@@ -6,9 +6,25 @@ import yaml from "js-yaml";
 import fg from "fast-glob";
 import type { SymbolMap } from "../types.js";
 
-const IGNORE = ["node_modules", "dist", ".git", "coverage", ".cache", ".index"];
+const ALWAYS_IGNORE = ["**/.git/**", "**/.index/**"];
 const CODE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"];
 const DOC_EXTS = [".md", ".mdx", ".txt", ".yaml", ".yml"];
+
+async function loadGitignorePatterns(repoPath: string): Promise<string[]> {
+  const gitignorePath = join(repoPath, ".gitignore");
+  if (!existsSync(gitignorePath)) return [];
+  const content = await readFile(gitignorePath, "utf-8");
+  return content
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith("#"))
+    .flatMap(pattern => {
+      // Convert gitignore patterns to fast-glob ignore patterns
+      const p = pattern.replace(/^\//, ""); // strip leading slash
+      if (p.includes("/")) return [`**/${p}`, `**/${p}/**`];
+      return [`**/${p}`, `**/${p}/**`];
+    });
+}
 
 export interface IndexSummary {
   added: number;
@@ -28,6 +44,9 @@ export async function reindexRepo(
   options?: { force?: boolean }
 ): Promise<IndexSummary> {
   await mkdir(join(repoPath, ".index"), { recursive: true });
+
+  const gitignorePatterns = await loadGitignorePatterns(repoPath);
+  const IGNORE = [...ALWAYS_IGNORE, ...gitignorePatterns];
 
   const docIndexPath = join(repoPath, ".index/doc-index.json");
   const symbolMapPath = join(repoPath, ".index/symbol-map.json");
