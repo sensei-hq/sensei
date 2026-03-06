@@ -8,7 +8,9 @@
 
 **Tech Stack:** TypeScript, Bun (runtime + package manager + workspaces), `@modelcontextprotocol/sdk`, `@clack/prompts`, `vitest` (unit: `*.spec.ts`), Playwright (e2e: `e2e/*.e2e.ts`), `js-yaml`, `fast-glob`
 
-> **Path note:** All tasks below use `packages/repo-index-server/` (not `mcp/repo-index-server/`). Replace `npm install` → `bun install`, `npm run` → `bun run`, `npx vitest` → `bunx vitest`. The root `package.json` is a bun workspace — see Task 1.
+> **Path note:** All source paths are relative to `packages/sensei/` (not `mcp/repo-index-server/`). Use `bun install`, `bun run`, `bunx vitest`. Test files use `*.spec.ts` (not `*.test.ts`). The root `package.json` is a bun workspace — see Task 1.
+
+> **Plan update (2026-03-06):** Tasks 10b, 11b, and 13b added for project memory tools, project-workflow skill, and `sensei migrate` command. Task 11 context-manager skill updated to include cross-session protocol.
 
 ---
 
@@ -2063,8 +2065,584 @@ git commit -m "chore: final verification pass"
 **Step 6: Summary**
 
 After all tasks complete, the repo contains:
-- 6 skills: `codebase-indexer`, `content-compression`, `agentic-dev-workflow`, `doc-drift-detector`, `context-manager`, `benchmark-runner`
-- 1 MCP server with 12 tools across query, reindex, context, drift, and generation categories
+- 7 skills: `codebase-indexer`, `content-compression`, `agentic-dev-workflow`, `doc-drift-detector`, `context-manager`, `benchmark-runner`, `project-workflow`
+- 1 MCP server with 19 tools across query, reindex, context, project-memory, drift, and generation categories
 - Benchmark task corpus (`tasks/sample.yaml`)
-- Install script (`install.sh`)
-- Design doc (`docs/plans/2026-03-06-ai-skills-repo-design.md`)
+- `sensei` CLI with `init`, `add`, `migrate`, `status`, `index`, `drift` commands
+- Design docs (`docs/design/`)
+
+---
+
+## Task 10b: MCP server — project memory tools
+
+**Files:**
+- Create: `packages/sensei/src/tools/project-memory.ts`
+- Create: `packages/sensei/src/tools/project-memory.spec.ts`
+- Modify: `packages/sensei/src/index.ts`
+
+Six tools: `get_session_context`, `checkpoint`, `add_decision`, `add_pattern`, `ask_question`, `get_open_items`, `close_item`.
+All reads/writes to `.index/checkpoints/` — agents never touch these files directly.
+
+**Step 1: Write failing tests**
+
+```typescript
+// src/tools/project-memory.spec.ts
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
+import { join } from "path";
+import {
+  getSessionContext, checkpoint, addDecision,
+  addPattern, askQuestion, getOpenItems, closeItem
+} from "./project-memory.js";
+
+const TMP = "/tmp/test-project-memory";
+
+beforeEach(() => {
+  mkdirSync(join(TMP, ".index/checkpoints/sessions"), { recursive: true });
+  writeFileSync(join(TMP, ".index/checkpoints/memory.yaml"),
+    "version: 1\ndecisions: []\ncontext:\n  project: test-app\n  phase: v1\n");
+  writeFileSync(join(TMP, ".index/checkpoints/patterns.yaml"),
+    "version: 1\npatterns: []\n");
+  writeFileSync(join(TMP, ".index/checkpoints/open-items.yaml"),
+    "version: 1\nitems: []\n");
+});
+
+afterEach(() => rmSync(TMP, { recursive: true, force: true }));
+
+describe("getSessionContext", () => {
+  it("returns memory + open items in under 400 tokens", async () => {
+    const result = await getSessionContext(TMP);
+    expect(result).toContain("test-app");
+    expect(result.length / 4).toBeLessThan(400);
+  });
+
+  it("falls back gracefully when no checkpoints exist", async () => {
+    rmSync(join(TMP, ".index/checkpoints"), { recursive: true });
+    const result = await getSessionContext(TMP);
+    expect(result).toContain("No session context");
+  });
+});
+
+describe("addDecision", () => {
+  it("appends a decision to memory.yaml", async () => {
+    await addDecision(TMP, "Use repository pattern for all DB access");
+    const result = await getSessionContext(TMP);
+    expect(result).toContain("repository pattern");
+  });
+
+  it("does not duplicate identical decisions", async () => {
+    await addDecision(TMP, "Use repository pattern");
+    await addDecision(TMP, "Use repository pattern");
+    const ctx = await getSessionContext(TMP);
+    const count = (ctx.match(/repository pattern/g) ?? []).length;
+    expect(count).toBe(1);
+  });
+});
+
+describe("addPattern", () => {
+  it("appends a pattern to patterns.yaml", async () => {
+    await addPattern(TMP, "data-attribute DOM", "data-{component} on root");
+    const result = await getSessionContext(TMP);
+    expect(result).toContain("data-attribute DOM");
+  });
+});
+
+describe("askQuestion / getOpenItems / closeItem", () => {
+  it("adds a question to open items", async () => {
+    const id = await askQuestion(TMP, "Should we use optimistic locking?");
+    expect(id).toBeTruthy();
+    const items = await getOpenItems(TMP);
+    expect(items).toContain("optimistic locking");
+  });
+
+  it("closes a question by id", async () => {
+    const id = await askQuestion(TMP, "Use row versioning?");
+    await closeItem(TMP, id);
+    const items = await getOpenItems(TMP);
+    expect(items).not.toContain("row versioning");
+  });
+});
+
+describe("checkpoint", () => {
+  it("archives session and returns resume instruction", async () => {
+    const result = await checkpoint(TMP, "Added auth module. Tests pass.");
+    expect(result).toContain("Checkpointed");
+    expect(result).toContain("get_session_context");
+  });
+
+  it("writes session archive file", async () => {
+    await checkpoint(TMP, "Done.");
+    const sessions = readdirSync(join(TMP, ".index/checkpoints/sessions"));
+    expect(sessions.length).toBeGreaterThan(0);
+  });
+});
+```
+
+**Step 2: Run tests — expect failure**
+
+```bash
+cd packages/sensei && bunx vitest run src/tools/project-memory.spec.ts
+# Expected: FAIL — project-memory.ts does not exist
+```
+
+**Step 3: Implement `src/tools/project-memory.ts`**
+
+```typescript
+import { readFile, writeFile, mkdir, readdir } from "fs/promises";
+import { join } from "path";
+import { existsSync } from "fs";
+import yaml from "js-yaml";
+
+const CHECKPOINTS = ".index/checkpoints";
+
+interface Memory {
+  version: number;
+  decisions: Array<{ id: string; text: string; date: string }>;
+  context: Record<string, string>;
+}
+
+interface Patterns {
+  version: number;
+  patterns: Array<{ name: string; convention: string; uses: number; added: string }>;
+}
+
+interface OpenItems {
+  version: number;
+  items: Array<{ id: string; question: string; added: string; status: string }>;
+}
+
+async function readYaml<T>(path: string): Promise<T | null> {
+  try {
+    return yaml.load(await readFile(path, "utf-8")) as T;
+  } catch { return null; }
+}
+
+async function writeYaml(path: string, data: unknown): Promise<void> {
+  await writeFile(path, yaml.dump(data));
+}
+
+export async function getSessionContext(repoPath: string): Promise<string> {
+  const dir = join(repoPath, CHECKPOINTS);
+  if (!existsSync(dir)) return "No session context found. Run sensei init or reindex_repo first.";
+
+  const [memory, items] = await Promise.all([
+    readYaml<Memory>(join(dir, "memory.yaml")),
+    readYaml<OpenItems>(join(dir, "open-items.yaml")),
+  ]);
+
+  const lines: string[] = ["## Project Memory"];
+  if (memory?.context) {
+    Object.entries(memory.context).forEach(([k, v]) => lines.push(`${k}: ${v}`));
+  }
+  if (memory?.decisions?.length) {
+    lines.push("\nDecisions:");
+    memory.decisions.forEach(d => lines.push(`- ${d.text}`));
+  }
+  if (items?.items?.filter(i => i.status === "open").length) {
+    lines.push("\n## Open Items");
+    items.items.filter(i => i.status === "open").forEach(i => lines.push(`- ${i.question}`));
+  }
+  return lines.join("\n");
+}
+
+export async function addDecision(repoPath: string, text: string): Promise<string> {
+  const path = join(repoPath, CHECKPOINTS, "memory.yaml");
+  const memory = await readYaml<Memory>(path) ?? { version: 1, decisions: [], context: {} };
+  const exists = memory.decisions.some(d => d.text.toLowerCase() === text.toLowerCase());
+  if (!exists) {
+    const id = text.toLowerCase().replace(/\s+/g, "-").slice(0, 40);
+    memory.decisions.push({ id, text, date: new Date().toISOString().split("T")[0] });
+    await writeYaml(path, memory);
+  }
+  return "Decision recorded.";
+}
+
+export async function addPattern(repoPath: string, name: string, convention: string): Promise<string> {
+  const path = join(repoPath, CHECKPOINTS, "patterns.yaml");
+  const patterns = await readYaml<Patterns>(path) ?? { version: 1, patterns: [] };
+  const existing = patterns.patterns.find(p => p.name === name);
+  if (existing) {
+    existing.uses++;
+  } else {
+    patterns.patterns.push({ name, convention, uses: 1, added: new Date().toISOString().split("T")[0] });
+  }
+  await writeYaml(path, patterns);
+  return "Pattern recorded.";
+}
+
+export async function askQuestion(repoPath: string, question: string): Promise<string> {
+  const path = join(repoPath, CHECKPOINTS, "open-items.yaml");
+  const items = await readYaml<OpenItems>(path) ?? { version: 1, items: [] };
+  const id = `q-${Date.now()}`;
+  items.items.push({ id, question, added: new Date().toISOString().split("T")[0], status: "open" });
+  await writeYaml(path, items);
+  return id;
+}
+
+export async function getOpenItems(repoPath: string): Promise<string> {
+  const path = join(repoPath, CHECKPOINTS, "open-items.yaml");
+  const items = await readYaml<OpenItems>(path);
+  const open = items?.items.filter(i => i.status === "open") ?? [];
+  if (!open.length) return "No open items.";
+  return open.map(i => `- [${i.id}] ${i.question}`).join("\n");
+}
+
+export async function closeItem(repoPath: string, id: string, resolution?: string): Promise<string> {
+  const path = join(repoPath, CHECKPOINTS, "open-items.yaml");
+  const items = await readYaml<OpenItems>(path);
+  if (!items) return "No open items found.";
+  const item = items.items.find(i => i.id === id);
+  if (!item) return `Item '${id}' not found.`;
+  item.status = "resolved";
+  if (resolution) (item as Record<string, string>).resolution = resolution;
+  await writeYaml(path, items);
+  return "Item closed.";
+}
+
+export async function checkpoint(repoPath: string, summary: string, decisions?: string[], patterns?: string[]): Promise<string> {
+  const dir = join(repoPath, CHECKPOINTS);
+  await mkdir(join(dir, "sessions"), { recursive: true });
+
+  // Capture any explicit decisions/patterns passed by agent
+  if (decisions?.length) {
+    await Promise.all(decisions.map(d => addDecision(repoPath, d)));
+  }
+  if (patterns?.length) {
+    await Promise.all(patterns.map(p => addPattern(repoPath, p, p)));
+  }
+
+  // Archive session snapshot
+  const date = new Date().toISOString().split("T")[0];
+  const sessionFile = join(dir, "sessions", `${date}-${Date.now()}.yaml`);
+  await writeYaml(sessionFile, {
+    date,
+    summary,
+    decisions_added: decisions ?? [],
+    patterns_added: patterns ?? [],
+    timestamp: new Date().toISOString(),
+  });
+
+  return `Checkpointed. Resume with get_session_context().`;
+}
+```
+
+**Step 4: Run tests — expect pass**
+
+```bash
+bunx vitest run src/tools/project-memory.spec.ts
+# Expected: PASS
+```
+
+**Step 5: Register tools in `src/index.ts`**
+
+```typescript
+import { getSessionContext, checkpoint, addDecision, addPattern, askQuestion, getOpenItems, closeItem } from "./tools/project-memory.js";
+
+server.tool("get_session_context", "Load compressed project memory for session resume (~300 tokens)",
+  {},
+  async () => ({ content: [{ type: "text", text: await getSessionContext(REPO) }] })
+);
+
+server.tool("checkpoint", "Distil session and archive. Call at session end or before switching tasks.",
+  { summary: z.string(), decisions: z.array(z.string()).optional(), patterns: z.array(z.string()).optional() },
+  async ({ summary, decisions, patterns }) => ({
+    content: [{ type: "text", text: await checkpoint(REPO, summary, decisions, patterns) }]
+  })
+);
+
+server.tool("add_decision", "Record a confirmed decision into project memory",
+  { text: z.string() },
+  async ({ text }) => ({ content: [{ type: "text", text: await addDecision(REPO, text) }] })
+);
+
+server.tool("add_pattern", "Record a proven pattern (use when pattern appears 2+ times)",
+  { name: z.string(), convention: z.string() },
+  async ({ name, convention }) => ({ content: [{ type: "text", text: await addPattern(REPO, name, convention) }] })
+);
+
+server.tool("ask_question", "Queue a question for the user (non-blocking)",
+  { question: z.string() },
+  async ({ question }) => ({ content: [{ type: "text", text: `Question queued. ID: ${await askQuestion(REPO, question)}` }] })
+);
+
+server.tool("get_open_items", "Get all unresolved questions and next steps",
+  {},
+  async () => ({ content: [{ type: "text", text: await getOpenItems(REPO) }] })
+);
+
+server.tool("close_item", "Mark an open item as resolved",
+  { id: z.string(), resolution: z.string().optional() },
+  async ({ id, resolution }) => ({ content: [{ type: "text", text: await closeItem(REPO, id, resolution) }] })
+);
+```
+
+**Step 6: Run all tests**
+
+```bash
+bunx vitest run
+# Expected: all PASS
+```
+
+**Step 7: Commit**
+
+```bash
+git add packages/sensei/src/tools/project-memory.ts packages/sensei/src/tools/project-memory.spec.ts packages/sensei/src/index.ts
+git commit -m "feat: add project memory MCP tools (get_session_context, checkpoint, add_decision, add_pattern, ask_question, get_open_items, close_item)"
+```
+
+---
+
+## Task 11b: Write `project-workflow` skill + update `context-manager` skill
+
+**Files:**
+- Create: `skills/project-workflow/SKILL.md`
+- Modify: `skills/context-manager/SKILL.md`
+
+**Step 1: Create `skills/project-workflow/` directory**
+
+```bash
+mkdir -p skills/project-workflow
+```
+
+**Step 2: Write `skills/project-workflow/SKILL.md`**
+
+```markdown
+---
+name: project-workflow
+description: Use when starting work on any project to establish the session protocol, capture decisions and patterns, and maintain knowledge across sessions without token bloat.
+---
+
+# Project Workflow
+
+## Overview
+
+Process-centric protocol for working on a project across sessions. Knowledge persists via MCP tools — agents never read or write memory files directly. Brainstorming, planning, and TDD are handled by superpowers plugins; this skill covers what survives between sessions.
+
+## Session Start
+
+```
+1. call: get_session_context()    ← memory + open items + active plan (~300 tokens)
+2. review open items              ← anything that needs resolution before starting?
+3. call: recommend_next(task)     ← get context prescription for first task
+```
+
+## During Work
+
+**When a decision is confirmed:**
+```
+call: add_decision("Use repository pattern for all DB access")
+```
+Fire-and-forget. No file reads needed.
+
+**When a pattern is used a second time:**
+```
+call: add_pattern("data-attribute DOM", "data-{component} on root, data-{component}-{part} on children")
+```
+
+**When a question needs user input (non-blocking):**
+```
+call: ask_question("Should we use optimistic locking or row versioning?")
+```
+Continue working. The question will surface at next session start.
+
+**One question at a time** — if multiple questions arise, queue them sequentially. Don't batch.
+
+## Task Boundaries
+
+Before switching to a different module or feature:
+```
+call: checkpoint("What was done, decisions made, what's next")
+```
+
+## Session End
+
+```
+call: checkpoint(
+  summary: "1-3 sentences: what was done, key decisions, next steps",
+  decisions: ["any decisions not yet captured via add_decision"],
+  patterns: ["any patterns not yet captured via add_pattern"]
+)
+```
+
+The MCP tool handles archiving. Next session resumes with `get_session_context()`.
+
+## Quality Gate (before closing a task)
+
+- [ ] All tests pass
+- [ ] Lint: 0 errors
+- [ ] Decisions captured via `add_decision()`
+- [ ] Open questions queued via `ask_question()`
+
+## Plugin Handoff
+
+| Work type | Use |
+|---|---|
+| Design a new feature | `superpowers:brainstorming` |
+| Write an implementation plan | `superpowers:writing-plans` |
+| Execute a plan | `superpowers:executing-plans` |
+| TDD a module | `superpowers:test-driven-development` |
+| Debug a failure | `superpowers:systematic-debugging` |
+| **Start/resume any session** | **this skill → get_session_context()** |
+| **Capture decisions/patterns** | **this skill → add_decision / add_pattern** |
+| **End a session** | **this skill → checkpoint()** |
+```
+
+**Step 3: Update `skills/context-manager/SKILL.md`**
+
+Replace the existing file's cross-session section with a reference to project-workflow:
+
+Add this section at the end of the existing file:
+
+```markdown
+## Cross-Session Context
+
+For knowledge that persists between sessions (decisions, patterns, open items), use the `project-workflow` skill. The tools are:
+
+| Need | Tool |
+|---|---|
+| Resume a session | `get_session_context()` |
+| Capture a decision | `add_decision(text)` |
+| Record a proven pattern | `add_pattern(name, convention)` |
+| Queue a question | `ask_question(question)` |
+| End a session | `checkpoint(summary)` |
+
+Context budget stays flat at ~300 tokens regardless of project history length.
+```
+
+**Step 4: Commit**
+
+```bash
+git add skills/project-workflow/ skills/context-manager/SKILL.md
+git commit -m "feat: add project-workflow skill and cross-session section to context-manager"
+```
+
+---
+
+## Task 13b: CLI — `sensei migrate` command
+
+**Files:**
+- Create: `packages/sensei/src/commands/migrate.ts`
+- Modify: `packages/sensei/src/cli.ts`
+
+**Step 1: Write `src/commands/migrate.ts`**
+
+```typescript
+import { intro, outro, spinner, note, log } from "@clack/prompts";
+import { readFile, mkdir, rename, copyFile, readdir, stat } from "fs/promises";
+import { join, dirname } from "path";
+import { existsSync } from "fs";
+import yaml from "js-yaml";
+import { addDecision, addPattern, checkpoint } from "../tools/project-memory.js";
+
+export async function migrate(cwd: string): Promise<void> {
+  intro("sensei migrate");
+
+  const agentsDir = join(cwd, "agents");
+  if (!existsSync(agentsDir)) {
+    log.warn("No agents/ folder found. Nothing to migrate.");
+    outro("Done.");
+    return;
+  }
+
+  const archiveDir = join(cwd, "agents/_archived");
+  await mkdir(join(cwd, ".index/checkpoints/sessions"), { recursive: true });
+
+  const s = spinner();
+  s.start("Reading agents/ files...");
+
+  const migrated: string[] = [];
+
+  // Migrate memory.md → decisions in memory.yaml
+  const memoryPath = join(agentsDir, "memory.md");
+  if (existsSync(memoryPath)) {
+    const content = await readFile(memoryPath, "utf-8");
+    // Extract bullet points as decisions
+    const decisions = content.split("\n")
+      .filter(l => l.match(/^[-*]\s+/))
+      .map(l => l.replace(/^[-*]\s+/, "").trim())
+      .filter(l => l.length > 0);
+    for (const decision of decisions) {
+      await addDecision(cwd, decision);
+    }
+    migrated.push(`memory.md → ${decisions.length} decisions`);
+  }
+
+  // Migrate design-patterns.md → patterns.yaml
+  const patternsPath = join(agentsDir, "design-patterns.md");
+  if (existsSync(patternsPath)) {
+    const content = await readFile(patternsPath, "utf-8");
+    // Extract H2/H3 sections as patterns
+    const sections = content.split(/\n## |\n### /).slice(1);
+    for (const section of sections) {
+      const [name, ...rest] = section.split("\n");
+      const convention = rest.filter(l => l.match(/^[-*]\s+/)).map(l => l.replace(/^[-*]\s+/, "")).join("; ");
+      if (name && convention) await addPattern(cwd, name.trim(), convention.trim());
+    }
+    migrated.push(`design-patterns.md → ${sections.length} patterns`);
+  }
+
+  // Extract last journal entry as open item
+  const journalPath = join(agentsDir, "journal.md");
+  if (existsSync(journalPath)) {
+    const content = await readFile(journalPath, "utf-8");
+    const lines = content.trim().split("\n");
+    const lastEntries = lines.slice(-10).join("\n");
+    await checkpoint(cwd, `Migrated from agents/journal.md. Last entries: ${lastEntries.slice(0, 200)}`);
+    migrated.push("journal.md → session checkpoint");
+  }
+
+  s.stop("Migration complete.");
+
+  // Archive agents/ folder
+  s.start("Archiving agents/ folder...");
+  await mkdir(archiveDir, { recursive: true });
+  const files = await readdir(agentsDir);
+  for (const file of files) {
+    if (file === "_archived") continue;
+    await rename(join(agentsDir, file), join(archiveDir, file));
+  }
+  s.stop("Archived to agents/_archived/");
+
+  note(
+    [
+      ...migrated,
+      "",
+      "agents/ archived to agents/_archived/",
+      "Review .index/checkpoints/ to verify parity",
+      "Delete agents/_archived/ when satisfied",
+      "",
+      "Resume with: get_session_context()",
+    ].join("\n"),
+    "Migration summary"
+  );
+
+  outro("Done. Run sensei status to verify.");
+}
+```
+
+**Step 2: Register in `src/cli.ts`**
+
+Add the import and dispatch:
+
+```typescript
+import { migrate } from "./commands/migrate.js";
+
+// In the dispatch switch:
+case "migrate":
+  await migrate(process.cwd());
+  break;
+```
+
+**Step 3: Verify syntax**
+
+```bash
+cd packages/sensei && bun run build
+# Expected: builds without errors
+```
+
+**Step 4: Commit**
+
+```bash
+git add packages/sensei/src/commands/migrate.ts packages/sensei/src/cli.ts
+git commit -m "feat: add sensei migrate command — converts agents/ folder to checkpoint structure"
+```
