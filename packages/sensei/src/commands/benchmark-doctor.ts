@@ -22,7 +22,7 @@ export function buildTargetedIndexPrompt(opts: TargetedIndexPromptOptions): stri
     const relInput = relative(opts.repoPath, opts.inputDir);
     // Match entries whose path starts with relInput or contains relInput as a segment
     const entries = Object.entries(map)
-      .filter(([path]) => path.startsWith(relInput) || path.includes(`/${relInput}/`) || path.includes(`/${relInput}`))
+      .filter(([p]) => p.startsWith(relInput + "/") || p.includes(`/${relInput}/`))
       .map(([path, entry]) => `### ${path}\n${[...entry.L0, ...entry.L1].join("\n")}`)
       .join("\n\n");
     indexSection = entries || "(no entries for input dir)";
@@ -71,7 +71,7 @@ export function buildRawContentPrompt(opts: RawContentPromptOptions): string {
         return `### ${f}\n${content}`;
       })
       .join("\n\n");
-    examplesSection = exFiles;
+    examplesSection = exFiles || "(no examples provided)";
   }
 
   return `You are converting a requirements folder into a ${opts.outputName} folder.
