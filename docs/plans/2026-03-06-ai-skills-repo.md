@@ -63,7 +63,7 @@ mkdir -p results
   "name": "repo-index-server",
   "version": "0.1.0",
   "type": "module",
-  "bin": { "skills": "./dist/cli.js" },
+  "bin": { "sensei": "./dist/cli.js" },
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts src/cli.ts --outdir dist --target bun",

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`skills` is a TypeScript CLI installed globally via `npm install -g` or `npx`. It shares the same codebase as the MCP server — same modules, two entry points (`cli.ts` for the CLI, `index.ts` for the MCP server). It manages three layers: developer profile, company profile, and project/repo configuration.
+`sensei` is a TypeScript CLI installed globally via `bun add -g sensei` or `npx sensei`. It shares the same codebase as the MCP server — same modules, two entry points (`cli.ts` for the CLI, `index.ts` for the MCP server). It manages three layers: developer profile, company profile, and project/repo configuration.
 
 ---
 
@@ -51,7 +51,7 @@ Each layer extends, never replaces. Company guidelines append to personal. Proje
 
 ```yaml
 activeProfile: personal          # Default active profile name
-editor: $EDITOR                  # Editor for 'skills guidelines edit'
+editor: $EDITOR                  # Editor for 'sensei guidelines edit'
 mcpRegistrations:                # All registered MCP servers
   - name: repo-index-server
     scope: project               # project | global
@@ -144,7 +144,7 @@ All interactive prompts use [`@clack/prompts`](https://github.com/natemoo-re/cla
 import { intro, outro, select, confirm, multiselect, spinner, note, isCancel, cancel } from "@clack/prompts";
 
 export async function init() {
-  intro("skills init");
+  intro("sensei init");
 
   const profiles = await multiselect({
     message: "Which profiles to activate for this repo?",
@@ -173,7 +173,7 @@ export async function init() {
     "Setup complete"
   );
 
-  outro("Run skills status anytime to check your setup.");
+  outro("Run sensei status anytime to check your setup.");
 }
 ```
 
@@ -210,10 +210,10 @@ const [,, cmd, ...args] = process.argv;
 
 Each command lives in `src/commands/<name>.ts` and imports from `src/tools/` (shared with MCP server).
 
-### `skills init`
+### `sensei init`
 
 ```
-1. Detect if .skills/ already exists → warn and suggest 'skills add' if so
+1. Detect if .skills/ already exists → warn and suggest 'sensei add' if so
 2. Run reindexRepo(cwd)
 3. Prompt: which profiles to activate? (list available from ~/.skills/profiles/)
 4. Write .skills/project.yaml with selected profiles
@@ -222,7 +222,7 @@ Each command lives in `src/commands/<name>.ts` and imports from `src/tools/` (sh
 7. Print summary: files created, profiles active, hook status
 ```
 
-### `skills add`
+### `sensei add`
 
 ```
 1. Run reindexRepo(cwd) — safe, won't overwrite .llmspec.yaml
@@ -231,11 +231,11 @@ Each command lives in `src/commands/<name>.ts` and imports from `src/tools/` (sh
 4. Report: what was added / what was skipped (already existed)
 ```
 
-### `skills upgrade`
+### `sensei upgrade`
 
 ```
-1. npm update repo-index-server (or pull from git if installed from source)
-2. Rebuild MCP server: npm run build
+1. bun update repo-index-server (or pull from git if installed from source)
+2. Rebuild MCP server: bun run build
 3. Re-run reindexRepo(cwd, { force: true }) for .index/ refresh
 4. Regenerate llms.txt and CLAUDE.md (non-destructive merge for CLAUDE.md)
 5. Do NOT overwrite .llmspec.yaml
@@ -243,7 +243,7 @@ Each command lives in `src/commands/<name>.ts` and imports from `src/tools/` (sh
 7. Print changelog of what changed
 ```
 
-### `skills status`
+### `sensei status`
 
 Output format:
 ```
@@ -253,11 +253,11 @@ Profiles:   personal ✓  |  acme (company) ✓
 MCP:        repo-index-server ✓ (registered, running)
             acme-companion ✓ (local cache, remote: https://mcp.acme.internal)
 Index:      last updated 2 days ago
-Drift:      3 files drifted (run: skills drift)
+Drift:      3 files drifted (run: sensei drift)
 Cache:      rokkit ✓ (indexed 5 days ago)  |  kavach ✓ (indexed 1 day ago)
 ```
 
-### `skills guidelines`
+### `sensei guidelines`
 
 ```
 1. Load personal guidelines.md
@@ -265,7 +265,7 @@ Cache:      rokkit ✓ (indexed 5 days ago)  |  kavach ✓ (indexed 1 day ago)
 3. Print merged output, each section labelled [personal] or [acme]
 ```
 
-### `skills guidelines edit`
+### `sensei guidelines edit`
 
 ```
 1. Determine active profile
@@ -274,7 +274,7 @@ Cache:      rokkit ✓ (indexed 5 days ago)  |  kavach ✓ (indexed 1 day ago)
 4. Print: "Guidelines updated."
 ```
 
-### `skills cache add <path> [--as <name>]`
+### `sensei cache add <path> [--as <name>]`
 
 ```
 1. Resolve path
@@ -283,12 +283,12 @@ Cache:      rokkit ✓ (indexed 5 days ago)  |  kavach ✓ (indexed 1 day ago)
 4. Print: "Cached <name> (N files indexed)"
 ```
 
-### `skills hooks install [--drift]`
+### `sensei hooks install [--drift]`
 
 ```
 1. Write .git/hooks/pre-commit:
    #!/bin/sh
-   skills drift --fail-on-drift
+   sensei drift --fail-on-drift
 2. chmod +x .git/hooks/pre-commit
 3. Print: "Pre-commit drift hook installed."
 ```
@@ -350,10 +350,10 @@ mcp/repo-index-server/
     tools/            ← shared: query, reindex, context, drift, generate, benchmark
     types.ts
     index-reader.ts
-  package.json        ← add: "bin": { "skills": "./dist/cli.js" }
+  package.json        ← "bin": { "sensei": "./dist/cli.js" }
 ```
 
-Adding `"bin"` to `package.json` makes `skills` available as a global command after `npm install -g`.
+Adding `"bin"` to `package.json` makes `sensei` available as a global command after `bun add -g sensei`.
 
 **Dependencies added for CLI:**
 
@@ -396,19 +396,19 @@ TDD: write failing test first, then minimal implementation
 
 ## Pre-Commit Hook Template
 
-Written to `.git/hooks/pre-commit` by `skills hooks install --drift`:
+Written to `.git/hooks/pre-commit` by `sensei hooks install --drift`:
 
 ```bash
 #!/bin/sh
 # Drift detection pre-commit hook
-# Installed by: skills hooks install --drift
+# Installed by: sensei hooks install --drift
 
-if ! command -v skills &> /dev/null; then
-  echo "skills CLI not found. Skipping drift check."
+if ! command -v sensei &> /dev/null; then
+  echo "sensei not installed. Skipping drift check."
   exit 0
 fi
 
-skills drift --fail-on-drift
+sensei drift --fail-on-drift
 exit $?
 ```
 
