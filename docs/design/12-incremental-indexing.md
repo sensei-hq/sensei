@@ -2,7 +2,9 @@
 
 ## Overview
 
-After the first full index, `reindexRepo` compares current file mtimes and sizes against the stored `doc-index.json` fingerprints. Only changed, added, or deleted files are re-processed. The symbol-map is patched in-place. A `force` flag bypasses the diff and runs a full scan.
+After the first full index, `reindexRepo` uses `git diff <lastIndexedCommit>..HEAD --name-only` to identify changed, added, and deleted files since the commit at index time. Only those files are re-processed. The symbol-map is patched in-place. A `force` flag bypasses the diff and runs a full scan.
+
+For non-git repos (no `.git/` directory), falls back to mtime/size fingerprints from `doc-index.json`.
 
 ---
 
@@ -14,31 +16,54 @@ reindexRepo(repoPath, { force: false })
 1. Load existing .index/symbol-map.json and .index/doc-index.json
    → if either missing: force = true (first run)
 
-2. Glob all code files (*.ts, *.tsx, *.js, *.py, etc.)
-3. Glob all doc files (*.md, *.yaml, etc.)
+2. Check if repo has git: stat(repoPath/.git)
+   → isGit = true/false
 
-4. For each code file:
-   a. Stat current mtime + size
-   b. Compare against stored doc-index fingerprint
-   c. If changed/added OR force: re-extract exports → update symbol-map
-   d. If unchanged: keep existing symbol-map entry
+3. Determine changed files:
+   a. If force: changedFiles = ALL glob results
+   b. If isGit AND doc-index has lastIndexedCommit:
+      changedFiles = git diff <lastIndexedCommit>..HEAD --name-only
+      deletedFiles = git diff <lastIndexedCommit>..HEAD --name-only --diff-filter=D
+   c. If not git (fallback): compare mtime/size against doc-index fingerprints
 
-5. For each file in symbol-map NOT in current glob result:
-   → file was deleted: remove from symbol-map
+4. For each changed/added code file:
+   → re-extract exports → update symbol-map
+
+5. For each deleted file in symbol-map:
+   → remove from symbol-map
 
 6. Write updated symbol-map.json
-7. Write updated doc-index.json (all current fingerprints)
+7. Write updated doc-index.json with:
+   - lastIndexedCommit: current HEAD sha (git rev-parse HEAD)
+   - fingerprints: { path: { mtime, size } } for fallback/non-git
 8. Write updated stack.md, shortcuts.md (always regenerate — cheap)
 9. If no .llmspec.yaml: write template (never overwrite)
 10. Write llms.txt (always regenerate)
 11. If no CLAUDE.md: write template (never overwrite)
 
-12. Return summary: { added, updated, removed, unchanged }
+12. Return summary: { added, updated, removed, unchanged, forced }
 ```
 
 ---
 
 ## Change Detection
+
+### Git repos (primary)
+
+Changed files come directly from git:
+
+```
+git diff <lastIndexedCommit>..HEAD --name-only
+```
+
+This handles:
+- Files modified, added, or deleted since the last index commit
+- Renames (old path removed, new path added)
+- Files changed by `git stash pop`, `git pull`, `git rebase`
+
+A file is **added** if it's in `--diff-filter=A`, **deleted** if in `--diff-filter=D`, **modified** otherwise.
+
+### Non-git repos (fallback)
 
 A file is considered **changed** if:
 ```
@@ -47,13 +72,23 @@ abs(currentMtime - storedMtime) > 1000ms  OR  currentSize !== storedSize
 
 The 1000ms tolerance handles filesystem rounding on some platforms.
 
-A file is considered **added** if it appears in the current glob but not in the stored fingerprints.
-
-A file is considered **deleted** if it appears in the stored symbol-map or doc-index but not in the current glob.
-
 ---
 
 ## Data Structures
+
+### `doc-index.json` (updated schema)
+
+```json
+{
+  "lastIndexedCommit": "a3f8c21d4b9e0f1234567890abcdef1234567890",
+  "files": {
+    "src/auth.ts": { "mtime": 1741234567890, "size": 4821 },
+    "docs/design/03-mcp-server.md": { "mtime": 1741234000000, "size": 12400 }
+  }
+}
+```
+
+`lastIndexedCommit` is absent on first run or in non-git repos.
 
 ### `IndexSummary` (return type)
 
@@ -104,10 +139,12 @@ Indexing... done (full scan)
 
 ```
 Unit: src/tools/reindex.spec.ts (extended)
-  - incremental: only changed files re-extracted
-  - incremental: deleted files removed from symbol-map
-  - incremental: new files added to symbol-map
-  - force: all files re-extracted regardless of fingerprints
+  - git: only files in git diff are re-extracted
+  - git: deleted files removed from symbol-map
+  - git: new files added to symbol-map
+  - git: lastIndexedCommit stored in doc-index.json after run
+  - non-git fallback: mtime/size comparison used when no .git/
+  - force: all files re-extracted regardless of git diff
   - summary counts correct for each case
   - first run (no prior index): force = true implicitly
 ```

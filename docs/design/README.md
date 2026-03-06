@@ -12,12 +12,13 @@ Architecture, structure, and implementation details for the AI skills repo.
 | [04-llmspec](./04-llmspec.md) | LLMSpec format (.llmspec.yaml), fields, generation, querying |
 | [05-indexing](./05-indexing.md) | Indexer design, extraction targets, storage format, incremental updates |
 | [06-compression](./06-compression.md) | Resolution levels, storage schema, serving logic, notation formats |
-| [07-drift](./07-drift.md) | Fingerprint system, drift detection algorithm, hook integration |
+| [07-drift](./07-drift.md) | Git-diff + traceability-based drift detection, hook integration |
 | [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup |
 | [09-cli](./09-cli.md) | CLI design, layered profile system, command modules, config schemas, hooks |
 | [10-project-memory](./10-project-memory.md) | Cross-session knowledge layer: checkpoint distillation, memory/patterns/open-items schemas, MCP tools, migration from agents/ |
 | [11-doc-reformatter](./11-doc-reformatter.md) | Doc reformatter: template detection, prompt structure, CLI interface, doc-reformatter skill |
-| [12-incremental-indexing](./12-incremental-indexing.md) | Incremental indexing: change detection algorithm, force flag, summary output |
+| [12-incremental-indexing](./12-incremental-indexing.md) | Incremental indexing: git-diff-based change detection, force flag, summary output |
+| [13-traceability-matrix](./13-traceability-matrix.md) | Doc-to-code traceability: schema, population (manual + auto-detect), drift cross-reference |
 
 ## Numbering Convention
 
