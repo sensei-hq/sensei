@@ -15,27 +15,33 @@
 ## Task 1: Scaffold bun workspaces monorepo
 
 **Files:**
-- Create: `package.json` (workspace root)
-- Create: `packages/repo-index-server/package.json`
-- Create: `packages/repo-index-server/tsconfig.json`
-- Create: `packages/repo-index-server/vitest.config.ts`
-- Create: `packages/repo-index-server/playwright.config.ts`
-- Create: `packages/repo-index-server/e2e/` (directory)
+- Create: `package.json` (workspace root — clean, no config noise)
+- Create: `config/tsconfig.base.json`
+- Create: `config/vitest.config.base.ts`
+- Create: `config/eslint.config.js`
+- Create: `packages/sensei/package.json`
+- Create: `packages/sensei/tsconfig.json`
+- Create: `packages/sensei/vitest.config.ts`
+- Create: `packages/sensei/playwright.config.ts`
+- Create: `packages/sensei/e2e/` (directory)
+- Create: `apps/` (directory, empty for now)
 - Create: `skills/` subdirectories
 - Create: `.gitignore`
 
 **Step 1: Create directory tree**
 
 ```bash
+mkdir -p config
+mkdir -p packages/sensei/src/tools
+mkdir -p packages/sensei/src/commands
+mkdir -p packages/sensei/e2e
+mkdir -p apps
 mkdir -p skills/codebase-indexer
 mkdir -p skills/content-compression
 mkdir -p skills/agentic-dev-workflow
 mkdir -p skills/doc-drift-detector
 mkdir -p skills/context-manager
 mkdir -p skills/benchmark-runner
-mkdir -p packages/repo-index-server/src/tools
-mkdir -p packages/repo-index-server/src/commands
-mkdir -p packages/repo-index-server/e2e
 mkdir -p tasks
 mkdir -p results
 ```
@@ -44,23 +50,75 @@ mkdir -p results
 
 ```json
 {
-  "name": "skills-workspace",
+  "name": "sensei",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "build": "bun run --filter='*' build",
     "test": "bun run --filter='*' test",
     "test:e2e": "bun run --filter='*' test:e2e",
-    "dev": "bun run --filter='repo-index-server' dev"
+    "dev": "bun run --filter='sensei' dev"
   }
 }
 ```
 
-**Step 3: Write `packages/repo-index-server/package.json`**
+**Step 3: Write `config/tsconfig.base.json`**
 
 ```json
 {
-  "name": "repo-index-server",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}
+```
+
+**Step 4: Write `config/vitest.config.base.ts`**
+
+```typescript
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    include: ["src/**/*.spec.ts"],
+    environment: "node",
+    coverage: {
+      reporter: ["text", "lcov"],
+    },
+  },
+});
+```
+
+**Step 5: Write `config/eslint.config.js`**
+
+```javascript
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-explicit-any": "warn",
+    },
+  }
+);
+```
+
+**Step 6: Write `packages/sensei/package.json`**
+
+```json
+{
+  "name": "sensei",
   "version": "0.1.0",
   "type": "module",
   "bin": { "sensei": "./dist/cli.js" },
@@ -79,48 +137,41 @@ mkdir -p results
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@playwright/test": "^1.48.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^2.0.0"
   }
 }
 ```
 
-**Step 4: Write `packages/repo-index-server/tsconfig.json`**
+**Step 7: Write `packages/sensei/tsconfig.json`**
 
 ```json
 {
+  "extends": "../../config/tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
     "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true
+    "rootDir": "src"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "e2e"]
 }
 ```
 
-**Step 5: Write `packages/repo-index-server/vitest.config.ts`**
+**Step 8: Write `packages/sensei/vitest.config.ts`**
 
 ```typescript
-import { defineConfig } from "vitest/config";
+import { mergeConfig } from "vitest/config";
+import base from "../../config/vitest.config.base.ts";
 
-export default defineConfig({
-  test: {
-    include: ["src/**/*.spec.ts"],
-    environment: "node",
-  },
-});
+export default mergeConfig(base, {});
 ```
 
-**Step 6: Write `packages/repo-index-server/playwright.config.ts`**
+**Step 9: Write `packages/sensei/playwright.config.ts`**
 
 ```typescript
 import { defineConfig } from "@playwright/test";
@@ -135,26 +186,24 @@ export default defineConfig({
 });
 ```
 
-**Step 7: Write root `.gitignore`**
+**Step 10: Write root `.gitignore`**
 
 ```
 node_modules/
 dist/
 results/*.json
 .index/
-*.llmspec.yaml
 .env
-bun.lockb
 ```
 
-**Step 8: Install dependencies**
+**Step 11: Install dependencies**
 
 ```bash
 bun install
 # Expected: bun.lockb created, node_modules populated
 ```
 
-**Step 9: Verify workspace resolves**
+**Step 12: Verify workspace resolves**
 
 ```bash
 bun run test

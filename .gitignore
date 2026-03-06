@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.index/
+*.json.bak
+bun.lockb
+
+# Benchmark results (raw)
+results/*.json
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
