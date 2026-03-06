@@ -2,26 +2,40 @@
 
 ## Overview
 
-Drift detection compares the current state of documentation files against a stored fingerprint index. The fingerprint records file path, size, and mtime. Any deviation constitutes drift. Drift is checked on demand via the `check_drift` MCP tool.
+Drift detection uses `git diff` against the last indexed commit to identify which files have changed, then cross-references those changes against a traceability matrix (`.index/traceability.json`) to flag docs whose linked code files have changed. This enables precise "code changed but doc didn't" detection without content analysis.
+
+For non-git repos, falls back to mtime/size comparison against `doc-index.json` fingerprints.
 
 ---
 
-## Fingerprint Schema
+## Traceability Matrix
 
-`.index/doc-index.json`:
+`.index/traceability.json` maps design/feature docs to the code files they cover:
 
 ```json
 {
-  "README.md": { "mtime": 1741234567890, "size": 4821 },
-  "docs/plans/2026-03-06-design.md": { "mtime": 1741234000000, "size": 12400 },
-  "CHANGELOG.md": { "mtime": 1741200000000, "size": 3200 },
-  "docs/features/01-CodebaseIndexing.md": { "mtime": 1741100000000, "size": 5600 }
+  "docs/design/03-mcp-server.md": ["src/index.ts", "src/tools/query.ts", "src/tools/reindex.ts"],
+  "docs/design/07-drift.md": ["src/tools/drift.ts"],
+  "docs/design/10-project-memory.md": ["src/tools/project-memory.ts"],
+  "docs/features/01-CodebaseIndexing.md": ["src/tools/reindex.ts", "src/index-reader.ts"],
+  "README.md": ["packages/sensei/package.json"]
 }
 ```
 
-**Fields:**
-- `mtime`: milliseconds since epoch (from `fs.stat().mtimeMs`)
-- `size`: file size in bytes (from `fs.stat().size`)
+**Population:**
+- Declared in `.llmspec.yaml` under `docs[].covers[]` (manual, authoritative)
+- Auto-detected by `reindexRepo` from doc content (filename mentions, symbol references) — best-effort
+- Manual declarations override auto-detection
+
+**Schema in `.llmspec.yaml`:**
+```yaml
+docs:
+  - path: docs/design/03-mcp-server.md
+    covers:
+      - src/index.ts
+      - src/tools/query.ts
+      - src/tools/reindex.ts
+```
 
 ---
 
@@ -29,59 +43,86 @@ Drift detection compares the current state of documentation files against a stor
 
 ```
 checkDrift(repoPath):
-  1. Read .index/doc-index.json
-  2. If missing → return "No doc-index.json. Run reindex_repo first."
-  3. For each (path, fingerprint) in stored index:
-     a. Stat the file at REPO_PATH/path
-     b. If file does not exist → add to drifted: "{path}: deleted (was in index)"
-     c. If |current.mtime - stored.mtime| > 1000ms OR current.size != stored.size
-        → add to drifted: "{path}: modified since last index"
-  4. Return { drifted: string[], summary: string }
+
+1. Read .index/doc-index.json → get lastIndexedCommit
+   → if missing: return "No index found. Run sensei index first."
+
+2. Check if repo has git:
+   a. If git AND lastIndexedCommit present:
+      changedFiles = git diff <lastIndexedCommit>..HEAD --name-only
+   b. If not git (fallback):
+      changedFiles = files where mtime/size differ from doc-index fingerprints
+
+3. Read .index/traceability.json
+   → if missing: skip cross-reference, report raw changed files only
+
+4. For each (docPath, coveredFiles) in traceability:
+   a. If ANY coveredFile is in changedFiles:
+      → docPath is drifted if it is NOT also in changedFiles
+      → label: "{docPath}: code changed (src/foo.ts) — doc may need update"
+
+5. For each changed file that IS a doc (*.md, *.yaml outside .index/):
+   → check if doc itself changed but code it covers did NOT
+   → label: "{docPath}: doc changed without code change — verify alignment"
+
+6. Return { drifted: DriftEntry[], summary: string }
 ```
-
-**Mtime tolerance:** 1000ms (1 second) to account for filesystem precision variation across platforms.
-
-**Size check:** Secondary confirmation. A file with the same mtime but different size has definitely changed (handles edge cases where mtime isn't updated).
 
 ---
 
-## What Drift Means
+## Data Structures
 
-Drift means a file has changed since the last `reindex_repo()` call. It does NOT mean the file is wrong — it means it has changed and the index is stale. The agent decides whether the change is significant.
+### `DriftEntry`
 
-Typical causes:
-- Code file modified without updating design docs (code ahead of docs)
-- Design doc updated but public README not yet updated (design ahead of public)
-- File deleted without removing references from other docs
+```typescript
+interface DriftEntry {
+  docPath: string;
+  reason: 'code-changed' | 'doc-changed' | 'file-deleted' | 'raw-modified';
+  changedFiles?: string[];  // code files that triggered the drift
+}
+```
+
+### `DriftResult`
+
+```typescript
+interface DriftResult {
+  drifted: DriftEntry[];
+  summary: string;
+  lastIndexedCommit?: string;
+}
+```
 
 ---
 
 ## Drift Report Format
 
+No drift:
 ```
-No drift detected. All indexed docs match current state.
+No drift detected. All docs aligned with code at a3f8c21.
 ```
 
-Or:
-
+With drift:
 ```
-3 file(s) drifted since last index:
-src/auth.ts: modified since last index
-docs/plans/old-design.md: deleted (was in index)
-CHANGELOG.md: modified since last index
+3 doc(s) drifted since a3f8c21:
+
+docs/design/03-mcp-server.md: code changed — src/index.ts, src/tools/query.ts
+docs/design/07-drift.md: code changed — src/tools/drift.ts
+docs/features/01-CodebaseIndexing.md: code changed — src/tools/reindex.ts
+
+Run sensei index after updating docs to clear drift.
 ```
 
 ---
 
 ## Pre-Commit Hook
 
-`install.sh --with-hooks` installs a pre-commit hook that runs `check_drift` and fails if drift is detected:
+`sensei hooks install` installs a pre-commit hook:
 
 ```bash
 #!/bin/sh
 # .git/hooks/pre-commit
 
-RESULT=$(node /path/to/mcp/repo-index-server/dist/cli.js check-drift 2>&1)
+RESULT=$(sensei drift 2>&1)
 
 if echo "$RESULT" | grep -q "drifted"; then
   echo "⚠️  Doc drift detected. Update docs before committing:"
@@ -90,24 +131,39 @@ if echo "$RESULT" | grep -q "drifted"; then
 fi
 ```
 
-The hook requires a CLI entrypoint (`dist/cli.js`) that runs `check_drift` directly without starting the full MCP server. This is a separate thin wrapper around the same `checkDrift` function.
+The hook runs `checkDrift` against staged changes. Blocks commit if docs are stale.
 
 ---
 
 ## Resolving Drift
 
-1. Call `check_drift()` to see what drifted
-2. For each modified file: review what changed
-3. Update the corresponding doc layers that should reflect the change
-4. Call `reindex_repo()` to update fingerprints
-5. Commit updated docs together with the code change
-
-The cycle ensures code changes and doc updates are committed together.
+1. `sensei drift` — see what drifted
+2. For each drifted doc: review what code changed (use `git diff <hash>..HEAD -- <code-file>`)
+3. Update the doc to reflect the code change
+4. `sensei index` — update `lastIndexedCommit` and fingerprints
+5. Commit code + doc changes together
 
 ---
 
-## Limitations (V1)
+## Fallback Behavior (non-git / no prior commit)
 
-- **Content drift not detected:** Only file modification time and size are checked, not semantic drift. A file that was edited and then reverted to the same bytes will not show as drifted.
-- **New files not flagged:** Files created after the last index that are not in `doc-index.json` are not reported. V2 will add a "new doc files not indexed" check.
-- **No cross-layer analysis:** V1 does not detect "this code file changed but the design doc that describes it didn't." That requires cross-referencing code and doc content — V2 with LLM analysis.
+When `lastIndexedCommit` is absent (non-git repo or pre-index state):
+
+- Falls back to mtime/size comparison from `doc-index.json`
+- No traceability cross-reference possible in this mode
+- Reports raw file modifications only: `"{path}: modified since last index"`
+
+---
+
+## Testing Strategy
+
+```
+Unit: src/tools/drift.spec.ts
+  - git: changed code file with traceability entry → doc flagged as drifted
+  - git: changed doc but code unchanged → doc-changed drift entry
+  - git: file deleted → file-deleted entry
+  - git: no changes since lastIndexedCommit → no drift
+  - non-git fallback: mtime/size diff → raw-modified entry
+  - missing traceability.json → raw changed files only, no cross-reference
+  - missing doc-index.json → returns error message
+```
