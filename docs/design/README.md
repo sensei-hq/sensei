@@ -15,6 +15,7 @@ Architecture, structure, and implementation details for the AI skills repo.
 | [07-drift](./07-drift.md) | Fingerprint system, drift detection algorithm, hook integration |
 | [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup |
 | [09-cli](./09-cli.md) | CLI design, layered profile system, command modules, config schemas, hooks |
+| [10-project-memory](./10-project-memory.md) | Cross-session knowledge layer: checkpoint distillation, memory/patterns/open-items schemas, MCP tools, migration from agents/ |
 
 ## Numbering Convention
 
