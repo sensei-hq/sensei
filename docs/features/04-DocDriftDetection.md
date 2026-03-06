@@ -1,124 +1,138 @@
 # Doc Drift Detection
 
-Code changes. Docs don't always follow. Over time, design docs describe a system that no longer exists, public docs reference APIs that have changed, and agents making decisions from stale docs produce incorrect results. Doc drift detection tracks all three documentation layers together and reports divergence before it causes problems.
+Code changes. Docs don't always follow. Over time, design docs describe a system that no longer exists, public docs reference APIs that have changed, and agents making decisions from stale docs produce incorrect results. Doc drift detection uses a traceability matrix and git history to flag exactly which docs are out of sync — no content analysis required.
 
 ## Features
 
-### Three-Layer Doc Tracking
+### Git-Based Change Detection
 
-Design docs, code, and public docs are treated as a system — not independent files. Changes to one layer without corresponding updates to others constitute drift.
+Index runs store the current git commit hash. Subsequent drift checks use `git diff` against that commit to get the exact set of changed files — reliable across stash, pull, rebase, and checkout.
 
 ```gherkin
-Feature: Three-Layer Doc Tracking
+Feature: Git-Based Change Detection
 
-  Scenario: Indexer fingerprints all doc layers
-    Given a repo with docs/plans/, src/, and README.md
-    When the agent calls reindex_repo()
-    Then .index/doc-index.json records file paths, sizes, and modification times
-    And all three layers are represented: design, code surface, and public docs
+  Scenario: Changed files detected via git diff
+    Given a repo indexed at commit a3f8c21
+    And three source files have been modified since that commit
+    When the agent calls check_drift()
+    Then only those three files are identified as changed
+    And files modified before the last index are not flagged
 
-  Scenario: Fingerprints are updated on re-index
-    Given a repo that has been indexed
-    And two files have changed since the last index
-    When the agent calls reindex_repo()
-    Then the fingerprints for those two files are updated
-    And fingerprints for unchanged files remain the same
+  Scenario: Deleted files detected
+    Given an indexed repo
+    And src/legacy.ts has been deleted since the last index commit
+    When the agent calls check_drift()
+    Then src/legacy.ts is reported as deleted
+
+  Scenario: Fallback to mtime/size for non-git repos
+    Given a repo with no .git/ directory
+    When the agent calls check_drift()
+    Then changed files are detected via mtime and size comparison
+    And the drift report notes git is not available
+```
+
+### Traceability Matrix
+
+Each design/feature doc declares (or auto-detects) the source files it covers. When those source files change, the linked docs are flagged for review.
+
+```gherkin
+Feature: Traceability Matrix
+
+  Scenario: Manual coverage declared in .llmspec.yaml
+    Given docs/design/03-mcp-server.md declares it covers src/index.ts
+    When the developer runs sensei index
+    Then .index/traceability.json records that mapping
+
+  Scenario: Auto-detection from doc content
+    Given docs/design/07-drift.md mentions "src/tools/drift.ts" in its text
+    And no manual declaration exists
+    When the developer runs sensei index
+    Then src/tools/drift.ts is auto-added to the traceability entry
+
+  Scenario: Cross-reference drift: code changed, doc didn't
+    Given docs/design/03-mcp-server.md covers src/index.ts
+    And src/index.ts has changed since the last index
+    And docs/design/03-mcp-server.md has NOT changed
+    When the agent calls check_drift()
+    Then docs/design/03-mcp-server.md is flagged as drifted
+    And the report identifies src/index.ts as the trigger
 ```
 
 ### On-Demand Drift Reporting
 
-Agents can check for drift at any time with a single tool call.
+Agents check drift at any time with a single tool call.
 
 ```gherkin
 Feature: On-Demand Drift Reporting
 
-  Scenario: No drift detected when files are unchanged
-    Given an indexed repo where no files have changed
+  Scenario: No drift
+    Given an indexed repo where no files have changed since the index commit
     When the agent calls check_drift()
-    Then the response reports zero drifted files
-    And confirms all indexed docs match current state
+    Then the response reports zero drifted docs
+    And confirms all docs are aligned with code at the indexed commit
 
-  Scenario: Modified file reported as drifted
-    Given an indexed repo
-    And src/auth.ts has been modified since the last index
+  Scenario: Actionable drift report
+    Given three docs are drifted
     When the agent calls check_drift()
-    Then src/auth.ts is listed as modified
-    And the drift report notes the file has changed since last index
-
-  Scenario: Deleted file reported as drifted
-    Given an indexed repo
-    And docs/plans/old-design.md has been deleted
-    When the agent calls check_drift()
-    Then docs/plans/old-design.md is listed as deleted
-    And the agent is told the file was in the index but no longer exists
-
-  Scenario: Drift report is actionable
-    Given a drift report with three drifted files
-    When the agent reviews the report
-    Then each entry identifies the file and the nature of the drift
+    Then each entry identifies the doc and which code file triggered the drift
     And the agent can address each item without additional lookups
 
-  Scenario: Clean state after resolving drift
-    Given a repo with drifted files that have been updated
+  Scenario: Clean after resolving drift
+    Given a repo with drifted docs that have been updated
     When the agent calls reindex_repo() after updating the docs
-    Then check_drift() reports no drifted files
+    Then check_drift() reports no drifted docs
 ```
 
 ### Pre-Commit Hook Integration
 
-Drift can be caught at commit time, before stale docs enter version control.
+Drift is caught at commit time, before stale docs enter version control.
 
 ```gherkin
 Feature: Pre-Commit Hook Integration
 
-  Scenario: Hook blocks commit when docs have drifted
-    Given a repo with a pre-commit hook configured for drift checking
-    And a source file has been modified without updating design docs
+  Scenario: Hook blocks commit when docs are stale
+    Given a pre-commit hook installed via sensei hooks install
+    And a source file was modified without updating its design doc
     When the developer runs git commit
     Then the hook calls check_drift()
-    And the commit is blocked with a drift report
-    And the developer is told which docs need updating
+    And the commit is blocked with a report of which docs need updating
 
   Scenario: Hook passes when docs are in sync
-    Given a repo with a pre-commit hook
-    And all doc layers are current
+    Given all doc layers are current
     When the developer runs git commit
-    Then the hook calls check_drift()
-    And reports no drift
-    And the commit proceeds
+    Then the hook reports no drift and the commit proceeds
 ```
 
 ### CI Integration
 
-Drift detection runs in CI to catch divergence before it reaches the main branch.
+Drift detection in CI catches divergence before it reaches the main branch.
 
 ```gherkin
 Feature: CI Integration
 
-  Scenario: CI step reports drift as a warning
-    Given a CI pipeline with drift detection configured
-    And a PR that modifies code without updating public docs
+  Scenario: CI step reports drift as warning
+    Given a CI pipeline with drift detection
+    And a PR modifies code without updating public docs
     When the pipeline runs
-    Then check_drift() produces a drift report
-    And the report is saved as a CI artifact
-    And the step is marked as a warning (not a failure, by default)
+    Then check_drift() produces a drift report saved as a CI artifact
+    And the step is a warning (not failure) by default
 
   Scenario: CI step fails on drift when configured
-    Given a CI pipeline with --fail-on-drift configured
+    Given sensei drift --fail-on-drift is in the pipeline
     And drift is detected
-    When the pipeline runs
-    Then the drift check step fails
-    And the PR cannot merge until drift is resolved
+    Then the CI step fails and the PR cannot merge until resolved
 ```
 
 ## Status
 
 | Feature | Status |
 |---------|--------|
-| Three-layer doc fingerprinting | 🔲 Planned |
+| Git-based change detection (git diff vs lastIndexedCommit) | 🔲 Planned |
+| Traceability matrix (.index/traceability.json) | 🔲 Planned |
+| Manual coverage in .llmspec.yaml | 🔲 Planned |
+| Auto-detection from doc content | 🔲 Planned |
+| Cross-reference drift: code changed, linked doc didn't | 🔲 Planned |
 | On-demand drift reporting (check_drift MCP tool) | 🔲 Planned |
-| Modified file detection | 🔲 Planned |
-| Deleted file detection | 🔲 Planned |
-| New file detection (unindexed docs) | 🔲 Planned |
 | Pre-commit hook integration | 🔲 Planned |
-| CI integration | 🔲 Planned |
+| CI integration (--fail-on-drift) | 🔲 Planned |
+| Non-git fallback (mtime/size) | 🔲 Planned |

@@ -24,6 +24,7 @@ This skills repo is built around a single conviction: **AI agents should spend t
 - [Project Workflow](08-ProjectWorkflow.md) — Cross-session knowledge persistence, session resume, decision and pattern capture
 - [Doc Reformatter](09-DocReformatter.md) — Reformat existing docs to match canonical templates
 - [Incremental Indexing](10-IncrementalIndexing.md) — Fast subsequent index runs, only changed files re-processed
+- [Traceability Matrix](11-TraceabilityMatrix.md) — Doc-to-code coverage map enabling precise drift detection
 
 ## Feature Status
 
@@ -43,10 +44,12 @@ This skills repo is built around a single conviction: **AI agents should spend t
 | Agentic Dev Workflow | Session protocol (orient → load → work → checkpoint) | 🔲 Planned |
 | | MCP offload patterns | 🔲 Planned |
 | | Task-to-resolution mapping | 🔲 Planned |
-| Doc Drift Detection | Doc layer fingerprinting | 🔲 Planned |
-| | Drift reporting (on-demand) | 🔲 Planned |
+| Doc Drift Detection | Git-based change detection (git diff vs lastIndexedCommit) | 🔲 Planned |
+| | Traceability matrix (doc → code coverage) | 🔲 Planned |
+| | Cross-reference drift: code changed, linked doc didn't | 🔲 Planned |
+| | Drift reporting on-demand (check_drift MCP tool) | 🔲 Planned |
 | | Pre-commit hook integration | 🔲 Planned |
-| | CI integration | 🔲 Planned |
+| | CI integration (--fail-on-drift) | 🔲 Planned |
 | Context Management | Targeted context slice loading | 🔲 Planned |
 | | Checkpoint and restore | 🔲 Planned |
 | | recommend_next (task-to-context prescription) | 🔲 Planned |
@@ -78,7 +81,12 @@ This skills repo is built around a single conviction: **AI agents should spend t
 | | Directory batch reformat | 🔲 Planned |
 | | Template auto-detection from path | 🔲 Planned |
 | | doc-reformatter skill | 🔲 Planned |
-| Incremental Indexing | Incremental scan on subsequent runs | 🔲 Planned |
+| Incremental Indexing | Git-diff-based incremental scan | 🔲 Planned |
 | | Deleted file removal from index | 🔲 Planned |
 | | --force flag for full rescan | 🔲 Planned |
 | | Index summary output | 🔲 Planned |
+| | Non-git fallback (mtime/size) | 🔲 Planned |
+| Traceability Matrix | Manual coverage in .llmspec.yaml | 🔲 Planned |
+| | Auto-detection from doc content | 🔲 Planned |
+| | .index/traceability.json generation | 🔲 Planned |
+| | Cross-reference drift (code changed, linked doc didn't) | 🔲 Planned |
