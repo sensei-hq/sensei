@@ -2,22 +2,7 @@ import { intro, outro, spinner, note, confirm, isCancel, log } from "@clack/prom
 import { readFile, writeFile, readdir } from "fs/promises";
 import { join, extname, relative } from "path";
 import { existsSync } from "fs";
-import Anthropic from "@anthropic-ai/sdk";
-
-const MODEL = "claude-opus-4-6";
-
-async function callClaude(prompt: string): Promise<string> {
-  const client = new Anthropic();
-  const stream = client.messages.stream({
-    model: MODEL,
-    max_tokens: 8192,
-    thinking: { type: "adaptive" },
-    messages: [{ role: "user", content: prompt }],
-  });
-  const message = await stream.finalMessage();
-  const text = message.content.find(b => b.type === "text");
-  return text?.text ?? "";
-}
+import { callClaude } from "../claude.js";
 
 const TEMPLATE_DIR_MAP: Array<{ pattern: RegExp; template: string }> = [
   { pattern: /^docs\/design\//,    template: "docs/templates/design.md" },
@@ -87,7 +72,7 @@ async function doctorFile(
     return false;
   }
 
-  const reformatted = await callClaude(prompt);
+  const { text: reformatted } = await callClaude(prompt);
   if (!reformatted.trim()) {
     log.error(`Empty response from Claude for ${relative(repoPath, filePath)}`);
     return false;
