@@ -28,6 +28,7 @@ beforeEach(() => {
   writeFileSync(join(TMP, "examples/01-example.md"), "# Example\n## Features\n### Login\nTODO\n## Status\n| Feature | Status |\n|---|---|\n");
   writeFileSync(join(TMP, ".index/symbol-map.json"), JSON.stringify({
     "docs/requirements/01-core.md": { L0: ["# Core"], L1: ["handles auth"], L2: [] },
+    "src/other/file.ts": { L0: ["export function foo"], L1: ["does other things"], L2: [] },
   }));
 });
 
@@ -44,6 +45,8 @@ describe("buildTargetedIndexPrompt", () => {
     expect(prompt).toContain("01-core.md");
     expect(prompt).toContain("# Template");
     expect(prompt).not.toContain("src/");
+    expect(prompt).not.toContain("src/other/file.ts");
+    expect(prompt).not.toContain("does other things");
   });
 });
 
@@ -89,11 +92,11 @@ describe("parseOutputFolder", () => {
 describe("structuralScore", () => {
   it("scores high for perfect output matching template sections", () => {
     const template = "## Features\n## Status\n";
+    const original = { "01-core.md": "# Core\nauth module feature" };
     const output = {
-      "01.md": "## Features\n### A\nTODO\n## Status\n| F | S |\n|---|---|\n| A | 🔲 Planned |",
-      "README.md": "# Overview",
+      "01.md": "## Features\n### Auth\nauth feature module\n## Status\n| F | S |\n|---|---|\n| A | 🔲 Planned |",
+      "README.md": "# Overview of auth module features",
     };
-    const original = { "01-core.md": "# Core\nauth module" };
     const score = structuralScore({ template, output, original });
     expect(score).toBeGreaterThanOrEqual(8);
   });
