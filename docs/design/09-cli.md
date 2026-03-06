@@ -120,9 +120,70 @@ overrides:
 
 ---
 
+## Prompts: Clack
+
+All interactive prompts use [`@clack/prompts`](https://github.com/natemoo-re/clack). No custom prompt logic.
+
+**Primitives used:**
+
+| Clack primitive | Used for |
+|---|---|
+| `intro` / `outro` | Session start/end with styled header |
+| `text` | Free-text input (project name, MCP endpoint URL) |
+| `confirm` | Yes/no decisions (install hook?, overwrite?) |
+| `select` | Single-choice (active profile, company name) |
+| `multiselect` | Multi-choice (which skills to activate) |
+| `spinner` | Long operations (indexing, building MCP server) |
+| `note` | Informational summary blocks (what was created) |
+| `log.success` / `log.warn` / `log.error` | Status messages |
+| `isCancel` | Handle Ctrl+C gracefully at any prompt |
+
+**Pattern for all interactive commands:**
+
+```typescript
+import { intro, outro, select, confirm, multiselect, spinner, note, isCancel, cancel } from "@clack/prompts";
+
+export async function init() {
+  intro("skills init");
+
+  const profiles = await multiselect({
+    message: "Which profiles to activate for this repo?",
+    options: [
+      { value: "personal", label: "Personal", hint: "your standards and workflow" },
+      { value: "acme", label: "Acme Corp", hint: "company guidelines + remote MCP" },
+    ],
+    required: true,
+  });
+  if (isCancel(profiles)) { cancel("Setup cancelled."); process.exit(0); }
+
+  const installHook = await confirm({ message: "Install pre-commit drift hook?" });
+  if (isCancel(installHook)) { cancel("Setup cancelled."); process.exit(0); }
+
+  const s = spinner();
+  s.start("Indexing repo...");
+  await reindexRepo(cwd);
+  s.stop("Repo indexed.");
+
+  note(
+    [
+      "Created: .llmspec.yaml, CLAUDE.md, llms.txt, .index/",
+      "Profiles: " + (profiles as string[]).join(", "),
+      installHook ? "Hook: pre-commit drift check installed" : "Hook: skipped",
+    ].join("\n"),
+    "Setup complete"
+  );
+
+  outro("Run skills status anytime to check your setup.");
+}
+```
+
+**Cancellation contract:** Every command wraps prompts in `isCancel` checks and exits cleanly with `cancel()`. No orphaned state.
+
+---
+
 ## CLI Entry Point
 
-`src/cli.ts` — thin command dispatcher using a minimal arg parser (no heavy frameworks, YAGNI):
+`src/cli.ts` — thin command dispatcher using `node:util` parseArgs (no heavy frameworks):
 
 ```typescript
 #!/usr/bin/env node
@@ -293,6 +354,18 @@ mcp/repo-index-server/
 ```
 
 Adding `"bin"` to `package.json` makes `skills` available as a global command after `npm install -g`.
+
+**Dependencies added for CLI:**
+
+```json
+{
+  "dependencies": {
+    "@clack/prompts": "^0.9.0"
+  }
+}
+```
+
+All interactive prompts go through `@clack/prompts` — no readline, no inquirer, no custom prompt code. See the Clack section above for the full primitive set.
 
 ---
 
