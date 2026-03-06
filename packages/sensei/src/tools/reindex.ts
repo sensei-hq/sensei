@@ -1,29 +1,167 @@
 import { readFile, writeFile, mkdir, stat } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
+import { execSync } from "child_process";
 import yaml from "js-yaml";
 import fg from "fast-glob";
 import type { SymbolMap } from "../types.js";
 
 const IGNORE = ["node_modules", "dist", ".git", "coverage", ".cache", ".index"];
 const CODE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"];
+const DOC_EXTS = [".md", ".mdx", ".txt", ".yaml", ".yml"];
 
-export async function reindexRepo(repoPath: string): Promise<void> {
+export interface IndexSummary {
+  added: number;
+  updated: number;
+  removed: number;
+  unchanged: number;
+  forced: boolean;
+}
+
+interface DocIndexData {
+  lastIndexedCommit?: string;
+  files: Record<string, { mtime: number; size: number }>;
+}
+
+export async function reindexRepo(
+  repoPath: string,
+  options?: { force?: boolean }
+): Promise<IndexSummary> {
   await mkdir(join(repoPath, ".index"), { recursive: true });
 
-  const [stack, shortcuts, symbolMap, docIndex] = await Promise.all([
+  const docIndexPath = join(repoPath, ".index/doc-index.json");
+  const symbolMapPath = join(repoPath, ".index/symbol-map.json");
+
+  // Load existing state
+  let existingDocIndex: DocIndexData | null = null;
+  let existingSymbolMap: SymbolMap = {};
+
+  if (existsSync(docIndexPath) && existsSync(symbolMapPath)) {
+    try {
+      existingDocIndex = JSON.parse(await readFile(docIndexPath, "utf-8"));
+      // Handle old format (flat object without files key)
+      if (existingDocIndex && !existingDocIndex.files) {
+        existingDocIndex = { files: existingDocIndex as unknown as Record<string, { mtime: number; size: number }> };
+      }
+      existingSymbolMap = JSON.parse(await readFile(symbolMapPath, "utf-8"));
+    } catch {
+      existingDocIndex = null;
+    }
+  }
+
+  const force = options?.force ?? existingDocIndex === null;
+
+  // Determine changed files
+  const isGit = existsSync(join(repoPath, ".git"));
+  const lastCommit = existingDocIndex?.lastIndexedCommit;
+  let changedFiles = new Set<string>();
+  let deletedFiles = new Set<string>();
+
+  if (!force && isGit && lastCommit) {
+    try {
+      const changed = execSync(`git diff ${lastCommit}..HEAD --name-only`, { cwd: repoPath })
+        .toString().trim().split("\n").filter(Boolean);
+      const deleted = execSync(`git diff ${lastCommit}..HEAD --name-only --diff-filter=D`, { cwd: repoPath })
+        .toString().trim().split("\n").filter(Boolean);
+      changedFiles = new Set(changed);
+      deletedFiles = new Set(deleted);
+    } catch {
+      // git diff failed (shallow clone, etc.) — fall through to mtime fallback
+    }
+  }
+
+  // Glob all current files
+  const codeFiles = await fg(CODE_EXTS.map(e => `**/*${e}`), {
+    cwd: repoPath, ignore: IGNORE, absolute: false,
+  });
+  const docFiles = await fg(DOC_EXTS.map(e => `**/*${e}`), {
+    cwd: repoPath, ignore: IGNORE, absolute: false,
+  });
+  const allCurrentFiles = new Set([...codeFiles, ...docFiles]);
+
+  // Build updated symbol map
+  const symbolMap: SymbolMap = { ...existingSymbolMap };
+  let added = 0, updated = 0, removed = 0, unchanged = 0;
+
+  // Remove deleted files from symbol map
+  for (const file of Object.keys(symbolMap)) {
+    if (!allCurrentFiles.has(file) || deletedFiles.has(file)) {
+      delete symbolMap[file];
+      removed++;
+    }
+  }
+
+  // Process code files
+  for (const file of codeFiles) {
+    if (deletedFiles.has(file)) continue;
+
+    let needsExtraction = force;
+
+    if (!needsExtraction) {
+      if (changedFiles.size > 0) {
+        // Git mode: process only files in git diff
+        needsExtraction = changedFiles.has(file);
+      } else {
+        // Mtime fallback
+        const stored = existingDocIndex?.files[file];
+        if (!stored) {
+          needsExtraction = true;
+        } else {
+          const s = await stat(join(repoPath, file));
+          needsExtraction = Math.abs(s.mtimeMs - stored.mtime) > 1000 || s.size !== stored.size;
+        }
+      }
+    }
+
+    if (needsExtraction) {
+      const content = await readFile(join(repoPath, file), "utf-8");
+      const exports = extractExports(content);
+      if (exports.L0.length > 0) {
+        const isNew = !(file in existingSymbolMap);
+        symbolMap[file] = exports;
+        if (isNew) added++; else updated++;
+      }
+    } else {
+      unchanged++;
+    }
+  }
+
+  // Build doc-index fingerprints for all current files
+  const fingerprints: Record<string, { mtime: number; size: number }> = {};
+  await Promise.all([...allCurrentFiles].map(async (file) => {
+    const s = await stat(join(repoPath, file));
+    fingerprints[file] = { mtime: s.mtimeMs, size: s.size };
+  }));
+
+  // Get current HEAD commit
+  let currentCommit: string | undefined;
+  if (isGit) {
+    try {
+      currentCommit = execSync("git rev-parse HEAD", { cwd: repoPath }).toString().trim();
+    } catch { /* not a git repo or no commits */ }
+  }
+
+  const newDocIndex: DocIndexData = {
+    ...(currentCommit ? { lastIndexedCommit: currentCommit } : {}),
+    files: fingerprints,
+  };
+
+  // Build traceability matrix from .llmspec.yaml
+  const traceability = await buildTraceability(repoPath, docFiles);
+
+  // Write all artifacts
+  const [stack, shortcuts] = await Promise.all([
     detectStack(repoPath),
     detectShortcuts(repoPath),
-    buildSymbolMap(repoPath),
-    buildDocIndex(repoPath),
   ]);
 
   await Promise.all([
     writeFile(join(repoPath, ".index/stack.md"), formatStack(stack)),
     writeFile(join(repoPath, ".index/shortcuts.md"), formatShortcuts(shortcuts)),
     writeFile(join(repoPath, ".index/symbol-map.json"), JSON.stringify(symbolMap, null, 2)),
-    writeFile(join(repoPath, ".index/doc-index.json"), JSON.stringify(docIndex, null, 2)),
-    writeFile(join(repoPath, ".index/patterns.md"), "# Patterns\n\n<!-- Review and expand -->\n"),
+    writeFile(join(repoPath, ".index/doc-index.json"), JSON.stringify(newDocIndex, null, 2)),
+    writeFile(join(repoPath, ".index/traceability.json"), JSON.stringify(traceability, null, 2)),
+    ensurePatternsMd(repoPath),
   ]);
 
   if (!existsSync(join(repoPath, ".llmspec.yaml"))) {
@@ -34,6 +172,54 @@ export async function reindexRepo(repoPath: string): Promise<void> {
     generateLlmsTxt(repoPath),
     generateClaudeMd(repoPath),
   ]);
+
+  return { added, updated, removed, unchanged, forced: force };
+}
+
+async function buildTraceability(
+  repoPath: string,
+  docFiles: string[]
+): Promise<Record<string, string[]>> {
+  const result: Record<string, string[]> = {};
+
+  // Load manual declarations from .llmspec.yaml
+  const llmspecPath = join(repoPath, ".llmspec.yaml");
+  if (existsSync(llmspecPath)) {
+    try {
+      const spec = yaml.load(await readFile(llmspecPath, "utf-8")) as Record<string, unknown>;
+      const docs = spec?.docs as Array<{ path: string; covers?: string[] }> | undefined;
+      if (Array.isArray(docs)) {
+        for (const entry of docs) {
+          if (entry.path && Array.isArray(entry.covers)) {
+            result[entry.path] = entry.covers;
+          }
+        }
+      }
+    } catch { /* malformed yaml */ }
+  }
+
+  // Auto-detect: scan doc content for filename references
+  for (const docFile of docFiles) {
+    if (result[docFile]) continue; // manual entry takes precedence
+    try {
+      const content = await readFile(join(repoPath, docFile), "utf-8");
+      const srcRefs = Array.from(
+        new Set(
+          Array.from(content.matchAll(/\bsrc\/[\w/.-]+\.[a-z]+\b/g)).map(m => m[0])
+        )
+      );
+      if (srcRefs.length > 0) result[docFile] = srcRefs;
+    } catch { /* skip unreadable */ }
+  }
+
+  return result;
+}
+
+async function ensurePatternsMd(repoPath: string): Promise<void> {
+  const path = join(repoPath, ".index/patterns.md");
+  if (!existsSync(path)) {
+    await writeFile(path, "# Patterns\n\n<!-- Review and expand -->\n");
+  }
 }
 
 async function detectStack(repoPath: string): Promise<Record<string, string[]>> {
@@ -65,20 +251,7 @@ async function detectShortcuts(repoPath: string): Promise<Record<string, string>
   return {};
 }
 
-async function buildSymbolMap(repoPath: string): Promise<SymbolMap> {
-  const files = await fg(CODE_EXTS.map(e => `**/*${e}`), {
-    cwd: repoPath, ignore: IGNORE, absolute: false,
-  });
-  const map: SymbolMap = {};
-  await Promise.all(files.map(async (file) => {
-    const content = await readFile(join(repoPath, file), "utf-8");
-    const exports = extractExports(content);
-    if (exports.L0.length > 0) map[file] = exports;
-  }));
-  return map;
-}
-
-function extractExports(content: string): { L0: string[]; L1: string[]; L2: string[] } {
+export function extractExports(content: string): { L0: string[]; L1: string[]; L2: string[] } {
   const L0: string[] = [];
   const exportRe = /^export\s+(async\s+)?(function|class|const|type|interface|enum)\s+(\w+[^{;=\n]*)/gm;
   let m: RegExpExecArray | null;
@@ -87,19 +260,6 @@ function extractExports(content: string): { L0: string[]; L1: string[]; L2: stri
     L0.push(sig);
   }
   return { L0, L1: L0.map(s => `// ${s}`), L2: [] };
-}
-
-async function buildDocIndex(repoPath: string): Promise<Record<string, { mtime: number; size: number }>> {
-  const docExts = [".md", ".mdx", ".txt", ".yaml", ".yml"];
-  const files = await fg(docExts.map(e => `**/*${e}`), {
-    cwd: repoPath, ignore: IGNORE, absolute: false,
-  });
-  const index: Record<string, { mtime: number; size: number }> = {};
-  await Promise.all(files.map(async (file) => {
-    const s = await stat(join(repoPath, file));
-    index[file] = { mtime: s.mtimeMs, size: s.size };
-  }));
-  return index;
 }
 
 function formatStack(stack: Record<string, string[]>): string {
@@ -127,6 +287,7 @@ function generateLlmSpecTemplate(repoPath: string, stack: Record<string, string[
     patterns: [],
     api_surface: [],
     doc_layers: { design: "docs/", code: "src/", public: ["README.md"] },
+    docs: [],
     shortcuts,
   });
 }
