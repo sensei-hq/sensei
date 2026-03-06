@@ -6,24 +6,23 @@
 
 **Architecture:** Skills are model-agnostic markdown files installed to `~/.claude/skills`. An MCP server (`repo-index-server`) scans repos, stores structured indexes in `.index/`, and serves targeted slices on demand. A `.llmspec.yaml` per repo acts as the primary orientation artifact. A benchmark system measures skill value with A/B comparisons.
 
-**Tech Stack:** TypeScript, `@modelcontextprotocol/sdk`, `tsx`, `vitest`, Node.js fs/path, YAML (`js-yaml`), `glob`, `fast-glob`
+**Tech Stack:** TypeScript, Bun (runtime + package manager + workspaces), `@modelcontextprotocol/sdk`, `@clack/prompts`, `vitest` (unit: `*.spec.ts`), Playwright (e2e: `e2e/*.e2e.ts`), `js-yaml`, `fast-glob`
+
+> **Path note:** All tasks below use `packages/repo-index-server/` (not `mcp/repo-index-server/`). Replace `npm install` → `bun install`, `npm run` → `bun run`, `npx vitest` → `bunx vitest`. The root `package.json` is a bun workspace — see Task 1.
 
 ---
 
-## Task 1: Scaffold repo structure
+## Task 1: Scaffold bun workspaces monorepo
 
 **Files:**
-- Create: `skills/codebase-indexer/.keep`
-- Create: `skills/content-compression/.keep`
-- Create: `skills/agentic-dev-workflow/.keep`
-- Create: `skills/doc-drift-detector/.keep`
-- Create: `skills/context-manager/.keep`
-- Create: `skills/benchmark-runner/.keep`
-- Create: `mcp/repo-index-server/.keep`
-- Create: `tasks/.keep`
-- Create: `results/.keep`
+- Create: `package.json` (workspace root)
+- Create: `packages/repo-index-server/package.json`
+- Create: `packages/repo-index-server/tsconfig.json`
+- Create: `packages/repo-index-server/vitest.config.ts`
+- Create: `packages/repo-index-server/playwright.config.ts`
+- Create: `packages/repo-index-server/e2e/` (directory)
+- Create: `skills/` subdirectories
 - Create: `.gitignore`
-- Create: `README.md`
 
 **Step 1: Create directory tree**
 
@@ -34,12 +33,109 @@ mkdir -p skills/agentic-dev-workflow
 mkdir -p skills/doc-drift-detector
 mkdir -p skills/context-manager
 mkdir -p skills/benchmark-runner
-mkdir -p mcp/repo-index-server/src
+mkdir -p packages/repo-index-server/src/tools
+mkdir -p packages/repo-index-server/src/commands
+mkdir -p packages/repo-index-server/e2e
 mkdir -p tasks
 mkdir -p results
 ```
 
-**Step 2: Write `.gitignore`**
+**Step 2: Write root `package.json`**
+
+```json
+{
+  "name": "skills-workspace",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "bun run --filter='*' build",
+    "test": "bun run --filter='*' test",
+    "test:e2e": "bun run --filter='*' test:e2e",
+    "dev": "bun run --filter='repo-index-server' dev"
+  }
+}
+```
+
+**Step 3: Write `packages/repo-index-server/package.json`**
+
+```json
+{
+  "name": "repo-index-server",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "skills": "./dist/cli.js" },
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts src/cli.ts --outdir dist --target bun",
+    "test": "bunx vitest run",
+    "test:e2e": "bunx playwright test",
+    "test:watch": "bunx vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@clack/prompts": "^0.9.0",
+    "fast-glob": "^3.3.0",
+    "js-yaml": "^4.1.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
+```
+
+**Step 4: Write `packages/repo-index-server/tsconfig.json`**
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "e2e"]
+}
+```
+
+**Step 5: Write `packages/repo-index-server/vitest.config.ts`**
+
+```typescript
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    include: ["src/**/*.spec.ts"],
+    environment: "node",
+  },
+});
+```
+
+**Step 6: Write `packages/repo-index-server/playwright.config.ts`**
+
+```typescript
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./e2e",
+  testMatch: "**/*.e2e.ts",
+  timeout: 30_000,
+  use: {
+    trace: "on-first-retry",
+  },
+});
+```
+
+**Step 7: Write root `.gitignore`**
 
 ```
 node_modules/
@@ -48,36 +144,37 @@ results/*.json
 .index/
 *.llmspec.yaml
 .env
+bun.lockb
 ```
 
-**Step 3: Write `README.md`**
-
-```markdown
-# AI Skills Repo
-
-Universal skills and MCP tools that help AI agents work more efficiently on codebases.
-
-## What's here
-
-- `skills/` — Model-agnostic skill files, installable to `~/.claude/skills`
-- `mcp/repo-index-server/` — Local MCP server for on-demand index queries
-- `tasks/sample.yaml` — Benchmark task corpus
-- `results/` — Benchmark run summaries
-
-## Install
+**Step 8: Install dependencies**
 
 ```bash
-./install.sh --claude   # Install skills + register MCP for Claude Code
+bun install
+# Expected: bun.lockb created, node_modules populated
 ```
 
-## Skills
+**Step 9: Verify workspace resolves**
 
-| Skill | Purpose |
-|---|---|
-| `codebase-indexer` | Scan repo → build index + .llmspec.yaml + llms.txt |
-| `content-compression` | Token-efficient code representation levels |
-| `agentic-dev-workflow` | Protocol for efficient agentic developer sessions |
-| `doc-drift-detector` | Detect sync drift across doc layers |
+```bash
+bun run test
+# Expected: no test files found yet, exits cleanly
+```
+
+**Step 10: Commit**
+
+```bash
+git add .
+git commit -m "chore: scaffold bun workspaces monorepo"
+```
+
+---
+
+> **For all tasks below:** paths are relative to `packages/repo-index-server/`.
+> Replace any `npm install` → `bun install`, `npm run` → `bun run`, `npx vitest` → `bunx vitest`.
+> Unit tests use `*.spec.ts` co-located with source. E2E tests use `e2e/*.e2e.ts`.
+
+---
 | `context-manager` | Load/offload context efficiently |
 | `benchmark-runner` | Evaluate skill impact with A/B comparisons |
 ```

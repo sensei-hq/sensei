@@ -8,64 +8,72 @@ The repo has four layers: **skills** (markdown guidance files), an **MCP server*
 
 ## Repo Structure
 
+Bun workspaces monorepo. One package today (`repo-index-server`), structured for additional packages later.
+
 ```
-skills/
-  codebase-indexer/       SKILL.md + extractor.md + llmspec-template.yaml
-  content-compression/    SKILL.md
-  agentic-dev-workflow/   SKILL.md
-  doc-drift-detector/     SKILL.md
-  context-manager/        SKILL.md
-  benchmark-runner/       SKILL.md
+/                               ← workspace root
+  package.json                  ← bun workspaces config
+  bun.lockb
+  README.md
 
-mcp/
-  repo-index-server/
-    src/
-      index.ts            MCP server entry point, tool registration
-      index-reader.ts     Reads .index/ and .llmspec.yaml
-      types.ts            LlmSpec, SymbolMap, ResolutionLevel types
-      tools/
-        query.ts          get_llmspec, get_file_context, list_exports, find_pattern, get_shortcuts
-        reindex.ts        reindex_repo (scanner + writer)
-        context.ts        load_context, checkpoint, recommend_next
-        drift.ts          check_drift
-        generate.ts       generate_llms_txt, generate_changelog
-        benchmark.ts      run_benchmark, compare_results, get_metrics_summary
-      guidelines.ts     get_guidelines, get_profile
-      cache.ts          query_cache
-    cli.ts              CLI entry point (shares tools/ with MCP server)
-    commands/           CLI command modules
-      init.ts           skills init
-      add.ts            skills add
-      upgrade.ts        skills upgrade
-      status.ts         skills status
-      profile.ts        skills profile create/edit/list/use
-      company.ts        skills company create/edit/register-mcp
-      guidelines.ts     skills guidelines [edit|show]
-      cache.ts          skills cache add/list/update
-      hooks.ts          skills hooks install
-      index-cmd.ts      skills index
-      drift-cmd.ts      skills drift
-    package.json        "bin": { "skills": "./dist/cli.js" }
-    tsconfig.json
+  packages/
+    repo-index-server/          ← MCP server + skills CLI
+      package.json              ← "bin": { "skills": "./dist/cli.js" }
+      tsconfig.json
+      src/
+        index.ts                MCP server entry point, tool registration
+        cli.ts                  skills CLI entry point
+        index-reader.ts         Reads .index/ and .llmspec.yaml
+        types.ts                LlmSpec, SymbolMap, ResolutionLevel types
+        commands/               CLI command modules
+          init.ts               skills init
+          add.ts                skills add
+          upgrade.ts            skills upgrade
+          status.ts             skills status
+          profile.ts            skills profile create/edit/list/use
+          company.ts            skills company create/edit/register-mcp
+          guidelines.ts         skills guidelines [edit|show]
+          cache.ts              skills cache add/list/update
+          hooks.ts              skills hooks install
+          index-cmd.ts          skills index
+          drift-cmd.ts          skills drift
+        tools/
+          query.ts              get_llmspec, get_file_context, list_exports, find_pattern, get_shortcuts
+          reindex.ts            reindex_repo (scanner + writer)
+          context.ts            load_context, checkpoint, recommend_next
+          drift.ts              check_drift
+          generate.ts           generate_llms_txt, generate_changelog
+          benchmark.ts          run_benchmark, compare_results, get_metrics_summary
+          guidelines.ts         get_guidelines, get_profile
+          cache.ts              query_cache
+      src/**/*.spec.ts          Unit tests (Vitest)
+      e2e/                      End-to-end tests (Playwright)
+        *.e2e.ts
 
-~/.skills/              Developer profile directory (created by CLI)
+  skills/                       Skill markdown files
+    codebase-indexer/           SKILL.md + extractor.md + llmspec-template.yaml
+    content-compression/        SKILL.md
+    agentic-dev-workflow/       SKILL.md
+    doc-drift-detector/         SKILL.md
+    context-manager/            SKILL.md
+    benchmark-runner/           SKILL.md
+
+  tasks/
+    sample.yaml                 Representative developer task corpus
+
+  results/                      Benchmark run summaries (*.json gitignored, *.md committed)
+
+  docs/
+    features/                   What and why
+    design/                     How (this directory)
+    plans/                      Implementation plans
+
+~/.skills/                      Developer profile directory (created by skills CLI)
   config.yaml
   profiles/
-    personal/           profile.yaml, guidelines.md, skills.yaml
-    companies/<name>/   profile.yaml, guidelines.md, skills.yaml
-  cache/<lib-name>/     Indexed external libraries
-
-tasks/
-  sample.yaml             Representative developer task corpus
-
-results/                  Benchmark run summaries (JSON gitignored, .md committed)
-
-docs/
-  features/               What and why
-  design/                 How (this directory)
-  plans/                  Implementation plans
-
-install.sh                Bootstrap only — for first-time setup before CLI is available
+    personal/                   profile.yaml, guidelines.md, skills.yaml
+    companies/<name>/           profile.yaml, guidelines.md, skills.yaml
+  cache/<lib-name>/             Indexed external libraries
 ```
 
 ---
@@ -160,8 +168,8 @@ The server reads `REPO_PATH` from environment to know which repo to serve. Set a
 {
   "mcpServers": {
     "repo-index-server": {
-      "command": "node",
-      "args": ["/path/to/mcp/repo-index-server/dist/index.js"],
+      "command": "bun",
+      "args": ["run", "/path/to/packages/repo-index-server/src/index.ts"],
       "env": { "REPO_PATH": "/path/to/target/repo" }
     }
   }
@@ -172,14 +180,24 @@ For multi-repo support (future): the server can accept `repoPath` as an optional
 
 ---
 
-## Install Script Behaviour
+## Bootstrap / Install
 
-`install.sh --claude`:
-1. Creates `~/.claude/skills/` if it doesn't exist
+First-time setup (before CLI is available globally):
+
+```bash
+bun install
+bun run build
+bun link   # makes `skills` available as a global command
+skills init
+```
+
+Once `skills` is globally available, all setup is handled through the CLI.
+
+The CLI (`skills init`) handles:
+1. Creates `~/.claude/skills/` if missing
 2. Symlinks each `skills/<name>/` into `~/.claude/skills/<name>`
-3. Builds the MCP server (`npm run build`)
-4. Merges the MCP server entry into `~/.claude/mcp.json`
-5. Sets `REPO_PATH` to `process.cwd()` at install time (can be changed manually)
+3. Builds and registers the MCP server in `~/.claude/mcp.json`
+4. Writes `.skills/project.yaml` in the target repo
 
 Symlinking means skills stay current with repo updates without reinstalling.
 
@@ -189,13 +207,15 @@ Symlinking means skills stay current with repo updates without reinstalling.
 
 | Component | Choice | Reason |
 |---|---|---|
-| MCP server language | TypeScript | Native MCP SDK support, type safety for tool contracts |
+| Language | TypeScript | Native MCP SDK support, type safety for tool contracts |
+| Runtime / package manager | Bun | Fast installs, built-in bundler, workspace support |
+| Monorepo | Bun workspaces | Single lockfile, shared dependencies across packages |
 | MCP SDK | `@modelcontextprotocol/sdk` | Standard, maintained by Anthropic |
 | CLI prompts | `@clack/prompts` | Beautiful, accessible prompts — select, multiselect, confirm, spinner, note |
 | YAML parser | `js-yaml` | Lightweight, well-maintained, handles .llmspec.yaml |
 | File globbing | `fast-glob` | Fastest glob implementation for Node.js |
-| Test framework | Vitest | Fast, ESM-native, compatible with TypeScript |
-| Build | `tsc` | Standard TypeScript compilation to dist/ |
+| Unit tests | Vitest | Fast, ESM-native, `*.spec.ts` files co-located with source |
+| E2E tests | Playwright | Full CLI and MCP tool integration tests, `e2e/*.e2e.ts` |
 
 ---
 
