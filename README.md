@@ -46,6 +46,8 @@ sensei status                      # index age, symbol count, drift summary
 sensei index [--force]             # incremental re-index (git diff) or full rescan
 sensei drift [--fail-on-drift]     # check doc drift via traceability matrix
 sensei doctor <path> [--dry-run]   # reformat docs to match canonical templates
+sensei benchmark doctor <input> <output> [--template] [--examples] [--sample N]
+                             3-strategy doc conversion benchmark
 sensei migrate                     # convert agents/ folder to .index/checkpoints/
 ```
 
