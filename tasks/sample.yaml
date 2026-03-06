@@ -1,0 +1,59 @@
+# Benchmark task corpus
+# Representative developer tasks for evaluating skill impact
+version: "1.0"
+
+tasks:
+  - id: orient-01
+    category: orientation
+    prompt: "Explain the overall architecture of this codebase. What are the main components and how do they interact?"
+    success_criteria: "Mentions entry points, key modules, and data flow"
+
+  - id: orient-02
+    category: orientation
+    prompt: "What tech stack does this project use? What are the main dependencies?"
+    success_criteria: "Lists correct stack and major dependencies"
+
+  - id: orient-03
+    category: orientation
+    prompt: "What commands do I need to run to start development and run tests?"
+    success_criteria: "Provides correct dev and test commands"
+
+  - id: find-01
+    category: discovery
+    prompt: "List all exported functions in the auth module."
+    success_criteria: "Returns correct function signatures without loading full files"
+
+  - id: find-02
+    category: discovery
+    prompt: "Find where the database connection is configured."
+    success_criteria: "Identifies correct file and line range"
+
+  - id: understand-01
+    category: understanding
+    prompt: "Walk me through the login flow step by step."
+    success_criteria: "Describes correct sequence of operations"
+
+  - id: understand-02
+    category: understanding
+    prompt: "What does the processOrder function return and what does it expect as input?"
+    success_criteria: "Correct IO description without loading full source"
+
+  - id: edit-01
+    category: feature-add
+    prompt: "Add a 'discount' field (number, optional) to the Order type and update the processOrder function to apply it."
+    success_criteria: "Correct type update, correct function update, no regressions"
+
+  - id: edit-02
+    category: refactor
+    prompt: "Extract the input validation logic from processOrder into a separate validateOrderInput function."
+    success_criteria: "Correct extraction, same behaviour, passing tests"
+
+  - id: doc-01
+    category: doc-update
+    prompt: "Update the README to document the new CLI flags added in the latest release."
+    success_criteria: "README updated, content matches code"
+
+  - id: drift-01
+    category: drift-check
+    prompt: "Check if the documentation is in sync with the current code."
+    success_criteria: "Drift report produced, identifies any mismatches"
