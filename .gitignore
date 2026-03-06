@@ -4,8 +4,11 @@ dist/
 *.json.bak
 bun.lockb
 
-# Benchmark results (raw)
-results/*.json
+# Benchmark raw results (summaries are committed manually)
+results/**/*.json
+results/**/a/
+results/**/b/
+results/**/c/
 
 # OS
 .DS_Store
