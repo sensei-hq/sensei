@@ -1,4 +1,4 @@
-# Content Compression Design
+# Content Compression
 
 ## Overview
 

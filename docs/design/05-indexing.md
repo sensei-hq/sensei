@@ -1,4 +1,4 @@
-# Indexing Design
+# Indexing
 
 ## Overview
 

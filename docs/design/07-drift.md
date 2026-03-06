@@ -1,4 +1,4 @@
-# Doc Drift Detection Design
+# Doc Drift Detection
 
 ## Overview
 
