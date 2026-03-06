@@ -58,3 +58,17 @@ Checkpoint stores: current task description, files loaded, decisions made, next 
 | Keeping previous task's files in context | Call `checkpoint()` before switching |
 | Loading L3 for every file in scope | Load L0/L1 first, escalate only where needed |
 | Re-reading the same file multiple times | Load once, keep in context for the task duration |
+
+## Cross-Session Context
+
+For knowledge that persists between sessions (decisions, patterns, open items), use the `project-workflow` skill. The tools are:
+
+| Need | Tool |
+|---|---|
+| Resume a session | `get_session_context()` |
+| Capture a decision | `add_decision(text)` |
+| Record a proven pattern | `add_pattern(name, convention)` |
+| Queue a question | `ask_question(question)` |
+| End a session | `checkpoint(summary)` |
+
+Context budget stays flat at ~300 tokens regardless of project history length.
