@@ -21,6 +21,7 @@ This skills repo is built around a single conviction: **AI agents should spend t
 - [Context Management](05-ContextManagement.md) — Load narrow, offload often, checkpoint before switching
 - [Benchmarking](06-Benchmarking.md) — Quantify skill impact with A/B comparisons
 - [CLI](07-CLI.md) — Set up repos, manage profiles, switch contexts, install hooks
+- [Project Workflow](08-ProjectWorkflow.md) — Cross-session knowledge persistence, session resume, decision and pattern capture
 
 ## Feature Status
 
@@ -64,3 +65,10 @@ This skills repo is built around a single conviction: **AI agents should spend t
 | | Pre-commit drift hook (skills hooks install) | 🔲 Planned |
 | | Guidelines view/edit/query | 🔲 Planned |
 | | get_guidelines MCP tool | 🔲 Planned |
+| | Migration from agents/ folder (sensei migrate) | 🔲 Planned |
+| Project Workflow | Session resume (get_session_context) | 🔲 Planned |
+| | Decision capture (add_decision) | 🔲 Planned |
+| | Pattern capture (add_pattern) | 🔲 Planned |
+| | Session checkpoint with LLM distillation | 🔲 Planned |
+| | Open items tracking (ask_question, close_item) | 🔲 Planned |
+| | Context budget stays flat over time | 🔲 Planned |

@@ -24,14 +24,25 @@
 |---|---|---|
 | `reindex_repo` | `path?: string, force?: boolean` | Confirmation + artifact list |
 
-### Context Tools
+### Context Tools (in-session)
 
 | Tool | Inputs | Output |
 |---|---|---|
 | `load_context` | `scope: string` | Content slice + token estimate |
 | `get_context_summary` | — | Available scopes with token estimates |
-| `checkpoint` | `name?: string` | Saved checkpoint name |
+| `checkpoint` | `summary: string, decisions?: string[], patterns?: string[]` | Archive session, return resume instruction |
 | `recommend_next` | `task: string` | Context prescription for the task |
+
+### Project Memory Tools (cross-session)
+
+| Tool | Inputs | Output |
+|---|---|---|
+| `get_session_context` | — | Compressed project snapshot ~300 tokens |
+| `add_decision` | `text: string` | Appends to memory.yaml, deduped |
+| `add_pattern` | `name: string, convention: string` | Appends to patterns.yaml |
+| `ask_question` | `question: string` | Adds to open-items.yaml, returns id |
+| `get_open_items` | — | All open questions and next steps |
+| `close_item` | `id: string, resolution?: string` | Marks open item resolved |
 
 ### Drift Tools
 
