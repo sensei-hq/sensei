@@ -8,49 +8,41 @@ The repo has four layers: **skills** (markdown guidance files), an **MCP server*
 
 ## Repo Structure
 
-Bun workspaces monorepo. One package today (`repo-index-server`), structured for additional packages later.
+Bun workspaces monorepo. Root is kept clean — only `package.json`, `bun.lockb`, `README.md`, `.gitignore`. All config, packages, and apps live in dedicated subdirectories.
 
 ```
-/                               ← workspace root
-  package.json                  ← bun workspaces config ("name": "sensei")
+/                               ← repo root (clean)
+  package.json                  ← bun workspace root ("workspaces": ["packages/*", "apps/*"])
   bun.lockb
   README.md
+  .gitignore
+
+  config/                       ← shared configuration (not a workspace package)
+    tsconfig.base.json          ← base TypeScript config (strict, ESNext, bundler resolution)
+    eslint.config.js            ← shared ESLint rules
+    vitest.config.base.ts       ← base vitest config (extended per package)
 
   packages/
-    repo-index-server/          ← MCP server + skills CLI
-      package.json              ← "bin": { "sensei": "./dist/cli.js" }
-      tsconfig.json
+    sensei/                     ← MCP server + sensei CLI
+      package.json              ← "name": "sensei", "bin": { "sensei": "./dist/cli.js" }
+      tsconfig.json             ← extends ../../config/tsconfig.base.json
+      vitest.config.ts          ← extends ../../config/vitest.config.base.ts
+      playwright.config.ts      ← e2e test config
       src/
         index.ts                MCP server entry point, tool registration
-        cli.ts                  skills CLI entry point
+        cli.ts                  sensei CLI entry point
         index-reader.ts         Reads .index/ and .llmspec.yaml
         types.ts                LlmSpec, SymbolMap, ResolutionLevel types
-        commands/               CLI command modules
-          init.ts               skills init
-          add.ts                skills add
-          upgrade.ts            skills upgrade
-          status.ts             skills status
-          profile.ts            skills profile create/edit/list/use
-          company.ts            skills company create/edit/register-mcp
-          guidelines.ts         skills guidelines [edit|show]
-          cache.ts              skills cache add/list/update
-          hooks.ts              skills hooks install
-          index-cmd.ts          skills index
-          drift-cmd.ts          skills drift
-        tools/
-          query.ts              get_llmspec, get_file_context, list_exports, find_pattern, get_shortcuts
-          reindex.ts            reindex_repo (scanner + writer)
-          context.ts            load_context, checkpoint, recommend_next
-          drift.ts              check_drift
-          generate.ts           generate_llms_txt, generate_changelog
-          benchmark.ts          run_benchmark, compare_results, get_metrics_summary
-          guidelines.ts         get_guidelines, get_profile
-          cache.ts              query_cache
+        commands/               CLI command modules (init, add, upgrade, status, …)
+        tools/                  Shared implementations (query, reindex, drift, context, …)
       src/**/*.spec.ts          Unit tests (Vitest)
-      e2e/                      End-to-end tests (Playwright)
-        *.e2e.ts
+      e2e/
+        *.e2e.ts                End-to-end tests (Playwright)
 
-  skills/                       Skill markdown files
+  apps/                         ← Applications (empty for now)
+    site/                       ← Documentation / marketing site (future)
+
+  skills/                       ← Skill markdown files (not a workspace package)
     codebase-indexer/           SKILL.md + extractor.md + llmspec-template.yaml
     content-compression/        SKILL.md
     agentic-dev-workflow/       SKILL.md
@@ -68,7 +60,7 @@ Bun workspaces monorepo. One package today (`repo-index-server`), structured for
     design/                     How (this directory)
     plans/                      Implementation plans
 
-~/.skills/                      Developer profile directory (created by skills CLI)
+~/.skills/                      Developer profile directory (created by sensei CLI)
   config.yaml
   profiles/
     personal/                   profile.yaml, guidelines.md, skills.yaml
