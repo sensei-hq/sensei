@@ -1,5 +1,5 @@
 import { intro, outro, spinner, note, confirm, isCancel, log } from "@clack/prompts";
-import { readFile, writeFile, readdir } from "fs/promises";
+import { readFile, writeFile, readdir, stat } from "fs/promises";
 import { join, extname, relative } from "path";
 import { existsSync } from "fs";
 import { callClaude } from "../claude.js";
@@ -97,7 +97,6 @@ export async function doctor(
     return;
   }
 
-  const { stat } = await import("fs/promises");
   const s = await stat(fullPath);
 
   if (!s.isDirectory()) {
@@ -129,9 +128,9 @@ export async function doctor(
 
     const sp = spinner();
     sp.start(`Doctoring ${rel}...`);
-    await doctorFile(file, repoPath, options);
-    sp.stop(`Done: ${rel}`);
-    done++;
+    const changed = await doctorFile(file, repoPath, options);
+    sp.stop(changed ? `Done: ${rel}` : `Skipped: ${rel}`);
+    if (changed) done++;
   }
 
   note(`${done} file(s) processed`, "Summary");
