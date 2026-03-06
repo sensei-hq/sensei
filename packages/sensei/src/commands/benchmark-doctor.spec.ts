@@ -18,6 +18,7 @@ import {
   buildFullRepoIndexPrompt,
   parseOutputFolder,
   structuralScore,
+  pickWinner,
 } from "./benchmark-doctor.js";
 
 beforeEach(() => {
@@ -115,5 +116,16 @@ describe("structuralScore", () => {
     const original = { "01-core.md": "auth" }; // 0 TODOs originally
     const score = structuralScore({ template, output, original });
     expect(score).toBeLessThan(10);
+  });
+});
+
+describe("pickWinner", () => {
+  it("returns the strategy with highest combined score", () => {
+    // Access via export — add export to benchmark-doctor.ts first
+    expect(pickWinner(7, 7, 8, 8, 9, 9)).toBe("c");
+  });
+
+  it("breaks ties in favour of a", () => {
+    expect(pickWinner(5, 5, 5, 5, 5, 5)).toBe("a");
   });
 });
