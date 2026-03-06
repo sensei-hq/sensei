@@ -7,7 +7,7 @@ description: Use when you suspect design docs are out of sync with code, before 
 
 ## Overview
 
-Design docs, code, and public docs drift apart silently. This skill uses fingerprinting (mtime + size) stored in `.index/doc-index.json` to detect when docs haven't been updated to match code changes. Drift is caught at commit time via a pre-commit hook.
+Design docs, code, and public docs drift apart silently. This skill uses `git diff` against the last indexed commit combined with a traceability matrix (`.index/traceability.json`) to flag exactly which docs need attention when code changes. Only docs that cover changed files are flagged — no false positives.
 
 ## When to Use
 
@@ -21,21 +21,32 @@ Design docs, code, and public docs drift apart silently. This skill uses fingerp
 call: check_drift()
 ```
 
-Returns a report of files that have changed since the last index, grouped by doc layer:
-- **design** — `docs/`, `ADRs/`, `docs/plans/`
-- **code** — source files
-- **public** — `README.md`, `docs/guides/`, `CHANGELOG.md`
-
-## Drift Report Format
+Returns a report of docs whose linked code files have changed since the last index commit:
 
 ```
-Drift detected in 3 files:
+3 doc(s) drifted since a3f8c21:
 
-[design]  docs/design/03-mcp-server.md  — modified 2 days ago, not re-indexed
-[code]    src/tools/query.ts             — modified 5 hours ago
-[public]  README.md                      — last indexed 14 days ago
+docs/design/03-mcp-server.md: code changed — src/index.ts, src/tools/query.ts
+docs/design/07-drift.md: code changed — src/tools/drift.ts
+README.md: code changed — packages/sensei/package.json
 
-Run: sensei index   to re-index and clear drift
+Run: sensei index   after updating docs to clear drift
+```
+
+## Traceability Matrix
+
+`.index/traceability.json` maps each doc to the source files it covers. Populated from:
+
+1. **Manual** — declare in `.llmspec.yaml` under `docs[].covers[]` (authoritative)
+2. **Auto-detected** — `sensei index` scans docs for filename/symbol mentions
+
+```yaml
+# .llmspec.yaml
+docs:
+  - path: docs/design/03-mcp-server.md
+    covers:
+      - src/index.ts
+      - src/tools/query.ts
 ```
 
 ## Pre-Commit Hook
@@ -52,22 +63,20 @@ sensei drift --fail-on-drift
 exit $?
 ```
 
-The hook fails the commit if drift is detected, forcing the developer to either update the docs or explicitly re-index.
+The hook runs `check_drift()` against staged changes. Blocks commit if any linked docs are stale.
 
 ## Resolving Drift
 
-1. **Update the docs** — edit the drifted doc to reflect the code change, then `sensei index`
-2. **Re-index only** — if the change is minor and docs are still accurate: `sensei index`
-3. **Suppress** — if docs intentionally lag (e.g. WIP): `sensei drift --ignore <file>`
+1. `sensei drift` — see which docs are flagged and which code files triggered them
+2. For each drifted doc: `git diff <hash>..HEAD -- <code-file>` to see what changed
+3. Update the doc to reflect the change
+4. `sensei index` — updates `lastIndexedCommit`, clears drift
+5. Commit code + doc changes together
 
-## Fingerprint Storage
+## Common Mistakes
 
-Fingerprints are stored in `.index/doc-index.json`:
-```json
-{
-  "docs/design/03-mcp-server.md": { "mtime": 1710000000, "size": 4200 },
-  "src/tools/query.ts":           { "mtime": 1710001000, "size": 1800 }
-}
-```
-
-A file is "drifted" if its current mtime or size differs from the stored fingerprint.
+| Mistake | Fix |
+|---|---|
+| Updating code without updating design docs | `sensei drift` before committing |
+| Docs without traceability entries | Add `covers:` to `.llmspec.yaml` for key docs |
+| Re-indexing without updating docs | Drift clears but docs are still wrong — update first |
