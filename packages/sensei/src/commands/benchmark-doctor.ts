@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
-import { readFile, mkdir, writeFile } from "fs/promises";
-import { join, relative, extname } from "path";
+import { readFile, mkdir, writeFile, cp, rm } from "fs/promises";
+import { join, relative, extname, dirname } from "path";
 import { intro, outro, spinner, note, log } from "@clack/prompts";
 import type { SymbolMap } from "../types.js";
 import { callClaude } from "../claude.js";
@@ -239,6 +239,21 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   }
 }
 
+// ── Winner selection ──────────────────────────────────────────────────────────
+
+export function pickWinner(
+  structA: number, judgeA: number,
+  structB: number, judgeB: number,
+  structC: number, judgeC: number,
+): "a" | "b" | "c" {
+  const scores = [
+    { key: "a" as const, score: structA + judgeA },
+    { key: "b" as const, score: structB + judgeB },
+    { key: "c" as const, score: structC + judgeC },
+  ];
+  return scores.reduce((best, cur) => cur.score > best.score ? cur : best).key;
+}
+
 // ── Main command ──────────────────────────────────────────────────────────────
 
 export interface BenchmarkDoctorOptions {
@@ -335,8 +350,6 @@ export async function benchmarkDoctor(
     judgeReasoning: judge.reasoning,
   };
 
-  await writeFile(join(outDir, "results.json"), JSON.stringify(results, null, 2), "utf-8");
-
   const summary = `# Doctor Benchmark — ${results.date}
 
 Input: \`${inputDir}\` → \`${outputName}\`
@@ -354,11 +367,74 @@ ${judge.reasoning}
 
   await writeFile(join(outDir, "summary.md"), summary, "utf-8");
 
+  // ── Auto-promote winner ─────────────────────────────────────────────────────
+  const winner = pickWinner(structA, judge.scoreA, structB, judge.scoreB, structC, judge.scoreC);
+  const winnerOutput = winner === "a" ? outputA : winner === "b" ? outputB : outputC;
+  const relInput = relative(repoPath, fullInputDir);
+  const targetDir = join(repoPath, dirname(relInput), outputName);
+
+  await mkdir(targetDir, { recursive: true });
+  for (const [name, content] of Object.entries(winnerOutput)) {
+    await writeFile(join(targetDir, name), content, "utf-8");
+  }
+
+  // ── Build telemetry report ──────────────────────────────────────────────────
+  const promptA = buildTargetedIndexPrompt({ inputDir: fullInputDir, repoPath, templateContent, outputName });
+  const promptB = buildRawContentPrompt({ inputDir: fullInputDir, examplesDir, outputName });
+  const promptC = buildFullRepoIndexPrompt({ repoPath, templateContent, outputName });
+
+  function cleanPaths(s: string): string {
+    return s.replaceAll(repoPath + "/", "").replaceAll(repoPath, "");
+  }
+
+  const exFiles = examplesDir && existsSync(examplesDir)
+    ? readdirSync(examplesDir).filter(f => extname(f) === ".md")
+    : [];
+  const inputLines = Object.values(original).join("\n").split("\n").length;
+  const inputChars = Object.values(original).join("").length;
+
+  const report = {
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    scenario: {
+      inputFileCount: Object.keys(original).length,
+      inputTotalChars: inputChars,
+      inputTotalLines: inputLines,
+      outputName,
+      templateName: relative(repoPath, templatePath),
+      examplesProvided: examplesDir !== null,
+      examplesFileCount: exFiles.length,
+    },
+    strategies: {
+      a: { name: "Targeted index",  prompt: cleanPaths(promptA), promptChars: promptA.length, promptLines: promptA.split("\n").length },
+      b: { name: "Raw content",     prompt: cleanPaths(promptB), promptChars: promptB.length, promptLines: promptB.split("\n").length },
+      c: { name: "Full repo index", prompt: cleanPaths(promptC), promptChars: promptC.length, promptLines: promptC.split("\n").length },
+    },
+    results: {
+      a: { tokensIn: resultA.usage.tokensIn, tokensOut: resultA.usage.tokensOut, filesGenerated: Object.keys(outputA).length, structuralScore: structA, judgeScore: judge.scoreA },
+      b: { tokensIn: resultB.usage.tokensIn, tokensOut: resultB.usage.tokensOut, filesGenerated: Object.keys(outputB).length, structuralScore: structB, judgeScore: judge.scoreB },
+      c: { tokensIn: resultC.usage.tokensIn, tokensOut: resultC.usage.tokensOut, filesGenerated: Object.keys(outputC).length, structuralScore: structC, judgeScore: judge.scoreC },
+    },
+    userFeedback: null as null | { preferred: string; systemAgreed: boolean; note?: string },
+    promoted: null as null | string,
+  };
+
+  const fullResults = {
+    ...results,
+    autoPromoted: winner,
+    userFeedback: null,
+    promoted: null,
+    report,
+  };
+
+  await writeFile(join(outDir, "results.json"), JSON.stringify(fullResults, null, 2), "utf-8");
+
   note(
     `Results: ${relative(repoPath, outDir)}/\n` +
     `A: struct=${structA} judge=${judge.scoreA} tokens=${resultA.usage.tokensIn}→${resultA.usage.tokensOut}\n` +
     `B: struct=${structB} judge=${judge.scoreB} tokens=${resultB.usage.tokensIn}→${resultB.usage.tokensOut}\n` +
-    `C: struct=${structC} judge=${judge.scoreC} tokens=${resultC.usage.tokensIn}→${resultC.usage.tokensOut}`,
+    `C: struct=${structC} judge=${judge.scoreC} tokens=${resultC.usage.tokensIn}→${resultC.usage.tokensOut}\n` +
+    `Auto-promoted: Strategy ${winner.toUpperCase()} → ${relative(repoPath, targetDir)}/`,
     "Benchmark complete"
   );
   outro("Done.");
