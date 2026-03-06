@@ -2,6 +2,22 @@ import { intro, outro, spinner, note, confirm, isCancel, log } from "@clack/prom
 import { readFile, writeFile, readdir } from "fs/promises";
 import { join, extname, relative } from "path";
 import { existsSync } from "fs";
+import Anthropic from "@anthropic-ai/sdk";
+
+const MODEL = "claude-opus-4-6";
+
+async function callClaude(prompt: string): Promise<string> {
+  const client = new Anthropic();
+  const stream = client.messages.stream({
+    model: MODEL,
+    max_tokens: 8192,
+    thinking: { type: "adaptive" },
+    messages: [{ role: "user", content: prompt }],
+  });
+  const message = await stream.finalMessage();
+  const text = message.content.find(b => b.type === "text");
+  return text?.text ?? "";
+}
 
 const TEMPLATE_DIR_MAP: Array<{ pattern: RegExp; template: string }> = [
   { pattern: /^docs\/design\//,    template: "docs/templates/design.md" },
@@ -71,10 +87,13 @@ async function doctorFile(
     return false;
   }
 
-  // In production this would call Claude SDK. For now, print the prompt and
-  // instruct the user to paste it — or integrate Anthropic SDK in a future task.
-  log.info(`Prompt built for ${relative(repoPath, filePath)}`);
-  log.info("Pass to Claude to reformat. Use --dry-run to inspect the prompt.");
+  const reformatted = await callClaude(prompt);
+  if (!reformatted.trim()) {
+    log.error(`Empty response from Claude for ${relative(repoPath, filePath)}`);
+    return false;
+  }
+
+  await writeFile(filePath, reformatted, "utf-8");
   return true;
 }
 
