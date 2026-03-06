@@ -1,4 +1,4 @@
-# LLMSpec Design
+# LLMSpec
 
 ## Overview
 

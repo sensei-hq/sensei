@@ -1,4 +1,4 @@
-# Skills Design
+# Skills
 
 ## Overview
 

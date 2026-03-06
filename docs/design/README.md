@@ -14,12 +14,13 @@ Architecture, structure, and implementation details for the AI skills repo.
 | [06-compression](./06-compression.md) | Resolution levels, storage schema, serving logic, notation formats |
 | [07-drift](./07-drift.md) | Fingerprint system, drift detection algorithm, hook integration |
 | [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup |
+| [09-cli](./09-cli.md) | CLI design, layered profile system, command modules, config schemas, hooks |
 
 ## Numbering Convention
 
 | Range | Category |
 |-------|----------|
-| 01–09 | Core design (architecture, skills, MCP, llmspec, indexing, compression, drift, benchmarking) |
+| 01–09 | Core design (architecture, skills, MCP, llmspec, indexing, compression, drift, benchmarking, CLI) |
 | 10–19 | MCP tool extensions |
 | 20–29 | Language-specific extractors |
 

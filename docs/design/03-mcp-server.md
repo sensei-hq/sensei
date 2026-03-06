@@ -1,4 +1,4 @@
-# MCP Server Design
+# MCP Server
 
 ## Overview
 
