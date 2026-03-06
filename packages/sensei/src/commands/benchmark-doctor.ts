@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
-import { readFile, mkdir, writeFile, cp, rm } from "fs/promises";
+import { readFile, mkdir, writeFile } from "fs/promises";
 import { join, relative, extname, dirname } from "path";
 import { intro, outro, spinner, note, log } from "@clack/prompts";
 import type { SymbolMap } from "../types.js";
@@ -300,18 +300,22 @@ export async function benchmarkDoctor(
 
   const sp = spinner();
 
+  const promptA = buildTargetedIndexPrompt({ inputDir: fullInputDir, repoPath, templateContent, outputName });
+  const promptB = buildRawContentPrompt({ inputDir: fullInputDir, examplesDir, outputName });
+  const promptC = buildFullRepoIndexPrompt({ repoPath, templateContent, outputName });
+
   sp.start("Strategy A: targeted index...");
-  const resultA = await callClaude(buildTargetedIndexPrompt({ inputDir: fullInputDir, repoPath, templateContent, outputName }));
+  const resultA = await callClaude(promptA);
   const outputA = parseOutputFolder(resultA.text);
   sp.stop(`Strategy A done (${resultA.usage.tokensIn}→${resultA.usage.tokensOut} tokens)`);
 
   sp.start("Strategy B: raw content...");
-  const resultB = await callClaude(buildRawContentPrompt({ inputDir: fullInputDir, examplesDir, outputName }));
+  const resultB = await callClaude(promptB);
   const outputB = parseOutputFolder(resultB.text);
   sp.stop(`Strategy B done (${resultB.usage.tokensIn}→${resultB.usage.tokensOut} tokens)`);
 
   sp.start("Strategy C: full repo index...");
-  const resultC = await callClaude(buildFullRepoIndexPrompt({ repoPath, templateContent, outputName }));
+  const resultC = await callClaude(promptC);
   const outputC = parseOutputFolder(resultC.text);
   sp.stop(`Strategy C done (${resultC.usage.tokensIn}→${resultC.usage.tokensOut} tokens)`);
 
@@ -350,6 +354,17 @@ export async function benchmarkDoctor(
     judgeReasoning: judge.reasoning,
   };
 
+  // ── Auto-promote winner ─────────────────────────────────────────────────────
+  const winner = pickWinner(structA, judge.scoreA, structB, judge.scoreB, structC, judge.scoreC);
+  const winnerOutput = winner === "a" ? outputA : winner === "b" ? outputB : outputC;
+  const relInput = relative(repoPath, fullInputDir);
+  const targetDir = join(repoPath, dirname(relInput), outputName);
+
+  await mkdir(targetDir, { recursive: true });
+  for (const [name, content] of Object.entries(winnerOutput)) {
+    await writeFile(join(targetDir, name), content, "utf-8");
+  }
+
   const summary = `# Doctor Benchmark — ${results.date}
 
 Input: \`${inputDir}\` → \`${outputName}\`
@@ -363,25 +378,15 @@ Input: \`${inputDir}\` → \`${outputName}\`
 ## Judge Reasoning
 
 ${judge.reasoning}
+
+## Auto-Promoted
+
+Strategy ${winner.toUpperCase()} was auto-promoted to \`${relative(repoPath, targetDir)}/\`
 `;
 
   await writeFile(join(outDir, "summary.md"), summary, "utf-8");
 
-  // ── Auto-promote winner ─────────────────────────────────────────────────────
-  const winner = pickWinner(structA, judge.scoreA, structB, judge.scoreB, structC, judge.scoreC);
-  const winnerOutput = winner === "a" ? outputA : winner === "b" ? outputB : outputC;
-  const relInput = relative(repoPath, fullInputDir);
-  const targetDir = join(repoPath, dirname(relInput), outputName);
-
-  await mkdir(targetDir, { recursive: true });
-  for (const [name, content] of Object.entries(winnerOutput)) {
-    await writeFile(join(targetDir, name), content, "utf-8");
-  }
-
   // ── Build telemetry report ──────────────────────────────────────────────────
-  const promptA = buildTargetedIndexPrompt({ inputDir: fullInputDir, repoPath, templateContent, outputName });
-  const promptB = buildRawContentPrompt({ inputDir: fullInputDir, examplesDir, outputName });
-  const promptC = buildFullRepoIndexPrompt({ repoPath, templateContent, outputName });
 
   function cleanPaths(s: string): string {
     return s.replaceAll(repoPath + "/", "").replaceAll(repoPath, "");
