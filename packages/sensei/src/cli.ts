@@ -9,6 +9,9 @@ const { positionals, values } = parseArgs({
     "fail-on-drift": { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
     template: { type: "string" },
+    examples: { type: "string" },
+    sample: { type: "string" },   // number parsed manually
+    out: { type: "string" },
   },
 });
 
@@ -67,6 +70,28 @@ async function main() {
       await migrate(process.cwd());
       break;
     }
+    case "benchmark": {
+      const subCmd = rest[0];
+      if (subCmd === "doctor") {
+        const { benchmarkDoctor } = await import("./commands/benchmark-doctor.js");
+        const inputDir = rest[1];
+        const outputName = rest[2];
+        if (!inputDir || !outputName) {
+          console.error("Usage: sensei benchmark doctor <input-dir> <output-name>");
+          process.exit(1);
+        }
+        await benchmarkDoctor(inputDir, outputName, process.cwd(), {
+          template: values.template,
+          examples: values.examples,
+          sample: values.sample ? parseInt(values.sample, 10) : undefined,
+          out: values.out,
+        });
+      } else {
+        console.error(`Unknown benchmark subcommand: ${subCmd ?? "(none)"}`);
+        process.exit(1);
+      }
+      break;
+    }
     default:
       console.log(`sensei — AI skills toolchain
 
@@ -79,6 +104,8 @@ Commands:
   sensei doctor <path> [--dry-run] [--template <path>]
                                 Reformat docs to match canonical templates
   sensei migrate                Migrate agents/ folder to .index/checkpoints/
+  sensei benchmark doctor <input-dir> <output-name> [--template <path>] [--examples <dir>] [--sample N] [--out <dir>]
+                                Run 3-strategy doc conversion benchmark
 `);
   }
 }
