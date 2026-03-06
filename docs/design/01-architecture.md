@@ -2,7 +2,7 @@
 
 ## Overview
 
-The repo has three layers: **skills** (markdown guidance files), an **MCP server** (compute and data layer), and **repo artifacts** (files written into indexed codebases). Skills teach agents the protocol. The MCP server handles execution. Repo artifacts persist the index between sessions.
+The repo has four layers: **skills** (markdown guidance files), an **MCP server** (compute and data layer), a **CLI** (`skills` binary, setup and profile management), and **repo artifacts** (files written into indexed codebases). Skills teach agents the protocol. The MCP server handles execution. The CLI manages the developer experience. Repo artifacts persist the index between sessions.
 
 ---
 
@@ -30,8 +30,30 @@ mcp/
         drift.ts          check_drift
         generate.ts       generate_llms_txt, generate_changelog
         benchmark.ts      run_benchmark, compare_results, get_metrics_summary
-    package.json
+      guidelines.ts     get_guidelines, get_profile
+      cache.ts          query_cache
+    cli.ts              CLI entry point (shares tools/ with MCP server)
+    commands/           CLI command modules
+      init.ts           skills init
+      add.ts            skills add
+      upgrade.ts        skills upgrade
+      status.ts         skills status
+      profile.ts        skills profile create/edit/list/use
+      company.ts        skills company create/edit/register-mcp
+      guidelines.ts     skills guidelines [edit|show]
+      cache.ts          skills cache add/list/update
+      hooks.ts          skills hooks install
+      index-cmd.ts      skills index
+      drift-cmd.ts      skills drift
+    package.json        "bin": { "skills": "./dist/cli.js" }
     tsconfig.json
+
+~/.skills/              Developer profile directory (created by CLI)
+  config.yaml
+  profiles/
+    personal/           profile.yaml, guidelines.md, skills.yaml
+    companies/<name>/   profile.yaml, guidelines.md, skills.yaml
+  cache/<lib-name>/     Indexed external libraries
 
 tasks/
   sample.yaml             Representative developer task corpus
@@ -43,7 +65,7 @@ docs/
   design/                 How (this directory)
   plans/                  Implementation plans
 
-install.sh                Symlinks skills, registers MCP, sets REPO_PATH
+install.sh                Bootstrap only — for first-time setup before CLI is available
 ```
 
 ---

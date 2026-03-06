@@ -10,6 +10,7 @@ This skills repo is built around a single conviction: **AI agents should spend t
 - **Deterministic Work Belongs in Tools** — Generating llms.txt, checking drift, listing exports — these are repeatable, deterministic tasks. MCP tools handle them so the LLM's context stays clear for judgment.
 - **Context Is Managed, Not Accumulated** — Agents load targeted slices, checkpoint before switching tasks, and never carry stale context into new work.
 - **Improvements Are Measured** — Skills are worth nothing if their impact can't be quantified. A benchmark system compares token usage, interaction counts, and task completion with and without skills.
+- **One Command to Get Started** — `skills init` sets up any repo in seconds. Developer profiles carry personal standards across all projects. Company profiles enforce shared standards without manual configuration.
 
 ## Modules
 
@@ -19,6 +20,7 @@ This skills repo is built around a single conviction: **AI agents should spend t
 - [Doc Drift Detection](04-DocDriftDetection.md) — Keep design docs, code, and public docs in sync
 - [Context Management](05-ContextManagement.md) — Load narrow, offload often, checkpoint before switching
 - [Benchmarking](06-Benchmarking.md) — Quantify skill impact with A/B comparisons
+- [CLI](07-CLI.md) — Set up repos, manage profiles, switch contexts, install hooks
 
 ## Feature Status
 
@@ -50,3 +52,15 @@ This skills repo is built around a single conviction: **AI agents should spend t
 | | A/B evaluation (with-skills vs without-skills) | 🔲 Planned |
 | | Metrics: tokens, interactions, tool calls, success | 🔲 Planned |
 | | Results storage and comparison | 🔲 Planned |
+| CLI | New repo setup (skills init) | 🔲 Planned |
+| | Add to existing repo (skills add) | 🔲 Planned |
+| | Upgrade (skills upgrade) | 🔲 Planned |
+| | Personal profile create/edit | 🔲 Planned |
+| | Company profile create/edit | 🔲 Planned |
+| | Remote company MCP registration | 🔲 Planned |
+| | Local companion MCP for remote caching | 🔲 Planned |
+| | Context status (skills status) | 🔲 Planned |
+| | Shared library cache (skills cache) | 🔲 Planned |
+| | Pre-commit drift hook (skills hooks install) | 🔲 Planned |
+| | Guidelines view/edit/query | 🔲 Planned |
+| | get_guidelines MCP tool | 🔲 Planned |
