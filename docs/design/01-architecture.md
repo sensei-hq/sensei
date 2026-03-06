@@ -191,6 +191,7 @@ Symlinking means skills stay current with repo updates without reinstalling.
 |---|---|---|
 | MCP server language | TypeScript | Native MCP SDK support, type safety for tool contracts |
 | MCP SDK | `@modelcontextprotocol/sdk` | Standard, maintained by Anthropic |
+| CLI prompts | `@clack/prompts` | Beautiful, accessible prompts — select, multiselect, confirm, spinner, note |
 | YAML parser | `js-yaml` | Lightweight, well-maintained, handles .llmspec.yaml |
 | File globbing | `fast-glob` | Fastest glob implementation for Node.js |
 | Test framework | Vitest | Fast, ESM-native, compatible with TypeScript |
