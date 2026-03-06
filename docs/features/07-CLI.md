@@ -166,6 +166,38 @@ Feature: Shared Library Cache
     Then both libraries are listed with their index age and file count
 ```
 
+### Migration from agents/ Folder
+
+Developers who have used a manual `agents/` folder pattern can migrate to the MCP-managed project memory system in one command.
+
+```gherkin
+Feature: Migrate from agents/ folder
+
+  Scenario: Developer migrates an existing repo
+    Given a repo with agents/memory.md, agents/journal.md, agents/design-patterns.md
+    When the developer runs sensei migrate
+    Then the CLI reads each file and distills it into the checkpoint structure
+    And agents/memory.md → .index/checkpoints/memory.yaml
+    And agents/design-patterns.md → .index/checkpoints/patterns.yaml
+    And the last journal entry → .index/checkpoints/open-items.yaml as a next step
+    And agents/ is archived to agents/_archived/ (not deleted)
+    And a new CLAUDE.md is written referencing the sensei workflow
+    And the developer is shown a summary of what was migrated
+
+  Scenario: Migration is non-destructive
+    Given a repo with an existing agents/ folder
+    When sensei migrate runs
+    Then agents/ is archived, not deleted
+    And the developer can inspect agents/_archived/ before removing it
+    And running sensei migrate a second time is safe (idempotent)
+
+  Scenario: Repo with no agents/ folder is handled gracefully
+    Given a repo with no agents/ folder
+    When the developer runs sensei migrate
+    Then the CLI reports: "No agents/ folder found. Nothing to migrate."
+    And exits cleanly
+```
+
 ### Pre-Commit Hook
 
 The CLI installs a pre-commit hook that runs drift detection before every commit.
@@ -238,3 +270,4 @@ Feature: Guidelines Editability
 | Pre-commit drift hook | 🔲 Planned |
 | Guidelines view/edit/query | 🔲 Planned |
 | Guidelines MCP tool (get_guidelines) | 🔲 Planned |
+| Migration from agents/ folder (sensei migrate) | 🔲 Planned |
