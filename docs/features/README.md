@@ -22,6 +22,8 @@ This skills repo is built around a single conviction: **AI agents should spend t
 - [Benchmarking](06-Benchmarking.md) — Quantify skill impact with A/B comparisons
 - [CLI](07-CLI.md) — Set up repos, manage profiles, switch contexts, install hooks
 - [Project Workflow](08-ProjectWorkflow.md) — Cross-session knowledge persistence, session resume, decision and pattern capture
+- [Doc Reformatter](09-DocReformatter.md) — Reformat existing docs to match canonical templates
+- [Incremental Indexing](10-IncrementalIndexing.md) — Fast subsequent index runs, only changed files re-processed
 
 ## Feature Status
 
@@ -72,3 +74,11 @@ This skills repo is built around a single conviction: **AI agents should spend t
 | | Session checkpoint with LLM distillation | 🔲 Planned |
 | | Open items tracking (ask_question, close_item) | 🔲 Planned |
 | | Context budget stays flat over time | 🔲 Planned |
+| Doc Reformatter | Single file reformat (sensei reformat <file>) | 🔲 Planned |
+| | Directory batch reformat | 🔲 Planned |
+| | Template auto-detection from path | 🔲 Planned |
+| | doc-reformatter skill | 🔲 Planned |
+| Incremental Indexing | Incremental scan on subsequent runs | 🔲 Planned |
+| | Deleted file removal from index | 🔲 Planned |
+| | --force flag for full rescan | 🔲 Planned |
+| | Index summary output | 🔲 Planned |
