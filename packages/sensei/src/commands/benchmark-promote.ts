@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, dirname, relative } from "path";
 import { intro, outro, select, text, isCancel, note, log } from "@clack/prompts";
 
@@ -56,7 +56,7 @@ export async function benchmarkPromote(resultsDir: string, repoPath: string): Pr
     Object.entries(scores as Record<string, { structuralScore: number; judgeScore: number; tokensIn: number; filesGenerated: number }>)
       .map(([k, v]) => {
         const marker = k === autoPromoted ? " ← auto" : "";
-        return `Strategy ${k.toUpperCase()}: struct=${v.structuralScore} judge=${(scores[k] as { judgeScore: number }).judgeScore} tokens=${v.tokensIn} files=${v.filesGenerated}${marker}`;
+        return `Strategy ${k.toUpperCase()}: struct=${v.structuralScore} judge=${v.judgeScore} tokens=${v.tokensIn} files=${v.filesGenerated}${marker}`;
       })
       .join("\n"),
     "Benchmark results"
@@ -78,11 +78,9 @@ export async function benchmarkPromote(resultsDir: string, repoPath: string): Pr
   // Copy files if user's choice differs from auto-promoted
   if (preferred !== autoPromoted) {
     const srcDir = join(repoPath, resultsDir, preferred as string, outputName);
-    const relInput = relative(repoPath, join(repoPath, input));
-    const targetDir = join(repoPath, dirname(relInput), outputName);
+    const targetDir = join(repoPath, dirname(input), outputName);
     await mkdir(targetDir, { recursive: true });
 
-    const { readdirSync, readFileSync } = await import("fs");
     for (const f of readdirSync(srcDir)) {
       const content = readFileSync(join(srcDir, f), "utf-8");
       await writeFile(join(targetDir, f), content, "utf-8");
@@ -91,7 +89,7 @@ export async function benchmarkPromote(resultsDir: string, repoPath: string): Pr
   }
 
   // Update results.json
-  const feedback = buildFeedback(preferred as string, autoPromoted, noteText as string || undefined);
+  const feedback = buildFeedback(preferred as string, autoPromoted, (noteText as string) || undefined);
   data.userFeedback = feedback;
   data.promoted = preferred;
   if (data.report) {
