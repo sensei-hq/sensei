@@ -1,4 +1,4 @@
-# skills
+# sensei
 
 A universal AI skills library and toolchain that helps AI agents work more efficiently on codebases. Scan a repo once, produce structured orientation artifacts, and expose an MCP server so agents load only what they need — fewer tokens, fewer interactions, better results.
 
@@ -55,17 +55,17 @@ A universal AI skills library and toolchain that helps AI agents work more effic
 
 ```bash
 # Install the CLI globally
-bun add -g skills   # or: npx skills
+bun add -g sensei   # or: npx sensei
 
 # Set up a new repo
 cd your-repo
-skills init
+sensei init
 
 # Add to an existing repo without overwriting anything
-skills add
+sensei add
 
 # Check status
-skills status
+sensei status
 ```
 
 ## Development

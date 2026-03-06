@@ -12,13 +12,13 @@ Bun workspaces monorepo. One package today (`repo-index-server`), structured for
 
 ```
 /                               ← workspace root
-  package.json                  ← bun workspaces config
+  package.json                  ← bun workspaces config ("name": "sensei")
   bun.lockb
   README.md
 
   packages/
     repo-index-server/          ← MCP server + skills CLI
-      package.json              ← "bin": { "skills": "./dist/cli.js" }
+      package.json              ← "bin": { "sensei": "./dist/cli.js" }
       tsconfig.json
       src/
         index.ts                MCP server entry point, tool registration
