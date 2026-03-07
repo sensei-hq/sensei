@@ -71,6 +71,20 @@ describe("OllamaBackend", () => {
       const result = await backend.embed("some text");
       expect(result).toEqual([0.1, 0.2, 0.3]);
     });
+
+    it("returns empty array when fetch throws", async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      const result = await backend.embed("some text");
+      expect(result).toEqual([]);
+    });
+
+    it("returns empty array on HTTP error response", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: "model not found" }), { status: 500 }
+      ));
+      const result = await backend.embed("some text");
+      expect(result).toEqual([]);
+    });
   });
 });
 
