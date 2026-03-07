@@ -6,11 +6,12 @@ A universal AI skills library and toolchain. Scan a repo once, produce structure
 
 AI agents dropped into an unfamiliar codebase waste most of their context window on orientation. Sensei solves this:
 
-- **Index once** — `sensei init` scans your repo and writes `.llmspec.yaml`, `CLAUDE.md`, `llms.txt`, and `.index/`
-- **Right resolution** — Code stored at four levels: signature (L0, ~10 tokens), IO pattern (L1), logic flow (L2), full source (L3, ~2000 tokens). Agents request the minimum needed
-- **Docs stay in sync** — Traceability matrix maps each design doc to the code it covers. `git diff` against the last index commit flags exactly which docs need attention — no false positives
-- **Context stays flat** — Project memory (decisions, patterns, open items) persists across sessions via MCP tools. `get_session_context()` loads ~300 tokens regardless of project age
-- **Improvements are measured** — Benchmark task corpus compares token usage and interaction counts with and without skills
+- **Index once** — `sensei init` scans your repo and writes `.sensei/` artifacts: symbol map, package hierarchy, traceability graph, llmspec
+- **Local model analysis** — a small on-device model (Transformers.js ONNX or Ollama) extracts symbols, summaries, flows, examples and relations — no regex, no AST, no API key
+- **Right resolution** — code stored at four levels: signature (L0, ~10 tokens), description (L1), logic flow (L2), full source (L3). Agents request the minimum needed
+- **Docs stay in sync** — traceability matrix built from model-extracted relations + embedding similarity. `git diff` against last index commit flags exactly which docs need attention
+- **Context stays flat** — project memory (decisions, patterns, open items) persists across sessions via MCP tools. `get_session_context()` loads ~300 tokens regardless of project age
+- **Improvements are measured** — benchmark task corpus compares token usage and interaction counts with and without skills
 
 ## Skills
 
@@ -40,28 +41,33 @@ Install to `~/.claude/skills/` (or equivalent). Teach agents when and how to use
 ## CLI
 
 ```bash
-sensei init                        # full scan + create .llmspec.yaml, CLAUDE.md, llms.txt, .index/
+sensei setup --mcp                 # register MCP server in ~/.claude/mcp.json
+sensei init                        # full scan + create .llmspec.yaml, CLAUDE.md, llms.txt, .sensei/
 sensei add                         # non-destructive add to existing repo
 sensei status                      # index age, symbol count, drift summary
 sensei index [--force]             # incremental re-index (git diff) or full rescan
 sensei drift [--fail-on-drift]     # check doc drift via traceability matrix
 sensei doctor <path> [--dry-run]   # reformat docs to match canonical templates
-sensei benchmark doctor <input> <output> [--template] [--examples] [--sample N]
+sensei benchmark doctor --source <input> --dest <output> [--template] [--examples] [--sample N]
                              3-strategy doc conversion benchmark
-sensei migrate                     # convert agents/ folder to .index/checkpoints/
+sensei migrate                     # convert agents/ folder to .sensei/checkpoints/
 ```
 
 ## Repo Structure
 
 ```
 /
-├── packages/sensei/
+├── packages/
+│   ├── cli/    @sensei/cli    — CLI binary (sensei command)
+│   ├── server/ @sensei/server — inference engine + telemetry server
+│   ├── mcp/    @sensei/mcp    — MCP tool server (served to Claude)
+│   └── shared/ @sensei/shared — types, constants, API contracts
+│
+├── packages/cli/
 │   ├── src/
-│   │   ├── index.ts          MCP server entry (19 tools)
 │   │   ├── cli.ts            sensei CLI entry
-│   │   ├── commands/         init, add, status, doctor, migrate
-│   │   └── tools/            reindex, query, drift, context, project-memory
-│   └── src/**/*.spec.ts      Unit tests (Vitest, 50 tests)
+│   │   └── commands/         init, add, status, doctor, migrate
+│   └── src/**/*.spec.ts      Unit tests (Vitest, 29 tests)
 │
 ├── skills/                   Skill markdown files (8 skills)
 ├── tasks/sample.yaml         Benchmark task corpus
@@ -69,30 +75,32 @@ sensei migrate                     # convert agents/ folder to .index/checkpoint
 ├── docs/features/            What and why — Gherkin scenarios, status tables
 ├── docs/design/              How — architecture, schemas, algorithms (13 docs)
 ├── docs/plans/               Implementation plans
-└── install.sh                Symlink installer + MCP server registration
+└── README.md                 This file — bootstrap instructions
 ```
 
 ## Getting Started
 
 ```bash
-# Install dependencies and build
-bun install
-bun run build
+# Install sensei globally
+cd packages/cli
+bun install && bun run build
+bun link          # or: bun i -g .
 
-# Install skills + register MCP server with Claude Code
-./install.sh --claude
+# Register MCP server with Claude Code
+cd your-repo
+sensei setup --mcp
 
 # Set up a new repo
-cd your-repo
 sensei init
 
 # Add to an existing repo (non-destructive)
-cd existing-repo
 sensei add
 
 # Migrate an existing agents/ folder
 sensei migrate
 ```
+
+Skills in `skills/` can be symlinked to `~/.claude/skills/` manually or via any skill manager.
 
 ## Development
 
@@ -106,4 +114,7 @@ bun run build        # build MCP server + CLI
 
 - [Features](docs/features/) — what each module does and why
 - [Design](docs/design/) — architecture, schemas, algorithms
+  - [14-server-package.md](docs/design/14-server-package.md) — server-mediated inference, package split
+  - [16-local-model-indexer.md](docs/design/16-local-model-indexer.md) — local model analysis, format decisions
+  - [15-package-adapters.md](docs/design/15-package-adapters.md) — glob-based package discovery
 - [Plans](docs/plans/) — implementation history
