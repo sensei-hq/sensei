@@ -94,6 +94,14 @@ async function main() {
           examples: values.examples,
           sample: values.sample ? parseInt(values.sample, 10) : undefined,
         });
+      } else if (subCmd === "inspect") {
+        const { benchmarkInspect } = await import("./commands/benchmark-inspect.js");
+        const runBranch = rest[1];
+        if (!runBranch) {
+          console.error("Usage: sensei benchmark inspect <run>-<letter>");
+          process.exit(1);
+        }
+        await benchmarkInspect(runBranch, process.cwd());
       } else if (subCmd === "promote") {
         const { benchmarkPromote } = await import("./commands/benchmark-promote.js");
         const runName = rest[1];
@@ -120,10 +128,12 @@ Commands:
   sensei doctor <path> [--dry-run] [--template <path>]
                                 Reformat docs to match canonical templates
   sensei migrate                Migrate agents/ folder to .index/checkpoints/
-  sensei benchmark doctor <input-dir> <output-name> [--template <path>] [--examples <dir>] [--sample N] [--out <dir>]
+  sensei benchmark doctor <input-dir> <output-name> [--template <path>] [--examples <dir>] [--sample N]
                                 Run 3-strategy doc conversion benchmark
+  sensei benchmark inspect <run>-<a|b|c>
+                                Switch to a benchmark strategy branch for inspection
   sensei benchmark promote <run-name>
-                                Review benchmark scores, capture preference, submit telemetry
+                                Merge chosen strategy branch, submit telemetry
   sensei serve [--port 7744] [--db <path>]
                                 Start local telemetry report receiver
 `);
