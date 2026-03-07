@@ -8,7 +8,7 @@ const TMP = "/tmp/sensei-test-query";
 beforeEach(() => {
   mkdirSync(join(TMP, ".index"), { recursive: true });
   mkdirSync(join(TMP, "src"), { recursive: true });
-  writeFileSync(join(TMP, ".llmspec.yaml"), `
+  writeFileSync(join(TMP, ".index/llmspec.yaml"), `
 project: query-test
 stack: [typescript]
 description: test

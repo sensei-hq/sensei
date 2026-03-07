@@ -6,7 +6,7 @@ import yaml from "js-yaml";
 import fg from "fast-glob";
 import type { SymbolMap } from "../types.js";
 
-const ALWAYS_IGNORE = ["**/.git/**", "**/.index/**"];
+const ALWAYS_IGNORE = ["**/.git/**", "**/.index/**", "CLAUDE.md"];
 const CODE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"];
 const DOC_EXTS = [".md", ".mdx", ".txt", ".yaml", ".yml"];
 
@@ -145,6 +145,38 @@ export async function reindexRepo(
     }
   }
 
+  // Process markdown doc files — add L0/L1 to symbol-map
+  for (const file of docFiles) {
+    if (!file.endsWith(".md") && !file.endsWith(".mdx")) continue;
+    if (deletedFiles.has(file)) continue;
+
+    let needsExtraction = force;
+
+    if (!needsExtraction) {
+      if (changedFiles.size > 0) {
+        needsExtraction = changedFiles.has(file);
+      } else {
+        const stored = existingDocIndex?.files[file];
+        if (!stored) {
+          needsExtraction = true;
+        } else {
+          const s = await stat(join(repoPath, file));
+          needsExtraction = Math.abs(s.mtimeMs - stored.mtime) > 1000 || s.size !== stored.size;
+        }
+      }
+    }
+
+    if (needsExtraction) {
+      const content = await readFile(join(repoPath, file), "utf-8");
+      const symbols = extractMarkdownSymbols(content, file);
+      const isNew = !(file in existingSymbolMap);
+      symbolMap[file] = symbols;
+      if (isNew) added++; else updated++;
+    } else {
+      unchanged++;
+    }
+  }
+
   // Build doc-index fingerprints for all current files
   const fingerprints: Record<string, { mtime: number; size: number }> = {};
   await Promise.all([...allCurrentFiles].map(async (file) => {
@@ -165,7 +197,7 @@ export async function reindexRepo(
     files: fingerprints,
   };
 
-  // Build traceability matrix from .llmspec.yaml
+  // Build traceability matrix from .index/llmspec.yaml
   const traceability = await buildTraceability(repoPath, docFiles);
 
   // Write all artifacts
@@ -183,8 +215,8 @@ export async function reindexRepo(
     ensurePatternsMd(repoPath),
   ]);
 
-  if (!existsSync(join(repoPath, ".llmspec.yaml"))) {
-    await writeFile(join(repoPath, ".llmspec.yaml"), generateLlmSpecTemplate(repoPath, stack, shortcuts));
+  if (!existsSync(join(repoPath, ".index/llmspec.yaml"))) {
+    await writeFile(join(repoPath, ".index/llmspec.yaml"), generateLlmSpecTemplate(repoPath, stack, shortcuts));
   }
 
   await Promise.all([
@@ -201,8 +233,8 @@ async function buildTraceability(
 ): Promise<Record<string, string[]>> {
   const result: Record<string, string[]> = {};
 
-  // Load manual declarations from .llmspec.yaml
-  const llmspecPath = join(repoPath, ".llmspec.yaml");
+  // Load manual declarations from .index/llmspec.yaml
+  const llmspecPath = join(repoPath, ".index/llmspec.yaml");
   if (existsSync(llmspecPath)) {
     try {
       const spec = yaml.load(await readFile(llmspecPath, "utf-8")) as Record<string, unknown>;
@@ -241,44 +273,101 @@ async function ensurePatternsMd(repoPath: string): Promise<void> {
   }
 }
 
+async function findPackageJson(repoPath: string): Promise<Record<string, unknown> | null> {
+  // Check root first, then immediate subdirectories (monorepo support)
+  const candidates = [
+    join(repoPath, "package.json"),
+    ...["src", "app", "solution", "packages", "web", "api", "server", "client"]
+      .map(d => join(repoPath, d, "package.json")),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      try { return JSON.parse(await readFile(p, "utf-8")); } catch { /* skip */ }
+    }
+  }
+  // Fall back to any package.json one level deep
+  try {
+    const entries = await fg(["*/package.json"], { cwd: repoPath, deep: 1, ignore: ALWAYS_IGNORE });
+    for (const rel of entries.slice(0, 3)) {
+      try { return JSON.parse(await readFile(join(repoPath, rel), "utf-8")); } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+  return null;
+}
+
 async function detectStack(repoPath: string): Promise<Record<string, string[]>> {
   const stack: Record<string, string[]> = { languages: [], frameworks: [], tools: [] };
-  const pkgPath = join(repoPath, "package.json");
-  if (existsSync(pkgPath)) {
-    const pkg = JSON.parse(await readFile(pkgPath, "utf-8"));
+  const pkg = await findPackageJson(repoPath);
+  if (pkg) {
     stack.languages.push("typescript/javascript");
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    ["react", "next", "vue", "svelte", "express", "fastify", "hono"].forEach(f => {
-      if (deps[f]) stack.frameworks.push(f);
-    });
-    if (deps["vitest"]) stack.tools.push("vitest");
-    if (deps["jest"]) stack.tools.push("jest");
-    if (deps["bun"]) stack.tools.push("bun");
+    const deps: Record<string, string> = { ...(pkg as any).dependencies, ...(pkg as any).devDependencies };
+    const FRAMEWORKS = ["react", "next", "@sveltejs/kit", "svelte", "vue", "nuxt", "solid-js",
+      "express", "fastify", "hono", "koa", "elysia", "convex", "trpc", "drizzle-orm", "prisma"];
+    FRAMEWORKS.forEach(f => { if (deps[f]) stack.frameworks.push(f.replace(/^@[^/]+\//, "")); });
+    const TOOLS = ["vitest", "jest", "playwright", "storybook", "turbo", "nx", "bun", "vite", "esbuild"];
+    TOOLS.forEach(t => { if (deps[t] || deps[`@${t}/core`]) stack.tools.push(t); });
   }
   if (existsSync(join(repoPath, "pyproject.toml")) || existsSync(join(repoPath, "requirements.txt"))) {
     stack.languages.push("python");
   }
+  if (existsSync(join(repoPath, "go.mod"))) stack.languages.push("go");
+  if (existsSync(join(repoPath, "Cargo.toml"))) stack.languages.push("rust");
   return stack;
 }
 
 async function detectShortcuts(repoPath: string): Promise<Record<string, string>> {
-  const pkgPath = join(repoPath, "package.json");
-  if (existsSync(pkgPath)) {
-    const pkg = JSON.parse(await readFile(pkgPath, "utf-8"));
-    return pkg.scripts ?? {};
-  }
-  return {};
+  const pkg = await findPackageJson(repoPath);
+  return (pkg as any)?.scripts ?? {};
 }
 
 export function extractExports(content: string): { L0: string[]; L1: string[]; L2: string[] } {
   const L0: string[] = [];
-  const exportRe = /^export\s+(async\s+)?(function|class|const|type|interface|enum)\s+(\w+[^{;=\n]*)/gm;
-  let m: RegExpExecArray | null;
-  while ((m = exportRe.exec(content)) !== null) {
+  const L1: string[] = [];
+  const lines = content.split("\n");
+  const exportRe = /^export\s+(async\s+)?(function|class|const|type|interface|enum)\s+(\w+[^{;=\n]*)/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = exportRe.exec(lines[i]);
+    if (!m) continue;
+
     const sig = m[0].replace(/\{.*/, "").replace(/=\s*$/, "").trim();
     L0.push(sig);
+
+    // Look backwards for JSDoc (/** ... */) — skip blank lines first
+    let j = i - 1;
+    while (j >= 0 && lines[j].trim() === "") j--;
+
+    if (j >= 0 && lines[j].trim() === "*/") {
+      j--; // skip the closing */ line
+      const docLines: string[] = [];
+      while (j >= 0 && !lines[j].includes("/**")) {
+        const stripped = lines[j].replace(/^\s*\*\s?/, "").trim();
+        if (stripped && !stripped.startsWith("@")) docLines.unshift(stripped);
+        j--;
+      }
+      const description = docLines.join(" ").trim().slice(0, 120);
+      if (description) L1.push(`${sig} — ${description}`);
+    }
   }
-  return { L0, L1: L0.map(s => `// ${s}`), L2: [] };
+
+  return { L0, L1, L2: [] };
+}
+
+export function extractMarkdownSymbols(content: string, filename: string): { L0: string[]; L1: string[]; L2: string[] } {
+  const lines = content.split("\n");
+
+  // L0: title (H1 or filename) + first substantive paragraph (≤150 chars)
+  const h1 = lines.find(l => l.startsWith("# "))?.replace(/^# /, "").trim() ?? filename.replace(/\.mdx?$/, "");
+  const bodyLines = lines.filter(l => !l.startsWith("#") && l.trim().length > 0);
+  const firstPara = bodyLines.slice(0, 3).join(" ").replace(/\s+/g, " ").trim().slice(0, 150);
+  const l0Entry = firstPara ? `${h1} — ${firstPara}` : h1;
+
+  // L1: H2 and H3 headings as section outline
+  const l1 = lines
+    .filter(l => /^#{2,3} /.test(l))
+    .map(l => l.trim());
+
+  return { L0: [l0Entry], L1: l1, L2: [] };
 }
 
 function formatStack(stack: Record<string, string[]>): string {
@@ -315,7 +404,7 @@ async function generateLlmsTxt(repoPath: string): Promise<void> {
   const readmePath = join(repoPath, "README.md");
   const readme = existsSync(readmePath) ? await readFile(readmePath, "utf-8") : "";
   const name = repoPath.split("/").at(-1) ?? "project";
-  await writeFile(join(repoPath, "llms.txt"),
+  await writeFile(join(repoPath, ".index/llms.txt"),
     `# ${name}\n\n${readme.split("\n").slice(0, 20).join("\n")}\n\n> Generated by sensei\n`);
 }
 

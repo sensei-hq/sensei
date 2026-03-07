@@ -7,7 +7,7 @@ const TMP = "/tmp/sensei-test-context";
 
 beforeEach(() => {
   mkdirSync(join(TMP, ".index"), { recursive: true });
-  writeFileSync(join(TMP, ".llmspec.yaml"), `
+  writeFileSync(join(TMP, ".index/llmspec.yaml"), `
 project: ctx-test
 description: A context test project
 stack: [typescript, react]

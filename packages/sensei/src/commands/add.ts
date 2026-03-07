@@ -21,15 +21,16 @@ export async function add(cwd: string): Promise<void> {
   const s = spinner();
   s.start("Indexing repo...");
   const summary = await reindexRepo(cwd);
-  s.stop(
-    summary.forced
-      ? `Full scan: ${summary.added} files indexed`
-      : `${summary.updated} updated, ${summary.added} added, ${summary.removed} removed, ${summary.unchanged} unchanged`
-  );
+  if (summary.forced) {
+    const total = summary.added + summary.updated;
+    s.stop(`Full scan: ${total} files indexed (${summary.added} new, ${summary.updated} updated)`);
+  } else {
+    s.stop(`${summary.updated} updated, ${summary.added} added, ${summary.removed} removed, ${summary.unchanged} unchanged`);
+  }
 
   note(
     [
-      `Edit .llmspec.yaml to declare doc coverage (docs[].covers[])`,
+      `Edit .index/llmspec.yaml to declare doc coverage (docs[].covers[])`,
       `Run: sensei hooks install --drift   to enable pre-commit drift check`,
     ].join("\n"),
     "Next steps"
