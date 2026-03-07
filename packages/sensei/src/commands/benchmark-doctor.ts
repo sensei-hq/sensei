@@ -1,9 +1,11 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { readFile, mkdir, writeFile } from "fs/promises";
 import { join, relative, extname, dirname } from "path";
-import { intro, outro, spinner, note, log } from "@clack/prompts";
+import { intro, outro, spinner, note, log, confirm, isCancel } from "@clack/prompts";
 import type { SymbolMap } from "../types.js";
 import { callClaude } from "../claude.js";
+import { getCurrentBranch, isCleanWorkingTree, createAndCheckoutBranch, checkoutBranch, stageFiles, commitFiles } from "../git.js";
+import { generateRunName } from "../names.js";
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
 
@@ -271,6 +273,21 @@ export async function benchmarkDoctor(
 ): Promise<void> {
   intro("sensei benchmark doctor");
 
+  // ── Preconditions ────────────────────────────────────────────────────────────
+  if (!isCleanWorkingTree(repoPath)) {
+    log.error("Working tree is not clean. Please commit or stash your changes before running benchmark doctor.");
+    outro("Aborted.");
+    return;
+  }
+
+  const baseBranch = getCurrentBranch(repoPath);
+  if (baseBranch === "HEAD") {
+    log.error("Detached HEAD state detected. Please checkout a branch before running benchmark doctor.");
+    outro("Aborted.");
+    return;
+  }
+
+  // ── Read inputs ──────────────────────────────────────────────────────────────
   const fullInputDir = join(repoPath, inputDir);
   if (!existsSync(fullInputDir)) {
     log.error(`Input dir not found: ${fullInputDir}`);
@@ -288,7 +305,6 @@ export async function benchmarkDoctor(
   }
 
   const examplesDir = opts.examples ? join(repoPath, opts.examples) : null;
-  const outDir = join(repoPath, opts.out ?? "results", `benchmark-doctor-${new Date().toISOString().slice(0, 10)}`);
   const templateContent = await readFile(templatePath, "utf-8");
 
   const allMd = readdirSync(fullInputDir).filter(f => extname(f) === ".md");
@@ -298,6 +314,7 @@ export async function benchmarkDoctor(
     original[f] = await readFile(join(fullInputDir, f), "utf-8");
   }
 
+  // ── Run all 3 strategies ─────────────────────────────────────────────────────
   const sp = spinner();
 
   const promptA = buildTargetedIndexPrompt({ inputDir: fullInputDir, repoPath, templateContent, outputName });
@@ -319,6 +336,7 @@ export async function benchmarkDoctor(
   const outputC = parseOutputFolder(resultC.text);
   sp.stop(`Strategy C done (${resultC.usage.tokensIn}→${resultC.usage.tokensOut} tokens)`);
 
+  // ── Score ────────────────────────────────────────────────────────────────────
   sp.start("Scoring...");
   const structA = structuralScore({ template: templateContent, output: outputA, original });
   const structB = structuralScore({ template: templateContent, output: outputB, original });
@@ -326,68 +344,17 @@ export async function benchmarkDoctor(
   const judge = await llmJudge(original, outputA, outputB, outputC);
   sp.stop("Scoring done");
 
-  await mkdir(join(outDir, "a", outputName), { recursive: true });
-  await mkdir(join(outDir, "b", outputName), { recursive: true });
-  await mkdir(join(outDir, "c", outputName), { recursive: true });
+  // ── Generate run name and branch names ───────────────────────────────────────
+  const runName = generateRunName();
+  const branches = {
+    a: `benchmark/${runName}-a`,
+    b: `benchmark/${runName}-b`,
+    c: `benchmark/${runName}-c`,
+  } as const;
 
-  for (const [name, content] of Object.entries(outputA))
-    await writeFile(join(outDir, "a", outputName, name), content, "utf-8");
-  for (const [name, content] of Object.entries(outputB))
-    await writeFile(join(outDir, "b", outputName, name), content, "utf-8");
-  for (const [name, content] of Object.entries(outputC))
-    await writeFile(join(outDir, "c", outputName, name), content, "utf-8");
-
-  const results = {
-    date: new Date().toISOString().slice(0, 10),
-    input: inputDir,
-    outputName,
-    strategies: {
-      a: { name: "Targeted index", description: "L1 summaries of input dir only + template", templatePath },
-      b: { name: "Raw content", description: "Full input content + example output folder", examplesPath: examplesDir ?? "none" },
-      c: { name: "Full repo index", description: "Full symbol-map.json + template", indexPath: join(repoPath, ".index/symbol-map.json") },
-    },
-    scores: {
-      a: { tokensIn: resultA.usage.tokensIn, tokensOut: resultA.usage.tokensOut, filesGenerated: Object.keys(outputA).length, structuralScore: structA, judgeScore: judge.scoreA },
-      b: { tokensIn: resultB.usage.tokensIn, tokensOut: resultB.usage.tokensOut, filesGenerated: Object.keys(outputB).length, structuralScore: structB, judgeScore: judge.scoreB },
-      c: { tokensIn: resultC.usage.tokensIn, tokensOut: resultC.usage.tokensOut, filesGenerated: Object.keys(outputC).length, structuralScore: structC, judgeScore: judge.scoreC },
-    },
-    judgeReasoning: judge.reasoning,
-  };
-
-  // ── Auto-promote winner ─────────────────────────────────────────────────────
   const winner = pickWinner(structA, judge.scoreA, structB, judge.scoreB, structC, judge.scoreC);
-  const winnerOutput = winner === "a" ? outputA : winner === "b" ? outputB : outputC;
-  const relInput = relative(repoPath, fullInputDir);
-  const targetDir = join(repoPath, dirname(relInput), outputName);
 
-  await mkdir(targetDir, { recursive: true });
-  for (const [name, content] of Object.entries(winnerOutput)) {
-    await writeFile(join(targetDir, name), content, "utf-8");
-  }
-
-  const summary = `# Doctor Benchmark — ${results.date}
-
-Input: \`${inputDir}\` → \`${outputName}\`
-
-| Strategy | Approach | Structural | Judge | Tokens In | Tokens Out | Files |
-|---|---|---|---|---|---|---|
-| A | Targeted index (lowest context) | ${structA} | ${judge.scoreA} | ${resultA.usage.tokensIn.toLocaleString()} | ${resultA.usage.tokensOut.toLocaleString()} | ${Object.keys(outputA).length} |
-| B | Raw content (highest context) | ${structB} | ${judge.scoreB} | ${resultB.usage.tokensIn.toLocaleString()} | ${resultB.usage.tokensOut.toLocaleString()} | ${Object.keys(outputB).length} |
-| C | Full repo index | ${structC} | ${judge.scoreC} | ${resultC.usage.tokensIn.toLocaleString()} | ${resultC.usage.tokensOut.toLocaleString()} | ${Object.keys(outputC).length} |
-
-## Judge Reasoning
-
-${judge.reasoning}
-
-## Auto-Promoted
-
-Strategy ${winner.toUpperCase()} was auto-promoted to \`${relative(repoPath, targetDir)}/\`
-`;
-
-  await writeFile(join(outDir, "summary.md"), summary, "utf-8");
-
-  // ── Build telemetry report ──────────────────────────────────────────────────
-
+  // ── Build results data ───────────────────────────────────────────────────────
   function cleanPaths(s: string): string {
     return s.replaceAll(repoPath + "/", "").replaceAll(repoPath, "");
   }
@@ -398,49 +365,121 @@ Strategy ${winner.toUpperCase()} was auto-promoted to \`${relative(repoPath, tar
   const inputLines = Object.values(original).join("\n").split("\n").length;
   const inputChars = Object.values(original).join("").length;
 
-  const report = {
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    scenario: {
-      inputFileCount: Object.keys(original).length,
-      inputTotalChars: inputChars,
-      inputTotalLines: inputLines,
-      outputName,
-      templateName: relative(repoPath, templatePath),
-      examplesProvided: examplesDir !== null,
-      examplesFileCount: exFiles.length,
-    },
-    strategies: {
-      a: { name: "Targeted index",  prompt: cleanPaths(promptA), promptChars: promptA.length, promptLines: promptA.split("\n").length },
-      b: { name: "Raw content",     prompt: cleanPaths(promptB), promptChars: promptB.length, promptLines: promptB.split("\n").length },
-      c: { name: "Full repo index", prompt: cleanPaths(promptC), promptChars: promptC.length, promptLines: promptC.split("\n").length },
-    },
-    results: {
-      a: { tokensIn: resultA.usage.tokensIn, tokensOut: resultA.usage.tokensOut, filesGenerated: Object.keys(outputA).length, structuralScore: structA, judgeScore: judge.scoreA },
-      b: { tokensIn: resultB.usage.tokensIn, tokensOut: resultB.usage.tokensOut, filesGenerated: Object.keys(outputB).length, structuralScore: structB, judgeScore: judge.scoreB },
-      c: { tokensIn: resultC.usage.tokensIn, tokensOut: resultC.usage.tokensOut, filesGenerated: Object.keys(outputC).length, structuralScore: structC, judgeScore: judge.scoreC },
-    },
-    userFeedback: null as null | { preferred: string; systemAgreed: boolean; note?: string },
-    promoted: null as null | string,
+  const relInput = relative(repoPath, fullInputDir);
+  const targetDir = join(repoPath, dirname(relInput), outputName);
+  const senseiJsonPath = join(repoPath, ".sensei", `benchmark-${runName}.json`);
+
+  const strategyNames = {
+    a: "Targeted index",
+    b: "Raw content",
+    c: "Full repo index",
+  } as const;
+
+  const strategyOutputs = { a: outputA, b: outputB, c: outputC };
+  const strategyResults = {
+    a: { tokensIn: resultA.usage.tokensIn, tokensOut: resultA.usage.tokensOut, filesGenerated: Object.keys(outputA).length, structuralScore: structA, judgeScore: judge.scoreA },
+    b: { tokensIn: resultB.usage.tokensIn, tokensOut: resultB.usage.tokensOut, filesGenerated: Object.keys(outputB).length, structuralScore: structB, judgeScore: judge.scoreB },
+    c: { tokensIn: resultC.usage.tokensIn, tokensOut: resultC.usage.tokensOut, filesGenerated: Object.keys(outputC).length, structuralScore: structC, judgeScore: judge.scoreC },
   };
 
-  const fullResults = {
-    ...results,
+  const resultsData = {
+    run: runName,
+    baseBranch,
+    branches,
     autoPromoted: winner,
     userFeedback: null,
     promoted: null,
-    report,
+    report: {
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      scenario: {
+        inputFileCount: Object.keys(original).length,
+        inputTotalChars: inputChars,
+        inputTotalLines: inputLines,
+        outputName,
+        templateName: relative(repoPath, templatePath),
+        examplesProvided: examplesDir !== null,
+        examplesFileCount: exFiles.length,
+      },
+      strategies: {
+        a: { name: "Targeted index",  prompt: cleanPaths(promptA), promptChars: promptA.length, promptLines: promptA.split("\n").length },
+        b: { name: "Raw content",     prompt: cleanPaths(promptB), promptChars: promptB.length, promptLines: promptB.split("\n").length },
+        c: { name: "Full repo index", prompt: cleanPaths(promptC), promptChars: promptC.length, promptLines: promptC.split("\n").length },
+      },
+      results: strategyResults,
+      userFeedback: null,
+      promoted: null,
+    },
   };
 
-  await writeFile(join(outDir, "results.json"), JSON.stringify(fullResults, null, 2), "utf-8");
+  // ── Permission prompt ────────────────────────────────────────────────────────
+  const commitMsgA = `chore: sensei benchmark doctor using "${strategyNames.a}": docs/${outputName} (${Object.keys(outputA).length} files)`;
+  const commitMsgB = `chore: sensei benchmark doctor using "${strategyNames.b}": docs/${outputName} (${Object.keys(outputB).length} files)`;
+  const commitMsgC = `chore: sensei benchmark doctor using "${strategyNames.c}": docs/${outputName} (${Object.keys(outputC).length} files)`;
 
+  const gitOpsLines = [
+    `git checkout -b ${branches.a} ${baseBranch}`,
+    `git add docs/${outputName}/ .sensei/benchmark-${runName}.json`,
+    `git commit -m "${commitMsgA}"`,
+    `git checkout ${baseBranch}`,
+    `git checkout -b ${branches.b} ${baseBranch}`,
+    `git add docs/${outputName}/ .sensei/benchmark-${runName}.json`,
+    `git commit -m "${commitMsgB}"`,
+    `git checkout ${baseBranch}`,
+    `git checkout -b ${branches.c} ${baseBranch}`,
+    `git add docs/${outputName}/ .sensei/benchmark-${runName}.json`,
+    `git commit -m "${commitMsgC}"`,
+    `git checkout ${baseBranch}`,
+    `git checkout ${branches[winner]}  ← winner`,
+  ];
+
+  const proceed = await confirm({
+    message: `sensei will perform these git operations:\n  ${gitOpsLines.join("\n  ")}\nProceed?`,
+  });
+
+  if (isCancel(proceed) || !proceed) {
+    outro("Cancelled.");
+    return;
+  }
+
+  // ── Create branches ──────────────────────────────────────────────────────────
+  const strategies: Array<"a" | "b" | "c"> = ["a", "b", "c"];
+  const commitMessages = { a: commitMsgA, b: commitMsgB, c: commitMsgC };
+
+  for (const key of strategies) {
+    const branch = branches[key];
+    const output = strategyOutputs[key];
+    const commitMsg = commitMessages[key];
+
+    createAndCheckoutBranch(repoPath, branch, baseBranch);
+
+    await mkdir(targetDir, { recursive: true });
+    for (const [name, content] of Object.entries(output)) {
+      await writeFile(join(targetDir, name), content, "utf-8");
+    }
+
+    await mkdir(join(repoPath, ".sensei"), { recursive: true });
+    await writeFile(senseiJsonPath, JSON.stringify(resultsData, null, 2), "utf-8");
+
+    stageFiles(repoPath, [targetDir, join(repoPath, ".sensei")]);
+    commitFiles(repoPath, commitMsg);
+
+    checkoutBranch(repoPath, baseBranch);
+  }
+
+  // ── Checkout winner branch ───────────────────────────────────────────────────
+  checkoutBranch(repoPath, branches[winner]);
+
+  // ── Announce results ─────────────────────────────────────────────────────────
   note(
-    `Results: ${relative(repoPath, outDir)}/\n` +
-    `A: struct=${structA} judge=${judge.scoreA} tokens=${resultA.usage.tokensIn}→${resultA.usage.tokensOut}\n` +
-    `B: struct=${structB} judge=${judge.scoreB} tokens=${resultB.usage.tokensIn}→${resultB.usage.tokensOut}\n` +
-    `C: struct=${structC} judge=${judge.scoreC} tokens=${resultC.usage.tokensIn}→${resultC.usage.tokensOut}\n` +
-    `Auto-promoted: Strategy ${winner.toUpperCase()} → ${relative(repoPath, targetDir)}/`,
-    "Benchmark complete"
+    `Run: ${runName}\n` +
+    `A (${strategyNames.a}): struct=${structA} judge=${judge.scoreA}\n` +
+    `B (${strategyNames.b}): struct=${structB} judge=${judge.scoreB}\n` +
+    `C (${strategyNames.c}): struct=${structC} judge=${judge.scoreC}\n` +
+    `Winner: ${winner.toUpperCase()} → ${branches[winner]}\n` +
+    `\n` +
+    `To inspect: sensei benchmark inspect ${runName}-<a|b|c>\n` +
+    `To promote: sensei benchmark promote ${runName}`
   );
   outro("Done.");
 }
