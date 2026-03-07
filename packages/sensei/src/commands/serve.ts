@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdir } from "fs/promises";
 import { dirname } from "path";
+import { intro, log } from "@clack/prompts";
 
 export interface ServeOptions {
   port?: number;
@@ -57,8 +58,9 @@ export async function serve(repoPath: string, opts: { port?: number; db?: string
   const port = opts.port ?? parseInt(process.env.SENSEI_PORT ?? "7744", 10);
   const dbPath = opts.db ?? process.env.SENSEI_DB ?? `${repoPath}/.sensei/reports.db`;
 
-  console.log(`sensei serve listening on :${port}`);
-  console.log(`Database: ${dbPath}`);
+  intro("sensei serve");
+  log.info(`Listening on :${port}`);
+  log.info(`Database: ${dbPath}`);
 
   await createReportServer({ port, dbPath });
   // Keep process alive
