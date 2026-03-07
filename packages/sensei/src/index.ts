@@ -42,7 +42,7 @@ server.tool("reindex_repo", "Scan a repo and build/update the index artifacts",
   async ({ path }) => {
     const target = path ?? REPO;
     await reindexRepo(target);
-    return { content: [{ type: "text", text: `Indexed ${target}. Artifacts written to .index/` }] };
+    return { content: [{ type: "text", text: `Indexed ${target}. Artifacts written to .sensei/` }] };
   }
 );
 
