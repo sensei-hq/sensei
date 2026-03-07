@@ -3,7 +3,7 @@ import { readFile, mkdir, rename, readdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import { addDecision, addPattern, checkpoint } from "../tools/project-memory.js";
-import { SENSEI_DIR, senseiPath } from "../constants.js";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 export async function migrate(cwd: string): Promise<void> {
   intro("sensei migrate");

@@ -2,7 +2,7 @@ import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { platform, homedir } from "os";
 import { join } from "path";
-import type { SetupStatus } from "./types.js";
+import type { SetupStatus } from "@sensei/shared";
 
 export const OLLAMA_MODEL = "llama3.2:3b";
 export const OLLAMA_MODEL_SIZE_GB = 2.0;

@@ -1,7 +1,7 @@
 import { intro, outro, spinner, note, confirm, log, isCancel } from "@clack/prompts";
 import { reindexRepo } from "../tools/reindex.js";
 import { checkSystemRequirements, OLLAMA_MODEL, OLLAMA_MODEL_SIZE_GB, OLLAMA_BASE_URL } from "../model/system-check.js";
-import type { SetupStatus } from "../model/types.js";
+import type { SetupStatus } from "@sensei/shared";
 
 export async function init(cwd: string): Promise<void> {
   intro("sensei init");

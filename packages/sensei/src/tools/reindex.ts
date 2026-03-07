@@ -4,8 +4,8 @@ import { existsSync } from "fs";
 import { execSync } from "child_process";
 import yaml from "js-yaml";
 import fg from "fast-glob";
-import type { SymbolMap } from "../types.js";
-import { SENSEI_DIR, senseiPath } from "../constants.js";
+import type { SymbolMap } from "@sensei/shared";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 const ALWAYS_IGNORE = ["**/.git/**", `**/${SENSEI_DIR}/**`, "CLAUDE.md"];
 const CODE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"];
