@@ -116,6 +116,7 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         try {
           const backendFn = opts.ollamaBackendFn ?? (() => new OllamaBackend());
           const ollama = backendFn();
+          await ollama.init(); // no-op now; ensures future stateful backends warm up correctly
           const available = await ollama.isAvailable();
           if (!available) {
             return Response.json(makeFallbackAnalysis(body.filePath));
