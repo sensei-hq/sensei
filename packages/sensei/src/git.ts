@@ -1,7 +1,7 @@
 import { execSync } from "child_process";
 
 function exec(cmd: string, cwd: string): string {
-  return execSync(cmd, { cwd, encoding: "utf-8" }) as string;
+  return execSync(cmd, { cwd, encoding: "utf-8" });
 }
 
 export function getCurrentBranch(repoPath: string): string {
@@ -13,15 +13,15 @@ export function isCleanWorkingTree(repoPath: string): boolean {
 }
 
 export function branchExists(repoPath: string, branch: string): boolean {
-  return exec(`git branch --list ${branch}`, repoPath).trim() !== "";
+  return exec(`git branch --list ${JSON.stringify(branch)}`, repoPath).trim() !== "";
 }
 
 export function createAndCheckoutBranch(repoPath: string, branch: string, from: string): void {
-  exec(`git checkout -b ${branch} ${from}`, repoPath);
+  exec(`git checkout -b ${JSON.stringify(branch)} ${JSON.stringify(from)}`, repoPath);
 }
 
 export function checkoutBranch(repoPath: string, branch: string): void {
-  exec(`git checkout ${branch}`, repoPath);
+  exec(`git checkout ${JSON.stringify(branch)}`, repoPath);
 }
 
 export function stageFiles(repoPath: string, paths: string[]): void {
@@ -33,13 +33,13 @@ export function commitFiles(repoPath: string, message: string): void {
 }
 
 export function mergeBranch(repoPath: string, branch: string): void {
-  exec(`git merge ${branch}`, repoPath);
+  exec(`git merge ${JSON.stringify(branch)}`, repoPath);
 }
 
 export function deleteBranch(repoPath: string, branch: string): void {
-  exec(`git branch -d ${branch}`, repoPath);
+  exec(`git branch -d ${JSON.stringify(branch)}`, repoPath);
 }
 
 export function readFileFromBranch(repoPath: string, branch: string, filePath: string): string {
-  return exec(`git show ${branch}:${filePath}`, repoPath);
+  return exec(`git show ${JSON.stringify(`${branch}:${filePath}`)}`, repoPath);
 }
