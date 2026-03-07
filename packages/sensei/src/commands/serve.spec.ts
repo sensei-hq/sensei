@@ -1,5 +1,6 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { createReportServer } from "./serve.js";
+import type { OllamaBackend } from "../model/ollama-backend.js";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -71,7 +72,16 @@ describe("POST /analyze", () => {
   });
 
   it("returns FileAnalysis shape (fallback when Ollama unavailable)", async () => {
-    const { stop, port } = await createReportServer({ port: 17747 });
+    const { stop, port } = await createReportServer({
+      port: 17747,
+      ollamaBackendFn: () => ({
+        isAvailable: async () => false,
+        extract: async () => { throw new Error("should not be called"); },
+        embed: async () => [],
+        name: "test",
+        init: async () => {},
+      }) as unknown as OllamaBackend,
+    });
     try {
       const res = await fetch(`http://localhost:${port}/analyze`, {
         method: "POST",
