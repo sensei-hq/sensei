@@ -1,6 +1,7 @@
 import { intro, outro, spinner, note, confirm, log, isCancel } from "@clack/prompts";
 import { reindexRepo } from "../tools/reindex.js";
 import { checkSystemRequirements, OLLAMA_MODEL, OLLAMA_MODEL_SIZE_GB } from "../model/system-check.js";
+import type { SetupStatus } from "../model/types.js";
 
 export async function init(cwd: string): Promise<void> {
   intro("sensei init");
@@ -8,8 +9,19 @@ export async function init(cwd: string): Promise<void> {
   // --- Prerequisites check ---
   const checkSpinner = spinner();
   checkSpinner.start("Checking prerequisites...");
-  const status = await checkSystemRequirements();
-  checkSpinner.stop("Prerequisites checked");
+  let status: SetupStatus;
+  try {
+    status = await checkSystemRequirements();
+    checkSpinner.stop("Prerequisites checked");
+  } catch (err) {
+    checkSpinner.stop("Prerequisites check failed");
+    log.warn(`Could not check prerequisites: ${err instanceof Error ? err.message : String(err)}`);
+    status = {
+      ollamaBinary: false, ollamaRunning: false, ollamaModel: false,
+      ollamaModelName: "", onnxModel: false, diskFreeGB: 0,
+      ramTotalGB: 0, ramAvailableGB: 0,
+    };
+  }
 
   const needs: string[] = [];
   if (!status.ollamaBinary) needs.push(`Ollama not installed  (needed for local model inference)`);
@@ -54,7 +66,7 @@ export async function init(cwd: string): Promise<void> {
               pullSpinner.stop(`Pull failed (status ${res.status})`);
             }
           } catch (err) {
-            pullSpinner.stop(`Pull failed: ${(err as Error).message}`);
+            pullSpinner.stop(`Pull failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
       }
