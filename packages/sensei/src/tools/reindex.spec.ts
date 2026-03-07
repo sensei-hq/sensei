@@ -73,6 +73,8 @@ describe("reindexRepo", () => {
     expect(summary.forced).toBe(true);
     expect(summary.added).toBeGreaterThan(0);
     expect(typeof summary.unchanged).toBe("number");
+    expect(typeof summary.skipped).toBe("number");
+    expect(summary.total).toBe(summary.added + summary.updated + summary.unchanged + summary.skipped);
   });
 
   it("incremental: unchanged file not re-added when run twice", async () => {

@@ -25,9 +25,22 @@ const [cmd, ...rest] = positionals;
 
 // Always operate from repo root — never scatter .index folders across the repo
 import { findRepoRoot } from "./git.js";
-const cwd = repoRoot;
-const repoRoot = findRepoRoot(cwd);
-if (repoRoot !== cwd) {
+import { existsSync } from "node:fs";
+import { join as pathJoin } from "node:path";
+const _cwd = process.cwd();
+const repoRoot = findRepoRoot(_cwd);
+
+// Guard: bail if we can't find a real repo root
+if (repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(pathJoin(_cwd, "package.json"))) {
+  console.error("sensei: could not detect repo root. Run sensei from inside a git repo or a directory with package.json.");
+  process.exit(1);
+}
+// Guard: bail if running from inside .index/
+if (_cwd.includes("/.index") || _cwd.includes("\\.index")) {
+  console.error(`sensei: do not run sensei from inside .index/. Change to the repo root and try again.`);
+  process.exit(1);
+}
+if (repoRoot !== _cwd) {
   console.error(`sensei: using repo root ${repoRoot}`);
 }
 
@@ -109,11 +122,19 @@ async function main() {
       const s = spinner();
       s.start("Indexing repo...");
       const summary = await reindexRepo(repoRoot, { force: values.force });
+      const withSymbols = summary.added + summary.updated;
       if (summary.forced) {
-        const total = summary.added + summary.updated;
-        s.stop(`Full scan: ${total} files indexed (${summary.added} new, ${summary.updated} updated)`);
+        s.stop(
+          `Full scan: ${summary.total} files scanned, ${withSymbols} with symbols` +
+          (summary.skipped ? `, ${summary.skipped} skipped (no symbols)` : "") +
+          ` (${summary.added} new, ${summary.updated} updated)`
+        );
       } else {
-        s.stop(`${summary.updated} updated, ${summary.added} added, ${summary.removed} removed, ${summary.unchanged} unchanged`);
+        s.stop(
+          `${summary.updated} updated, ${summary.added} added, ${summary.removed} removed` +
+          `, ${summary.unchanged} unchanged` +
+          (summary.skipped ? `, ${summary.skipped} skipped` : "")
+        );
       }
       break;
     }
