@@ -25,7 +25,7 @@ export function checkoutBranch(repoPath: string, branch: string): void {
 }
 
 export function stageFiles(repoPath: string, paths: string[]): void {
-  exec(`git add ${paths.map(p => `"${p}"`).join(" ")}`, repoPath);
+  exec(`git add ${paths.map(p => JSON.stringify(p)).join(" ")}`, repoPath);
 }
 
 export function commitFiles(repoPath: string, message: string): void {

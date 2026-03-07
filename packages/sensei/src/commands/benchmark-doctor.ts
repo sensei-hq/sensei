@@ -262,7 +262,6 @@ export interface BenchmarkDoctorOptions {
   template?: string;
   examples?: string;
   sample?: number;
-  out?: string;
 }
 
 export async function benchmarkDoctor(
@@ -433,9 +432,8 @@ export async function benchmarkDoctor(
     `git checkout ${branches[winner]}  ← winner`,
   ];
 
-  const proceed = await confirm({
-    message: `sensei will perform these git operations:\n  ${gitOpsLines.join("\n  ")}\nProceed?`,
-  });
+  log.info(`sensei will perform these git operations:\n  ${gitOpsLines.join("\n  ")}`);
+  const proceed = await confirm({ message: "Proceed?" });
 
   if (isCancel(proceed) || !proceed) {
     outro("Cancelled.");

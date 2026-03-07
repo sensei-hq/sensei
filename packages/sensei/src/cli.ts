@@ -11,7 +11,6 @@ const { positionals, values } = parseArgs({
     template: { type: "string" },
     examples: { type: "string" },
     sample: { type: "string" },   // number parsed manually
-    out: { type: "string" },
     port: { type: "string" },
     db: { type: "string" },
   },
@@ -94,7 +93,6 @@ async function main() {
           template: values.template,
           examples: values.examples,
           sample: values.sample ? parseInt(values.sample, 10) : undefined,
-          out: values.out,
         });
       } else if (subCmd === "promote") {
         const { benchmarkPromote } = await import("./commands/benchmark-promote.js");
