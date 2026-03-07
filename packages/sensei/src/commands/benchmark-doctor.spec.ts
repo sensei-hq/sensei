@@ -16,6 +16,7 @@ import {
   buildTargetedIndexPrompt,
   buildRawContentPrompt,
   buildFullRepoIndexPrompt,
+  buildOutlineIndex,
   parseOutputFolder,
   structuralScore,
   pickWinner,
@@ -35,7 +36,27 @@ beforeEach(() => {
 
 afterEach(() => rmSync(TMP, { recursive: true, force: true }));
 
+describe("buildOutlineIndex", () => {
+  it("returns heading outline of all .md files in the directory", () => {
+    const outline = buildOutlineIndex(join(TMP, "requirements"));
+    expect(outline).toContain("01-core.md");
+    expect(outline).toContain("# Core");
+  });
+});
+
 describe("buildTargetedIndexPrompt", () => {
+  it("falls back to file outline when no symbol-map found", () => {
+    rmSync(join(TMP, ".index/symbol-map.json"), { force: true });
+    const prompt = buildTargetedIndexPrompt({
+      inputDir: join(TMP, "requirements"),
+      repoPath: TMP,
+      templateContent: "# Template",
+      outputName: "features",
+    });
+    expect(prompt).toContain("01-core.md");
+    expect(prompt).toContain("# Core");
+  });
+
   it("includes only input-dir entries from symbol-map", () => {
     const prompt = buildTargetedIndexPrompt({
       inputDir: join(TMP, "requirements"),
