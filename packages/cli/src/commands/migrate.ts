@@ -2,7 +2,7 @@ import { intro, outro, spinner, note, log } from "@clack/prompts";
 import { readFile, mkdir, rename, readdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
-import { addDecision, addPattern, checkpoint } from "@sensei/mcp";
+import { addDecision, addPattern, checkpoint } from "@sensei/tools";
 import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 export async function migrate(cwd: string): Promise<void> {
