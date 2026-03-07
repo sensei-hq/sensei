@@ -1,28 +1,27 @@
 import { readFile } from "fs/promises";
-import { join } from "path";
 import yaml from "js-yaml";
 import type { LlmSpec, SymbolMap } from "./types.js";
+import { SENSEI_DIR, senseiPath } from "./constants.js";
 
 export async function readLlmSpec(repoPath: string): Promise<LlmSpec> {
-  const specPath = join(repoPath, ".sensei/llmspec.yaml");
+  const specPath = senseiPath(repoPath, "llmspec.yaml");
   let raw: string;
   try {
     raw = await readFile(specPath, "utf-8");
   } catch {
-    throw new Error(`No .sensei/llmspec.yaml found at ${specPath}. Run sensei index first.`);
+    throw new Error(`No ${SENSEI_DIR}/llmspec.yaml found at ${specPath}. Run sensei index first.`);
   }
   return yaml.load(raw) as LlmSpec;
 }
 
 export async function readSymbolMap(repoPath: string): Promise<SymbolMap> {
-  const mapPath = join(repoPath, ".sensei/symbol-map.json");
-  const raw = await readFile(mapPath, "utf-8");
+  const raw = await readFile(senseiPath(repoPath, "symbol-map.json"), "utf-8");
   return JSON.parse(raw) as SymbolMap;
 }
 
 export async function readIndexFile(repoPath: string, filename: string): Promise<string | null> {
   try {
-    return await readFile(join(repoPath, ".sensei", filename), "utf-8");
+    return await readFile(senseiPath(repoPath, filename), "utf-8");
   } catch {
     return null;
   }

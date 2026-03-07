@@ -6,6 +6,7 @@ import { reindexRepo } from "./tools/reindex.js";
 import { loadContext, recommendNext } from "./tools/context.js";
 import { checkDrift } from "./tools/drift.js";
 import { checkpoint, getSessionContext, addDecision, addPattern, askQuestion, getOpenItems, closeItem } from "./tools/project-memory.js";
+import { SENSEI_DIR } from "./constants.js";
 
 const server = new McpServer({ name: "repo-index-server", version: "0.1.0" });
 const REPO = process.env.REPO_PATH ?? process.cwd();
@@ -42,7 +43,7 @@ server.tool("reindex_repo", "Scan a repo and build/update the index artifacts",
   async ({ path }) => {
     const target = path ?? REPO;
     await reindexRepo(target);
-    return { content: [{ type: "text", text: `Indexed ${target}. Artifacts written to .sensei/` }] };
+    return { content: [{ type: "text", text: `Indexed ${target}. Artifacts written to ${SENSEI_DIR}/` }] };
   }
 );
 
