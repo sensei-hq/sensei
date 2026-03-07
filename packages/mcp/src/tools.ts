@@ -7,9 +7,11 @@ export type { IndexSummary } from "./tools/reindex.js";
 
 // Context
 export { loadContext, recommendNext } from "./tools/context.js";
+export type { ContextSlice } from "./tools/context.js";
 
 // Drift
 export { checkDrift } from "./tools/drift.js";
+export type { DriftEntry, DriftResult } from "./tools/drift.js";
 
 // Project memory
 export {
