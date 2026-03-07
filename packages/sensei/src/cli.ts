@@ -12,6 +12,8 @@ const { positionals, values } = parseArgs({
     examples: { type: "string" },
     sample: { type: "string" },   // number parsed manually
     out: { type: "string" },
+    port: { type: "string" },
+    db: { type: "string" },
   },
 });
 
@@ -70,6 +72,14 @@ async function main() {
       await migrate(process.cwd());
       break;
     }
+    case "serve": {
+      const { serve } = await import("./commands/serve.js");
+      await serve(process.cwd(), {
+        port: values.port ? parseInt(values.port, 10) : undefined,
+        db: values.db,
+      });
+      break;
+    }
     case "benchmark": {
       const subCmd = rest[0];
       if (subCmd === "doctor") {
@@ -86,6 +96,14 @@ async function main() {
           sample: values.sample ? parseInt(values.sample, 10) : undefined,
           out: values.out,
         });
+      } else if (subCmd === "promote") {
+        const { benchmarkPromote } = await import("./commands/benchmark-promote.js");
+        const resultsDir = rest[1];
+        if (!resultsDir) {
+          console.error("Usage: sensei benchmark promote <results-dir>");
+          process.exit(1);
+        }
+        await benchmarkPromote(resultsDir, process.cwd());
       } else {
         console.error(`Unknown benchmark subcommand: ${subCmd ?? "(none)"}`);
         process.exit(1);
@@ -106,6 +124,10 @@ Commands:
   sensei migrate                Migrate agents/ folder to .index/checkpoints/
   sensei benchmark doctor <input-dir> <output-name> [--template <path>] [--examples <dir>] [--sample N] [--out <dir>]
                                 Run 3-strategy doc conversion benchmark
+  sensei benchmark promote <results-dir>
+                                Review benchmark scores, capture preference, submit telemetry
+  sensei serve [--port 7744] [--db <path>]
+                                Start local telemetry report receiver
 `);
   }
 }

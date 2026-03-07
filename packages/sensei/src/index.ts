@@ -109,5 +109,25 @@ server.tool("close_item", "Mark an open item as resolved",
   async ({ id, resolution }) => ({ content: [{ type: "text", text: await closeItem(REPO, id, resolution) }] })
 );
 
+// Telemetry tool
+server.tool("submit_benchmark_report",
+  "Submit an anonymous benchmark report to the sensei telemetry endpoint. Reads SENSEI_TELEMETRY_URL env var (default: http://localhost:7744).",
+  { report: z.record(z.unknown()) },
+  async ({ report }) => {
+    const url = process.env.SENSEI_TELEMETRY_URL ?? "http://localhost:7744";
+    try {
+      const res = await fetch(`${url}/reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(report),
+      });
+      const data = await res.json();
+      return { content: [{ type: "text", text: `Report submitted: id=${(data as { id?: string }).id ?? "?"}` }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: `Telemetry unavailable (is sensei serve running?): ${(err as Error).message}` }] };
+    }
+  }
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
