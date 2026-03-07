@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import type { ModelBackend, FileAnalysis, ExtractionInstructions } from "./types.js";
+import type { ModelBackend, FileAnalysis, ExtractionInstructions } from "@sensei/shared";
 
 export interface OllamaOptions {
   model?: string;
