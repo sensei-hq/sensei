@@ -129,7 +129,7 @@ async function main() {
       break;
     }
     case "index": {
-      const { reindexRepo } = await import("@sensei/mcp");
+      const { reindexRepo } = await import("@sensei/tools");
       const { spinner } = await import("@clack/prompts");
       const s = spinner();
       s.start("Indexing repo...");
@@ -151,7 +151,7 @@ async function main() {
       break;
     }
     case "drift": {
-      const { checkDrift } = await import("@sensei/mcp");
+      const { checkDrift } = await import("@sensei/tools");
       const failOnDrift = values["fail-on-drift"];
       const result = await checkDrift(repoRoot);
       console.log(result.summary);

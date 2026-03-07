@@ -13,7 +13,7 @@
     "test:watch": "bunx vitest"
   },
   "dependencies": {
-    "@sensei/mcp": "workspace:*",
+    "@sensei/tools": "workspace:*",
     "@sensei/server": "workspace:*",
     "@sensei/shared": "workspace:*",
     "@anthropic-ai/sdk": "^0.78.0",
