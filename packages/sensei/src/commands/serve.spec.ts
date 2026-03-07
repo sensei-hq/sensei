@@ -12,11 +12,12 @@ describe("createReportServer", () => {
   afterAll(() => server?.stop());
 
   it("returns health ok", async () => {
-    server = await createReportServer({ port: PORT, dbPath: DB_PATH, isAvailableFn: async () => false });
+    server = await createReportServer({ port: PORT, dbPath: DB_PATH, isAvailableFn: async () => ({ ollamaRunning: false, ollamaModel: false }) });
     const res = await fetch(`http://localhost:${PORT}/health`);
     const body = await res.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(body.ollamaRunning).toBe(false);
+    expect(body.ollamaModel).toBe(false);
     expect(body.backend).toBe("none");
   });
 
@@ -90,13 +91,14 @@ describe("POST /analyze", () => {
 
 describe("GET /health (extended)", () => {
   it("includes ollamaRunning field", async () => {
-    const { stop, port } = await createReportServer({ port: 17748, isAvailableFn: async () => false });
+    const { stop, port } = await createReportServer({ port: 17748, isAvailableFn: async () => ({ ollamaRunning: false, ollamaModel: false }) });
     try {
       const res = await fetch(`http://localhost:${port}/health`);
       const data = await res.json() as Record<string, unknown>;
       expect(res.status).toBe(200);
       expect(data.ok).toBe(true);
       expect(data.ollamaRunning).toBe(false);
+      expect(data.ollamaModel).toBe(false);
       expect(data.backend).toBe("none");
     } finally {
       stop();

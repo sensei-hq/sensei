@@ -10,7 +10,7 @@ export interface ServeOptions {
   port?: number;
   dbPath?: string;
   repoPath?: string;
-  isAvailableFn?: () => Promise<boolean>;  // injectable for tests
+  isAvailableFn?: () => Promise<{ ollamaRunning: boolean; ollamaModel: boolean }>;  // injectable for tests
 }
 
 export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void; port: number }> {
@@ -34,9 +34,12 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
       const url = new URL(req.url);
 
       if (req.method === "GET" && url.pathname === "/health") {
-        const checkFn = opts.isAvailableFn ?? (() => new OllamaBackend().isAvailable());
-        const ollamaRunning = await checkFn();
-        return Response.json({ ok: true, backend: ollamaRunning ? "ollama" : "none", ollamaRunning });
+        const checkFn = opts.isAvailableFn ?? (async () => {
+          const s = await checkSystemRequirements();
+          return { ollamaRunning: s.ollamaRunning, ollamaModel: s.ollamaModel };
+        });
+        const { ollamaRunning, ollamaModel } = await checkFn();
+        return Response.json({ ok: true, backend: ollamaRunning ? "ollama" : "none", ollamaRunning, ollamaModel });
       }
 
       if (req.method === "POST" && url.pathname === "/reports") {
