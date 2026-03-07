@@ -7,7 +7,7 @@ const TMP = "/tmp/sensei-test-index-reader";
 
 beforeEach(() => {
   mkdirSync(join(TMP, ".index"), { recursive: true });
-  writeFileSync(join(TMP, ".llmspec.yaml"), `
+  writeFileSync(join(TMP, ".index/llmspec.yaml"), `
 project: test-app
 version: 1.0.0
 description: A test project
@@ -36,7 +36,7 @@ describe("readLlmSpec", () => {
   });
 
   it("throws if .llmspec.yaml missing", async () => {
-    await expect(readLlmSpec("/nonexistent")).rejects.toThrow("No .llmspec.yaml found");
+    await expect(readLlmSpec("/nonexistent")).rejects.toThrow("No .index/llmspec.yaml found");
   });
 });
 
