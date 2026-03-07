@@ -118,8 +118,8 @@ export async function reindexRepo(
 
     if (!needsExtraction) {
       if (changedFiles.size > 0) {
-        // Git mode: process only files in git diff
-        needsExtraction = changedFiles.has(file);
+        // In git diff mode, still extract files not yet in symbol map
+        needsExtraction = changedFiles.has(file) || !(file in existingSymbolMap);
       } else {
         // Mtime fallback
         const stored = existingDocIndex?.files[file];
@@ -135,9 +135,10 @@ export async function reindexRepo(
     if (needsExtraction) {
       const content = await readFile(join(repoPath, file), "utf-8");
       const exports = extractExports(content);
-      if (exports.L0.length > 0) {
+      const result = exports.L0.length > 0 ? exports : extractHeuristic(content, file);
+      if (result.L0.length > 0) {
         const isNew = !(file in existingSymbolMap);
-        symbolMap[file] = exports;
+        symbolMap[file] = result;
         if (isNew) added++; else updated++;
       }
     } else {
@@ -154,7 +155,8 @@ export async function reindexRepo(
 
     if (!needsExtraction) {
       if (changedFiles.size > 0) {
-        needsExtraction = changedFiles.has(file);
+        // In git diff mode, still extract files not yet in symbol map
+        needsExtraction = changedFiles.has(file) || !(file in existingSymbolMap);
       } else {
         const stored = existingDocIndex?.files[file];
         if (!stored) {
@@ -337,17 +339,22 @@ export function extractExports(content: string): { L0: string[]; L1: string[]; L
     let j = i - 1;
     while (j >= 0 && lines[j].trim() === "") j--;
 
-    if (j >= 0 && lines[j].trim() === "*/") {
-      j--; // skip the closing */ line
+    let description = "";
+    if (j >= 0 && /^\/\*\*.*\*\/\s*$/.test(lines[j].trim())) {
+      // Single-line JSDoc: /** description */
+      description = lines[j].replace(/^\s*\/\*\*\s*/, "").replace(/\s*\*\/\s*$/, "").trim().slice(0, 120);
+    } else if (j >= 0 && lines[j].trim() === "*/") {
+      // Multi-line JSDoc: last line is */
+      j--;
       const docLines: string[] = [];
       while (j >= 0 && !lines[j].includes("/**")) {
         const stripped = lines[j].replace(/^\s*\*\s?/, "").trim();
         if (stripped && !stripped.startsWith("@")) docLines.unshift(stripped);
         j--;
       }
-      const description = docLines.join(" ").trim().slice(0, 120);
-      if (description) L1.push(`${sig} — ${description}`);
+      description = docLines.join(" ").trim().slice(0, 120);
     }
+    L1.push(description ? `// ${description}\n// ${sig}` : `// ${sig}`);
   }
 
   return { L0, L1, L2: [] };
@@ -362,12 +369,35 @@ export function extractMarkdownSymbols(content: string, filename: string): { L0:
   const firstPara = bodyLines.slice(0, 3).join(" ").replace(/\s+/g, " ").trim().slice(0, 150);
   const l0Entry = firstPara ? `${h1} — ${firstPara}` : h1;
 
-  // L1: H2 and H3 headings as section outline
-  const l1 = lines
-    .filter(l => /^#{2,3} /.test(l))
-    .map(l => l.trim());
+  // L1: L0 prefixed with //, then H2/H3 section headings prefixed with //
+  const sections = lines.filter(l => /^#{2,3} /.test(l)).map(l => `// ${l.trim()}`);
+  const l1 = [`// ${l0Entry}`, ...sections];
 
   return { L0: [l0Entry], L1: l1, L2: [] };
+}
+
+export function extractHeuristic(content: string, filename: string): { L0: string[]; L1: string[]; L2: string[] } {
+  const L0: string[] = [];
+  const ext = filename.split(".").at(-1) ?? "";
+  const lines = content.split("\n");
+
+  for (const line of lines) {
+    let m: RegExpExecArray | null = null;
+    if (["ts", "tsx", "js", "jsx"].includes(ext)) {
+      m = /^(?:async\s+)?function\s+\w[^({]*/.exec(line)
+        ?? /^(?:const|let)\s+\w+\s*=\s*(?:async\s*)?\(/.exec(line);
+    } else if (ext === "py") {
+      m = /^(?:async\s+)?def\s+\w[^:]*:/.exec(line)
+        ?? /^class\s+\w[^:]*:/.exec(line);
+    } else if (ext === "go") {
+      m = /^func\s+(?:\(\w[^)]*\)\s+)?\w[^({]*/.exec(line);
+    } else if (ext === "rs") {
+      m = /^(?:pub\s+(?:async\s+)?)?fn\s+\w[^({]*/.exec(line);
+    }
+    if (m) L0.push(m[0].replace(/\s*\{.*/, "").trim());
+  }
+
+  return { L0, L1: L0.map(s => `// ${s}`), L2: [] };
 }
 
 function formatStack(stack: Record<string, string[]>): string {

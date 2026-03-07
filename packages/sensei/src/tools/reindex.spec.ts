@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { reindexRepo } from "./reindex.js";
+import { reindexRepo, extractExports, extractMarkdownSymbols, extractHeuristic } from "./reindex.js";
 
 const TMP = "/tmp/sensei-test-reindex";
 
@@ -110,5 +110,90 @@ describe("reindexRepo", () => {
     await reindexRepo(TMP);
     const t = JSON.parse(readFileSync(join(TMP, ".index/traceability.json"), "utf-8"));
     expect(t["docs/design.md"]).toContain("src/index.ts");
+  });
+
+  it("includes markdown files in symbol map", async () => {
+    await reindexRepo(TMP);
+    const map = JSON.parse(readFileSync(join(TMP, ".index/symbol-map.json"), "utf-8"));
+    expect(map["README.md"]).toBeDefined();
+    expect(map["README.md"].L0[0]).toContain("Test App");
+  });
+
+  it("indexes markdown files not in git diff on incremental run", async () => {
+    // Simulate a repo that was indexed before markdown support was added:
+    // doc-index exists but symbol map has no README.md entry
+    mkdirSync(join(TMP, ".index"), { recursive: true });
+    writeFileSync(join(TMP, ".index/doc-index.json"), JSON.stringify({ files: { "README.md": { mtime: Date.now(), size: 100 } } }));
+    writeFileSync(join(TMP, ".index/symbol-map.json"), JSON.stringify({}));
+    const summary = await reindexRepo(TMP);
+    const map = JSON.parse(readFileSync(join(TMP, ".index/symbol-map.json"), "utf-8"));
+    expect(map["README.md"]).toBeDefined();
+  });
+});
+
+describe("extractExports", () => {
+  it("L1 is L0 prefixed with //", () => {
+    const { L0, L1 } = extractExports("export function foo(a: string): void {}");
+    expect(L0).toEqual(["export function foo(a: string): void"]);
+    expect(L1[0]).toBe("// export function foo(a: string): void");
+  });
+
+  it("L1 includes JSDoc description before signature", () => {
+    const src = `/** Does the thing */\nexport function foo(): void {}`;
+    const { L1 } = extractExports(src);
+    expect(L1[0]).toContain("Does the thing");
+    expect(L1[0]).toContain("// export function foo");
+  });
+
+  it("every L0 entry has a matching L1 entry", () => {
+    const src = `export function a(): void {}\nexport function b(): void {}`;
+    const { L0, L1 } = extractExports(src);
+    expect(L1.length).toBe(L0.length);
+  });
+});
+
+describe("extractMarkdownSymbols", () => {
+  it("L0 is title — summary", () => {
+    const { L0 } = extractMarkdownSymbols("# My Doc\n\nThis doc explains X.", "my-doc.md");
+    expect(L0[0]).toBe("My Doc — This doc explains X.");
+  });
+
+  it("L1 is L0 prefixed with //", () => {
+    const { L0, L1 } = extractMarkdownSymbols("# My Doc\n\nThis doc explains X.", "my-doc.md");
+    expect(L1[0]).toBe(`// ${L0[0]}`);
+  });
+
+  it("L1 includes section headings prefixed with //", () => {
+    const { L1 } = extractMarkdownSymbols("# Doc\n\n## Setup\n\n## Usage", "doc.md");
+    expect(L1).toContain("// ## Setup");
+    expect(L1).toContain("// ## Usage");
+  });
+});
+
+describe("extractHeuristic", () => {
+  it("extracts non-exported TS functions", () => {
+    const { L0 } = extractHeuristic("function helper(x: number): string {}", "util.ts");
+    expect(L0[0]).toContain("function helper");
+  });
+
+  it("extracts Python defs and classes", () => {
+    const { L0 } = extractHeuristic("def process(data):\n    pass\nclass Handler:\n    pass", "handler.py");
+    expect(L0).toContain("def process(data):");
+    expect(L0).toContain("class Handler:");
+  });
+
+  it("extracts Go functions", () => {
+    const { L0 } = extractHeuristic("func ProcessRequest(w http.ResponseWriter, r *http.Request) {}", "server.go");
+    expect(L0[0]).toContain("func ProcessRequest");
+  });
+
+  it("extracts Rust functions", () => {
+    const { L0 } = extractHeuristic("pub fn handle(req: Request) -> Response {}", "handler.rs");
+    expect(L0[0]).toContain("fn handle");
+  });
+
+  it("L1 is L0 prefixed with //", () => {
+    const { L0, L1 } = extractHeuristic("function foo(): void {}", "util.ts");
+    expect(L1[0]).toBe(`// ${L0[0]}`);
   });
 });
