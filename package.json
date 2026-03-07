@@ -6,6 +6,6 @@
     "build": "bun run --filter='*' build",
     "test": "bun run --filter='*' test",
     "test:e2e": "bun run --filter='*' test:e2e",
-    "dev": "bun run --filter='sensei' dev"
+    "dev": "bun run --filter='@sensei/cli' dev"
   }
 }
