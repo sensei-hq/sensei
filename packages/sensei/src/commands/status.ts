@@ -1,6 +1,6 @@
 import { intro, outro, note, log } from "@clack/prompts";
 import { existsSync, readFileSync } from "fs";
-import { checkDrift } from "../tools/drift.js";
+import { checkDrift } from "@sensei/mcp";
 import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 export async function status(cwd: string): Promise<void> {

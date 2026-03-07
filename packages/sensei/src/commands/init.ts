@@ -1,5 +1,5 @@
 import { intro, outro, spinner, note, confirm, log, isCancel } from "@clack/prompts";
-import { reindexRepo } from "../tools/reindex.js";
+import { reindexRepo } from "@sensei/mcp";
 import { checkSystemRequirements, OLLAMA_MODEL, OLLAMA_MODEL_SIZE_GB, OLLAMA_BASE_URL } from "@sensei/server";
 import type { SetupStatus } from "@sensei/shared";
 

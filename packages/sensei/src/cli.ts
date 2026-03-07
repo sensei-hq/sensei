@@ -115,10 +115,12 @@ async function main() {
         process.exit(1);
       }
       const { setupMcp } = await import("./commands/setup.js");
-      // Derive dist/index.js path from this script's location
-      const cliPath = new URL(import.meta.url).pathname;
-      const indexJsPath = cliPath.replace(/cli\.js$/, "index.js");
-      await setupMcp(repoRoot, indexJsPath);
+      const { createRequire } = await import("module");
+      const { dirname: _dirname, join: _join } = await import("path");
+      const _require = createRequire(import.meta.url);
+      const mcpPkgPath = _require.resolve("@sensei/mcp/package.json");
+      const mcpIndexJs = _join(_dirname(mcpPkgPath), "dist", "index.js");
+      await setupMcp(repoRoot, mcpIndexJs);
       break;
     }
     case "status": {
@@ -127,7 +129,7 @@ async function main() {
       break;
     }
     case "index": {
-      const { reindexRepo } = await import("./tools/reindex.js");
+      const { reindexRepo } = await import("@sensei/mcp");
       const { spinner } = await import("@clack/prompts");
       const s = spinner();
       s.start("Indexing repo...");
@@ -149,7 +151,7 @@ async function main() {
       break;
     }
     case "drift": {
-      const { checkDrift } = await import("./tools/drift.js");
+      const { checkDrift } = await import("@sensei/mcp");
       const failOnDrift = values["fail-on-drift"];
       const result = await checkDrift(repoRoot);
       console.log(result.summary);
