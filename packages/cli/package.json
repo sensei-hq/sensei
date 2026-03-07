@@ -1,13 +1,13 @@
 {
-  "name": "sensei",
+  "name": "@sensei/cli",
   "version": "0.1.0",
   "type": "module",
   "bin": {
     "sensei": "./dist/cli.js"
   },
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
-    "build": "bun build src/index.ts src/cli.ts --outdir dist --target bun && sed -i '' '1s|#!/usr/bin/env node|#!/usr/bin/env bun|' dist/cli.js",
+    "dev": "bun run --watch src/cli.ts",
+    "build": "bun build src/cli.ts --outdir dist --target bun && sed -i '' '1s|#!/usr/bin/env node|#!/usr/bin/env bun|' dist/cli.js",
     "test": "bunx vitest run",
     "test:e2e": "bunx playwright test",
     "test:watch": "bunx vitest"
