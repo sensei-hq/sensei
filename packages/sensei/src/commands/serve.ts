@@ -11,6 +11,7 @@ export interface ServeOptions {
   dbPath?: string;
   repoPath?: string;
   isAvailableFn?: () => Promise<{ ollamaRunning: boolean; ollamaModel: boolean }>;  // injectable for tests
+  ollamaBackendFn?: () => OllamaBackend;  // injectable for tests
 }
 
 export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void; port: number }> {
@@ -58,8 +59,12 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
       }
 
       if (req.method === "GET" && url.pathname === "/setup/status") {
-        const status = await checkSystemRequirements();
-        return Response.json(status);
+        try {
+          const status = await checkSystemRequirements();
+          return Response.json(status);
+        } catch {
+          return Response.json({ ok: false, error: "System check failed" }, { status: 500 });
+        }
       }
 
       if (req.method === "POST" && url.pathname === "/setup/ollama") {
@@ -76,7 +81,6 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
               });
               if (!res.body) {
                 send({ status: "error", message: "No response body from Ollama pull endpoint" });
-                controller.close();
                 return;
               }
               const reader = res.body.getReader();
@@ -91,35 +95,38 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
               send({ status: "done" });
             } catch (err) {
               send({ status: "error", message: (err as Error).message });
+            } finally {
+              controller.close();
             }
-            controller.close();
           },
         });
         return new Response(stream, { headers: { "Content-Type": "application/x-ndjson" } });
       }
 
       if (req.method === "POST" && url.pathname === "/analyze") {
+        let body: { filePath?: string; content?: string; instructions?: Record<string, unknown> };
         try {
-          const body = await req.json() as {
-            filePath?: string;
-            content?: string;
-            instructions?: Record<string, unknown>;
-          };
-          if (!body.filePath || typeof body.content !== "string") {
-            return Response.json({ ok: false, error: "filePath and content are required" }, { status: 400 });
-          }
-          const ollama = new OllamaBackend();
+          body = await req.json() as typeof body;
+        } catch {
+          return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+        }
+        if (!body.filePath || typeof body.content !== "string") {
+          return Response.json({ ok: false, error: "filePath and content are required" }, { status: 400 });
+        }
+        try {
+          const backendFn = opts.ollamaBackendFn ?? (() => new OllamaBackend());
+          const ollama = backendFn();
           const available = await ollama.isAvailable();
           if (!available) {
             return Response.json(makeFallbackAnalysis(body.filePath));
           }
           const analysis = await ollama.extract(body.content, {
-            filePath: body.filePath,
             ...(body.instructions ?? {}),
+            filePath: body.filePath,  // always wins over instructions spread
           });
           return Response.json(analysis);
-        } catch {
-          return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+        } catch (err) {
+          return Response.json({ ok: false, error: "Extraction failed" }, { status: 500 });
         }
       }
 
