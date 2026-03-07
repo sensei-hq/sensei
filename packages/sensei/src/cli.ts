@@ -35,9 +35,6 @@ if (repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(path
   console.error("sensei: could not detect repo root. Run sensei from inside a git repo or a directory with package.json.");
   process.exit(1);
 }
-if (repoRoot !== _cwd) {
-  console.error(`sensei: using repo root ${repoRoot}`);
-}
 
 const HELP = `sensei — AI skills toolchain
 
@@ -51,7 +48,7 @@ Commands:
   index                    Re-index the current repo
   drift                    Check for doc drift
   doctor <path>            Reformat docs to match canonical templates
-  migrate                  Migrate agents/ folder to .index/checkpoints/
+  migrate                  Migrate agents/ folder to .sensei/checkpoints/
   benchmark doctor         Run 3-strategy doc conversion benchmark
   benchmark inspect        Switch to a benchmark branch for inspection
   benchmark promote        Merge chosen strategy branch, submit telemetry

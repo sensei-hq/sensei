@@ -6,8 +6,8 @@ import { readLlmSpec, readSymbolMap, readIndexFile } from "./index-reader.js";
 const TMP = "/tmp/sensei-test-index-reader";
 
 beforeEach(() => {
-  mkdirSync(join(TMP, ".index"), { recursive: true });
-  writeFileSync(join(TMP, ".index/llmspec.yaml"), `
+  mkdirSync(join(TMP, ".sensei"), { recursive: true });
+  writeFileSync(join(TMP, ".sensei/llmspec.yaml"), `
 project: test-app
 version: 1.0.0
 description: A test project
@@ -16,14 +16,14 @@ entry_points:
   - path: src/index.ts
     role: server entry
 `);
-  writeFileSync(join(TMP, ".index/symbol-map.json"), JSON.stringify({
+  writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({
     "src/auth.ts": {
       L0: ["login(email: string, password: string): Promise<User>"],
       L1: ["user = login(email, password)\n// returns: Promise<User | null>"],
       L2: ["validate credentials → fetch user → generate token → return user"],
     }
   }));
-  writeFileSync(join(TMP, ".index/patterns.md"), "# Patterns\n\n- Use repository pattern for DB access");
+  writeFileSync(join(TMP, ".sensei/patterns.md"), "# Patterns\n\n- Use repository pattern for DB access");
 });
 
 afterEach(() => rmSync(TMP, { recursive: true, force: true }));
@@ -36,7 +36,7 @@ describe("readLlmSpec", () => {
   });
 
   it("throws if .llmspec.yaml missing", async () => {
-    await expect(readLlmSpec("/nonexistent")).rejects.toThrow("No .index/llmspec.yaml found");
+    await expect(readLlmSpec("/nonexistent")).rejects.toThrow("No .sensei/llmspec.yaml found");
   });
 });
 

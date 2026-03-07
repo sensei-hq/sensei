@@ -14,7 +14,7 @@ export async function migrate(cwd: string): Promise<void> {
     return;
   }
 
-  await mkdir(join(cwd, ".index/checkpoints/sessions"), { recursive: true });
+  await mkdir(join(cwd, ".sensei/checkpoints/sessions"), { recursive: true });
 
   const s = spinner();
   s.start("Reading agents/ files...");
@@ -78,7 +78,7 @@ export async function migrate(cwd: string): Promise<void> {
       ...migrated,
       "",
       "agents/ archived to agents/_archived/",
-      "Review .index/checkpoints/ to verify parity",
+      "Review .sensei/checkpoints/ to verify parity",
       "Delete agents/_archived/ when satisfied",
       "",
       "Resume with: get_session_context()",

@@ -25,10 +25,10 @@ import {
 beforeEach(() => {
   mkdirSync(join(TMP, "requirements"), { recursive: true });
   mkdirSync(join(TMP, "examples"), { recursive: true });
-  mkdirSync(join(TMP, ".index"), { recursive: true });
+  mkdirSync(join(TMP, ".sensei"), { recursive: true });
   writeFileSync(join(TMP, "requirements/01-core.md"), "# Core\nThe core module handles auth.\n");
   writeFileSync(join(TMP, "examples/01-example.md"), "# Example\n## Features\n### Login\nTODO\n## Status\n| Feature | Status |\n|---|---|\n");
-  writeFileSync(join(TMP, ".index/symbol-map.json"), JSON.stringify({
+  writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({
     "docs/requirements/01-core.md": { L0: ["# Core"], L1: ["handles auth"], L2: [] },
     "src/other/file.ts": { L0: ["export function foo"], L1: ["does other things"], L2: [] },
   }));
@@ -46,7 +46,7 @@ describe("buildOutlineIndex", () => {
 
 describe("buildTargetedIndexPrompt", () => {
   it("falls back to file outline when no symbol-map found", () => {
-    rmSync(join(TMP, ".index/symbol-map.json"), { force: true });
+    rmSync(join(TMP, ".sensei/symbol-map.json"), { force: true });
     const prompt = buildTargetedIndexPrompt({
       inputDir: join(TMP, "requirements"),
       repoPath: TMP,

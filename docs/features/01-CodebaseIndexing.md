@@ -15,9 +15,9 @@ Feature: Repo Scanner
     Given a code repository with source files, package.json, and docs
     When the agent calls reindex_repo()
     Then a .index/ directory is created with structured artifacts
-    And a .llmspec.yaml is created at the repo root
+    And a .llmspec.yaml is created in .index/
     And a CLAUDE.md is created at the repo root if one does not exist
-    And a llms.txt is created at the repo root
+    And a llms.txt is created in .index/
 
   Scenario: Indexer extracts tech stack from package.json
     Given a repo with package.json listing react and express

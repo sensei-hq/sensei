@@ -6,7 +6,7 @@ import { checkDrift } from "../tools/drift.js";
 export async function status(cwd: string): Promise<void> {
   intro("sensei status");
 
-  const indexDir = join(cwd, ".index");
+  const indexDir = join(cwd, ".sensei");
   const docIndexPath = join(indexDir, "doc-index.json");
   const symbolMapPath = join(indexDir, "symbol-map.json");
 

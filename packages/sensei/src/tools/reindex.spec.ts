@@ -25,45 +25,45 @@ beforeEach(() => {
 afterEach(() => rmSync(TMP, { recursive: true, force: true }));
 
 describe("reindexRepo", () => {
-  it("creates .index directory", async () => {
+  it("creates .sensei directory", async () => {
     await reindexRepo(TMP);
-    expect(existsSync(join(TMP, ".index"))).toBe(true);
+    expect(existsSync(join(TMP, ".sensei"))).toBe(true);
   });
 
   it("writes symbol-map.json with L0 entries", async () => {
     await reindexRepo(TMP);
-    const map = JSON.parse(readFileSync(join(TMP, ".index/symbol-map.json"), "utf-8"));
+    const map = JSON.parse(readFileSync(join(TMP, ".sensei/symbol-map.json"), "utf-8"));
     expect(Object.keys(map).length).toBeGreaterThan(0);
   });
 
   it("writes stack.md with detected stack", async () => {
     await reindexRepo(TMP);
-    const stack = readFileSync(join(TMP, ".index/stack.md"), "utf-8");
+    const stack = readFileSync(join(TMP, ".sensei/stack.md"), "utf-8");
     expect(stack).toContain("express");
   });
 
   it("writes shortcuts.md from package.json scripts", async () => {
     await reindexRepo(TMP);
-    const shortcuts = readFileSync(join(TMP, ".index/shortcuts.md"), "utf-8");
+    const shortcuts = readFileSync(join(TMP, ".sensei/shortcuts.md"), "utf-8");
     expect(shortcuts).toContain("bun src/index.ts");
   });
 
-  it("creates .index/llmspec.yaml template if missing", async () => {
+  it("creates .sensei/llmspec.yaml template if missing", async () => {
     await reindexRepo(TMP);
-    expect(existsSync(join(TMP, ".index/llmspec.yaml"))).toBe(true);
+    expect(existsSync(join(TMP, ".sensei/llmspec.yaml"))).toBe(true);
   });
 
-  it("does not overwrite existing .index/llmspec.yaml", async () => {
-    mkdirSync(join(TMP, ".index"), { recursive: true });
-    writeFileSync(join(TMP, ".index/llmspec.yaml"), "project: my-custom-project\n");
+  it("does not overwrite existing .sensei/llmspec.yaml", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), "project: my-custom-project\n");
     await reindexRepo(TMP);
-    const content = readFileSync(join(TMP, ".index/llmspec.yaml"), "utf-8");
+    const content = readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8");
     expect(content).toContain("my-custom-project");
   });
 
   it("writes doc-index.json with new schema (files key)", async () => {
     await reindexRepo(TMP);
-    const index = JSON.parse(readFileSync(join(TMP, ".index/doc-index.json"), "utf-8"));
+    const index = JSON.parse(readFileSync(join(TMP, ".sensei/doc-index.json"), "utf-8"));
     expect(index.files["README.md"]).toHaveProperty("mtime");
     expect(index.files["README.md"]).toHaveProperty("size");
   });
@@ -90,7 +90,7 @@ describe("reindexRepo", () => {
     writeFileSync(join(TMP, "src/new.ts"), "export function newFn(): void {}\n");
     const summary2 = await reindexRepo(TMP);
     expect(summary2.added).toBe(1);
-    const map = JSON.parse(readFileSync(join(TMP, ".index/symbol-map.json"), "utf-8"));
+    const map = JSON.parse(readFileSync(join(TMP, ".sensei/symbol-map.json"), "utf-8"));
     expect(map["src/new.ts"]).toBeDefined();
   });
 
@@ -103,20 +103,20 @@ describe("reindexRepo", () => {
 
   it("writes traceability.json", async () => {
     await reindexRepo(TMP);
-    expect(existsSync(join(TMP, ".index/traceability.json"))).toBe(true);
+    expect(existsSync(join(TMP, ".sensei/traceability.json"))).toBe(true);
   });
 
   it("traceability: auto-detects src/ references in docs", async () => {
     mkdirSync(join(TMP, "docs"), { recursive: true });
     writeFileSync(join(TMP, "docs/design.md"), "See src/index.ts for details.");
     await reindexRepo(TMP);
-    const t = JSON.parse(readFileSync(join(TMP, ".index/traceability.json"), "utf-8"));
+    const t = JSON.parse(readFileSync(join(TMP, ".sensei/traceability.json"), "utf-8"));
     expect(t["docs/design.md"]).toContain("src/index.ts");
   });
 
   it("includes markdown files in symbol map", async () => {
     await reindexRepo(TMP);
-    const map = JSON.parse(readFileSync(join(TMP, ".index/symbol-map.json"), "utf-8"));
+    const map = JSON.parse(readFileSync(join(TMP, ".sensei/symbol-map.json"), "utf-8"));
     expect(map["README.md"]).toBeDefined();
     expect(map["README.md"].L0[0]).toContain("Test App");
   });
@@ -124,11 +124,11 @@ describe("reindexRepo", () => {
   it("indexes markdown files not in git diff on incremental run", async () => {
     // Simulate a repo that was indexed before markdown support was added:
     // doc-index exists but symbol map has no README.md entry
-    mkdirSync(join(TMP, ".index"), { recursive: true });
-    writeFileSync(join(TMP, ".index/doc-index.json"), JSON.stringify({ files: { "README.md": { mtime: Date.now(), size: 100 } } }));
-    writeFileSync(join(TMP, ".index/symbol-map.json"), JSON.stringify({}));
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/doc-index.json"), JSON.stringify({ files: { "README.md": { mtime: Date.now(), size: 100 } } }));
+    writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({}));
     const summary = await reindexRepo(TMP);
-    const map = JSON.parse(readFileSync(join(TMP, ".index/symbol-map.json"), "utf-8"));
+    const map = JSON.parse(readFileSync(join(TMP, ".sensei/symbol-map.json"), "utf-8"));
     expect(map["README.md"]).toBeDefined();
   });
 });

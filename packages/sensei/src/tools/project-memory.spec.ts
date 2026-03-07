@@ -9,12 +9,12 @@ import {
 const TMP = "/tmp/sensei-test-project-memory";
 
 beforeEach(() => {
-  mkdirSync(join(TMP, ".index/checkpoints/sessions"), { recursive: true });
-  writeFileSync(join(TMP, ".index/checkpoints/memory.yaml"),
+  mkdirSync(join(TMP, ".sensei/checkpoints/sessions"), { recursive: true });
+  writeFileSync(join(TMP, ".sensei/checkpoints/memory.yaml"),
     "version: 1\ndecisions: []\ncontext:\n  project: test-app\n  phase: v1\n");
-  writeFileSync(join(TMP, ".index/checkpoints/patterns.yaml"),
+  writeFileSync(join(TMP, ".sensei/checkpoints/patterns.yaml"),
     "version: 1\npatterns: []\n");
-  writeFileSync(join(TMP, ".index/checkpoints/open-items.yaml"),
+  writeFileSync(join(TMP, ".sensei/checkpoints/open-items.yaml"),
     "version: 1\nitems: []\n");
 });
 
@@ -28,7 +28,7 @@ describe("getSessionContext", () => {
   });
 
   it("falls back gracefully when no checkpoints exist", async () => {
-    rmSync(join(TMP, ".index/checkpoints"), { recursive: true });
+    rmSync(join(TMP, ".sensei/checkpoints"), { recursive: true });
     const result = await getSessionContext(TMP);
     expect(result).toContain("No session context");
   });
@@ -96,7 +96,7 @@ describe("checkpoint", () => {
 
   it("writes session archive file", async () => {
     await checkpoint(TMP, "Done.");
-    const sessions = readdirSync(join(TMP, ".index/checkpoints/sessions"));
+    const sessions = readdirSync(join(TMP, ".sensei/checkpoints/sessions"));
     expect(sessions.length).toBeGreaterThan(0);
   });
 
