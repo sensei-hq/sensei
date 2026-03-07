@@ -1,5 +1,5 @@
 import { intro, outro, spinner, note, confirm, isCancel } from "@clack/prompts";
-import { reindexRepo } from "@sensei/mcp";
+import { reindexRepo } from "@sensei/tools";
 import { existsSync } from "fs";
 import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
