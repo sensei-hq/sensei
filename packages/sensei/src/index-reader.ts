@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import yaml from "js-yaml";
-import type { LlmSpec, SymbolMap } from "./types.js";
-import { SENSEI_DIR, senseiPath } from "./constants.js";
+import type { LlmSpec, SymbolMap } from "@sensei/shared";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 export async function readLlmSpec(repoPath: string): Promise<LlmSpec> {
   const specPath = senseiPath(repoPath, "llmspec.yaml");

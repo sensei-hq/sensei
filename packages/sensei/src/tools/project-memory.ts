@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import yaml from "js-yaml";
-import { SENSEI_DIR } from "../constants.js";
+import { SENSEI_DIR } from "@sensei/shared";
 
 const CHECKPOINTS = `${SENSEI_DIR}/checkpoints`;
 

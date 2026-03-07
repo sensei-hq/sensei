@@ -2,11 +2,11 @@ import { readFileSync, existsSync, readdirSync } from "fs";
 import { readFile, mkdir, writeFile } from "fs/promises";
 import { join, relative, extname, dirname } from "path";
 import { intro, outro, spinner, note, log, confirm, isCancel } from "@clack/prompts";
-import type { SymbolMap } from "../types.js";
+import type { SymbolMap } from "@sensei/shared";
 import { callClaude } from "../claude.js";
 import { getCurrentBranch, isCleanWorkingTree, createAndCheckoutBranch, checkoutBranch, stageFiles, commitFiles, branchExists } from "../git.js";
 import { generateRunName } from "../names.js";
-import { SENSEI_DIR, senseiPath } from "../constants.js";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdir } from "fs/promises";
 import { dirname } from "path";
 import { intro, log } from "@clack/prompts";
-import { senseiPath } from "../constants.js";
+import { senseiPath } from "@sensei/shared";
 import { checkSystemRequirements, OLLAMA_BASE_URL, OLLAMA_MODEL } from "../model/system-check.js";
 import { OllamaBackend, makeFallbackAnalysis } from "../model/ollama-backend.js";
 

@@ -6,7 +6,7 @@ import { reindexRepo } from "./tools/reindex.js";
 import { loadContext, recommendNext } from "./tools/context.js";
 import { checkDrift } from "./tools/drift.js";
 import { checkpoint, getSessionContext, addDecision, addPattern, askQuestion, getOpenItems, closeItem } from "./tools/project-memory.js";
-import { SENSEI_DIR } from "./constants.js";
+import { SENSEI_DIR } from "@sensei/shared";
 
 const server = new McpServer({ name: "repo-index-server", version: "0.1.0" });
 const REPO = process.env.REPO_PATH ?? process.cwd();

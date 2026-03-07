@@ -5,7 +5,7 @@ import {
   branchExists, checkoutBranch, mergeBranch, deleteBranch, readFileFromBranch,
   stageFiles, commitFiles,
 } from "../git.js";
-import { SENSEI_DIR, senseiPath } from "../constants.js";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 // ── Pure helpers (exported for testing) ────────────────────────────────────────
 
