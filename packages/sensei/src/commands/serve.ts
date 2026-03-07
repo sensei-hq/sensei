@@ -3,13 +3,16 @@ import { mkdir } from "fs/promises";
 import { dirname } from "path";
 import { intro, log } from "@clack/prompts";
 import { senseiPath } from "../constants.js";
+import { checkSystemRequirements, OLLAMA_BASE_URL, OLLAMA_MODEL } from "../model/system-check.js";
+import { OllamaBackend, makeFallbackAnalysis } from "../model/ollama-backend.js";
 
 export interface ServeOptions {
   port?: number;
   dbPath?: string;
+  repoPath?: string;
 }
 
-export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void }> {
+export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void; port: number }> {
   const port = opts.port ?? 7744;
   const dbPath = opts.dbPath ?? senseiPath(".", "reports.db");
 
@@ -30,7 +33,9 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
       const url = new URL(req.url);
 
       if (req.method === "GET" && url.pathname === "/health") {
-        return Response.json({ ok: true });
+        const ollama = new OllamaBackend();
+        const ollamaRunning = await ollama.isAvailable();
+        return Response.json({ ok: true, backend: ollamaRunning ? "ollama" : "none", ollamaRunning });
       }
 
       if (req.method === "POST" && url.pathname === "/reports") {
@@ -48,11 +53,72 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         }
       }
 
+      if (req.method === "GET" && url.pathname === "/setup/status") {
+        const status = await checkSystemRequirements();
+        return Response.json(status);
+      }
+
+      if (req.method === "POST" && url.pathname === "/setup/ollama") {
+        const stream = new ReadableStream({
+          async start(controller) {
+            const send = (obj: unknown) =>
+              controller.enqueue(new TextEncoder().encode(JSON.stringify(obj) + "\n"));
+            try {
+              send({ status: "pulling", model: OLLAMA_MODEL });
+              const res = await fetch(`${OLLAMA_BASE_URL}/api/pull`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: OLLAMA_MODEL, stream: true }),
+              });
+              const reader = res.body!.getReader();
+              const decoder = new TextDecoder();
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                for (const line of decoder.decode(value).split("\n").filter(Boolean)) {
+                  try { send(JSON.parse(line)); } catch { /* skip malformed */ }
+                }
+              }
+              send({ status: "done" });
+            } catch (err) {
+              send({ status: "error", message: (err as Error).message });
+            }
+            controller.close();
+          },
+        });
+        return new Response(stream, { headers: { "Content-Type": "application/x-ndjson" } });
+      }
+
+      if (req.method === "POST" && url.pathname === "/analyze") {
+        try {
+          const body = await req.json() as {
+            filePath?: string;
+            content?: string;
+            instructions?: Record<string, unknown>;
+          };
+          if (!body.filePath || body.content === undefined) {
+            return Response.json({ ok: false, error: "filePath and content are required" }, { status: 400 });
+          }
+          const ollama = new OllamaBackend();
+          const available = await ollama.isAvailable();
+          if (!available) {
+            return Response.json(makeFallbackAnalysis(body.filePath));
+          }
+          const analysis = await ollama.extract(body.content, {
+            filePath: body.filePath,
+            ...(body.instructions ?? {}),
+          });
+          return Response.json(analysis);
+        } catch {
+          return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+        }
+      }
+
       return Response.json({ ok: false, error: "Not found" }, { status: 404 });
     },
   });
 
-  return { stop: () => server.stop() };
+  return { stop: () => server.stop(), port: server.port };
 }
 
 export async function serve(repoPath: string, opts: { port?: number; db?: string }): Promise<void> {
