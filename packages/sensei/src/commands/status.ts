@@ -1,17 +1,17 @@
 import { intro, outro, note, log } from "@clack/prompts";
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
 import { checkDrift } from "../tools/drift.js";
+import { SENSEI_DIR, senseiPath } from "../constants.js";
 
 export async function status(cwd: string): Promise<void> {
   intro("sensei status");
 
-  const indexDir = join(cwd, ".sensei");
-  const docIndexPath = join(indexDir, "doc-index.json");
-  const symbolMapPath = join(indexDir, "symbol-map.json");
+  const indexDir = senseiPath(cwd);
+  const docIndexPath = senseiPath(cwd, "doc-index.json");
+  const symbolMapPath = senseiPath(cwd, "symbol-map.json");
 
   if (!existsSync(indexDir)) {
-    log.warn("Not indexed. Run: sensei init");
+    log.warn(`Not indexed. Run: sensei init`);
     outro("Done.");
     return;
   }

@@ -2,8 +2,9 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import yaml from "js-yaml";
+import { SENSEI_DIR } from "../constants.js";
 
-const CHECKPOINTS = ".sensei/checkpoints";
+const CHECKPOINTS = `${SENSEI_DIR}/checkpoints`;
 
 interface Memory {
   version: number;

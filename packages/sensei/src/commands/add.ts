@@ -1,16 +1,16 @@
 import { intro, outro, spinner, note, confirm, isCancel } from "@clack/prompts";
 import { reindexRepo } from "../tools/reindex.js";
 import { existsSync } from "fs";
-import { join } from "path";
+import { SENSEI_DIR, senseiPath } from "../constants.js";
 
 export async function add(cwd: string): Promise<void> {
   intro("sensei add");
 
-  const alreadyIndexed = existsSync(join(cwd, ".sensei", "symbol-map.json"));
+  const alreadyIndexed = existsSync(senseiPath(cwd, "symbol-map.json"));
 
   if (alreadyIndexed) {
     const proceed = await confirm({
-      message: ".sensei/ already exists. Re-index and update artifacts?",
+      message: `${SENSEI_DIR}/ already exists. Re-index and update artifacts?`,
     });
     if (isCancel(proceed) || !proceed) {
       outro("Cancelled.");
@@ -30,7 +30,7 @@ export async function add(cwd: string): Promise<void> {
 
   note(
     [
-      `Edit .sensei/llmspec.yaml to declare doc coverage (docs[].covers[])`,
+      `Edit ${SENSEI_DIR}/llmspec.yaml to declare doc coverage (docs[].covers[])`,
       `Run: sensei hooks install --drift   to enable pre-commit drift check`,
     ].join("\n"),
     "Next steps"

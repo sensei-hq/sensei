@@ -5,6 +5,7 @@ import {
   branchExists, checkoutBranch, mergeBranch, deleteBranch, readFileFromBranch,
   stageFiles, commitFiles,
 } from "../git.js";
+import { SENSEI_DIR, senseiPath } from "../constants.js";
 
 // ── Pure helpers (exported for testing) ────────────────────────────────────────
 
@@ -54,7 +55,7 @@ export async function benchmarkPromote(runName: string, repoPath: string): Promi
   }
 
   // ── Read results JSON from branch a ─────────────────────────────────────────
-  const resultsFile = `.sensei/benchmark-${runName}.json`;
+  const resultsFile = `${SENSEI_DIR}/benchmark-${runName}.json`;
   let data: any;
   try {
     data = JSON.parse(readFileFromBranch(repoPath, branches.a, resultsFile));
