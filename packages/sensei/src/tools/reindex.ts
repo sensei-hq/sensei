@@ -31,6 +31,8 @@ export interface IndexSummary {
   updated: number;
   removed: number;
   unchanged: number;
+  skipped: number;   // scanned but no symbols found
+  total: number;     // total files scanned (code + markdown)
   forced: boolean;
 }
 
@@ -100,7 +102,7 @@ export async function reindexRepo(
 
   // Build updated symbol map
   const symbolMap: SymbolMap = { ...existingSymbolMap };
-  let added = 0, updated = 0, removed = 0, unchanged = 0;
+  let added = 0, updated = 0, removed = 0, unchanged = 0, skipped = 0;
 
   // Remove deleted files from symbol map
   for (const file of Object.keys(symbolMap)) {
@@ -140,6 +142,8 @@ export async function reindexRepo(
         const isNew = !(file in existingSymbolMap);
         symbolMap[file] = result;
         if (isNew) added++; else updated++;
+      } else {
+        skipped++;
       }
     } else {
       unchanged++;
@@ -226,7 +230,8 @@ export async function reindexRepo(
     generateClaudeMd(repoPath),
   ]);
 
-  return { added, updated, removed, unchanged, forced: force };
+  const total = added + updated + unchanged + skipped;
+  return { added, updated, removed, unchanged, skipped, total, forced: force };
 }
 
 async function buildTraceability(
