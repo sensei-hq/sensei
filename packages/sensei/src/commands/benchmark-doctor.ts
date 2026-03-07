@@ -4,7 +4,7 @@ import { join, relative, extname, dirname } from "path";
 import { intro, outro, spinner, note, log, confirm, isCancel } from "@clack/prompts";
 import type { SymbolMap } from "../types.js";
 import { callClaude } from "../claude.js";
-import { getCurrentBranch, isCleanWorkingTree, createAndCheckoutBranch, checkoutBranch, stageFiles, commitFiles } from "../git.js";
+import { getCurrentBranch, isCleanWorkingTree, createAndCheckoutBranch, checkoutBranch, stageFiles, commitFiles, branchExists } from "../git.js";
 import { generateRunName } from "../names.js";
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
@@ -353,6 +353,15 @@ export async function benchmarkDoctor(
 
   const winner = pickWinner(structA, judge.scoreA, structB, judge.scoreB, structC, judge.scoreC);
 
+  // ── Check no branches already exist ─────────────────────────────────────────
+  for (const branch of Object.values(branches)) {
+    if (branchExists(repoPath, branch)) {
+      log.error(`Branch already exists: ${branch}. Re-run to get a new run name.`);
+      outro("Aborted.");
+      return;
+    }
+  }
+
   // ── Build results data ───────────────────────────────────────────────────────
   function cleanPaths(s: string): string {
     return s.replaceAll(repoPath + "/", "").replaceAll(repoPath, "");
@@ -406,6 +415,7 @@ export async function benchmarkDoctor(
         c: { name: "Full repo index", prompt: cleanPaths(promptC), promptChars: promptC.length, promptLines: promptC.split("\n").length },
       },
       results: strategyResults,
+      judgeReasoning: judge.reasoning,
       userFeedback: null,
       promoted: null,
     },
@@ -459,7 +469,7 @@ export async function benchmarkDoctor(
     await mkdir(join(repoPath, ".sensei"), { recursive: true });
     await writeFile(senseiJsonPath, JSON.stringify(resultsData, null, 2), "utf-8");
 
-    stageFiles(repoPath, [targetDir, join(repoPath, ".sensei")]);
+    stageFiles(repoPath, [targetDir, senseiJsonPath]);
     commitFiles(repoPath, commitMsg);
 
     checkoutBranch(repoPath, baseBranch);

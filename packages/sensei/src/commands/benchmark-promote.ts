@@ -3,6 +3,7 @@ import { join } from "path";
 import { intro, outro, select, text, isCancel, note, log, confirm } from "@clack/prompts";
 import {
   branchExists, checkoutBranch, mergeBranch, deleteBranch, readFileFromBranch,
+  stageFiles, commitFiles,
 } from "../git.js";
 
 // ── Pure helpers (exported for testing) ────────────────────────────────────────
@@ -100,7 +101,9 @@ export async function benchmarkPromote(runName: string, repoPath: string): Promi
   log.info(
     `sensei will perform these git operations:\n` +
     `  git checkout ${baseBranch}\n` +
-    `  git merge ${chosenBranch}`
+    `  git merge ${chosenBranch}\n` +
+    `  git add ${resultsFile}\n` +
+    `  git commit -m "chore: record benchmark promotion ${runName} → <choice>"`
   );
   const okMerge = await confirm({ message: "Proceed with merge?" });
   if (isCancel(okMerge) || !okMerge) { outro("Cancelled."); return; }
@@ -118,6 +121,8 @@ export async function benchmarkPromote(runName: string, repoPath: string): Promi
     data.report.promoted = preferred;
   }
   await writeFile(join(repoPath, resultsFile), JSON.stringify(data, null, 2), "utf-8");
+  stageFiles(repoPath, [join(repoPath, resultsFile)]);
+  commitFiles(repoPath, `chore: record benchmark promotion ${runName} → ${preferred as string}`);
 
   // ── Submit telemetry ─────────────────────────────────────────────────────────
   const telemetryUrl = process.env.SENSEI_TELEMETRY_URL ?? "http://localhost:7744";
