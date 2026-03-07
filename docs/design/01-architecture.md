@@ -215,7 +215,21 @@ Symlinking means skills stay current with repo updates without reinstalling.
 
 | Question | Status |
 |---|---|
-| Incremental re-indexing: full rescan vs git-diff-based | Deferred — full rescan for V1, diff-based in V2 |
+| Incremental re-indexing: full rescan vs git-diff-based | Resolved — see `12-incremental-indexing.md` |
 | Multi-repo support: single MCP instance per repo vs shared | Deferred — per-repo for V1 |
-| L2 generation: pre-computed vs on-demand LLM summarisation | Deferred — placeholder for V1, LLM-generated in V2 |
+| L2 generation: pre-computed vs on-demand LLM summarisation | Resolved — local model approach, see `16-local-model-indexer.md` |
 | Benchmark runner: manual A/B vs automated test harness | Manual setup for V1 |
+
+---
+
+## Architecture Evolution
+
+This document describes the v1 architecture (single `packages/sensei/` package, CLI + MCP co-located).
+
+Subsequent design decisions that extend or supersede sections above:
+
+| Document | What it changes |
+|---|---|
+| [14-server-package](./14-server-package.md) | Splits into CLI + inference server + MCP packages; server-mediated model inference; local/org/cloud deployment |
+| [15-package-adapters](./15-package-adapters.md) | Adds folder-map artifact and glob-based package discovery layer above the symbol map |
+| [16-local-model-indexer](./16-local-model-indexer.md) | Replaces regex symbol extraction with local model inference (Ollama + ONNX) |
