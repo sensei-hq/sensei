@@ -6,11 +6,11 @@ import { checkDrift } from "./drift.js";
 const TMP = "/tmp/sensei-test-drift";
 
 function writeDocIndex(files: Record<string, { mtime: number; size: number }>) {
-  writeFileSync(join(TMP, ".index/doc-index.json"), JSON.stringify({ files }));
+  writeFileSync(join(TMP, ".sensei/doc-index.json"), JSON.stringify({ files }));
 }
 
 beforeEach(() => {
-  mkdirSync(join(TMP, ".index"), { recursive: true });
+  mkdirSync(join(TMP, ".sensei"), { recursive: true });
   mkdirSync(join(TMP, "docs"), { recursive: true });
   writeFileSync(join(TMP, "README.md"), "# App");
   writeFileSync(join(TMP, "docs/design.md"), "# Design");
@@ -54,7 +54,7 @@ describe("checkDrift", () => {
   });
 
   it("returns no-index message if doc-index.json missing", async () => {
-    rmSync(join(TMP, ".index/doc-index.json"));
+    rmSync(join(TMP, ".sensei/doc-index.json"));
     const result = await checkDrift(TMP);
     expect(result.summary).toContain("Run sensei index");
   });

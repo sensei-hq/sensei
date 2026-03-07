@@ -11,12 +11,12 @@ export async function init(cwd: string): Promise<void> {
 
   note(
     [
-      `Created: CLAUDE.md, .index/ (llmspec.yaml, llms.txt, symbol-map.json, ...)`,
+      `Created: CLAUDE.md, .sensei/ (llmspec.yaml, llms.txt, symbol-map.json, ...)`,
       ``,
       `Next steps:`,
-      `  1. Edit .index/llmspec.yaml to add doc coverage (docs[].covers[])`,
+      `  1. Edit .sensei/llmspec.yaml to add doc coverage (docs[].covers[])`,
       `  2. Run: sensei hooks install --drift   to enable pre-commit drift check`,
-      `  3. Commit .index/ so the team shares the index without re-running sensei`,
+      `  3. Commit .sensei/ so the team shares the index without re-running sensei`,
     ].join("\n"),
     "Setup complete"
   );

@@ -6,8 +6,8 @@ import { loadContext, recommendNext } from "./context.js";
 const TMP = "/tmp/sensei-test-context";
 
 beforeEach(() => {
-  mkdirSync(join(TMP, ".index"), { recursive: true });
-  writeFileSync(join(TMP, ".index/llmspec.yaml"), `
+  mkdirSync(join(TMP, ".sensei"), { recursive: true });
+  writeFileSync(join(TMP, ".sensei/llmspec.yaml"), `
 project: ctx-test
 description: A context test project
 stack: [typescript, react]
@@ -17,12 +17,12 @@ entry_points:
 shortcuts:
   dev: bun run dev
 `);
-  writeFileSync(join(TMP, ".index/symbol-map.json"), JSON.stringify({
+  writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({
     "src/auth.ts": { L0: ["login(): Promise<User>"], L1: [], L2: [] },
     "src/billing/invoice.ts": { L0: ["createInvoice(): Invoice"], L1: [], L2: [] },
   }));
-  writeFileSync(join(TMP, ".index/patterns.md"), "# Patterns\n\n## Repo Pattern\nUse repos for DB.");
-  writeFileSync(join(TMP, ".index/stack.md"), "# Stack\n\n- typescript\n- react");
+  writeFileSync(join(TMP, ".sensei/patterns.md"), "# Patterns\n\n## Repo Pattern\nUse repos for DB.");
+  writeFileSync(join(TMP, ".sensei/stack.md"), "# Stack\n\n- typescript\n- react");
 });
 
 afterEach(() => rmSync(TMP, { recursive: true, force: true }));

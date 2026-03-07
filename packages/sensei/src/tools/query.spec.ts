@@ -6,9 +6,9 @@ import { getLlmSpec, getFileContext, listExports, findPattern, getShortcuts } fr
 const TMP = "/tmp/sensei-test-query";
 
 beforeEach(() => {
-  mkdirSync(join(TMP, ".index"), { recursive: true });
+  mkdirSync(join(TMP, ".sensei"), { recursive: true });
   mkdirSync(join(TMP, "src"), { recursive: true });
-  writeFileSync(join(TMP, ".index/llmspec.yaml"), `
+  writeFileSync(join(TMP, ".sensei/llmspec.yaml"), `
 project: query-test
 stack: [typescript]
 description: test
@@ -16,15 +16,15 @@ shortcuts:
   dev: bun run dev
   test: bun test
 `);
-  writeFileSync(join(TMP, ".index/symbol-map.json"), JSON.stringify({
+  writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({
     "src/auth.ts": {
       L0: ["login(email: string): Promise<User>"],
       L1: ["user = login(email)\n// returns: Promise<User>"],
       L2: ["validate → fetch → return"],
     }
   }));
-  writeFileSync(join(TMP, ".index/patterns.md"), "# Patterns\n\n## Repository Pattern\nAll DB access through repos.");
-  writeFileSync(join(TMP, ".index/shortcuts.md"), "# Shortcuts\n\n- dev: bun run dev\n- test: bun test");
+  writeFileSync(join(TMP, ".sensei/patterns.md"), "# Patterns\n\n## Repository Pattern\nAll DB access through repos.");
+  writeFileSync(join(TMP, ".sensei/shortcuts.md"), "# Shortcuts\n\n- dev: bun run dev\n- test: bun test");
   writeFileSync(join(TMP, "src/auth.ts"), `export function login(email: string): Promise<User> {\n  return db.find(email);\n}`);
 });
 
