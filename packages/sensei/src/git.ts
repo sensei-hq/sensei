@@ -1,7 +1,29 @@
 import { execSync } from "child_process";
+import { existsSync } from "fs";
+import { join, dirname } from "path";
 
 function exec(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, encoding: "utf-8" });
+}
+
+/**
+ * Find the repo root starting from `cwd`.
+ * Tries `git rev-parse --show-toplevel`, then walks up looking for package.json.
+ * Returns the root path, or `cwd` if nothing is found.
+ */
+export function findRepoRoot(cwd: string): string {
+  try {
+    return exec("git rev-parse --show-toplevel", cwd).trim();
+  } catch {
+    // Not a git repo — walk up to find package.json
+    let dir = cwd;
+    while (true) {
+      if (existsSync(join(dir, "package.json"))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) return cwd; // filesystem root
+      dir = parent;
+    }
+  }
 }
 
 export function getCurrentBranch(repoPath: string): string {
