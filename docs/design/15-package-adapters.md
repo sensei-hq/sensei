@@ -224,7 +224,7 @@ Array of `PackageInfo`. One entry per discovered package boundary.
       "description": "AI skills toolchain for keeping docs and code in sync.",
       "sections": ["Installation", "Commands", "MCP Tools", "Development"],
       "links": [
-        { "from": "packages/sensei/README.md", "to": "docs/design/package-adapters.md",
+        { "from": "packages/sensei/README.md", "to": "docs/design/15-package-adapters.md",
           "text": "Package adapter design", "kind": "doc" }
       ]
     },
@@ -241,11 +241,11 @@ Current traceability only captures `doc → [code files]`. With link extraction 
 {
   "packages/sensei/README.md": {
     "covers": ["src/cli.ts", "src/index.ts"],
-    "linkedDocs": ["docs/design/package-adapters.md"],
+    "linkedDocs": ["docs/design/15-package-adapters.md"],
     "linkedCode": ["src/commands/init.ts"],
     "source": "readme-links"
   },
-  "docs/design/package-adapters.md": {
+  "docs/design/15-package-adapters.md": {
     "covers": ["src/tools/reindex.ts"],
     "linkedDocs": [],
     "linkedCode": [],

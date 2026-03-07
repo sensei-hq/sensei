@@ -14,9 +14,9 @@
       "dependencies": {
         "@anthropic-ai/sdk": "^0.78.0",
         "@clack/prompts": "^0.9.0",
-        "@sensei/mcp": "workspace:*",
         "@sensei/server": "workspace:*",
         "@sensei/shared": "workspace:*",
+        "@sensei/tools": "workspace:*",
       },
       "devDependencies": {
         "@eslint/js": "^9.0.0",
@@ -33,12 +33,10 @@
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.0.0",
         "@sensei/shared": "workspace:*",
-        "fast-glob": "^3.3.0",
-        "js-yaml": "^4.1.0",
+        "@sensei/tools": "workspace:*",
         "zod": "^3.22.0",
       },
       "devDependencies": {
-        "@types/js-yaml": "^4.0.9",
         "@types/node": "^22.0.0",
         "typescript": "^5.5.0",
         "vitest": "^2.0.0",
