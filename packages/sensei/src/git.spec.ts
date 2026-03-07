@@ -51,7 +51,7 @@ describe("readFileFromBranch", () => {
     expect(readFileFromBranch(REPO, "benchmark/wild-cat-a", ".sensei/benchmark-wild-cat.json"))
       .toBe('{"run":"wild-cat"}');
     expect(mockExec).toHaveBeenCalledWith(
-      'git show benchmark/wild-cat-a:.sensei/benchmark-wild-cat.json',
+      'git show "benchmark/wild-cat-a:.sensei/benchmark-wild-cat.json"',
       { cwd: REPO, encoding: "utf-8" },
     );
   });
