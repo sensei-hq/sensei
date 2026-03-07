@@ -1,6 +1,6 @@
 import { intro, outro, spinner, note, confirm, log, isCancel } from "@clack/prompts";
 import { reindexRepo } from "../tools/reindex.js";
-import { checkSystemRequirements, OLLAMA_MODEL, OLLAMA_MODEL_SIZE_GB } from "../model/system-check.js";
+import { checkSystemRequirements, OLLAMA_MODEL, OLLAMA_MODEL_SIZE_GB, OLLAMA_BASE_URL } from "../model/system-check.js";
 import type { SetupStatus } from "../model/types.js";
 
 export async function init(cwd: string): Promise<void> {
@@ -54,7 +54,7 @@ export async function init(cwd: string): Promise<void> {
           const pullSpinner = spinner();
           pullSpinner.start(`Pulling ${OLLAMA_MODEL}...`);
           try {
-            const res = await fetch("http://127.0.0.1:11434/api/pull", {
+            const res = await fetch(`${OLLAMA_BASE_URL}/api/pull`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ name: OLLAMA_MODEL, stream: false }),
