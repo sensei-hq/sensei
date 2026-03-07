@@ -9,6 +9,7 @@ const { positionals, values } = parseArgs({
     force: { type: "boolean", default: false },
     "fail-on-drift": { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
+    mcp: { type: "boolean", default: false },
     template: { type: "string" },
     examples: { type: "string" },
     sample: { type: "string" },   // number parsed manually
@@ -44,6 +45,7 @@ Usage:
 Commands:
   init                     Set up a new repo (index + profiles + hook)
   add                      Add sensei to an existing repo (non-destructive)
+  setup --mcp              Register sensei MCP server in ~/.claude/mcp.json
   status                   Show index age, drift status, active profiles
   index                    Re-index the current repo
   drift                    Check for doc drift
@@ -53,9 +55,13 @@ Commands:
   benchmark inspect        Switch to a benchmark branch for inspection
   benchmark promote        Merge chosen strategy branch, submit telemetry
   serve                    Start local telemetry report receiver
+  server status            Check if server is running and show model setup status
 
 Options:
   -h, --help               Show this help message
+
+setup:
+  --mcp                    Register MCP server (writes ~/.claude/mcp.json)
 
 index:
   --force                  Force full re-scan (ignore cached fingerprints)
@@ -101,6 +107,18 @@ async function main() {
     case "add": {
       const { add } = await import("./commands/add.js");
       await add(repoRoot);
+      break;
+    }
+    case "setup": {
+      if (!values.mcp) {
+        console.error("Usage: sensei setup --mcp");
+        process.exit(1);
+      }
+      const { setupMcp } = await import("./commands/setup.js");
+      // Derive dist/index.js path from this script's location
+      const cliPath = new URL(import.meta.url).pathname;
+      const indexJsPath = cliPath.replace(/cli\.js$/, "index.js");
+      await setupMcp(repoRoot, indexJsPath);
       break;
     }
     case "status": {
@@ -204,6 +222,30 @@ async function main() {
         process.exit(1);
       }
       break;
+    }
+    case "server": {
+      const subCmd = rest[0];
+      if (subCmd === "status" || !subCmd) {
+        const url = process.env.SENSEI_SERVER_URL ?? "http://localhost:7744";
+        try {
+          const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
+          const data = await res.json() as Record<string, unknown>;
+          console.log(`sensei server: running at ${url}`);
+          console.log(`  backend: ${data.backend ?? "none"}`);
+          console.log(`  ollama:  ${data.ollamaRunning ? "running" : "not running"}`);
+          const setupRes = await fetch(`${url}/setup/status`, { signal: AbortSignal.timeout(2000) });
+          const setup = await setupRes.json() as Record<string, unknown>;
+          console.log(`  disk:    ${setup.diskFreeGB} GB free`);
+          console.log(`  ram:     ${setup.ramAvailableGB} GB available`);
+          console.log(`  model:   ${setup.ollamaModel ? `✓ ${setup.ollamaModelName}` : `✗ ${setup.ollamaModelName} not pulled`}`);
+        } catch {
+          console.log(`sensei server: not running at ${url}`);
+          console.log(`  Start with: sensei serve`);
+        }
+        break;
+      }
+      console.error(`Unknown server subcommand: ${subCmd}`);
+      process.exit(1);
     }
     default:
       if (cmd) console.error(`Unknown command: ${cmd}\n`);
