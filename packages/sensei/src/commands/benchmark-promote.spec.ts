@@ -1,16 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { pickPreferred, buildFeedback, submitReport } from "./benchmark-promote.js";
-
-describe("pickPreferred", () => {
-  it("identifies winner from scores", () => {
-    const scores = {
-      a: { structuralScore: 7, judgeScore: 7 },
-      b: { structuralScore: 8, judgeScore: 8 },
-      c: { structuralScore: 9, judgeScore: 9 },
-    };
-    expect(pickPreferred(scores)).toBe("c");
-  });
-});
+import { buildFeedback, submitReport } from "./benchmark-promote.js";
 
 describe("buildFeedback", () => {
   it("sets systemAgreed true when user matches auto", () => {
