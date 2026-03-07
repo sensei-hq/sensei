@@ -96,12 +96,12 @@ async function main() {
         });
       } else if (subCmd === "promote") {
         const { benchmarkPromote } = await import("./commands/benchmark-promote.js");
-        const resultsDir = rest[1];
-        if (!resultsDir) {
-          console.error("Usage: sensei benchmark promote <results-dir>");
+        const runName = rest[1];
+        if (!runName) {
+          console.error("Usage: sensei benchmark promote <run-name>");
           process.exit(1);
         }
-        await benchmarkPromote(resultsDir, process.cwd());
+        await benchmarkPromote(runName, process.cwd());
       } else {
         console.error(`Unknown benchmark subcommand: ${subCmd ?? "(none)"}`);
         process.exit(1);
@@ -122,7 +122,7 @@ Commands:
   sensei migrate                Migrate agents/ folder to .index/checkpoints/
   sensei benchmark doctor <input-dir> <output-name> [--template <path>] [--examples <dir>] [--sample N] [--out <dir>]
                                 Run 3-strategy doc conversion benchmark
-  sensei benchmark promote <results-dir>
+  sensei benchmark promote <run-name>
                                 Review benchmark scores, capture preference, submit telemetry
   sensei serve [--port 7744] [--db <path>]
                                 Start local telemetry report receiver
