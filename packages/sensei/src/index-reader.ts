@@ -4,12 +4,12 @@ import yaml from "js-yaml";
 import type { LlmSpec, SymbolMap } from "./types.js";
 
 export async function readLlmSpec(repoPath: string): Promise<LlmSpec> {
-  const specPath = join(repoPath, ".llmspec.yaml");
+  const specPath = join(repoPath, ".index/llmspec.yaml");
   let raw: string;
   try {
     raw = await readFile(specPath, "utf-8");
   } catch {
-    throw new Error(`No .llmspec.yaml found at ${specPath}. Run sensei index first.`);
+    throw new Error(`No .index/llmspec.yaml found at ${specPath}. Run sensei index first.`);
   }
   return yaml.load(raw) as LlmSpec;
 }
