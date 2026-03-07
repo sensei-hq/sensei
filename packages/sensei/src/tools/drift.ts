@@ -2,7 +2,7 @@ import { stat, readFile } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import { execSync } from "child_process";
-import { senseiPath } from "../constants.js";
+import { senseiPath } from "@sensei/shared";
 
 export interface DriftEntry {
   docPath: string;

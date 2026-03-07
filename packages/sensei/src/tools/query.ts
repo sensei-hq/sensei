@@ -2,7 +2,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import yaml from "js-yaml";
 import { readLlmSpec, readSymbolMap, readIndexFile } from "../index-reader.js";
-import type { ResolutionLevel } from "../types.js";
+import type { ResolutionLevel } from "@sensei/shared";
 
 export async function getLlmSpec(repoPath: string, section?: string): Promise<string> {
   const spec = await readLlmSpec(repoPath);

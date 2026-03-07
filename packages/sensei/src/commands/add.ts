@@ -1,7 +1,7 @@
 import { intro, outro, spinner, note, confirm, isCancel } from "@clack/prompts";
 import { reindexRepo } from "../tools/reindex.js";
 import { existsSync } from "fs";
-import { SENSEI_DIR, senseiPath } from "../constants.js";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 export async function add(cwd: string): Promise<void> {
   intro("sensei add");
