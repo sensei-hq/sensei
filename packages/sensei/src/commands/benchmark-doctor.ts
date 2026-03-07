@@ -9,6 +9,20 @@ import { generateRunName } from "../names.js";
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
 
+// ── Outline index builder (fallback for targeted index strategy) ──────────────
+
+export function buildOutlineIndex(inputDir: string): string {
+  return readdirSync(inputDir)
+    .filter(f => extname(f) === ".md")
+    .sort()
+    .map(f => {
+      const content = readFileSync(join(inputDir, f), "utf-8");
+      const headings = content.match(/^#{1,3} .+/gm)?.join("\n") ?? "(no headings)";
+      return `### ${f}\n${headings}`;
+    })
+    .join("\n\n");
+}
+
 export interface TargetedIndexPromptOptions {
   inputDir: string;
   repoPath: string;
@@ -18,7 +32,7 @@ export interface TargetedIndexPromptOptions {
 
 export function buildTargetedIndexPrompt(opts: TargetedIndexPromptOptions): string {
   const symbolMapPath = join(opts.repoPath, ".index/symbol-map.json");
-  let indexSection = "(no index found)";
+  let indexSection: string;
   if (existsSync(symbolMapPath)) {
     const map: SymbolMap = JSON.parse(readFileSync(symbolMapPath, "utf-8"));
     const relInput = relative(opts.repoPath, opts.inputDir);
@@ -27,7 +41,9 @@ export function buildTargetedIndexPrompt(opts: TargetedIndexPromptOptions): stri
       .filter(([p]) => p.startsWith(relInput + "/") || p.includes(`/${relInput}/`))
       .map(([path, entry]) => `### ${path}\n${[...entry.L0, ...entry.L1].join("\n")}`)
       .join("\n\n");
-    indexSection = entries || "(no entries for input dir)";
+    indexSection = entries || buildOutlineIndex(opts.inputDir);
+  } else {
+    indexSection = buildOutlineIndex(opts.inputDir);
   }
 
   return `You are converting a requirements folder into a ${opts.outputName} folder.
@@ -313,37 +329,7 @@ export async function benchmarkDoctor(
     original[f] = await readFile(join(fullInputDir, f), "utf-8");
   }
 
-  // ── Run all 3 strategies ─────────────────────────────────────────────────────
-  const sp = spinner();
-
-  const promptA = buildTargetedIndexPrompt({ inputDir: fullInputDir, repoPath, templateContent, outputName });
-  const promptB = buildRawContentPrompt({ inputDir: fullInputDir, examplesDir, outputName });
-  const promptC = buildFullRepoIndexPrompt({ repoPath, templateContent, outputName });
-
-  sp.start("Strategy A: targeted index...");
-  const resultA = await callClaude(promptA);
-  const outputA = parseOutputFolder(resultA.text);
-  sp.stop(`Strategy A done (${resultA.usage.tokensIn}→${resultA.usage.tokensOut} tokens)`);
-
-  sp.start("Strategy B: raw content...");
-  const resultB = await callClaude(promptB);
-  const outputB = parseOutputFolder(resultB.text);
-  sp.stop(`Strategy B done (${resultB.usage.tokensIn}→${resultB.usage.tokensOut} tokens)`);
-
-  sp.start("Strategy C: full repo index...");
-  const resultC = await callClaude(promptC);
-  const outputC = parseOutputFolder(resultC.text);
-  sp.stop(`Strategy C done (${resultC.usage.tokensIn}→${resultC.usage.tokensOut} tokens)`);
-
-  // ── Score ────────────────────────────────────────────────────────────────────
-  sp.start("Scoring...");
-  const structA = structuralScore({ template: templateContent, output: outputA, original });
-  const structB = structuralScore({ template: templateContent, output: outputB, original });
-  const structC = structuralScore({ template: templateContent, output: outputC, original });
-  const judge = await llmJudge(original, outputA, outputB, outputC);
-  sp.stop("Scoring done");
-
-  // ── Generate run name and branch names ───────────────────────────────────────
+  // ── Generate run name and check branches ─────────────────────────────────────
   const runName = generateRunName();
   const branches = {
     a: `benchmark/${runName}-a`,
@@ -351,9 +337,6 @@ export async function benchmarkDoctor(
     c: `benchmark/${runName}-c`,
   } as const;
 
-  const winner = pickWinner(structA, judge.scoreA, structB, judge.scoreB, structC, judge.scoreC);
-
-  // ── Check no branches already exist ─────────────────────────────────────────
   for (const branch of Object.values(branches)) {
     if (branchExists(repoPath, branch)) {
       log.error(`Branch already exists: ${branch}. Re-run to get a new run name.`);
@@ -362,16 +345,10 @@ export async function benchmarkDoctor(
     }
   }
 
-  // ── Build results data ───────────────────────────────────────────────────────
-  function cleanPaths(s: string): string {
-    return s.replaceAll(repoPath + "/", "").replaceAll(repoPath, "");
-  }
-
-  const exFiles = examplesDir && existsSync(examplesDir)
-    ? readdirSync(examplesDir).filter(f => extname(f) === ".md")
-    : [];
-  const inputLines = Object.values(original).join("\n").split("\n").length;
-  const inputChars = Object.values(original).join("").length;
+  // ── Build prompts ─────────────────────────────────────────────────────────────
+  const promptA = buildTargetedIndexPrompt({ inputDir: fullInputDir, repoPath, templateContent, outputName });
+  const promptB = buildRawContentPrompt({ inputDir: fullInputDir, examplesDir, outputName });
+  const promptC = buildFullRepoIndexPrompt({ repoPath, templateContent, outputName });
 
   const relInput = relative(repoPath, fullInputDir);
   const targetDir = join(repoPath, dirname(relInput), outputName);
@@ -383,12 +360,105 @@ export async function benchmarkDoctor(
     c: "Full repo index",
   } as const;
 
-  const strategyOutputs = { a: outputA, b: outputB, c: outputC };
-  const strategyResults = {
-    a: { tokensIn: resultA.usage.tokensIn, tokensOut: resultA.usage.tokensOut, filesGenerated: Object.keys(outputA).length, structuralScore: structA, judgeScore: judge.scoreA },
-    b: { tokensIn: resultB.usage.tokensIn, tokensOut: resultB.usage.tokensOut, filesGenerated: Object.keys(outputB).length, structuralScore: structB, judgeScore: judge.scoreB },
-    c: { tokensIn: resultC.usage.tokensIn, tokensOut: resultC.usage.tokensOut, filesGenerated: Object.keys(outputC).length, structuralScore: structC, judgeScore: judge.scoreC },
-  };
+  // ── Permission prompt (before any API calls or git ops) ───────────────────────
+  const gitOpsLines = [
+    `git checkout -b ${branches.a} ${baseBranch}`,
+    `  → run "Targeted index" strategy`,
+    `  git add docs/${outputName}/`,
+    `  git commit -m "chore: sensei benchmark doctor using \\"Targeted index\\": docs/${outputName}"`,
+    `git checkout ${baseBranch}`,
+    `git checkout -b ${branches.b} ${baseBranch}`,
+    `  → run "Raw content" strategy`,
+    `  git add docs/${outputName}/`,
+    `  git commit -m "chore: sensei benchmark doctor using \\"Raw content\\": docs/${outputName}"`,
+    `git checkout ${baseBranch}`,
+    `git checkout -b ${branches.c} ${baseBranch}`,
+    `  → run "Full repo index" strategy`,
+    `  git add docs/${outputName}/`,
+    `  git commit -m "chore: sensei benchmark doctor using \\"Full repo index\\": docs/${outputName}"`,
+    `git checkout ${baseBranch}`,
+    `[score all strategies]`,
+    `[update .sensei/benchmark-${runName}.json on each branch with scores]`,
+    `git checkout benchmark/${runName}-<winner>  ← determined after scoring`,
+  ];
+
+  log.info(`sensei will perform these git operations:\n  ${gitOpsLines.join("\n  ")}`);
+  const proceed = await confirm({ message: "Proceed?" });
+  if (isCancel(proceed) || !proceed) {
+    outro("Cancelled.");
+    return;
+  }
+
+  // ── Interleaved: create branch → run strategy → commit docs → back ────────────
+  const sp = spinner();
+
+  interface StrategyRun {
+    tokensIn: number;
+    tokensOut: number;
+    elapsedMs: number;
+  }
+
+  const strategyRuns = {} as Record<"a" | "b" | "c", StrategyRun>;
+  const strategyOutputs = {} as Record<"a" | "b" | "c", Record<string, string>>;
+  const strategyPrompts = { a: promptA, b: promptB, c: promptC };
+  const strategies: Array<"a" | "b" | "c"> = ["a", "b", "c"];
+
+  for (const key of strategies) {
+    const branch = branches[key];
+    const stratName = strategyNames[key];
+
+    createAndCheckoutBranch(repoPath, branch, baseBranch);
+
+    sp.start(`Strategy ${key.toUpperCase()}: ${stratName.toLowerCase()}...`);
+    const t0 = Date.now();
+    const result = await callClaude(strategyPrompts[key]);
+    const elapsedMs = Date.now() - t0;
+    const output = parseOutputFolder(result.text);
+    const nFiles = Object.keys(output).length;
+    sp.stop(
+      `Strategy ${key.toUpperCase()} done ` +
+      `(${result.usage.tokensIn}→${result.usage.tokensOut} tokens, ` +
+      `${(elapsedMs / 1000).toFixed(1)}s, ${nFiles} file${nFiles === 1 ? "" : "s"})`
+    );
+
+    strategyRuns[key] = { tokensIn: result.usage.tokensIn, tokensOut: result.usage.tokensOut, elapsedMs };
+    strategyOutputs[key] = output;
+
+    await mkdir(targetDir, { recursive: true });
+    for (const [fname, content] of Object.entries(output)) {
+      await writeFile(join(targetDir, fname), content, "utf-8");
+    }
+
+    const commitMsg = `chore: sensei benchmark doctor using "${stratName}": docs/${outputName} (${nFiles} file${nFiles === 1 ? "" : "s"})`;
+    stageFiles(repoPath, [targetDir]);
+    commitFiles(repoPath, commitMsg);
+
+    checkoutBranch(repoPath, baseBranch);
+  }
+
+  // ── Score ─────────────────────────────────────────────────────────────────────
+  sp.start("Scoring...");
+  const outputA = strategyOutputs.a;
+  const outputB = strategyOutputs.b;
+  const outputC = strategyOutputs.c;
+  const structA = structuralScore({ template: templateContent, output: outputA, original });
+  const structB = structuralScore({ template: templateContent, output: outputB, original });
+  const structC = structuralScore({ template: templateContent, output: outputC, original });
+  const judge = await llmJudge(original, outputA, outputB, outputC);
+  sp.stop("Scoring done");
+
+  const winner = pickWinner(structA, judge.scoreA, structB, judge.scoreB, structC, judge.scoreC);
+
+  // ── Build results data ────────────────────────────────────────────────────────
+  function cleanPaths(s: string): string {
+    return s.replaceAll(repoPath + "/", "").replaceAll(repoPath, "");
+  }
+
+  const exFiles = examplesDir && existsSync(examplesDir)
+    ? readdirSync(examplesDir).filter(f => extname(f) === ".md")
+    : [];
+  const inputLines = Object.values(original).join("\n").split("\n").length;
+  const inputChars = Object.values(original).join("").length;
 
   const resultsData = {
     run: runName,
@@ -414,76 +484,36 @@ export async function benchmarkDoctor(
         b: { name: "Raw content",     prompt: cleanPaths(promptB), promptChars: promptB.length, promptLines: promptB.split("\n").length },
         c: { name: "Full repo index", prompt: cleanPaths(promptC), promptChars: promptC.length, promptLines: promptC.split("\n").length },
       },
-      results: strategyResults,
+      results: {
+        a: { tokensIn: strategyRuns.a.tokensIn, tokensOut: strategyRuns.a.tokensOut, elapsedMs: strategyRuns.a.elapsedMs, filesGenerated: Object.keys(outputA).length, structuralScore: structA, judgeScore: judge.scoreA },
+        b: { tokensIn: strategyRuns.b.tokensIn, tokensOut: strategyRuns.b.tokensOut, elapsedMs: strategyRuns.b.elapsedMs, filesGenerated: Object.keys(outputB).length, structuralScore: structB, judgeScore: judge.scoreB },
+        c: { tokensIn: strategyRuns.c.tokensIn, tokensOut: strategyRuns.c.tokensOut, elapsedMs: strategyRuns.c.elapsedMs, filesGenerated: Object.keys(outputC).length, structuralScore: structC, judgeScore: judge.scoreC },
+      },
       judgeReasoning: judge.reasoning,
       userFeedback: null,
       promoted: null,
     },
   };
 
-  // ── Permission prompt ────────────────────────────────────────────────────────
-  const commitMsgA = `chore: sensei benchmark doctor using "${strategyNames.a}": docs/${outputName} (${Object.keys(outputA).length} files)`;
-  const commitMsgB = `chore: sensei benchmark doctor using "${strategyNames.b}": docs/${outputName} (${Object.keys(outputB).length} files)`;
-  const commitMsgC = `chore: sensei benchmark doctor using "${strategyNames.c}": docs/${outputName} (${Object.keys(outputC).length} files)`;
-
-  const gitOpsLines = [
-    `git checkout -b ${branches.a} ${baseBranch}`,
-    `git add docs/${outputName}/ .sensei/benchmark-${runName}.json`,
-    `git commit -m "${commitMsgA}"`,
-    `git checkout ${baseBranch}`,
-    `git checkout -b ${branches.b} ${baseBranch}`,
-    `git add docs/${outputName}/ .sensei/benchmark-${runName}.json`,
-    `git commit -m "${commitMsgB}"`,
-    `git checkout ${baseBranch}`,
-    `git checkout -b ${branches.c} ${baseBranch}`,
-    `git add docs/${outputName}/ .sensei/benchmark-${runName}.json`,
-    `git commit -m "${commitMsgC}"`,
-    `git checkout ${baseBranch}`,
-    `git checkout ${branches[winner]}  ← winner`,
-  ];
-
-  log.info(`sensei will perform these git operations:\n  ${gitOpsLines.join("\n  ")}`);
-  const proceed = await confirm({ message: "Proceed?" });
-
-  if (isCancel(proceed) || !proceed) {
-    outro("Cancelled.");
-    return;
-  }
-
-  // ── Create branches ──────────────────────────────────────────────────────────
-  const strategies: Array<"a" | "b" | "c"> = ["a", "b", "c"];
-  const commitMessages = { a: commitMsgA, b: commitMsgB, c: commitMsgC };
-
+  // ── Update JSON on each branch with full scores ───────────────────────────────
   for (const key of strategies) {
-    const branch = branches[key];
-    const output = strategyOutputs[key];
-    const commitMsg = commitMessages[key];
-
-    createAndCheckoutBranch(repoPath, branch, baseBranch);
-
-    await mkdir(targetDir, { recursive: true });
-    for (const [name, content] of Object.entries(output)) {
-      await writeFile(join(targetDir, name), content, "utf-8");
-    }
-
+    checkoutBranch(repoPath, branches[key]);
     await mkdir(join(repoPath, ".sensei"), { recursive: true });
     await writeFile(senseiJsonPath, JSON.stringify(resultsData, null, 2), "utf-8");
-
-    stageFiles(repoPath, [targetDir, senseiJsonPath]);
-    commitFiles(repoPath, commitMsg);
-
+    stageFiles(repoPath, [senseiJsonPath]);
+    commitFiles(repoPath, `chore: add benchmark scores for ${runName}`);
     checkoutBranch(repoPath, baseBranch);
   }
 
-  // ── Checkout winner branch ───────────────────────────────────────────────────
+  // ── Checkout winner ───────────────────────────────────────────────────────────
   checkoutBranch(repoPath, branches[winner]);
 
-  // ── Announce results ─────────────────────────────────────────────────────────
+  // ── Announce results ──────────────────────────────────────────────────────────
   note(
     `Run: ${runName}\n` +
-    `A (${strategyNames.a}): struct=${structA} judge=${judge.scoreA}\n` +
-    `B (${strategyNames.b}): struct=${structB} judge=${judge.scoreB}\n` +
-    `C (${strategyNames.c}): struct=${structC} judge=${judge.scoreC}\n` +
+    `A (${strategyNames.a}): struct=${structA} judge=${judge.scoreA} ${(strategyRuns.a.elapsedMs / 1000).toFixed(1)}s ${Object.keys(outputA).length} files\n` +
+    `B (${strategyNames.b}): struct=${structB} judge=${judge.scoreB} ${(strategyRuns.b.elapsedMs / 1000).toFixed(1)}s ${Object.keys(outputB).length} files\n` +
+    `C (${strategyNames.c}): struct=${structC} judge=${judge.scoreC} ${(strategyRuns.c.elapsedMs / 1000).toFixed(1)}s ${Object.keys(outputC).length} files\n` +
     `Winner: ${winner.toUpperCase()} → ${branches[winner]}\n` +
     `\n` +
     `To inspect: sensei benchmark inspect ${runName}-<a|b|c>\n` +
