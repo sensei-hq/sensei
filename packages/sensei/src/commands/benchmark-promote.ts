@@ -109,7 +109,7 @@ export async function benchmarkPromote(runName: string, repoPath: string): Promi
   checkoutBranch(repoPath, baseBranch);
   mergeBranch(repoPath, chosenBranch);
 
-  // ── Update results JSON and commit ───────────────────────────────────────────
+  // ── Update results JSON ───────────────────────────────────────────────────────
   const feedback = buildFeedback(preferred as string, autoPromoted, (noteText as string) || undefined);
   data.userFeedback = feedback;
   data.promoted = preferred;
