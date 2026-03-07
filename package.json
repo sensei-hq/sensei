@@ -1,11 +1,18 @@
 {
   "name": "sensei",
   "private": true,
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "build": "bun run --filter='*' build",
-    "test": "bun run --filter='*' test",
+    "test": "bunx vitest run",
     "test:e2e": "bun run --filter='*' test:e2e",
-    "dev": "bun run --filter='@sensei/cli' dev"
+    "dev": "bun run --filter='@sensei/cli' dev",
+    "coverage": "vitest run coverage --config ./config/vitest.config.base.ts"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
   }
 }
