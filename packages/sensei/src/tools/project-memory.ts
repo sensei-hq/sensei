@@ -3,7 +3,7 @@ import { join } from "path";
 import { existsSync } from "fs";
 import yaml from "js-yaml";
 
-const CHECKPOINTS = ".index/checkpoints";
+const CHECKPOINTS = ".sensei/checkpoints";
 
 interface Memory {
   version: number;
