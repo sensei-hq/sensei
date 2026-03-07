@@ -113,14 +113,19 @@ export class OllamaBackend implements ModelBackend {
   }
 
   async embed(text: string): Promise<number[]> {
-    const res = await fetch(`${this.baseUrl}/api/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.model, prompt: text }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const data = await res.json() as { embedding?: number[] };
-    return data.embedding ?? [];
+    try {
+      const res = await fetch(`${this.baseUrl}/api/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: this.model, prompt: text }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return [];
+      const data = await res.json() as { embedding?: number[] };
+      return data.embedding ?? [];
+    } catch {
+      return [];
+    }
   }
 }
 
