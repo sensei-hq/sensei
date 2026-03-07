@@ -48,15 +48,16 @@ describe("reindexRepo", () => {
     expect(shortcuts).toContain("bun src/index.ts");
   });
 
-  it("creates .llmspec.yaml template if missing", async () => {
+  it("creates .index/llmspec.yaml template if missing", async () => {
     await reindexRepo(TMP);
-    expect(existsSync(join(TMP, ".llmspec.yaml"))).toBe(true);
+    expect(existsSync(join(TMP, ".index/llmspec.yaml"))).toBe(true);
   });
 
-  it("does not overwrite existing .llmspec.yaml", async () => {
-    writeFileSync(join(TMP, ".llmspec.yaml"), "project: my-custom-project\n");
+  it("does not overwrite existing .index/llmspec.yaml", async () => {
+    mkdirSync(join(TMP, ".index"), { recursive: true });
+    writeFileSync(join(TMP, ".index/llmspec.yaml"), "project: my-custom-project\n");
     await reindexRepo(TMP);
-    const content = readFileSync(join(TMP, ".llmspec.yaml"), "utf-8");
+    const content = readFileSync(join(TMP, ".index/llmspec.yaml"), "utf-8");
     expect(content).toContain("my-custom-project");
   });
 
