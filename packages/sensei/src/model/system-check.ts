@@ -79,11 +79,19 @@ export function getDiskFreeGB(
       const match = out.match(/FreeSpace=(\d+)/);
       return match ? parseInt(match[1]) / 1e9 : 0;
     }
+    if (platform() === "linux") {
+      // --output=avail gives a single-column output: header "Avail" + value in KB
+      const out = exec(`df -k --output=avail "${homedir()}"`);
+      const lines = out.trim().split("\n");
+      const freeKB = parseInt(lines[lines.length - 1].trim());
+      return Number.isFinite(freeKB) ? freeKB / 1_000_000 : 0;
+    }
+    // macOS: df -k column 3 is Available (reliable on macOS)
     const out = exec(`df -k "${homedir()}"`);
     const lines = out.trim().split("\n");
     const last = lines[lines.length - 1].split(/\s+/);
     const freeKB = parseInt(last[3] ?? "0");
-    return freeKB / 1_000_000;
+    return Number.isFinite(freeKB) ? freeKB / 1_000_000 : 0;
   } catch {
     return 0;
   }
@@ -98,8 +106,8 @@ export function getRamGB(
       const pagesStr = exec("sysctl -n vm.page_free_count").trim();
       const available = (parseInt(pagesStr) * 16384) / 1e9;
       return {
-        total: Math.round(total * 10) / 10,
-        available: Math.round(available * 10) / 10,
+        total: Number.isFinite(total) ? Math.round(total * 10) / 10 : 0,
+        available: Number.isFinite(available) ? Math.round(available * 10) / 10 : 0,
       };
     }
     if (platform() === "linux") {
@@ -107,8 +115,8 @@ export function getRamGB(
       const total = parseInt(meminfo.match(/MemTotal:\s+(\d+)/)?.[1] ?? "0") / 1_000_000;
       const available = parseInt(meminfo.match(/MemAvailable:\s+(\d+)/)?.[1] ?? "0") / 1_000_000;
       return {
-        total: Math.round(total * 10) / 10,
-        available: Math.round(available * 10) / 10,
+        total: Number.isFinite(total) ? Math.round(total * 10) / 10 : 0,
+        available: Number.isFinite(available) ? Math.round(available * 10) / 10 : 0,
       };
     }
   } catch { /* ignore */ }
