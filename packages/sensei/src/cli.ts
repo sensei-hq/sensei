@@ -35,11 +35,6 @@ if (repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(path
   console.error("sensei: could not detect repo root. Run sensei from inside a git repo or a directory with package.json.");
   process.exit(1);
 }
-// Guard: bail if running from inside .index/
-if (_cwd.includes("/.index") || _cwd.includes("\\.index")) {
-  console.error(`sensei: do not run sensei from inside .index/. Change to the repo root and try again.`);
-  process.exit(1);
-}
 if (repoRoot !== _cwd) {
   console.error(`sensei: using repo root ${repoRoot}`);
 }
