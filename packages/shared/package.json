@@ -2,8 +2,13 @@
   "name": "@sensei/shared",
   "version": "0.1.0",
   "type": "module",
+  "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "bunx tsc --project tsconfig.json",
+    "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -53,7 +53,7 @@ export interface FileAnalysis {
 
   symbols: AnalyzedSymbol[];
   summary: string;        // 1-2 sentence file purpose
-  role?: string;          // "component" | "service" | "util" | "config" | "test" | "unknown"
+  role?: "component" | "service" | "util" | "config" | "test" | "unknown";
 
   flows?: Flow[];
   examples?: string[];
