@@ -10,6 +10,7 @@ export interface ServeOptions {
   port?: number;
   dbPath?: string;
   repoPath?: string;
+  isAvailableFn?: () => Promise<boolean>;  // injectable for tests
 }
 
 export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void; port: number }> {
@@ -33,8 +34,8 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
       const url = new URL(req.url);
 
       if (req.method === "GET" && url.pathname === "/health") {
-        const ollama = new OllamaBackend();
-        const ollamaRunning = await ollama.isAvailable();
+        const checkFn = opts.isAvailableFn ?? (() => new OllamaBackend().isAvailable());
+        const ollamaRunning = await checkFn();
         return Response.json({ ok: true, backend: ollamaRunning ? "ollama" : "none", ollamaRunning });
       }
 
@@ -70,7 +71,12 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: OLLAMA_MODEL, stream: true }),
               });
-              const reader = res.body!.getReader();
+              if (!res.body) {
+                send({ status: "error", message: "No response body from Ollama pull endpoint" });
+                controller.close();
+                return;
+              }
+              const reader = res.body.getReader();
               const decoder = new TextDecoder();
               while (true) {
                 const { done, value } = await reader.read();
@@ -96,7 +102,7 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
             content?: string;
             instructions?: Record<string, unknown>;
           };
-          if (!body.filePath || body.content === undefined) {
+          if (!body.filePath || typeof body.content !== "string") {
             return Response.json({ ok: false, error: "filePath and content are required" }, { status: 400 });
           }
           const ollama = new OllamaBackend();
