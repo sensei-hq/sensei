@@ -58,24 +58,22 @@ sensei migrate                     # convert agents/ folder to .sensei/checkpoin
 ```
 /
 ├── packages/
-│   ├── cli/    @sensei/cli    — CLI binary (sensei command)
-│   ├── server/ @sensei/server — inference engine + telemetry server
-│   ├── mcp/    @sensei/mcp    — MCP tool server (served to Claude)
-│   └── shared/ @sensei/shared — types, constants, API contracts
+│   ├── shared/ @sensei/shared — types, constants, API contracts (no deps)
+│   ├── tools/  @sensei/tools  — tool logic: reindex, query, drift, context, memory
+│   ├── server/ @sensei/server — inference engine + telemetry HTTP server
+│   ├── mcp/    @sensei/mcp    — thin MCP adapter (wraps @sensei/tools)
+│   └── cli/    @sensei/cli    — thin CLI binary (sensei command)
 │
-├── packages/cli/
-│   ├── src/
-│   │   ├── cli.ts            sensei CLI entry
-│   │   └── commands/         init, add, status, doctor, migrate
-│   └── src/**/*.spec.ts      Unit tests (Vitest, 29 tests)
+│   Dependency graph: shared ← tools ← mcp
+│                     shared ← server   cli → tools + server
 │
 ├── skills/                   Skill markdown files (8 skills)
-├── tasks/sample.yaml         Benchmark task corpus
+├── tasks/                    Benchmark task corpus
 ├── docs/templates/           Canonical doc templates (design.md, feature.md)
 ├── docs/features/            What and why — Gherkin scenarios, status tables
-├── docs/design/              How — architecture, schemas, algorithms (13 docs)
+├── docs/design/              How — architecture, schemas, algorithms
 ├── docs/plans/               Implementation plans
-└── README.md                 This file — bootstrap instructions
+└── README.md                 This file
 ```
 
 ## Getting Started
@@ -106,8 +104,8 @@ Skills in `skills/` can be symlinked to `~/.claude/skills/` manually or via any 
 
 ```bash
 bun install          # install dependencies
-bun test             # run unit tests (50 tests)
-bun run build        # build MCP server + CLI
+bun test             # run all 118 unit tests (vitest 4 projects)
+bun run build        # build all packages
 ```
 
 ## Docs

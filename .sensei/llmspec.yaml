@@ -1,0 +1,21 @@
+project: sensei
+version: 0.1.0
+description: 'TODO: one-sentence project summary'
+stack:
+  - typescript/javascript
+entry_points:
+  - path: src/index.ts
+    role: 'TODO: describe role'
+concepts: []
+patterns: []
+api_surface: []
+doc_layers:
+  design: docs/
+  code: src/
+  public:
+    - README.md
+docs: []
+shortcuts:
+  build: bun run build
+  test: bunx vitest run
+  dev: bun run --filter='@sensei/cli' dev
