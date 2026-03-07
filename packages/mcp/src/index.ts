@@ -1,11 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { getLlmSpec, getFileContext, listExports, findPattern, getShortcuts } from "./tools/query.js";
-import { reindexRepo } from "./tools/reindex.js";
-import { loadContext, recommendNext } from "./tools/context.js";
-import { checkDrift } from "./tools/drift.js";
-import { checkpoint, getSessionContext, addDecision, addPattern, askQuestion, getOpenItems, closeItem } from "./tools/project-memory.js";
+import {
+  getLlmSpec, getFileContext, listExports, findPattern, getShortcuts,
+  reindexRepo,
+  loadContext, recommendNext,
+  checkDrift,
+  checkpoint, getSessionContext, addDecision, addPattern, askQuestion, getOpenItems, closeItem,
+} from "@sensei/tools";
 import { SENSEI_DIR } from "@sensei/shared";
 
 const server = new McpServer({ name: "repo-index-server", version: "0.1.0" });
