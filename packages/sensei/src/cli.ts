@@ -23,6 +23,14 @@ const { positionals, values } = parseArgs({
 
 const [cmd, ...rest] = positionals;
 
+// Always operate from repo root — never scatter .index folders across the repo
+import { findRepoRoot } from "./git.js";
+const cwd = repoRoot;
+const repoRoot = findRepoRoot(cwd);
+if (repoRoot !== cwd) {
+  console.error(`sensei: using repo root ${repoRoot}`);
+}
+
 const HELP = `sensei — AI skills toolchain
 
 Usage:
@@ -82,17 +90,17 @@ async function main() {
   switch (cmd) {
     case "init": {
       const { init } = await import("./commands/init.js");
-      await init(process.cwd());
+      await init(repoRoot);
       break;
     }
     case "add": {
       const { add } = await import("./commands/add.js");
-      await add(process.cwd());
+      await add(repoRoot);
       break;
     }
     case "status": {
       const { status } = await import("./commands/status.js");
-      await status(process.cwd());
+      await status(repoRoot);
       break;
     }
     case "index": {
@@ -100,7 +108,7 @@ async function main() {
       const { spinner } = await import("@clack/prompts");
       const s = spinner();
       s.start("Indexing repo...");
-      const summary = await reindexRepo(process.cwd(), { force: values.force });
+      const summary = await reindexRepo(repoRoot, { force: values.force });
       if (summary.forced) {
         const total = summary.added + summary.updated;
         s.stop(`Full scan: ${total} files indexed (${summary.added} new, ${summary.updated} updated)`);
@@ -112,7 +120,7 @@ async function main() {
     case "drift": {
       const { checkDrift } = await import("./tools/drift.js");
       const failOnDrift = values["fail-on-drift"];
-      const result = await checkDrift(process.cwd());
+      const result = await checkDrift(repoRoot);
       console.log(result.summary);
       if (failOnDrift && result.drifted.length > 0) process.exit(1);
       break;
@@ -121,7 +129,7 @@ async function main() {
     case "reformat": {
       const { doctor } = await import("./commands/doctor.js");
       const target = rest[0] ?? ".";
-      await doctor(target, process.cwd(), {
+      await doctor(target, repoRoot, {
         dryRun: values["dry-run"],
         template: values.template,
       });
@@ -129,12 +137,12 @@ async function main() {
     }
     case "migrate": {
       const { migrate } = await import("./commands/migrate.js");
-      await migrate(process.cwd());
+      await migrate(repoRoot);
       break;
     }
     case "serve": {
       const { serve } = await import("./commands/serve.js");
-      await serve(process.cwd(), {
+      await serve(repoRoot, {
         port: values.port ? parseInt(values.port, 10) : undefined,
         db: values.db,
       });
@@ -155,7 +163,7 @@ async function main() {
           console.error("Usage: sensei benchmark doctor --source <input-dir> --dest <output-dir> [--template <path>] [--examples <dir>] [--sample N] [--verbose]");
           process.exit(1);
         }
-        await benchmarkDoctor(source, dest, process.cwd(), {
+        await benchmarkDoctor(source, dest, repoRoot, {
           template: values.template,
           examples: values.examples,
           sample: values.sample ? parseInt(values.sample, 10) : undefined,
@@ -168,7 +176,7 @@ async function main() {
           console.error("Usage: sensei benchmark inspect <run>-<letter>");
           process.exit(1);
         }
-        await benchmarkInspect(runBranch, process.cwd());
+        await benchmarkInspect(runBranch, repoRoot);
       } else if (subCmd === "promote") {
         const { benchmarkPromote } = await import("./commands/benchmark-promote.js");
         const runName = rest[1];
@@ -176,7 +184,7 @@ async function main() {
           console.error("Usage: sensei benchmark promote <run-name>");
           process.exit(1);
         }
-        await benchmarkPromote(runName, process.cwd());
+        await benchmarkPromote(runName, repoRoot);
       } else {
         console.error(`Unknown benchmark subcommand: ${subCmd}\n`);
         console.log(HELP);
