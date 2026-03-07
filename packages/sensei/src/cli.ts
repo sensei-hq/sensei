@@ -226,15 +226,27 @@ async function main() {
     case "server": {
       const subCmd = rest[0];
       if (subCmd === "status" || !subCmd) {
+        interface HealthResponse {
+          backend?: string;
+          ollamaRunning?: boolean;
+        }
+        interface SetupResponse {
+          diskFreeGB?: number;
+          ramAvailableGB?: number;
+          ollamaModel?: boolean;
+          ollamaModelName?: string;
+        }
         const url = process.env.SENSEI_SERVER_URL ?? "http://localhost:7744";
         try {
           const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
-          const data = await res.json() as Record<string, unknown>;
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json() as HealthResponse;
           console.log(`sensei server: running at ${url}`);
           console.log(`  backend: ${data.backend ?? "none"}`);
           console.log(`  ollama:  ${data.ollamaRunning ? "running" : "not running"}`);
           const setupRes = await fetch(`${url}/setup/status`, { signal: AbortSignal.timeout(2000) });
-          const setup = await setupRes.json() as Record<string, unknown>;
+          if (!setupRes.ok) throw new Error(`HTTP ${setupRes.status}`);
+          const setup = await setupRes.json() as SetupResponse;
           console.log(`  disk:    ${setup.diskFreeGB} GB free`);
           console.log(`  ram:     ${setup.ramAvailableGB} GB available`);
           console.log(`  model:   ${setup.ollamaModel ? `✓ ${setup.ollamaModelName}` : `✗ ${setup.ollamaModelName} not pulled`}`);
