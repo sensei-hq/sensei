@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdir } from "fs/promises";
 import { dirname } from "path";
 import { intro, log } from "@clack/prompts";
+import { senseiPath } from "../constants.js";
 
 export interface ServeOptions {
   port?: number;
@@ -10,7 +11,7 @@ export interface ServeOptions {
 
 export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void }> {
   const port = opts.port ?? 7744;
-  const dbPath = opts.dbPath ?? ".sensei/reports.db";
+  const dbPath = opts.dbPath ?? senseiPath(".", "reports.db");
 
   await mkdir(dirname(dbPath), { recursive: true });
 
@@ -56,7 +57,7 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
 
 export async function serve(repoPath: string, opts: { port?: number; db?: string }): Promise<void> {
   const port = opts.port ?? parseInt(process.env.SENSEI_PORT ?? "7744", 10);
-  const dbPath = opts.db ?? process.env.SENSEI_DB ?? `${repoPath}/.sensei/reports.db`;
+  const dbPath = opts.db ?? process.env.SENSEI_DB ?? senseiPath(repoPath, "reports.db");
 
   intro("sensei serve");
   log.info(`Listening on :${port}`);

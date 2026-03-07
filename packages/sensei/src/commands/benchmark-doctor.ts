@@ -6,6 +6,7 @@ import type { SymbolMap } from "../types.js";
 import { callClaude } from "../claude.js";
 import { getCurrentBranch, isCleanWorkingTree, createAndCheckoutBranch, checkoutBranch, stageFiles, commitFiles, branchExists } from "../git.js";
 import { generateRunName } from "../names.js";
+import { SENSEI_DIR, senseiPath } from "../constants.js";
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
 
@@ -31,7 +32,7 @@ export interface TargetedIndexPromptOptions {
 }
 
 export function buildTargetedIndexPrompt(opts: TargetedIndexPromptOptions): string {
-  const symbolMapPath = join(opts.repoPath, ".sensei/symbol-map.json");
+  const symbolMapPath = senseiPath(opts.repoPath, "symbol-map.json");
   let indexSection: string;
   if (existsSync(symbolMapPath)) {
     const map: SymbolMap = JSON.parse(readFileSync(symbolMapPath, "utf-8"));
@@ -118,7 +119,7 @@ export interface FullRepoIndexPromptOptions {
 }
 
 export function buildFullRepoIndexPrompt(opts: FullRepoIndexPromptOptions): string {
-  const symbolMapPath = join(opts.repoPath, ".sensei/symbol-map.json");
+  const symbolMapPath = senseiPath(opts.repoPath, "symbol-map.json");
   let symbolMapSection = "(no symbol-map found)";
   if (existsSync(symbolMapPath)) {
     symbolMapSection = readFileSync(symbolMapPath, "utf-8");
@@ -366,11 +367,11 @@ export async function benchmarkDoctor(
   const promptC = buildFullRepoIndexPrompt({ repoPath, templateContent, outputName });
 
   if (opts.verbose) {
-    const symbolMapExists = existsSync(join(repoPath, ".sensei/symbol-map.json"));
+    const symbolMapExists = existsSync(senseiPath(repoPath, "symbol-map.json"));
     log.info(`Strategy A index source: ${symbolMapExists ? "symbol-map.json (filtered to " + inputDir + ")" : "heading outline (no symbol-map found — run: sensei index)"}`);
     log.info(`Prompt sizes — A: ${promptA.length} chars / B: ${promptB.length} chars / C: ${promptC.length} chars`);
   }
-  const senseiJsonPath = join(repoPath, ".sensei", `benchmark-${runName}.json`);
+  const senseiJsonPath = senseiPath(repoPath, `benchmark-${runName}.json`);
 
   const strategyNames = {
     a: "Targeted index",
@@ -396,7 +397,7 @@ export async function benchmarkDoctor(
     `  git commit -m "chore: sensei benchmark doctor using \\"Full repo index\\": ${outputDir}"`,
     `git checkout ${baseBranch}`,
     `[Claude API call: LLM judge — scores all 3 outputs]`,
-    `[update .sensei/benchmark-${runName}.json on each branch with scores]`,
+    `[update ${SENSEI_DIR}/benchmark-${runName}.json on each branch with scores]`,
     `git checkout benchmark/${runName}-<winner>  ← determined after scoring`,
   ];
 
@@ -522,9 +523,9 @@ export async function benchmarkDoctor(
 
   // ── Update JSON on each branch with full scores ───────────────────────────────
   for (const key of strategies) {
-    v(`git checkout ${branches[key]}  → write .sensei/benchmark-${runName}.json → commit → back`);
+    v(`git checkout ${branches[key]}  → write ${SENSEI_DIR}/benchmark-${runName}.json → commit → back`);
     checkoutBranch(repoPath, branches[key]);
-    await mkdir(join(repoPath, ".sensei"), { recursive: true });
+    await mkdir(senseiPath(repoPath), { recursive: true });
     await writeFile(senseiJsonPath, JSON.stringify(resultsData, null, 2), "utf-8");
     stageFiles(repoPath, [senseiJsonPath]);
     commitFiles(repoPath, `chore: add benchmark scores for ${runName}`);

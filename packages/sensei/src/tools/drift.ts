@@ -2,6 +2,7 @@ import { stat, readFile } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import { execSync } from "child_process";
+import { senseiPath } from "../constants.js";
 
 export interface DriftEntry {
   docPath: string;
@@ -23,7 +24,7 @@ interface DocIndexData {
 }
 
 export async function checkDrift(repoPath: string): Promise<DriftResult> {
-  const indexPath = join(repoPath, ".sensei/doc-index.json");
+  const indexPath = senseiPath(repoPath, "doc-index.json");
   if (!existsSync(indexPath)) {
     return { drifted: [], summary: "No doc-index.json found. Run sensei index first." };
   }
@@ -64,7 +65,7 @@ export async function checkDrift(repoPath: string): Promise<DriftResult> {
     }
   } else {
     // Git mode: cross-reference changed files with traceability matrix
-    const traceabilityPath = join(repoPath, ".sensei/traceability.json");
+    const traceabilityPath = senseiPath(repoPath, "traceability.json");
     if (existsSync(traceabilityPath)) {
       const traceability: Record<string, string[]> = JSON.parse(
         await readFile(traceabilityPath, "utf-8")

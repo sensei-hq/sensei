@@ -3,6 +3,7 @@ import { readFile, mkdir, rename, readdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import { addDecision, addPattern, checkpoint } from "../tools/project-memory.js";
+import { SENSEI_DIR, senseiPath } from "../constants.js";
 
 export async function migrate(cwd: string): Promise<void> {
   intro("sensei migrate");
@@ -14,7 +15,7 @@ export async function migrate(cwd: string): Promise<void> {
     return;
   }
 
-  await mkdir(join(cwd, ".sensei/checkpoints/sessions"), { recursive: true });
+  await mkdir(senseiPath(cwd, "checkpoints/sessions"), { recursive: true });
 
   const s = spinner();
   s.start("Reading agents/ files...");
@@ -78,7 +79,7 @@ export async function migrate(cwd: string): Promise<void> {
       ...migrated,
       "",
       "agents/ archived to agents/_archived/",
-      "Review .sensei/checkpoints/ to verify parity",
+      `Review ${SENSEI_DIR}/checkpoints/ to verify parity`,
       "Delete agents/_archived/ when satisfied",
       "",
       "Resume with: get_session_context()",
