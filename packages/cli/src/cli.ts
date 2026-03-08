@@ -52,6 +52,8 @@ Commands:
   doctor <path>            Reformat docs to match canonical templates
   migrate                  Migrate agents/ folder to .sensei/checkpoints/
   benchmark doctor         Run 3-strategy doc conversion benchmark
+  benchmark coverage       Score llmspec.yaml docs[].covers[] with Ollama
+  benchmark populate       A/B benchmark: Claude without vs with populate-llmspec skill
   benchmark inspect        Switch to a benchmark branch for inspection
   benchmark promote        Merge chosen strategy branch, submit telemetry
   serve                    Start local telemetry report receiver
