@@ -1,6 +1,10 @@
 // Index reader
 export { readLlmSpec, readSymbolMap, readIndexFile } from "./index-reader.js";
 
+// Coverage
+export { generateCoverage } from "./tools/coverage.js";
+export type { CoverageEntry } from "./tools/coverage.js";
+
 // Query tools
 export { getLlmSpec, getFileContext, listExports, findPattern, getShortcuts } from "./tools/query.js";
 
