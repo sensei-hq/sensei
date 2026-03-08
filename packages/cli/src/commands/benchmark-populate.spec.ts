@@ -69,6 +69,17 @@ describe("buildPopulatePrompt", () => {
     const readmeIdx = prompt.indexOf("A CLI toolchain");
     expect(skillIdx).toBeLessThan(readmeIdx);
   });
+
+  it("does not leave orphan covers lines when docs/plans entry is stripped", () => {
+    const prompt = buildPopulatePrompt(TMP, null);
+    const skeletonStart = prompt.indexOf("## Current llmspec.yaml skeleton");
+    const instructionsStart = prompt.indexOf("## Instructions");
+    // Extract only the YAML content between the skeleton header and the instructions
+    const skeletonSection = prompt.slice(skeletonStart, instructionsStart);
+    // Only one covers: line should remain (for docs/design entry)
+    const coverCount = (skeletonSection.match(/covers:/g) ?? []).length;
+    expect(coverCount).toBe(1);
+  });
 });
 
 describe("parseYamlOutput", () => {
