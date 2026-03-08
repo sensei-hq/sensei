@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "fs";
-import { readFile, mkdir, writeFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import { execSync } from "child_process";
 import { join } from "path";
 import { intro, outro, spinner, note, log, confirm, isCancel } from "@clack/prompts";
@@ -10,7 +10,7 @@ import {
   checkoutBranch, stageFiles, commitFiles, branchExists,
 } from "../git.js";
 import { generateRunName } from "../names.js";
-import { SENSEI_DIR, senseiPath } from "@sensei/shared";
+import { senseiPath } from "@sensei/shared";
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
@@ -120,6 +120,9 @@ function readSkillContent(repoPath: string): string | null {
 
 // ── Score script runner ───────────────────────────────────────────────────────
 
+// Note: score-coverage.ts resolves .sensei/llmspec-expected.yaml relative to its own
+// repo root (the directory containing tasks/). Passing repoPath as cwd does not change
+// where the expected file is looked up — only the generated llmspecPath is an argument.
 function runScoreScript(repoPath: string, llmspecPath: string): string {
   const scoreScript = join(repoPath, "tasks/score-coverage.ts");
   if (!existsSync(scoreScript)) return "";
@@ -187,7 +190,7 @@ export async function benchmarkPopulate(repoPath: string): Promise<void> {
 
   // ── Build prompts ─────────────────────────────────────────────────────────────
   const promptA = buildPopulatePrompt(repoPath, null);
-  const promptB = buildPopulatePrompt(repoPath, skillContent ?? null);
+  const promptB = buildPopulatePrompt(repoPath, skillContent);
 
   // ── Generate run name and check branches ─────────────────────────────────────
   const runName = generateRunName();
@@ -277,6 +280,8 @@ export async function benchmarkPopulate(repoPath: string): Promise<void> {
     baseBranch,
     branches,
     autoPromoted: winner,
+    userFeedback: null,
+    promoted: null,
     report: {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
