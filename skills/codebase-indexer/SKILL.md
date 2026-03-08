@@ -36,12 +36,13 @@ call: reindex_repo({ path: ".", output: ".index/" })
 
 This scans the repo using the extractor guide (`extractor.md`) and writes all output artifacts.
 
-**Step 3: Review and fill gaps in `.llmspec.yaml`**
+**Step 3: Populate semantic fields**
 
-Auto-generated fields will be populated. Manually review and complete:
-- `concepts` — domain terms that aren't obvious from code
-- `patterns` — conventions that require judgment to identify
-- `description` — one-sentence project summary
+`sensei index` fills the structural scaffold. Use the `populate-llmspec` skill to fill description, concepts, patterns, entry_points roles, and `docs[].covers[]` — higher quality than the local model.
+
+```
+invoke: populate-llmspec skill
+```
 
 **Step 4: Verify outputs**
 
