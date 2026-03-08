@@ -157,9 +157,11 @@ export async function benchmarkPopulate(repoPath: string): Promise<void> {
     return;
   }
 
-  const llmspecExpectedPath = senseiPath(repoPath, "llmspec-expected.yaml");
-  if (!existsSync(llmspecExpectedPath)) {
-    log.error(".sensei/llmspec-expected.yaml not found. Create it first.");
+  // score-coverage.ts resolves llmspec-expected.yaml relative to its own repo root.
+  // This benchmark only produces valid scores when run inside the skills repo.
+  const scoreScriptPath = join(repoPath, "tasks/score-coverage.ts");
+  if (!existsSync(scoreScriptPath)) {
+    log.error("sensei: tasks/score-coverage.ts not found. This benchmark must be run from the skills repo.");
     outro("Aborted.");
     return;
   }
@@ -212,11 +214,11 @@ export async function benchmarkPopulate(repoPath: string): Promise<void> {
   // ── Permission prompt (before any API calls or git ops) ───────────────────────
   const gitOpsLines = [
     `git checkout -b ${branches.a} ${baseBranch}`,
-    `  → Claude API call: "${strategyNames.a}" strategy (${promptA.length} chars)`,
+    `  → Claude API call: "${strategyNames.a}" strategy (${promptA.length.toLocaleString()} chars)`,
     `  git add .sensei/llmspec.yaml && git commit`,
     `git checkout ${baseBranch}`,
     `git checkout -b ${branches.b} ${baseBranch}`,
-    `  → Claude API call: "${strategyNames.b}" strategy (${promptB.length} chars)`,
+    `  → Claude API call: "${strategyNames.b}" strategy (${promptB.length.toLocaleString()} chars)`,
     `  git add .sensei/llmspec.yaml && git commit`,
     `git checkout ${baseBranch}`,
     `[score each branch against .sensei/llmspec-expected.yaml]`,
