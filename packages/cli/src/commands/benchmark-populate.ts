@@ -36,10 +36,21 @@ export function buildPopulatePrompt(repoPath: string, skillContent: string | nul
     : "(no llmspec.yaml found)";
   // Remove YAML list items whose path is under docs/plans/ or docs/templates/
   // Each entry looks like:  "  - path: docs/plans/...\n    covers: []"
-  const llmspecContent = llmspecRaw.replace(
-    /[ \t]*- path:\s*(docs\/plans\/|docs\/templates\/).*\n([ \t]+\S[^\n]*\n)*/g,
-    ""
-  );
+  const llmspecContent = (() => {
+    const lines = llmspecRaw.split("\n");
+    const filtered: string[] = [];
+    let skip = false;
+    for (const line of lines) {
+      if (/[ \t]*- path:\s*(docs\/plans\/|docs\/templates\/)/.test(line)) {
+        skip = true;
+        continue;
+      }
+      if (skip && /^[ \t]+\S/.test(line)) continue;
+      skip = false;
+      filtered.push(line);
+    }
+    return filtered.join("\n");
+  })();
 
   const skillSection = skillContent
     ? `${skillContent}\n\n---\n\n`
