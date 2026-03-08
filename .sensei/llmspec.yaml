@@ -1,20 +1,182 @@
 project: sensei
 version: 0.1.0
-description: 'TODO: one-sentence project summary'
+description: >-
+  A CLI and MCP server that indexes a codebase once, exposes exports at four resolution
+  levels (L0-L3), and measures AI skills impact through A/B benchmarks.
 stack:
-  - typescript/javascript
+  - typescript
+  - bun
+  - vitest
+  - modelcontextprotocol
 entry_points:
-  - path: src/index.ts
-    role: 'TODO: describe role'
-concepts: []
-patterns: []
+  - path: packages/cli/src/cli.ts
+    role: sensei CLI binary — arg parsing, subcommand dispatch
+  - path: packages/mcp/src/index.ts
+    role: MCP server entry — registers 14 tools over stdio
+  - path: packages/server/src/serve.ts
+    role: inference HTTP server — /health /analyze /setup endpoints
+  - path: packages/tools/src/index.ts
+    role: tool library barrel — reindex, query, drift, context, project-memory
+concepts:
+  - name: llmspec
+    definition: >-
+      YAML manifest (.sensei/llmspec.yaml) describing the project to AI agents:
+      entry points, stack, doc-to-code coverage mappings, patterns, shortcuts.
+  - name: resolution levels
+    definition: >-
+      Code stored at four granularities — L0 signature (~10 tokens), L1 description,
+      L2 logic flow, L3 full source. Agents request the minimum needed.
+  - name: symbol map
+    definition: >-
+      JSON index (.sensei/symbol-map.json) mapping every file to its exported symbols
+      at L0-L2, built by reindexRepo().
+  - name: doc coverage
+    definition: >-
+      Each docs[] entry in llmspec.yaml has a covers[] list mapping the doc to the
+      source files it documents. Used by checkDrift() to detect stale docs.
+  - name: package split
+    definition: >-
+      Monorepo with 5 packages: shared (types) → tools (logic) → mcp/server (adapters)
+      → cli (binary). Neither mcp nor cli depends on the other.
+patterns:
+  - name: injectable deps
+    files: packages/*/src/**/*.ts
+    convention: >-
+      Functions accept optional fn parameters (fetchFn, execFn, isAvailableFn)
+      so tests can inject stubs without module mocking.
+  - name: barrel exports
+    files: packages/*/src/index.ts
+    convention: >-
+      Each package exposes a single src/index.ts barrel. Internal paths are
+      never imported across package boundaries.
+  - name: workspace-star deps
+    files: packages/*/package.json
+    convention: >-
+      Cross-package deps use "workspace:*" protocol. Bun resolves TypeScript
+      source directly — no build step needed for workspace consumers.
 api_surface: []
 doc_layers:
-  design: docs/
-  code: src/
+  design: docs/design/
+  code: packages/
   public:
     - README.md
-docs: []
+docs:
+  - path: docs/design/01-architecture.md
+    covers:
+      - packages/cli/src/cli.ts
+      - packages/mcp/src/index.ts
+  - path: docs/design/03-mcp-server.md
+    covers:
+      - packages/mcp/src/index.ts
+      - packages/tools/src/index.ts
+  - path: docs/design/04-llmspec.md
+    covers:
+      - packages/tools/src/tools/reindex.ts
+      - packages/tools/src/index-reader.ts
+  - path: docs/design/05-indexing.md
+    covers:
+      - packages/tools/src/tools/reindex.ts
+  - path: docs/design/06-compression.md
+    covers:
+      - packages/tools/src/tools/query.ts
+      - packages/shared/src/types.ts
+  - path: docs/design/07-drift.md
+    covers:
+      - packages/tools/src/tools/drift.ts
+  - path: docs/design/08-benchmarking.md
+    covers:
+      - packages/cli/src/commands/benchmark-doctor.ts
+      - packages/cli/src/commands/benchmark-inspect.ts
+      - packages/cli/src/commands/benchmark-promote.ts
+  - path: docs/design/09-cli.md
+    covers:
+      - packages/cli/src/cli.ts
+      - packages/cli/src/commands/init.ts
+      - packages/cli/src/commands/add.ts
+      - packages/cli/src/commands/status.ts
+  - path: docs/design/10-project-memory.md
+    covers:
+      - packages/tools/src/tools/project-memory.ts
+  - path: docs/design/11-doc-doctor.md
+    covers:
+      - packages/cli/src/commands/doctor.ts
+  - path: docs/design/12-incremental-indexing.md
+    covers:
+      - packages/tools/src/tools/reindex.ts
+  - path: docs/design/13-traceability-matrix.md
+    covers:
+      - packages/tools/src/tools/drift.ts
+      - packages/tools/src/index-reader.ts
+  - path: docs/design/14-server-package.md
+    covers:
+      - packages/server/src/serve.ts
+      - packages/server/src/model/system-check.ts
+  - path: docs/design/16-local-model-indexer.md
+    covers:
+      - packages/tools/src/tools/reindex.ts
+      - packages/server/src/model/ollama-backend.ts
+  - path: docs/features/01-CodebaseIndexing.md
+    covers:
+      - packages/tools/src/tools/reindex.ts
+      - packages/tools/src/index-reader.ts
+  - path: docs/features/02-ContentCompression.md
+    covers:
+      - packages/tools/src/tools/query.ts
+  - path: docs/features/03-AgenticDevWorkflow.md
+    covers:
+      - packages/tools/src/tools/context.ts
+      - packages/tools/src/tools/query.ts
+  - path: docs/features/04-DocDriftDetection.md
+    covers:
+      - packages/tools/src/tools/drift.ts
+  - path: docs/features/05-ContextManagement.md
+    covers:
+      - packages/tools/src/tools/context.ts
+  - path: docs/features/06-Benchmarking.md
+    covers:
+      - packages/cli/src/commands/benchmark-doctor.ts
+      - packages/cli/src/commands/benchmark-inspect.ts
+      - packages/cli/src/commands/benchmark-promote.ts
+  - path: docs/features/07-CLI.md
+    covers:
+      - packages/cli/src/cli.ts
+      - packages/cli/src/commands/init.ts
+      - packages/cli/src/commands/add.ts
+  - path: docs/features/08-ProjectWorkflow.md
+    covers:
+      - packages/tools/src/tools/project-memory.ts
+  - path: docs/features/09-DocDoctor.md
+    covers:
+      - packages/cli/src/commands/doctor.ts
+  - path: docs/features/10-IncrementalIndexing.md
+    covers:
+      - packages/tools/src/tools/reindex.ts
+  - path: docs/features/11-TraceabilityMatrix.md
+    covers:
+      - packages/tools/src/tools/drift.ts
+      - packages/tools/src/index-reader.ts
+  - path: docs/plans/2026-03-07-monorepo-package-split.md
+    covers: []
+  - path: docs/plans/2026-03-06-doctor-benchmark.md
+    covers: []
+  - path: docs/plans/2026-03-07-server-inference-package.md
+    covers: []
+  - path: docs/plans/2026-03-06-benchmark-git-branches-design.md
+    covers: []
+  - path: docs/plans/2026-03-06-promote-telemetry.md
+    covers: []
+  - path: docs/plans/2026-03-06-benchmark-git-branches.md
+    covers: []
+  - path: docs/plans/2026-03-06-doctor-benchmark-design.md
+    covers: []
+  - path: docs/plans/2026-03-06-promote-telemetry-design.md
+    covers: []
+  - path: docs/plans/2026-03-06-ai-skills-repo.md
+    covers: []
+  - path: docs/plans/2026-03-06-ai-skills-repo-design.md
+    covers: []
+  - path: docs/plans/2026-03-07-extract-tools-package.md
+    covers: []
 shortcuts:
   build: bun run build
   test: bunx vitest run
