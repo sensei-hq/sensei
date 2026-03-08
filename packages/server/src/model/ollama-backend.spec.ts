@@ -62,6 +62,23 @@ describe("OllamaBackend", () => {
     });
   });
 
+  describe("generate", () => {
+    it("returns the response string from Ollama", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+        JSON.stringify({ response: '["packages/tools/src/tools/reindex.ts"]' }),
+        { status: 200 }
+      ));
+      const result = await backend.generate("which files does this cover?");
+      expect(result).toBe('["packages/tools/src/tools/reindex.ts"]');
+    });
+
+    it("returns empty string when fetch throws", async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      const result = await backend.generate("some prompt");
+      expect(result).toBe("");
+    });
+  });
+
   describe("embed", () => {
     it("returns number array from Ollama embeddings endpoint", async () => {
       vi.mocked(fetch).mockResolvedValueOnce(new Response(

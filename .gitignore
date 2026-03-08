@@ -10,9 +10,13 @@ results/**/a/
 results/**/b/
 results/**/c/
 
+# Sensei server DB
+.sensei/reports.db
+
 # OS
 .DS_Store
 
 # Editor
 .vscode/
 .idea/
+coverage
