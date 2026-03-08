@@ -1,14 +1,6 @@
 {
-  "skills/context-manager/SKILL.md": [
-    "src/auth/login.ts"
-  ],
-  "skills/doc-drift-detector/SKILL.md": [
-    "src/index.ts",
-    "src/tools/query.ts",
-    "src/tools/drift.ts"
-  ],
-  "skills/benchmark-runner/SKILL.md": [
-    "src/auth/login.ts"
+  "tasks/benchmark-coverage.yaml": [
+    "src/tools/reindex.ts"
   ],
   "docs/design/06-compression.md": [
     "src/orders.ts"
@@ -259,5 +251,16 @@
     "src/commands/status.ts",
     "src/commands/migrate.ts",
     "src/cli.ts"
+  ],
+  "skills/context-manager/SKILL.md": [
+    "src/auth/login.ts"
+  ],
+  "skills/doc-drift-detector/SKILL.md": [
+    "src/index.ts",
+    "src/tools/query.ts",
+    "src/tools/drift.ts"
+  ],
+  "skills/benchmark-runner/SKILL.md": [
+    "src/auth/login.ts"
   ]
 }

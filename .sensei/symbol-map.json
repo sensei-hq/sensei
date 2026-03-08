@@ -1443,5 +1443,14 @@
       "// ## Task 4: Full validation"
     ],
     "L2": []
+  },
+  "tasks/score-coverage.ts": {
+    "L0": [
+      "function load"
+    ],
+    "L1": [
+      "// function load"
+    ],
+    "L2": []
   }
 }
