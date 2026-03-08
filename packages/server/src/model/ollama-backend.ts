@@ -112,6 +112,21 @@ export class OllamaBackend implements ModelBackend {
     }
   }
 
+  async generate(prompt: string): Promise<string> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: this.model, prompt, stream: false }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const data = await res.json() as { response?: string };
+      return data.response ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   async embed(text: string): Promise<number[]> {
     try {
       const res = await fetch(`${this.baseUrl}/api/embeddings`, {

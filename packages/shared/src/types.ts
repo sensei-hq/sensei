@@ -72,6 +72,7 @@ export interface ExtractionInstructions {
 export interface ModelBackend {
   name: string;
   init(): Promise<void>;
+  generate(prompt: string): Promise<string>;
   embed(text: string): Promise<number[]>;
   extract(content: string, instructions: ExtractionInstructions): Promise<FileAnalysis>;
   isAvailable(): Promise<boolean>;
