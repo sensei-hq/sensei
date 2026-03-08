@@ -81,6 +81,15 @@ benchmark doctor:
   --sample <n>             Process only the first N input files
   --verbose                Show git steps, prompt sizes, and Claude API call markers
 
+benchmark coverage:
+  Uses local Ollama model to populate llmspec.yaml docs[].covers[]
+  and score against .sensei/llmspec-expected.yaml gold standard
+
+benchmark populate:
+  Compares Claude-without-skill vs Claude-with-populate-llmspec-skill.
+  Scores each strategy with score-coverage.ts and reports tokens, time, score.
+  Requires: .sensei/llmspec.yaml and .sensei/llmspec-expected.yaml
+
 benchmark inspect:
   sensei benchmark inspect <run>-<a|b|c>
 
@@ -218,6 +227,12 @@ async function main() {
           process.exit(1);
         }
         await benchmarkPromote(runName, repoRoot);
+      } else if (subCmd === "coverage") {
+        const { benchmarkCoverage } = await import("./commands/benchmark-coverage.js");
+        await benchmarkCoverage(repoRoot);
+      } else if (subCmd === "populate") {
+        const { benchmarkPopulate } = await import("./commands/benchmark-populate.js");
+        await benchmarkPopulate(repoRoot);
       } else {
         console.error(`Unknown benchmark subcommand: ${subCmd}\n`);
         console.log(HELP);
