@@ -1,7 +1,16 @@
 import { readFileSync, existsSync } from "fs";
+import { readFile, mkdir, writeFile } from "fs/promises";
+import { execSync } from "child_process";
 import { join } from "path";
+import { intro, outro, spinner, note, log, confirm, isCancel } from "@clack/prompts";
 import type { SymbolMap } from "@sensei/shared";
-import { senseiPath } from "@sensei/shared";
+import { callClaude } from "../claude.js";
+import {
+  getCurrentBranch, isCleanWorkingTree, createAndCheckoutBranch,
+  checkoutBranch, stageFiles, commitFiles, branchExists,
+} from "../git.js";
+import { generateRunName } from "../names.js";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
@@ -97,4 +106,210 @@ export function parseYamlOutput(text: string): string {
 export function parsePopulateScore(output: string): number {
   const match = output.match(/llmspec coverage score:\s*(\d+)\/100/);
   return match ? parseInt(match[1], 10) : 0;
+}
+
+// ── Skill reader ──────────────────────────────────────────────────────────────
+
+function readSkillContent(repoPath: string): string | null {
+  const skillPath = join(repoPath, "skills/populate-llmspec/SKILL.md");
+  if (!existsSync(skillPath)) return null;
+  const raw = readFileSync(skillPath, "utf-8");
+  // Strip YAML frontmatter (--- ... ---)
+  return raw.replace(/^---[\s\S]*?---\n/, "").trim();
+}
+
+// ── Score script runner ───────────────────────────────────────────────────────
+
+function runScoreScript(repoPath: string, llmspecPath: string): string {
+  const scoreScript = join(repoPath, "tasks/score-coverage.ts");
+  if (!existsSync(scoreScript)) return "";
+  try {
+    return execSync(`bun ${scoreScript} ${llmspecPath}`, {
+      cwd: repoPath,
+      encoding: "utf-8",
+    });
+  } catch (err: unknown) {
+    const e = err as { stdout?: string };
+    return e.stdout ?? "";
+  }
+}
+
+// ── Main command ──────────────────────────────────────────────────────────────
+
+interface StrategyRun {
+  tokensIn: number;
+  tokensOut: number;
+  elapsedMs: number;
+  coverageScore: number;
+}
+
+export async function benchmarkPopulate(repoPath: string): Promise<void> {
+  intro("sensei benchmark populate");
+
+  // ── Preconditions ────────────────────────────────────────────────────────────
+  const llmspecPath = senseiPath(repoPath, "llmspec.yaml");
+  if (!existsSync(llmspecPath)) {
+    log.error(".sensei/llmspec.yaml not found. Run: sensei init");
+    outro("Aborted.");
+    return;
+  }
+
+  const llmspecExpectedPath = senseiPath(repoPath, "llmspec-expected.yaml");
+  if (!existsSync(llmspecExpectedPath)) {
+    log.error(".sensei/llmspec-expected.yaml not found. Create it first.");
+    outro("Aborted.");
+    return;
+  }
+
+  if (!isCleanWorkingTree(repoPath)) {
+    log.error("Working tree is not clean. Please commit or stash your changes before running benchmark populate.");
+    outro("Aborted.");
+    return;
+  }
+
+  const baseBranch = getCurrentBranch(repoPath);
+  if (baseBranch === "HEAD") {
+    log.error("Detached HEAD state detected. Please checkout a branch before running benchmark populate.");
+    outro("Aborted.");
+    return;
+  }
+
+  // ── Read skill content ────────────────────────────────────────────────────────
+  let skillContent: string | null = null;
+  try {
+    skillContent = readSkillContent(repoPath);
+    if (skillContent === null) {
+      log.warn("skills/populate-llmspec/SKILL.md not found — Strategy B will run without skill content.");
+    }
+  } catch {
+    log.warn("Could not read skills/populate-llmspec/SKILL.md — Strategy B will run without skill content.");
+  }
+
+  // ── Build prompts ─────────────────────────────────────────────────────────────
+  const promptA = buildPopulatePrompt(repoPath, null);
+  const promptB = buildPopulatePrompt(repoPath, skillContent ?? null);
+
+  // ── Generate run name and check branches ─────────────────────────────────────
+  const runName = generateRunName();
+  const branches = { a: `benchmark/${runName}-a`, b: `benchmark/${runName}-b` } as const;
+
+  for (const branch of Object.values(branches)) {
+    if (branchExists(repoPath, branch)) {
+      log.error(`Branch already exists: ${branch}. Re-run to get a new run name.`);
+      outro("Aborted.");
+      return;
+    }
+  }
+
+  const strategyNames = {
+    a: "Baseline (no skill)",
+    b: "With populate-llmspec skill",
+  } as const;
+
+  // ── Permission prompt (before any API calls or git ops) ───────────────────────
+  const gitOpsLines = [
+    `git checkout -b ${branches.a} ${baseBranch}`,
+    `  → Claude API call: "${strategyNames.a}" strategy (${promptA.length} chars)`,
+    `  git add .sensei/llmspec.yaml && git commit`,
+    `git checkout ${baseBranch}`,
+    `git checkout -b ${branches.b} ${baseBranch}`,
+    `  → Claude API call: "${strategyNames.b}" strategy (${promptB.length} chars)`,
+    `  git add .sensei/llmspec.yaml && git commit`,
+    `git checkout ${baseBranch}`,
+    `[score each branch against .sensei/llmspec-expected.yaml]`,
+    `[write .sensei/benchmark-populate-${runName}.json on each branch]`,
+    `git checkout benchmark/${runName}-<winner>`,
+  ];
+
+  log.info(`sensei will perform these git operations:\n  ${gitOpsLines.join("\n  ")}`);
+  const proceed = await confirm({ message: "Proceed?" });
+  if (isCancel(proceed) || !proceed) {
+    outro("Cancelled.");
+    return;
+  }
+
+  // ── Interleaved: create branch → run strategy → score → commit → back ─────────
+  const sp = spinner();
+  const strategyRuns = {} as Record<"a" | "b", StrategyRun>;
+  const strategyPrompts = { a: promptA, b: promptB };
+  const strategies: Array<"a" | "b"> = ["a", "b"];
+
+  for (const key of strategies) {
+    createAndCheckoutBranch(repoPath, branches[key], baseBranch);
+
+    sp.start(`Strategy ${key.toUpperCase()}: ${strategyNames[key]}...`);
+    const t0 = Date.now();
+    const result = await callClaude(strategyPrompts[key]);
+    const elapsedMs = Date.now() - t0;
+    sp.stop(
+      `Strategy ${key.toUpperCase()} done ` +
+      `(${result.usage.tokensIn}→${result.usage.tokensOut} tokens, ` +
+      `${(elapsedMs / 1000).toFixed(1)}s)`
+    );
+
+    const yamlText = parseYamlOutput(result.text);
+    await writeFile(llmspecPath, yamlText, "utf-8");
+
+    const scoreOutput = runScoreScript(repoPath, llmspecPath);
+    const coverageScore = parsePopulateScore(scoreOutput);
+    log.info(`  Score: ${coverageScore}/100`);
+
+    strategyRuns[key] = {
+      tokensIn: result.usage.tokensIn,
+      tokensOut: result.usage.tokensOut,
+      elapsedMs,
+      coverageScore,
+    };
+
+    stageFiles(repoPath, [llmspecPath]);
+    commitFiles(repoPath, `chore: sensei benchmark populate using "${strategyNames[key]}": .sensei/llmspec.yaml`);
+
+    checkoutBranch(repoPath, baseBranch);
+  }
+
+  // ── Determine winner ──────────────────────────────────────────────────────────
+  const winner: "a" | "b" = strategyRuns.b.coverageScore >= strategyRuns.a.coverageScore ? "b" : "a";
+
+  // ── Build results JSON ────────────────────────────────────────────────────────
+  const senseiJsonPath = senseiPath(repoPath, `benchmark-populate-${runName}.json`);
+  const resultsData = {
+    run: runName,
+    baseBranch,
+    branches,
+    autoPromoted: winner,
+    report: {
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      strategies: {
+        a: { name: strategyNames.a, promptChars: promptA.length },
+        b: { name: strategyNames.b, promptChars: promptB.length },
+      },
+      results: {
+        a: { ...strategyRuns.a },
+        b: { ...strategyRuns.b },
+      },
+    },
+  };
+
+  // ── Write JSON on each branch ─────────────────────────────────────────────────
+  for (const key of strategies) {
+    checkoutBranch(repoPath, branches[key]);
+    await mkdir(senseiPath(repoPath), { recursive: true });
+    await writeFile(senseiJsonPath, JSON.stringify(resultsData, null, 2), "utf-8");
+    stageFiles(repoPath, [senseiJsonPath]);
+    commitFiles(repoPath, `chore: add benchmark-populate scores for ${runName}`);
+    checkoutBranch(repoPath, baseBranch);
+  }
+
+  // ── Checkout winner ───────────────────────────────────────────────────────────
+  checkoutBranch(repoPath, branches[winner]);
+
+  // ── Announce results ──────────────────────────────────────────────────────────
+  note(
+    `Run: ${runName}\n` +
+    `A (${strategyNames.a}): score=${strategyRuns.a.coverageScore}/100 tokens=${strategyRuns.a.tokensIn}→${strategyRuns.a.tokensOut} time=${(strategyRuns.a.elapsedMs / 1000).toFixed(1)}s\n` +
+    `B (${strategyNames.b}): score=${strategyRuns.b.coverageScore}/100 tokens=${strategyRuns.b.tokensIn}→${strategyRuns.b.tokensOut} time=${(strategyRuns.b.elapsedMs / 1000).toFixed(1)}s\n` +
+    `Winner: ${winner.toUpperCase()} → ${branches[winner]}`
+  );
+  outro("Done.");
 }
