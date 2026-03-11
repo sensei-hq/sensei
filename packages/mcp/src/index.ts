@@ -112,6 +112,23 @@ server.tool("close_item", "Mark an open item as resolved",
   async ({ id, resolution }) => ({ content: [{ type: "text", text: await closeItem(REPO, id, resolution) }] })
 );
 
+// Search tool
+server.tool(
+  "search",
+  "Search the indexed repo using symbol, BM25, and semantic layers. Returns ranked results.",
+  {
+    query: z.string().describe("Search query"),
+    top: z.number().optional().describe("Max results (default: 10)"),
+    type: z.enum(["all", "symbol", "fulltext", "semantic"]).optional().describe("Search layer (default: all)"),
+  },
+  async ({ query, top, type }) => {
+    const { search } = await import("@sensei/tools");
+    const result = await search(REPO, query, { top, type });
+    const text = typeof result === "string" ? result : JSON.stringify(result);
+    return { content: [{ type: "text", text }] };
+  }
+);
+
 // Telemetry tool
 server.tool("submit_benchmark_report",
   "Submit an anonymous benchmark report to the sensei telemetry endpoint. Reads SENSEI_TELEMETRY_URL env var (default: http://localhost:7744).",
