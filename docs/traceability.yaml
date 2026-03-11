@@ -293,6 +293,54 @@ features:
         section: "#drift-warning-on-sync"
         status: planned
 
+  analytics:
+    doc: docs/features/12-analytics.md
+    title: Analytics
+    nfrs: [reliability, usability, accuracy]
+    items:
+      - id: collector-daemon
+        section: "#telemetry-collector"
+        status: planned
+      - id: jsonl-fallback
+        section: "#telemetry-collector"
+        status: planned
+      - id: jsonl-drain
+        section: "#telemetry-collector"
+        status: planned
+      - id: uuid-generation
+        section: "#telemetry-collector"
+        status: planned
+      - id: hook-scripts
+        section: "#telemetry-collector"
+        status: planned
+      - id: hook-installation
+        section: "#telemetry-collector"
+        status: planned
+      - id: sqlite-storage
+        section: "#telemetry-collector"
+        status: planned
+      - id: stats-default
+        section: "#analytics-cli"
+        status: planned
+      - id: stats-all
+        section: "#analytics-cli"
+        status: planned
+      - id: stats-tool
+        section: "#analytics-cli"
+        status: planned
+      - id: stats-session
+        section: "#analytics-cli"
+        status: planned
+      - id: stats-since
+        section: "#analytics-cli"
+        status: planned
+      - id: stats-json
+        section: "#analytics-cli"
+        status: planned
+      - id: stats-gaps
+        section: "#analytics-cli"
+        status: planned
+
 # ─────────────────────────────────────────────────────────────
 # Design docs — declares which feature items each component covers
 # ─────────────────────────────────────────────────────────────
@@ -432,6 +480,13 @@ design:
     implements:
       - feature: context
         items: [slice-loading, token-budget, checkpoint-restore, recommend-next]
+
+  analytics-collector:
+    doc: docs/superpowers/specs/2026-03-11-analytics-design.md
+    title: Analytics Collector
+    implements:
+      - feature: analytics
+        items: [collector-daemon, jsonl-fallback, jsonl-drain, uuid-generation, hook-scripts, hook-installation, sqlite-storage, stats-default, stats-all, stats-tool, stats-session, stats-since, stats-json, stats-gaps]
 
 # ─────────────────────────────────────────────────────────────
 # Code entries — populated as implementation progresses
