@@ -7,6 +7,7 @@ import {
   loadContext, recommendNext,
   checkDrift,
   checkpoint, getSessionContext, addDecision, addPattern, askQuestion, getOpenItems, closeItem,
+  search,
 } from "@sensei/tools";
 import { SENSEI_DIR } from "@sensei/shared";
 
@@ -122,7 +123,6 @@ server.tool(
     type: z.enum(["all", "symbol", "fulltext", "semantic"]).optional().describe("Search layer (default: all)"),
   },
   async ({ query, top, type }) => {
-    const { search } = await import("@sensei/tools");
     const result = await search(REPO, query, { top, type });
     const text = typeof result === "string" ? result : JSON.stringify(result);
     return { content: [{ type: "text", text }] };
