@@ -87,6 +87,11 @@ benchmark coverage:
   Uses local Ollama model to populate llmspec.yaml docs[].covers[]
   and score against .sensei/llmspec-expected.yaml gold standard
 
+benchmark indexer:
+  Compare cocoindex-code vs sensei's symbol indexer.
+  Measures file coverage, query relevance, and prints a spot-check for manual review.
+  Requires: cocoindex-code installed (pipx install cocoindex-code) and indexed.
+
 benchmark populate:
   Compares Claude-without-skill vs Claude-with-populate-llmspec-skill.
   Scores each strategy with score-coverage.ts and reports tokens, time, score.
@@ -235,6 +240,9 @@ async function main() {
       } else if (subCmd === "populate") {
         const { benchmarkPopulate } = await import("./commands/benchmark-populate.js");
         await benchmarkPopulate(repoRoot);
+      } else if (subCmd === "indexer") {
+        const { benchmarkIndexer } = await import("./commands/benchmark-indexer.js");
+        await benchmarkIndexer(repoRoot);
       } else {
         console.error(`Unknown benchmark subcommand: ${subCmd}\n`);
         console.log(HELP);

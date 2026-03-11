@@ -20,6 +20,16 @@ export type { ContextSlice } from "./tools/context.js";
 export { checkDrift } from "./tools/drift.js";
 export type { DriftEntry, DriftResult } from "./tools/drift.js";
 
+// Benchmark: indexer comparison
+export { extractGroundTruth } from "./benchmark/indexer-comparison/ground-truth.js";
+export type { GroundTruth } from "./benchmark/indexer-comparison/ground-truth.js";
+export { loadSenseiIndex } from "./benchmark/indexer-comparison/sensei-adapter.js";
+export type { SenseiIndex } from "./benchmark/indexer-comparison/sensei-adapter.js";
+export { connectCocoindex } from "./benchmark/indexer-comparison/cocoindex-adapter.js";
+export type { CocoIndex } from "./benchmark/indexer-comparison/cocoindex-adapter.js";
+export { score } from "./benchmark/indexer-comparison/scorer.js";
+export { printReport, writeMarkdownReport } from "./benchmark/indexer-comparison/reporter.js";
+
 // Project memory
 export {
   checkpoint,
