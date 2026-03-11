@@ -43,7 +43,7 @@ export async function watch(repoPath: string): Promise<void> {
         })
         .catch(err => console.error("reindex error:", err.message))
         .finally(() => { reindexPromise = null; });
-      await reindexPromise;
+      // No await here — setTimeout discards the callback's return value
     }, 500);
   }
 
@@ -54,9 +54,10 @@ export async function watch(repoPath: string): Promise<void> {
   console.log(`Watching ${watchTargets.map(p => p.replace(repoPath + "/", "")).join(", ")}... (Ctrl+C to stop)`);
 
   await new Promise<void>(resolve => {
-    process.on("SIGINT", async () => {
+    process.once("SIGINT", async () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      if (reindexPromise) await reindexPromise;
+      const inFlight = reindexPromise;
+      if (inFlight) await inFlight;
       await watcher.close();
       console.log("Watch stopped.");
       resolve();
