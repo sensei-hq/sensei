@@ -11,6 +11,7 @@
     "test": "bunx vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@sensei/shared": "workspace:*",
     "fast-glob": "^3.3.0",
     "js-yaml": "^4.1.0"
