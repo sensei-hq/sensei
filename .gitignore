@@ -25,3 +25,4 @@ results/**/c/
 coverage
 firebase-debug.log
 .worktrees/
+.cocoindex_code
