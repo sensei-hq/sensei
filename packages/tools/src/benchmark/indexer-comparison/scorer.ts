@@ -1,3 +1,4 @@
+import { basename } from "path";
 import type { GroundTruth } from "./ground-truth.js";
 import type { CocoIndex } from "./cocoindex-adapter.js";
 import type { SenseiIndex } from "./sensei-adapter.js";
@@ -40,7 +41,8 @@ export async function score(
   const sampleFiles = groundTruth.files.slice(0, 15);
   const spotCheck: SpotCheckRow[] = await Promise.all(
     sampleFiles.map(async (filePath): Promise<SpotCheckRow> => {
-      const cocoChunks = await cocoIndex.search(`file:${filePath}`, 1);
+      const fileQuery = basename(filePath, ".ts");
+      const cocoChunks = await cocoIndex.search(fileQuery, 1);
       const cocoContent = cocoChunks[0]?.content.slice(0, 200) ?? null;
 
       const senseiSymbol = senseiIndex.symbols.find(s => s.path === filePath);

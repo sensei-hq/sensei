@@ -43,8 +43,12 @@ export async function benchmarkIndexer(repoPath: string): Promise<void> {
   console.log(`  ${cocoIndex.files.length} files indexed`);
 
   console.log("Scoring...");
-  const report = await score(groundTruth, cocoIndex, senseiIndex);
-  await cocoIndex.close();
+  let report;
+  try {
+    report = await score(groundTruth, cocoIndex, senseiIndex);
+  } finally {
+    await cocoIndex.close();
+  }
 
   printReport(report);
   const outPath = await writeMarkdownReport(report, repoPath);
