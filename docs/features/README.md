@@ -16,16 +16,21 @@ Sensei makes AI agents more effective in software development by solving the ori
 
 ## Modules
 
-- [Indexing](indexing.md) — Scan, extract, and produce orientation artifacts; incremental updates; multi-modal search; symbol graph
-- [Resolution](resolution.md) — Token-efficient code representations at four levels (L0–L3)
-- [Workflow](workflow.md) — Session protocol, project memory, decision capture, and cross-session continuity
-- [Traceability](traceability.md) — Doc-to-code coverage map, git-based drift detection, pre-commit and CI integration
-- [Context](context.md) — Targeted slice loading, token budget reporting, and task-scoped context prescriptions
-- [Benchmarking](benchmarking.md) — A/B comparisons, metrics collection, CLI prompt comparison, and improvement loop
-- [CLI](cli.md) — Repo setup, profile management, context switching, shared library cache
-- [Documentation](documentation.md) — Doc guide skill, find_doc tool, scaffold, doc-doctor, and external doc references
-- [Patterns](patterns.md) — Detect, capture, search, and export recurring patterns as local repo skills
-- [Caching](caching.md) — Persist and retrieve notable Claude responses across sessions
+- [01 — Indexing](01-indexing.md) — Scan, extract, and produce orientation artifacts; incremental updates; multi-modal search; symbol graph
+- [02 — Resolution](02-resolution.md) — Token-efficient code representations at four levels (L0–L3)
+- [03 — Workflow](03-workflow.md) — Session protocol, project memory, decision capture, and cross-session continuity
+- [04 — Traceability](04-traceability.md) — Doc-to-code coverage map, git-based drift detection, pre-commit and CI integration
+- [05 — Context](05-context.md) — Targeted slice loading, token budget reporting, and task-scoped context prescriptions
+- [06 — Benchmarking](06-benchmarking.md) — A/B comparisons, metrics collection, CLI prompt comparison, and improvement loop
+- [07 — CLI](07-cli.md) — Repo setup, profile management, context switching, shared library cache
+- [08 — Documentation](08-documentation.md) — Doc guide skill, find_doc tool, scaffold, doc-doctor, and external doc references
+- [09 — Patterns](09-patterns.md) — Detect, capture, search, and export recurring patterns as local repo skills
+- [10 — Caching](10-caching.md) — Persist and retrieve notable Claude responses across sessions
+- [11 — Implementation Sync](11-implementation-sync.md) — Post-implementation doc enrichment, traceability sync, plan archival, incremental llms.txt
+
+## Traceability
+
+Feature items, status, and design coverage are tracked in [`docs/traceability.yaml`](../traceability.yaml). Status lives there only — do not add status tables to feature docs.
 
 ## Feature Status
 
