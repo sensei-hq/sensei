@@ -19,6 +19,7 @@ const { positionals, values } = parseArgs({
     source: { type: "string" },
     dest: { type: "string" },
     verbose: { type: "boolean", default: false },
+    repo: { type: "string" },
   },
 });
 
@@ -106,6 +107,9 @@ benchmark promote:
 serve:
   --port <n>               Port to listen on (default: 7744)
   --db <path>              Path to SQLite database file
+
+watch:
+  --repo <path>            Repo to watch (default: auto-detected repo root)
 `;
 
 async function main() {
@@ -285,6 +289,12 @@ async function main() {
       }
       console.error(`Unknown server subcommand: ${subCmd}`);
       process.exit(1);
+    }
+    case "watch": {
+      const { watch } = await import("./commands/watch.js");
+      const repo = values.repo ?? repoRoot;
+      await watch(repo);
+      break;
     }
     default:
       if (cmd) console.error(`Unknown command: ${cmd}\n`);
