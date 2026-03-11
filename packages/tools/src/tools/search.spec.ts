@@ -9,7 +9,6 @@ const TMP = "/tmp/sensei-test-search";
 // Fixed vectors: auth gets high similarity to "authenticate" query, home gets low
 const AUTH_VECTOR = new Array(384).fill(0).map((_, i) => i < 192 ? 0.1 : 0.0);
 const HOME_VECTOR = new Array(384).fill(0).map((_, i) => i >= 192 ? 0.1 : 0.0);
-const QUERY_VECTOR = new Array(384).fill(0).map((_, i) => i < 192 ? 0.1 : 0.0); // matches auth
 
 const { HOISTED_QUERY_VECTOR } = vi.hoisted(() => ({
   HOISTED_QUERY_VECTOR: new Array(384).fill(0).map((_, i) => i < 192 ? 0.1 : 0.0),
