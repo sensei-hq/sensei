@@ -1,3 +1,11 @@
+---
+id: cli
+type: design
+implements:
+  - feature: cli
+    items: [repo-setup, profile-management, company-profile, context-switching, shared-library-cache, migration, pre-commit-hook, guidelines]
+---
+
 # CLI
 
 ## Overview

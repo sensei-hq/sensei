@@ -1,3 +1,11 @@
+---
+id: llmspec
+type: design
+implements:
+  - feature: indexing
+    items: [llmspec-generation]
+---
+
 # LLMSpec
 
 ## Overview

@@ -1,3 +1,11 @@
+---
+id: indexer
+type: design
+implements:
+  - feature: indexing
+    items: [repo-scanner, symbol-map, llms-txt-generation, multi-modal-search, symbol-graph]
+---
+
 # Indexing
 
 ## Overview

@@ -1,3 +1,11 @@
+---
+id: resolution-levels
+type: design
+implements:
+  - feature: resolution
+    items: [resolution-levels, docstring-stripping, logic-flow-notation, io-pattern-notation, task-to-level-mapping]
+---
+
 # Content Compression
 
 ## Overview
