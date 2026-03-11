@@ -24,3 +24,4 @@ results/**/c/
 .idea/
 coverage
 firebase-debug.log
+.worktrees/
