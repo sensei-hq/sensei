@@ -1,4 +1,9 @@
-# Content Compression
+---
+id: resolution
+type: feature
+---
+
+# Resolution
 
 Loading full source files into LLM context is the single biggest source of token waste in agentic coding. Most tasks — understanding a function, tracing a flow, discovering what's available — need far less than full source. Content compression defines four resolution levels and the rules for choosing between them.
 
