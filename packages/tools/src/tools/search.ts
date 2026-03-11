@@ -35,9 +35,9 @@ interface EmbeddingsFile {
   vectors: Record<string, number[]>;
 }
 
-// Module-level cache (reset between tests via module reload)
-let cachedChunks: ChunksFile | null = null;
-let cachedEmbeddings: EmbeddingsFile | null = null;
+// Module-level cache keyed by repoPath (reset between tests via module reload)
+const chunksCache = new Map<string, ChunksFile>();
+const embeddingsCache = new Map<string, EmbeddingsFile>();
 let reindexInProgress = false;
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -57,22 +57,24 @@ function symbolNameFromL0(l0: string): string {
 }
 
 async function loadChunks(repoPath: string): Promise<ChunksFile | null> {
-  if (cachedChunks) return cachedChunks;
+  if (chunksCache.has(repoPath)) return chunksCache.get(repoPath)!;
   const path = senseiPath(repoPath, "chunks.json");
   if (!existsSync(path)) return null;
   try {
-    cachedChunks = JSON.parse(await readFile(path, "utf-8")) as ChunksFile;
-    return cachedChunks;
+    const data = JSON.parse(await readFile(path, "utf-8")) as ChunksFile;
+    chunksCache.set(repoPath, data);
+    return data;
   } catch { return null; }
 }
 
 async function loadEmbeddings(repoPath: string): Promise<EmbeddingsFile | null> {
-  if (cachedEmbeddings) return cachedEmbeddings;
+  if (embeddingsCache.has(repoPath)) return embeddingsCache.get(repoPath)!;
   const path = senseiPath(repoPath, "embeddings.json");
   if (!existsSync(path)) return null;
   try {
-    cachedEmbeddings = JSON.parse(await readFile(path, "utf-8")) as EmbeddingsFile;
-    return cachedEmbeddings;
+    const data = JSON.parse(await readFile(path, "utf-8")) as EmbeddingsFile;
+    embeddingsCache.set(repoPath, data);
+    return data;
   } catch { return null; }
 }
 
