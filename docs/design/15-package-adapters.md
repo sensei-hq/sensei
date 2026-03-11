@@ -6,7 +6,7 @@ implements:
     items: [repo-scanner]
 ---
 
-# Package Adapters — Design
+# Package Adapters
 
 ## Problem
 
