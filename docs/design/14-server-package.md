@@ -1,3 +1,9 @@
+---
+id: server-package
+type: design
+implements: []
+---
+
 # Architecture v2 — Server-Mediated Inference, Package Split
 
 ## What Changed and Why

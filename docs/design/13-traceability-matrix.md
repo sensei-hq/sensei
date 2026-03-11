@@ -1,3 +1,11 @@
+---
+id: traceability-matrix
+type: design
+implements:
+  - feature: traceability
+    items: [coverage-declaration, auto-detection]
+---
+
 # Traceability Matrix
 
 ## Overview
