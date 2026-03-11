@@ -1,3 +1,8 @@
+---
+id: cli
+type: feature
+---
+
 # CLI
 
 Developers switch between projects, between personal and company contexts, and between different tech stacks. Without tooling to manage this, context is lost, standards drift apart, and each new project requires manual setup. The `skills` CLI makes context switching fast, profile management structured, and repo setup a single command.
