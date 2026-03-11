@@ -84,7 +84,7 @@ When the daemon is not running, hooks write to JSONL (fire-and-forget, ≤100ms)
 1. Read or generate UUID at `~/.sensei/uuid`
 2. Open SQLite with `PRAGMA journal_mode=WAL`
 3. Run migrations (create tables if missing)
-4. Drain `events.jsonl` if present and non-empty
+4. Drain `events.jsonl` if present and non-empty: import each line into SQLite, then delete the file on full success. On partial failure (e.g. SQLite error mid-drain), leave the file intact and log a warning — do not partially clear it.
 5. Start HTTP server on `localhost:51789`
 
 ### JSONL fallback
@@ -113,6 +113,38 @@ Both scripts are registered in `~/.claude/settings.json` under `hooks.PreToolUse
 
 ## `sensei stats` CLI
 
+### Flags
+
+| Flag | Argument | Behaviour |
+|------|----------|-----------|
+| _(none)_ | — | 7-day summary (default) |
+| `--all` | — | All-time summary; same format as default but no date filter |
+| `--tool` | tool name | Stats for one tool: call count, avg duration_ms, success rate, last called timestamp |
+| `--session` | session ID | Full chronological event sequence for that session |
+| `--since` | YYYY-MM-DD | Filter to events on or after the given date |
+| `--json` | — | Emit all output as JSON (schema below) |
+| `--gaps` | — | Missed opportunity report (see below) |
+
+`--since` can be combined with `--tool` or `--session`. `--json` can be combined with any flag.
+
+### JSON output schema
+
+```json
+{
+  "period": { "from": "2026-03-04", "to": "2026-03-11" },
+  "total_calls": 842,
+  "tools": [
+    { "name": "search_index", "calls": 341, "success_rate": 0.98, "avg_duration_ms": 120 }
+  ],
+  "sessions": 24,
+  "projects": 3
+}
+```
+
+For `--gaps --json`, the top-level key is `"gaps"` with an array of `{ "pattern", "count", "suggested_tool" }` objects.
+For `--tool --json`, the top-level key is `"tool"` with a single tool stats object including `"last_called"` (ISO timestamp).
+For `--session --json`, the top-level key is `"events"` with the full event array for that session.
+
 ### Default output (7-day)
 
 ```
@@ -123,12 +155,14 @@ Tool calls: 842
   Bash            289  (34%)   ✓ 91%  avg 340ms
   Read            112  (13%)   ✓ 100% avg  45ms
   reindex_repo     58   (7%)   ✓ 97%  avg 8.2s
-  ...
+  (top 5 by call count)
 
 Sessions: 24 across 3 projects
 ```
 
 ### `--gaps` output
+
+Results are sorted by frequency (most common gaps first).
 
 ```
 Missed opportunity report — last 7 days
@@ -152,7 +186,8 @@ Gaps are detected by pattern-matching bash commands against known sensei tool eq
 | JSONL write fails | Hook exits silently; event is lost |
 | SQLite write fails | Daemon logs to stderr; returns `{"ok":false}` |
 | Hook timeout (>100ms) | Hook process exits; event dropped or written to JSONL |
-| Daemon drain fails | Daemon logs warning; continues serving new events |
+| Daemon drain fails mid-way | Daemon logs warning; JSONL file left intact; continues serving new events |
+| Malformed/invalid event payload | Daemon returns `{"ok":false,"error":"invalid payload"}`; logs to stderr; event discarded |
 
 All failures are silent from the user's perspective. Reliability of the underlying session is never compromised.
 
@@ -183,7 +218,12 @@ packages/collector/
     stats.test.ts
     install.test.ts
     gaps.test.ts
+    schema.test.ts        Migration tests (create tables, idempotent re-run)
 packages/cli/src/commands/
   stats.ts            sensei stats command (calls packages/collector stats)
   setup.ts            sensei setup command (calls packages/collector install)
+
+Generated at runtime by sensei setup (not source files):
+  ~/.claude/hooks/pre-tool-use.sh
+  ~/.claude/hooks/post-tool-use.sh
 ```
