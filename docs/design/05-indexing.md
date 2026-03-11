@@ -12,6 +12,15 @@ implements:
 
 The indexer scans a repo and produces structured artifacts in `.index/`. It runs as an MCP tool (`reindex_repo`) and is guided by the `codebase-indexer` skill. V1 does a full rescan each time; V2 will diff against git to process only changed files.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| performance | Full scan of a 500-file repo must complete in under 30s |
+| accuracy | Symbol extraction must correctly capture all exported functions and their signatures |
+| scalability | Index artifacts must not grow unbounded — incremental runs update only changed entries |
+| reliability | Index must be consistent after interrupted runs (no partial/corrupt state) |
+
 ---
 
 ## Extraction Targets

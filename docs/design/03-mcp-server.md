@@ -18,6 +18,14 @@ implements:
 
 `repo-index-server` is a local MCP server that reads from a repo's `.index/` directory and `.llmspec.yaml` and serves targeted slices on demand. It also performs compute offload — generating docs, checking drift, running benchmarks — so LLMs don't spend context tokens on deterministic work.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| performance | Each MCP tool call must return in under 200ms for indexed repos |
+| reliability | MCP server must handle malformed input without crashing |
+| token-efficiency | Tool responses must include only requested data — no over-fetching |
+
 ---
 
 ## Tool Categories

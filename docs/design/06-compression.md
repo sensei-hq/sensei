@@ -12,6 +12,14 @@ implements:
 
 Code is stored at four resolution levels in the symbol map. The MCP server serves the requested level. Agents choose the right level based on task type — guided by the `content-compression` skill and the `recommend_next` tool.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| token-efficiency | L0 output must be under 100 tokens for a typical module |
+| accuracy | L2 logic flow must faithfully represent all branches and side effects |
+| performance | Level serving must add under 10ms overhead vs raw file read |
+
 ---
 
 ## Resolution Level Definitions

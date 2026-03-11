@@ -14,6 +14,14 @@ After the first full index, `reindexRepo` uses `git diff <lastIndexedCommit>..HE
 
 For non-git repos (no `.git/` directory), falls back to mtime/size fingerprints from `doc-index.json`.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| performance | Incremental run touching 5 files must complete in under 3s |
+| reliability | Deleted files must be fully removed from all index artifacts |
+| accuracy | Incremental results must be identical to a full rescan of the same state |
+
 ---
 
 ## Algorithm
