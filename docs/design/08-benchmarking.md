@@ -6,7 +6,7 @@ implements:
     items: [task-corpus, ab-evaluation, metrics-collection, results-comparison, cli-prompt-comparison, improvement-loop]
 ---
 
-# Benchmarking Design
+# Benchmarking
 
 ## Overview
 

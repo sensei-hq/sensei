@@ -6,7 +6,7 @@ implements:
     items: [doctor-single-doc, doctor-directory, template-auto-detection, doctor-rules]
 ---
 
-# Doc Doctorter
+# Doc Tools
 
 ## Overview
 
