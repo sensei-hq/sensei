@@ -1,3 +1,8 @@
+---
+id: benchmarking
+type: feature
+---
+
 # Benchmarking
 
 Skills and MCP tools are only valuable if their impact is measurable. Benchmarking provides a structured way to compare agent performance with and without skills, across a representative set of developer tasks, and to track improvement over time.
@@ -119,6 +124,52 @@ Feature: Results Comparison
     And improvements (or regressions) since the first run are highlighted
 ```
 
+### CLI Prompt Comparison
+
+Run a single prompt against Claude in two configurations — with and without skills/MCP — and get an immediate side-by-side result.
+
+```gherkin
+Feature: CLI Prompt Comparison
+
+  Scenario: Developer compares a prompt with and without skills
+    Given a prompt "How do I add a new MCP tool to this server?"
+    When the developer runs sensei benchmark prompt "How do I add a new MCP tool to this server?"
+    Then Claude runs the prompt in the without-skills configuration
+    And Claude runs the prompt in the with-skills configuration
+    And a side-by-side result is printed showing tokens, turns, tool calls, and response quality
+
+  Scenario: Without-skills run uses a clean environment
+    Given the without-skills configuration for a prompt comparison
+    Then no .sensei/ index is loaded
+    And no skills are injected
+    And the MCP server is not connected
+    And Claude has only the raw prompt
+
+  Scenario: With-skills run uses the full sensei environment
+    Given the with-skills configuration for a prompt comparison
+    Then the .sensei/ index is loaded
+    And skills are injected via the skills directory
+    And the MCP server is connected
+    And llmspec and llms.txt are available
+
+  Scenario: Result highlights efficiency delta
+    Given a completed prompt comparison
+    Then the output shows: tokens saved, turns saved, tool calls saved
+    And a percentage improvement is shown for each metric
+    And the response quality score is shown (based on success criteria match)
+
+  Scenario: Prompt comparison stores result for trend tracking
+    Given a completed prompt comparison
+    Then the result is appended to results/prompt-comparisons.json
+    And includes: prompt, date, delta metrics, and config used
+
+  Scenario: Developer runs comparison with a saved prompt file
+    Given a file tasks/my-prompt.txt containing a multi-line prompt
+    When the developer runs sensei benchmark prompt --file tasks/my-prompt.txt
+    Then the prompt from the file is used in both configurations
+    And results are displayed as normal
+```
+
 ### Improvement Loop
 
 Benchmarks feed directly back into skill improvement.
@@ -161,3 +212,6 @@ Feature: Improvement Loop
 | Comparison report (compare_results MCP tool) | 🔲 Planned |
 | Metrics summary and trend (get_metrics_summary) | 🔲 Planned |
 | Improvement loop documentation | 🔲 Planned |
+| CLI prompt comparison (sensei benchmark prompt) | 🔲 Planned |
+| Prompt comparison result storage (results/prompt-comparisons.json) | 🔲 Planned |
+| Prompt file input (--file flag) | 🔲 Planned |

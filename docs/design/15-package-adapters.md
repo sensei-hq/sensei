@@ -1,4 +1,12 @@
-# Package Adapters — Design
+---
+id: package-adapters
+type: design
+implements:
+  - feature: indexing
+    items: [repo-scanner]
+---
+
+# Package Adapters
 
 ## Problem
 
@@ -10,6 +18,13 @@ The current index (`symbol-map.json`) is a flat file → symbols map. It has no 
 - Tech stack and tooling per package (critical for monorepos)
 
 This makes it hard to answer questions like "what does `packages/sensei` do?", "what drives the auth implementation?", or "has this design doc drifted from the code it describes?"
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| accuracy | Adapter must correctly identify all source files and skip noise (node_modules, dist) |
+| scalability | Adapter must handle repos with 10,000+ files without memory exhaustion |
 
 ---
 

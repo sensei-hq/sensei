@@ -1,8 +1,21 @@
+---
+id: architecture
+type: design
+implements: []
+---
+
 # Architecture
 
 ## Overview
 
 The repo has four layers: **skills** (markdown guidance files), an **MCP server** (compute and data layer), a **CLI** (`skills` binary, setup and profile management), and **repo artifacts** (files written into indexed codebases). Skills teach agents the protocol. The MCP server handles execution. The CLI manages the developer experience. Repo artifacts persist the index between sessions.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| maintainability | Component boundaries must be clear enough that any module can be replaced without changing others |
+| scalability | Architecture must support adding new language adapters without modifying core indexer |
 
 ---
 
