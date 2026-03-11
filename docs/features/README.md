@@ -27,6 +27,7 @@ Sensei makes AI agents more effective in software development by solving the ori
 - [09 — Patterns](09-patterns.md) — Detect, capture, search, and export recurring patterns as local repo skills
 - [10 — Caching](10-caching.md) — Persist and retrieve notable Claude responses across sessions
 - [11 — Implementation Sync](11-implementation-sync.md) — Post-implementation doc enrichment, traceability sync, plan archival, incremental llms.txt
+- [12 — Analytics](12-analytics.md) — Telemetry collector, local SQLite storage, sensei stats CLI, missed-opportunity gap report
 
 ## Traceability
 
@@ -112,3 +113,13 @@ Feature items, status, and design coverage are tracked in [`docs/traceability.ya
 | | Cache hints in get_session_context() | 🔲 Planned |
 | | TTL-based expiry with retrieval extension | 🔲 Planned |
 | | Pin/delete via CLI (sensei cache pin / delete) | 🔲 Planned |
+| Analytics | Telemetry daemon (Node.js, localhost:51789) | 🔲 Planned |
+| | JSONL fallback when daemon unavailable | 🔲 Planned |
+| | JSONL drain on daemon startup | 🔲 Planned |
+| | Anonymous UUID generation | 🔲 Planned |
+| | PreToolUse / PostToolUse hook scripts | 🔲 Planned |
+| | Hook installation via sensei setup | 🔲 Planned |
+| | SQLite storage (WAL mode) | 🔲 Planned |
+| | sensei stats (7-day default summary) | 🔲 Planned |
+| | sensei stats --all / --tool / --session / --since / --json | 🔲 Planned |
+| | sensei stats --gaps (missed opportunity report) | 🔲 Planned |
