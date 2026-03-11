@@ -4,7 +4,7 @@ type: design
 implements: []
 ---
 
-# Architecture v2 — Server-Mediated Inference, Package Split
+# Server Package
 
 ## What Changed and Why
 

@@ -6,7 +6,7 @@ implements:
     items: [multi-modal-search]
 ---
 
-# Local Model Indexer — Design
+# Local Model Indexer
 
 ## Problem with the Current Approach
 
