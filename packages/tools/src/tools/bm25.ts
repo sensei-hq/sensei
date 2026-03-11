@@ -3,7 +3,15 @@ const K1 = 1.5;
 const B = 0.75;
 
 function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  // Split on non-alphanumeric boundaries, then further split camelCase tokens
+  const raw = text.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const tokens: string[] = [];
+  for (const tok of raw) {
+    // Split camelCase / PascalCase: e.g. "reindexRepo" → ["reindex", "Repo"]
+    const parts = tok.split(/(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/);
+    for (const p of parts) tokens.push(p.toLowerCase());
+  }
+  return tokens;
 }
 
 export function scoreBM25(
