@@ -1,3 +1,17 @@
+---
+id: mcp-server
+type: design
+implements:
+  - feature: indexing
+    items: [llmspec-generation, symbol-map, multi-modal-search, symbol-graph]
+  - feature: context
+    items: [targeted-slice-loading, recommend-next]
+  - feature: workflow
+    items: [mcp-offload, session-resume, session-checkpoint]
+  - feature: traceability
+    items: [on-demand-reporting]
+---
+
 # MCP Server
 
 ## Overview

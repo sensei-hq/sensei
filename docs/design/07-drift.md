@@ -1,3 +1,11 @@
+---
+id: drift-detector
+type: design
+implements:
+  - feature: traceability
+    items: [git-change-detection, drift-cross-reference, on-demand-reporting, pre-commit-hook, ci-integration]
+---
+
 # Doc Drift Detection
 
 ## Overview

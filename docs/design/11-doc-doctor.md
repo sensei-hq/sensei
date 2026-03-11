@@ -1,3 +1,11 @@
+---
+id: doc-tools
+type: design
+implements:
+  - feature: documentation
+    items: [doctor-single-doc, doctor-directory, template-auto-detection, doctor-rules]
+---
+
 # Doc Doctorter
 
 ## Overview

@@ -1,3 +1,13 @@
+---
+id: project-memory
+type: design
+implements:
+  - feature: workflow
+    items: [session-resume, decision-capture, pattern-capture, session-checkpoint, open-items]
+  - feature: context
+    items: [checkpoint-restore]
+---
+
 # Project Memory
 
 ## Overview
