@@ -24,7 +24,7 @@ features:
         status: planned
       - id: multi-modal-search
         section: "#multi-modal-search"
-        status: planned
+        status: done
       - id: symbol-graph
         section: "#symbol-graph"
         status: planned
@@ -441,4 +441,19 @@ design:
 #     status: in-progress | done
 # ─────────────────────────────────────────────────────────────
 
-code: {}
+code:
+  packages/tools/src/tools/chunker.ts:
+    implements-design: [indexer]
+    status: done
+  packages/tools/src/tools/bm25.ts:
+    implements-design: [indexer]
+    status: done
+  packages/tools/src/tools/embedder.ts:
+    implements-design: [indexer, local-model-indexer]
+    status: done
+  packages/tools/src/tools/search.ts:
+    implements-design: [indexer]
+    status: done
+  packages/cli/src/commands/watch.ts:
+    implements-design: [incremental-indexer]
+    status: done
