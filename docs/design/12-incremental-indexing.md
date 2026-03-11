@@ -1,3 +1,11 @@
+---
+id: incremental-indexer
+type: design
+implements:
+  - feature: indexing
+    items: [incremental-indexing, force-full-reindex, index-summary]
+---
+
 # Incremental Indexing
 
 ## Overview

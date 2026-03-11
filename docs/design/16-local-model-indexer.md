@@ -1,3 +1,11 @@
+---
+id: local-model-indexer
+type: design
+implements:
+  - feature: indexing
+    items: [multi-modal-search]
+---
+
 # Local Model Indexer — Design
 
 ## Problem with the Current Approach

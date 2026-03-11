@@ -1,3 +1,11 @@
+---
+id: benchmarking-runner
+type: design
+implements:
+  - feature: benchmarking
+    items: [task-corpus, ab-evaluation, metrics-collection, results-comparison, cli-prompt-comparison, improvement-loop]
+---
+
 # Benchmarking Design
 
 ## Overview

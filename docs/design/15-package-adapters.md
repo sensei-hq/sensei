@@ -1,3 +1,11 @@
+---
+id: package-adapters
+type: design
+implements:
+  - feature: indexing
+    items: [repo-scanner]
+---
+
 # Package Adapters — Design
 
 ## Problem
