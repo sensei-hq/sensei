@@ -1,6 +1,8 @@
 # Features
 
-This skills repo is built around a single conviction: **AI agents should spend tokens reasoning, not orienting**. A developer agent dropped into an unfamiliar codebase should be able to orient in one tool call, load exactly what it needs for the current task, and offload all deterministic work to purpose-built tools.
+## Objective
+
+Sensei makes AI agents more effective in software development by solving the orientation, context, and continuity problems that make unassisted agents slow and expensive. An agent with sensei orients in one tool call, loads exactly the context it needs, delegates deterministic work to MCP tools, and carries knowledge forward across sessions — spending tokens on reasoning, not rediscovery.
 
 ## Vision
 
@@ -14,79 +16,99 @@ This skills repo is built around a single conviction: **AI agents should spend t
 
 ## Modules
 
-- [Codebase Indexing](01-CodebaseIndexing.md) — Scan, extract, and produce orientation artifacts
-- [Content Compression](02-ContentCompression.md) — Token-efficient code representations at four resolution levels
-- [Agentic Dev Workflow](03-AgenticDevWorkflow.md) — Protocol for efficient agentic developer sessions
-- [Doc Drift Detection](04-DocDriftDetection.md) — Keep design docs, code, and public docs in sync
-- [Context Management](05-ContextManagement.md) — Load narrow, offload often, checkpoint before switching
-- [Benchmarking](06-Benchmarking.md) — Quantify skill impact with A/B comparisons
-- [CLI](07-CLI.md) — Set up repos, manage profiles, switch contexts, install hooks
-- [Project Workflow](08-ProjectWorkflow.md) — Cross-session knowledge persistence, session resume, decision and pattern capture
-- [Doc Doctor](09-DocDoctor.md) — Reformat existing docs to match canonical templates
-- [Incremental Indexing](10-IncrementalIndexing.md) — Fast subsequent index runs, only changed files re-processed
-- [Traceability Matrix](11-TraceabilityMatrix.md) — Doc-to-code coverage map enabling precise drift detection
+- [01 — Indexing](01-indexing.md) — Scan, extract, and produce orientation artifacts; incremental updates; multi-modal search; symbol graph
+- [02 — Resolution](02-resolution.md) — Token-efficient code representations at four levels (L0–L3)
+- [03 — Workflow](03-workflow.md) — Session protocol, project memory, decision capture, and cross-session continuity
+- [04 — Traceability](04-traceability.md) — Doc-to-code coverage map, git-based drift detection, pre-commit and CI integration
+- [05 — Context](05-context.md) — Targeted slice loading, token budget reporting, and task-scoped context prescriptions
+- [06 — Benchmarking](06-benchmarking.md) — A/B comparisons, metrics collection, CLI prompt comparison, and improvement loop
+- [07 — CLI](07-cli.md) — Repo setup, profile management, context switching, shared library cache
+- [08 — Documentation](08-documentation.md) — Doc guide skill, find_doc tool, scaffold, doc-doctor, and external doc references
+- [09 — Patterns](09-patterns.md) — Detect, capture, search, and export recurring patterns as local repo skills
+- [10 — Caching](10-caching.md) — Persist and retrieve notable Claude responses across sessions
+- [11 — Implementation Sync](11-implementation-sync.md) — Post-implementation doc enrichment, traceability sync, plan archival, incremental llms.txt
+
+## Traceability
+
+Feature items, status, and design coverage are tracked in [`docs/traceability.yaml`](../traceability.yaml). Status lives there only — do not add status tables to feature docs.
 
 ## Feature Status
 
 | Module | Feature | Status |
 |--------|---------|--------|
-| Codebase Indexing | Repo scanner (file map, stack, shortcuts, symbols) | 🔲 Planned |
+| Indexing | Repo scanner (file map, stack, shortcuts, symbols) | 🔲 Planned |
 | | LLMSpec (.llmspec.yaml) generation | 🔲 Planned |
 | | CLAUDE.md generation | 🔲 Planned |
 | | llms.txt generation | 🔲 Planned |
-| | Incremental re-indexing | 🔲 Planned |
-| | Project-scoped skill generation | 🔲 Planned |
-| Content Compression | L0–L3 resolution levels | 🔲 Planned |
+| | Symbol map at L0–L2 | 🔲 Planned |
+| | Multi-modal search (semantic + full-text + symbol) | 🔲 Planned |
+| | Symbol graph (callers, dependencies, impact analysis) | 🔲 Planned |
+| | Full scan on first run | ✅ Done |
+| | Incremental scan on subsequent runs | 🔲 Planned |
+| | Deleted file removal from index | 🔲 Planned |
+| | --force flag for full rescan | 🔲 Planned |
+| | Index summary output | 🔲 Planned |
+| Resolution | L0–L3 resolution levels | 🔲 Planned |
 | | Docstring stripping | 🔲 Planned |
 | | Logic flow notation | 🔲 Planned |
 | | IO pattern notation | 🔲 Planned |
-| | MCP-served resolution (get_file_context) | 🔲 Planned |
-| Agentic Dev Workflow | Session protocol (orient → load → work → checkpoint) | 🔲 Planned |
-| | MCP offload patterns | 🔲 Planned |
-| | Task-to-resolution mapping | 🔲 Planned |
-| Doc Drift Detection | Git-based change detection (git diff vs lastIndexedCommit) | 🔲 Planned |
-| | Traceability matrix (doc → code coverage) | 🔲 Planned |
-| | Cross-reference drift: code changed, linked doc didn't | 🔲 Planned |
-| | Drift reporting on-demand (check_drift MCP tool) | 🔲 Planned |
+| | Task-to-level mapping via recommend_next | 🔲 Planned |
+| Workflow | Session orientation protocol (LLMSpec first) | 🔲 Planned |
+| | Targeted context loading | 🔲 Planned |
+| | MCP offload protocol | 🔲 Planned |
+| | Task transition with checkpoint | 🔲 Planned |
+| | Plan-to-implementation efficiency | 🔲 Planned |
+| | Analysis-before-implementation gate | 🔲 Planned |
+| | Session resume (get_session_context) | 🔲 Planned |
+| | Decision capture (add_decision) | 🔲 Planned |
+| | Pattern capture (add_pattern) | 🔲 Planned |
+| | Session checkpoint with distillation | 🔲 Planned |
+| | Open items (ask_question, close_item) | 🔲 Planned |
+| | Migration from agents/ folder (sensei migrate) | 🔲 Planned |
+| Traceability | Manual coverage declaration in .llmspec.yaml | 🔲 Planned |
+| | Auto-detection from filename and symbol references | 🔲 Planned |
+| | .index/traceability.json generation | 🔲 Planned |
+| | Cross-reference drift (code changed, linked doc didn't) | 🔲 Planned |
+| | On-demand drift reporting (check_drift) | 🔲 Planned |
 | | Pre-commit hook integration | 🔲 Planned |
 | | CI integration (--fail-on-drift) | 🔲 Planned |
-| Context Management | Targeted context slice loading | 🔲 Planned |
-| | Checkpoint and restore | 🔲 Planned |
+| Context | Targeted slice loading (load_context) | 🔲 Planned |
+| | Token budget reporting per slice | 🔲 Planned |
+| | Context summary (get_context_summary) | 🔲 Planned |
+| | Named and timestamped checkpoints | 🔲 Planned |
 | | recommend_next (task-to-context prescription) | 🔲 Planned |
-| | Token budget guidance | 🔲 Planned |
 | Benchmarking | Task corpus (representative developer tasks) | 🔲 Planned |
 | | A/B evaluation (with-skills vs without-skills) | 🔲 Planned |
 | | Metrics: tokens, interactions, tool calls, success | 🔲 Planned |
 | | Results storage and comparison | 🔲 Planned |
+| | CLI prompt comparison (sensei benchmark prompt) | 🔲 Planned |
+| | Prompt comparison result storage | 🔲 Planned |
 | CLI | New repo setup (skills init) | 🔲 Planned |
 | | Add to existing repo (skills add) | 🔲 Planned |
 | | Upgrade (skills upgrade) | 🔲 Planned |
 | | Personal profile create/edit | 🔲 Planned |
 | | Company profile create/edit | 🔲 Planned |
 | | Remote company MCP registration | 🔲 Planned |
-| | Local companion MCP for remote caching | 🔲 Planned |
 | | Context status (skills status) | 🔲 Planned |
 | | Shared library cache (skills cache) | 🔲 Planned |
 | | Pre-commit drift hook (skills hooks install) | 🔲 Planned |
 | | Guidelines view/edit/query | 🔲 Planned |
-| | get_guidelines MCP tool | 🔲 Planned |
 | | Migration from agents/ folder (sensei migrate) | 🔲 Planned |
-| Project Workflow | Session resume (get_session_context) | 🔲 Planned |
-| | Decision capture (add_decision) | 🔲 Planned |
-| | Pattern capture (add_pattern) | 🔲 Planned |
-| | Session checkpoint with LLM distillation | 🔲 Planned |
-| | Open items tracking (ask_question, close_item) | 🔲 Planned |
-| | Context budget stays flat over time | 🔲 Planned |
-| Doc Doctor | Single file reformat (sensei doctor <file>) | 🔲 Planned |
-| | Directory batch reformat | 🔲 Planned |
+| Documentation | doc-guide skill | 🔲 Planned |
+| | find_doc MCP tool | 🔲 Planned |
+| | New feature scaffold (sensei doc new) | 🔲 Planned |
+| | External doc fetch and cache (fetch_doc_ref) | 🔲 Planned |
+| | Single file doctor (sensei doctor <file>) | 🔲 Planned |
+| | Directory batch doctor (sensei doctor <dir>) | 🔲 Planned |
 | | Template auto-detection from path | 🔲 Planned |
-| | doc-doctor skill | 🔲 Planned |
-| Incremental Indexing | Git-diff-based incremental scan | 🔲 Planned |
-| | Deleted file removal from index | 🔲 Planned |
-| | --force flag for full rescan | 🔲 Planned |
-| | Index summary output | 🔲 Planned |
-| | Non-git fallback (mtime/size) | 🔲 Planned |
-| Traceability Matrix | Manual coverage in .llmspec.yaml | 🔲 Planned |
-| | Auto-detection from doc content | 🔲 Planned |
-| | .index/traceability.json generation | 🔲 Planned |
-| | Cross-reference drift (code changed, linked doc didn't) | 🔲 Planned |
+| Patterns | Pattern detection from code (2+ usages) | 🔲 Planned |
+| | Pattern detection from design docs | 🔲 Planned |
+| | Pattern capture (add_pattern MCP tool) | 🔲 Planned |
+| | Pattern search (find_pattern MCP tool) | 🔲 Planned |
+| | Pattern-to-skill export (sensei pattern export) | 🔲 Planned |
+| Caching | Manual response capture (cache_response MCP tool) | 🔲 Planned |
+| | Proactive cache offer for significant responses | 🔲 Planned |
+| | Retrieval by semantic query (find_cached_response) | 🔲 Planned |
+| | Cache hints in get_session_context() | 🔲 Planned |
+| | TTL-based expiry with retrieval extension | 🔲 Planned |
+| | Pin/delete via CLI (sensei cache pin / delete) | 🔲 Planned |

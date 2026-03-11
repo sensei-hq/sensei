@@ -1,3 +1,11 @@
+---
+id: incremental-indexer
+type: design
+implements:
+  - feature: indexing
+    items: [incremental-indexing, force-full-reindex, index-summary]
+---
+
 # Incremental Indexing
 
 ## Overview
@@ -5,6 +13,14 @@
 After the first full index, `reindexRepo` uses `git diff <lastIndexedCommit>..HEAD --name-only` to identify changed, added, and deleted files since the commit at index time. Only those files are re-processed. The symbol-map is patched in-place. A `force` flag bypasses the diff and runs a full scan.
 
 For non-git repos (no `.git/` directory), falls back to mtime/size fingerprints from `doc-index.json`.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| performance | Incremental run touching 5 files must complete in under 3s |
+| reliability | Deleted files must be fully removed from all index artifacts |
+| accuracy | Incremental results must be identical to a full rescan of the same state |
 
 ---
 

@@ -1,8 +1,24 @@
+---
+id: llmspec
+type: design
+implements:
+  - feature: indexing
+    items: [llmspec-generation]
+---
+
 # LLMSpec
 
 ## Overview
 
 `.llmspec.yaml` is an OpenAPI-equivalent structured format for LLM consumption. It is the primary orientation artifact for any indexed repo — compact, structured, and queryable by section. It sits at the repo root alongside `CLAUDE.md` and `llms.txt`.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| token-efficiency | Full LLMSpec must be under 600 tokens for a typical project |
+| accuracy | Auto-populated fields must correctly reflect the actual repo structure |
+| maintainability | Manual edits must survive re-index without being overwritten |
 
 ---
 

@@ -1,8 +1,21 @@
+---
+id: skills
+type: design
+implements: []
+---
+
 # Skills
 
 ## Overview
 
 Skills are markdown files that teach agents a protocol, technique, or reference. They are not documentation of what was built — they are guidance for how to work. Skills live in `skills/<name>/SKILL.md` and are symlinked to `~/.claude/skills/<name>/`.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| maintainability | Skill format must be parseable by agents without special tooling |
+| token-efficiency | Skill content must be loadable in under 500 tokens for typical skills |
 
 ---
 

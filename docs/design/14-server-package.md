@@ -1,4 +1,10 @@
-# Architecture v2 — Server-Mediated Inference, Package Split
+---
+id: server-package
+type: design
+implements: []
+---
+
+# Server Package
 
 ## What Changed and Why
 
@@ -11,6 +17,13 @@ Three forces push toward a server-mediated architecture:
 2. **Shared org infrastructure** — teams want to run one inference server on shared hardware instead of every developer downloading 2 GB of models. A server-based design supports local, on-premise org, and cloud endpoints with the same client interface.
 
 3. **Separation of concerns** — CLI (developer UX), MCP server (LLM tool interface), and inference server (AI tasks + telemetry) have different deployment models, scaling characteristics, and update cycles. They should be separate packages.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| scalability | Server package must support concurrent requests from multiple agents |
+| reliability | Server must restart cleanly after crash without index corruption |
 
 ---
 

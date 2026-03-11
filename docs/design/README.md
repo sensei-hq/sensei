@@ -16,22 +16,20 @@ Architecture, structure, and implementation details for the AI skills repo.
 | [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup |
 | [09-cli](./09-cli.md) | CLI design, layered profile system, command modules, config schemas |
 
-## Feature Extensions (10–13)
+## Feature Extensions (10–19)
 
 | Document | Description |
 |----------|-------------|
 | [10-project-memory](./10-project-memory.md) | Cross-session knowledge: checkpoint distillation, decisions, open items |
-| [11-doc-doctor](./11-doc-doctor.md) | Doc reformatter: template detection, prompt structure, CLI interface |
+| [11-doc-tools](./11-doc-tools.md) | Doc guide skill, find_doc fallback, sensei doc new scaffold, doc-doctor, external doc refs |
 | [12-incremental-indexing](./12-incremental-indexing.md) | Git-diff change detection, force flag, incremental update algorithm |
 | [13-traceability-matrix](./13-traceability-matrix.md) | Doc-to-code traceability: schema, population, drift cross-reference |
-
-## Infrastructure Extensions (14–19)
-
-| Document | Description |
-|----------|-------------|
 | [14-server-package](./14-server-package.md) | Inference server: package split, server API, deployment models (local/org/cloud) |
 | [15-package-adapters](./15-package-adapters.md) | Glob-based package discovery, folder-map, README link extraction |
 | [16-local-model-indexer](./16-local-model-indexer.md) | Local model inference: ModelBackend interface, FileAnalysis schema, analysis cache |
+| [17-pattern-store](./17-pattern-store.md) | Pattern detection, capture, search, and skill export; .sensei/patterns.md storage |
+| [18-response-cache](./18-response-cache.md) | Cross-session response cache: TTL management, semantic retrieval, session hints |
+| [19-context-manager](./19-context-manager.md) | Targeted slice loading, token budget, checkpoints, recommend_next prescription |
 
 ## Language-Specific Adapters (20–29)
 
@@ -49,8 +47,7 @@ _Planned — not yet written._
 | Range | Category |
 |-------|----------|
 | 01–09 | Core design — architecture, skills, MCP tools, llmspec, indexing, compression, drift, benchmarking, CLI |
-| 10–13 | Feature extensions — project memory, doc doctor, incremental indexing, traceability |
-| 14–19 | Infrastructure extensions — inference server, package adapters, local model layer |
+| 10–19 | Feature extensions — project memory, doc tools, incremental indexing, traceability, server package, package adapters, local model, pattern store, response cache, context manager |
 | 20–29 | Language-specific adapters |
 | 30–39 | Reserved |
 
@@ -74,7 +71,17 @@ _Planned — not yet written._
   └── 14-server-package            inference server is separate from MCP server
 ```
 
+## Traceability
+
+Feature → design → code coverage is tracked in [`docs/traceability.yaml`](../traceability.yaml).
+
+Query patterns:
+- Features with no design: feature ids not referenced in any `design[].implements[].feature`
+- Designs with no code: design ids not in any `code[].implements-design`
+- Backlog: all `items` with `status: planned`
+
 ## Related
 
 - [Features](../features/) — What and why (needs, scenarios, status)
+- [Traceability](../traceability.yaml) — Feature/design/code coverage matrix
 - [Plans](../plans/) — Implementation plans
