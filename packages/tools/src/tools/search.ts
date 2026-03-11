@@ -84,8 +84,16 @@ async function loadSymbolMap(repoPath: string): Promise<SymbolMap> {
   try { return JSON.parse(await readFile(path, "utf-8")) as SymbolMap; } catch { return {}; }
 }
 
+function splitCamel(s: string): string[] {
+  // Split camelCase/PascalCase into lowercase tokens: "reindexRepo" → ["reindex", "repo"]
+  return s.split(/(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map(t => t.toLowerCase());
+}
+
 function symbolSearch(query: string, symbolMap: SymbolMap): Array<{ id: string; score: number; file: string; type: "symbol" | "doc" }> {
   const q = query.toLowerCase();
+  const queryTokens = splitCamel(query).filter(t => t.length > 2);
   const results: Array<{ id: string; score: number; file: string; type: "symbol" | "doc" }> = [];
 
   for (const [file, symbols] of Object.entries(symbolMap)) {
@@ -96,6 +104,12 @@ function symbolSearch(query: string, symbolMap: SymbolMap): Array<{ id: string; 
       if (name === q) score = 1.0;
       else if (name.startsWith(q)) score = 0.8;
       else if (name.includes(q)) score = 0.5;
+      else if (queryTokens.length > 0) {
+        // Word-level match: split symbol name by camelCase and check token overlap
+        const nameTokens = splitCamel(name);
+        const matchCount = queryTokens.filter(qt => nameTokens.some(nt => nt.startsWith(qt) || qt.startsWith(nt))).length;
+        if (matchCount > 0) score = 0.3 * (matchCount / queryTokens.length);
+      }
       if (score > 0) {
         results.push({ id: `${file}:${symbolNameFromL0(l0)}`, score, file, type: "symbol" });
       }
