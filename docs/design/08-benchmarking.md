@@ -12,6 +12,14 @@ implements:
 
 The benchmark system runs a task corpus against two configurations (with-skills and without-skills) and records five metrics per task. Results are stored as JSON. A comparison report shows percentage improvement across metrics and highlights weak categories.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| accuracy | Metrics (tokens, turns, tool calls) must be captured without sampling error |
+| reproducibility | Same task run twice in the same config must produce comparable results |
+| reliability | Failed task runs must be recorded, not silently skipped |
+
 ---
 
 ## Task Corpus Schema

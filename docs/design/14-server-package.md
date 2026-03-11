@@ -18,6 +18,13 @@ Three forces push toward a server-mediated architecture:
 
 3. **Separation of concerns** — CLI (developer UX), MCP server (LLM tool interface), and inference server (AI tasks + telemetry) have different deployment models, scaling characteristics, and update cycles. They should be separate packages.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| scalability | Server package must support concurrent requests from multiple agents |
+| reliability | Server must restart cleanly after crash without index corruption |
+
 ---
 
 ## Package Structure
