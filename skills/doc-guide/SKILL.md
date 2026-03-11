@@ -116,7 +116,7 @@ Never create a duplicate. If a doc exists for a topic, update it.
 
 ```
 1. find_doc("<topic>")                           ← confirm it doesn't exist
-2. ls docs/features/ | sort | tail -2            ← find last NN used
+2. ls docs/features/ | grep -E '^[0-9]' | sort | tail -1  ← find last NN used
 3. NN = last NN + 1 (zero-padded)
 4. name = hyphen-case functional module name
 5. cp skills/doc-guide/feature-template.md docs/features/NN-name.md
@@ -140,7 +140,7 @@ Never create a duplicate. If a doc exists for a topic, update it.
 ```
 1. find_doc("<topic>")                           ← confirm it doesn't exist
 2. Identify target layer range (01–09 core, 10–19 extensions, etc.)
-3. ls docs/design/ | grep "^NN-" | sort | tail -1  ← find last NN in range
+3. ls docs/design/ | grep -E '^[0-9]' | sort | tail -1  ← find last NN in range
 4. NN = last NN in range + 1
 5. name = hyphen-case component name (engineering vocabulary)
 6. cp skills/doc-guide/design-template.md docs/design/NN-name.md
