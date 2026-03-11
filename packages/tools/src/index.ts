@@ -40,3 +40,7 @@ export {
   getOpenItems,
   closeItem,
 } from "./tools/project-memory.js";
+
+// Search
+export { search } from "./tools/search.js";
+export type { SearchResult } from "./tools/search.js";
