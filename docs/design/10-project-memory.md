@@ -1,8 +1,26 @@
+---
+id: project-memory
+type: design
+implements:
+  - feature: workflow
+    items: [session-resume, decision-capture, pattern-capture, session-checkpoint, open-items]
+  - feature: context
+    items: [checkpoint-restore]
+---
+
 # Project Memory
 
 ## Overview
 
 Project memory is the cross-session knowledge layer. It survives between sessions, stays bounded in size, and is managed entirely by MCP tools — agents never read or write memory files directly. The core principle: **distil at session end, load compressed at session start**. Context budget stays flat regardless of project age.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| reliability | No decision or pattern must be silently lost during checkpoint |
+| token-efficiency | `get_session_context()` must stay under 400 tokens regardless of history length |
+| maintainability | Checkpoint format must be human-readable YAML, not binary |
 
 ---
 

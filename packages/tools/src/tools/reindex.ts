@@ -6,6 +6,7 @@ import yaml from "js-yaml";
 import fg from "fast-glob";
 import type { SymbolMap } from "@sensei/shared";
 import { SENSEI_DIR, senseiPath } from "@sensei/shared";
+import { buildChunksAndEmbeddings } from "./chunker.js";
 
 const ALWAYS_IGNORE = ["**/.git/**", `**/${SENSEI_DIR}/**`, "CLAUDE.md"];
 const CODE_EXTS = [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"];
@@ -221,6 +222,8 @@ export async function reindexRepo(
     writeFile(senseiPath(repoPath, "traceability.json"), JSON.stringify(traceability, null, 2)),
     ensurePatternsMd(repoPath),
   ]);
+
+  await buildChunksAndEmbeddings(repoPath, symbolMap, docFiles, { force });
 
   if (!existsSync(senseiPath(repoPath, "llmspec.yaml"))) {
     await writeFile(senseiPath(repoPath, "llmspec.yaml"), generateLlmSpecTemplate(repoPath, stack, shortcuts));
