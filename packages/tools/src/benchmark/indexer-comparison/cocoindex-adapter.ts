@@ -23,14 +23,19 @@ export async function connectCocoindex(repoPath: string): Promise<CocoIndex> {
 
   // Wait for index to be ready (retry up to 30s)
   const deadline = Date.now() + 30_000;
+  let ready = false;
   while (Date.now() < deadline) {
     const result = await client.callTool({
       name: "search",
       arguments: { query: "test", limit: 1, refresh_index: false },
     }) as { content: Array<{ text: string }> };
     const parsed = JSON.parse(result.content[0].text);
-    if (parsed.success) break;
+    if (parsed.success) { ready = true; break; }
     await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!ready) {
+    await client.close();
+    throw new Error("cocoindex-code: index not ready after 30s. Run: cocoindex-code index");
   }
 
   // Collect all indexed file paths via a broad search
