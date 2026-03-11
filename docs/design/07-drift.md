@@ -14,6 +14,14 @@ Drift detection uses `git diff` against the last indexed commit to identify whic
 
 For non-git repos, falls back to mtime/size comparison against `doc-index.json` fingerprints.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| accuracy | No false positives — docs not linked to changed files must not be flagged |
+| reliability | git fallback (mtime/size) must work when .git/ is absent |
+| performance | Drift check on a 100-doc repo must complete in under 5s |
+
 ---
 
 ## Traceability Matrix

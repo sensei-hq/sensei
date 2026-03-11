@@ -21,6 +21,14 @@ AST parsing would fix fragility but not shallowness, and adds heavy language-spe
 
 **The root issue:** indexing is a *semantic* task, not a structural one. We want to understand what code *means*, not just what it *looks like*.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| accuracy | Semantic search results must have ≥80% relevance for natural language queries |
+| performance | Embedding generation must not block the main index run by more than 2x |
+| reliability | Missing or unavailable local model must fall back to regex-based indexing |
+
 ---
 
 ## Approach: Local Model as Base Analyzer

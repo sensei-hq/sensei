@@ -12,6 +12,14 @@ implements:
 
 `.index/traceability.json` maps documentation files to the source files they describe. Combined with `git diff`, this enables precise drift detection: when a code file changes, only the docs that cover it are flagged — not everything in the repo.
 
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| accuracy | Manual coverage entries must never be overwritten by auto-detection |
+| reliability | Matrix must remain valid (no orphan entries) after file renames |
+| performance | Matrix generation must add under 5s to a full index run |
+
 ---
 
 ## Schema
