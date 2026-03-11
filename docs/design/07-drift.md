@@ -1,3 +1,11 @@
+---
+id: drift-detector
+type: design
+implements:
+  - feature: traceability
+    items: [git-change-detection, drift-cross-reference, on-demand-reporting, pre-commit-hook, ci-integration]
+---
+
 # Doc Drift Detection
 
 ## Overview
@@ -5,6 +13,14 @@
 Drift detection uses `git diff` against the last indexed commit to identify which files have changed, then cross-references those changes against a traceability matrix (`.index/traceability.json`) to flag docs whose linked code files have changed. This enables precise "code changed but doc didn't" detection without content analysis.
 
 For non-git repos, falls back to mtime/size comparison against `doc-index.json` fingerprints.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| accuracy | No false positives — docs not linked to changed files must not be flagged |
+| reliability | git fallback (mtime/size) must work when .git/ is absent |
+| performance | Drift check on a 100-doc repo must complete in under 5s |
 
 ---
 

@@ -1,4 +1,9 @@
-# Context Management
+---
+id: context
+type: feature
+---
+
+# Context
 
 The context window is working memory. When it fills with stale content from previous tasks, agents make mistakes — referencing things that are no longer in scope, missing relevant current state, or spending tokens on content they won't use. Context management defines how agents load, maintain, and release context across a session.
 

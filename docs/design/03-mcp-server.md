@@ -1,8 +1,30 @@
+---
+id: mcp-server
+type: design
+implements:
+  - feature: indexing
+    items: [llmspec-generation, symbol-map, multi-modal-search, symbol-graph]
+  - feature: context
+    items: [targeted-slice-loading, recommend-next]
+  - feature: workflow
+    items: [mcp-offload, session-resume, session-checkpoint]
+  - feature: traceability
+    items: [on-demand-reporting]
+---
+
 # MCP Server
 
 ## Overview
 
 `repo-index-server` is a local MCP server that reads from a repo's `.index/` directory and `.llmspec.yaml` and serves targeted slices on demand. It also performs compute offload — generating docs, checking drift, running benchmarks — so LLMs don't spend context tokens on deterministic work.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| performance | Each MCP tool call must return in under 200ms for indexed repos |
+| reliability | MCP server must handle malformed input without crashing |
+| token-efficiency | Tool responses must include only requested data — no over-fetching |
 
 ---
 

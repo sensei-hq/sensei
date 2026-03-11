@@ -1,0 +1,459 @@
+version: 1
+
+# Single source of truth for feature → design → code traceability.
+# Status lives here only — do not add status tables to docs.
+# item.section anchors point into the feature doc markdown.
+
+features:
+  indexing:
+    doc: docs/features/01-indexing.md
+    title: Indexing
+    nfrs: [performance, accuracy, scalability, token-efficiency]
+    items:
+      - id: repo-scanner
+        section: "#repo-scanner"
+        status: done
+      - id: llmspec-generation
+        section: "#llmspec-generation"
+        status: planned
+      - id: symbol-map
+        section: "#symbol-map"
+        status: planned
+      - id: llms-txt-generation
+        section: "#llmstxt-generation"
+        status: planned
+      - id: multi-modal-search
+        section: "#multi-modal-search"
+        status: done
+      - id: symbol-graph
+        section: "#symbol-graph"
+        status: planned
+      - id: incremental-indexing
+        section: "#incremental-indexing"
+        status: planned
+      - id: force-full-reindex
+        section: "#force-full-reindex"
+        status: planned
+      - id: index-summary
+        section: "#index-summary-output"
+        status: planned
+
+  resolution:
+    doc: docs/features/02-resolution.md
+    title: Resolution
+    nfrs: [token-efficiency, accuracy]
+    items:
+      - id: resolution-levels
+        section: "#resolution-levels"
+        status: planned
+      - id: docstring-stripping
+        section: "#docstring-and-comment-stripping"
+        status: planned
+      - id: logic-flow-notation
+        section: "#logic-flow-notation"
+        status: planned
+      - id: io-pattern-notation
+        section: "#io-pattern-notation"
+        status: planned
+      - id: task-to-level-mapping
+        section: "#task-to-level-mapping"
+        status: planned
+
+  workflow:
+    doc: docs/features/03-workflow.md
+    title: Workflow
+    nfrs: [reliability, token-efficiency]
+    items:
+      - id: session-orientation
+        section: "#session-orientation-protocol"
+        status: planned
+      - id: targeted-context-loading
+        section: "#targeted-context-loading"
+        status: planned
+      - id: mcp-offload
+        section: "#mcp-offload-protocol"
+        status: planned
+      - id: task-transition
+        section: "#task-transition-protocol"
+        status: planned
+      - id: plan-implementation-efficiency
+        section: "#plan-to-implementation-efficiency"
+        status: planned
+      - id: analysis-gate
+        section: "#analysis-before-implementation-gate"
+        status: planned
+      - id: session-resume
+        section: "#session-resume"
+        status: planned
+      - id: decision-capture
+        section: "#decision-capture"
+        status: planned
+      - id: pattern-capture
+        section: "#pattern-capture"
+        status: planned
+      - id: session-checkpoint
+        section: "#session-checkpoint"
+        status: planned
+      - id: open-items
+        section: "#open-items-tracking"
+        status: planned
+
+  traceability:
+    doc: docs/features/04-traceability.md
+    title: Traceability
+    nfrs: [accuracy, reliability]
+    items:
+      - id: coverage-declaration
+        section: "#declare-coverage-in-llmspec"
+        status: planned
+      - id: auto-detection
+        section: "#auto-detection-from-doc-content"
+        status: planned
+      - id: git-change-detection
+        section: "#git-based-change-detection"
+        status: planned
+      - id: drift-cross-reference
+        section: "#precise-drift-cross-reference"
+        status: planned
+      - id: on-demand-reporting
+        section: "#on-demand-drift-reporting"
+        status: planned
+      - id: pre-commit-hook
+        section: "#pre-commit-hook-integration"
+        status: planned
+      - id: ci-integration
+        section: "#ci-integration"
+        status: planned
+
+  context:
+    doc: docs/features/05-context.md
+    title: Context
+    nfrs: [token-efficiency, usability]
+    items:
+      - id: slice-loading
+        section: "#targeted-slice-loading"
+        status: planned
+      - id: token-budget
+        section: "#token-budget-reporting"
+        status: planned
+      - id: checkpoint-restore
+        section: "#checkpoint-and-restore"
+        status: planned
+      - id: recommend-next
+        section: "#recommend_next"
+        status: planned
+
+  benchmarking:
+    doc: docs/features/06-benchmarking.md
+    title: Benchmarking
+    nfrs: [accuracy, reproducibility]
+    items:
+      - id: task-corpus
+        section: "#task-corpus"
+        status: planned
+      - id: ab-evaluation
+        section: "#ab-evaluation"
+        status: planned
+      - id: metrics-collection
+        section: "#metrics-collection"
+        status: planned
+      - id: results-comparison
+        section: "#results-comparison"
+        status: planned
+      - id: cli-prompt-comparison
+        section: "#cli-prompt-comparison"
+        status: planned
+      - id: improvement-loop
+        section: "#improvement-loop"
+        status: planned
+
+  cli:
+    doc: docs/features/07-cli.md
+    title: CLI
+    nfrs: [usability, reliability]
+    items:
+      - id: repo-setup
+        section: "#repo-setup"
+        status: planned
+      - id: profile-management
+        section: "#profile-management"
+        status: planned
+      - id: company-profile
+        section: "#company-profile-management"
+        status: planned
+      - id: context-switching
+        section: "#context-switching"
+        status: planned
+      - id: shared-library-cache
+        section: "#shared-library-cache"
+        status: planned
+      - id: migration
+        section: "#migration-from-agents-folder"
+        status: planned
+      - id: pre-commit-hook
+        section: "#pre-commit-hook"
+        status: planned
+      - id: guidelines
+        section: "#guidelines-editability"
+        status: planned
+
+  documentation:
+    doc: docs/features/08-documentation.md
+    title: Documentation
+    nfrs: [accuracy, usability, maintainability]
+    items:
+      - id: doc-guide
+        section: "#doc-guide"
+        status: done
+      - id: find-doc
+        section: "#find-doc"
+        status: planned
+      - id: scaffold
+        section: "#new-feature-scaffold"
+        status: planned
+      - id: external-doc-ref
+        section: "#external-doc-reference"
+        status: planned
+      - id: doctor-single-doc
+        section: "#doctor-a-single-doc"
+        status: planned
+      - id: doctor-directory
+        section: "#doctor-a-directory"
+        status: planned
+      - id: template-auto-detection
+        section: "#template-auto-detection"
+        status: planned
+      - id: doctor-rules
+        section: "#doctor-rules"
+        status: planned
+
+  patterns:
+    doc: docs/features/09-patterns.md
+    title: Patterns
+    nfrs: [token-efficiency, accuracy, reliability]
+    items:
+      - id: pattern-detection-code
+        section: "#pattern-detection"
+        status: planned
+      - id: pattern-detection-docs
+        section: "#pattern-detection"
+        status: planned
+      - id: pattern-templates
+        section: "#pattern-templates"
+        status: planned
+      - id: pattern-capture
+        section: "#pattern-capture"
+        status: planned
+      - id: pattern-search
+        section: "#pattern-search"
+        status: planned
+      - id: pattern-export
+        section: "#pattern-to-skill-export"
+        status: planned
+
+  caching:
+    doc: docs/features/10-caching.md
+    title: Caching
+    nfrs: [token-efficiency, reliability, scalability, security]
+    items:
+      - id: response-capture
+        section: "#response-capture"
+        status: planned
+      - id: proactive-offer
+        section: "#response-capture"
+        status: planned
+      - id: retrieval
+        section: "#response-retrieval"
+        status: planned
+      - id: cache-management
+        section: "#cache-management"
+        status: planned
+      - id: session-integration
+        section: "#integration-with-session-resume"
+        status: planned
+
+  implementation-sync:
+    doc: docs/features/11-implementation-sync.md
+    title: Implementation Sync
+    nfrs: [reliability, accuracy]
+    items:
+      - id: post-impl-doc-enrichment
+        section: "#post-implementation-doc-enrichment"
+        status: planned
+      - id: traceability-status-sync
+        section: "#traceability-status-sync"
+        status: planned
+      - id: plan-archival
+        section: "#plan-archival"
+        status: planned
+      - id: incremental-llms-txt
+        section: "#incremental-llmstxt-sync"
+        status: planned
+      - id: drift-warning-on-sync
+        section: "#drift-warning-on-sync"
+        status: planned
+
+# ─────────────────────────────────────────────────────────────
+# Design docs — declares which feature items each component covers
+# ─────────────────────────────────────────────────────────────
+
+design:
+  architecture:
+    doc: docs/design/01-architecture.md
+    title: Architecture
+    implements: []
+
+  skills:
+    doc: docs/design/02-skills.md
+    title: Skills
+    implements: []
+
+  mcp-server:
+    doc: docs/design/03-mcp-server.md
+    title: MCP Server
+    implements:
+      - feature: indexing
+        items: [llmspec-generation, symbol-map, multi-modal-search, symbol-graph]
+      - feature: context
+        items: [slice-loading, recommend-next]
+      - feature: workflow
+        items: [mcp-offload, session-resume, session-checkpoint]
+      - feature: traceability
+        items: [on-demand-reporting]
+
+  llmspec:
+    doc: docs/design/04-llmspec.md
+    title: LLMSpec
+    implements:
+      - feature: indexing
+        items: [llmspec-generation]
+
+  indexer:
+    doc: docs/design/05-indexing.md
+    title: Indexer
+    implements:
+      - feature: indexing
+        items: [repo-scanner, symbol-map, llms-txt-generation, multi-modal-search, symbol-graph]
+
+  resolution-levels:
+    doc: docs/design/06-compression.md
+    title: Resolution Levels
+    implements:
+      - feature: resolution
+        items: [resolution-levels, docstring-stripping, logic-flow-notation, io-pattern-notation, task-to-level-mapping]
+
+  drift-detector:
+    doc: docs/design/07-drift.md
+    title: Drift Detector
+    implements:
+      - feature: traceability
+        items: [git-change-detection, drift-cross-reference, on-demand-reporting, pre-commit-hook, ci-integration]
+
+  benchmarking-runner:
+    doc: docs/design/08-benchmarking.md
+    title: Benchmarking Runner
+    implements:
+      - feature: benchmarking
+        items: [task-corpus, ab-evaluation, metrics-collection, results-comparison, cli-prompt-comparison, improvement-loop]
+
+  cli:
+    doc: docs/design/09-cli.md
+    title: CLI
+    implements:
+      - feature: cli
+        items: [repo-setup, profile-management, company-profile, context-switching, shared-library-cache, migration, pre-commit-hook, guidelines]
+
+  project-memory:
+    doc: docs/design/10-project-memory.md
+    title: Project Memory
+    implements:
+      - feature: workflow
+        items: [session-resume, decision-capture, pattern-capture, session-checkpoint, open-items]
+      - feature: context
+        items: [checkpoint-restore]
+
+  doc-tools:
+    doc: docs/design/11-doc-tools.md
+    title: Doc Tools
+    implements:
+      - feature: documentation
+        items: [doc-guide, find-doc, scaffold, external-doc-ref, doctor-single-doc, doctor-directory, template-auto-detection, doctor-rules]
+
+  incremental-indexer:
+    doc: docs/design/12-incremental-indexing.md
+    title: Incremental Indexer
+    implements:
+      - feature: indexing
+        items: [incremental-indexing, force-full-reindex, index-summary]
+
+  traceability-matrix:
+    doc: docs/design/13-traceability-matrix.md
+    title: Traceability Matrix
+    implements:
+      - feature: traceability
+        items: [coverage-declaration, auto-detection]
+
+  server-package:
+    doc: docs/design/14-server-package.md
+    title: Server Package
+    implements: []
+
+  package-adapters:
+    doc: docs/design/15-package-adapters.md
+    title: Package Adapters
+    implements:
+      - feature: indexing
+        items: [repo-scanner]
+
+  local-model-indexer:
+    doc: docs/design/16-local-model-indexer.md
+    title: Local Model Indexer
+    implements:
+      - feature: indexing
+        items: [multi-modal-search]
+
+  pattern-store:
+    doc: docs/design/17-pattern-store.md
+    title: Pattern Store
+    implements:
+      - feature: patterns
+        items: [pattern-detection-code, pattern-detection-docs, pattern-templates, pattern-capture, pattern-search, pattern-export]
+
+  response-cache:
+    doc: docs/design/18-response-cache.md
+    title: Response Cache
+    implements:
+      - feature: caching
+        items: [response-capture, proactive-offer, retrieval, cache-management, session-integration]
+
+  context-manager:
+    doc: docs/design/19-context-manager.md
+    title: Context Manager
+    implements:
+      - feature: context
+        items: [slice-loading, token-budget, checkpoint-restore, recommend-next]
+
+# ─────────────────────────────────────────────────────────────
+# Code entries — populated as implementation progresses
+# Format:
+#   src/path/file.ts:
+#     implements-design: [<design-id>]
+#     status: in-progress | done
+# ─────────────────────────────────────────────────────────────
+
+code:
+  packages/tools/src/tools/chunker.ts:
+    implements-design: [indexer]
+    status: done
+  packages/tools/src/tools/bm25.ts:
+    implements-design: [indexer]
+    status: done
+  packages/tools/src/tools/embedder.ts:
+    implements-design: [indexer, local-model-indexer]
+    status: done
+  packages/tools/src/tools/search.ts:
+    implements-design: [indexer]
+    status: done
+  packages/cli/src/commands/watch.ts:
+    implements-design: [incremental-indexer]
+    status: done

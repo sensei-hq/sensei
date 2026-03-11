@@ -23,3 +23,6 @@ results/**/c/
 .vscode/
 .idea/
 coverage
+firebase-debug.log
+.worktrees/
+.cocoindex_code

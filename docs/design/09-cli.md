@@ -1,8 +1,24 @@
+---
+id: cli
+type: design
+implements:
+  - feature: cli
+    items: [repo-setup, profile-management, company-profile, context-switching, shared-library-cache, migration, pre-commit-hook, guidelines]
+---
+
 # CLI
 
 ## Overview
 
 `sensei` is a TypeScript CLI installed globally via `bun add -g sensei` or `npx sensei`. It shares the same codebase as the MCP server — same modules, two entry points (`cli.ts` for the CLI, `index.ts` for the MCP server). It manages three layers: developer profile, company profile, and project/repo configuration.
+
+## Non-Functional Requirements
+
+| NFR | Requirement |
+|-----|-------------|
+| usability | `skills init` must complete setup with no more than 3 user prompts |
+| reliability | All CLI commands must be idempotent — running twice must be safe |
+| performance | CLI commands must respond in under 2s for typical repos |
 
 ---
 
