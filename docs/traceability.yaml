@@ -117,7 +117,7 @@ features:
         status: done
       - id: on-demand-reporting
         section: "#on-demand-drift-reporting"
-        status: planned
+        status: done
       - id: pre-commit-hook
         section: "#pre-commit-hook-integration"
         status: planned
