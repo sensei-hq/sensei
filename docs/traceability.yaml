@@ -577,6 +577,30 @@ code:
   database/ddl/table/sensei/repo_libraries.ddl:
     implements-design: [supabase-store]
     status: done
-  database/seed/sensei_seed.sql:
+  database/ddl/table/staging/repos.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/staging/libraries.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/staging/events.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/staging/benchmark_reports.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/procedure/staging/import_repos.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/procedure/staging/import_libraries.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/procedure/staging/import_events.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/procedure/staging/import_benchmark_reports.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/import/loader.sql:
     implements-design: [supabase-store]
     status: done
