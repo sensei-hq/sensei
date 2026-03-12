@@ -488,6 +488,17 @@ design:
       - feature: analytics
         items: [collector-daemon, jsonl-fallback, jsonl-drain, uuid-generation, hook-scripts, hook-installation, sqlite-storage, stats-default, stats-all, stats-tool, stats-session, stats-since, stats-json, stats-gaps]
 
+  supabase-store:
+    doc: docs/superpowers/specs/2026-03-12-supabase-central-store-design.md
+    title: Supabase Central Store
+    implements:
+      - feature: analytics
+        items: [collector-daemon, sqlite-storage]
+      - feature: benchmarking
+        items: [metrics-collection, results-comparison]
+      - feature: indexing
+        items: [multi-modal-search]
+
 # ─────────────────────────────────────────────────────────────
 # Code entries — populated as implementation progresses
 # Format:
@@ -538,4 +549,34 @@ code:
     status: done
   packages/cli/src/commands/setup.ts:
     implements-design: [analytics-collector, cli]
+    status: done
+  database/ddl/table/sensei/repos.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/symbols.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/chunks.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/docs.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/events.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/benchmark_reports.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/libraries.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/references.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/ddl/table/sensei/repo_libraries.ddl:
+    implements-design: [supabase-store]
+    status: done
+  database/seed/sensei_seed.sql:
+    implements-design: [supabase-store]
     status: done
