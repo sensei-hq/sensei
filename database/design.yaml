@@ -1,0 +1,12 @@
+project:
+  name: sensei
+  database: PostgreSQL
+  extensionSchema: extensions
+
+schemas:
+  - extensions
+  - sensei
+
+extensions:
+  - uuid-ossp
+  - vector
