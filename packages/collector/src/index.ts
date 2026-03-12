@@ -5,3 +5,5 @@ export type { DaemonOptions, Daemon } from "./daemon.js";
 export { drainJsonl } from "./drain.js";
 export { queryStats } from "./stats.js";
 export type { StatsResult, StatsOptions, ToolStat } from "./stats.js";
+export { detectGapPatterns, BASH_TO_TOOL_PATTERNS } from "./gaps.js";
+export type { GapEntry } from "./gaps.js";
