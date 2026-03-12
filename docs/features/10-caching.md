@@ -125,17 +125,3 @@ Feature: Integration with Session Resume
     Then the relevant cached response is returned
     And the agent can load it into context on demand
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Manual response capture (cache_response MCP tool) | 🔲 Planned |
-| Proactive cache offer for significant responses | 🔲 Planned |
-| Retrieval by semantic query (find_cached_response) | 🔲 Planned |
-| Cache hints in get_session_context() | 🔲 Planned |
-| Cache listing (list_cached_responses) | 🔲 Planned |
-| TTL-based expiry (90-day default) | 🔲 Planned |
-| Retrieval-based TTL extension | 🔲 Planned |
-| Pin/delete via CLI (sensei cache pin / delete) | 🔲 Planned |
-| Cache maintenance (sensei cache gc) | 🔲 Planned |

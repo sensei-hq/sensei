@@ -283,22 +283,3 @@ Feature: Index Summary
       Indexed: 45 files (full scan)
       Created: .llmspec.yaml, CLAUDE.md, llms.txt, .index/
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Repo scanner (file map, stack, shortcuts, symbols) | 🔲 Planned |
-| LLMSpec (.llmspec.yaml) generation | 🔲 Planned |
-| CLAUDE.md generation | 🔲 Planned |
-| llms.txt generation | 🔲 Planned |
-| Symbol map at L0–L2 | 🔲 Planned |
-| Doc layer fingerprinting | 🔲 Planned |
-| Project-scoped skill generation | 🔲 Planned |
-| Multi-modal search (semantic + full-text + symbol) | 🔲 Planned |
-| Symbol graph (callers, dependencies, impact analysis) | 🔲 Planned |
-| Full scan on first run | ✅ Done |
-| Incremental scan on subsequent runs | 🔲 Planned |
-| Deleted file removal from index | 🔲 Planned |
-| --force flag for full rescan | 🔲 Planned |
-| Index summary output | 🔲 Planned |

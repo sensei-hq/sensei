@@ -159,17 +159,3 @@ Feature: Drift Warning on Sync
     Then the CI step fails with the drift warning
     And the diff of untracked files is included in the output
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Post-implementation doc enrichment (sensei sync) | 🔲 Planned |
-| Implementation notes merged into design docs | 🔲 Planned |
-| Traceability status sync (planned → done) | 🔲 Planned |
-| Code entries added from git diff | 🔲 Planned |
-| Plan archival on completion | 🔲 Planned |
-| Dry-run mode (--dry-run) | 🔲 Planned |
-| Incremental llms.txt sync (--incremental) | 🔲 Planned |
-| Drift warning for untracked changed files | 🔲 Planned |
-| CI drift gate (--fail-on-drift) | 🔲 Planned |

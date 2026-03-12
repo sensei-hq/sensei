@@ -328,24 +328,3 @@ Feature: Open Items Tracking
     Then the item is removed from open items
     And the resolution can optionally be captured as a decision via add_decision()
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Session orientation protocol (LLMSpec first) | 🔲 Planned |
-| Targeted context loading | 🔲 Planned |
-| MCP offload protocol | 🔲 Planned |
-| Task transition with checkpoint | 🔲 Planned |
-| recommend_next task-to-context prescription | 🔲 Planned |
-| Anti-pattern guidance (what NOT to do) | 🔲 Planned |
-| Plan-to-implementation efficiency (no re-derivation) | 🔲 Planned |
-| Analysis-before-implementation gate | 🔲 Planned |
-| Phased implementation with per-phase checkpoints | 🔲 Planned |
-| Session resume (get_session_context) | 🔲 Planned |
-| Decision capture (add_decision) | 🔲 Planned |
-| Pattern capture (add_pattern) | 🔲 Planned |
-| Session checkpoint with distillation | 🔲 Planned |
-| Open items (ask_question, close_item, get_open_items) | 🔲 Planned |
-| Migration from agents/ folder (sensei migrate) | 🔲 Planned |
-| Context budget stays flat over time | 🔲 Planned |

@@ -135,16 +135,3 @@ Feature: Pattern Search
     Then all 8 pattern names and one-line descriptions are returned
     And token usage is under 200 tokens
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Pattern detection from code (2+ usages) | 🔲 Planned |
-| Pattern detection from design docs | 🔲 Planned |
-| Pattern templates (tree/flat, adapter, strategy, command, observer) | 🔲 Planned |
-| Pattern capture (add_pattern MCP tool) | 🔲 Planned |
-| Pattern search (find_pattern MCP tool) | 🔲 Planned |
-| Pattern list (list_patterns MCP tool) | 🔲 Planned |
-| Pattern-to-skill export (sensei pattern export) | 🔲 Planned |
-| pattern-extract skill | 🔲 Planned |

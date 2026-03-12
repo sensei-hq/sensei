@@ -160,17 +160,3 @@ Feature: Task-to-Level Mapping
     Then the recommendation specifies L3 for the file containing validateToken
     And suggests L0 for adjacent files for context
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| L0 — Signature level | 🔲 Planned |
-| L1 — IO pattern level | 🔲 Planned |
-| L2 — Logic flow level | 🔲 Planned |
-| L3 — Full source level | 🔲 Planned |
-| Docstring stripping at L0/L1/L2 | 🔲 Planned |
-| Logic flow notation (L2) | 🔲 Planned |
-| IO pattern notation (L1) | 🔲 Planned |
-| Task-to-level mapping via recommend_next | 🔲 Planned |
-| Import stripping at L0/L1/L2 | 🔲 Planned |
