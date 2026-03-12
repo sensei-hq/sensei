@@ -44,7 +44,7 @@ describe("drainJsonl", () => {
     const db = new Database(":memory:");
     createTables(db);
 
-    await expect(drainJsonl(db, JSONL_PATH)).resolves.not.toThrow();
+    await expect(drainJsonl(db, JSONL_PATH)).resolves.toBeUndefined();
 
     const count = (db.prepare("SELECT COUNT(*) as n FROM events").get() as { n: number }).n;
     expect(count).toBe(0);
