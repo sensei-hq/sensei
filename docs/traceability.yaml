@@ -15,13 +15,13 @@ features:
         status: done
       - id: llmspec-generation
         section: "#llmspec-generation"
-        status: planned
+        status: done
       - id: symbol-map
         section: "#symbol-map"
-        status: planned
+        status: done
       - id: llms-txt-generation
         section: "#llmstxt-generation"
-        status: planned
+        status: done
       - id: multi-modal-search
         section: "#multi-modal-search"
         status: done
@@ -36,7 +36,7 @@ features:
         status: planned
       - id: index-summary
         section: "#index-summary-output"
-        status: planned
+        status: done
 
   resolution:
     doc: docs/features/02-resolution.md
@@ -105,16 +105,16 @@ features:
     items:
       - id: coverage-declaration
         section: "#declare-coverage-in-llmspec"
-        status: planned
+        status: done
       - id: auto-detection
         section: "#auto-detection-from-doc-content"
-        status: planned
+        status: done
       - id: git-change-detection
         section: "#git-based-change-detection"
-        status: planned
+        status: done
       - id: drift-cross-reference
         section: "#precise-drift-cross-reference"
-        status: planned
+        status: done
       - id: on-demand-reporting
         section: "#on-demand-drift-reporting"
         status: planned
@@ -132,7 +132,7 @@ features:
     items:
       - id: slice-loading
         section: "#targeted-slice-loading"
-        status: planned
+        status: done
       - id: token-budget
         section: "#token-budget-reporting"
         status: planned
@@ -141,7 +141,7 @@ features:
         status: planned
       - id: recommend-next
         section: "#recommend_next"
-        status: planned
+        status: done
 
   benchmarking:
     doc: docs/features/06-benchmarking.md
@@ -288,7 +288,7 @@ features:
         status: planned
       - id: incremental-llms-txt
         section: "#incremental-llmstxt-sync"
-        status: planned
+        status: done
       - id: drift-warning-on-sync
         section: "#drift-warning-on-sync"
         status: planned
