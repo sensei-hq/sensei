@@ -79,62 +79,66 @@ export async function stats(opts: StatsCommandOptions): Promise<void> {
   }
 
   const db = new Database(dbPath);
-  createTables(db);
+  try {
+    createTables(db);
 
-  if (opts.gaps) {
-    // Query all Bash commands in the period, honouring --since / --all
-    let gapsWhere = "tool = 'Bash' AND phase = 'post' AND input IS NOT NULL";
-    const gapsParams: unknown[] = [];
-    if (opts.since) {
-      gapsWhere += " AND ts >= ?";
-      gapsParams.push(new Date(opts.since).getTime());
-    } else if (!opts.all) {
-      gapsWhere += " AND ts >= ?";
-      gapsParams.push(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    }
-    const bashEvents = db.prepare(`
-      SELECT input FROM events WHERE ${gapsWhere}
-    `).all(...gapsParams) as Array<{ input: string }>;
+    if (opts.gaps) {
+      // Pre-events carry the tool input (the bash command). Post-events do not include input.
+      let gapsWhere = "tool = 'Bash' AND phase = 'pre' AND input IS NOT NULL";
+      const gapsParams: unknown[] = [];
+      if (opts.since) {
+        gapsWhere += " AND ts >= ?";
+        gapsParams.push(new Date(opts.since).getTime());
+      } else if (!opts.all) {
+        gapsWhere += " AND ts >= ?";
+        gapsParams.push(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      }
+      const bashEvents = db.prepare(`
+        SELECT input FROM events WHERE ${gapsWhere}
+      `).all(...gapsParams) as Array<{ input: string }>;
 
-    const commands = bashEvents
-      .map(e => {
-        try {
-          const parsed = JSON.parse(e.input) as { command?: string };
-          return parsed.command ?? "";
-        } catch {
-          return e.input;
+      const commands = bashEvents
+        .map(e => {
+          try {
+            const parsed = JSON.parse(e.input) as { command?: string };
+            return parsed.command ?? "";
+          } catch {
+            return e.input;
+          }
+        })
+        .filter(Boolean);
+
+      const gaps = detectGapPatterns(commands);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ gaps }, null, 2));
+      } else {
+        const period = opts.all ? "all time" : opts.since ? `since ${opts.since}` : "last 7 days";
+        console.log(`\nMissed opportunity report — ${period}\n`);
+        if (gaps.length === 0) {
+          console.log("  No gaps detected.");
+          return;
         }
-      })
-      .filter(Boolean);
-
-    const gaps = detectGapPatterns(commands);
-
-    if (opts.json) {
-      console.log(JSON.stringify({ gaps }, null, 2));
-    } else {
-      const period = opts.all ? "all time" : "last 7 days";
-      console.log(`\nMissed opportunity report — ${period}\n`);
-      if (gaps.length === 0) {
-        console.log("  No gaps detected.");
-        return;
+        const header = "Pattern                          Count   Suggested tool";
+        const sep    = "─".repeat(header.length);
+        console.log(header);
+        console.log(sep);
+        for (const g of gaps) {
+          console.log(`${g.pattern.padEnd(32)} ${String(g.count).padStart(5)}   ${g.suggested_tool}`);
+        }
       }
-      const header = "Pattern                          Count   Suggested tool";
-      const sep    = "─".repeat(header.length);
-      console.log(header);
-      console.log(sep);
-      for (const g of gaps) {
-        console.log(`${g.pattern.padEnd(32)} ${String(g.count).padStart(5)}   ${g.suggested_tool}`);
-      }
+      return;
     }
-    return;
+
+    const result = queryStats(db, {
+      all: opts.all,
+      tool: opts.tool,
+      session: opts.session,
+      since: opts.since,
+    });
+
+    console.log(formatStats(result, { json: opts.json ?? false }));
+  } finally {
+    db.close();
   }
-
-  const result = queryStats(db, {
-    all: opts.all,
-    tool: opts.tool,
-    session: opts.session,
-    since: opts.since,
-  });
-
-  console.log(formatStats(result, { json: opts.json ?? false }));
 }
