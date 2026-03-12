@@ -258,21 +258,3 @@ Feature: Guidelines Editability
     Then developers who run skills upgrade receive the updated guidelines
     And the MCP serves the new version immediately
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| New repo setup (skills init) | 🔲 Planned |
-| Add to existing repo (skills add) | 🔲 Planned |
-| Upgrade (skills upgrade) | 🔲 Planned |
-| Personal profile create/edit | 🔲 Planned |
-| Company profile create/edit | 🔲 Planned |
-| Remote company MCP registration | 🔲 Planned |
-| Local companion MCP for remote caching | 🔲 Planned |
-| Context status (skills status) | 🔲 Planned |
-| Shared library cache (skills cache) | 🔲 Planned |
-| Pre-commit drift hook | 🔲 Planned |
-| Guidelines view/edit/query | 🔲 Planned |
-| Guidelines MCP tool (get_guidelines) | 🔲 Planned |
-| Migration from agents/ folder (sensei migrate) | 🔲 Planned |

@@ -120,17 +120,3 @@ Feature: recommend_next
     Then the prescription defaults to get_llmspec() for orientation
     And suggests narrowing after orientation
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Targeted slice loading (load_context) | 🔲 Planned |
-| Token budget reporting per slice | 🔲 Planned |
-| Context summary (get_context_summary) | 🔲 Planned |
-| Named checkpoint (in-session task boundary) | 🔲 Planned |
-| Timestamped checkpoint | 🔲 Planned |
-| recommend_next (task-to-context prescription) | 🔲 Planned |
-| Session protocol documentation | 🔲 Planned |
-
-> **Cross-session context management** (session resume, decision capture, pattern capture, open items) is covered in [08-ProjectWorkflow](./08-ProjectWorkflow.md).
