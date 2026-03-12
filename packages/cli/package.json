@@ -16,6 +16,7 @@
     "@sensei/tools": "workspace:*",
     "@sensei/server": "workspace:*",
     "@sensei/shared": "workspace:*",
+    "@sensei/collector": "workspace:*",
     "@anthropic-ai/sdk": "^0.78.0",
     "@clack/prompts": "^0.9.0",
     "chokidar": "^3.6.0"
@@ -23,7 +24,9 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@playwright/test": "^1.48.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.6.2",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.0.0"
   }

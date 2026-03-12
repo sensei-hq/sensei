@@ -20,6 +20,13 @@ const { positionals, values } = parseArgs({
     dest: { type: "string" },
     verbose: { type: "boolean", default: false },
     repo: { type: "string" },
+    // stats command
+    tool: { type: "string" },
+    session: { type: "string" },
+    since: { type: "string" },
+    all: { type: "boolean", default: false },
+    json: { type: "boolean", default: false },
+    gaps: { type: "boolean", default: false },
   },
 });
 
@@ -59,6 +66,7 @@ Commands:
   benchmark promote        Merge chosen strategy branch, submit telemetry
   serve                    Start local telemetry report receiver
   server status            Check if server is running and show model setup status
+  stats                    Show tool usage analytics (last 7 days)
 
 Options:
   -h, --help               Show this help message
@@ -110,6 +118,14 @@ serve:
 
 watch:
   --repo <path>            Repo to watch (default: auto-detected repo root)
+
+stats:
+  --all                    Show all-time data instead of last 7 days
+  --tool <name>            Show stats for a specific tool
+  --session <id>           Show all events for a session
+  --since <YYYY-MM-DD>     Show events on or after this date
+  --json                   Output as JSON
+  --gaps                   Show missed-opportunity report (bash vs sensei tools)
 `;
 
 async function main() {
@@ -294,6 +310,18 @@ async function main() {
       const { watch } = await import("./commands/watch.js");
       const repo = values.repo ?? repoRoot;
       await watch(repo);
+      break;
+    }
+    case "stats": {
+      const { stats } = await import("./commands/stats.js");
+      await stats({
+        all: values.all,
+        tool: values.tool,
+        session: values.session,
+        since: values.since,
+        json: values.json,
+        gaps: values.gaps,
+      });
       break;
     }
     default:
