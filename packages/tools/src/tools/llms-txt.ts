@@ -71,7 +71,7 @@ export function parseLlmsTxt(content: string): Record<string, string> {
     const firstLine = part.split("\n")[0];
     if (!firstLine.startsWith("## ")) continue;
     const sectionName = firstLine.slice(3).trim();
-    const body = part.slice(firstLine.length + 1);
+    const body = part.slice(firstLine.length + 1).trimEnd();
     result[sectionName] = body;
   }
 
