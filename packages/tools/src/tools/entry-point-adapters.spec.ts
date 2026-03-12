@@ -57,6 +57,31 @@ describe("inferFromPackageJson — root bin field", () => {
   });
 });
 
+describe("inferFromPackageJson — bin string shorthand", () => {
+  it("handles bin as a string (shorthand form)", async () => {
+    mkdirSync(join(TMP, "src"), { recursive: true });
+    writeFileSync(join(TMP, "src/cli.ts"), "// entry");
+    writeFileSync(join(TMP, "package.json"), JSON.stringify({
+      name: "@my/tool",
+      bin: "./dist/cli.js",
+    }));
+    const results = await inferEntryPoints(TMP);
+    expect(results.some(r => r.path === "src/cli.ts")).toBe(true);
+  });
+
+  it("derives role from package name stripping scope for bin string", async () => {
+    mkdirSync(join(TMP, "src"), { recursive: true });
+    writeFileSync(join(TMP, "src/cli.ts"), "// entry");
+    writeFileSync(join(TMP, "package.json"), JSON.stringify({
+      name: "@my/tool",
+      bin: "./dist/cli.js",
+    }));
+    const results = await inferEntryPoints(TMP);
+    const entry = results.find(r => r.path === "src/cli.ts");
+    expect(entry?.inferredRole).toContain("tool");
+  });
+});
+
 describe("inferFromPackageJson — main field", () => {
   it("resolves main dist path to src counterpart", async () => {
     mkdirSync(join(TMP, "src"), { recursive: true });
