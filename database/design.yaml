@@ -2,9 +2,12 @@ project:
   name: sensei
   database: PostgreSQL
   extensionSchema: extensions
+  staging:
+    - staging
 
 schemas:
   - extensions
+  - staging
   - sensei
 
 extensions:
@@ -13,5 +16,7 @@ extensions:
 
 import:
   options:
-    truncate: false
+    truncate: true
     nullValue: ''
+  after:
+    - import/loader.sql
