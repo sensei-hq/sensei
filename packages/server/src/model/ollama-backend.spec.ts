@@ -4,17 +4,24 @@ import { OllamaBackend, extractJson, makeFallbackAnalysis } from "./ollama-backe
 describe("OllamaBackend", () => {
   const backend = new OllamaBackend({ model: "llama3.2:3b", baseUrl: "http://127.0.0.1:11434" });
 
-  beforeEach(() => { vi.stubGlobal("fetch", vi.fn()); });
-  afterEach(() => { vi.unstubAllGlobals(); });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchMock: any;
+  let originalFetch: typeof globalThis.fetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+  });
+  afterEach(() => { globalThis.fetch = originalFetch; });
 
   describe("isAvailable", () => {
     it("returns true when Ollama responds", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ models: [] }), { status: 200 }));
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ models: [] }), { status: 200 }));
       expect(await backend.isAvailable()).toBe(true);
     });
 
     it("returns false when fetch throws", async () => {
-      vi.mocked(fetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
       expect(await backend.isAvailable()).toBe(false);
     });
   });
@@ -30,7 +37,7 @@ describe("OllamaBackend", () => {
         role: "util",
         symbols: [{ name: "foo", kind: "function", signature: "function foo(): void", description: "Does foo", visibility: "public" }],
       };
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      fetchMock.mockResolvedValueOnce(new Response(
         JSON.stringify({ response: JSON.stringify(analysis) }),
         { status: 200 }
       ));
@@ -42,7 +49,7 @@ describe("OllamaBackend", () => {
 
     it("strips prose before/after JSON in model response", async () => {
       const analysis = { path: "src/bar.ts", language: "typescript", contentHash: "def456", analyzedAt: "2026-01-01T00:00:00.000Z", summary: "Bar module", symbols: [], role: "util" };
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      fetchMock.mockResolvedValueOnce(new Response(
         JSON.stringify({ response: `Here is the analysis:\n${JSON.stringify(analysis)}\nLet me know if you need more.` }),
         { status: 200 }
       ));
@@ -51,7 +58,7 @@ describe("OllamaBackend", () => {
     });
 
     it("returns fallback FileAnalysis when JSON parse fails", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      fetchMock.mockResolvedValueOnce(new Response(
         JSON.stringify({ response: "I cannot analyze this file." }),
         { status: 200 }
       ));
@@ -64,7 +71,7 @@ describe("OllamaBackend", () => {
 
   describe("generate", () => {
     it("returns the response string from Ollama", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      fetchMock.mockResolvedValueOnce(new Response(
         JSON.stringify({ response: '["packages/tools/src/tools/reindex.ts"]' }),
         { status: 200 }
       ));
@@ -73,7 +80,7 @@ describe("OllamaBackend", () => {
     });
 
     it("returns empty string when fetch throws", async () => {
-      vi.mocked(fetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
       const result = await backend.generate("some prompt");
       expect(result).toBe("");
     });
@@ -81,7 +88,7 @@ describe("OllamaBackend", () => {
 
   describe("embed", () => {
     it("returns number array from Ollama embeddings endpoint", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      fetchMock.mockResolvedValueOnce(new Response(
         JSON.stringify({ embedding: [0.1, 0.2, 0.3] }),
         { status: 200 }
       ));
@@ -90,13 +97,13 @@ describe("OllamaBackend", () => {
     });
 
     it("returns empty array when fetch throws", async () => {
-      vi.mocked(fetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
       const result = await backend.embed("some text");
       expect(result).toEqual([]);
     });
 
     it("returns empty array on HTTP error response", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      fetchMock.mockResolvedValueOnce(new Response(
         JSON.stringify({ error: "model not found" }), { status: 500 }
       ));
       const result = await backend.embed("some text");
