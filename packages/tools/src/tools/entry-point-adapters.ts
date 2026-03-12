@@ -67,7 +67,10 @@ function extractFromPkg(
 
   // bin field
   const bin = pkg.bin;
-  if (bin && typeof bin === "object") {
+  if (bin && typeof bin === "string") {
+    const name = (pkg.name as string | undefined)?.replace(/^@[^/]+\//, "") ?? "bin";
+    results.push({ path: resolveDistToSrc(repoPath, pkgDir, bin), inferredRole: `${name} CLI binary` });
+  } else if (bin && typeof bin === "object") {
     for (const [key, distPath] of Object.entries(bin as Record<string, string>)) {
       const resolved = resolveDistToSrc(repoPath, pkgDir, distPath);
       results.push({ path: resolved, inferredRole: `${key} CLI binary` });
