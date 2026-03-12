@@ -15,7 +15,7 @@ create table if not exists chunks (
 
 create index if not exists chunks_repo_id_idx on chunks(repo_id);
 
-create index if not exists chunks_embedding_hnsw_idx
+create index if not exists idx_chunks_embedding_hnsw
   on chunks using hnsw (embedding vector_cosine_ops)
   with (m = 16, ef_construction = 64);
 
