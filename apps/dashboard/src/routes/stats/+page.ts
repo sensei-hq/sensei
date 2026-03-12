@@ -20,7 +20,7 @@ export const load: PageLoad = async () => {
 
   const { data: sessions } = await db
     .from('events')
-    .select('session_id, ts')
+    .select('session_id, ts, tool')
     .not('session_id', 'is', null)
     .order('ts', { ascending: false })
     .limit(100);
