@@ -11,6 +11,10 @@
  */
 import * as http from "http";
 
+declare global {
+  var Bun: { serve: (...args: unknown[]) => unknown };
+}
+
 interface BunServeOptions {
   port?: number;
   fetch: (req: Request) => Response | Promise<Response>;
@@ -60,8 +64,8 @@ function bunServe(opts: BunServeOptions): BunServer {
   server.listen(listenPort);
 
   // Obtain the actual bound port (in case 0 was passed)
-  const address = server.address() as { port: number } | null;
-  const actualPort = address?.port ?? listenPort;
+  const address = server.address();
+  const actualPort = (address && typeof address === "object" && "port" in address) ? address.port : listenPort;
 
   return {
     stop() {
@@ -73,7 +77,7 @@ function bunServe(opts: BunServeOptions): BunServer {
 
 // Install Bun global if not already present (i.e. running under Node/Vitest)
 if (typeof globalThis.Bun === "undefined") {
-  (globalThis as unknown as Record<string, unknown>).Bun = {
+  globalThis.Bun = {
     serve: bunServe,
   };
 }
