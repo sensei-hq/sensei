@@ -12,6 +12,7 @@ results/**/c/
 
 # Secrets
 .env
+database/.env.local
 
 # Sensei server DB
 .sensei/reports.db
