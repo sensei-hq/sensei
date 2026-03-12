@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
 import { createTables } from "./schema.js";
+import { drainJsonl } from "./drain.js";
 
 export interface DaemonOptions {
   db?: Database;          // injectable for tests; if omitted, opened from dbPath
@@ -71,6 +72,10 @@ export async function startDaemon(port: number, opts: DaemonOptions = {}): Promi
   })();
 
   createTables(db);
+
+  if (opts.jsonlPath) {
+    await drainJsonl(db, opts.jsonlPath);
+  }
 
   const startedAt = Date.now();
 
