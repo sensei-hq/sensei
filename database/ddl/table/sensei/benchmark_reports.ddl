@@ -2,7 +2,7 @@ set search_path to sensei, extensions;
 
 create table if not exists benchmark_reports (
   id          uuid primary key default gen_random_uuid()
-, repo_id     uuid references repos(id)
+, repo_id     uuid references repos(id) on delete set null
 , run_name    text not null
 , strategy    text not null
 , score       numeric
