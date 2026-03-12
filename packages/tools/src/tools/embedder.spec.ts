@@ -27,7 +27,8 @@ describe("embed", () => {
 
   it("reuses pipeline singleton — pipeline() called only once across multiple embed() calls", async () => {
     const { pipeline } = await import("@xenova/transformers");
-    const pipelineMock = vi.mocked(pipeline);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pipelineMock = pipeline as any;
     pipelineMock.mockClear();
     await embed("first call");
     await embed("second call");
