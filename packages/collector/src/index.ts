@@ -1,1 +1,1 @@
-export {};
+export { readOrCreateUuid } from "./uuid.js";
