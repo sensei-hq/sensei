@@ -69,7 +69,7 @@ server.tool("check_drift", "Check if indexed docs have drifted from the current 
   {},
   async () => {
     const result = await checkDrift(REPO);
-    return { content: [{ type: "text", text: result.summary }] };
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   }
 );
 
