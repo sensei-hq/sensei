@@ -40,7 +40,7 @@ export async function setupHooks(): Promise<void> {
   await installHooks();
   log.success("Hook scripts installed to ~/.claude/hooks/");
   log.success("hooks.PreToolUse and hooks.PostToolUse registered in ~/.claude/settings.json");
-  log.info("Daemon autostart registered (launchd on macOS / systemd on Linux)");
+  log.info("Daemon autostart registered via launchd (macOS only — Linux systemd not yet supported)");
   log.info("Run: launchctl load ~/Library/LaunchAgents/com.sensei.collector.plist");
   outro("Done. Claude tool calls will now be tracked in ~/.sensei/<uuid>/analytics.db");
 }
