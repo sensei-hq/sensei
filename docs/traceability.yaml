@@ -300,46 +300,46 @@ features:
     items:
       - id: collector-daemon
         section: "#telemetry-collector"
-        status: planned
+        status: done
       - id: jsonl-fallback
         section: "#telemetry-collector"
-        status: planned
+        status: done
       - id: jsonl-drain
         section: "#telemetry-collector"
-        status: planned
+        status: done
       - id: uuid-generation
         section: "#telemetry-collector"
-        status: planned
+        status: done
       - id: hook-scripts
         section: "#telemetry-collector"
-        status: planned
+        status: done
       - id: hook-installation
         section: "#telemetry-collector"
-        status: planned
+        status: done
       - id: sqlite-storage
         section: "#telemetry-collector"
-        status: planned
+        status: done
       - id: stats-default
         section: "#analytics-cli"
-        status: planned
+        status: done
       - id: stats-all
         section: "#analytics-cli"
-        status: planned
+        status: done
       - id: stats-tool
         section: "#analytics-cli"
-        status: planned
+        status: done
       - id: stats-session
         section: "#analytics-cli"
-        status: planned
+        status: done
       - id: stats-since
         section: "#analytics-cli"
-        status: planned
+        status: done
       - id: stats-json
         section: "#analytics-cli"
-        status: planned
+        status: done
       - id: stats-gaps
         section: "#analytics-cli"
-        status: planned
+        status: done
 
 # ─────────────────────────────────────────────────────────────
 # Design docs — declares which feature items each component covers
