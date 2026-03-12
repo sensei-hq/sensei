@@ -17,7 +17,8 @@ create index if not exists chunks_repo_id_idx on chunks(repo_id);
 
 create index if not exists idx_chunks_embedding_hnsw
   on chunks using hnsw (embedding vector_cosine_ops)
-  with (m = 16, ef_construction = 64);
+  with (m = 16, ef_construction = 64)
+  where embedding is not null;
 
 comment on table chunks is
 'Chunked content with embeddings. Replaces .sensei/chunks.json + .sensei/embeddings.json.
