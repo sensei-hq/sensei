@@ -196,22 +196,3 @@ Feature: Improvement Loop
     Then any metric that has regressed compared to the baseline is flagged
     And the comparison report marks the regression clearly
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Task corpus (tasks/sample.yaml) | 🔲 Planned |
-| Task categories covering all developer work | 🔲 Planned |
-| A/B evaluation setup | 🔲 Planned |
-| Token count metrics | 🔲 Planned |
-| Interaction count metrics | 🔲 Planned |
-| Tool call metrics | 🔲 Planned |
-| Success criteria evaluation | 🔲 Planned |
-| Results storage as JSON | 🔲 Planned |
-| Comparison report (compare_results MCP tool) | 🔲 Planned |
-| Metrics summary and trend (get_metrics_summary) | 🔲 Planned |
-| Improvement loop documentation | 🔲 Planned |
-| CLI prompt comparison (sensei benchmark prompt) | 🔲 Planned |
-| Prompt comparison result storage (results/prompt-comparisons.json) | 🔲 Planned |
-| Prompt file input (--file flag) | 🔲 Planned |
