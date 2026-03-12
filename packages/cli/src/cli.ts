@@ -27,6 +27,7 @@ const { positionals, values } = parseArgs({
     all: { type: "boolean", default: false },
     json: { type: "boolean", default: false },
     gaps: { type: "boolean", default: false },
+    hooks: { type: "boolean", default: false },
   },
 });
 
@@ -54,6 +55,7 @@ Commands:
   init                     Set up a new repo (index + profiles + hook)
   add                      Add sensei to an existing repo (non-destructive)
   setup --mcp              Register sensei MCP server in ~/.claude/mcp.json
+  setup --hooks            Install Claude hook scripts and register daemon autostart
   status                   Show index age, drift status, active profiles
   index                    Re-index the current repo
   drift                    Check for doc drift
@@ -146,6 +148,11 @@ async function main() {
       break;
     }
     case "setup": {
+      if (values.hooks) {
+        const { setupHooks } = await import("./commands/setup.js");
+        await setupHooks();
+        break;
+      }
       if (!values.mcp) {
         console.error("Usage: sensei setup --mcp");
         process.exit(1);

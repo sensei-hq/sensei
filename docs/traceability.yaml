@@ -512,3 +512,30 @@ code:
   packages/cli/src/commands/watch.ts:
     implements-design: [incremental-indexer]
     status: done
+  packages/collector/src/uuid.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/collector/src/schema.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/collector/src/daemon.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/collector/src/drain.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/collector/src/stats.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/collector/src/gaps.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/collector/src/install.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/cli/src/commands/stats.ts:
+    implements-design: [analytics-collector]
+    status: done
+  packages/cli/src/commands/setup.ts:
+    implements-design: [analytics-collector, cli]
+    status: done
