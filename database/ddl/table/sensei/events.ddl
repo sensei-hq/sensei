@@ -4,7 +4,7 @@ create table if not exists events (
   id           uuid primary key default gen_random_uuid()
 , user_uuid    text not null
 , session_id   text
-, repo_id      uuid references repos(id)
+, repo_id      uuid references repos(id) on delete set null
 , phase        text not null check (phase in ('pre', 'post'))
 , tool         text not null
 , project_path text
