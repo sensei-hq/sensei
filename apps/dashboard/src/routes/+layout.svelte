@@ -8,4 +8,13 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+<nav>
+  <a href="/">Dashboard</a>
+  <a href="/stats">Stats</a>
+  <a href="/repos">Repos</a>
+  <a href="/benchmarks">Benchmarks</a>
+  <a href="/libraries">Libraries</a>
+  <a href="/references">References</a>
+</nav>
+
 {@render children()}
