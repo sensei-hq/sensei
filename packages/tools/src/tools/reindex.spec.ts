@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { reindexRepo, extractExports, extractMarkdownSymbols, extractHeuristic } from "./reindex.js";
+import yaml from "js-yaml";
+import { reindexRepo, extractExports, extractMarkdownSymbols, extractHeuristic, mergeLlmSpec } from "./reindex.js";
 
 const TMP = "/tmp/sensei-test-reindex";
 
@@ -53,12 +54,48 @@ describe("reindexRepo", () => {
     expect(existsSync(join(TMP, ".sensei/llmspec.yaml"))).toBe(true);
   });
 
-  it("does not overwrite existing .sensei/llmspec.yaml", async () => {
+  it("preserves semantic fields in existing .sensei/llmspec.yaml on re-index", async () => {
     mkdirSync(join(TMP, ".sensei"), { recursive: true });
-    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), "project: my-custom-project\n");
+    const existing = yaml.dump({
+      project: "my-custom-project",
+      version: "0.0.0",
+      description: "Human-authored description that must not be overwritten.",
+      stack: ["old-stack"],
+      entry_points: [{ path: "src/index.ts", role: "human role" }],
+      concepts: [{ name: "MyConcept", definition: "Important concept." }],
+      patterns: [],
+      api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: ["README.md"] },
+      shortcuts: {},
+    });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), existing);
     await reindexRepo(TMP);
     const content = readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8");
-    expect(content).toContain("my-custom-project");
+    const parsed = yaml.load(content) as Record<string, unknown>;
+    expect((parsed as any).description).toBe("Human-authored description that must not be overwritten.");
+    expect((parsed as any).concepts[0].name).toBe("MyConcept");
+  });
+
+  it("updates structural fields in existing .sensei/llmspec.yaml on re-index", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    const existing = yaml.dump({
+      project: "my-custom-project",
+      version: "0.0.0",
+      description: "desc",
+      stack: ["old-stack"],
+      entry_points: [{ path: "src/index.ts", role: "human role" }],
+      concepts: [],
+      patterns: [],
+      api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: ["README.md"] },
+      shortcuts: {},
+    });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), existing);
+    await reindexRepo(TMP);
+    const content = readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8");
+    const parsed = yaml.load(content) as Record<string, unknown>;
+    expect(Array.isArray((parsed as any).stack)).toBe(true);
+    expect((parsed as any).shortcuts).toHaveProperty("dev");
   });
 
   it("writes doc-index.json with new schema (files key)", async () => {
@@ -197,5 +234,116 @@ describe("extractHeuristic", () => {
   it("L1 is L0 prefixed with //", () => {
     const { L0, L1 } = extractHeuristic("function foo(): void {}", "util.ts");
     expect(L1[0]).toBe(`// ${L0[0]}`);
+  });
+});
+
+describe("mergeLlmSpec", () => {
+  const structuralBase = {
+    stack: ["typescript"],
+    shortcuts: { test: "bunx vitest" },
+    version: "0.2.0",
+    entryPoints: [{ path: "src/cli.ts", inferredRole: "CLI binary" }],
+    llmsTxtSections: [{ name: "Entry Points", sources: ["src/cli.ts"] }],
+  };
+
+  it("creates llmspec.yaml from scratch if missing", async () => {
+    await mergeLlmSpec(TMP, structuralBase);
+    expect(existsSync(join(TMP, ".sensei/llmspec.yaml"))).toBe(true);
+  });
+
+  it("written-from-scratch file has correct stack", async () => {
+    await mergeLlmSpec(TMP, structuralBase);
+    const parsed = yaml.load(readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8")) as any;
+    expect(parsed.stack).toEqual(["typescript"]);
+  });
+
+  it("preserves description when updating existing file", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), yaml.dump({
+      project: "test",
+      version: "0.1.0",
+      description: "Keep me.",
+      stack: ["old"],
+      entry_points: [],
+      concepts: [],
+      patterns: [],
+      api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: [] },
+      shortcuts: {},
+    }));
+    await mergeLlmSpec(TMP, structuralBase);
+    const parsed = yaml.load(readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8")) as any;
+    expect(parsed.description).toBe("Keep me.");
+  });
+
+  it("updates stack on existing file", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), yaml.dump({
+      project: "test", version: "0.0.0", description: "d",
+      stack: ["old-stack"], entry_points: [],
+      concepts: [], patterns: [], api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: [] }, shortcuts: {},
+    }));
+    await mergeLlmSpec(TMP, { ...structuralBase, stack: ["typescript", "bun"] });
+    const parsed = yaml.load(readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8")) as any;
+    expect(parsed.stack).toContain("typescript");
+    expect(parsed.stack).toContain("bun");
+    expect(parsed.stack).not.toContain("old-stack");
+  });
+
+  it("preserves existing entry_point role when path already present", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), yaml.dump({
+      project: "test", version: "0.0.0", description: "d", stack: [],
+      entry_points: [{ path: "src/cli.ts", role: "Human-assigned role" }],
+      concepts: [], patterns: [], api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: [] }, shortcuts: {},
+    }));
+    await mergeLlmSpec(TMP, structuralBase);
+    const parsed = yaml.load(readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8")) as any;
+    expect(parsed.entry_points[0].role).toBe("Human-assigned role");
+  });
+
+  it("adds new entry_point with inferredRole", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), yaml.dump({
+      project: "test", version: "0.0.0", description: "d", stack: [],
+      entry_points: [],
+      concepts: [], patterns: [], api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: [] }, shortcuts: {},
+    }));
+    await mergeLlmSpec(TMP, structuralBase);
+    const parsed = yaml.load(readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8")) as any;
+    expect(parsed.entry_points.some((e: any) => e.path === "src/cli.ts")).toBe(true);
+    expect(parsed.entry_points.find((e: any) => e.path === "src/cli.ts").role).toBe("CLI binary");
+  });
+
+  it("removes entry_point paths no longer in candidates", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), yaml.dump({
+      project: "test", version: "0.0.0", description: "d", stack: [],
+      entry_points: [
+        { path: "src/cli.ts", role: "CLI" },
+        { path: "src/old.ts", role: "Old entry, now deleted" },
+      ],
+      concepts: [], patterns: [], api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: [] }, shortcuts: {},
+    }));
+    await mergeLlmSpec(TMP, structuralBase);
+    const parsed = yaml.load(readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8")) as any;
+    expect(parsed.entry_points.some((e: any) => e.path === "src/old.ts")).toBe(false);
+  });
+
+  it("updates llms_txt field", async () => {
+    mkdirSync(join(TMP, ".sensei"), { recursive: true });
+    writeFileSync(join(TMP, ".sensei/llmspec.yaml"), yaml.dump({
+      project: "test", version: "0.0.0", description: "d", stack: [],
+      entry_points: [], concepts: [], patterns: [], api_surface: [],
+      doc_layers: { design: "docs/", code: "src/", public: [] }, shortcuts: {},
+    }));
+    await mergeLlmSpec(TMP, structuralBase);
+    const parsed = yaml.load(readFileSync(join(TMP, ".sensei/llmspec.yaml"), "utf-8")) as any;
+    expect(Array.isArray(parsed.llms_txt)).toBe(true);
+    expect(parsed.llms_txt[0].name).toBe("Entry Points");
   });
 });
