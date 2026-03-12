@@ -10,3 +10,8 @@ schemas:
 extensions:
   - uuid-ossp
   - vector
+
+import:
+  options:
+    truncate: false
+    nullValue: ''
