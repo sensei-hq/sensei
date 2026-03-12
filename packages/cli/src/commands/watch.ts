@@ -2,9 +2,15 @@
 import chokidar from "chokidar";
 import { join } from "path";
 import { existsSync } from "fs";
-import { reindexRepo } from "@sensei/tools";
+import { reindexRepo, checkDrift } from "@sensei/tools";
 
-export async function watch(repoPath: string): Promise<void> {
+export interface WatchOptions {
+  drift?: boolean;
+}
+
+export async function watch(repoPath: string, options: WatchOptions = {}): Promise<void> {
+  const DEBOUNCE_MS = 500;
+
   const watchTargets = [
     join(repoPath, "src"),
     join(repoPath, "docs"),
@@ -15,7 +21,6 @@ export async function watch(repoPath: string): Promise<void> {
     console.log("Nothing to watch — no src/, docs/, or package.json found.");
     return;
   }
-
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let reindexPromise: Promise<void> | null = null;
 
@@ -36,15 +41,25 @@ export async function watch(repoPath: string): Promise<void> {
       if (reindexPromise) return; // skip — reindex in flight
       const start = Date.now();
       reindexPromise = reindexRepo(repoPath)
-        .then(summary => {
+        .then(async summary => {
           const changed = summary.added + summary.updated + summary.removed;
           const elapsed = Date.now() - start;
           console.log(`reindexed ${changed} files (${elapsed}ms)`);
+          if (options.drift) {
+            try {
+              const drift = await checkDrift(repoPath);
+              if (drift.drifted.length > 0) {
+                console.log(drift.summary);
+              }
+            } catch (err) {
+              console.warn("drift check error:", (err as Error).message);
+            }
+          }
         })
         .catch(err => console.error("reindex error:", err.message))
         .finally(() => { reindexPromise = null; });
       // No await here — setTimeout discards the callback's return value
-    }, 500);
+    }, DEBOUNCE_MS);
   }
 
   watcher.on("change", triggerReindex);

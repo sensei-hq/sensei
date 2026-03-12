@@ -28,6 +28,7 @@ const { positionals, values } = parseArgs({
     json: { type: "boolean", default: false },
     gaps: { type: "boolean", default: false },
     hooks: { type: "boolean", default: false },
+    drift: { type: "boolean", default: false },
   },
 });
 
@@ -120,6 +121,7 @@ serve:
 
 watch:
   --repo <path>            Repo to watch (default: auto-detected repo root)
+  --drift                  Run drift check after each reindex (silent when clean)
 
 stats:
   --all                    Show all-time data instead of last 7 days
@@ -316,7 +318,7 @@ async function main() {
     case "watch": {
       const { watch } = await import("./commands/watch.js");
       const repo = values.repo ?? repoRoot;
-      await watch(repo);
+      await watch(repo, { drift: values.drift });
       break;
     }
     case "stats": {
