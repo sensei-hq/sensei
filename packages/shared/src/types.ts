@@ -11,6 +11,7 @@ export interface LlmSpec {
   api_surface: Array<{ name: string; path: string; io: string; flow: string }>;
   doc_layers: { design: string; code: string; public: string[] };
   shortcuts: Record<string, string>;
+  llms_txt?: LlmsTxtSection[];
 }
 
 export type ResolutionLevel = "L0" | "L1" | "L2" | "L3";
@@ -23,6 +24,11 @@ export interface SymbolEntry {
 }
 
 export type SymbolMap = Record<string, SymbolEntry>;
+
+export interface LlmsTxtSection {
+  name: string;
+  sources: string[]; // repo-relative paths
+}
 
 // ─── Model / inference types ─────────────────────────────────────────────────
 
