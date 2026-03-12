@@ -9,8 +9,15 @@ export type { CoverageEntry } from "./tools/coverage.js";
 export { getLlmSpec, getFileContext, listExports, findPattern, getShortcuts } from "./tools/query.js";
 
 // Reindex
-export { reindexRepo } from "./tools/reindex.js";
+export { reindexRepo, mergeLlmSpec } from "./tools/reindex.js";
 export type { IndexSummary } from "./tools/reindex.js";
+
+// llms-txt generator
+export { buildSections, renderSection, parseLlmsTxt, generateLlmsTxt } from "./tools/llms-txt.js";
+
+// Entry-point adapters
+export { inferEntryPoints } from "./tools/entry-point-adapters.js";
+export type { EntryPointCandidate } from "./tools/entry-point-adapters.js";
 
 // Context
 export { loadContext, recommendNext } from "./tools/context.js";
