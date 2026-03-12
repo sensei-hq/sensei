@@ -237,21 +237,3 @@ Feature: Doctor Rules
     Then extra content is placed under "## Additional Notes"
     And nothing is discarded
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| doc-guide skill (feature vs design conventions) | 🔲 Planned |
-| find_doc MCP tool (query-based doc discovery) | 🔲 Planned |
-| New feature scaffold (sensei doc new) | 🔲 Planned |
-| Scaffold updates README automatically | 🔲 Planned |
-| External doc fetch and cache (fetch_doc_ref) | 🔲 Planned |
-| Session-scoped doc ref cache (.index/doc-refs/) | 🔲 Planned |
-| Cross-ref search across cached doc refs | 🔲 Planned |
-| Doc ref TTL management (7-day default) | 🔲 Planned |
-| Single file doctor (sensei doctor <file>) | 🔲 Planned |
-| Directory batch doctor (sensei doctor <dir>) | 🔲 Planned |
-| Template auto-detection from path | 🔲 Planned |
-| Doctor rules (preserve all, placeholder for missing) | 🔲 Planned |
-| doc-doctor skill | 🔲 Planned |

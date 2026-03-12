@@ -104,22 +104,3 @@ Feature: Analytics CLI
         and the suggested sensei tool
     And the report is sorted by frequency (most common gaps first)
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Telemetry daemon (Node.js, port 51789) | 🔲 Planned |
-| JSONL fallback when daemon unavailable | 🔲 Planned |
-| JSONL drain on daemon startup | 🔲 Planned |
-| Anonymous UUID generation | 🔲 Planned |
-| PreToolUse / PostToolUse hook scripts | 🔲 Planned |
-| Hook installation via sensei setup | 🔲 Planned |
-| SQLite storage (WAL mode) | 🔲 Planned |
-| sensei stats (7-day default summary) | 🔲 Planned |
-| sensei stats --all | 🔲 Planned |
-| sensei stats --tool | 🔲 Planned |
-| sensei stats --session | 🔲 Planned |
-| sensei stats --since | 🔲 Planned |
-| sensei stats --json | 🔲 Planned |
-| sensei stats --gaps (missed opportunity report) | 🔲 Planned |

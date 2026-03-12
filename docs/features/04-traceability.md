@@ -177,20 +177,3 @@ Feature: CI Integration
     And drift is detected
     Then the CI step fails and the PR cannot merge until resolved
 ```
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Manual coverage declaration in .llmspec.yaml | 🔲 Planned |
-| .index/traceability.json generation on reindex | 🔲 Planned |
-| Auto-detection from filename mentions in docs | 🔲 Planned |
-| Auto-detection from symbol references | 🔲 Planned |
-| Manual entries not overwritten by auto-detection | 🔲 Planned |
-| Cross-reference drift: code changed, linked doc didn't | 🔲 Planned |
-| Co-change (code + doc both changed) treated as aligned | 🔲 Planned |
-| Git-based change detection (git diff vs lastIndexedCommit) | 🔲 Planned |
-| Non-git fallback (mtime/size) | 🔲 Planned |
-| On-demand drift reporting (check_drift MCP tool) | 🔲 Planned |
-| Pre-commit hook integration | 🔲 Planned |
-| CI integration (--fail-on-drift) | 🔲 Planned |
