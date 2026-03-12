@@ -33,3 +33,14 @@ export async function setupMcp(repoPath: string, indexJsPath: string): Promise<v
   log.info(`REPO_PATH: ${repoPath}`);
   outro("Done. Restart Claude Code to pick up the MCP server.");
 }
+
+export async function setupHooks(): Promise<void> {
+  intro("sensei setup --hooks");
+  const { installHooks } = await import("@sensei/collector");
+  await installHooks();
+  log.success("Hook scripts installed to ~/.claude/hooks/");
+  log.success("hooks.PreToolUse and hooks.PostToolUse registered in ~/.claude/settings.json");
+  log.info("Daemon autostart registered (launchd on macOS / systemd on Linux)");
+  log.info("Run: launchctl load ~/Library/LaunchAgents/com.sensei.collector.plist");
+  outro("Done. Claude tool calls will now be tracked in ~/.sensei/<uuid>/analytics.db");
+}
