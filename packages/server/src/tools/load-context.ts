@@ -30,12 +30,22 @@ export async function loadContext(
     throw new Error(`File not found: ${filePath}`);
   }
 
-  const { data: symbols } = await client
+  const { data: symbols, error: symbolsError } = await client
     .from("symbols")
     .select("name,kind,line_start,line_end,signature,is_exported")
     .eq("repo_id", repoId)
     .eq("file_path", filePath)
     .order("line_start");
+
+  if (symbolsError) {
+    return {
+      file_path: filePath,
+      content,
+      symbols: [],
+      line_count: content.split("\n").length,
+      note: `Symbols unavailable: ${symbolsError.message}`,
+    } as any;
+  }
 
   return {
     file_path: filePath,

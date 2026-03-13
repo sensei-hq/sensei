@@ -15,7 +15,8 @@ export async function getSessionContext(
   repoId: string,
   repoPath: string,
 ): Promise<SessionContextResult> {
-  const { data: repo } = await client.from("repos").select("*").eq("id", repoId).single();
+  const { data: repo, error } = await client.from("repos").select("*").eq("id", repoId).single();
+  if (error || !repo) throw new Error(`Repo not found: ${error?.message ?? 'no data'}`);
   const { count: symbolCount } = await client
     .from("symbols")
     .select("*", { count: "exact", head: true })
