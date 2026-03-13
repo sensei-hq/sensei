@@ -1,33 +1,24 @@
 <script lang="ts">
+  import { List } from '@rokkit/ui';
   import type { PageData } from './$types';
+
   const { data } = $props();
+
+  // Map repos to the shape Rokkit List expects: { label, description, href }
+  const items = $derived(data.repos.map(r => ({
+    label: r.name,
+    description: `${r.file_count} files · ${r.symbol_count} symbols · ${(r.stack ?? []).join(', ') || 'unknown stack'} · Traceability: 0 links`,
+    href: `/repos/${r.id}`,
+    meta: r.last_indexed_at
+      ? `Last indexed ${new Date(r.last_indexed_at).toLocaleString()}`
+      : 'Never indexed',
+  })));
 </script>
 
-<h1>Repos</h1>
+<h1>Indexed Repos</h1>
 
-{#if data.repos.length === 0}
-  <p>No repos indexed yet. Run <code>sensei index</code> to get started.</p>
+{#if items.length === 0}
+  <p>No repos indexed yet. Run <code>sensei init</code> in your project directory.</p>
 {:else}
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Stack</th>
-        <th>Branch</th>
-        <th>Last Indexed</th>
-        <th>Commit</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each data.repos as repo}
-        <tr>
-          <td><strong>{repo.name}</strong>{#if repo.description}<br><small>{repo.description}</small>{/if}</td>
-          <td>{repo.stack?.join(', ') ?? '—'}</td>
-          <td>{repo.default_branch ?? '—'}</td>
-          <td>{repo.last_indexed_at ? new Date(repo.last_indexed_at).toLocaleString() : '—'}</td>
-          <td><code>{repo.last_indexed_commit?.slice(0, 7) ?? '—'}</code></td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <List {items} />
 {/if}
