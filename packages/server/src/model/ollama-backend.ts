@@ -4,6 +4,7 @@ import type { ModelBackend, FileAnalysis, ExtractionInstructions } from "@sensei
 export interface OllamaOptions {
   model?: string;
   baseUrl?: string;
+  embeddingModel?: string;
 }
 
 const EXTRACTION_PROMPT = (filePath: string, language: string, hints: string, content: string) => `
@@ -65,10 +66,12 @@ export function makeFallbackAnalysis(filePath: string): FileAnalysis {
 export class OllamaBackend implements ModelBackend {
   readonly name = "ollama";
   private model: string;
+  private embeddingModel: string;
   private baseUrl: string;
 
   constructor(opts: OllamaOptions = {}) {
     this.model = opts.model ?? "llama3.2:3b";
+    this.embeddingModel = opts.embeddingModel ?? this.model;
     this.baseUrl = opts.baseUrl ?? "http://127.0.0.1:11434";
   }
 
@@ -132,7 +135,7 @@ export class OllamaBackend implements ModelBackend {
       const res = await fetch(`${this.baseUrl}/api/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, prompt: text }),
+        body: JSON.stringify({ model: this.embeddingModel, prompt: text }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) return [];
