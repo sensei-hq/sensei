@@ -10,9 +10,9 @@ implements:
 
 ## Overview
 
-After the first full index, `reindexRepo` uses `git diff <lastIndexedCommit>..HEAD --name-only` to identify changed, added, and deleted files since the commit at index time. Only those files are re-processed. The symbol-map is patched in-place. A `force` flag bypasses the diff and runs a full scan.
+After the first full index, `reindexRepo` uses `git diff <lastIndexedCommit>..HEAD --name-only` to identify changed, added, and deleted files since the commit at index time. Only those files are re-processed. Supabase records for changed files are updated in-place. A `force` flag bypasses the diff and runs a full scan.
 
-For non-git repos (no `.git/` directory), falls back to mtime/size fingerprints from `doc-index.json`.
+For non-git repos (no `.git/` directory), falls back to mtime/size fingerprints stored in `sensei.scan_state`.
 
 ## Non-Functional Requirements
 
@@ -29,8 +29,8 @@ For non-git repos (no `.git/` directory), falls back to mtime/size fingerprints 
 ```
 reindexRepo(repoPath, { force: false })
 
-1. Load existing .index/symbol-map.json and .index/doc-index.json
-   → if either missing: force = true (first run)
+1. Load prior `sensei.scan_state` rows for this repo
+   → if no scan_state rows exist: force = true (first run)
 
 2. Check if repo has git: stat(repoPath/.git)
    → isGit = true/false
@@ -40,21 +40,21 @@ reindexRepo(repoPath, { force: false })
    b. If isGit AND doc-index has lastIndexedCommit:
       changedFiles = git diff <lastIndexedCommit>..HEAD --name-only
       deletedFiles = git diff <lastIndexedCommit>..HEAD --name-only --diff-filter=D
-   c. If not git (fallback): compare mtime/size against doc-index fingerprints
+   c. If not git (fallback): compare mtime/size against `sensei.scan_state` fingerprints
 
 4. For each changed/added code file:
-   → re-extract exports → update symbol-map
+   → re-extract exports → upsert into `sensei.symbols`
 
 5. For each deleted file in symbol-map:
-   → remove from symbol-map
+   → delete from `sensei.symbols` and `sensei.scan_state`
 
-6. Write updated symbol-map.json
-7. Write updated doc-index.json with:
-   - lastIndexedCommit: current HEAD sha (git rev-parse HEAD)
-   - fingerprints: { path: { mtime, size } } for fallback/non-git
-8. Write updated stack.md, shortcuts.md (always regenerate — cheap)
-9. If no .llmspec.yaml: write template (never overwrite)
-10. Write llms.txt (always regenerate)
+6. Upsert updated rows into `sensei.symbols`
+7. Upsert `sensei.scan_state` rows with:
+   - lastIndexedCommit: current HEAD sha (git rev-parse HEAD) — stored in `sensei.repos`
+   - content_hash, mtime per file for fallback/non-git
+8. Regenerate `.sensei/stack.md`, `.sensei/shortcuts.md` (always regenerate — cheap)
+9. If no `.sensei/llmspec.yaml`: write template (never overwrite)
+10. Regenerate `.sensei/llms.txt`
 11. If no CLAUDE.md: write template (never overwrite)
 
 12. Return summary: { added, updated, removed, unchanged, forced }
@@ -92,19 +92,17 @@ The 1000ms tolerance handles filesystem rounding on some platforms.
 
 ## Data Structures
 
-### `doc-index.json` (updated schema)
+### `sensei.scan_state` (Supabase table)
 
-```json
-{
-  "lastIndexedCommit": "a3f8c21d4b9e0f1234567890abcdef1234567890",
-  "files": {
-    "src/auth.ts": { "mtime": 1741234567890, "size": 4821 },
-    "docs/design/03-mcp-server.md": { "mtime": 1741234000000, "size": 12400 }
-  }
-}
-```
+| Column | Type | Description |
+|---|---|---|
+| `repo_id` | uuid | FK to `sensei.repos` |
+| `file_path` | text | Relative path from repo root |
+| `content_hash` | text | SHA-256 of file content |
+| `mtime` | bigint | Last modified timestamp |
+| `indexed_at` | timestamptz | When this file was last indexed |
 
-`lastIndexedCommit` is absent on first run or in non-git repos.
+`lastIndexedCommit` (git SHA of last index run) is stored in `sensei.repos`.
 
 ### `IndexSummary` (return type)
 
@@ -146,7 +144,7 @@ On first run (full scan):
 ```
 Indexing... done (full scan)
   47 files indexed
-  Created: .llmspec.yaml, CLAUDE.md, llms.txt, .index/
+  Created: .sensei/llmspec.yaml, CLAUDE.md, .sensei/llms.txt
 ```
 
 ---
@@ -158,7 +156,7 @@ Unit: src/tools/reindex.spec.ts (extended)
   - git: only files in git diff are re-extracted
   - git: deleted files removed from symbol-map
   - git: new files added to symbol-map
-  - git: lastIndexedCommit stored in doc-index.json after run
+  - git: lastIndexedCommit stored in `sensei.repos` after run
   - non-git fallback: mtime/size comparison used when no .git/
   - force: all files re-extracted regardless of git diff
   - summary counts correct for each case

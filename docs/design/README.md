@@ -23,10 +23,10 @@ Authoritative design documents. When these conflict with older documents (10–1
 | Document | Description | Status |
 |----------|-------------|--------|
 | [01-architecture](./01-architecture.md) | Package structure, interfaces, data flows, architectural decisions (ADRs), technology choices | Current |
-| [02-skills](./02-skills.md) | Skill file format, naming conventions, testing requirements | Superseded by multi-agent design in 20-pipeline-adapter |
-| [03-mcp-server](./03-mcp-server.md) | MCP server tool contracts (Claude-facing) | Partially superseded — see 20-pipeline-adapter for new tools |
-| [04-llmspec](./04-llmspec.md) | LLMSpec format — superseded by three-layer metadata model | Superseded |
-| [05-indexing](./05-indexing.md) | Indexer design (regex-based, v1) — superseded by pipeline adapter | Superseded |
+| [02-skills](./02-skills.md) | Skill file format, naming conventions, testing requirements | Archived — see superpowers plugin system |
+| [03-mcp-server](./03-mcp-server.md) | MCP server tool contracts (Claude-facing) | Superseded by `40-mcp-tool-contracts.md` |
+| [04-llmspec](./04-llmspec.md) | LLMSpec format — superseded by three-layer metadata model | Superseded by `40-metadata-model.md` |
+| [05-indexing](./05-indexing.md) | Indexer design (regex-based, v1) — superseded by pipeline adapter | Superseded by `20-pipeline-adapter.md` + `40-metadata-model.md` |
 | [06-compression](./06-compression.md) | Resolution levels (L0–L3), storage schema, serving logic | Current — L0–L3 still used by load_context |
 | [07-drift](./07-drift.md) | Git-diff + traceability-based drift detection, hook integration | Current |
 | [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup | Current |
@@ -44,8 +44,8 @@ Earlier design iterations. Superseded sections are noted. The pipeline adapter (
 | [11-doc-tools](./11-doc-tools.md) | Doc guide skill, find_doc, doc new scaffold, doc-doctor | Current |
 | [12-incremental-indexing](./12-incremental-indexing.md) | Git-diff change detection, incremental update algorithm | Current |
 | [13-traceability-matrix](./13-traceability-matrix.md) | Doc-to-code traceability: schema, population, drift cross-reference | Current — extended by Layer 3 cross-repo traceability |
-| [14-server-package](./14-server-package.md) | Package split, server API, deployment models | Superseded by 01-architecture package structure |
-| [15-package-adapters](./15-package-adapters.md) | Glob-based package discovery, folder-map | Superseded by engine/Parse stage in 20-pipeline-adapter |
+| [14-server-package](./14-server-package.md) | Package split, server API, deployment models | Superseded by `01-architecture.md` |
+| [15-package-adapters](./15-package-adapters.md) | Glob-based package discovery, folder-map | Superseded by `40-metadata-model.md` |
 | [16-local-model-indexer](./16-local-model-indexer.md) | ModelBackend interface, local model inference | Current — ModelBackend is in packages/shared |
 | [17-pattern-store](./17-pattern-store.md) | Pattern detection, capture, search, skill export | Current |
 | [18-response-cache](./18-response-cache.md) | Cross-session response cache, TTL, semantic retrieval | Current |
@@ -79,6 +79,17 @@ Earlier design iterations. Superseded sections are noted. The pipeline adapter (
 
 ---
 
+## Reference Docs (40–49)
+
+Implementation-specific design docs: data models, API contracts, CLI design, deployment, documentation workflows.
+
+| Document | Description | Status |
+|----------|-------------|--------|
+| [40-metadata-model](./40-metadata-model.md) | Supabase schema, orientation artifacts (llmspec/llms.txt), symbol resolution levels, package discovery | Current |
+| [40-mcp-tool-contracts](./40-mcp-tool-contracts.md) | MCP tool contracts: get_session_context, search, load_context + Phase 2+ roadmap | Current |
+
+---
+
 ## Implementation Phases (30–39)
 
 | Document | Description | Status |
@@ -95,6 +106,7 @@ Earlier design iterations. Superseded sections are noted. The pipeline adapter (
 | 10–19 | Feature design — project memory, doc tools, incremental indexing, traceability, server, adapters, local model, pattern store, response cache, context manager |
 | 20–29 | Pipeline & language/contract adapters |
 | 30–39 | Implementation planning — phases, migration guides, deployment runbooks |
+| 40–49 | Reference docs — data models, API contracts, CLI design, deployment |
 
 ---
 
@@ -109,6 +121,9 @@ Earlier design iterations. Superseded sections are noted. The pipeline adapter (
   │
   ├── 30-implementation-phases  phase-by-phase build plan (references 01 + 20)
   │
+  ├── 40-metadata-model.md     Supabase schema, orientation artifacts, symbol levels
+  └── 40-mcp-tool-contracts.md MCP tool API contracts
+
   └── architecture.md        Mermaid component maps + three-layer visual
 
 cc-rlm.md ────────────────── reference analysis that informed 20-pipeline-adapter

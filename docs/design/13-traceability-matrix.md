@@ -10,7 +10,7 @@ implements:
 
 ## Overview
 
-`.index/traceability.json` maps documentation files to the source files they describe. Combined with `git diff`, this enables precise drift detection: when a code file changes, only the docs that cover it are flagged — not everything in the repo.
+The traceability matrix maps documentation files to the source files they describe. Stored in Supabase and combined with `git diff`, this enables precise drift detection: when a code file changes, only the docs that cover it are flagged — not everything in the repo.
 
 ## Non-Functional Requirements
 
@@ -24,14 +24,16 @@ implements:
 
 ## Schema
 
-### `.index/traceability.json`
+### Traceability Data (Supabase)
 
+The traceability matrix is stored in Supabase as a mapping from doc paths to covered source files. The generated `.sensei/traceability.json` file is a cached export of this data, regenerated on each `sensei index` run.
+
+**Logical structure:**
 ```json
 {
   "docs/design/03-mcp-server.md": ["src/index.ts", "src/tools/query.ts"],
   "docs/design/07-drift.md": ["src/tools/drift.ts"],
-  "docs/features/01-CodebaseIndexing.md": ["src/tools/reindex.ts", "src/index-reader.ts"],
-  "README.md": ["packages/sensei/package.json"]
+  ...
 }
 ```
 
@@ -59,7 +61,7 @@ Manual declarations in `.llmspec.yaml` are authoritative and override auto-detec
 
 ### 1. Manual (`.llmspec.yaml`)
 
-Developer declares `covers:` per doc. Most accurate. Required for high-value docs (architecture, design). `reindexRepo` reads these and writes them into `traceability.json`.
+Developer declares `covers:` per doc. Most accurate. Required for high-value docs (architecture, design). `reindexRepo` reads these and stores them in Supabase, then regenerates `.sensei/traceability.json`.
 
 ### 2. Auto-detection (best-effort)
 
@@ -83,7 +85,7 @@ reindexRepo():
   1. Read .llmspec.yaml docs[].covers → manual entries
   2. Auto-detect entries from doc content
   3. Merge: manual overrides auto
-  4. Write .index/traceability.json
+  4. Upsert traceability data into Supabase; regenerate `.sensei/traceability.json`
 ```
 
 `traceability.json` is always regenerated on `reindexRepo`. Manual entries in `.llmspec.yaml` are never lost because they're the source of truth.
@@ -95,7 +97,7 @@ reindexRepo():
 ```
 checkDrift():
   1. git diff <lastIndexedCommit>..HEAD --name-only → changedFiles[]
-  2. Load traceability.json
+  2. Load traceability data from Supabase (or cached `.sensei/traceability.json`)
   3. For each (doc, coveredFiles):
      → IF any coveredFile in changedFiles AND doc NOT in changedFiles:
         → doc is drifted: "code changed, doc may need update"

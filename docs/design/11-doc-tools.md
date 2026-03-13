@@ -91,12 +91,12 @@ Traceability missing:  Create docs/traceability.yaml if it doesn't exist, then a
 
 ## External Doc Reference — fetch_doc_ref
 
-`fetch_doc_ref` fetches external API documentation and caches it in `.index/doc-refs/` with a 7-day TTL so repeated calls within the same week skip the network.
+`fetch_doc_ref` fetches external API documentation and caches it in `.sensei/doc-refs/` with a 7-day TTL so repeated calls within the same week skip the network.
 
 ### Cache Layout
 
 ```
-.index/doc-refs/
+.sensei/doc-refs/
   <slug>.md         ← cached doc content (markdown)
   <slug>.meta.json  ← { url, fetchedAt, ttlDays, tags }
   index.json        ← lightweight index for search_doc_refs
@@ -105,7 +105,7 @@ Traceability missing:  Create docs/traceability.yaml if it doesn't exist, then a
 ### Flow
 
 ```
-Step 1: Check .index/doc-refs/<slug>.md
+Step 1: Check .sensei/doc-refs/<slug>.md
   → If exists and age < ttlDays: return cached content
   → If exists and stale: re-fetch
   → If not exists: fetch
