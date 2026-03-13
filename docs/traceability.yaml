@@ -604,3 +604,30 @@ code:
   database/import/loader.sql:
     implements-design: [supabase-store]
     status: done
+  packages/shared/src/config.ts:
+    implements-design: [supabase-store]
+    status: done
+  packages/shared/src/supabase-client.ts:
+    implements-design: [supabase-store]
+    status: done
+  packages/collector/src/supabase-writer.ts:
+    implements-design: [supabase-store, analytics-collector]
+    status: done
+  packages/tools/src/tools/supabase-index-writer.ts:
+    implements-design: [supabase-store, indexer]
+    status: done
+  packages/tools/src/tools/repo-registration.ts:
+    implements-design: [supabase-store]
+    status: done
+  packages/shared/src/config.spec.ts:
+    implements-design: [supabase-store]
+    status: done
+  packages/collector/src/supabase-writer.spec.ts:
+    implements-design: [supabase-store, analytics-collector]
+    status: done
+  packages/tools/src/tools/supabase-index-writer.spec.ts:
+    implements-design: [supabase-store, indexer]
+    status: done
+  packages/tools/src/tools/repo-registration.spec.ts:
+    implements-design: [supabase-store]
+    status: done
