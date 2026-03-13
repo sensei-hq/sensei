@@ -14,8 +14,13 @@ results/**/c/
 .env
 database/.env.local
 
-# Sensei server DB
+# Sensei generated index artifacts (large; stored in Supabase after Phase 1)
 .sensei/reports.db
+.sensei/chunks.json
+.sensei/embeddings.json
+
+# Superpowers plugin cache
+.superpowers/
 
 # OS
 .DS_Store
