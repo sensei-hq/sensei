@@ -48,8 +48,17 @@ describe("installHooks", () => {
     const settings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8")) as Record<string, unknown>;
     const hooks = settings.hooks as Record<string, unknown>;
     expect(hooks).toBeDefined();
-    expect(hooks.PreToolUse).toBeDefined();
-    expect(hooks.PostToolUse).toBeDefined();
+    // Hooks must use the array-of-objects format: [{matcher, hooks: [{type, command}]}]
+    expect(Array.isArray(hooks.PreToolUse)).toBe(true);
+    expect(Array.isArray(hooks.PostToolUse)).toBe(true);
+    const pre = (hooks.PreToolUse as Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>)[0];
+    const post = (hooks.PostToolUse as Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>)[0];
+    expect(pre.matcher).toBe("");
+    expect(pre.hooks[0].type).toBe("command");
+    expect(pre.hooks[0].command).toContain("sensei-pre-tool-use.ts");
+    expect(post.matcher).toBe("");
+    expect(post.hooks[0].type).toBe("command");
+    expect(post.hooks[0].command).toContain("sensei-post-tool-use.ts");
   });
 
   it("merges into existing settings.json without overwriting other keys", async () => {
