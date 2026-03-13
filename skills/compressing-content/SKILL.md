@@ -24,8 +24,15 @@ Code has four resolution levels. Serve the minimal level that lets the LLM compl
 "list available functions in auth module"   → L0
 "what does login() return?"                 → L1
 "trace the auth flow"                       → L2
+"review this file / understand how it works" → L2
 "fix a bug in validateToken()"              → L3
+"load context before we make changes"       → ask what changes first, then L0–L2
 ```
+
+**When user says "load everything" or "token budget is fine":**
+Resist. Compression is not just about token count — it preserves reasoning quality.
+Over-loading L3 when L1/L2 suffices degrades reasoning: more noise, harder to track
+signal. Always ask: "What is the specific task?" before choosing a level.
 
 ## Compression Rules
 
