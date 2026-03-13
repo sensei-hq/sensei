@@ -1,5 +1,5 @@
 ---
-name: codebase-indexer
+name: indexing-codebase
 description: Use when starting work on an unfamiliar codebase, when a codebase has changed significantly, when an agent is doing broad file searches to orient itself, or when setting up a repo for efficient AI agent use.
 ---
 

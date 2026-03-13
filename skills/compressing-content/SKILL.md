@@ -1,5 +1,5 @@
 ---
-name: content-compression
+name: compressing-content
 description: Use when working with code in LLM context and needing to reduce token usage, choose representation levels, or compress code for agent consumption without losing reasoning ability.
 ---
 

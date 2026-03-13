@@ -1,5 +1,5 @@
 ---
-name: populate-llmspec
+name: populating-llmspec
 description: Use when .sensei/llmspec.yaml has TODO placeholders or empty fields, when docs[].covers[] entries are missing or incomplete, or when concepts and patterns fields are unpopulated after sensei index runs.
 ---
 

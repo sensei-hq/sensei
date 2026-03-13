@@ -1,5 +1,5 @@
 ---
-name: context-manager
+name: managing-context
 description: Use when starting a new task in a session, switching between tasks, or when context is getting large and needs to be trimmed to stay efficient.
 ---
 

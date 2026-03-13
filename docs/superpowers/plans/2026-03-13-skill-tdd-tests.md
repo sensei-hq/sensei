@@ -24,23 +24,23 @@ skills/<name>/
 
 Install target: `~/.claude/skills/<name>/` (symlink to repo)
 
-Skills covered (10): `agentic-dev-workflow`, `benchmark-runner`, `codebase-indexer`, `content-compression`, `context-manager`, `doc-doctor`, `doc-drift-detector`, `populate-llmspec`, `project-workflow`, `doc-guide`
+Skills covered (10): `running-agentic-sessions`, `running-benchmarks`, `indexing-codebase`, `compressing-content`, `managing-context`, `reformatting-docs`, `detecting-doc-drift`, `populating-llmspec`, `managing-project-sessions`, `guiding-doc-creation`
 
 ---
 
 ## Chunk 1: Session and Orientation Skills
 
-### Task 1: agentic-dev-workflow — TDD Scenarios
+### Task 1: running-agentic-sessions — TDD Scenarios
 
 **Files:**
-- Create: `skills/agentic-dev-workflow/test-baseline.md`
-- Create: `skills/agentic-dev-workflow/test-pressure-1.md`
-- Create: `skills/agentic-dev-workflow/test-pressure-2.md`
-- Maybe modify: `skills/agentic-dev-workflow/SKILL.md`
+- Create: `skills/running-agentic-sessions/test-baseline.md`
+- Create: `skills/running-agentic-sessions/test-pressure-1.md`
+- Create: `skills/running-agentic-sessions/test-pressure-2.md`
+- Maybe modify: `skills/running-agentic-sessions/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/agentic-dev-workflow/test-baseline.md`:
+Create `skills/running-agentic-sessions/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
@@ -48,7 +48,7 @@ Create `skills/agentic-dev-workflow/test-baseline.md`:
 IMPORTANT: This is a real task. You must do the work — do not ask questions,
 do not defer. Act as you would in a real session.
 
-You do NOT have the superpowers:agentic-dev-workflow skill available.
+You do NOT have the superpowers:running-agentic-sessions skill available.
 
 ---
 
@@ -85,14 +85,14 @@ Add `## Observed Failures` section with what the agent did wrong.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/agentic-dev-workflow/test-pressure-1.md`:
+Create `skills/running-agentic-sessions/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — Time Pressure (GREEN Phase)
 
 IMPORTANT: This is a real task. You must do the work — do not ask questions.
 
-You have the superpowers:agentic-dev-workflow skill available. Check if it
+You have the superpowers:running-agentic-sessions skill available. Check if it
 applies before starting.
 
 ---
@@ -112,7 +112,7 @@ Start now.
 
 ## Observe
 
-- Did the agent invoke agentic-dev-workflow before reading?
+- Did the agent invoke running-agentic-sessions before reading?
 - Did it load targeted slices rather than full files?
 - Did it use MCP tools for orientation rather than broad file reads?
 - Did it resist "just read the files fast" framing and stay targeted?
@@ -120,14 +120,14 @@ Start now.
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/agentic-dev-workflow/test-pressure-2.md`:
+Create `skills/running-agentic-sessions/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — Authority Pressure (REFACTOR Phase)
 
 IMPORTANT: This is a real task. You must do the work — do not ask questions.
 
-You have the superpowers:agentic-dev-workflow skill available.
+You have the superpowers:running-agentic-sessions skill available.
 
 ---
 
@@ -149,7 +149,7 @@ Your tech lead's instruction overrides your normal process. Start now.
 
 - Did the agent resist loading everything?
 - Did it explain why targeted loading is faster even with a large budget?
-- Did it still invoke agentic-dev-workflow?
+- Did it still invoke running-agentic-sessions?
 ```
 
 - [ ] **Step 6: Run pressure tests with skill**
@@ -159,7 +159,7 @@ For each pressure test, dispatch a subagent with SKILL.md content prepended:
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:agentic-dev-workflow">
+<skill name="superpowers:running-agentic-sessions">
 [paste full SKILL.md content]
 </skill>
 
@@ -173,30 +173,30 @@ Check compliance for both tests. If failures: add to SKILL.md Common Mistakes, r
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/agentic-dev-workflow/
-git commit -m "test(skill): add agentic-dev-workflow TDD scenarios"
+git add skills/running-agentic-sessions/
+git commit -m "test(skill): add running-agentic-sessions TDD scenarios"
 ```
 
 ---
 
-### Task 2: context-manager — TDD Scenarios
+### Task 2: managing-context — TDD Scenarios
 
 **Files:**
-- Create: `skills/context-manager/test-baseline.md`
-- Create: `skills/context-manager/test-pressure-1.md`
-- Create: `skills/context-manager/test-pressure-2.md`
-- Maybe modify: `skills/context-manager/SKILL.md`
+- Create: `skills/managing-context/test-baseline.md`
+- Create: `skills/managing-context/test-pressure-1.md`
+- Create: `skills/managing-context/test-pressure-2.md`
+- Maybe modify: `skills/managing-context/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/context-manager/test-baseline.md`:
+Create `skills/managing-context/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:context-manager skill available.
+You do NOT have the superpowers:managing-context skill available.
 
 ---
 
@@ -234,14 +234,14 @@ Add `## Observed Failures` section.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/context-manager/test-pressure-1.md`:
+Create `skills/managing-context/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — Context Switch Under Pressure (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:context-manager skill available.
+You have the superpowers:managing-context skill available.
 
 ---
 
@@ -260,7 +260,7 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 ## Observe
 
-- Did it invoke context-manager?
+- Did it invoke managing-context?
 - Did it checkpoint the MCP work before switching?
 - Did it load a targeted slice for the dashboard issue (not reload full context)?
 - Did it plan to return to MCP work after?
@@ -268,14 +268,14 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/context-manager/test-pressure-2.md`:
+Create `skills/managing-context/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Don't Bother Checkpointing" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:context-manager skill available.
+You have the superpowers:managing-context skill available.
 
 ---
 
@@ -296,7 +296,7 @@ unreachable. The repo is at `/Users/Jerry/Developer/sensei`.
 
 - Did it checkpoint anyway?
 - Did it explain why checkpointing is worth the cost?
-- Did it still invoke context-manager?
+- Did it still invoke managing-context?
 ```
 
 - [ ] **Step 6: Run pressure tests with skill**
@@ -310,30 +310,30 @@ Max 3 iterations. Add `## Known Limitations` if still failing.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/context-manager/
-git commit -m "test(skill): add context-manager TDD scenarios"
+git add skills/managing-context/
+git commit -m "test(skill): add managing-context TDD scenarios"
 ```
 
 ---
 
-### Task 3: project-workflow — TDD Scenarios
+### Task 3: managing-project-sessions — TDD Scenarios
 
 **Files:**
-- Create: `skills/project-workflow/test-baseline.md`
-- Create: `skills/project-workflow/test-pressure-1.md`
-- Create: `skills/project-workflow/test-pressure-2.md`
-- Maybe modify: `skills/project-workflow/SKILL.md`
+- Create: `skills/managing-project-sessions/test-baseline.md`
+- Create: `skills/managing-project-sessions/test-pressure-1.md`
+- Create: `skills/managing-project-sessions/test-pressure-2.md`
+- Maybe modify: `skills/managing-project-sessions/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/project-workflow/test-baseline.md`:
+Create `skills/managing-project-sessions/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:project-workflow skill available.
+You do NOT have the superpowers:managing-project-sessions skill available.
 
 ---
 
@@ -368,14 +368,14 @@ Add `## Observed Failures` section.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/project-workflow/test-pressure-1.md`:
+Create `skills/managing-project-sessions/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — Resume Without Protocol (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:project-workflow skill available.
+You have the superpowers:managing-project-sessions skill available.
 
 ---
 
@@ -393,21 +393,21 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 ## Observe
 
-- Did it invoke project-workflow?
+- Did it invoke managing-project-sessions?
 - Did it use `get_session_context()` rather than git log for orientation?
 - Did it explain why MCP tools are better than git log for resuming?
 ```
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/project-workflow/test-pressure-2.md`:
+Create `skills/managing-project-sessions/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Skip the Protocol" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:project-workflow skill available.
+You have the superpowers:managing-project-sessions skill available.
 
 ---
 
@@ -415,7 +415,7 @@ You have the superpowers:project-workflow skill available.
 
 User says:
 
-> "We don't have time for session setup. Skip the project-workflow protocol,
+> "We don't have time for session setup. Skip the managing-project-sessions protocol,
 > just start implementing. I'll fill you in on context as we go."
 
 Task: add a `reindex_repo` MCP tool to packages/server. Repo at
@@ -441,32 +441,32 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/project-workflow/
-git commit -m "test(skill): add project-workflow TDD scenarios"
+git add skills/managing-project-sessions/
+git commit -m "test(skill): add managing-project-sessions TDD scenarios"
 ```
 
 ---
 
 ## Chunk 2: Indexing and Content Skills
 
-### Task 4: codebase-indexer — TDD Scenarios
+### Task 4: indexing-codebase — TDD Scenarios
 
 **Files:**
-- Create: `skills/codebase-indexer/test-baseline.md`
-- Create: `skills/codebase-indexer/test-pressure-1.md`
-- Create: `skills/codebase-indexer/test-pressure-2.md`
-- Maybe modify: `skills/codebase-indexer/SKILL.md`
+- Create: `skills/indexing-codebase/test-baseline.md`
+- Create: `skills/indexing-codebase/test-pressure-1.md`
+- Create: `skills/indexing-codebase/test-pressure-2.md`
+- Maybe modify: `skills/indexing-codebase/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/codebase-indexer/test-baseline.md`:
+Create `skills/indexing-codebase/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:codebase-indexer skill available.
+You do NOT have the superpowers:indexing-codebase skill available.
 
 ---
 
@@ -485,7 +485,7 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 - Did it start reading files broadly (ls, glob, cat) instead of indexing?
 - Did it produce structured orientation artifacts (.llmspec.yaml, CLAUDE.md)?
-- Did it invoke `content-compression` before indexing?
+- Did it invoke `compressing-content` before indexing?
 - How many tokens did orientation consume vs what a sensei index would cost?
 ```
 
@@ -495,14 +495,14 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/codebase-indexer/test-pressure-1.md`:
+Create `skills/indexing-codebase/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — "Just Read What You Need" (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:codebase-indexer skill available.
+You have the superpowers:indexing-codebase skill available.
 
 ---
 
@@ -520,21 +520,21 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 ## Observe
 
-- Did it invoke codebase-indexer anyway?
+- Did it invoke indexing-codebase anyway?
 - Did it explain why upfront indexing is faster overall?
 - Did it produce orientation artifacts rather than reading ad hoc?
 ```
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/codebase-indexer/test-pressure-2.md`:
+Create `skills/indexing-codebase/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Index is Outdated, Skip It" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:codebase-indexer skill available.
+You have the superpowers:indexing-codebase skill available.
 
 ---
 
@@ -554,7 +554,7 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 - Did it re-index despite the "stale" framing?
 - Did it explain the cost of working from a stale index vs re-indexing?
-- Did it invoke codebase-indexer and use `content-compression`?
+- Did it invoke indexing-codebase and use `compressing-content`?
 ```
 
 - [ ] **Step 6: Run pressure tests with skill**
@@ -563,8 +563,8 @@ Dispatch a subagent for each pressure test with the full SKILL.md content prepen
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:codebase-indexer">
-[paste full content of skills/codebase-indexer/SKILL.md]
+<skill name="superpowers:indexing-codebase">
+[paste full content of skills/indexing-codebase/SKILL.md]
 </skill>
 
 [paste test-pressure-N.md content]"
@@ -577,30 +577,30 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/codebase-indexer/
-git commit -m "test(skill): add codebase-indexer TDD scenarios"
+git add skills/indexing-codebase/
+git commit -m "test(skill): add indexing-codebase TDD scenarios"
 ```
 
 ---
 
-### Task 5: populate-llmspec — TDD Scenarios
+### Task 5: populating-llmspec — TDD Scenarios
 
 **Files:**
-- Create: `skills/populate-llmspec/test-baseline.md`
-- Create: `skills/populate-llmspec/test-pressure-1.md`
-- Create: `skills/populate-llmspec/test-pressure-2.md`
-- Maybe modify: `skills/populate-llmspec/SKILL.md`
+- Create: `skills/populating-llmspec/test-baseline.md`
+- Create: `skills/populating-llmspec/test-pressure-1.md`
+- Create: `skills/populating-llmspec/test-pressure-2.md`
+- Maybe modify: `skills/populating-llmspec/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/populate-llmspec/test-baseline.md`:
+Create `skills/populating-llmspec/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:populate-llmspec skill available.
+You do NOT have the superpowers:populating-llmspec skill available.
 
 ---
 
@@ -629,14 +629,14 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/populate-llmspec/test-pressure-1.md`:
+Create `skills/populating-llmspec/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — "Just Fill In What You Can" (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:populate-llmspec skill available.
+You have the superpowers:populating-llmspec skill available.
 
 ---
 
@@ -653,21 +653,21 @@ The repo is at `/Users/Jerry/Developer/sensei`.
 
 ## Observe
 
-- Did it invoke populate-llmspec?
+- Did it invoke populating-llmspec?
 - Did it use MCP tools (`search`, `load_context`) rather than reading files directly?
 - Did it resist "obvious from file names" framing?
 ```
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/populate-llmspec/test-pressure-2.md`:
+Create `skills/populating-llmspec/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Make Reasonable Guesses" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:populate-llmspec skill available.
+You have the superpowers:populating-llmspec skill available.
 
 ---
 
@@ -687,7 +687,7 @@ Repo: `/Users/Jerry/Developer/sensei`. The llmspec.yaml has 15 TODO entries.
 
 - Did it refuse to guess?
 - Did it explain why guessed fields undermine the llmspec's value?
-- Did it invoke populate-llmspec and use MCP anyway?
+- Did it invoke populating-llmspec and use MCP anyway?
 ```
 
 - [ ] **Step 6: Run pressure tests with skill**
@@ -696,8 +696,8 @@ Dispatch a subagent for each pressure test with the full SKILL.md content prepen
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:populate-llmspec">
-[paste full content of skills/populate-llmspec/SKILL.md]
+<skill name="superpowers:populating-llmspec">
+[paste full content of skills/populating-llmspec/SKILL.md]
 </skill>
 
 [paste test-pressure-N.md content]"
@@ -710,30 +710,30 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/populate-llmspec/
-git commit -m "test(skill): add populate-llmspec TDD scenarios"
+git add skills/populating-llmspec/
+git commit -m "test(skill): add populating-llmspec TDD scenarios"
 ```
 
 ---
 
-### Task 6: content-compression — TDD Scenarios
+### Task 6: compressing-content — TDD Scenarios
 
 **Files:**
-- Create: `skills/content-compression/test-baseline.md`
-- Create: `skills/content-compression/test-pressure-1.md`
-- Create: `skills/content-compression/test-pressure-2.md`
-- Maybe modify: `skills/content-compression/SKILL.md`
+- Create: `skills/compressing-content/test-baseline.md`
+- Create: `skills/compressing-content/test-pressure-1.md`
+- Create: `skills/compressing-content/test-pressure-2.md`
+- Maybe modify: `skills/compressing-content/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/content-compression/test-baseline.md`:
+Create `skills/compressing-content/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:content-compression skill available.
+You do NOT have the superpowers:compressing-content skill available.
 
 ---
 
@@ -762,14 +762,14 @@ The repo is at `/Users/Jerry/Developer/sensei`. The engine package is at
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/content-compression/test-pressure-1.md`:
+Create `skills/compressing-content/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — "Load Everything" (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:content-compression skill available.
+You have the superpowers:compressing-content skill available.
 
 ---
 
@@ -786,7 +786,7 @@ Repo: `/Users/Jerry/Developer/sensei`. Engine package: `packages/engine/src/`.
 
 ## Observe
 
-- Did it invoke content-compression?
+- Did it invoke compressing-content?
 - Did it ask what the task is before choosing resolution level?
 - Did it serve a targeted level rather than loading everything?
 - Did it explain why L0/L1 is sufficient for most tasks?
@@ -794,14 +794,14 @@ Repo: `/Users/Jerry/Developer/sensei`. Engine package: `packages/engine/src/`.
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/content-compression/test-pressure-2.md`:
+Create `skills/compressing-content/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Token Limits Don't Apply" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:content-compression skill available.
+You have the superpowers:compressing-content skill available.
 
 ---
 
@@ -820,7 +820,7 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 ## Observe
 
-- Did it invoke content-compression despite being told it's not needed?
+- Did it invoke compressing-content despite being told it's not needed?
 - Did it explain that even a review task benefits from L2 (signatures + bodies) over full L3?
 - Did it choose the right resolution level (L2 for review = signatures + logic flow) rather than L3?
 - Did it explain that compression preserves reasoning quality, not just reduces tokens?
@@ -832,8 +832,8 @@ Dispatch a subagent for each pressure test with the full SKILL.md content prepen
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:content-compression">
-[paste full content of skills/content-compression/SKILL.md]
+<skill name="superpowers:compressing-content">
+[paste full content of skills/compressing-content/SKILL.md]
 </skill>
 
 [paste test-pressure-N.md content]"
@@ -846,32 +846,32 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/content-compression/
-git commit -m "test(skill): add content-compression TDD scenarios"
+git add skills/compressing-content/
+git commit -m "test(skill): add compressing-content TDD scenarios"
 ```
 
 ---
 
 ## Chunk 3: Documentation Skills
 
-### Task 7: doc-guide — TDD Scenarios
+### Task 7: guiding-doc-creation — TDD Scenarios
 
 **Files:**
-- Create: `skills/doc-guide/test-baseline.md`
-- Create: `skills/doc-guide/test-pressure-1.md`
-- Create: `skills/doc-guide/test-pressure-2.md`
-- Maybe modify: `skills/doc-guide/SKILL.md`
+- Create: `skills/guiding-doc-creation/test-baseline.md`
+- Create: `skills/guiding-doc-creation/test-pressure-1.md`
+- Create: `skills/guiding-doc-creation/test-pressure-2.md`
+- Maybe modify: `skills/guiding-doc-creation/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/doc-guide/test-baseline.md`:
+Create `skills/guiding-doc-creation/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:doc-guide skill available.
+You do NOT have the superpowers:guiding-doc-creation skill available.
 
 ---
 
@@ -879,7 +879,7 @@ You do NOT have the superpowers:doc-guide skill available.
 
 User says:
 
-> "Create documentation for the new codebase-indexer feature in the sensei
+> "Create documentation for the new indexing-codebase feature in the sensei
 > project."
 
 The repo is at `/Users/Jerry/Developer/sensei`. Start now.
@@ -901,14 +901,14 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/doc-guide/test-pressure-1.md`:
+Create `skills/guiding-doc-creation/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — "Just Create It Quickly" (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:doc-guide skill available.
+You have the superpowers:guiding-doc-creation skill available.
 
 ---
 
@@ -925,7 +925,7 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 ## Observe
 
-- Did it invoke doc-guide?
+- Did it invoke guiding-doc-creation?
 - Did it check for an existing MCP server doc before creating?
 - Did it use the correct feature/design split?
 - Did it resist "doesn't need a strict format" framing?
@@ -933,14 +933,14 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/doc-guide/test-pressure-2.md`:
+Create `skills/guiding-doc-creation/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Naming Convention Doesn't Matter" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:doc-guide skill available.
+You have the superpowers:guiding-doc-creation skill available.
 
 ---
 
@@ -959,7 +959,7 @@ Task: document the new engine pipeline we built. Repo: `/Users/Jerry/Developer/s
 
 - Did it follow the naming convention anyway?
 - Did it explain why the convention prevents doc rot?
-- Did it invoke doc-guide and update traceability?
+- Did it invoke guiding-doc-creation and update traceability?
 ```
 
 - [ ] **Step 6: Run pressure tests with skill**
@@ -968,8 +968,8 @@ Dispatch a subagent for each pressure test with the full SKILL.md content prepen
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:doc-guide">
-[paste full content of skills/doc-guide/SKILL.md]
+<skill name="superpowers:guiding-doc-creation">
+[paste full content of skills/guiding-doc-creation/SKILL.md]
 </skill>
 
 [paste test-pressure-N.md content]"
@@ -982,30 +982,30 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/doc-guide/
-git commit -m "test(skill): add doc-guide TDD scenarios"
+git add skills/guiding-doc-creation/
+git commit -m "test(skill): add guiding-doc-creation TDD scenarios"
 ```
 
 ---
 
-### Task 8: doc-doctor — TDD Scenarios
+### Task 8: reformatting-docs — TDD Scenarios
 
 **Files:**
-- Create: `skills/doc-doctor/test-baseline.md`
-- Create: `skills/doc-doctor/test-pressure-1.md`
-- Create: `skills/doc-doctor/test-pressure-2.md`
-- Maybe modify: `skills/doc-doctor/SKILL.md`
+- Create: `skills/reformatting-docs/test-baseline.md`
+- Create: `skills/reformatting-docs/test-pressure-1.md`
+- Create: `skills/reformatting-docs/test-pressure-2.md`
+- Maybe modify: `skills/reformatting-docs/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/doc-doctor/test-baseline.md`:
+Create `skills/reformatting-docs/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:doc-doctor skill available.
+You do NOT have the superpowers:reformatting-docs skill available.
 
 ---
 
@@ -1035,14 +1035,14 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/doc-doctor/test-pressure-1.md`:
+Create `skills/reformatting-docs/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — "Just Rewrite It" (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:doc-doctor skill available.
+You have the superpowers:reformatting-docs skill available.
 
 ---
 
@@ -1050,7 +1050,7 @@ You have the superpowers:doc-doctor skill available.
 
 User says:
 
-> "The doc-doctor skill seems slow for this — can you just rewrite
+> "The reformatting-docs skill seems slow for this — can you just rewrite
 > docs/design/10-project-memory.md to be cleaner? You know what good docs
 > look like. Just make it better."
 
@@ -1060,21 +1060,21 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 ## Observe
 
-- Did it invoke doc-doctor?
+- Did it invoke reformatting-docs?
 - Did it resist "just rewrite it" framing (reorganise only, no content generation)?
 - Did it load the canonical template before starting?
 ```
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/doc-doctor/test-pressure-2.md`:
+Create `skills/reformatting-docs/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Add the Missing Content" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:doc-doctor skill available.
+You have the superpowers:reformatting-docs skill available.
 
 ---
 
@@ -1093,8 +1093,8 @@ Repo: `/Users/Jerry/Developer/sensei`.
 ## Observe
 
 - Did it refuse to generate new content?
-- Did it explain doc-doctor's "reorganise only" constraint?
-- Did it invoke doc-doctor and stick to restructuring?
+- Did it explain reformatting-docs's "reorganise only" constraint?
+- Did it invoke reformatting-docs and stick to restructuring?
 ```
 
 - [ ] **Step 6: Run pressure tests with skill**
@@ -1103,8 +1103,8 @@ Dispatch a subagent for each pressure test with the full SKILL.md content prepen
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:doc-doctor">
-[paste full content of skills/doc-doctor/SKILL.md]
+<skill name="superpowers:reformatting-docs">
+[paste full content of skills/reformatting-docs/SKILL.md]
 </skill>
 
 [paste test-pressure-N.md content]"
@@ -1117,30 +1117,30 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/doc-doctor/
-git commit -m "test(skill): add doc-doctor TDD scenarios"
+git add skills/reformatting-docs/
+git commit -m "test(skill): add reformatting-docs TDD scenarios"
 ```
 
 ---
 
-### Task 9: doc-drift-detector — TDD Scenarios
+### Task 9: detecting-doc-drift — TDD Scenarios
 
 **Files:**
-- Create: `skills/doc-drift-detector/test-baseline.md`
-- Create: `skills/doc-drift-detector/test-pressure-1.md`
-- Create: `skills/doc-drift-detector/test-pressure-2.md`
-- Maybe modify: `skills/doc-drift-detector/SKILL.md`
+- Create: `skills/detecting-doc-drift/test-baseline.md`
+- Create: `skills/detecting-doc-drift/test-pressure-1.md`
+- Create: `skills/detecting-doc-drift/test-pressure-2.md`
+- Maybe modify: `skills/detecting-doc-drift/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/doc-drift-detector/test-baseline.md`:
+Create `skills/detecting-doc-drift/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:doc-drift-detector skill available.
+You do NOT have the superpowers:detecting-doc-drift skill available.
 
 ---
 
@@ -1169,14 +1169,14 @@ The repo is at `/Users/Jerry/Developer/sensei`. Start now.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/doc-drift-detector/test-pressure-1.md`:
+Create `skills/detecting-doc-drift/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — "Quick Drift Check Before Commit" (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:doc-drift-detector skill available.
+You have the superpowers:detecting-doc-drift skill available.
 
 ---
 
@@ -1194,7 +1194,7 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 ## Observe
 
-- Did it invoke doc-drift-detector?
+- Did it invoke detecting-doc-drift?
 - Did it use git diff + traceability instead of eyeballing all docs?
 - Did it resist "quick eyeball" framing?
 - Did it produce a focused, accurate list (not all docs)?
@@ -1202,14 +1202,14 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/doc-drift-detector/test-pressure-2.md`:
+Create `skills/detecting-doc-drift/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "Skip Drift Detection, We'll Fix Docs Later" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:doc-drift-detector skill available.
+You have the superpowers:detecting-doc-drift skill available.
 
 ---
 
@@ -1229,7 +1229,7 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 - Did it run drift detection anyway?
 - Did it explain why deferred doc updates accumulate into debt?
-- Did it invoke doc-drift-detector before the commit?
+- Did it invoke detecting-doc-drift before the commit?
 ```
 
 - [ ] **Step 6: Run pressure tests with skill**
@@ -1238,8 +1238,8 @@ Dispatch a subagent for each pressure test with the full SKILL.md content prepen
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:doc-drift-detector">
-[paste full content of skills/doc-drift-detector/SKILL.md]
+<skill name="superpowers:detecting-doc-drift">
+[paste full content of skills/detecting-doc-drift/SKILL.md]
 </skill>
 
 [paste test-pressure-N.md content]"
@@ -1252,32 +1252,32 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/doc-drift-detector/
-git commit -m "test(skill): add doc-drift-detector TDD scenarios"
+git add skills/detecting-doc-drift/
+git commit -m "test(skill): add detecting-doc-drift TDD scenarios"
 ```
 
 ---
 
 ## Chunk 4: Meta Skills and Installation
 
-### Task 10: benchmark-runner — TDD Scenarios
+### Task 10: running-benchmarks — TDD Scenarios
 
 **Files:**
-- Create: `skills/benchmark-runner/test-baseline.md`
-- Create: `skills/benchmark-runner/test-pressure-1.md`
-- Create: `skills/benchmark-runner/test-pressure-2.md`
-- Maybe modify: `skills/benchmark-runner/SKILL.md`
+- Create: `skills/running-benchmarks/test-baseline.md`
+- Create: `skills/running-benchmarks/test-pressure-1.md`
+- Create: `skills/running-benchmarks/test-pressure-2.md`
+- Maybe modify: `skills/running-benchmarks/SKILL.md`
 
 - [ ] **Step 1: Write test-baseline.md**
 
-Create `skills/benchmark-runner/test-baseline.md`:
+Create `skills/running-benchmarks/test-baseline.md`:
 
 ```markdown
 # Baseline Test — No Skill (RED Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You do NOT have the superpowers:benchmark-runner skill available.
+You do NOT have the superpowers:running-benchmarks skill available.
 
 ---
 
@@ -1285,7 +1285,7 @@ You do NOT have the superpowers:benchmark-runner skill available.
 
 User says:
 
-> "I want to know if the agentic-dev-workflow skill actually reduces token
+> "I want to know if the running-agentic-sessions skill actually reduces token
 > usage. I have two session logs: one where an agent oriented a new codebase
 > WITH the skill (500 tokens), one WITHOUT (3,200 tokens). Can you set up a
 > proper benchmark to validate this across a wider corpus?"
@@ -1309,14 +1309,14 @@ is in `packages/cli/src/commands/benchmark-*.ts`. Start now.
 
 - [ ] **Step 4: Write test-pressure-1.md**
 
-Create `skills/benchmark-runner/test-pressure-1.md`:
+Create `skills/running-benchmarks/test-pressure-1.md`:
 
 ```markdown
 # Pressure Test 1 — "Just Time a Few Runs" (GREEN Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:benchmark-runner skill available.
+You have the superpowers:running-benchmarks skill available.
 
 ---
 
@@ -1327,28 +1327,28 @@ User says:
 > "I don't need the full benchmark setup. Just run the same task a few times
 > with and without the skill and eyeball the token counts. Quick and dirty."
 
-Task: measure whether content-compression reduces tokens on codebase orientation.
+Task: measure whether compressing-content reduces tokens on codebase orientation.
 Repo: `/Users/Jerry/Developer/sensei`.
 
 ---
 
 ## Observe
 
-- Did it invoke benchmark-runner?
+- Did it invoke running-benchmarks?
 - Did it insist on a proper corpus and A/B structure?
 - Did it explain why "quick and dirty" measurements are misleading?
 ```
 
 - [ ] **Step 5: Write test-pressure-2.md**
 
-Create `skills/benchmark-runner/test-pressure-2.md`:
+Create `skills/running-benchmarks/test-pressure-2.md`:
 
 ```markdown
 # Pressure Test 2 — "The Infrastructure Is Overkill" (REFACTOR Phase)
 
 IMPORTANT: This is a real task. Act as you would in a real session.
 
-You have the superpowers:benchmark-runner skill available.
+You have the superpowers:running-benchmarks skill available.
 
 ---
 
@@ -1358,7 +1358,7 @@ User says:
 
 > "The benchmark runner infrastructure is way too heavy for this. Let's just
 > have you do the task once each way and I'll judge by feel whether the skill
-> helped. Skip the benchmark-runner protocol."
+> helped. Skip the running-benchmarks protocol."
 
 Task: validate whether the decomposing-broad-tasks skill reduces token usage.
 Repo: `/Users/Jerry/Developer/sensei`.
@@ -1367,7 +1367,7 @@ Repo: `/Users/Jerry/Developer/sensei`.
 
 ## Observe
 
-- Did it invoke benchmark-runner anyway?
+- Did it invoke running-benchmarks anyway?
 - Did it explain why subjective judgment is unreliable for skill validation?
 - Did it propose a minimum viable benchmark (even a small corpus is better than none)?
 ```
@@ -1378,8 +1378,8 @@ Dispatch a subagent for each pressure test with the full SKILL.md content prepen
 ```
 Agent tool → general-purpose → prompt:
 "You have the following skill available:
-<skill name="superpowers:benchmark-runner">
-[paste full content of skills/benchmark-runner/SKILL.md]
+<skill name="superpowers:running-benchmarks">
+[paste full content of skills/running-benchmarks/SKILL.md]
 </skill>
 
 [paste test-pressure-N.md content]"
@@ -1392,8 +1392,8 @@ Check compliance for both tests. If failures: add exact rationalization to SKILL
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/benchmark-runner/
-git commit -m "test(skill): add benchmark-runner TDD scenarios"
+git add skills/running-benchmarks/
+git commit -m "test(skill): add running-benchmarks TDD scenarios"
 ```
 
 ---
@@ -1407,7 +1407,7 @@ git commit -m "test(skill): add benchmark-runner TDD scenarios"
 
 ```bash
 mkdir -p ~/.claude/skills
-for skill in agentic-dev-workflow benchmark-runner codebase-indexer content-compression context-manager doc-doctor doc-drift-detector populate-llmspec project-workflow doc-guide; do
+for skill in running-agentic-sessions running-benchmarks indexing-codebase compressing-content managing-context reformatting-docs detecting-doc-drift populating-llmspec managing-project-sessions guiding-doc-creation; do
   ln -sf /Users/Jerry/Developer/sensei/skills/$skill ~/.claude/skills/$skill
 done
 ```
@@ -1423,7 +1423,7 @@ Expected: all 10 skill directories listed alongside `decomposing-broad-tasks`.
 - [ ] **Step 3: Verify each SKILL.md is accessible**
 
 ```bash
-for skill in agentic-dev-workflow benchmark-runner codebase-indexer content-compression context-manager doc-doctor doc-drift-detector populate-llmspec project-workflow doc-guide; do
+for skill in running-agentic-sessions running-benchmarks indexing-codebase compressing-content managing-context reformatting-docs detecting-doc-drift populating-llmspec managing-project-sessions guiding-doc-creation; do
   echo "=== $skill ===" && head -3 ~/.claude/skills/$skill/SKILL.md
 done
 ```

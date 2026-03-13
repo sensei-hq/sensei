@@ -1,5 +1,5 @@
 ---
-name: doc-doctor
+name: reformatting-docs
 description: Use when asked to reformat, restructure, or migrate docs to match a canonical template. Works for single files or entire directories.
 ---
 
