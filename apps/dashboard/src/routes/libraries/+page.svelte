@@ -2,10 +2,14 @@
   import type { PageData } from './$types';
   const { data } = $props();
 
-  let search = '';
-  $: filtered = data.libraries.filter((l: any) =>
-    l.name.toLowerCase().includes(search.toLowerCase()) ||
-    (l.description ?? '').toLowerCase().includes(search.toLowerCase())
+  let search = $state('');
+  const filtered = $derived(
+    search.trim()
+      ? data.libraries.filter((lib: any) =>
+          lib.name?.toLowerCase().includes(search.toLowerCase()) ||
+          lib.description?.toLowerCase().includes(search.toLowerCase())
+        )
+      : data.libraries
   );
 </script>
 
