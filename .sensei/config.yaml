@@ -1,2 +1,13 @@
 repo_id: 8dd1e3de-6b3e-4b64-a9e5-7a5113c01b9d
 supabase_url: http://127.0.0.1:54321
+
+custom_libs:
+  - name: rokkit
+    source_type: llms.txt
+    base_url: https://rokkit.vercel.app/llms/index.txt
+    description: "Rokkit UI component library — data-driven Svelte components with Rokkit/UnoCSS theming"
+
+  - name: kavach
+    source_type: http
+    base_url: https://kavach.jerrythomas.name/docs
+    description: "Kavach auth library — SvelteKit + Supabase OAuth, session management, route protection"
