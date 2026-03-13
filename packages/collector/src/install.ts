@@ -189,8 +189,12 @@ export async function installHooks(opts: InstallOptions = {}): Promise<void> {
     } catch {}
   }
   const hooks = (settings.hooks as Record<string, unknown>) ?? {};
-  hooks.PreToolUse = prePath;
-  hooks.PostToolUse = postPath;
+  hooks.PreToolUse = [
+    { matcher: "", hooks: [{ type: "command", command: `bun ${prePath}` }] },
+  ];
+  hooks.PostToolUse = [
+    { matcher: "", hooks: [{ type: "command", command: `bun ${postPath}` }] },
+  ];
   settings.hooks = hooks;
   mkdirSync(dirname(settingsPath), { recursive: true });
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
