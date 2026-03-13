@@ -21,7 +21,7 @@ Decompose broad requests into focused agent chunks with minimal, targeted contex
 
 **Do not read file bodies in steps 1–3. Filenames and headers only.**
 
-Impulse to "understand before clustering" is the bulk reading this prevents. Stop after file 1 reveals shared context.
+Impulse to "understand before clustering" is the bulk reading this prevents. Proceed to Step 2 after the lightweight scan — do not read any file body, even the first one.
 
 ## The Protocol
 
@@ -45,7 +45,7 @@ Group files that can be completed without knowledge of each other:
 | **Ordered** | Output of one feeds another | Sequential |
 | **Coupled** | Cannot be cleanly separated | Single agent, do not split |
 
-Single cluster → not broad enough. Decompose directly without sub-agents. Target 3–5 files per cluster.
+**If Step 3 produces a single cluster:** the task is not broad enough to decompose — handle it as a single inline task without spawning agents. Target 3–5 files per cluster for valid decompositions.
 
 ### Step 4 — Brief Each Agent
 
