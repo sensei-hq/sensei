@@ -55,6 +55,7 @@
         "@sensei/server": "workspace:*",
         "@sensei/shared": "workspace:*",
         "@sensei/tools": "workspace:*",
+        "@supabase/supabase-js": "^2.99.1",
         "chokidar": "^3.6.0",
       },
       "devDependencies": {
