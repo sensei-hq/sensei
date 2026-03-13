@@ -56,6 +56,7 @@ Single cluster → not broad enough. Decompose directly without sub-agents. Targ
 ## Your Scope
 Files: [list]
 Goal: [one sentence]
+Constraints: [what NOT to do]
 
 ## Reference
 <doc pointer, not pre-loaded>
