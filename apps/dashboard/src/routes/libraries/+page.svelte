@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PageData } from './$types';
-  export let data: PageData;
+  const { data } = $props();
 
   let search = '';
   $: filtered = data.libraries.filter((l: any) =>
