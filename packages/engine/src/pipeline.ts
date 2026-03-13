@@ -78,22 +78,17 @@ export async function indexRepo(opts: IndexRepoOptions): Promise<IndexResult> {
 
   // Generate embeddings for changed TS files (best-effort — requires backend)
   if (backend) {
-    const filesToEmbed = scan.files.filter(
-      f => scan.changed.includes(f.path) && tsAdapter.extensions.some(ext => f.path.endsWith(ext))
-    );
-
     await Promise.all(
-      filesToEmbed.map(async file => {
+      validParsedTs.map(async parsed => {
         try {
-          const fileSymbols = validParsedTs.find(p => p.filePath === file.path)?.symbols ?? [];
-          const chunkText = fileSymbols.map(s => `${s.name} ${s.signature ?? ""}`.trim()).join(" ");
+          const chunkText = parsed.symbols.map(s => `${s.name} ${s.signature ?? ""}`.trim()).join(" ");
           if (!chunkText) return;
 
           const embedding = await backend.embed(chunkText);
           if (embedding.length === 0) return;
 
           await client.from("embeddings").upsert(
-            { repo_id: repoId, file_path: file.path, chunk_text: chunkText, embedding, updated_at: new Date().toISOString() },
+            { repo_id: repoId, file_path: parsed.filePath, chunk_text: chunkText, embedding, updated_at: new Date().toISOString() },
             { onConflict: "repo_id,file_path" }
           );
         } catch {
