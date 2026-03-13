@@ -270,7 +270,36 @@ export async function reindexRepo(
   const total = added + updated + unchanged + skipped;
 
   // Dual-write symbols + docs to Supabase if config present
-  const supabaseConfig = await loadSenseiConfig(repoPath);
+  let supabaseConfig = await loadSenseiConfig(repoPath);
+
+  // First-time: register repo and write .sensei/config.yaml
+  if (!supabaseConfig) {
+    const { loadCredentials } = await import("@sensei/shared");
+    const creds = await loadCredentials();
+    if (creds) {
+      const supabaseUrl = process.env.SUPABASE_URL ?? "http://localhost:54321";
+      const { createClient } = await import("@supabase/supabase-js");
+      const tempClient = createClient(supabaseUrl, creds.supabase_service_key, {
+        db: { schema: "sensei" },
+        auth: { persistSession: false },
+      });
+      const { registerRepo } = await import("./repo-registration.js");
+      const repoName = repoPath.split("/").at(-1) ?? "unknown";
+      const repoId = await registerRepo(tempClient, {
+        name:        repoName,
+        remote_url:  null,
+        description: undefined,
+        stack:       undefined,
+      });
+      if (repoId) {
+        const yamlLib = await import("js-yaml");
+        const configPath = join(repoPath, ".sensei", "config.yaml");
+        await writeFile(configPath, yamlLib.default.dump({ repo_id: repoId, supabase_url: supabaseUrl }));
+        supabaseConfig = { repo_id: repoId, supabase_url: supabaseUrl };
+      }
+    }
+  }
+
   if (supabaseConfig) {
     const client = await makeSenseiClient(repoPath);
     if (client) {
