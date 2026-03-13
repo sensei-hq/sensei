@@ -1,4 +1,4 @@
-import { kavach } from '$kavach/auth';
+import type { Handle } from '@sveltejs/kit';
+import kavach from 'kavach';
 
-export const handle = ({ event, resolve }: Parameters<typeof import('@sveltejs/kit').Handle>[0]) =>
-  kavach.handle({ event, resolve });
+export const handle: Handle = ({ event, resolve }) => kavach.handle({ event, resolve });
