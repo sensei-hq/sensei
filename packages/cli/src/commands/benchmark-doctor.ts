@@ -35,14 +35,19 @@ export function buildTargetedIndexPrompt(opts: TargetedIndexPromptOptions): stri
   const symbolMapPath = senseiPath(opts.repoPath, "symbol-map.json");
   let indexSection: string;
   if (existsSync(symbolMapPath)) {
-    const map: SymbolMap = JSON.parse(readFileSync(symbolMapPath, "utf-8"));
-    const relInput = relative(opts.repoPath, opts.inputDir);
-    // Match entries whose path starts with relInput or contains relInput as a segment
-    const entries = Object.entries(map)
-      .filter(([p]) => p.startsWith(relInput + "/") || p.includes(`/${relInput}/`))
-      .map(([path, entry]) => `### ${path}\n${[...entry.L0, ...entry.L1].join("\n")}`)
-      .join("\n\n");
-    indexSection = entries || buildOutlineIndex(opts.inputDir);
+    try {
+      const map: SymbolMap = JSON.parse(readFileSync(symbolMapPath, "utf-8"));
+      const relInput = relative(opts.repoPath, opts.inputDir);
+      // Match entries whose path starts with relInput or contains relInput as a segment
+      const entries = Object.entries(map)
+        .filter(([p]) => p.startsWith(relInput + "/") || p.includes(`/${relInput}/`))
+        .map(([path, entry]) => `### ${path}\n${[...entry.L0, ...entry.L1].join("\n")}`)
+        .join("\n\n");
+      indexSection = entries || buildOutlineIndex(opts.inputDir);
+    } catch {
+      // If read/parse fails, fall back to outline
+      indexSection = buildOutlineIndex(opts.inputDir);
+    }
   } else {
     indexSection = buildOutlineIndex(opts.inputDir);
   }
