@@ -143,9 +143,11 @@ interface TokenCounter {
 ```
 
 Three implementations:
-- `AnthropicTokenCounter` — uses `@anthropic-ai/tokenizer` (local, no API call)
-- `OpenAITokenCounter` — uses `tiktoken` (local, no API call)
+- `AnthropicTokenCounter` — uses `tiktoken` (`cl100k_base`, local, no API call, ~95% accuracy for Claude)
+- `OpenAITokenCounter` — uses `tiktoken` (`cl100k_base`, local, no API call)
 - `EstimateTokenCounter` — `Math.ceil(text.length / 4)` (zero dependencies, fallback)
+
+Single dependency: `tiktoken`. (`@anthropic-ai/tokenizer` is not a published npm package.)
 
 Factory auto-selects by `modelId`:
 ```typescript
@@ -278,8 +280,15 @@ interface ContextPack {
 async function buildContextPack(
   db: SupabaseClient,
   repoId: string,
+  repoPath: string,          // absolute path on disk — needed by ASTSlicer to read files
   task: string,
-  opts?: { maxTokens?: number; modelId?: string; sessionId?: string; sessionContext?: string[] }
+  opts: {
+    backend: ModelBackend;   // required — injected from MCP server layer; SemanticStrategy uses it
+    maxTokens?: number;
+    modelId?: string;
+    sessionId?: string;
+    sessionContext?: string[];
+  }
 ): Promise<ContextPack>
 ```
 
