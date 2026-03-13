@@ -3,11 +3,14 @@ import { mkdirSync } from "fs";
 import { dirname } from "path";
 import { createTables } from "./schema.js";
 import { drainJsonl } from "./drain.js";
+import { makeSenseiClient } from "@sensei/shared";
+import { writeEventToSupabase } from "./supabase-writer.js";
 
 export interface DaemonOptions {
   db?: Database;          // injectable for tests; if omitted, opened from dbPath
   dbPath?: string;        // ignored when db is provided
   jsonlPath?: string;     // path to JSONL fallback file; drained on startup (wired in Task 5)
+  repoPath?: string;      // used to resolve Supabase config
 }
 
 export interface Daemon {
@@ -73,6 +76,9 @@ export async function startDaemon(port: number, opts: DaemonOptions = {}): Promi
 
   createTables(db);
 
+  let supabaseClient: Awaited<ReturnType<typeof makeSenseiClient>> = null;
+  makeSenseiClient(opts.repoPath ?? process.cwd()).then(c => { supabaseClient = c; });
+
   if (opts.jsonlPath) {
     await drainJsonl(db, opts.jsonlPath);
   }
@@ -100,6 +106,18 @@ export async function startDaemon(port: number, opts: DaemonOptions = {}): Promi
         }
         try {
           insertEvent(db, body);
+          if (supabaseClient) {
+            writeEventToSupabase(supabaseClient, {
+              user_uuid:    body.user_uuid ?? "",
+              session_id:   body.session_id ?? null,
+              repo_id:      null,
+              phase:        body.phase,
+              tool:         body.tool,
+              project_path: body.project_path ?? "",
+              input:        body.input ? (() => { try { return JSON.parse(body.input!); } catch { return null; } })() : null,
+              ts:           new Date(body.ts),
+            }).catch(() => {});
+          }
           return Response.json({ ok: true });
         } catch (err) {
           console.error("[collector] SQLite write error:", (err as Error).message);
