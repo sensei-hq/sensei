@@ -1,5 +1,5 @@
 import { intro, outro, spinner, note, log, isCancel, text } from "@clack/prompts";
-import { writeFile, mkdir, access, readFile } from "fs/promises";
+import { writeFile, mkdir, access, readFile, chmod } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 import { createClient } from "@supabase/supabase-js";
@@ -82,7 +82,6 @@ export async function init(cwd: string): Promise<void> {
   const credsPath = join(credsDir, "credentials.yaml");
   await writeFile(credsPath, `supabase_service_key: ${String(serviceKey)}\n`);
   // Restrict credentials file to owner-only (service role key — never share)
-  const { chmod } = await import("fs/promises");
   await chmod(credsPath, 0o600);
 
   // 5. Run first index

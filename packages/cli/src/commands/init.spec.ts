@@ -27,17 +27,13 @@ vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(),
 }));
 
-vi.mock("fs/promises", async () => {
-  const actual = await vi.importActual<typeof import("fs/promises")>("fs/promises");
-  return {
-    ...actual,
-    writeFile: vi.fn().mockResolvedValue(undefined),
-    mkdir: vi.fn().mockResolvedValue(undefined),
-    access: vi.fn().mockRejectedValue(new Error("not found")),
-    readFile: vi.fn().mockRejectedValue(new Error("not found")),
-    chmod: vi.fn().mockResolvedValue(undefined),
-  };
-});
+vi.mock("fs/promises", () => ({
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  access: vi.fn().mockRejectedValue(new Error("not found")),
+  readFile: vi.fn().mockRejectedValue(new Error("not found")),
+  chmod: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { init } from "./init.js";
 import { indexRepo } from "@sensei/engine";
