@@ -6,6 +6,10 @@ implements:
     items: [llmspec-generation]
 ---
 
+> **SUPERSEDED** by `40-metadata-model.md`. The LLMSpec format described here is still used for the `.sensei/llmspec.yaml` orientation artifact, but the source of truth has moved from on-disk files to Supabase. See `40-metadata-model.md` for the current schema and generation rules.
+
+---
+
 # LLMSpec
 
 ## Overview

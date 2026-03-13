@@ -10,7 +10,7 @@ implements:
 
 ## Overview
 
-The benchmark system runs a task corpus against two configurations (with-skills and without-skills) and records five metrics per task. Results are stored as JSON. A comparison report shows percentage improvement across metrics and highlights weak categories.
+The benchmark system runs a task corpus against two configurations (with-skills and without-skills) and records five metrics per task. Results are stored in Supabase (`sensei.events` table with `event_type: 'benchmark'`); `results/` JSON files are local exports for CI comparison only. A comparison report shows percentage improvement across metrics and highlights weak categories.
 
 ## Non-Functional Requirements
 
@@ -153,14 +153,12 @@ RECOMMENDED IMPROVEMENTS
 Manual setup in V1. No automated test harness — the developer runs the tasks manually in each configuration and records results.
 
 **with-skills configuration:**
-- Repo is indexed (`.llmspec.yaml`, `.index/` present)
-- `~/.claude/skills/<name>` symlinks active
+- Repo is indexed (`.sensei/llmspec.yaml` present, symbols in Supabase)
 - MCP server running with `REPO_PATH` set
 
 **without-skills configuration:**
-- No `.index/` directory
-- No `.llmspec.yaml`
-- `~/.claude/skills/` emptied or skills removed
+- No `.sensei/` orientation files
+- No symbols indexed in Supabase
 - MCP server not registered
 
 **Test repo:** A representative codebase of moderate size (10–30 files, 2–5 modules, existing docs). Use the same repo for both configurations. Branch for isolation.
@@ -171,9 +169,9 @@ Manual setup in V1. No automated test harness — the developer runs the tasks m
 
 ```
 results/
-  2026-03-06-benchmark.json       Raw results (gitignored)
+  2026-03-06-benchmark.json       Local export of Supabase results (gitignored)
   2026-03-06-comparison.md        Human-readable summary (committed)
   .gitignore                      *.json
 ```
 
-Summaries are committed so improvement trends are visible in git history. Raw JSON is gitignored to avoid repo bloat.
+Results are stored in Supabase (`sensei.events`, `event_type: 'benchmark'`). The `results/*.json` files are local exports used for CI comparison only. Summaries are committed so improvement trends are visible in git history. Raw JSON is gitignored to avoid repo bloat.
