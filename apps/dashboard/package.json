@@ -21,6 +21,10 @@
 		"vite": "^7.3.1"
 	},
 	"dependencies": {
+		"kavach": "^1.0.0-next.34",
+		"@kavach/vite": "^1.0.0-next.34",
+		"@kavach/sentry": "^1.0.0-next.34",
+		"@kavach/ui": "^1.0.0-next.34",
 		"@rokkit/actions": "^1.0.0-next.133",
 		"@rokkit/app": "^1.0.0-next.133",
 		"@rokkit/core": "^1.0.0-next.133",

@@ -12,6 +12,13 @@
     "dev": "bun run --filter='@sensei/cli' dev",
     "coverage": "vitest run --coverage "
   },
+  "overrides": {
+    "@kavach/sentry": "1.0.0-next.32",
+    "@kavach/cookie": "1.0.0-next.32",
+    "@kavach/hashing": "1.0.0-next.32",
+    "@kavach/logger": "1.0.0-next.32",
+    "@kavach/query": "1.0.0-next.32"
+  },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@vitest/coverage-v8": "4.0.18",
