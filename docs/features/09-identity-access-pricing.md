@@ -15,7 +15,7 @@ Sensei's value is measurable: a 70–80% reduction in token usage turns a $100/m
 
 ### Authentication
 
-Sensei uses Supabase OAuth via kavach — all providers Supabase supports are available. GitHub is the primary auth option (natural fit — developers already use it, repos live there). Magic link is available for enterprise users and teams not on GitHub. Additional OAuth providers (Google, GitLab, Bitbucket, Azure) are supported via the same kavach/Supabase auth layer.
+Sensei supports multiple OAuth providers. GitHub is the primary auth option (natural fit — developers already use it, repos live there). Magic link is available for enterprise users and teams not on GitHub. Additional OAuth providers (Google, GitLab, Bitbucket, Azure) are supported via the same auth layer.
 
 ```gherkin
 Feature: Authentication
@@ -24,26 +24,26 @@ Feature: Authentication
     Given a user visits the sensei web app
     When they click "Sign in with GitHub"
     Then they are redirected to GitHub OAuth
-    And on return, a Supabase session is created
-    And their GitHub username and avatar are stored in auth.users
+    And on return, an authenticated session is created
+    And their GitHub username and avatar are recorded
 
   Scenario: Enterprise user signs in with magic link
     Given a user enters their work email on the login page
     When they click "Send magic link"
     Then a login link is sent to their email
-    And clicking it creates a Supabase session
+    And clicking it creates an authenticated session
     And they are assigned to their team based on email domain
 
   Scenario: User signs in with alternative OAuth provider
     Given a user clicks "Sign in with Google"
     Then they are redirected to Google OAuth
-    And on return a Supabase session is created
+    And on return an authenticated session is created
     And they can link this account to an existing sensei profile
 
   Scenario: Session expires
-    Given a user's session token has expired
-    When they make a request to the sensei API
-    Then they receive a 401 response
+    Given a user's session has expired
+    When they make a request to sensei
+    Then they receive an authentication error
     And are redirected to the login page to re-authenticate
 ```
 
@@ -51,7 +51,7 @@ Feature: Authentication
 
 ### Multi-Tenancy & Repo Isolation
 
-Each team's data is fully isolated in Supabase via row-level security (RLS). A private repo's symbols, sessions, analytics, and snapshots are only visible to team members. Public (open source) repos are readable by anyone — no account required to browse their index.
+Each team's data is fully isolated. A private repo's symbols, sessions, analytics, and snapshots are only visible to team members. Public (open source) repos are readable by anyone — no account required to browse their index.
 
 ```gherkin
 Feature: Repo Isolation
@@ -110,8 +110,8 @@ Feature: Team Authorization
 
   Scenario: Repo registered under a team
     Given a team owner runs sensei init on a new repo
-    Then the repo is registered in sensei.repos with team_id set
-    And RLS policies ensure only team members can access it
+    Then the repo is registered under the team
+    And access controls ensure only team members can access it
 ```
 
 ---
@@ -162,7 +162,7 @@ Sensei's pricing is anchored to its value: token reduction that saves developers
 
 **Pro ($5/seat/month):** Private repos, team access, full analytics, FTR scoring, quality dashboard, external doc retrieval, custom lib indexing, GitHub App integration.
 
-**Enterprise (custom):** SSO/SAML via kavach, dedicated Supabase instance, SLA, priority support.
+**Enterprise (custom):** SSO/SAML, dedicated hosted instance, SLA, priority support.
 
 ```gherkin
 Feature: Pricing Enforcement
@@ -205,15 +205,15 @@ Sensei's architecture ensures code never has to leave your machine. Local deploy
 Feature: Data Privacy and Telemetry Control
 
   Scenario: Local mode keeps all data on-device
-    Given a developer runs sensei in local mode (supabase start)
+    Given a developer runs sensei in local mode
     When they index a repo and use context_pack
-    Then all data is stored in the local Supabase Docker instance
+    Then all data is stored in the local backend instance
     And no data is sent to sensei.dev or any external service
     And the developer can verify this via network inspection
 
   Scenario: Cloud mode stores only index artifacts, not source code
     Given a developer uses sensei cloud
-    Then only extracted symbols, embeddings, and session metadata are stored
+    Then only extracted symbols and session metadata are stored
     And raw source code files are never uploaded or retained
     And the privacy policy documents the exact fields retained
 
@@ -234,7 +234,7 @@ Feature: Data Privacy and Telemetry Control
     Given a developer who has opted in to anonymous telemetry
     When they open the Telemetry Audit view in settings
     Then they see a log of the last 30 days of contributed data
-    And each entry shows only the anonymised fields: task_type, turn_count, token_count, ftr_score, stack, agent_name
+    And each entry shows only the anonymised fields: task type, turn count, token count, FTR score, stack, and agent name
     And they can delete their contribution history at any time
 
   Scenario: Team data deletion
