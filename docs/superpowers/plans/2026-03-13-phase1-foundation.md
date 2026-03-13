@@ -2103,78 +2103,213 @@ git commit -m "feat(cli): update sensei init — engine pipeline, Supabase repo 
 
 ---
 
-## Chunk 6: Dashboard — Repo List and Symbol Browser
+## Chunk 6: Dashboard — kavach Setup, Repo List, Symbol Browser
 
-### Task 10: Dashboard Repo List View
+**How kavach and Supabase work together in the dashboard:**
+- `kavach` (auth package) + `@kavach/vite` (Vite plugin) manage auth sessions. The Vite plugin resolves virtual modules like `$kavach/auth` and `$kavach/config`.
+- `hooks.server.ts` wires kavach's handle: `export const handle = ({ event, resolve }) => kavach.handle({ event, resolve })`
+- After handle runs, `event.locals.session` contains the authenticated user (or null). This is used in layouts and protected routes.
+- **Supabase data queries** in `+page.server.ts` use a **service-role client** created from env vars (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`) — _not_ from kavach locals. Kavach is auth; Supabase client is data.
+- Phase 1: no protected routes, kavach is wired but routes are open. Phase 9 adds GitHub OAuth login gate via `@kavach/sentry`.
 
-The dashboard already has a `repos` route. Update it to read from Supabase `sensei.repos` and `sensei.symbols` using kavach for auth and Supabase data access.
+**Rokkit components used:** `@rokkit/ui` is already installed. Use data-driven components:
+- `Table` component for the symbol browser (drives rows from an array prop)
+- `SearchFilter` for filtering symbols
+- `List` for the repo list
 
-**Auth approach:** The dashboard uses `~/Developer/kavach` — an internal library supporting SvelteKit + Supabase OAuth. Kavach provides the Supabase client and session context in SvelteKit server hooks and load functions. Phase 1 uses kavach's service-role client directly (no user auth yet — Phase 9 adds GitHub OAuth). Phase 9 will add user auth gates; Phase 1 just needs the Supabase connection.
+The Rokkit llms.txt (`https://rokkit.vercel.app/llms/index.txt`) and kavach docs will be registered as `custom_libs` in `.sensei/config.yaml` — making them the **first real test** of Phase 5 Library Intelligence.
+
+### Task 10: kavach Setup in Dashboard
 
 **Files:**
+- Modify: `apps/dashboard/package.json`
+- Create: `apps/dashboard/kavach.config.js`
+- Modify: `apps/dashboard/vite.config.ts`
+- Create: `apps/dashboard/src/hooks.server.ts`
+- Modify: `apps/dashboard/src/app.d.ts`
+- Create: `apps/dashboard/src/routes/+layout.server.ts`
+
+- [ ] **Step 1: Add kavach dependencies to dashboard**
+
+In `apps/dashboard/package.json`, add to `"dependencies"`:
+```json
+"kavach": "^1.0.0-next.34",
+"@kavach/vite": "^1.0.0-next.34",
+"@kavach/sentry": "^1.0.0-next.34",
+"@kavach/ui": "^1.0.0-next.34"
+```
+
+Run:
+```bash
+cd apps/dashboard && bun install
+```
+
+- [ ] **Step 2: Create kavach.config.js**
+
+Create `apps/dashboard/kavach.config.js`:
+
+```javascript
+export default {
+  app: {
+    home: '/',
+    login: '/login',
+    logout: '/logout',
+    session: '/auth/session',
+  },
+  // Phase 1: no protected routes. Phase 9 adds role-based protection.
+  roles: {},
+  providers: [
+    // Phase 1: no providers configured. Phase 9 adds GitHub OAuth.
+  ],
+}
+```
+
+- [ ] **Step 3: Add kavach Vite plugin to vite.config.ts**
+
+Read the current `apps/dashboard/vite.config.ts` first, then add the kavach plugin:
+
+```typescript
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+import UnoCSS from '@unocss/vite';
+import { kavach } from '@kavach/vite';
+
+export default defineConfig({
+  plugins: [
+    kavach(),          // must come before sveltekit
+    UnoCSS(),
+    sveltekit(),
+  ],
+});
+```
+
+- [ ] **Step 4: Create hooks.server.ts**
+
+Create `apps/dashboard/src/hooks.server.ts`:
+
+```typescript
+import { kavach } from '$kavach/auth';
+
+export const handle = ({ event, resolve }: Parameters<typeof import('@sveltejs/kit').Handle>[0]) =>
+  kavach.handle({ event, resolve });
+```
+
+- [ ] **Step 5: Update app.d.ts to declare locals**
+
+Update `apps/dashboard/src/app.d.ts`:
+
+```typescript
+import type { AuthSession } from 'kavach';
+
+declare global {
+  namespace App {
+    interface Locals {
+      session: AuthSession | null;
+    }
+  }
+}
+
+export {};
+```
+
+- [ ] **Step 6: Create +layout.server.ts to pass session to all pages**
+
+Create `apps/dashboard/src/routes/+layout.server.ts`:
+
+```typescript
+import type { LayoutServerLoad } from './$types';
+
+export const load: LayoutServerLoad = ({ locals }) => ({
+  session: locals.session ?? null,
+});
+```
+
+- [ ] **Step 7: Start dashboard and verify kavach loads without error**
+
+```bash
+cd apps/dashboard && bun run dev
+```
+
+Expected: Dev server starts, no import errors for `$kavach/auth` or `$kavach/config`. Open `http://localhost:3000` — page loads (no auth gate in Phase 1).
+
+- [ ] **Step 8: Commit kavach setup**
+
+```bash
+git add apps/dashboard/package.json apps/dashboard/kavach.config.js apps/dashboard/vite.config.ts apps/dashboard/src/hooks.server.ts apps/dashboard/src/app.d.ts apps/dashboard/src/routes/+layout.server.ts bun.lock
+git commit -m "feat(dashboard): wire kavach auth — Vite plugin, hooks, session locals, layout"
+```
+
+---
+
+### Task 11: Dashboard Repo List and Symbol Browser with Rokkit
+
+The repos route now uses `+page.server.ts` (server-only, service-role Supabase) for data loading and Rokkit's `Table` and `SearchFilter` components for display.
+
+**Why `+page.server.ts`:** Runs server-only — the service role key never reaches the browser. `process.env` is available. Pages get data as plain serializable props.
+
+**Supabase client in server load functions:** Use a service-role client created from env vars directly — NOT from kavach locals. Kavach gives `locals.session` (auth); Supabase data queries use their own client.
+
+**Files:**
+- Create: `apps/dashboard/src/lib/server/db.ts`
 - Create/Modify: `apps/dashboard/src/routes/repos/+page.server.ts`
 - Modify: `apps/dashboard/src/routes/repos/+page.svelte`
 - Create: `apps/dashboard/src/routes/repos/[id]/+page.server.ts`
 - Create: `apps/dashboard/src/routes/repos/[id]/+page.svelte`
 
-> **Why `+page.server.ts` not `+page.ts`:** SvelteKit page load functions in `+page.ts` run both server-side AND client-side. The Supabase service role key must never be exposed to the browser, and `process.cwd()` is not available in browser context. `+page.server.ts` runs only on the server, keeping the key secure.
+> **Before writing:** Fetch the Rokkit Table and SearchFilter component docs to understand their props:
+> ```bash
+> curl https://rokkit.vercel.app/llms/components/table.txt
+> curl https://rokkit.vercel.app/llms/components/search-filter.txt
+> ```
 
-> **Read first:**
-> 1. `~/Developer/kavach` — read its README and SvelteKit integration docs to understand how to get the Supabase client in a server load function
-> 2. `apps/dashboard/src/routes/+layout.svelte` and any existing `+hooks.server.ts` to see if kavach is already set up
-> 3. `apps/dashboard/src/routes/repos/` for what already exists
+If a `+page.ts` exists at `repos/+page.ts`, delete it: `rm apps/dashboard/src/routes/repos/+page.ts`
 
-If a `+page.ts` file exists in repos/, delete it: `rm apps/dashboard/src/routes/repos/+page.ts`
+- [ ] **Step 1: Create the server-side Supabase client helper**
 
-- [ ] **Step 1: Check kavach setup**
-
-```bash
-ls ~/Developer/kavach/
-cat ~/Developer/kavach/README.md 2>/dev/null | head -60
-ls apps/dashboard/src/hooks.server.ts 2>/dev/null || echo "no hooks.server.ts"
-cat apps/dashboard/src/app.d.ts
-```
-
-Identify how kavach exposes the Supabase client in SvelteKit server load functions — typically via `event.locals.supabase` or a similar pattern set up in `hooks.server.ts`.
-
-- [ ] **Step 2: Set up kavach in dashboard if not already done**
-
-If kavach is not yet integrated into the dashboard, follow its SvelteKit setup instructions. At minimum this involves:
-- Adding kavach as a dependency to `apps/dashboard/package.json`
-- Creating or updating `src/hooks.server.ts` to attach the Supabase client to `locals`
-- Updating `src/app.d.ts` to declare the `locals` type
-
-Follow the kavach README exactly for this step.
-
-- [ ] **Step 3: Create repos/+page.server.ts**
-
-Using the Supabase client from kavach (e.g., `event.locals.supabase` or however kavach exposes it), create `apps/dashboard/src/routes/repos/+page.server.ts`:
+Create `apps/dashboard/src/lib/server/db.ts`:
 
 ```typescript
-import type { PageServerLoad } from "./$types";
+import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } from '$env/static/private';
 
-export const load: PageServerLoad = async (event) => {
-  // Get the Supabase client from kavach locals — adjust property name to match kavach's API
-  const client = event.locals.supabase;
-  if (!client) return { repos: [] };
+/** Service-role Supabase client — server-only, never expose to browser. */
+export function getDb() {
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    db: { schema: 'sensei' },
+    auth: { persistSession: false },
+  });
+}
+```
 
-  const { data: repos } = await client
-    .from("repos")
-    .select("id,name,local_path,stack,last_indexed_at,created_at")
-    .order("created_at", { ascending: false });
+Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to `apps/dashboard/.env` (create if absent):
+```
+SUPABASE_URL=http://localhost:54321
+SUPABASE_SERVICE_ROLE_KEY=<paste service_role key from supabase start output>
+```
 
-  // Get symbol counts per repo
+- [ ] **Step 2: Create repos/+page.server.ts**
+
+Create `apps/dashboard/src/routes/repos/+page.server.ts`:
+
+```typescript
+import type { PageServerLoad } from './$types';
+import { getDb } from '$lib/server/db';
+
+export const load: PageServerLoad = async () => {
+  const db = getDb();
+
+  const { data: repos } = await db
+    .from('repos')
+    .select('id,name,local_path,stack,last_indexed_at,created_at')
+    .order('created_at', { ascending: false });
+
   const symbolCounts = await Promise.all(
     (repos ?? []).map(async repo => {
-      const { count } = await client
-        .from("symbols")
-        .select("*", { count: "exact", head: true })
-        .eq("repo_id", repo.id);
-      const { count: fileCount } = await client
-        .from("scan_state")
-        .select("*", { count: "exact", head: true })
-        .eq("repo_id", repo.id);
-      return { repo_id: repo.id, symbolCount: count ?? 0, fileCount: fileCount ?? 0 };
+      const [{ count: symbolCount }, { count: fileCount }] = await Promise.all([
+        db.from('symbols').select('*', { count: 'exact', head: true }).eq('repo_id', repo.id),
+        db.from('scan_state').select('*', { count: 'exact', head: true }).eq('repo_id', repo.id),
+      ]);
+      return { repo_id: repo.id, symbolCount: symbolCount ?? 0, fileCount: fileCount ?? 0 };
     })
   );
 
@@ -2190,92 +2325,104 @@ export const load: PageServerLoad = async (event) => {
 };
 ```
 
-- [ ] **Step 3: Update or create repos/+page.svelte**
+- [ ] **Step 3: Create repos/+page.svelte using Rokkit List**
+
+Read the Rokkit List component docs first:
+```bash
+curl https://rokkit.vercel.app/llms/components/list.txt
+```
 
 Create `apps/dashboard/src/routes/repos/+page.svelte`:
 
 ```svelte
 <script lang="ts">
+  import { List } from '@rokkit/ui';
   import type { PageData } from './$types';
+
   const { data } = $props();
+
+  // Map repos to the shape Rokkit List expects: { label, description, href }
+  const items = $derived(data.repos.map(r => ({
+    label: r.name,
+    description: `${r.file_count} files · ${r.symbol_count} symbols · ${r.stack.join(', ') || 'unknown stack'} · Traceability: 0 links`,
+    href: `/repos/${r.id}`,
+    meta: r.last_indexed_at
+      ? `Last indexed ${new Date(r.last_indexed_at).toLocaleString()}`
+      : 'Never indexed',
+  })));
 </script>
 
 <h1>Indexed Repos</h1>
 
-{#if data.repos.length === 0}
-  <p>No repos indexed yet. Run <code>sensei init</code> in your project.</p>
+{#if items.length === 0}
+  <p>No repos indexed yet. Run <code>sensei init</code> in your project directory.</p>
 {:else}
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Stack</th>
-        <th>Files</th>
-        <th>Symbols</th>
-        <th>Traceability</th>
-        <th>Last Indexed</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each data.repos as repo}
-        <tr>
-          <td><a href="/repos/{repo.id}">{repo.name}</a></td>
-          <td>{repo.stack.join(', ') || '—'}</td>
-          <td>{repo.file_count}</td>
-          <td>{repo.symbol_count}</td>
-          <td>0 links</td>
-          <td>{repo.last_indexed_at ? new Date(repo.last_indexed_at).toLocaleString() : 'Never'}</td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <List {items} />
 {/if}
 ```
 
-- [ ] **Step 4: Create Symbol Browser — repos/[id]/+page.server.ts**
+> **Note:** Rokkit's `List` component prop shape may differ from the example above. Check the fetched `list.txt` docs and adjust the `items` mapping to match the actual prop contract.
 
-Create `apps/dashboard/src/routes/repos/[id]/+page.server.ts` using the kavach Supabase client:
+- [ ] **Step 4: Create repos/[id]/+page.server.ts**
+
+Create `apps/dashboard/src/routes/repos/[id]/+page.server.ts`:
 
 ```typescript
-import type { PageServerLoad } from "./$types";
-import { error } from "@sveltejs/kit";
+import type { PageServerLoad } from './$types';
+import { error } from '@sveltejs/kit';
+import { getDb } from '$lib/server/db';
 
-export const load: PageServerLoad = async (event) => {
-  const client = event.locals.supabase;
-  if (!client) throw error(503, "Supabase not configured");
-  const { params } = event;
+export const load: PageServerLoad = async ({ params }) => {
+  const db = getDb();
 
-  const { data: repo } = await client
-    .from("repos")
-    .select("*")
-    .eq("id", params.id)
+  const { data: repo } = await db
+    .from('repos')
+    .select('*')
+    .eq('id', params.id)
     .single();
 
-  if (!repo) throw error(404, "Repo not found");
+  if (!repo) throw error(404, 'Repo not found');
 
-  const { data: symbols } = await client
-    .from("symbols")
-    .select("name,kind,file_path,line_start,is_exported,signature")
-    .eq("repo_id", params.id)
-    .eq("is_exported", true)
-    .order("file_path")
-    .order("line_start")
+  const { data: symbols } = await db
+    .from('symbols')
+    .select('name,kind,file_path,line_start,is_exported,signature')
+    .eq('repo_id', params.id)
+    .eq('is_exported', true)
+    .order('file_path')
+    .order('line_start')
     .limit(500);
 
   return { repo, symbols: symbols ?? [] };
 };
 ```
 
-- [ ] **Step 5: Create Symbol Browser — repos/[id]/+page.svelte**
+- [ ] **Step 5: Create Symbol Browser using Rokkit Table and SearchFilter**
+
+Read the Rokkit Table and SearchFilter docs first:
+```bash
+curl https://rokkit.vercel.app/llms/components/table.txt
+curl https://rokkit.vercel.app/llms/components/search-filter.txt
+```
 
 Create `apps/dashboard/src/routes/repos/[id]/+page.svelte`:
 
 ```svelte
 <script lang="ts">
+  import { Table, SearchFilter } from '@rokkit/ui';
   import type { PageData } from './$types';
+
   const { data } = $props();
 
   let query = $state('');
+
+  // Columns definition for Rokkit Table
+  const columns = [
+    { key: 'name',      label: 'Name',      width: '25%' },
+    { key: 'kind',      label: 'Kind',      width: '10%' },
+    { key: 'file_path', label: 'File',      width: '45%' },
+    { key: 'line_start',label: 'Line',      width: '10%' },
+  ];
+
   const filtered = $derived(
     query.trim()
       ? data.symbols.filter(s =>
@@ -2291,17 +2438,90 @@ Create `apps/dashboard/src/routes/repos/[id]/+page.svelte`:
 
 <dl>
   <dt>Stack</dt><dd>{data.repo.stack.join(', ') || '—'}</dd>
-  <dt>Last indexed</dt><dd>{data.repo.last_indexed_at ? new Date(data.repo.last_indexed_at).toLocaleString() : 'Never'}</dd>
+  <dt>Last indexed</dt>
+  <dd>{data.repo.last_indexed_at ? new Date(data.repo.last_indexed_at).toLocaleString() : 'Never'}</dd>
   <dt>Traceability</dt><dd>0 links</dd>
 </dl>
 
 <h2>Symbols ({data.symbols.length})</h2>
 
-<input
-  type="search"
-  placeholder="Filter by name or file..."
-  bind:value={query}
-/>
+<SearchFilter bind:value={query} placeholder="Filter by name or file..." />
+
+<Table {columns} rows={filtered} />
+```
+
+> **Note:** Rokkit's `Table` and `SearchFilter` prop shapes may differ from the example above. Check the fetched component docs and adjust `columns` and prop names to match the actual API. The `SearchFilter` bind may be `bind:query` or a different event — check the docs.
+
+- [ ] **Step 6: Start dashboard and verify**
+
+```bash
+cd apps/dashboard && bun run dev
+```
+
+Open `http://localhost:3000/repos`. Expected: repo list rendered with Rokkit `List`. Click a repo → symbol browser with `SearchFilter` and `Table`. Filter works.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/dashboard/src/lib/server/ apps/dashboard/src/routes/repos/ apps/dashboard/.env.example
+git commit -m "feat(dashboard): repo list + symbol browser with Rokkit Table/SearchFilter via server-side Supabase"
+```
+
+---
+
+### Task 12: Register Rokkit and kavach as custom_libs for Phase 5 verification
+
+This step adds the library entries to `.sensei/config.yaml` so that Phase 5's `sensei update-registry` and `get_lib_docs` can index them. This makes Rokkit and kavach docs the **first integration test** for Library Intelligence.
+
+**Files:**
+- Modify: `.sensei/config.yaml` (created by `sensei init`)
+
+- [ ] **Step 1: Add custom_libs section to .sensei/config.yaml**
+
+After running `sensei init`, the `.sensei/config.yaml` will contain `repo_id` and `supabase_url`. Append the `custom_libs` section:
+
+```yaml
+repo_id: <generated-by-init>
+supabase_url: http://localhost:54321
+
+custom_libs:
+  - name: rokkit
+    source_type: llms.txt
+    base_url: https://rokkit.vercel.app/llms/index.txt
+    description: "Rokkit UI component library — data-driven Svelte components with Rokkit/UnoCSS theming"
+
+  - name: kavach
+    source_type: http
+    base_url: https://kavach.jerrythomas.name/docs
+    description: "Kavach auth library — SvelteKit + Supabase OAuth, session management, route protection"
+```
+
+> **Note:** `source_type: llms.txt` tells the engine's `LlmsTxtParser` to fetch and parse the index file from `base_url`. `source_type: http` tells `HttpFetcher` to crawl the docs site. These adapters are implemented in Phase 5.
+
+- [ ] **Step 2: Verify config parses cleanly**
+
+```bash
+cd /path/to/your/project && cat .sensei/config.yaml
+```
+
+Expected: YAML is valid, `custom_libs` array has 2 entries.
+
+- [ ] **Step 3: Note for Phase 5 verification**
+
+When Phase 5 is implemented, run:
+```bash
+sensei update-registry
+get_lib_docs({ lib: "rokkit", component: "Table" })
+get_lib_docs({ lib: "kavach", component: "handle" })
+```
+
+Both should return relevant doc chunks — confirming the llms.txt and HTTP adapter pipelines work.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .sensei/config.yaml
+git commit -m "config: register rokkit and kavach as custom_libs for Phase 5 library intelligence"
 
 <table>
   <thead>
@@ -2442,7 +2662,8 @@ git commit -m "test(server): add search integration test for Phase 1 Done-When v
 | `packages/engine` | New package: Scanner, TypeScriptAdapter (ts-morph), Indexer, indexRepo pipeline |
 | `packages/server` | MCP server: `get_session_context`, `search`, `load_context` tools |
 | `packages/cli` | Updated `init` command — Supabase registration, engine indexing, CLAUDE.md + AGENTS.md |
-| `apps/dashboard` | Repo list + Symbol browser backed by Supabase |
+| `apps/dashboard` | kavach auth wired (Vite plugin + hooks + session locals); Repo list + Symbol browser using Rokkit `Table`/`SearchFilter` + server-side Supabase |
+| `.sensei/config.yaml` | `custom_libs` entries for Rokkit (llms.txt) and kavach (http) — Phase 5 integration test targets |
 
 **Phase 1 Done When:**
 `sensei init` on the sensei repo → dashboard shows repo with file/symbol counts → `search` MCP tool returns results for "createClient" → "Traceability: 0 links" visible in dashboard.
