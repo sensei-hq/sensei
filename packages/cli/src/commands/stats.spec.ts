@@ -1,33 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Database } from "bun:sqlite";
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "fs";
-import { join, dirname } from "path";
-import { tmpdir } from "os";
-import { createTables, queryStats } from "@sensei/collector";
+import { describe, it, expect, vi } from "vitest";
 import { formatStats, stats } from "./stats.js";
+import type { StatsResult } from "@sensei/collector";
 
-const TMP = join(tmpdir(), `sensei-stats-cmd-test-${Date.now()}`);
-
-beforeEach(() => mkdirSync(TMP, { recursive: true }));
-afterEach(() => rmSync(TMP, { recursive: true, force: true }));
-
-function seedDb(db: Database) {
-  const insert = db.prepare(`
-    INSERT INTO events (user_uuid, session_id, seq, ts, tool, phase, duration_ms, success, input, error, project_path)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const recent = Date.now() - 1000;
-  insert.run("u1", "s1", 1, recent, "search_index", "post", 150, 1, null, null, "/proj");
-  insert.run("u1", "s1", 2, recent + 100, "Bash", "post", 300, 0, null, "error", "/proj");
+// A minimal StatsResult for formatStats tests
+function makeResult(overrides: Partial<StatsResult> = {}): StatsResult {
+  return {
+    period: { from: "2026-03-05", to: "2026-03-12" },
+    total_calls: 2,
+    tools: [
+      { name: "search_index", calls: 1, success_rate: 1.0, avg_duration_ms: 150, last_called: Date.now() },
+      { name: "Bash", calls: 1, success_rate: 0.0, avg_duration_ms: 300, last_called: Date.now() },
+    ],
+    sessions: 1,
+    projects: 1,
+    ...overrides,
+  };
 }
 
 describe("formatStats", () => {
   it("default text output includes tool names and total calls", () => {
-    const db = new Database(":memory:");
-    createTables(db);
-    seedDb(db);
-
-    const result = queryStats(db, {});
+    const result = makeResult();
     const text = formatStats(result, { json: false });
     expect(text).toContain("search_index");
     expect(text).toContain("Bash");
@@ -35,11 +27,7 @@ describe("formatStats", () => {
   });
 
   it("--json output is valid JSON with expected keys", () => {
-    const db = new Database(":memory:");
-    createTables(db);
-    seedDb(db);
-
-    const result = queryStats(db, {});
+    const result = makeResult();
     const text = formatStats(result, { json: true });
     const parsed = JSON.parse(text) as Record<string, unknown>;
     expect(parsed.total_calls).toBeDefined();
@@ -48,36 +36,32 @@ describe("formatStats", () => {
   });
 
   it("tool-specific output includes tool name and success_rate", () => {
-    const db = new Database(":memory:");
-    createTables(db);
-    seedDb(db);
-
-    const result = queryStats(db, { tool: "search_index" });
+    const result = makeResult({
+      tool: { name: "search_index", calls: 1, success_rate: 1.0, avg_duration_ms: 150, last_called: Date.now() },
+    });
     const text = formatStats(result, { json: false });
     expect(text).toContain("search_index");
     expect(text).toMatch(/100%|1\.0/);
   });
 });
 
-describe("stats() DB path construction", () => {
-  it("opens analytics.db at ~/.sensei/<uuid>/analytics.db", async () => {
-    const home = join(TMP, "home");
-    const uuidVal = "test-uuid-abc";
-    mkdirSync(join(home, ".sensei"), { recursive: true });
-    writeFileSync(join(home, ".sensei", "uuid"), uuidVal);
+describe("stats() with mock Supabase client", () => {
+  it("logs error when Supabase client not configured", async () => {
+    // Mock makeSenseiClient to return null (not configured)
+    vi.mock("@sensei/shared", () => ({
+      makeSenseiClient: vi.fn().mockResolvedValue(null),
+    }));
 
-    // Capture console.log output
     const output: string[] = [];
-    const origLog = console.log;
-    console.log = (...args: unknown[]) => output.push(args.join(" "));
+    const origError = console.error;
+    console.error = (...args: unknown[]) => output.push(args.join(" "));
     try {
-      await stats({ _home: home });
+      await stats({ _repoPath: "/nonexistent" });
     } finally {
-      console.log = origLog;
+      console.error = origError;
     }
 
-    // The DB file must have been created at the expected path
-    const dbPath = join(home, ".sensei", uuidVal, "analytics.db");
-    expect(existsSync(dbPath)).toBe(true);
+    expect(output.some(l => l.includes("not configured"))).toBe(true);
+    vi.restoreAllMocks();
   });
 });

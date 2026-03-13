@@ -1,48 +1,28 @@
-import { Database } from "bun:sqlite";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync, unlinkSync } from "fs";
+import { writeEventToSupabase } from "./supabase-writer.js";
 
 interface StoredEvent {
   user_uuid?: string;
   session_id?: string;
   seq?: number | null;
-  ts?: number;
+  ts?: number;  // Unix milliseconds
   tool?: string;
   phase?: string;
   duration_ms?: number | null;
   success?: boolean | null;
-  input?: string | null;
+  input?: string | null;  // JSON string
   error?: string | null;
   project_path?: string;
 }
 
-function insertRaw(db: Database, e: StoredEvent): void {
-  if (!e.ts || !e.tool || (e.phase !== "pre" && e.phase !== "post")) return;
-
-  db.prepare(`
-    INSERT INTO events (user_uuid, session_id, seq, ts, tool, phase, duration_ms, success, input, error, project_path)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    e.user_uuid ?? "",
-    e.session_id ?? "",
-    e.seq ?? null,
-    e.ts,
-    e.tool,
-    e.phase,
-    e.duration_ms ?? null,
-    e.success == null ? null : (e.success ? 1 : 0),
-    e.input?.slice(0, 2048) ?? null,
-    e.error ?? null,
-    e.project_path ?? "",
-  );
-}
-
-export async function drainJsonl(db: Database, jsonlPath: string): Promise<void> {
+export async function drainJsonl(client: SupabaseClient, jsonlPath: string): Promise<void> {
   if (!existsSync(jsonlPath)) return;
 
   const content = readFileSync(jsonlPath, "utf8");
   const lines = content.split("\n").filter(l => l.trim().length > 0);
 
-  // Parse JSON first — parse errors are benign skips, not failures
+  // Parse JSON first — parse errors are benign skips
   const validEvents: StoredEvent[] = [];
   for (const line of lines) {
     try {
@@ -52,20 +32,34 @@ export async function drainJsonl(db: Database, jsonlPath: string): Promise<void>
     }
   }
 
-  // Insert in a transaction — if any SQLite write fails, rollback and leave file intact
+  // Insert each event individually — skip invalid/failed, don't abort
   try {
-    db.run("BEGIN");
-    for (const event of validEvents) {
-      insertRaw(db, event);
+    for (const e of validEvents) {
+      if (!e.ts || !e.tool || (e.phase !== "pre" && e.phase !== "post")) {
+        console.warn("[collector] drain: skipping event with missing required fields");
+        continue;
+      }
+      await writeEventToSupabase(client, {
+        user_uuid:    e.user_uuid ?? "",
+        session_id:   e.session_id ?? null,
+        repo_id:      null,
+        phase:        e.phase as "pre" | "post",
+        tool:         e.tool,
+        project_path: e.project_path ?? "",
+        input:        e.input ? (() => { try { return JSON.parse(e.input!); } catch { return null; } })() : null,
+        ts:           new Date(e.ts),
+        seq:          e.seq ?? null,
+        duration_ms:  e.duration_ms ?? null,
+        success:      e.success ?? null,
+        error:        e.error ?? null,
+      });
     }
-    db.run("COMMIT");
   } catch (err) {
-    try { db.run("ROLLBACK"); } catch {}
-    console.error("[collector] drain: SQLite write failed, leaving JSONL intact:", (err as Error).message);
-    return; // File stays intact — caller can retry on next startup
+    console.error("[collector] drain: unexpected error, leaving JSONL intact:", (err as Error).message);
+    return;
   }
 
-  // All events inserted — delete the JSONL file
+  // All events processed — delete the JSONL file
   try {
     unlinkSync(jsonlPath);
   } catch (err) {
