@@ -31,6 +31,7 @@
       "export type ResolutionLevel",
       "export interface SymbolEntry",
       "export type SymbolMap",
+      "export interface LlmsTxtSection",
       "export interface AnalyzedSymbol",
       "export interface Flow",
       "export interface Relation",
@@ -45,6 +46,7 @@
       "// export type ResolutionLevel",
       "// export interface SymbolEntry",
       "// export type SymbolMap",
+      "// export interface LlmsTxtSection",
       "// export interface AnalyzedSymbol",
       "// export interface Flow",
       "// export interface Relation",
@@ -133,14 +135,16 @@
       "export async function reindexRepo(",
       "export function extractExports(content: string):",
       "export function extractMarkdownSymbols(content: string, filename: string):",
-      "export function extractHeuristic(content: string, filename: string):"
+      "export function extractHeuristic(content: string, filename: string):",
+      "export async function mergeLlmSpec("
     ],
     "L1": [
       "// export interface IndexSummary",
       "// export async function reindexRepo(",
       "// export function extractExports(content: string):",
       "// export function extractMarkdownSymbols(content: string, filename: string):",
-      "// export function extractHeuristic(content: string, filename: string):"
+      "// export function extractHeuristic(content: string, filename: string):",
+      "// export async function mergeLlmSpec("
     ],
     "L2": []
   },
@@ -333,10 +337,12 @@
   },
   "packages/cli/src/commands/setup.ts": {
     "L0": [
-      "export async function setupMcp(repoPath: string, indexJsPath: string): Promise<void>"
+      "export async function setupMcp(repoPath: string, indexJsPath: string): Promise<void>",
+      "export async function setupHooks(): Promise<void>"
     ],
     "L1": [
-      "// export async function setupMcp(repoPath: string, indexJsPath: string): Promise<void>"
+      "// export async function setupMcp(repoPath: string, indexJsPath: string): Promise<void>",
+      "// export async function setupHooks(): Promise<void>"
     ],
     "L2": []
   },
@@ -588,11 +594,12 @@
   },
   "docs/design/06-compression.md": {
     "L0": [
-      "Content Compression — Code is stored at four resolution levels in the symbol map. The MCP server serves the requested level. Agents choose the right level based on task typ"
+      "Content Compression — --- id: resolution-levels type: design"
     ],
     "L1": [
-      "// Content Compression — Code is stored at four resolution levels in the symbol map. The MCP server serves the requested level. Agents choose the right level based on task typ",
+      "// Content Compression — --- id: resolution-levels type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Resolution Level Definitions",
       "// ### L0 — Signature",
       "// ### L1 — IO Pattern",
@@ -607,11 +614,12 @@
   },
   "docs/design/09-cli.md": {
     "L0": [
-      "CLI — `sensei` is a TypeScript CLI installed globally via `bun add -g sensei` or `npx sensei`. It shares the same codebase as the MCP server — same modules,"
+      "CLI — --- id: cli type: design"
     ],
     "L1": [
-      "// CLI — `sensei` is a TypeScript CLI installed globally via `bun add -g sensei` or `npx sensei`. It shares the same codebase as the MCP server — same modules,",
+      "// CLI — --- id: cli type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Layered Profile System",
       "// ## Config Schemas",
       "// ### `~/.skills/config.yaml`",
@@ -644,11 +652,12 @@
   },
   "docs/design/16-local-model-indexer.md": {
     "L0": [
-      "Local Model Indexer — Design — The current indexer (`reindex.ts`) uses regex to extract symbols. This is: - **Fragile** — TypeScript generics, decorators, JSX, multiline signatures,"
+      "Local Model Indexer — --- id: local-model-indexer type: design"
     ],
     "L1": [
-      "// Local Model Indexer — Design — The current indexer (`reindex.ts`) uses regex to extract symbols. This is: - **Fragile** — TypeScript generics, decorators, JSX, multiline signatures,",
+      "// Local Model Indexer — --- id: local-model-indexer type: design",
       "// ## Problem with the Current Approach",
+      "// ## Non-Functional Requirements",
       "// ## Approach: Local Model as Base Analyzer",
       "// ## ModelBackend Interface",
       "// ### Backends",
@@ -667,11 +676,12 @@
   },
   "docs/design/02-skills.md": {
     "L0": [
-      "Skills — Skills are markdown files that teach agents a protocol, technique, or reference. They are not documentation of what was built — they are guidance for "
+      "Skills — --- id: skills type: design"
     ],
     "L1": [
-      "// Skills — Skills are markdown files that teach agents a protocol, technique, or reference. They are not documentation of what was built — they are guidance for ",
+      "// Skills — --- id: skills type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## File Format",
       "// ### SKILL.md Structure",
       "// ## Overview",
@@ -694,11 +704,12 @@
   },
   "docs/design/04-llmspec.md": {
     "L0": [
-      "LLMSpec — `.llmspec.yaml` is an OpenAPI-equivalent structured format for LLM consumption. It is the primary orientation artifact for any indexed repo — compact,"
+      "LLMSpec — --- id: llmspec type: design"
     ],
     "L1": [
-      "// LLMSpec — `.llmspec.yaml` is an OpenAPI-equivalent structured format for LLM consumption. It is the primary orientation artifact for any indexed repo — compact,",
+      "// LLMSpec — --- id: llmspec type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Full Schema",
       "// ## Generation Rules",
       "// ### Auto-populated on first index",
@@ -710,33 +721,14 @@
     ],
     "L2": []
   },
-  "docs/design/11-doc-doctor.md": {
-    "L0": [
-      "Doc Doctorter — `sensei doctor` builds a structured prompt combining the canonical template and the existing doc content, then hands it to Claude. The LLM does the ac"
-    ],
-    "L1": [
-      "// Doc Doctorter — `sensei doctor` builds a structured prompt combining the canonical template and the existing doc content, then hands it to Claude. The LLM does the ac",
-      "// ## Overview",
-      "// ## Template Detection",
-      "// ## Prompt Structure",
-      "// ## Template",
-      "// ## Existing Document",
-      "// ## Rules",
-      "// ## CLI Interface",
-      "// ## Tool Contract",
-      "// ### `sensei doctor <file>`",
-      "// ## Doc Doctorter Skill",
-      "// ## Testing Strategy"
-    ],
-    "L2": []
-  },
   "docs/design/15-package-adapters.md": {
     "L0": [
-      "Package Adapters — Design — The current index (`symbol-map.json`) is a flat file → symbols map. It has no concept of: - Package boundaries and their purpose - Which files belong "
+      "Package Adapters — --- id: package-adapters type: design"
     ],
     "L1": [
-      "// Package Adapters — Design — The current index (`symbol-map.json`) is a flat file → symbols map. It has no concept of: - Package boundaries and their purpose - Which files belong ",
+      "// Package Adapters — --- id: package-adapters type: design",
       "// ## Problem",
+      "// ## Non-Functional Requirements",
       "// ## Approach: Glob-based adapter discovery",
       "// ## Adapter interface",
       "// ## README.md extraction",
@@ -760,11 +752,12 @@
   },
   "docs/design/13-traceability-matrix.md": {
     "L0": [
-      "Traceability Matrix — `.index/traceability.json` maps documentation files to the source files they describe. Combined with `git diff`, this enables precise drift detection:"
+      "Traceability Matrix — --- id: traceability-matrix type: design"
     ],
     "L1": [
-      "// Traceability Matrix — `.index/traceability.json` maps documentation files to the source files they describe. Combined with `git diff`, this enables precise drift detection:",
+      "// Traceability Matrix — --- id: traceability-matrix type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Schema",
       "// ### `.index/traceability.json`",
       "// ### `.llmspec.yaml` declaration (authoritative)",
@@ -781,11 +774,12 @@
   },
   "docs/design/05-indexing.md": {
     "L0": [
-      "Indexing — The indexer scans a repo and produces structured artifacts in `.index/`. It runs as an MCP tool (`reindex_repo`) and is guided by the `codebase-indexe"
+      "Indexing — --- id: indexer type: design"
     ],
     "L1": [
-      "// Indexing — The indexer scans a repo and produces structured artifacts in `.index/`. It runs as an MCP tool (`reindex_repo`) and is guided by the `codebase-indexe",
+      "// Indexing — --- id: indexer type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Extraction Targets",
       "// ### File Map",
       "// ### Tech Stack",
@@ -813,22 +807,23 @@
     "L1": [
       "// Design Documentation — Architecture, structure, and implementation details for the AI skills repo. | Document | Description | |----------|-------------|",
       "// ## Core Design (01–09)",
-      "// ## Feature Extensions (10–13)",
-      "// ## Infrastructure Extensions (14–19)",
+      "// ## Feature Extensions (10–19)",
       "// ## Language-Specific Adapters (20–29)",
       "// ## Numbering Convention",
       "// ## Document Relationships",
+      "// ## Traceability",
       "// ## Related"
     ],
     "L2": []
   },
   "docs/design/01-architecture.md": {
     "L0": [
-      "Architecture — The repo has four layers: **skills** (markdown guidance files), an **MCP server** (compute and data layer), a **CLI** (`skills` binary, setup and prof"
+      "Architecture — --- id: architecture type: design"
     ],
     "L1": [
-      "// Architecture — The repo has four layers: **skills** (markdown guidance files), an **MCP server** (compute and data layer), a **CLI** (`skills` binary, setup and prof",
+      "// Architecture — --- id: architecture type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Repo Structure",
       "// ## Component Relationships",
       "// ## Data Flow: Indexing",
@@ -843,11 +838,12 @@
   },
   "docs/design/08-benchmarking.md": {
     "L0": [
-      "Benchmarking Design — The benchmark system runs a task corpus against two configurations (with-skills and without-skills) and records five metrics per task. Results are sto"
+      "Benchmarking — --- id: benchmarking-runner type: design"
     ],
     "L1": [
-      "// Benchmarking Design — The benchmark system runs a task corpus against two configurations (with-skills and without-skills) and records five metrics per task. Results are sto",
+      "// Benchmarking — --- id: benchmarking-runner type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Task Corpus Schema",
       "// ## Metrics Schema",
       "// ## Benchmark Run Output",
@@ -859,11 +855,12 @@
   },
   "docs/design/14-server-package.md": {
     "L0": [
-      "Architecture v2 — Server-Mediated Inference, Package Split — The v1 architecture (`01-architecture.md`) treated sensei as a single package with CLI + MCP server co-located. This worked for a solo developer but h"
+      "Server Package — --- id: server-package type: design"
     ],
     "L1": [
-      "// Architecture v2 — Server-Mediated Inference, Package Split — The v1 architecture (`01-architecture.md`) treated sensei as a single package with CLI + MCP server co-located. This worked for a solo developer but h",
+      "// Server Package — --- id: server-package type: design",
       "// ## What Changed and Why",
+      "// ## Non-Functional Requirements",
       "// ## Package Structure",
       "// ## Component Roles",
       "// ### `@sensei/server` — The Brain",
@@ -891,11 +888,12 @@
   },
   "docs/design/10-project-memory.md": {
     "L0": [
-      "Project Memory — Project memory is the cross-session knowledge layer. It survives between sessions, stays bounded in size, and is managed entirely by MCP tools — agent"
+      "Project Memory — --- id: project-memory type: design"
     ],
     "L1": [
-      "// Project Memory — Project memory is the cross-session knowledge layer. It survives between sessions, stays bounded in size, and is managed entirely by MCP tools — agent",
+      "// Project Memory — --- id: project-memory type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Storage Layout",
       "// ## File Schemas",
       "// ### `memory.yaml`",
@@ -920,11 +918,12 @@
   },
   "docs/design/03-mcp-server.md": {
     "L0": [
-      "MCP Server — `repo-index-server` is a local MCP server that reads from a repo's `.index/` directory and `.llmspec.yaml` and serves targeted slices on demand. It al"
+      "MCP Server — --- id: mcp-server type: design"
     ],
     "L1": [
-      "// MCP Server — `repo-index-server` is a local MCP server that reads from a repo's `.index/` directory and `.llmspec.yaml` and serves targeted slices on demand. It al",
+      "// MCP Server — --- id: mcp-server type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Tool Categories",
       "// ### Query Tools (read from index)",
       "// ### Reindex Tool (write to index)",
@@ -948,11 +947,12 @@
   },
   "docs/design/07-drift.md": {
     "L0": [
-      "Doc Drift Detection — Drift detection uses `git diff` against the last indexed commit to identify which files have changed, then cross-references those changes against a tr"
+      "Doc Drift Detection — --- id: drift-detector type: design"
     ],
     "L1": [
-      "// Doc Drift Detection — Drift detection uses `git diff` against the last indexed commit to identify which files have changed, then cross-references those changes against a tr",
+      "// Doc Drift Detection — --- id: drift-detector type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Traceability Matrix",
       "// ## Drift Detection Algorithm",
       "// ## Data Structures",
@@ -968,11 +968,12 @@
   },
   "docs/design/12-incremental-indexing.md": {
     "L0": [
-      "Incremental Indexing — After the first full index, `reindexRepo` uses `git diff <lastIndexedCommit>..HEAD --name-only` to identify changed, added, and deleted files since th"
+      "Incremental Indexing — --- id: incremental-indexer type: design"
     ],
     "L1": [
-      "// Incremental Indexing — After the first full index, `reindexRepo` uses `git diff <lastIndexedCommit>..HEAD --name-only` to identify changed, added, and deleted files since th",
+      "// Incremental Indexing — --- id: incremental-indexer type: design",
       "// ## Overview",
+      "// ## Non-Functional Requirements",
       "// ## Algorithm",
       "// ## Change Detection",
       "// ### Git repos (primary)",
@@ -988,10 +989,10 @@
   },
   "docs/features/07-CLI.md": {
     "L0": [
-      "CLI — Developers switch between projects, between personal and company contexts, and between different tech stacks. Without tooling to manage this, context "
+      "CLI — --- id: cli type: feature"
     ],
     "L1": [
-      "// CLI — Developers switch between projects, between personal and company contexts, and between different tech stacks. Without tooling to manage this, context ",
+      "// CLI — --- id: cli type: feature",
       "// ## Features",
       "// ### Repo Setup",
       "// ### Profile Management",
@@ -1000,174 +1001,37 @@
       "// ### Shared Library Cache",
       "// ### Migration from agents/ Folder",
       "// ### Pre-Commit Hook",
-      "// ### Guidelines Editability",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/11-TraceabilityMatrix.md": {
-    "L0": [
-      "Traceability Matrix — Design docs, feature docs, and READMEs each describe specific parts of the codebase. The traceability matrix records those relationships explicitly — "
-    ],
-    "L1": [
-      "// Traceability Matrix — Design docs, feature docs, and READMEs each describe specific parts of the codebase. The traceability matrix records those relationships explicitly — ",
-      "// ## Features",
-      "// ### Declare Coverage in LLMSpec",
-      "// ### Auto-Detection from Doc Content",
-      "// ### Precise Drift Cross-Reference",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/04-DocDriftDetection.md": {
-    "L0": [
-      "Doc Drift Detection — Code changes. Docs don't always follow. Over time, design docs describe a system that no longer exists, public docs reference APIs that have changed, "
-    ],
-    "L1": [
-      "// Doc Drift Detection — Code changes. Docs don't always follow. Over time, design docs describe a system that no longer exists, public docs reference APIs that have changed, ",
-      "// ## Features",
-      "// ### Git-Based Change Detection",
-      "// ### Traceability Matrix",
-      "// ### On-Demand Drift Reporting",
-      "// ### Pre-Commit Hook Integration",
-      "// ### CI Integration",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/03-AgenticDevWorkflow.md": {
-    "L0": [
-      "Agentic Dev Workflow — An AI developer agent without a workflow protocol accumulates context, repeats work, and makes broad searches where targeted ones would suffice. The a"
-    ],
-    "L1": [
-      "// Agentic Dev Workflow — An AI developer agent without a workflow protocol accumulates context, repeats work, and makes broad searches where targeted ones would suffice. The a",
-      "// ## Features",
-      "// ### Session Orientation Protocol",
-      "// ### Targeted Context Loading",
-      "// ### MCP Offload Protocol",
-      "// ### Task Transition Protocol",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/08-ProjectWorkflow.md": {
-    "L0": [
-      "Project Workflow — Agents working across sessions on the same project lose context silently. Without a persistent knowledge layer, every session re-discovers the same pa"
-    ],
-    "L1": [
-      "// Project Workflow — Agents working across sessions on the same project lose context silently. Without a persistent knowledge layer, every session re-discovers the same pa",
-      "// ## Features",
-      "// ### Session Resume",
-      "// ### Decision Capture",
-      "// ### Pattern Capture",
-      "// ### Session Checkpoint",
-      "// ### Open Items Tracking",
-      "// ### Migration from Manual agents/ Structure",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/05-ContextManagement.md": {
-    "L0": [
-      "Context Management — The context window is working memory. When it fills with stale content from previous tasks, agents make mistakes — referencing things that are no long"
-    ],
-    "L1": [
-      "// Context Management — The context window is working memory. When it fills with stale content from previous tasks, agents make mistakes — referencing things that are no long",
-      "// ## Features",
-      "// ### Targeted Slice Loading",
-      "// ### Token Budget Reporting",
-      "// ### Checkpoint and Restore",
-      "// ### recommend_next",
-      "// ## Status"
+      "// ### Guidelines Editability"
     ],
     "L2": []
   },
   "docs/features/README.md": {
     "L0": [
-      "Features — This skills repo is built around a single conviction: **AI agents should spend tokens reasoning, not orienting**. A developer agent dropped into an un"
+      "Features — Sensei makes AI agents more effective in software development by solving the orientation, context, and continuity problems that make unassisted agents"
     ],
     "L1": [
-      "// Features — This skills repo is built around a single conviction: **AI agents should spend tokens reasoning, not orienting**. A developer agent dropped into an un",
+      "// Features — Sensei makes AI agents more effective in software development by solving the orientation, context, and continuity problems that make unassisted agents",
+      "// ## Objective",
       "// ## Vision",
       "// ## Modules",
+      "// ## Traceability",
       "// ## Feature Status"
-    ],
-    "L2": []
-  },
-  "docs/features/10-IncrementalIndexing.md": {
-    "L0": [
-      "Incremental Indexing — Running a full repo scan on every `sensei index` invocation is wasteful on large repos. After the first index, most files haven't changed. Incremental"
-    ],
-    "L1": [
-      "// Incremental Indexing — Running a full repo scan on every `sensei index` invocation is wasteful on large repos. After the first index, most files haven't changed. Incremental",
-      "// ## Features",
-      "// ### Incremental Index on Subsequent Runs",
-      "// ### Force Full Reindex",
-      "// ### Index Summary Output",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/01-CodebaseIndexing.md": {
-    "L0": [
-      "Codebase Indexing — An AI agent dropped into a large codebase without orientation is expensive — it reads files, greps broadly, loads directories, and still might miss ke"
-    ],
-    "L1": [
-      "// Codebase Indexing — An AI agent dropped into a large codebase without orientation is expensive — it reads files, greps broadly, loads directories, and still might miss ke",
-      "// ## Features",
-      "// ### Repo Scanner",
-      "// ### LLMSpec Generation",
-      "// ### Symbol Map",
-      "// ### llms.txt Generation",
-      "// ### Incremental Re-indexing",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/09-DocDoctor.md": {
-    "L0": [
-      "Doc Doctorter — Existing repos accumulate docs in ad-hoc formats. When migrating to sensei, there is no mechanism to rewrite those docs to match the canonical templat"
-    ],
-    "L1": [
-      "// Doc Doctorter — Existing repos accumulate docs in ad-hoc formats. When migrating to sensei, there is no mechanism to rewrite those docs to match the canonical templat",
-      "// ## Features",
-      "// ### Doctor a Single Doc",
-      "// ### Doctor a Directory",
-      "// ### Template Auto-Detection",
-      "// ### Doctor Rules",
-      "// ## Status"
-    ],
-    "L2": []
-  },
-  "docs/features/02-ContentCompression.md": {
-    "L0": [
-      "Content Compression — Loading full source files into LLM context is the single biggest source of token waste in agentic coding. Most tasks — understanding a function, traci"
-    ],
-    "L1": [
-      "// Content Compression — Loading full source files into LLM context is the single biggest source of token waste in agentic coding. Most tasks — understanding a function, traci",
-      "// ## Features",
-      "// ### Resolution Levels",
-      "// ### Docstring and Comment Stripping",
-      "// ### Logic Flow Notation",
-      "// ### IO Pattern Notation",
-      "// ### Task-to-Level Mapping",
-      "// ## Status"
     ],
     "L2": []
   },
   "docs/features/06-Benchmarking.md": {
     "L0": [
-      "Benchmarking — Skills and MCP tools are only valuable if their impact is measurable. Benchmarking provides a structured way to compare agent performance with and wit"
+      "Benchmarking — --- id: benchmarking type: feature"
     ],
     "L1": [
-      "// Benchmarking — Skills and MCP tools are only valuable if their impact is measurable. Benchmarking provides a structured way to compare agent performance with and wit",
+      "// Benchmarking — --- id: benchmarking type: feature",
       "// ## Features",
       "// ### Task Corpus",
       "// ### A/B Evaluation",
       "// ### Metrics Collection",
       "// ### Results Comparison",
-      "// ### Improvement Loop",
-      "// ## Status"
+      "// ### CLI Prompt Comparison",
+      "// ### Improvement Loop"
     ],
     "L2": []
   },
@@ -1450,6 +1314,1320 @@
     ],
     "L1": [
       "// function load"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/benchmark-coverage.ts": {
+    "L0": [
+      "export async function benchmarkCoverage(repoPath: string): Promise<void>"
+    ],
+    "L1": [
+      "// export async function benchmarkCoverage(repoPath: string): Promise<void>"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/benchmark-indexer.ts": {
+    "L0": [
+      "export async function benchmarkIndexer(repoPath: string): Promise<void>"
+    ],
+    "L1": [
+      "// export async function benchmarkIndexer(repoPath: string): Promise<void>"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/benchmark-populate.ts": {
+    "L0": [
+      "export function buildPopulatePrompt(repoPath: string, skillContent: string | null): string",
+      "export function parseYamlOutput(text: string): string",
+      "export function parsePopulateScore(output: string): number",
+      "export async function benchmarkPopulate(repoPath: string): Promise<void>"
+    ],
+    "L1": [
+      "// export function buildPopulatePrompt(repoPath: string, skillContent: string | null): string",
+      "// export function parseYamlOutput(text: string): string",
+      "// export function parsePopulateScore(output: string): number",
+      "// export async function benchmarkPopulate(repoPath: string): Promise<void>"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/watch.ts": {
+    "L0": [
+      "export interface WatchOptions",
+      "export async function watch(repoPath: string, options: WatchOptions"
+    ],
+    "L1": [
+      "// export interface WatchOptions",
+      "// export async function watch(repoPath: string, options: WatchOptions"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/bm25.ts": {
+    "L0": [
+      "export function scoreBM25("
+    ],
+    "L1": [
+      "// export function scoreBM25("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/chunker.ts": {
+    "L0": [
+      "export async function extractChunks(",
+      "export async function buildChunksAndEmbeddings("
+    ],
+    "L1": [
+      "// export async function extractChunks(",
+      "// export async function buildChunksAndEmbeddings("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/coverage.spec.ts": {
+    "L0": [
+      "function makeModel"
+    ],
+    "L1": [
+      "// function makeModel"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/coverage.ts": {
+    "L0": [
+      "export interface CoverageEntry",
+      "export async function generateCoverage("
+    ],
+    "L1": [
+      "// export interface CoverageEntry",
+      "// Use a local model to determine which source files each doc in docs/ covers. Returns entries suitable for llmspec.yaml do\n// export async function generateCoverage("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/embedder.ts": {
+    "L0": [
+      "export async function embed(text: string): Promise<number[]>",
+      "export async function isAvailable(): Promise<boolean>",
+      "export async function ensureReady(): Promise<void>"
+    ],
+    "L1": [
+      "// export async function embed(text: string): Promise<number[]>",
+      "// export async function isAvailable(): Promise<boolean>",
+      "// export async function ensureReady(): Promise<void>"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/search.ts": {
+    "L0": [
+      "export interface SearchResult",
+      "export async function search("
+    ],
+    "L1": [
+      "// export interface SearchResult",
+      "// export async function search("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/benchmark/indexer-comparison/cocoindex-adapter.ts": {
+    "L0": [
+      "export interface CocoIndex",
+      "export async function connectCocoindex(repoPath: string): Promise<CocoIndex>"
+    ],
+    "L1": [
+      "// export interface CocoIndex",
+      "// export async function connectCocoindex(repoPath: string): Promise<CocoIndex>"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/benchmark/indexer-comparison/ground-truth.ts": {
+    "L0": [
+      "export interface GroundTruth",
+      "export async function extractGroundTruth(repoPath: string): Promise<GroundTruth>"
+    ],
+    "L1": [
+      "// export interface GroundTruth",
+      "// export async function extractGroundTruth(repoPath: string): Promise<GroundTruth>"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/benchmark/indexer-comparison/reporter.ts": {
+    "L0": [
+      "export function printReport(report: ComparisonReport): void",
+      "export async function writeMarkdownReport("
+    ],
+    "L1": [
+      "// export function printReport(report: ComparisonReport): void",
+      "// export async function writeMarkdownReport("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/benchmark/indexer-comparison/scorer.ts": {
+    "L0": [
+      "export async function score("
+    ],
+    "L1": [
+      "// export async function score("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/benchmark/indexer-comparison/sensei-adapter.ts": {
+    "L0": [
+      "export interface SenseiIndex",
+      "export async function loadSenseiIndex(repoPath: string): Promise<SenseiIndex>"
+    ],
+    "L1": [
+      "// export interface SenseiIndex",
+      "// export async function loadSenseiIndex(repoPath: string): Promise<SenseiIndex>"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/benchmark/indexer-comparison/types.ts": {
+    "L0": [
+      "export interface IndexedFile",
+      "export interface CocoChunk",
+      "export interface SenseiSymbol",
+      "export interface TestQuery",
+      "export interface ComparisonReport",
+      "export interface QueryComparison",
+      "export interface SpotCheckRow"
+    ],
+    "L1": [
+      "// A file indexed by either indexer\n// export interface IndexedFile",
+      "// A code chunk returned by cocoindex search\n// export interface CocoChunk",
+      "// A named symbol from sensei's symbol map\n// export interface SenseiSymbol",
+      "// Test query with expected file paths that should appear in results\n// export interface TestQuery",
+      "// export interface ComparisonReport",
+      "// export interface QueryComparison",
+      "// export interface SpotCheckRow"
+    ],
+    "L2": []
+  },
+  "results/indexer-comparison-2026-03-11.md": {
+    "L0": [
+      "Indexer Comparison Report — 2026-03-11 — | Metric | cocoindex | sensei | |---|---|---| | Files indexed | 42 | 81 |"
+    ],
+    "L1": [
+      "// Indexer Comparison Report — 2026-03-11 — | Metric | cocoindex | sensei | |---|---|---| | Files indexed | 42 | 81 |",
+      "// ## Summary",
+      "// ## Query Breakdown",
+      "// ## Spot-check",
+      "// ### Components",
+      "// ## Overview",
+      "// ## Decision"
+    ],
+    "L2": []
+  },
+  "docs/design/11-doc-tools.md": {
+    "L0": [
+      "Doc Tools — --- id: doc-tools type: design"
+    ],
+    "L1": [
+      "// Doc Tools — --- id: doc-tools type: design",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## find_doc — Doc Discovery",
+      "// ### With MCP",
+      "// ### Without MCP (fallback)",
+      "// ### Rules",
+      "// ## Scaffold — sensei doc new",
+      "// ### Flow",
+      "// ### CLI Interface",
+      "// ### Error Handling",
+      "// ## External Doc Reference — fetch_doc_ref",
+      "// ### Cache Layout",
+      "// ### Flow",
+      "// ### API / Tool Contracts",
+      "// ### Error Handling",
+      "// ## Template Detection",
+      "// ## Prompt Structure",
+      "// ## Template",
+      "// ## Existing Document",
+      "// ## Rules",
+      "// ## CLI Interface",
+      "// ## Tool Contract",
+      "// ### `sensei doctor <file>`",
+      "// ## Doc Doctorter Skill",
+      "// ## Testing Strategy"
+    ],
+    "L2": []
+  },
+  "docs/design/17-pattern-store.md": {
+    "L0": [
+      "Pattern Store — --- id: pattern-store type: design"
+    ],
+    "L1": [
+      "// Pattern Store — --- id: pattern-store type: design",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## Data Model / File Layout",
+      "// ## adapter-per-package",
+      "// ## Algorithm / Flow",
+      "// ## API / Tool Contracts",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ## Open Questions"
+    ],
+    "L2": []
+  },
+  "docs/design/18-response-cache.md": {
+    "L0": [
+      "Response Cache — --- id: response-cache type: design"
+    ],
+    "L1": [
+      "// Response Cache — --- id: response-cache type: design",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## Data Model / Storage",
+      "// ## Algorithm / Flow",
+      "// ## API / Tool Contracts",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ## Open Questions"
+    ],
+    "L2": []
+  },
+  "docs/design/19-context-manager.md": {
+    "L0": [
+      "Context Manager — --- id: context-manager type: design"
+    ],
+    "L1": [
+      "// Context Manager — --- id: context-manager type: design",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## Slice Definitions",
+      "// ## Checkpoint Storage",
+      "// ## Algorithm / Flow",
+      "// ## API / Tool Contracts",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ## Open Questions"
+    ],
+    "L2": []
+  },
+  "docs/features/01-indexing.md": {
+    "L0": [
+      "Indexing — --- id: indexing type: feature"
+    ],
+    "L1": [
+      "// Indexing — --- id: indexing type: feature",
+      "// ## Features",
+      "// ### Repo Scanner",
+      "// ### LLMSpec Generation",
+      "// ### Symbol Map",
+      "// ### llms.txt Generation",
+      "// ### Multi-Modal Search",
+      "// ### Symbol Graph",
+      "// ### Incremental Indexing",
+      "// ### Force Full Reindex",
+      "// ### Index Summary Output"
+    ],
+    "L2": []
+  },
+  "docs/features/02-resolution.md": {
+    "L0": [
+      "Resolution — --- id: resolution type: feature"
+    ],
+    "L1": [
+      "// Resolution — --- id: resolution type: feature",
+      "// ## Features",
+      "// ### Resolution Levels",
+      "// ### Docstring and Comment Stripping",
+      "// ### Logic Flow Notation",
+      "// ### IO Pattern Notation",
+      "// ### Task-to-Level Mapping"
+    ],
+    "L2": []
+  },
+  "docs/features/03-workflow.md": {
+    "L0": [
+      "Workflow — --- id: workflow type: feature"
+    ],
+    "L1": [
+      "// Workflow — --- id: workflow type: feature",
+      "// ## Features",
+      "// ### Session Orientation Protocol",
+      "// ### Targeted Context Loading",
+      "// ### MCP Offload Protocol",
+      "// ### Task Transition Protocol",
+      "// ### Plan-to-Implementation Efficiency",
+      "// ### Analysis-Before-Implementation Gate",
+      "// ### Session Resume",
+      "// ### Decision Capture",
+      "// ### Pattern Capture",
+      "// ### Session Checkpoint",
+      "// ### Open Items Tracking"
+    ],
+    "L2": []
+  },
+  "docs/features/04-traceability.md": {
+    "L0": [
+      "Traceability — --- id: traceability type: feature"
+    ],
+    "L1": [
+      "// Traceability — --- id: traceability type: feature",
+      "// ## Features",
+      "// ### Declare Coverage in LLMSpec",
+      "// ### Auto-Detection from Doc Content",
+      "// ### Git-Based Change Detection",
+      "// ### Precise Drift Cross-Reference",
+      "// ### On-Demand Drift Reporting",
+      "// ### Pre-Commit Hook Integration",
+      "// ### CI Integration"
+    ],
+    "L2": []
+  },
+  "docs/features/05-context.md": {
+    "L0": [
+      "Context — --- id: context type: feature"
+    ],
+    "L1": [
+      "// Context — --- id: context type: feature",
+      "// ## Features",
+      "// ### Targeted Slice Loading",
+      "// ### Token Budget Reporting",
+      "// ### Checkpoint and Restore",
+      "// ### recommend_next"
+    ],
+    "L2": []
+  },
+  "docs/features/08-documentation.md": {
+    "L0": [
+      "Documentation — --- id: documentation type: feature"
+    ],
+    "L1": [
+      "// Documentation — --- id: documentation type: feature",
+      "// ## Features",
+      "// ### Doc Guide",
+      "// ### Find Doc",
+      "// ### New Feature Scaffold",
+      "// ### External Doc Reference",
+      "// ### Doctor a Single Doc",
+      "// ### Doctor a Directory",
+      "// ### Template Auto-Detection",
+      "// ### Doctor Rules"
+    ],
+    "L2": []
+  },
+  "docs/features/09-patterns.md": {
+    "L0": [
+      "Patterns — --- id: patterns type: feature"
+    ],
+    "L1": [
+      "// Patterns — --- id: patterns type: feature",
+      "// ## Features",
+      "// ### Pattern Detection",
+      "// ### Pattern Templates",
+      "// ### Pattern Capture",
+      "// ### Pattern-to-Skill Export",
+      "// ### Pattern Search"
+    ],
+    "L2": []
+  },
+  "docs/features/10-caching.md": {
+    "L0": [
+      "Caching — --- id: caching type: feature"
+    ],
+    "L1": [
+      "// Caching — --- id: caching type: feature",
+      "// ## Features",
+      "// ### Response Capture",
+      "// ### Response Retrieval",
+      "// ### Cache Management",
+      "// ### Integration with Session Resume"
+    ],
+    "L2": []
+  },
+  "docs/features/11-implementation-sync.md": {
+    "L0": [
+      "Implementation Sync — --- id: implementation-sync type: feature"
+    ],
+    "L1": [
+      "// Implementation Sync — --- id: implementation-sync type: feature",
+      "// ## Features",
+      "// ### Post-Implementation Doc Enrichment",
+      "// ### Traceability Status Sync",
+      "// ### Plan Archival",
+      "// ### Incremental llms.txt Sync",
+      "// ### Drift Warning on Sync"
+    ],
+    "L2": []
+  },
+  "docs/plans/2026-03-07-benchmark-populate.md": {
+    "L0": [
+      "benchmark populate Implementation Plan — > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. **Goal:** Add `sensei benchmark populate` —"
+    ],
+    "L1": [
+      "// benchmark populate Implementation Plan — > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. **Goal:** Add `sensei benchmark populate` —",
+      "// ### Task 1: `buildPopulatePrompt` + `parseYamlOutput` + `parsePopulateScore` + tests",
+      "// ## README (first 60 lines)",
+      "// ## Source files (path → key exports)",
+      "// ## Documentation files (path → headings)",
+      "// ## Current llmspec.yaml skeleton (fill the TODO fields)",
+      "// ## Instructions",
+      "// ### Task 2: `benchmarkPopulate` main command",
+      "// ### Task 3: Wire into CLI",
+      "// ### Task 4: Verify end-to-end (smoke test)"
+    ],
+    "L2": []
+  },
+  "docs/plans/2026-03-07-populate-llmspec-skill.md": {
+    "L0": [
+      "populate-llmspec Skill Implementation Plan — > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. **Goal:** Create a `populate-llmspec` skill"
+    ],
+    "L1": [
+      "// populate-llmspec Skill Implementation Plan — > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. **Goal:** Create a `populate-llmspec` skill",
+      "// ### Task 1: Create `skills/populate-llmspec/SKILL.md`",
+      "// ## Overview",
+      "// ## When to Use",
+      "// ## Protocol",
+      "// ## Quick Reference",
+      "// ## Common Mistakes",
+      "// ### Task 2: Update `codebase-indexer` skill to reference `populate-llmspec`",
+      "// ### Task 3: Run populate-llmspec on this repo as a live test"
+    ],
+    "L2": []
+  },
+  "skills/doc-guide/SKILL.md": {
+    "L0": [
+      "Doc Guide — --- name: doc-guide description: Use when creating, updating, or locating docs in this repo. Encodes the feature/design naming split, frontmatter spec"
+    ],
+    "L1": [
+      "// Doc Guide — --- name: doc-guide description: Use when creating, updating, or locating docs in this repo. Encodes the feature/design naming split, frontmatter spec",
+      "// ## The Two-Doc System",
+      "// ## Naming Conventions",
+      "// ### Feature docs",
+      "// ### Design docs",
+      "// ### Design doc numbering ranges",
+      "// ## Frontmatter",
+      "// ### Feature doc frontmatter",
+      "// ### Design doc frontmatter",
+      "// ## Before Creating Any Doc",
+      "// ## Creating a New Feature Doc",
+      "// ## Creating a New Design Doc",
+      "// ## Updating Status",
+      "// ## Answering Traceability Queries",
+      "// ## What Belongs Where",
+      "// ## Quick Reference"
+    ],
+    "L2": []
+  },
+  "skills/doc-guide/design-template.md": {
+    "L0": [
+      "<Component Name> — --- id: <component-name> type: design"
+    ],
+    "L1": [
+      "// <Component Name> — --- id: <component-name> type: design",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## <Data Model / Schema / File Layout>",
+      "// ## <Algorithm / Flow / Protocol>",
+      "// ## <API / Tool Contracts>",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ## Open Questions"
+    ],
+    "L2": []
+  },
+  "skills/doc-guide/feature-template.md": {
+    "L0": [
+      "<Module Name> — --- id: <module-name> type: feature"
+    ],
+    "L1": [
+      "// <Module Name> — --- id: <module-name> type: feature",
+      "// ## Features",
+      "// ### <Feature Name>",
+      "// ### <Feature Name>"
+    ],
+    "L2": []
+  },
+  "skills/populate-llmspec/SKILL.md": {
+    "L0": [
+      "Populate LLMSpec — --- name: populate-llmspec description: Use when .sensei/llmspec.yaml has TODO placeholders or empty fields, when docs[].covers[] entries are missing "
+    ],
+    "L1": [
+      "// Populate LLMSpec — --- name: populate-llmspec description: Use when .sensei/llmspec.yaml has TODO placeholders or empty fields, when docs[].covers[] entries are missing ",
+      "// ## Overview",
+      "// ## Protocol",
+      "// ## Quick Reference",
+      "// ## Common Mistakes"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-10-indexer-comparison.md": {
+    "L0": [
+      "Indexer Comparison Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Indexer Comparison Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Types, Ground Truth, and Sensei Adapter",
+      "// ### Task 1: Shared types",
+      "// ### Task 2: Ground truth extractor",
+      "// ### Task 3: Sensei adapter",
+      "// ## Chunk 2: cocoindex Adapter, Scorer, Reporter, CLI",
+      "// ### Task 4: cocoindex MCP adapter",
+      "// ### Task 5: Scorer",
+      "// ### Task 6: Reporter",
+      "// ### Task 7: CLI command",
+      "// ## Post-run: Decision"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-11-doc-guide-traceability.md": {
+    "L0": [
+      "Doc Guide & Traceability System — Implementation Plan — > **For agentic workers:** REQUIRED: Use `superpowers:subagent-driven-development` (if subagents available) or `superpowers:executing-plans` to implem"
+    ],
+    "L1": [
+      "// Doc Guide & Traceability System — Implementation Plan — > **For agentic workers:** REQUIRED: Use `superpowers:subagent-driven-development` (if subagents available) or `superpowers:executing-plans` to implem",
+      "// ## Chunk 1: Feature Docs — Rename + Frontmatter",
+      "// ### Task 1: Rename feature docs and add frontmatter",
+      "// ## Chunk 2: Design Docs — Titles + Frontmatter + NFR Sections",
+      "// ### Task 2: Clean design doc titles",
+      "// ### Task 3: Add frontmatter to all existing design docs",
+      "// ### Task 4: Add NFR sections to all existing design docs",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Non-Functional Requirements",
+      "// ## Chunk 3: New Design Docs",
+      "// ### Task 5: Create `17-pattern-store.md`",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## Data Model",
+      "// ## <pattern-name>",
+      "// ## Detection Algorithm",
+      "// ## MCP Tool Contracts",
+      "// ## Pattern-to-Skill Export",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ### Task 6: Create `18-response-cache.md`",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## Data Model",
+      "// ## MCP Tool Contracts",
+      "// ## TTL and Maintenance",
+      "// ## Session Integration",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ### Task 7: Create `19-context-manager.md`",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## Slice Definitions",
+      "// ## MCP Tool Contracts",
+      "// ## recommend_next Task Mapping",
+      "// ## Workflow Gate: Analysis Before Implementation",
+      "// ## In-Session Checkpoint Protocol",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ### Task 8: Extend `11-doc-tools.md` with missing sections",
+      "// ## find_doc Tool Contract",
+      "// ## New Feature Scaffold",
+      "// ## External Doc Reference",
+      "// ## Chunk 4: Create `docs/traceability.yaml`",
+      "// ### Task 9: Write the full traceability matrix",
+      "// ## Chunk 5: Update `doc-guide` Skill",
+      "// ### Task 10: Rewrite `skills/doc-guide/SKILL.md`",
+      "// ## The Two-Doc System",
+      "// ## Naming Conventions",
+      "// ### Feature docs",
+      "// ### Design docs",
+      "// ### Design doc numbering ranges",
+      "// ## Frontmatter",
+      "// ### Feature doc frontmatter",
+      "// ### Design doc frontmatter",
+      "// ## Before Creating Any Doc",
+      "// ## Creating a New Feature Doc",
+      "// ## Creating a New Design Doc",
+      "// ## Updating Status",
+      "// ## Answering Traceability Queries",
+      "// ## What Belongs Where",
+      "// ## Quick Reference",
+      "// ### Task 11: Create `skills/doc-guide/feature-template.md`",
+      "// ## Features",
+      "// ### <Feature Name>",
+      "// ### <Feature Name>",
+      "// ### Task 12: Create `skills/doc-guide/design-template.md`",
+      "// ## Overview",
+      "// ## Non-Functional Requirements",
+      "// ## <Data Model / Schema / File Layout>",
+      "// ## <Algorithm / Flow / Protocol>",
+      "// ## <API / Tool Contracts>",
+      "// ## Error Handling",
+      "// ## Testing Strategy",
+      "// ## Open Questions",
+      "// ## Chunk 6: Update READMEs + Validate",
+      "// ### Task 13: Update `docs/features/README.md`",
+      "// ## Modules",
+      "// ## Feature Status",
+      "// ### Task 14: Update `docs/design/README.md`",
+      "// ## Traceability",
+      "// ### Task 15: Validate the skill works without MCP"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-11-indexer-multimodal-search.md": {
+    "L0": [
+      "Indexer Multi-Modal Search Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Indexer Multi-Modal Search Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Core data layer (chunker, BM25, embedder)",
+      "// ### Task 1: Chunker",
+      "// ### Task 2: BM25 Scorer",
+      "// ### Task 3: Embedder",
+      "// ## Chunk 2: Reindex integration and search",
+      "// ### Task 4: Wire `buildChunksAndEmbeddings` into `reindexRepo`",
+      "// ### Task 5: Search tool",
+      "// ## Chunk 3: Wiring into MCP, CLI, and watch command",
+      "// ### Task 6: Export `search` and register MCP tool",
+      "// ### Task 7: `sensei watch` command",
+      "// ## Chunk 4: E2E test and traceability updates",
+      "// ### Task 8: E2E smoke test",
+      "// ### Task 9: Update traceability",
+      "// ## Final verification"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-10-indexer-comparison-design.md": {
+    "L0": [
+      "Indexer Comparison: cocoindex vs. sensei — **Date:** 2026-03-10 **Status:** Approved Sensei's current indexer is regex-based and unreliable. cocoindex-code is a mature AST-based indexer with a "
+    ],
+    "L1": [
+      "// Indexer Comparison: cocoindex vs. sensei — **Date:** 2026-03-10 **Status:** Approved Sensei's current indexer is regex-based and unreliable. cocoindex-code is a mature AST-based indexer with a ",
+      "// ## Problem",
+      "// ## Goal",
+      "// ## Metrics",
+      "// ## Architecture",
+      "// ### Components",
+      "// ### Data Flow",
+      "// ### Shared Symbol Shape",
+      "// ## Error Handling",
+      "// ## Test Queries (hardcoded)",
+      "// ## Output",
+      "// ## Testing",
+      "// ## Decision Criteria"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-11-doc-guide-traceability-design.md": {
+    "L0": [
+      "Doc Guide & Traceability System — Design — **Date:** 2026-03-11 **Status:** Approved — ready for implementation **Scope:** Items 1–3 only. MCP integration (item 4) is a separate future cycle."
+    ],
+    "L1": [
+      "// Doc Guide & Traceability System — Design — **Date:** 2026-03-11 **Status:** Approved — ready for implementation **Scope:** Items 1–3 only. MCP integration (item 4) is a separate future cycle.",
+      "// ## Objective",
+      "// ## Naming Conventions",
+      "// ### Feature docs — `docs/features/NN-module-name.md`",
+      "// ### Design docs — `docs/design/NN-component-name.md`",
+      "// ### Key distinction",
+      "// ### Numbering ranges for design docs",
+      "// ## Frontmatter Spec",
+      "// ### Feature doc frontmatter",
+      "// ### Design doc frontmatter",
+      "// ## Traceability YAML Schema",
+      "// ### NFR vs functional item distinction",
+      "// ### Progressive connection model",
+      "// ### MCP-queryable states",
+      "// ## doc-guide Skill Structure",
+      "// ### What the skill instructs agents to do",
+      "// ## Scope of Work",
+      "// ### 1. Rename docs/features/ files — add NN prefixes",
+      "// ### 2. Fix docs/design/ titles — remove numbers from headings",
+      "// ### 3. Add missing design docs",
+      "// ### 4. Add NFR sections to all design docs",
+      "// ### 5. Create docs/traceability.yaml",
+      "// ### 6. Update skills/doc-guide/",
+      "// ### 7. Update READMEs",
+      "// ## Validation Test",
+      "// ## Future: MCP Integration (separate cycle)"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-11-indexer-multimodal-search-design.md": {
+    "L0": [
+      "Indexer Multi-Modal Search — Design — **Date:** 2026-03-11 **Status:** Approved — ready for implementation **Scope:** Multi-modal search only (semantic + BM25 + symbol) + `sensei watch`. L"
+    ],
+    "L1": [
+      "// Indexer Multi-Modal Search — Design — **Date:** 2026-03-11 **Status:** Approved — ready for implementation **Scope:** Multi-modal search only (semantic + BM25 + symbol) + `sensei watch`. L",
+      "// ## Objective",
+      "// ## Architecture",
+      "// ## Chunking Strategy",
+      "// ### Code files → one chunk per symbol",
+      "// ### Markdown files → one chunk per section (H2/H3)",
+      "// ## Storage Schema",
+      "// ### `.sensei/chunks.json`",
+      "// ### `.sensei/embeddings.json`",
+      "// ## Incremental Update",
+      "// ## Integration with `reindexRepo()`",
+      "// ## Search Algorithm",
+      "// ### Symbol search",
+      "// ### BM25",
+      "// ### Semantic search",
+      "// ### Unified ranking via Reciprocal Rank Fusion",
+      "// ## MCP Tool Contract",
+      "// ### `search`",
+      "// ## File Watcher — `sensei watch`",
+      "// ## Error Handling",
+      "// ## File Structure",
+      "// ## Testing Strategy",
+      "// ## Traceability Updates"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/daemon.ts": {
+    "L0": [
+      "export interface DaemonOptions",
+      "export interface Daemon",
+      "export async function startDaemon(port: number, opts: DaemonOptions"
+    ],
+    "L1": [
+      "// export interface DaemonOptions",
+      "// export interface Daemon",
+      "// export async function startDaemon(port: number, opts: DaemonOptions"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/drain.spec.ts": {
+    "L0": [
+      "function makeEvent",
+      "function makeMockClient"
+    ],
+    "L1": [
+      "// function makeEvent",
+      "// function makeMockClient"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/drain.ts": {
+    "L0": [
+      "export async function drainJsonl(client: SupabaseClient, jsonlPath: string): Promise<void>"
+    ],
+    "L1": [
+      "// export async function drainJsonl(client: SupabaseClient, jsonlPath: string): Promise<void>"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/gaps.ts": {
+    "L0": [
+      "export interface GapEntry",
+      "export const BASH_TO_TOOL_PATTERNS: Record<string, string>",
+      "export function detectGapPatterns(commands: string[]): GapEntry[]"
+    ],
+    "L1": [
+      "// export interface GapEntry",
+      "// Maps bash command prefix patterns to the sensei tool that could replace them. Keys are regex strings matched against the\n// export const BASH_TO_TOOL_PATTERNS: Record<string, string>",
+      "// Given a list of raw bash command strings, return gap entries sorted by frequency descending.\n// export function detectGapPatterns(commands: string[]): GapEntry[]"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/install.ts": {
+    "L0": [
+      "export interface InstallOptions",
+      "export async function installHooks(opts: InstallOptions"
+    ],
+    "L1": [
+      "// export interface InstallOptions",
+      "// export async function installHooks(opts: InstallOptions"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/schema.ts": {
+    "L0": [
+      "export function createTables(db: Database): void"
+    ],
+    "L1": [
+      "// export function createTables(db: Database): void"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/stats.spec.ts": {
+    "L0": [
+      "function makeMockClient"
+    ],
+    "L1": [
+      "// function makeMockClient"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/stats.ts": {
+    "L0": [
+      "export interface ToolStat",
+      "export interface StatsResult",
+      "export interface StatsOptions",
+      "export async function queryStats(client: SupabaseClient, opts: StatsOptions): Promise<StatsResult>"
+    ],
+    "L1": [
+      "// export interface ToolStat",
+      "// export interface StatsResult",
+      "// export interface StatsOptions",
+      "// export async function queryStats(client: SupabaseClient, opts: StatsOptions): Promise<StatsResult>"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/uuid.ts": {
+    "L0": [
+      "export async function readOrCreateUuid(uuidPath: string): Promise<string>"
+    ],
+    "L1": [
+      "// export async function readOrCreateUuid(uuidPath: string): Promise<string>"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/__stubs__/bun-globals.ts": {
+    "L0": [
+      "function bunServe"
+    ],
+    "L1": [
+      "// function bunServe"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/__stubs__/bun-sqlite.ts": {
+    "L0": [
+      "export class Database"
+    ],
+    "L1": [
+      "// export class Database"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/__stubs__/bun-globals.ts": {
+    "L0": [
+      "function bunServe"
+    ],
+    "L1": [
+      "// function bunServe"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/__stubs__/bun-sqlite.ts": {
+    "L0": [
+      "export class Database"
+    ],
+    "L1": [
+      "// export class Database"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/stats.spec.ts": {
+    "L0": [
+      "function makeResult"
+    ],
+    "L1": [
+      "// function makeResult"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/stats.ts": {
+    "L0": [
+      "export interface StatsCommandOptions",
+      "export function formatStats(result: StatsResult, opts:",
+      "export async function stats(opts: StatsCommandOptions): Promise<void>"
+    ],
+    "L1": [
+      "// export interface StatsCommandOptions",
+      "// export function formatStats(result: StatsResult, opts:",
+      "// export async function stats(opts: StatsCommandOptions): Promise<void>"
+    ],
+    "L2": []
+  },
+  "docs/features/12-analytics.md": {
+    "L0": [
+      "Analytics — --- id: analytics type: feature"
+    ],
+    "L1": [
+      "// Analytics — --- id: analytics type: feature",
+      "// ## Features",
+      "// ### Telemetry Collector",
+      "// ### Analytics CLI"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-11-analytics-collector.md": {
+    "L0": [
+      "Analytics Collector Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Analytics Collector Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Foundation",
+      "// ### Task 1: Package Scaffold",
+      "// ### Task 2: UUID Module",
+      "// ### Task 3: Schema Module",
+      "// ## Chunk 2: Daemon",
+      "// ### Task 4: Daemon Core — HTTP Server + Event Ingestion",
+      "// ### Task 5: JSONL Drain",
+      "// ## Chunk 3: Analytics",
+      "// ### Task 6: Stats Query Engine",
+      "// ### Task 7: Gaps Detector",
+      "// ### Task 8: Hook Installer",
+      "// ## Chunk 4: CLI Integration",
+      "// ### Task 9: `sensei stats` Command",
+      "// ### Task 10: Update `sensei setup` for Hook Installation + Traceability",
+      "// ## Final Verification"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-11-analytics-design.md": {
+    "L0": [
+      "Analytics — Sub-project 1: Telemetry Collector + Analytics CLI — Capture every Claude tool call in SQLite and expose it via `sensei stats` so teams can measure sensei's real-world impact, track which tools are used,"
+    ],
+    "L1": [
+      "// Analytics — Sub-project 1: Telemetry Collector + Analytics CLI — Capture every Claude tool call in SQLite and expose it via `sensei stats` so teams can measure sensei's real-world impact, track which tools are used,",
+      "// ## Goal",
+      "// ## Architecture",
+      "// ### Overview",
+      "// ### New Package",
+      "// ## Event Schema",
+      "// ### `events` table",
+      "// ### `projects` table",
+      "// ### `daily_stats` table (pre-aggregated)",
+      "// ## Collector Daemon",
+      "// ### HTTP API",
+      "// ### Startup sequence",
+      "// ### JSONL fallback",
+      "// ### Daemon management",
+      "// ## Hook Scripts",
+      "// ## `sensei stats` CLI",
+      "// ### Flags",
+      "// ### JSON output schema",
+      "// ### Default output (7-day)",
+      "// ### `--gaps` output",
+      "// ## Error Handling",
+      "// ## Testing",
+      "// ## File Map"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/entry-point-adapters.ts": {
+    "L0": [
+      "export interface EntryPointCandidate",
+      "export async function inferEntryPoints(repoPath: string): Promise<EntryPointCandidate[]>"
+    ],
+    "L1": [
+      "// export interface EntryPointCandidate",
+      "// export async function inferEntryPoints(repoPath: string): Promise<EntryPointCandidate[]>"
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/llms-txt.ts": {
+    "L0": [
+      "export function buildSections(symbolMap: SymbolMap, entryPointPaths: string[]): LlmsTxtSection[]",
+      "export function renderSection(name: string, sources: string[], symbolMap: SymbolMap): string",
+      "export function parseLlmsTxt(content: string): Record<string, string>",
+      "export async function generateLlmsTxt("
+    ],
+    "L1": [
+      "// export function buildSections(symbolMap: SymbolMap, entryPointPaths: string[]): LlmsTxtSection[]",
+      "// export function renderSection(name: string, sources: string[], symbolMap: SymbolMap): string",
+      "// export function parseLlmsTxt(content: string): Record<string, string>",
+      "// export async function generateLlmsTxt("
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-12-llms-txt-traceability.md": {
+    "L0": [
+      "llms.txt Traceability + llmspec Auto-Update — Implementation Plan — > **For agentic workers:** REQUIRED: Use `superpowers:subagent-driven-development` (if subagents available) or `superpowers:executing-plans` to implem"
+    ],
+    "L1": [
+      "// llms.txt Traceability + llmspec Auto-Update — Implementation Plan — > **For agentic workers:** REQUIRED: Use `superpowers:subagent-driven-development` (if subagents available) or `superpowers:executing-plans` to implem",
+      "// ## Chunk 1: Foundation — Types, Entry-Point Adapters",
+      "// ### Task 1: Extend `LlmSpec` with `LlmsTxtSection`",
+      "// ### Task 2: Create `entry-point-adapters.spec.ts` (failing tests first)",
+      "// ### Task 3: Implement `entry-point-adapters.ts`",
+      "// ## Chunk 2: Generator — `llms-txt.ts`",
+      "// ### Task 4: Create `llms-txt.spec.ts` (failing tests first)",
+      "// ## boundaries\", () => {",
+      "// ## Entry Points\\",
+      "// ## packages/src\\",
+      "// ## Entry Points\\",
+      "// ## Entry Points\\",
+      "// ## packages/tools/src/tools\\",
+      "// ## packages/tools/src/tools\\",
+      "// ### Task 5: Implement `llms-txt.ts`",
+      "// ## \" boundaries; preamble (before first ##) is discarded.",
+      "// ## Chunk 3: Merge + Wire",
+      "// ### Task 6: Add `mergeLlmSpec` tests to `reindex.spec.ts` and update the overwrite test",
+      "// ### Task 7: Implement `mergeLlmSpec` in `reindex.ts` and wire new modules",
+      "// ### Task 8: Export new public types from `packages/tools/src/index.ts`",
+      "// ### Critical Files for Implementation"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/watch.spec.ts": {
+    "L0": [
+      "function makeWatcher"
+    ],
+    "L1": [
+      "// function makeWatcher"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-12-on-demand-reporting.md": {
+    "L0": [
+      "On-Demand Drift Reporting Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// On-Demand Drift Reporting Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Structured MCP output + watch --drift flag",
+      "// ### Task 1: Structured JSON from `check_drift` MCP tool",
+      "// ### Task 2: `sensei watch --drift` flag",
+      "// ### Task 3: Update traceability"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-12-on-demand-reporting-design.md": {
+    "L0": [
+      "On-Demand Drift Reporting — Design — **Feature:** `on-demand-reporting` in `docs/traceability.yaml` Make drift results actionable for agents (structured JSON from MCP) and surface drift a"
+    ],
+    "L1": [
+      "// On-Demand Drift Reporting — Design — **Feature:** `on-demand-reporting` in `docs/traceability.yaml` Make drift results actionable for agents (structured JSON from MCP) and surface drift a",
+      "// ## Goal",
+      "// ## Changes",
+      "// ### 1. Structured MCP output",
+      "// ### 2. Watch `--drift` flag",
+      "// ## Files Touched",
+      "// ## Testing",
+      "// ## Non-Goals"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-12-supabase-central-store-design.md": {
+    "L0": [
+      "Supabase Central Store — Design — Replace sensei's scattered SQLite + JSON file artifacts with a central Supabase (PostgreSQL) instance. A SvelteKit + rokkit web app reads from Supabas"
+    ],
+    "L1": [
+      "// Supabase Central Store — Design — Replace sensei's scattered SQLite + JSON file artifacts with a central Supabase (PostgreSQL) instance. A SvelteKit + rokkit web app reads from Supabas",
+      "// ## Goal",
+      "// ## Architecture",
+      "// ## Database Setup",
+      "// ## Schema",
+      "// ### `sensei.repos`",
+      "// ### `sensei.symbols`",
+      "// ### `sensei.chunks`",
+      "// ### `sensei.docs`",
+      "// ### `sensei.events`",
+      "// ### `sensei.benchmark_reports`",
+      "// ### `sensei.libraries`",
+      "// ### `sensei.references`",
+      "// ### `sensei.repo_libraries`",
+      "// ## Committed Repo Files (post-migration)",
+      "// ## Global Credentials",
+      "// ## Web App — `apps/dashboard`",
+      "// ## Implementation Order",
+      "// ## Non-Goals"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-12-supabase-backend-migration.md": {
+    "L0": [
+      "Supabase Backend Migration + Config Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Supabase Backend Migration + Config Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Config loader + Supabase client (packages/shared)",
+      "// ### Task 1: Config reader — `.sensei/config.yaml` + `~/.config/sensei/credentials.yaml`",
+      "// ### Task 2: Supabase client factory in shared",
+      "// ## Chunk 2: Collector migration — SQLite → Supabase",
+      "// ### Task 3: Migrate collector daemon to write to `sensei.events`",
+      "// ## Chunk 3: Indexer migration — write to Supabase",
+      "// ### Task 4: Write symbols and docs to Supabase after reindex",
+      "// ## Chunk 4: Repo registration — generate `.sensei/config.yaml`",
+      "// ### Task 5: Register repo in Supabase and write config on first index",
+      "// ## Chunk 5: Update traceability",
+      "// ### Task 6: Update traceability.yaml"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-12-supabase-database-setup.md": {
+    "L0": [
+      "Supabase Database Setup Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Supabase Database Setup Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Bootstrap — Supabase init + dbd project",
+      "// ### Task 1: Initialize Supabase project and dbd database folder",
+      "// ## Chunk 2: Core tables — repos, symbols, chunks, docs",
+      "// ### Task 2: DDL for repos, symbols, chunks, docs",
+      "// ## Chunk 3: Analytics and benchmarks",
+      "// ### Task 3: DDL for events and benchmark_reports",
+      "// ## Chunk 4: Knowledge base tables",
+      "// ### Task 4: DDL for libraries, references, repo_libraries",
+      "// ## Chunk 5: Seed data",
+      "// ### Task 5: Insert seed rows for web app development",
+      "// ## Chunk 6: Update traceability",
+      "// ### Task 6: Register database design in traceability.yaml"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-12-supabase-web-app.md": {
+    "L0": [
+      "Supabase Web App Dashboard Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Supabase Web App Dashboard Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Scaffold app and configure Supabase",
+      "// ### Task 1: Create SvelteKit app with rokkit + kavach",
+      "// ## Chunk 2: Dashboard page",
+      "// ### Task 2: Build the Dashboard overview page",
+      "// ## Chunk 3: Stats page",
+      "// ### Task 3: Build the Stats page",
+      "// ## Chunk 4: Repos page",
+      "// ### Task 4: Build the Repos page",
+      "// ## Chunk 5: Libraries and References pages",
+      "// ### Task 5: Build Libraries and References pages",
+      "// ## Chunk 6: Benchmark Reports page + navigation",
+      "// ### Task 6: Benchmark Reports page and app navigation"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/lib/supabase.ts": {
+    "L0": [
+      "export const supabase"
+    ],
+    "L1": [
+      "// export const supabase"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/+page.ts": {
+    "L0": [
+      "export const load: PageLoad"
+    ],
+    "L1": [
+      "// export const load: PageLoad"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/libraries/+page.ts": {
+    "L0": [
+      "export const load: PageLoad"
+    ],
+    "L1": [
+      "// export const load: PageLoad"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/benchmarks/+page.ts": {
+    "L0": [
+      "export const load: PageLoad"
+    ],
+    "L1": [
+      "// export const load: PageLoad"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/references/+page.ts": {
+    "L0": [
+      "export const load: PageLoad"
+    ],
+    "L1": [
+      "// export const load: PageLoad"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/repos/+page.ts": {
+    "L0": [
+      "export const load: PageLoad"
+    ],
+    "L1": [
+      "// export const load: PageLoad"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/stats/+page.ts": {
+    "L0": [
+      "export const load: PageLoad"
+    ],
+    "L1": [
+      "// export const load: PageLoad"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/README.md": {
+    "L0": [
+      "sv — Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli). If you're seeing this, you've probably already done"
+    ],
+    "L1": [
+      "// sv — Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli). If you're seeing this, you've probably already done",
+      "// ## Creating a project",
+      "// ## Developing",
+      "// ## Building"
+    ],
+    "L2": []
+  },
+  "packages/shared/src/config.spec.ts": {
+    "L0": [
+      "async function makeTmpDir"
+    ],
+    "L1": [
+      "// async function makeTmpDir"
+    ],
+    "L2": []
+  },
+  "packages/shared/src/config.ts": {
+    "L0": [
+      "export interface SenseiRepoConfig",
+      "export interface SenseiCredentials",
+      "export async function loadSenseiConfig(repoPath: string): Promise<SenseiRepoConfig | null>",
+      "export async function loadCredentials(homeDir?: string): Promise<SenseiCredentials | null>"
+    ],
+    "L1": [
+      "// export interface SenseiRepoConfig",
+      "// export interface SenseiCredentials",
+      "// Read .sensei/config.yaml from repoPath. Returns null if missing.\n// export async function loadSenseiConfig(repoPath: string): Promise<SenseiRepoConfig | null>",
+      "// Read credentials from ~/.config/sensei/credentials.yaml, or SUPABASE_SERVICE_KEY env.\n// export async function loadCredentials(homeDir?: string): Promise<SenseiCredentials | null>"
+    ],
+    "L2": []
+  },
+  "packages/shared/src/supabase-client.ts": {
+    "L0": [
+      "export async function makeSenseiClient(repoPath: string): Promise<SupabaseClient<any, \"sensei\"> | null>"
+    ],
+    "L1": [
+      "// export async function makeSenseiClient(repoPath: string): Promise<SupabaseClient<any, \"sensei\"> | null>"
+    ],
+    "L2": []
+  },
+  "packages/collector/src/supabase-writer.ts": {
+    "L0": [
+      "export interface SupabaseEvent",
+      "export async function writeEventToSupabase("
+    ],
+    "L1": [
+      "// export interface SupabaseEvent",
+      "// export async function writeEventToSupabase("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/supabase-index-writer.ts": {
+    "L0": [
+      "export interface TraceabilityEntry",
+      "export async function upsertSymbols(",
+      "export async function upsertDocs("
+    ],
+    "L1": [
+      "// export interface TraceabilityEntry",
+      "// export async function upsertSymbols(",
+      "// export async function upsertDocs("
+    ],
+    "L2": []
+  },
+  "packages/tools/src/tools/repo-registration.ts": {
+    "L0": [
+      "export interface RepoInfo",
+      "export async function registerRepo("
+    ],
+    "L1": [
+      "// export interface RepoInfo",
+      "// export async function registerRepo("
     ],
     "L2": []
   }

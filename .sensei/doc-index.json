@@ -1,441 +1,865 @@
 {
-  "lastIndexedCommit": "2f91a283f2d927f4150595b0720c974c78d0e34b",
+  "lastIndexedCommit": "39a7caa130c1252ac1d180b7dae94abbb8bc2623",
   "files": {
     "vitest.config.ts": {
-      "mtime": 1772926529367,
+      "mtime": 1773190492482.5352,
       "size": 126
     },
-    "tasks/score-coverage.ts": {
-      "mtime": 1772927336895,
-      "size": 4821
-    },
-    "packages/server/vitest.config.ts": {
-      "mtime": 1772915803325,
-      "size": 425
-    },
     "config/eslint.config.js": {
-      "mtime": 1772819710885,
+      "mtime": 1773190492454.1082,
       "size": 396
     },
-    "packages/tools/src/index-reader.ts": {
-      "mtime": 1772918061542,
-      "size": 947
-    },
-    "packages/mcp/vitest.config.ts": {
-      "mtime": 1772926537760,
-      "size": 175
-    },
     "config/vitest.config.base.ts": {
-      "mtime": 1772926534169,
+      "mtime": 1773190492454.5164,
       "size": 221
     },
-    "packages/server/src/index.ts": {
-      "mtime": 1772915932381,
-      "size": 436
+    "tasks/debug-coverage.ts": {
+      "mtime": 1773190492481.8926,
+      "size": 1412
     },
-    "packages/tools/vitest.config.ts": {
-      "mtime": 1772918054857,
-      "size": 139
+    "tasks/score-coverage.ts": {
+      "mtime": 1773190492482.3386,
+      "size": 4821
     },
-    "packages/server/src/serve.ts": {
-      "mtime": 1772915913729,
-      "size": 6095
+    "apps/dashboard/rokkit.config.js": {
+      "mtime": 1773363643087.7341,
+      "size": 294
     },
-    "packages/shared/src/constants.ts": {
-      "mtime": 1772914568698,
-      "size": 319
+    "apps/dashboard/uno.config.js": {
+      "mtime": 1773364121372.7964,
+      "size": 290
     },
-    "packages/tools/src/index.ts": {
-      "mtime": 1772918070582,
-      "size": 759
+    "apps/dashboard/vite.config.ts": {
+      "mtime": 1773363647673.1245,
+      "size": 294
     },
-    "packages/server/src/model/system-check.ts": {
-      "mtime": 1772915876088,
-      "size": 4385
+    "apps/dashboard/svelte.config.js": {
+      "mtime": 1773357319070.4004,
+      "size": 598
     },
-    "packages/server/src/serve.spec.ts": {
-      "mtime": 1772915927987,
-      "size": 4190
+    "packages/collector/vitest.config.ts": {
+      "mtime": 1773270196699.005,
+      "size": 425
     },
-    "packages/server/src/model/system-check.spec.ts": {
-      "mtime": 1772915884328,
-      "size": 2955
-    },
-    "packages/server/src/model/ollama-backend.ts": {
-      "mtime": 1772915836611,
-      "size": 4474
-    },
-    "packages/shared/src/types.ts": {
-      "mtime": 1772914876978,
-      "size": 3157
-    },
-    "packages/cli/vitest.config.ts": {
-      "mtime": 1772916046901,
-      "size": 139
-    },
-    "packages/server/src/__stubs__/bun-globals.ts": {
-      "mtime": 1772915817894,
-      "size": 2319
-    },
-    "packages/tools/src/tools/query.spec.ts": {
-      "mtime": 1772918061559,
-      "size": 3024
-    },
-    "packages/mcp/src/index.ts": {
-      "mtime": 1772919376145,
-      "size": 5497
+    "packages/mcp/vitest.config.ts": {
+      "mtime": 1773190492471.247,
+      "size": 175
     },
     "packages/cli/playwright.config.ts": {
-      "mtime": 1772819721487,
+      "mtime": 1773190492464.8186,
       "size": 194
     },
-    "packages/server/src/__stubs__/bun-sqlite.ts": {
-      "mtime": 1772915807546,
-      "size": 288
+    "packages/cli/vitest.config.ts": {
+      "mtime": 1773276828896.242,
+      "size": 425
     },
-    "packages/server/src/model/ollama-backend.spec.ts": {
-      "mtime": 1772915850351,
-      "size": 4149
+    "packages/tools/vitest.config.ts": {
+      "mtime": 1773264533513.6218,
+      "size": 209
     },
-    "packages/tools/src/index-reader.spec.ts": {
-      "mtime": 1772918061544,
-      "size": 1992
+    "packages/shared/vitest.config.ts": {
+      "mtime": 1773360114343.7427,
+      "size": 139
     },
-    "packages/tools/src/tools/context.spec.ts": {
-      "mtime": 1772918061548,
-      "size": 2504
+    "packages/server/vitest.config.ts": {
+      "mtime": 1773190492473.7563,
+      "size": 425
     },
-    "packages/shared/src/index.ts": {
-      "mtime": 1772914570706,
-      "size": 60
+    "apps/dashboard/src/app.d.ts": {
+      "mtime": 1773357319069.773,
+      "size": 274
     },
-    "packages/tools/src/tools/reindex.spec.ts": {
-      "mtime": 1772918061562,
-      "size": 8168
+    "packages/collector/src/daemon.spec.ts": {
+      "mtime": 1773362961735.2515,
+      "size": 2005
     },
-    "packages/tools/src/tools/reindex.ts": {
-      "mtime": 1772918061560,
-      "size": 17144
+    "packages/collector/src/daemon.ts": {
+      "mtime": 1773362948789.599,
+      "size": 3746
     },
-    "packages/tools/src/tools/project-memory.ts": {
-      "mtime": 1772918061554,
-      "size": 5231
+    "packages/collector/src/drain.spec.ts": {
+      "mtime": 1773362972306.2375,
+      "size": 2370
     },
-    "packages/tools/src/tools/drift.spec.ts": {
-      "mtime": 1772918061552,
-      "size": 2350
+    "packages/collector/src/drain.ts": {
+      "mtime": 1773362913045.7314,
+      "size": 2303
     },
-    "packages/tools/src/tools/drift.ts": {
-      "mtime": 1772918061550,
-      "size": 4542
+    "packages/collector/src/gaps.spec.ts": {
+      "mtime": 1773276572313.7595,
+      "size": 2862
     },
-    "packages/tools/src/tools/context.ts": {
-      "mtime": 1772918061546,
-      "size": 2241
+    "packages/collector/src/gaps.ts": {
+      "mtime": 1773276579815.2705,
+      "size": 1503
     },
-    "packages/tools/src/tools/project-memory.spec.ts": {
-      "mtime": 1772918061556,
-      "size": 3977
+    "packages/collector/src/index.ts": {
+      "mtime": 1773362952771.305,
+      "size": 469
     },
-    "packages/tools/src/tools/query.ts": {
-      "mtime": 1772918061557,
-      "size": 2215
+    "packages/collector/src/install.spec.ts": {
+      "mtime": 1773277593949.5127,
+      "size": 4074
     },
-    "packages/cli/src/names.spec.ts": {
-      "mtime": 1772846055159,
-      "size": 471
+    "packages/collector/src/install.ts": {
+      "mtime": 1773277578514.4402,
+      "size": 7151
     },
-    "packages/cli/src/cli.ts": {
-      "mtime": 1772925950460,
-      "size": 10132
+    "packages/collector/src/schema.spec.ts": {
+      "mtime": 1773276110725.9893,
+      "size": 2516
     },
-    "packages/cli/src/names.ts": {
-      "mtime": 1772846062218,
-      "size": 882
+    "packages/collector/src/schema.ts": {
+      "mtime": 1773276116519.2344,
+      "size": 1367
     },
-    "packages/cli/src/git.spec.ts": {
-      "mtime": 1772885739908,
-      "size": 2865
+    "packages/collector/src/stats.spec.ts": {
+      "mtime": 1773362989123.0974,
+      "size": 3880
+    },
+    "packages/collector/src/stats.ts": {
+      "mtime": 1773362932832.6565,
+      "size": 3472
+    },
+    "packages/collector/src/supabase-writer.spec.ts": {
+      "mtime": 1773360968493.552,
+      "size": 1347
+    },
+    "packages/collector/src/supabase-writer.ts": {
+      "mtime": 1773362891258.4521,
+      "size": 1315
+    },
+    "packages/collector/src/uuid.spec.ts": {
+      "mtime": 1773276041980.5718,
+      "size": 1322
+    },
+    "packages/collector/src/uuid.ts": {
+      "mtime": 1773276045769.124,
+      "size": 437
+    },
+    "packages/mcp/src/index.ts": {
+      "mtime": 1773333707302.7966,
+      "size": 6131
     },
     "packages/cli/src/claude.ts": {
-      "mtime": 1772829266388,
+      "mtime": 1773190492465.1724,
       "size": 774
     },
+    "packages/cli/src/cli.ts": {
+      "mtime": 1773334710884.9636,
+      "size": 13150
+    },
+    "packages/cli/src/git.spec.ts": {
+      "mtime": 1773190492469.3745,
+      "size": 2865
+    },
     "packages/cli/src/git.ts": {
-      "mtime": 1772885695510,
+      "mtime": 1773190492469.6172,
       "size": 2298
     },
-    "packages/cli/src/commands/status.ts": {
-      "mtime": 1772925943245,
-      "size": 1596
+    "packages/cli/src/names.spec.ts": {
+      "mtime": 1773190492469.7966,
+      "size": 471
     },
-    "packages/cli/src/commands/migrate.ts": {
-      "mtime": 1772925945656,
-      "size": 3152
+    "packages/cli/src/names.ts": {
+      "mtime": 1773190492469.9968,
+      "size": 882
     },
-    "packages/cli/src/commands/doctor.ts": {
-      "mtime": 1772829497884,
-      "size": 4116
+    "packages/shared/src/config.spec.ts": {
+      "mtime": 1773360094325.1892,
+      "size": 2517
     },
-    "packages/cli/src/commands/init.ts": {
-      "mtime": 1772925940952,
-      "size": 3902
+    "packages/shared/src/config.ts": {
+      "mtime": 1773360124184.5767,
+      "size": 1268
     },
-    "packages/cli/src/commands/benchmark-promote.ts": {
-      "mtime": 1772915633848,
-      "size": 7078
+    "packages/shared/src/constants.ts": {
+      "mtime": 1773190492474.1804,
+      "size": 319
     },
-    "packages/cli/src/commands/benchmark-inspect.spec.ts": {
-      "mtime": 1772851690329,
-      "size": 403
+    "packages/shared/src/index.ts": {
+      "mtime": 1773360183597.9856,
+      "size": 127
     },
-    "packages/cli/src/commands/setup.ts": {
-      "mtime": 1772891653120,
-      "size": 1103
+    "packages/shared/src/supabase-client.ts": {
+      "mtime": 1773360898267.4343,
+      "size": 846
     },
-    "packages/cli/src/commands/benchmark-promote.spec.ts": {
-      "mtime": 1772847465984,
-      "size": 1205
+    "packages/shared/src/types.ts": {
+      "mtime": 1773332174959.7488,
+      "size": 3330
     },
-    "packages/cli/src/commands/serve.ts": {
-      "mtime": 1772916038849,
-      "size": 101
+    "packages/server/src/index.ts": {
+      "mtime": 1773190492472.2297,
+      "size": 436
     },
-    "packages/cli/src/commands/benchmark-inspect.ts": {
-      "mtime": 1772851697149,
-      "size": 858
+    "packages/server/src/serve.spec.ts": {
+      "mtime": 1773190492473.3308,
+      "size": 4190
+    },
+    "packages/server/src/serve.ts": {
+      "mtime": 1773190492473.5461,
+      "size": 6095
+    },
+    "packages/tools/src/index-reader.spec.ts": {
+      "mtime": 1773190492475.485,
+      "size": 1992
+    },
+    "packages/tools/src/index-reader.ts": {
+      "mtime": 1773190492475.692,
+      "size": 947
+    },
+    "packages/tools/src/index.ts": {
+      "mtime": 1773332174959.911,
+      "size": 2007
+    },
+    "apps/dashboard/src/lib/index.ts": {
+      "mtime": 1773357319069.8345,
+      "size": 75
+    },
+    "apps/dashboard/src/lib/supabase.ts": {
+      "mtime": 1773358259582.2654,
+      "size": 224
+    },
+    "packages/collector/src/__stubs__/bun-globals.ts": {
+      "mtime": 1773275150452.7317,
+      "size": 2462
+    },
+    "packages/collector/src/__stubs__/bun-sqlite.ts": {
+      "mtime": 1773270192834.2378,
+      "size": 734
+    },
+    "apps/dashboard/src/routes/+page.ts": {
+      "mtime": 1773358361195.7314,
+      "size": 666
+    },
+    "packages/cli/src/__stubs__/bun-globals.ts": {
+      "mtime": 1773276826163.3713,
+      "size": 2462
+    },
+    "packages/cli/src/__stubs__/bun-sqlite.ts": {
+      "mtime": 1773276826161.7178,
+      "size": 734
     },
     "packages/cli/src/commands/add.ts": {
-      "mtime": 1772925938790,
+      "mtime": 1773190492465.7307,
       "size": 1261
     },
+    "packages/cli/src/commands/benchmark-coverage.ts": {
+      "mtime": 1773190492465.9487,
+      "size": 3177
+    },
     "packages/cli/src/commands/benchmark-doctor.spec.ts": {
-      "mtime": 1772886489572,
+      "mtime": 1773190492466.1846,
       "size": 5597
     },
     "packages/cli/src/commands/benchmark-doctor.ts": {
-      "mtime": 1772915643662,
+      "mtime": 1773190492466.4434,
       "size": 23518
     },
-    "tasks/benchmark-coverage.yaml": {
-      "mtime": 1772927231224,
-      "size": 2152
+    "packages/cli/src/commands/benchmark-indexer.ts": {
+      "mtime": 1773264533510.1758,
+      "size": 1998
     },
-    "tasks/sample.yaml": {
-      "mtime": 1772826368999,
-      "size": 2345
+    "packages/cli/src/commands/benchmark-inspect.spec.ts": {
+      "mtime": 1773190492466.6873,
+      "size": 403
+    },
+    "packages/cli/src/commands/benchmark-inspect.ts": {
+      "mtime": 1773190492466.908,
+      "size": 858
+    },
+    "packages/cli/src/commands/benchmark-populate.spec.ts": {
+      "mtime": 1773190492467.145,
+      "size": 4828
+    },
+    "packages/cli/src/commands/benchmark-populate.ts": {
+      "mtime": 1773190492467.464,
+      "size": 14257
+    },
+    "packages/cli/src/commands/benchmark-promote.spec.ts": {
+      "mtime": 1773190492467.6558,
+      "size": 1205
+    },
+    "packages/cli/src/commands/benchmark-promote.ts": {
+      "mtime": 1773190492467.8696,
+      "size": 7078
+    },
+    "packages/cli/src/commands/doctor.ts": {
+      "mtime": 1773190492468.0972,
+      "size": 4116
+    },
+    "packages/cli/src/commands/init.ts": {
+      "mtime": 1773190492468.3354,
+      "size": 3902
+    },
+    "packages/cli/src/commands/migrate.ts": {
+      "mtime": 1773190492468.5315,
+      "size": 3152
+    },
+    "packages/cli/src/commands/serve.ts": {
+      "mtime": 1773190492468.8396,
+      "size": 101
+    },
+    "packages/cli/src/commands/setup.ts": {
+      "mtime": 1773277537288.3103,
+      "size": 1711
+    },
+    "packages/cli/src/commands/stats.spec.ts": {
+      "mtime": 1773363024981.2214,
+      "size": 2367
+    },
+    "packages/cli/src/commands/stats.ts": {
+      "mtime": 1773363009547.0203,
+      "size": 3986
+    },
+    "packages/cli/src/commands/status.ts": {
+      "mtime": 1773190492469.1514,
+      "size": 1596
+    },
+    "packages/cli/src/commands/watch.spec.ts": {
+      "mtime": 1773335637006.0828,
+      "size": 4186
+    },
+    "packages/cli/src/commands/watch.ts": {
+      "mtime": 1773335422375.5562,
+      "size": 2578
+    },
+    "packages/server/src/__stubs__/bun-globals.ts": {
+      "mtime": 1773190492471.7732,
+      "size": 2319
+    },
+    "packages/server/src/__stubs__/bun-sqlite.ts": {
+      "mtime": 1773190492472.0085,
+      "size": 288
+    },
+    "packages/server/src/model/ollama-backend.spec.ts": {
+      "mtime": 1773356027853.9336,
+      "size": 4956
+    },
+    "packages/server/src/model/ollama-backend.ts": {
+      "mtime": 1773190492472.7004,
+      "size": 4950
+    },
+    "packages/server/src/model/system-check.spec.ts": {
+      "mtime": 1773190492472.9023,
+      "size": 2955
+    },
+    "packages/server/src/model/system-check.ts": {
+      "mtime": 1773190492473.1177,
+      "size": 4385
+    },
+    "packages/tools/src/tools/bm25.spec.ts": {
+      "mtime": 1773264533512.1152,
+      "size": 2160
+    },
+    "packages/tools/src/tools/bm25.ts": {
+      "mtime": 1773264533512.2236,
+      "size": 1747
+    },
+    "packages/tools/src/tools/chunker.spec.ts": {
+      "mtime": 1773264533512.3628,
+      "size": 4078
+    },
+    "packages/tools/src/tools/context.spec.ts": {
+      "mtime": 1773190492476.1704,
+      "size": 2504
+    },
+    "packages/tools/src/tools/chunker.ts": {
+      "mtime": 1773264533512.5022,
+      "size": 7036
+    },
+    "packages/tools/src/tools/context.ts": {
+      "mtime": 1773190492476.3628,
+      "size": 2241
+    },
+    "packages/tools/src/tools/coverage.spec.ts": {
+      "mtime": 1773190492476.5496,
+      "size": 4021
+    },
+    "packages/tools/src/tools/coverage.ts": {
+      "mtime": 1773190492476.7637,
+      "size": 3114
+    },
+    "packages/tools/src/tools/drift.spec.ts": {
+      "mtime": 1773190492477.1135,
+      "size": 2350
+    },
+    "packages/tools/src/tools/drift.ts": {
+      "mtime": 1773190492477.3506,
+      "size": 4542
+    },
+    "packages/tools/src/tools/embedder.ts": {
+      "mtime": 1773264533512.7612,
+      "size": 1166
+    },
+    "packages/tools/src/tools/embedder.spec.ts": {
+      "mtime": 1773356033200.9907,
+      "size": 1789
+    },
+    "packages/tools/src/tools/entry-point-adapters.spec.ts": {
+      "mtime": 1773332174960.0422,
+      "size": 7701
+    },
+    "packages/tools/src/tools/entry-point-adapters.ts": {
+      "mtime": 1773332174960.1611,
+      "size": 7205
+    },
+    "packages/tools/src/tools/llms-txt.spec.ts": {
+      "mtime": 1773332174960.3186,
+      "size": 9002
+    },
+    "packages/tools/src/tools/llms-txt.ts": {
+      "mtime": 1773332174960.4282,
+      "size": 4165
+    },
+    "packages/tools/src/tools/project-memory.spec.ts": {
+      "mtime": 1773190492477.583,
+      "size": 3977
+    },
+    "packages/tools/src/tools/project-memory.ts": {
+      "mtime": 1773190492477.7947,
+      "size": 5231
+    },
+    "packages/tools/src/tools/query.spec.ts": {
+      "mtime": 1773190492477.9966,
+      "size": 3024
+    },
+    "packages/tools/src/tools/query.ts": {
+      "mtime": 1773190492478.2053,
+      "size": 2215
+    },
+    "packages/tools/src/tools/reindex.spec.ts": {
+      "mtime": 1773332174960.6077,
+      "size": 14858
+    },
+    "packages/tools/src/tools/reindex.ts": {
+      "mtime": 1773361231495.67,
+      "size": 21306
+    },
+    "packages/tools/src/tools/repo-registration.spec.ts": {
+      "mtime": 1773361203060.6238,
+      "size": 1022
+    },
+    "packages/tools/src/tools/repo-registration.ts": {
+      "mtime": 1773361214682.0188,
+      "size": 1013
+    },
+    "packages/tools/src/tools/search.e2e.ts": {
+      "mtime": 1773264533513.1467,
+      "size": 1616
+    },
+    "packages/tools/src/tools/search.spec.ts": {
+      "mtime": 1773264533513.2793,
+      "size": 6545
+    },
+    "packages/tools/src/tools/search.ts": {
+      "mtime": 1773264533513.4377,
+      "size": 8034
+    },
+    "packages/tools/src/tools/supabase-index-writer.spec.ts": {
+      "mtime": 1773361100537.4434,
+      "size": 1409
+    },
+    "packages/tools/src/tools/supabase-index-writer.ts": {
+      "mtime": 1773361112029.4817,
+      "size": 1617
+    },
+    "apps/dashboard/src/routes/benchmarks/+page.ts": {
+      "mtime": 1773358493868.0134,
+      "size": 429
+    },
+    "apps/dashboard/src/routes/libraries/+page.ts": {
+      "mtime": 1773358491308.7202,
+      "size": 414
+    },
+    "apps/dashboard/src/routes/references/+page.ts": {
+      "mtime": 1773358628673.6526,
+      "size": 391
+    },
+    "apps/dashboard/src/routes/repos/+page.ts": {
+      "mtime": 1773358386859.4534,
+      "size": 426
+    },
+    "apps/dashboard/src/routes/stats/+page.ts": {
+      "mtime": 1773358449038.7805,
+      "size": 1301
+    },
+    "packages/tools/src/benchmark/indexer-comparison/ground-truth.spec.ts": {
+      "mtime": 1773264533510.9207,
+      "size": 1166
+    },
+    "packages/tools/src/benchmark/indexer-comparison/ground-truth.ts": {
+      "mtime": 1773264533511.105,
+      "size": 828
+    },
+    "packages/tools/src/benchmark/indexer-comparison/cocoindex-adapter.ts": {
+      "mtime": 1773264533510.8157,
+      "size": 3314
+    },
+    "packages/tools/src/benchmark/indexer-comparison/reporter.ts": {
+      "mtime": 1773264533511.2498,
+      "size": 3929
+    },
+    "packages/tools/src/benchmark/indexer-comparison/scorer.spec.ts": {
+      "mtime": 1773264533511.3855,
+      "size": 1666
+    },
+    "packages/tools/src/benchmark/indexer-comparison/scorer.ts": {
+      "mtime": 1773264533511.5,
+      "size": 2546
+    },
+    "packages/tools/src/benchmark/indexer-comparison/sensei-adapter.spec.ts": {
+      "mtime": 1773264533511.6094,
+      "size": 1257
+    },
+    "packages/tools/src/benchmark/indexer-comparison/sensei-adapter.ts": {
+      "mtime": 1773264533511.7236,
+      "size": 1231
+    },
+    "packages/tools/src/benchmark/indexer-comparison/types.ts": {
+      "mtime": 1773264533511.8364,
+      "size": 1255
     },
     "README.md": {
-      "mtime": 1772927047090,
+      "mtime": 1773190492453.1746,
       "size": 5496
     },
-    "docs/design/16-local-model-indexer.md": {
-      "mtime": 1772898771874,
-      "size": 12454
+    "database/design.yaml": {
+      "mtime": 1773359223334.2024,
+      "size": 278
     },
-    "docs/design/06-compression.md": {
-      "mtime": 1772816704843,
-      "size": 4848
+    "docs/traceability.yaml": {
+      "mtime": 1773361269484.2417,
+      "size": 19885
     },
-    "docs/design/04-llmspec.md": {
-      "mtime": 1772816496733,
-      "size": 5816
+    "results/indexer-comparison-2026-03-11.md": {
+      "mtime": 1773264533513.7483,
+      "size": 4143
     },
-    "docs/design/02-skills.md": {
-      "mtime": 1772816486296,
-      "size": 4940
+    "tasks/benchmark-coverage.yaml": {
+      "mtime": 1773190492481.6548,
+      "size": 2152
     },
-    "docs/design/09-cli.md": {
-      "mtime": 1772819143823,
-      "size": 12456
-    },
-    "docs/design/11-doc-doctor.md": {
-      "mtime": 1772826567205,
-      "size": 3720
-    },
-    "docs/design/15-package-adapters.md": {
-      "mtime": 1772898771873,
-      "size": 10240
-    },
-    "docs/design/05-indexing.md": {
-      "mtime": 1772816550160,
-      "size": 5037
-    },
-    "docs/design/13-traceability-matrix.md": {
-      "mtime": 1772825350961,
-      "size": 3548
-    },
-    "docs/design/README.md": {
-      "mtime": 1772898574131,
-      "size": 4267
+    "apps/dashboard/README.md": {
+      "mtime": 1773357319071.7798,
+      "size": 958
     },
     "docs/design/01-architecture.md": {
-      "mtime": 1772898585557,
-      "size": 9282
+      "mtime": 1773264533504.416,
+      "size": 9637
     },
-    "docs/design/08-benchmarking.md": {
-      "mtime": 1772815804878,
-      "size": 4756
+    "tasks/sample.yaml": {
+      "mtime": 1773190492482.1277,
+      "size": 2345
     },
-    "docs/design/14-server-package.md": {
-      "mtime": 1772898771872,
-      "size": 14027
-    },
-    "docs/design/07-drift.md": {
-      "mtime": 1772825332670,
-      "size": 4764
-    },
-    "docs/design/10-project-memory.md": {
-      "mtime": 1772822631617,
-      "size": 7869
+    "docs/design/02-skills.md": {
+      "mtime": 1773264533504.5493,
+      "size": 5245
     },
     "docs/design/03-mcp-server.md": {
-      "mtime": 1772822660888,
-      "size": 6571
+      "mtime": 1773264533504.6914,
+      "size": 7260
+    },
+    "docs/design/04-llmspec.md": {
+      "mtime": 1773264533504.835,
+      "size": 6245
+    },
+    "docs/design/05-indexing.md": {
+      "mtime": 1773264533504.9702,
+      "size": 5649
+    },
+    "docs/design/06-compression.md": {
+      "mtime": 1773264533505.1274,
+      "size": 5364
+    },
+    "docs/design/07-drift.md": {
+      "mtime": 1773264533505.2854,
+      "size": 5271
+    },
+    "docs/design/08-benchmarking.md": {
+      "mtime": 1773264533505.4172,
+      "size": 5289
+    },
+    "docs/design/09-cli.md": {
+      "mtime": 1773264533505.5571,
+      "size": 12976
+    },
+    "docs/design/10-project-memory.md": {
+      "mtime": 1773264533505.7026,
+      "size": 8433
+    },
+    "docs/design/11-doc-tools.md": {
+      "mtime": 1773264533505.8118,
+      "size": 8176
     },
     "docs/design/12-incremental-indexing.md": {
-      "mtime": 1772825306873,
-      "size": 3972
+      "mtime": 1773264533505.949,
+      "size": 4442
     },
-    "docs/templates/design.md": {
-      "mtime": 1772825237716,
-      "size": 1750
+    "docs/design/13-traceability-matrix.md": {
+      "mtime": 1773264533506.0718,
+      "size": 3998
     },
-    "docs/features/07-CLI.md": {
-      "mtime": 1772822651929,
-      "size": 11442
+    "docs/design/15-package-adapters.md": {
+      "mtime": 1773264533506.4116,
+      "size": 10598
     },
-    "docs/features/04-DocDriftDetection.md": {
-      "mtime": 1772825385206,
-      "size": 5317
+    "docs/design/14-server-package.md": {
+      "mtime": 1773264533506.225,
+      "size": 14284
     },
-    "docs/features/11-TraceabilityMatrix.md": {
-      "mtime": 1772825422532,
-      "size": 4028
+    "docs/design/16-local-model-indexer.md": {
+      "mtime": 1773264533506.5647,
+      "size": 12908
     },
-    "docs/templates/feature.md": {
-      "mtime": 1772825212900,
-      "size": 1146
+    "docs/design/18-response-cache.md": {
+      "mtime": 1773264533506.7783,
+      "size": 4460
     },
-    "docs/features/03-AgenticDevWorkflow.md": {
-      "mtime": 1772815460212,
-      "size": 5329
+    "docs/design/17-pattern-store.md": {
+      "mtime": 1773264533506.6716,
+      "size": 4285
     },
-    "docs/features/08-ProjectWorkflow.md": {
-      "mtime": 1772822591611,
-      "size": 7012
+    "docs/design/19-context-manager.md": {
+      "mtime": 1773264533506.8855,
+      "size": 4458
     },
-    "docs/features/05-ContextManagement.md": {
-      "mtime": 1772822639404,
-      "size": 5313
+    "docs/design/README.md": {
+      "mtime": 1773264533507.0146,
+      "size": 5006
     },
-    "docs/features/README.md": {
-      "mtime": 1772826573931,
-      "size": 6391
+    "docs/features/01-indexing.md": {
+      "mtime": 1773333108854.2603,
+      "size": 10961
     },
-    "docs/features/10-IncrementalIndexing.md": {
-      "mtime": 1772824963849,
-      "size": 3075
+    "docs/features/02-resolution.md": {
+      "mtime": 1773333108864.7275,
+      "size": 6514
     },
-    "docs/features/01-CodebaseIndexing.md": {
-      "mtime": 1772885276366,
-      "size": 6220
+    "docs/features/03-workflow.md": {
+      "mtime": 1773333108873.995,
+      "size": 13499
     },
-    "docs/features/09-DocDoctor.md": {
-      "mtime": 1772826567206,
-      "size": 4392
+    "docs/features/04-traceability.md": {
+      "mtime": 1773333108883.0747,
+      "size": 6739
     },
-    "docs/features/02-ContentCompression.md": {
-      "mtime": 1772815432564,
-      "size": 6958
+    "docs/features/05-context.md": {
+      "mtime": 1773333108892.662,
+      "size": 4732
     },
     "docs/features/06-Benchmarking.md": {
-      "mtime": 1772815530532,
-      "size": 5983
+      "mtime": 1773333108901.4395,
+      "size": 7502
     },
-    "docs/plans/2026-03-07-monorepo-package-split.md": {
-      "mtime": 1772912724561,
-      "size": 30062
+    "docs/features/07-CLI.md": {
+      "mtime": 1773333108910.9497,
+      "size": 10756
     },
-    "docs/plans/2026-03-06-doctor-benchmark.md": {
-      "mtime": 1772829081827,
-      "size": 27962
+    "docs/features/08-documentation.md": {
+      "mtime": 1773333108920.5237,
+      "size": 9480
     },
-    "docs/plans/2026-03-07-server-inference-package.md": {
-      "mtime": 1772899779777,
-      "size": 32883
+    "docs/features/09-patterns.md": {
+      "mtime": 1773333108928.896,
+      "size": 5483
+    },
+    "docs/features/10-caching.md": {
+      "mtime": 1773333108937.8706,
+      "size": 5166
+    },
+    "docs/features/11-implementation-sync.md": {
+      "mtime": 1773333108947.265,
+      "size": 6629
+    },
+    "docs/features/12-analytics.md": {
+      "mtime": 1773333108956.4858,
+      "size": 4163
+    },
+    "docs/features/README.md": {
+      "mtime": 1773267948169.175,
+      "size": 8565
+    },
+    "docs/plans/2026-03-06-ai-skills-repo-design.md": {
+      "mtime": 1772813612695.1035,
+      "size": 9400
+    },
+    "docs/plans/2026-03-06-ai-skills-repo.md": {
+      "mtime": 1773190492460.3264,
+      "size": 82929
     },
     "docs/plans/2026-03-06-benchmark-git-branches-design.md": {
-      "mtime": 1772844703004,
+      "mtime": 1773190492460.6184,
       "size": 7153
     },
-    "docs/plans/2026-03-06-promote-telemetry.md": {
-      "mtime": 1772839099184,
-      "size": 24795
-    },
     "docs/plans/2026-03-06-benchmark-git-branches.md": {
-      "mtime": 1772844911577,
+      "mtime": 1773190492460.914,
       "size": 33466
     },
     "docs/plans/2026-03-06-doctor-benchmark-design.md": {
-      "mtime": 1772828926947,
+      "mtime": 1773190492461.1562,
       "size": 5944
     },
+    "docs/plans/2026-03-06-doctor-benchmark.md": {
+      "mtime": 1773190492461.4092,
+      "size": 27962
+    },
     "docs/plans/2026-03-06-promote-telemetry-design.md": {
-      "mtime": 1772838999125,
+      "mtime": 1773190492461.665,
       "size": 5620
     },
-    "docs/plans/2026-03-06-ai-skills-repo.md": {
-      "mtime": 1772823018425,
-      "size": 82929
+    "docs/plans/2026-03-06-promote-telemetry.md": {
+      "mtime": 1773190492461.9292,
+      "size": 24795
     },
-    "skills/doc-drift-detector/SKILL.md": {
-      "mtime": 1772826289099,
-      "size": 2546
-    },
-    "docs/plans/2026-03-06-ai-skills-repo-design.md": {
-      "mtime": 1772813612695,
-      "size": 9400
-    },
-    "skills/context-manager/SKILL.md": {
-      "mtime": 1772826295156,
-      "size": 2834
-    },
-    "skills/codebase-indexer/extractor.md": {
-      "mtime": 1772820830110,
-      "size": 1934
+    "docs/plans/2026-03-07-benchmark-populate.md": {
+      "mtime": 1773190492462.2007,
+      "size": 21240
     },
     "docs/plans/2026-03-07-extract-tools-package.md": {
-      "mtime": 1772917951895,
+      "mtime": 1773190492462.361,
       "size": 16947
     },
+    "docs/plans/2026-03-07-monorepo-package-split.md": {
+      "mtime": 1773190492462.6636,
+      "size": 30062
+    },
+    "docs/plans/2026-03-07-populate-llmspec-skill.md": {
+      "mtime": 1773190492462.9321,
+      "size": 7962
+    },
+    "docs/plans/2026-03-07-server-inference-package.md": {
+      "mtime": 1773190492463.1455,
+      "size": 32883
+    },
     "skills/benchmark-runner/SKILL.md": {
-      "mtime": 1772820892412,
+      "mtime": 1773190492479.4202,
       "size": 3088
     },
-    "skills/codebase-indexer/SKILL.md": {
-      "mtime": 1772820846838,
-      "size": 2687
+    "docs/templates/design.md": {
+      "mtime": 1773190492463.4631,
+      "size": 1750
     },
-    "skills/project-workflow/SKILL.md": {
-      "mtime": 1772826316449,
-      "size": 2996
-    },
-    "skills/doc-doctor/SKILL.md": {
-      "mtime": 1772826960793,
-      "size": 1720
-    },
-    "skills/codebase-indexer/llmspec-template.yaml": {
-      "mtime": 1772820813477,
-      "size": 1201
+    "docs/templates/feature.md": {
+      "mtime": 1773190492463.6968,
+      "size": 1146
     },
     "skills/agentic-dev-workflow/SKILL.md": {
-      "mtime": 1772820804967,
+      "mtime": 1773190492479.15,
       "size": 2519
     },
+    "skills/codebase-indexer/SKILL.md": {
+      "mtime": 1773190492479.7063,
+      "size": 2672
+    },
+    "skills/codebase-indexer/extractor.md": {
+      "mtime": 1773190492479.8271,
+      "size": 1934
+    },
+    "skills/codebase-indexer/llmspec-template.yaml": {
+      "mtime": 1773190492479.9602,
+      "size": 1201
+    },
     "skills/content-compression/SKILL.md": {
-      "mtime": 1772820789454,
+      "mtime": 1773190492480.1135,
       "size": 2435
+    },
+    "skills/doc-doctor/SKILL.md": {
+      "mtime": 1773190492480.571,
+      "size": 1720
+    },
+    "skills/context-manager/SKILL.md": {
+      "mtime": 1773190492480.3474,
+      "size": 2834
+    },
+    "skills/doc-guide/SKILL.md": {
+      "mtime": 1773264533513.9285,
+      "size": 7200
+    },
+    "skills/doc-guide/design-template.md": {
+      "mtime": 1773264533514.0598,
+      "size": 1586
+    },
+    "skills/doc-guide/feature-template.md": {
+      "mtime": 1773264533514.2026,
+      "size": 958
+    },
+    "skills/populate-llmspec/SKILL.md": {
+      "mtime": 1773190492481.0332,
+      "size": 3255
+    },
+    "skills/doc-drift-detector/SKILL.md": {
+      "mtime": 1773190492480.8015,
+      "size": 2546
+    },
+    "skills/project-workflow/SKILL.md": {
+      "mtime": 1773190492481.2903,
+      "size": 2996
+    },
+    "apps/dashboard/static/robots.txt": {
+      "mtime": 1773357319069.5273,
+      "size": 63
+    },
+    "docs/superpowers/plans/2026-03-10-indexer-comparison.md": {
+      "mtime": 1773264533508.7207,
+      "size": 28679
+    },
+    "docs/superpowers/plans/2026-03-11-analytics-collector.md": {
+      "mtime": 1773269911090.6372,
+      "size": 69431
+    },
+    "docs/superpowers/plans/2026-03-11-doc-guide-traceability.md": {
+      "mtime": 1773264533508.921,
+      "size": 61237
+    },
+    "docs/superpowers/plans/2026-03-11-indexer-multimodal-search.md": {
+      "mtime": 1773264533509.1196,
+      "size": 54370
+    },
+    "docs/superpowers/plans/2026-03-12-llms-txt-traceability.md": {
+      "mtime": 1773330660558.3381,
+      "size": 53807
+    },
+    "docs/superpowers/plans/2026-03-12-on-demand-reporting.md": {
+      "mtime": 1773333551728.3179,
+      "size": 11797
+    },
+    "docs/superpowers/plans/2026-03-12-supabase-backend-migration.md": {
+      "mtime": 1773341144913.191,
+      "size": 26996
+    },
+    "docs/superpowers/plans/2026-03-12-supabase-database-setup.md": {
+      "mtime": 1773340994881.4958,
+      "size": 18503
+    },
+    "docs/superpowers/plans/2026-03-12-supabase-web-app.md": {
+      "mtime": 1773341004933.9238,
+      "size": 17685
+    },
+    "docs/superpowers/specs/2026-03-10-indexer-comparison-design.md": {
+      "mtime": 1773264533509.29,
+      "size": 4224
+    },
+    "docs/superpowers/specs/2026-03-11-analytics-design.md": {
+      "mtime": 1773268053157.9866,
+      "size": 8070
+    },
+    "docs/superpowers/specs/2026-03-11-doc-guide-traceability-design.md": {
+      "mtime": 1773264533509.4292,
+      "size": 10440
+    },
+    "docs/superpowers/specs/2026-03-11-indexer-multimodal-search-design.md": {
+      "mtime": 1773264533509.5784,
+      "size": 14123
+    },
+    "docs/superpowers/specs/2026-03-12-on-demand-reporting-design.md": {
+      "mtime": 1773333459085.353,
+      "size": 2302
+    },
+    "docs/superpowers/specs/2026-03-12-supabase-central-store-design.md": {
+      "mtime": 1773340124261.499,
+      "size": 7745
     }
   }
 }
