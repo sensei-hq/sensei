@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface ToolStat {
   name: string;
@@ -26,115 +26,83 @@ export interface StatsOptions {
   since?: string;   // YYYY-MM-DD
 }
 
-/**
- * Build composable WHERE conditions.
- * --since can combine with --tool or --session per the spec.
- * --session alone has no date filter (returns all events for that session).
- */
-function buildConditions(opts: StatsOptions): { conditions: string[]; params: unknown[] } {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (opts.session) {
-    conditions.push("session_id = ?");
-    params.push(opts.session);
-  }
-
-  if (opts.since) {
-    conditions.push("ts >= ?");
-    params.push(new Date(opts.since).getTime());
-  } else if (!opts.all && !opts.session) {
-    // Default: last 7 days — NOT applied when --session is active,
-    // because --session must return all events for that session regardless of age.
-    conditions.push("ts >= ?");
-    params.push(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  }
-
-  if (opts.tool) {
-    conditions.push("tool = ?");
-    params.push(opts.tool);
-  }
-
-  return { conditions, params };
-}
-
-export function queryStats(db: Database, opts: StatsOptions): StatsResult {
+export async function queryStats(client: SupabaseClient, opts: StatsOptions): Promise<StatsResult> {
   const now = Date.now();
   const toDate = new Date(now).toISOString().slice(0, 10);
 
-  const { conditions, params } = buildConditions(opts);
-  const baseWhere = conditions.length > 0 ? conditions.join(" AND ") : "1";
-
-  // For session mode, return the chronological event list
+  // Session mode: return chronological events for that session (no date filter)
   if (opts.session) {
-    const events = db
-      .prepare(`SELECT * FROM events WHERE ${baseWhere} ORDER BY ts ASC`)
-      .all(...params) as Array<Record<string, unknown>>;
-    const firstTs = (events[0]?.ts as number | undefined) ?? now;
+    const { data: events } = await client
+      .from("events")
+      .select("*")
+      .eq("session_id", opts.session)
+      .order("ts", { ascending: true });
+
+    const rows = (events ?? []).map((e: any) => ({ ...e, ts: new Date(e.ts as string).getTime() }));
+    const firstTs = (rows[0]?.ts as number | undefined) ?? now;
+
     return {
       period: { from: new Date(firstTs).toISOString().slice(0, 10), to: toDate },
-      total_calls: events.length,
+      total_calls: rows.length,
       tools: [],
       sessions: 1,
       projects: 0,
-      events,
+      events: rows,
     };
   }
 
-  const postWhere = `${baseWhere} AND phase = 'post'`;
+  // Determine date filter
+  const since: string | undefined = opts.all
+    ? undefined
+    : opts.since
+      ? new Date(opts.since).toISOString()
+      : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const totalRow = db
-    .prepare(`SELECT COUNT(*) as n FROM events WHERE ${postWhere}`)
-    .get(...params) as { n: number };
-  const total_calls = totalRow.n;
+  // Build query for post-phase events
+  let query = client.from("events").select("*").eq("phase", "post");
+  if (since) query = query.gte("ts", since);
+  if (opts.tool) query = query.eq("tool", opts.tool);
 
-  const toolRows = db.prepare(`
-    SELECT
-      tool,
-      COUNT(*) as calls,
-      AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) as success_rate,
-      AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE NULL END) as avg_duration_ms,
-      MAX(ts) as last_called
-    FROM events
-    WHERE ${postWhere}
-    GROUP BY tool
-    ORDER BY calls DESC
-  `).all(...params) as Array<{
-    tool: string;
-    calls: number;
-    success_rate: number;
-    avg_duration_ms: number;
-    last_called: number;
-  }>;
+  const { data: events } = await query;
+  const rows = events ?? [];
 
-  const tools: ToolStat[] = toolRows.map(r => ({
-    name: r.tool,
-    calls: r.calls,
-    success_rate: Math.round((r.success_rate ?? 0) * 100) / 100,
-    avg_duration_ms: Math.round(r.avg_duration_ms ?? 0),
-    last_called: r.last_called,
-  }));
+  // Aggregate client-side
+  const toolCounts = new Map<string, { calls: number; successes: number; totalDuration: number; lastTs: number }>();
+  for (const e of rows) {
+    const entry = toolCounts.get(e.tool) ?? { calls: 0, successes: 0, totalDuration: 0, lastTs: 0 };
+    entry.calls++;
+    if (e.success === true) entry.successes++;
+    if (e.duration_ms != null) entry.totalDuration += e.duration_ms;
+    entry.lastTs = Math.max(entry.lastTs, new Date(e.ts as string).getTime());
+    toolCounts.set(e.tool, entry);
+  }
 
-  const sessionsRow = db
-    .prepare(`SELECT COUNT(DISTINCT session_id) as n FROM events WHERE ${postWhere}`)
-    .get(...params) as { n: number };
+  const tools: ToolStat[] = Array.from(toolCounts.entries())
+    .map(([name, s]) => ({
+      name,
+      calls: s.calls,
+      success_rate: Math.round((s.calls > 0 ? s.successes / s.calls : 0) * 100) / 100,
+      avg_duration_ms: Math.round(s.calls > 0 ? s.totalDuration / s.calls : 0),
+      last_called: s.lastTs,
+    }))
+    .sort((a, b) => b.calls - a.calls);
 
-  const projectsRow = db
-    .prepare(`SELECT COUNT(DISTINCT project_path) as n FROM events WHERE ${postWhere}`)
-    .get(...params) as { n: number };
+  const total_calls = rows.length;
+  const sessions = new Set(rows.map((e: any) => e.session_id)).size;
+  const projects = new Set(rows.map((e: any) => e.project_path)).size;
 
   const fromTs = opts.all
-    ? (db.prepare("SELECT MIN(ts) as t FROM events").get() as { t: number | null })?.t ?? now
-    : opts.since
-      ? new Date(opts.since).getTime()
+    ? (rows.length > 0 ? Math.min(...rows.map((e: any) => new Date(e.ts as string).getTime())) : now)
+    : since
+      ? new Date(since).getTime()
       : now - 7 * 24 * 60 * 60 * 1000;
 
   const result: StatsResult = {
     period: { from: new Date(fromTs).toISOString().slice(0, 10), to: toDate },
     total_calls,
     tools,
-    sessions: sessionsRow.n,
-    projects: projectsRow.n,
+    sessions,
+    projects,
   };
 
   if (opts.tool && tools.length > 0) {
