@@ -7,40 +7,40 @@ type: feature
 
 > Sensei measures quality, attribution, and improvement — and makes it visible
 
-Knowing that an agent finished a task is not the same as knowing it finished it well. Sensei captures every tool call, every turn, and every session outcome, then distils those signals into a First-Time-Right score that distinguishes a vague spec from a bad agent. Developers rate goals, run benchmarks, and compare models — not with intuition, but with reproducible numbers stored in Supabase and surfaced in a dashboard that keeps improving as the team keeps working. Anonymised aggregate data across all sensei users powers real-world benchmarks and a personalised coaching layer that tells each developer exactly what changes would improve their implementation cycle — starting with the highest-leverage variable: requirement quality.
+Knowing that an agent finished a task is not the same as knowing it finished it well. Sensei captures every tool call, every turn, and every session outcome, then distils those signals into a First-Time-Right score that distinguishes a vague spec from a bad agent. Developers rate goals, run benchmarks, and compare models — not with intuition, but with reproducible numbers persisted and surfaced in a dashboard that keeps improving as the team keeps working. Anonymised aggregate data across all sensei users powers real-world benchmarks and a personalised coaching layer that tells each developer exactly what changes would improve their implementation cycle — starting with the highest-leverage variable: requirement quality.
 
 ## Features
 
 ### Telemetry Collection
 
-PreToolUse and PostToolUse hook events are captured for every tool call and stored in `sensei.events`. When Supabase is unavailable the collector writes JSONL to disk and drains the file to Supabase on reconnect. Each event records: tool name, phase, duration_ms, success, session_id, project_path, model_id, model_provider, and token counts. The telemetry daemon runs on `localhost:51789`.
+PreToolUse and PostToolUse hook events are captured for every tool call and stored persistently. When the backend is unavailable the collector writes events to disk and drains them on reconnect. Each event records: tool name, phase, duration, success, session, project, model, provider, and token counts.
 
 ```gherkin
 Feature: Telemetry Collection
 
-  Scenario: Tool call events are recorded in Supabase
-    Given the sensei daemon is running and Supabase is reachable
+  Scenario: Tool call events are recorded
+    Given the sensei daemon is running and the backend is reachable
     When the agent calls the read_file MCP tool
-    Then a PreToolUse event is inserted into sensei.events before the call executes
-    And a PostToolUse event is inserted after the call completes
-    And both events include: tool_name "read_file", session_id, duration_ms, and success
+    Then a PreToolUse event is recorded before the call executes
+    And a PostToolUse event is recorded after the call completes
+    And both events include: tool name, session, duration, and success status
 
-  Scenario: JSONL fallback activates when Supabase is unavailable
-    Given Supabase is unreachable
+  Scenario: Disk fallback activates when the backend is unavailable
+    Given the backend is unreachable
     When the agent calls any MCP tool
-    Then the event is written to the JSONL fallback file on disk
+    Then the event is written to a fallback file on disk
     And no error is surfaced to the agent
 
-  Scenario: JSONL events are drained on reconnect
-    Given the JSONL fallback file contains 47 events written during an outage
-    When the sensei daemon starts and successfully connects to Supabase
-    Then all 47 events are inserted into sensei.events
-    And the JSONL file is cleared after successful drain
+  Scenario: Queued events are drained on reconnect
+    Given the fallback file contains 47 events written during an outage
+    When the sensei daemon starts and successfully connects to the backend
+    Then all 47 events are stored persistently
+    And the fallback file is cleared after successful drain
 ```
 
 ### Task and Turn Tracking
 
-Each agent session is recorded in `task_sessions` with metadata including repo_id, agent name, model_id, task description, task type, and status. Individual turns are recorded in `task_turns` capturing per-turn model and token data. Task type is auto-detected from keywords or an optional local LLM classifier.
+Each agent session is recorded with metadata including the repo, agent name, model, task description, task type, and status. Individual turns capture per-turn model and token data. Task type is auto-detected from keywords or an optional local model classifier.
 
 ```gherkin
 Feature: Task and Turn Tracking
@@ -48,31 +48,30 @@ Feature: Task and Turn Tracking
   Scenario: Session is created when a task begins
     Given the developer starts a new Claude session in a sensei-instrumented repo
     When the UserPromptSubmit hook fires with "fix the broken auth middleware"
-    Then a row is inserted into task_sessions with status "in_progress"
-    And task_type is auto-detected as "fix" from the keyword "fix"
+    Then a session record is created with status "in_progress"
+    And the task type is auto-detected as "fix" from the keyword
 
   Scenario: Per-turn token data is recorded including mid-session model switches
-    Given a session is in progress and the developer switches from claude-3-5-sonnet to claude-3-opus mid-session
-    Then a new task_turns row is created for each turn
-    And the model_id and model_provider columns reflect the model used for that specific turn
-    And user_tokens, agent_tokens, and pack_tokens are recorded per turn
+    Given a session is in progress and the developer switches models mid-session
+    Then each turn is recorded with the model used for that specific turn
+    And user tokens, agent tokens, and context pack tokens are recorded per turn
 
   Scenario: Session is marked completed when the agent signals task done
-    Given a task_session with status "in_progress"
+    Given a task session with status "in_progress"
     When the agent calls the MCP tool complete_task with a summary
-    Then the task_sessions row is updated to status "completed"
-    And ended_at is set to the current timestamp
+    Then the session is updated to status "completed"
+    And the end time is recorded
 
   Scenario: Abandoned session is detected after inactivity
-    Given a task_session with status "in_progress" and no turns for 4 hours
+    Given a task session with status "in_progress" and no turns for 4 hours
     When the sensei daemon runs its session cleanup job
     Then the session status is updated to "abandoned"
-    And the event is logged to sensei.events
+    And the event is recorded in telemetry
 ```
 
 ### FTR Scoring (First-Time-Right)
 
-FTR is a composite score from 0.0 to 1.0 stored in `sensei.task_outcomes`. It aggregates six weighted signals: turns taken (30%), refinements requested (20%), no reverts within N commits (20%), tests pass on first run (15%), no task revisit within 7 days (10%), and no bugs filed against session output (5%). Developer vs agent attribution distinguishes a vague spec from a clear spec with wrong output.
+FTR is a composite score from 0.0 to 1.0 stored with each task outcome. It aggregates six weighted signals: turns taken (30%), refinements requested (20%), no reverts within N commits (20%), tests pass on first run (15%), no task revisit within 7 days (10%), and no bugs filed against session output (5%). Developer vs agent attribution distinguishes a vague spec from a clear spec with wrong output.
 
 ```gherkin
 Feature: FTR Scoring
@@ -86,8 +85,8 @@ Feature: FTR Scoring
   Scenario: Task revisit within 7 days reduces the FTR score
     Given a task was completed 5 days ago and a new session opens for the same file and feature area
     When the new session is linked to the original task
-    Then the original task_outcomes score is reduced by the revisit penalty (10%)
-    And the outcome record is updated in sensei.task_outcomes
+    Then the original outcome score is reduced by the revisit penalty
+    And the outcome record is updated
 
   Scenario: Attribution distinguishes vague spec from bad agent output
     Given a task where the developer rated the spec as vague
@@ -100,12 +99,12 @@ Feature: FTR Scoring
     Given a completed session with no developer rating after 24 hours
     When sensei runs the heuristic FTR calculation
     Then a score is computed from automated signals only (turns, reverts, test results)
-    And the task_outcomes row is created with rating_source set to "heuristic"
+    And the outcome record is created indicating the score was computed by heuristic rather than developer rating
 ```
 
 ### Quality Rating UI
 
-The web dashboard groups session turns by summarised goal and lets the developer rate each goal as pass, fail, or partial. Ratings are stored in `task_outcomes` and integrated with Claude's existing feedback mechanism. Historical FTR trends are visible per repo, per agent, and per model.
+The web dashboard groups session turns by summarised goal and lets the developer rate each goal as pass, fail, or partial. Ratings are stored alongside the task outcome and integrated with Claude's existing feedback mechanism. Historical FTR trends are visible per repo, per agent, and per model.
 
 ```gherkin
 Feature: Quality Rating UI
@@ -119,19 +118,19 @@ Feature: Quality Rating UI
   Scenario: Developer rates a goal as partial
     Given a goal card for "add rate limiting middleware" in the dashboard
     When the developer clicks the "partial" rating button
-    Then a task_outcomes row is created or updated with ftr_rating "partial" for that goal
+    Then the outcome record for that goal is updated with a "partial" rating
     And the overall session FTR score is recalculated
 
   Scenario: FTR trend is visible per model in the dashboard
     Given 30 days of task outcomes across two models: claude-3-5-sonnet and claude-3-opus
     When the developer opens the Model Comparison view
     Then a trend chart shows average FTR score per week for each model
-    And the chart allows filtering by repo and task_type
+    And the chart allows filtering by repo and task type
 ```
 
 ### Benchmarking
 
-A task corpus in `tasks/sample.yaml` provides representative developer tasks for A/B evaluation. Runs compare with-skills vs without-skills configurations across metrics: tokens, interactions, tool calls, and task completion. Results are stored in `sensei.benchmark_reports` and compared via CLI.
+A task corpus in `tasks/sample.yaml` provides representative developer tasks for A/B evaluation. Runs compare with-skills vs without-skills configurations across metrics: tokens, interactions, tool calls, and task completion. Results are stored persistently and compared via CLI.
 
 ```gherkin
 Feature: Benchmarking
@@ -140,7 +139,7 @@ Feature: Benchmarking
     Given tasks/sample.yaml contains 10 representative tasks
     When the developer runs sensei benchmark run --config with-skills
     Then each task is executed against the current agent configuration
-    And results are stored in sensei.benchmark_reports with run_id, config, and per-task metrics
+    And results are stored with the run identifier, configuration, and per-task metrics
 
   Scenario: A/B comparison shows improvement from skills
     Given two benchmark runs: run-001 (without-skills) and run-002 (with-skills)
@@ -160,7 +159,7 @@ Feature: Benchmarking
 
 The single highest-leverage variable in FTR is the quality of the requirement given to the agent. Vague requirements produce refinement loops. Concrete requirements with explicit constraints, acceptance criteria, and examples produce first-time-right output. Sensei measures requirement quality automatically and correlates it with outcomes across all sessions — showing developers precisely where upfront investment in elaboration pays off.
 
-Requirement quality is scored at task start (0.0–1.0) from: description length, presence of acceptance criteria, specificity keywords ("must", "should not", "returns", "given/when/then"), examples provided, and referenced context (files, symbols, docs). The score is stored in `task_sessions.req_quality_score` and correlated with FTR in `task_outcomes`.
+Requirement quality is scored at task start (0.0–1.0) from: description length, presence of acceptance criteria, specificity keywords ("must", "should not", "returns", "given/when/then"), examples provided, and referenced context (files, symbols, docs). The score is stored with the session and correlated with FTR outcomes.
 
 ```gherkin
 Feature: Requirement Quality Scoring
@@ -168,22 +167,22 @@ Feature: Requirement Quality Scoring
   Scenario: Vague requirement receives a low quality score
     Given a developer submits the task: "fix the login bug"
     When sensei scores the requirement at session start
-    Then req_quality_score is below 0.3
+    Then the requirement quality score is below 0.3
     And the session is flagged for elaboration guidance
     And the dashboard shows the suggested elaboration prompt inline
 
   Scenario: Concrete requirement receives a high quality score
     Given a developer submits the task: "The login endpoint returns 500 when the email contains a plus sign. It should return 200 and accept the user. Affected file: src/auth/login.ts. Acceptance: existing tests pass plus a new test for plus-sign emails."
     When sensei scores the requirement
-    Then req_quality_score is above 0.8
+    Then the requirement quality score is above 0.8
     And no elaboration prompt is shown
 
   Scenario: Aggregate shows req quality correlates with FTR
-    Given 90 days of sessions with both req_quality_score and ftr_score recorded
+    Given 90 days of sessions with both requirement quality score and FTR recorded
     When the developer opens the Insights view
-    Then a scatter chart shows req_quality_score on the x-axis and ftr_score on the y-axis
-    And the trend line shows positive correlation with R² displayed
-    And the chart is filterable by task_type and agent
+    Then a scatter chart shows requirement quality on the x-axis and FTR on the y-axis
+    And the trend line shows positive correlation with statistical confidence displayed
+    And the chart is filterable by task type and agent
 
   Scenario: Developer sees time-to-complete vs req quality
     Given sessions where elaboration took >2 minutes before first tool call
@@ -292,14 +291,14 @@ Feature: Analytics CLI and Dashboard
   Scenario: sensei stats --gaps reports missed tool opportunities
     Given 5 sessions where the agent ran raw bash cat/grep commands instead of sensei tools
     When the developer runs sensei stats --gaps
-    Then each bypassed tool usage is listed with: session_id, command used, sensei tool that could have been used
+    Then each bypassed tool usage is listed with: session, command used, and the sensei tool that could have been used
     And a summary count of total missed opportunities is shown
 
   Scenario: sensei stats --json outputs machine-readable data
-    Given a week of session data in sensei.events
+    Given a week of session data
     When the developer runs sensei stats --json
     Then the output is valid JSON with the same fields as the default summary
-    And it can be piped into jq or written to a file without parsing errors
+    And it can be piped into standard tools or written to a file without parsing errors
 
   Scenario: Dashboard shows turn timeline for a session
     Given a session with 8 turns and attached telemetry events
