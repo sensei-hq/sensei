@@ -7,7 +7,7 @@ description: Use when a request touches 5+ files or mentions "all", "every", "re
 
 ## Overview
 
-Decompose broad requests into focused agent chunks with minimal, targeted context. Coordinating context holds only lightweight scan and shared brief. Full reading happens inside dispatched agents.
+Decompose broad requests into focused agent chunks. Coordinating context holds only lightweight scan and shared brief. Full reading happens inside dispatched agents.
 
 ## When to Use
 
@@ -21,17 +21,17 @@ Decompose broad requests into focused agent chunks with minimal, targeted contex
 
 **Do not read file bodies in steps 1–3. Filenames and headers only.**
 
-Impulse to "understand before clustering" is the bulk reading this prevents. Proceed to Step 2 after the lightweight scan — do not read any file body, even the first one.
+The impulse to "understand before clustering" is exactly what this prevents. Proceed to Step 2 after the lightweight scan — do not read file bodies, even the first one.
 
 ## The Protocol
 
 ### Step 1 — Lightweight Scan
 
-Filenames, frontmatter, first ~10 lines only. For docs: `id`, `type`, overview. For code: exports, imports. This is the only coordinating-context reading.
+Filenames, frontmatter, first ~10 lines. For docs: `id`, `type`, overview. For code: exports, imports.
 
 ### Step 2 — Extract Shared Context
 
-Compact brief (~100 tokens) applying to every agent. Architecture constraint, style rule, or pattern — extract once, never re-derive per agent.
+Compact brief (~100 tokens) applying to all agents. Extract once, never re-derive.
 
 Examples: "All `.index/` → Supabase tables", "Remove implementation, keep behavior", "Follow existing frontmatter format"
 
@@ -73,10 +73,10 @@ Use `superpowers:dispatching-parallel-agents` for parallel; sequential in order.
 
 | Mistake | Fix |
 |---|---|
-| "Quick read to understand" | That IS the bulk reading. Headers only. |
+| "Quick read to understand" | That's the bulk reading. Headers only. |
 | Keep reading after file 1 | Stop. Proceed to Step 2. |
-| Silent tool calls, no narration | Announce the skill, follow steps explicitly. |
-| Re-derive context per agent | Write once in Step 2, paste to all. |
+| Silent tool calls, no narration | Announce and follow steps explicitly. |
+| Re-derive context per agent | Write once, paste to all. |
 | 15 single-file agents | Cluster 3–5 files per agent. |
 | Force-split coupled work | Keep together. |
 | Skip for 6 files | 5+ threshold. Use protocol. |
