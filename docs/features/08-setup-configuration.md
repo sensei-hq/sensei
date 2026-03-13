@@ -13,24 +13,24 @@ Getting a new tool adopted depends almost entirely on how hard the first five mi
 
 ### sensei init
 
-A single command that detects the project stack, registers the repo in Supabase, runs the initial indexing pipeline, generates `AGENTS.md`, installs agent adapters for all detected agents, and writes `.sensei/config.yaml`. There is no migration path — the project is pre-release and always starts fresh.
+A single command that detects the project stack, registers the repo, runs the initial indexing pipeline, generates `AGENTS.md`, installs agent adapters for all detected agents, and writes `.sensei/config.yaml`. There is no migration path — the project is pre-release and always starts fresh.
 
 ```gherkin
 Feature: sensei init
 
-  Scenario: Developer initialises a new repo with local Supabase
+  Scenario: Developer initialises a new repo in local mode
     Given a code repository with package.json and no .sensei/ directory
-    And supabase start has been run and local Supabase is available
+    And a local backend instance is running
     When the developer runs sensei init
-    Then the repo is registered in the local Supabase instance
+    Then the repo is registered with the local backend
     And the initial indexing pipeline runs and indexes all source files
     And AGENTS.md is created at the repo root
     And .sensei/config.yaml is written with mode: local
 
-  Scenario: Developer initialises with cloud Supabase
-    Given the developer has set SUPABASE_URL and SUPABASE_ANON_KEY environment variables
+  Scenario: Developer initialises in cloud mode
+    Given the developer has configured cloud backend credentials in their environment
     When the developer runs sensei init
-    Then the repo is registered in the cloud Supabase project
+    Then the repo is registered with the cloud backend
     And .sensei/config.yaml is written with mode: cloud
 
   Scenario: Agent adapters are installed for detected agents
@@ -43,40 +43,40 @@ Feature: sensei init
   Scenario: Init is idempotent when run a second time
     Given a repo where sensei init has already been run
     When the developer runs sensei init again
-    Then no duplicate Supabase registrations are created
-    And existing .sensei/config.yaml is preserved unless --force is passed
+    Then no duplicate registrations are created
+    And existing .sensei/config.yaml is preserved unless a force option is passed
     And a summary of what was updated vs skipped is printed
 ```
 
 ### Deployment Modes
 
-Sensei supports local deployment via `supabase start` (Docker) and cloud deployment via supabase.com. Both modes use the same Supabase client. The mode is set in `.sensei/config.yaml`. pgvector ships by default with `supabase start`. Supabase is always required — there is no fallback to `.sensei/` JSON files.
+Sensei supports local deployment (running entirely on your machine) and cloud deployment. Both modes use the same configuration format and feature set. The mode is set in `.sensei/config.yaml`. A backend is always required — there is no fallback to local files only.
 
 ```gherkin
 Feature: Deployment Modes
 
-  Scenario: Local mode connects to supabase start
+  Scenario: Local mode connects to the local backend
     Given .sensei/config.yaml has mode: local
-    When any sensei command that writes to the database runs
-    Then the Supabase client connects to http://localhost:54321
-    And pgvector queries execute successfully against the local instance
+    When any sensei command that writes data runs
+    Then the client connects to the local backend instance
+    And all queries execute successfully against the local instance
 
-  Scenario: Cloud mode connects to supabase.com
-    Given .sensei/config.yaml has mode: cloud and SUPABASE_URL is set to a cloud project URL
-    When any sensei command that writes to the database runs
-    Then the Supabase client connects to the cloud project URL
-    And the same schema and queries work without modification
+  Scenario: Cloud mode connects to the cloud backend
+    Given .sensei/config.yaml has mode: cloud and cloud credentials are configured
+    When any sensei command that writes data runs
+    Then the client connects to the cloud backend
+    And the same features and queries work without modification
 
-  Scenario: Missing Supabase connection fails with a clear error
-    Given .sensei/config.yaml has mode: local but supabase start is not running
+  Scenario: Missing backend connection fails with a clear error
+    Given .sensei/config.yaml has mode: local but the local backend is not running
     When the developer runs sensei index
-    Then the command exits with an error: "Cannot connect to local Supabase. Run: supabase start"
-    And no fallback to JSON files is attempted
+    Then the command exits with a clear error explaining how to start the local backend
+    And no fallback to local files only is attempted
 ```
 
 ### Model Configuration Hierarchy
 
-Global model configuration lives in `~/.config/sensei/config.yaml` and covers inference provider, base URL, and model assignments for embedding, indexing, extraction, classification, and default tasks. Project overrides in `.sensei/config.yaml` can replace individual model assignments without restating the full config. The `ModelBackend` interface is provider-agnostic, and `TokenCounter` selects the appropriate counting strategy per provider.
+Global model configuration lives in `~/.config/sensei/config.yaml` and covers inference provider, base URL, and model assignments for embedding, indexing, extraction, classification, and default tasks. Project overrides in `.sensei/config.yaml` can replace individual model assignments without restating the full config. The model backend is provider-agnostic, and token counting selects the appropriate strategy per provider.
 
 ```gherkin
 Feature: Model Configuration Hierarchy
@@ -94,22 +94,22 @@ Feature: Model Configuration Hierarchy
     When sensei runs a classification task for this project
     Then "llama3.2" is used as the model
 
-  Scenario: TokenCounter selects strategy based on provider
-    Given the configured model is claude-3-5-sonnet via the Anthropic provider
+  Scenario: Token counting selects strategy based on provider
+    Given the configured model is from the Anthropic provider
     When sensei counts tokens for a context pack
-    Then the Anthropic API tokenizer is used
+    Then the provider-appropriate tokenization strategy is used
     And the count is accurate to within 1% of the actual API token count
 
-  Scenario: OpenAI-compatible provider is used via ModelBackend interface
-    Given .sensei/config.yaml sets provider to "lm-studio" with base_url "http://localhost:1234/v1"
+  Scenario: OpenAI-compatible provider is used transparently
+    Given .sensei/config.yaml sets an OpenAI-compatible provider with its base URL
     When sensei calls the indexing model
-    Then the request is sent to http://localhost:1234/v1 using the OpenAI-compatible client
-    And the response is handled identically to any other ModelBackend provider
+    Then the request is sent to the configured endpoint using the compatible client
+    And the response is handled identically to any other provider
 ```
 
 ### Agent Adapter Setup
 
-`sensei setup` detects which agents are configured for the repo by checking for agent-specific directories (`.claude/`, `.cursor/`, `.opencode/`, etc.), installs skills to the appropriate locations, writes agent-specific configuration files, and registers all required hooks. A specific agent can be added with `sensei setup --agent <name>`.
+`sensei setup` detects which agents are configured for the repo by checking for agent-specific directories, installs skills to the appropriate locations, writes agent-specific configuration files, and registers all required hooks. A specific agent can be added with `sensei setup --agent <name>`.
 
 ```gherkin
 Feature: Agent Adapter Setup
@@ -145,27 +145,27 @@ Feature: Ranking Strategy Configuration
   Scenario: Default ranking chain is used when none is configured
     Given .sensei/config.yaml has no ranking_chain entry
     When the agent calls context_pack
-    Then the default chain runs: diff_first_bfs → traceability_boost → external_docs → semantic → bm25
+    Then the default chain runs: diff-first traversal, traceability boost, external docs, semantic search, and keyword ranking
     And results are returned within the configured token budget
 
   Scenario: Project disables semantic ranking for latency
-    Given .sensei/config.yaml sets ranking_chain to [diff_first_bfs, bm25]
+    Given .sensei/config.yaml sets the ranking chain to diff-first traversal and keyword ranking only
     When the agent calls context_pack
-    Then no semantic embedding query is made
+    Then no semantic search is performed
     And the response latency is lower than with the default chain
-    And results are still ranked by diff relevance and BM25 score
+    And results are still ranked by diff relevance and keyword score
 
   Scenario: Traceability boost elevates linked files
-    Given the ranking_chain includes traceability_boost
-    And the current task touches a file linked to a feature doc in sensei.traceability
+    Given the ranking chain includes traceability boost
+    And the current task touches a file linked to a feature doc
     When the agent calls context_pack
     Then the linked feature doc appears in the top 3 results
-    And its rank position is higher than its BM25 or semantic score alone would produce
+    And its rank position is higher than its traversal or semantic score alone would produce
 ```
 
 ### Library Registry Updates
 
-`sensei update-registry` fetches the latest `lib_registry` from a hosted JSON endpoint and merges new library entries into the bundled list. Custom libraries are registered in `.sensei/config.yaml` with a source path or `llms_txt_url` and an optional skill generation flag.
+`sensei update-registry` fetches the latest library registry from a hosted source and merges new library entries into the bundled list. Custom libraries are registered in `.sensei/config.yaml` with a source path or llms.txt URL and an optional skill generation flag.
 
 ```gherkin
 Feature: Library Registry Updates
@@ -178,13 +178,13 @@ Feature: Library Registry Updates
     And existing entries are preserved unless the remote version field is newer
 
   Scenario: Custom library is registered in project config
-    Given .sensei/config.yaml has a custom_libs entry for "dbd" with source_path "../dbd/src" and generate_skill: true
+    Given .sensei/config.yaml has a custom_libs entry for "dbd" with a source path and skill generation enabled
     When the developer runs sensei index
     Then "dbd" source files are scanned and indexed
     And .sensei/skills/dbd.md is generated after indexing completes
 
-  Scenario: Custom library with llms_txt_url skips source scan for covered symbols
-    Given .sensei/config.yaml registers "kavach" with llms_txt_url "https://kavach.dev/llms.txt"
+  Scenario: Custom library with llms.txt URL skips source scan for covered symbols
+    Given .sensei/config.yaml registers "kavach" with a configured llms.txt URL
     When the developer runs sensei index
     Then kavach's llms.txt is fetched and parsed first
     And source indexing runs only for kavach symbols absent from the llms.txt content
@@ -192,27 +192,27 @@ Feature: Library Registry Updates
 
 ### Project Config Editing
 
-Layer 2 metadata (`project_config`) is editable via the dashboard or CLI. Fields include project description, team guidelines, custom context, and agent preferences. Editing any field triggers skill regeneration for affected agents.
+User-authored project configuration is editable via the dashboard or CLI. Fields include project description, team guidelines, custom context, and agent preferences. Editing any field triggers skill regeneration for affected agents.
 
 ```gherkin
 Feature: Project Config Editing
 
   Scenario: Developer updates team guidelines via CLI
-    Given a project registered in Supabase
+    Given a registered project
     When the developer runs sensei config set guidelines "Always write tests before implementation"
-    Then the project_config record in Supabase is updated with the new guideline
+    Then the project configuration is updated with the new guideline
     And affected skill files are queued for regeneration
 
   Scenario: Skill files are regenerated after config change
-    Given a project_config change updates the "agent_preferences" field
+    Given a project configuration change updating the agent preferences
     When the regeneration job runs
     Then AGENTS.md is rewritten to reflect the updated preferences
-    And .claude/skills/project.md is updated with the new content
+    And installed skill files are updated with the new content
     And unchanged skill files are not rewritten
 
-  Scenario: Dashboard edits persist to Supabase
+  Scenario: Dashboard edits persist immediately
     Given the developer opens the project settings view in the dashboard
     When they update the project description and click Save
-    Then the project_config row in Supabase is updated immediately
+    Then the project configuration is updated immediately
     And a toast notification confirms the save and notes that skill regeneration has been queued
 ```

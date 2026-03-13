@@ -7,7 +7,7 @@ type: feature
 
 > Your agent gets exactly what it needs for the current task, nothing more
 
-Agents default to reading whole files and loading broad context, which burns token budget on code that has nothing to do with the task at hand. Sensei's context pipeline runs Rank → Slice → Assemble to produce a tight ContextPack: only the symbols that matter, trimmed to relevant line ranges, deduplicated against what the agent already read this session, and capped to a hard token budget.
+Agents default to reading whole files and loading broad context, which burns token budget on code that has nothing to do with the task at hand. Sensei's context pipeline ranks, slices, and assembles a tight ContextPack: only the symbols that matter, trimmed to relevant line ranges, deduplicated against what the agent already read this session, and capped to a hard token budget.
 
 ## Features
 
@@ -46,7 +46,7 @@ Feature: context_pack
 
 ### Diff-First BFS Ranking
 
-The ranking stage seeds a breadth-first traversal from the most task-relevant entry points. Files in the current git diff receive a 2.0x score multiplier; the active file receives 1.5x. BFS neighbors inherit a 0.65x decay per hop through the call graph. The ranking strategy chain is configurable: `diff_first_bfs → traceability_boost → external_docs → semantic → bm25`.
+The ranking stage seeds a breadth-first traversal from the most task-relevant entry points. Files in the current git diff receive a higher base score; the active file also receives a boost. Neighbors decay in relevance with each hop through the call graph. The ranking strategy chain is configurable and can include diff-first traversal, traceability boosting, external docs, semantic search, and keyword-based ranking.
 
 ```gherkin
 Feature: Diff-First BFS Ranking
@@ -54,14 +54,14 @@ Feature: Diff-First BFS Ranking
   Scenario: Files in git diff are ranked highest
     Given a repo where src/payments/charge.ts and src/payments/retry.ts have uncommitted changes
     When the ranking stage runs for a task about payment processing
-    Then both changed files receive a 2.0x base score multiplier
+    Then both changed files receive a boosted base score
     And they appear at the top of the ranked file list
 
   Scenario: BFS neighbors decay by hop distance
-    Given an indexed repo where charge.ts (score 2.0) calls validateCard.ts and logTransaction.ts
+    Given an indexed repo where charge.ts calls validateCard.ts and logTransaction.ts
     When BFS ranking traverses one hop from charge.ts
-    Then validateCard.ts and logTransaction.ts each receive a score of 2.0 * 0.65 = 1.3
-    And files two hops away receive 2.0 * 0.65 * 0.65 = 0.845
+    Then validateCard.ts and logTransaction.ts each receive a lower score than charge.ts
+    And files two hops away receive a further reduced score
 
   Scenario: Traceability boost elevates requirement-linked files
     Given a repo with a traceability link from requirement REQ-42 to src/billing/invoice.ts
@@ -79,7 +79,7 @@ Feature: Diff-First BFS Ranking
 
 ### AST Symbol Slicing
 
-Instead of including full files, the slicing stage extracts only the function and class bodies relevant to the task, using line ranges from `sensei.symbols`. Symbols are scored by task keyword match and call-graph proximity. The highest-scoring symbols are selected; adjacent line ranges with a gap of 3 lines or fewer are merged into a single slice.
+Instead of including full files, the slicing stage extracts only the function and class bodies relevant to the task, using line ranges from the symbol index. Symbols are scored by task keyword match and call-graph proximity. The highest-scoring symbols are selected; adjacent line ranges with a small gap are merged into a single slice.
 
 ```gherkin
 Feature: AST Symbol Slicing
@@ -114,7 +114,7 @@ Feature: AST Symbol Slicing
 
 ### Session Deduplication
 
-Sensei tracks every file the agent has read in the current session via a `PostToolUse` hook that writes to `sensei.session_reads`. When assembling a `ContextPack`, files already read and unchanged since they were read are skipped. This typically saves 15–30% of tokens on turn 2 and beyond.
+Sensei tracks every file the agent has read in the current session via a `PostToolUse` hook. When assembling a `ContextPack`, files already read and unchanged since they were read are skipped. This typically saves 15–30% of tokens on turn 2 and beyond.
 
 ```gherkin
 Feature: Session Deduplication
@@ -136,8 +136,8 @@ Feature: Session Deduplication
   Scenario: PostToolUse hook records file reads automatically
     Given an agent that calls read_file("src/config.ts") directly
     When the PostToolUse hook fires after the tool call
-    Then a row is written to sensei.session_reads for src/config.ts
-    And the row records the session_id, file path, and timestamp
+    Then src/config.ts is recorded as read for the current session
+    And the record includes the session, file path, and timestamp
 
   Scenario: Deduplication saves tokens on multi-turn sessions
     Given a session where the agent read 20 files on turns 1 and 2
@@ -149,7 +149,7 @@ Feature: Session Deduplication
 
 ### Token Budget Management
 
-Each `context_pack` call operates within a hard token budget (default 8K, configurable per repo). Token counting is model-aware via a `TokenCounter` interface with provider-specific implementations (Anthropic API, tiktoken, gpt-tokenizer). Budget is allocated as: header ~100 tokens, git diff ≤20%, doc sections ≤20%, code slices fill the remainder in descending rank order. External doc chunks are capped at 10–15%.
+Each `context_pack` call operates within a hard token budget (default 8K, configurable per repo). Token counting is model-aware, using the appropriate counting strategy per provider. Budget is allocated proportionally: a small header, a capped share for git diff, a capped share for doc sections, and code slices filling the remainder in descending rank order. External doc chunks are subject to their own cap within the doc section budget.
 
 ```gherkin
 Feature: Token Budget Management
@@ -169,8 +169,8 @@ Feature: Token Budget Management
 
   Scenario: Token counter is model-aware
     Given a session using an Anthropic Claude model
-    When the TokenCounter counts tokens for a candidate slice
-    Then it uses the Anthropic token counting API
+    When the token counter counts tokens for a candidate slice
+    Then the count uses the appropriate tokenization strategy for that provider
     And the count matches the model's actual tokenization
 
   Scenario: External doc chunks are capped
@@ -217,7 +217,7 @@ Feature: load_context and recommend_next
 
 ### Answer-Driven Relevance Learning
 
-After each agent response, Sensei parses the reply to identify which symbols were cited or used. Hit and miss rates for symbols are updated in `sensei.repo_memory`. Future ranking calls apply learned score multipliers (0.5x for consistently missed symbols, up to 2.0x for consistently cited ones), making `context_pack` more accurate with each session.
+After each agent response, Sensei parses the reply to identify which symbols were cited or used. Hit and miss rates for symbols are updated in persistent project memory. Future ranking calls apply learned score multipliers, reducing the rank of consistently uncited symbols and elevating consistently cited ones, making `context_pack` more accurate with each session.
 
 ```gherkin
 Feature: Answer-Driven Relevance Learning
@@ -225,19 +225,19 @@ Feature: Answer-Driven Relevance Learning
   Scenario: Cited symbols receive a positive relevance signal
     Given a session where the agent's response cited validatePayment and chargeCard
     When the relevance learning stage processes the response
-    Then sensei.repo_memory records a hit for validatePayment and chargeCard
-    And their ranking multipliers are increased toward 2.0x
+    Then a positive relevance signal is recorded for validatePayment and chargeCard
+    And their ranking multipliers are increased
 
   Scenario: Loaded but uncited symbols receive a negative signal
     Given a session where tokenizeCard was included in the ContextPack but never mentioned in responses
     When the relevance learning stage processes the session
-    Then sensei.repo_memory records a miss for tokenizeCard
-    And its ranking multiplier is decreased toward 0.5x
+    Then a negative relevance signal is recorded for tokenizeCard
+    And its ranking multiplier is decreased
 
   Scenario: Learned multipliers affect future ranking
-    Given that validatePayment has accumulated a 1.8x multiplier over 10 sessions
+    Given that validatePayment has accumulated a strong positive multiplier over 10 sessions
     When a new context_pack call ranks symbols for a payments task
-    Then validatePayment's BFS score is multiplied by 1.8
+    Then validatePayment's score is boosted by the learned multiplier
     And it appears higher in the ranked list than symbols with no learning signal
 
   Scenario: Relevance learning improves across sessions

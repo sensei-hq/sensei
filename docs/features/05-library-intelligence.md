@@ -13,7 +13,7 @@ Third-party libraries and internal shared packages are a major source of agent c
 
 ### Custom Library Indexing
 
-Internal shared libraries (e.g. rokkit, kavach, dbd) are indexed from source using the same Parse/Index pipeline as project code. The source path is declared in `.sensei/config.yaml` under `custom_libs`, and each library receives a synthetic `repo_id` of the form `{parent}::lib::{name}` so Rank and Slice queries require no special casing.
+Internal shared libraries (e.g. rokkit, kavach, dbd) are indexed from source using the same pipeline as project code. The source path is declared in `.sensei/config.yaml` under `custom_libs`, and each library is tracked separately so ranking and slicing queries treat them consistently with project code.
 
 ```gherkin
 Feature: Custom Library Indexing
@@ -22,27 +22,26 @@ Feature: Custom Library Indexing
     Given a .sensei/config.yaml with custom_libs entry for "rokkit" at "../rokkit/src"
     When the developer runs sensei index
     Then rokkit source files are scanned and parsed
-    And symbols are stored with repo_id "sensei::lib::rokkit"
-    And rokkit symbols appear in search results alongside project code
+    And rokkit symbols are indexed and appear in search results alongside project code
 
   Scenario: Incremental re-index on file change
     Given rokkit has been indexed and one file "rokkit/src/button.ts" has changed
     When the developer runs sensei index
-    Then only "rokkit/src/button.ts" is re-parsed based on mtime
+    Then only the changed file is re-parsed
     And unchanged rokkit files are not re-processed
-    And the symbol map for button.ts is updated
+    And the symbol index for that file is updated
 
   Scenario: Force full rebuild of a custom library
     Given rokkit has been indexed
-    When the developer runs sensei index --force
-    Then all rokkit source files are re-parsed regardless of mtime
-    And the complete symbol map for rokkit is rebuilt from scratch
+    When the developer requests a full rescan
+    Then all rokkit source files are re-parsed regardless of prior change detection
+    And the complete symbol index for rokkit is rebuilt from scratch
 
   Scenario: Custom lib symbols are included in context_pack
     Given rokkit is indexed and a project file imports ButtonGroup from rokkit
     When the agent calls context_pack for a task touching that import
     Then rokkit/src/button-group.ts symbols appear in the packed context
-    And the repo_id in the response identifies them as library symbols
+    And the response identifies them as library symbols
 ```
 
 ### llms.txt Priority
@@ -53,14 +52,14 @@ Feature: Custom Library Indexing
 Feature: llms.txt Priority
 
   Scenario: Remote llms.txt is fetched and parsed first
-    Given a custom_libs entry for "rokkit" with llms_txt_url "https://rokkit.dev/llms.txt"
+    Given a custom_libs entry for "rokkit" with a configured llms.txt URL
     When the developer runs sensei index
-    Then sensei fetches https://rokkit.dev/llms.txt before scanning source
-    And doc chunks from llms.txt are stored with source "llms_txt"
-    And source indexing only runs for symbols absent from llms.txt
+    Then sensei fetches the llms.txt content before scanning source
+    And documentation from llms.txt is indexed with priority
+    And source indexing only runs for symbols absent from the llms.txt content
 
-  Scenario: Bundled llms.txt file is used when URL is not set
-    Given a custom_libs entry for "kavach" with llms_txt_path "./vendor/kavach/llms.txt"
+  Scenario: Bundled llms.txt file is used when a URL is not set
+    Given a custom_libs entry for "kavach" with a local llms.txt path configured
     When the developer runs sensei index
     Then sensei reads the local llms.txt file
     And its content is parsed and indexed before source files are scanned
@@ -74,64 +73,63 @@ Feature: llms.txt Priority
 
 ### External Doc Registry
 
-The bundled `lib_registry` maps known libraries to their documentation URL templates and section structure. The registry is updated via `sensei update-registry` and accepts community pull requests. Per-repo usage is tracked in the `external_refs` table; doc content is cached in the global `external_docs` table shared across all repos.
+The bundled library registry maps known libraries to their documentation URL templates and section structure. The registry is updated via `sensei update-registry` and accepts community pull requests. Per-repo library usage is tracked and doc content is cached globally, shared across all repos.
 
 ```gherkin
 Feature: External Doc Registry
 
   Scenario: Registry entry drives doc URL resolution
-    Given lib_registry contains an entry for "zod" with doc_url_template "https://zod.dev/{section}"
+    Given the library registry contains an entry for "zod" with a documentation URL template
     And the project's package.json lists "zod" as a dependency
     When the agent calls get_lib_docs("zod", "schema")
-    Then sensei constructs a URL from the template and fetches the relevant page
-    And the fetched content is cached in external_docs with no repo_id
+    Then sensei constructs the URL from the template and fetches the relevant page
+    And the fetched content is cached globally for reuse
 
-  Scenario: Detected import registers library in external_refs
+  Scenario: Detected import registers library for doc retrieval
     Given the project imports from "drizzle-orm" in three source files
     When sensei index runs
-    Then "drizzle-orm" is added to the external_refs table for this repo
-    And its doc_url_template from lib_registry is linked to the entry
+    Then "drizzle-orm" is registered as a library used by this repo
+    And its documentation URL template from the registry is linked to the entry
 
   Scenario: Registry is updated from hosted JSON
-    Given the current lib_registry does not contain "effect"
+    Given the current bundled registry does not contain "effect"
     When the developer runs sensei update-registry
-    Then the hosted registry JSON is fetched
+    Then the hosted registry is fetched
     And the new "effect" entry is merged into the bundled registry
-    And no existing entries are overwritten unless the version field is newer
+    And no existing entries are overwritten unless the remote version is newer
 ```
 
 ### Two-Tier Doc Retrieval
 
-Tier 1 is a lightweight root index (`doc_index_pages` table) holding a summary per documentation page, refreshed every 24 hours by a background daemon. Tier 2 is the on-demand page cache (`external_docs` table) with pgvector embeddings and a 7-day TTL. Full crawl is opt-in per library; by default only API reference and changelog sections are targeted.
+Tier 1 is a lightweight root index holding a summary per documentation page, refreshed periodically by a background daemon. Tier 2 is the on-demand page cache with semantic search enabled and a time-to-live expiry. Full crawl is opt-in per library; by default only API reference and changelog sections are targeted.
 
 ```gherkin
 Feature: Two-Tier Doc Retrieval
 
   Scenario: Root index is populated on first doc access
-    Given "svelte" is in external_refs and has no doc_index_pages entries yet
+    Given "svelte" is registered as a library dependency with no cached documentation yet
     When the agent calls get_lib_docs("svelte", "stores")
-    Then sensei fetches the Svelte docs index page
-    And stores one doc_index_pages row per discovered page with a summary
+    Then sensei fetches the Svelte docs index page and stores a summary per discovered page
     And then fetches the "stores" page to answer the query
 
   Scenario: Tier 2 cache hit avoids network fetch
-    Given the external_docs table has a cached entry for svelte/stores with TTL not expired
+    Given a cached entry for svelte/stores whose TTL has not expired
     When the agent calls get_lib_docs("svelte", "stores")
     Then the cached content is returned without a network request
-    And the response metadata includes cached_at and ttl_expires_at
+    And the response metadata includes when it was cached and when it expires
 
   Scenario: Stale cache entry is served while refreshing
-    Given an external_docs entry for svelte/stores where TTL has expired
+    Given a cached entry for svelte/stores where the TTL has expired
     When the agent calls get_lib_docs("svelte", "stores")
     Then the stale cached content is returned immediately
     And a background refresh is triggered
-    And the response context_pack stats mark the chunk as stale:true
+    And the response metadata indicates the chunk is stale
 
-  Scenario: Daemon refreshes root index every 24 hours
-    Given the doc_index_pages entry for "drizzle-orm" was last refreshed 25 hours ago
+  Scenario: Daemon refreshes root index periodically
+    Given the doc index entry for "drizzle-orm" was last refreshed more than 24 hours ago
     When the sensei daemon runs its scheduled doc refresh job
     Then the Drizzle ORM docs index page is re-fetched
-    And updated doc_index_pages rows replace the stale ones
+    And the updated summaries replace the stale ones
 ```
 
 ### get_lib_docs MCP Tool
@@ -142,22 +140,22 @@ Feature: Two-Tier Doc Retrieval
 Feature: get_lib_docs MCP Tool
 
   Scenario: Agent retrieves docs for a known library topic
-    Given "zod" is in external_refs and its docs are cached
+    Given "zod" is a registered library dependency with cached documentation
     When the agent calls get_lib_docs("zod", "transform")
     Then relevant doc chunks for zod transforms are returned
-    And each chunk includes: source_url, section, content, and token_count
+    And each chunk includes: source URL, section, content, and token count
 
   Scenario: Cache miss on a small page is resolved synchronously
-    Given the external_docs table has no entry for "hono/routing"
-    And the hono routing page is under 500ms to fetch
+    Given no cached documentation exists for "hono/routing"
+    And the hono routing page is quick to fetch
     When the agent calls get_lib_docs("hono", "routing")
     Then sensei fetches the page synchronously
-    And the result is stored in external_docs
+    And the result is cached for future use
     And the content is returned in the same response
 
   Scenario: Background prefetch fires when lib imports are ranked
     Given "effect" is detected in ranked files during context_pack assembly
-    And no external_docs entries exist for "effect"
+    And no cached documentation exists for "effect"
     When context_pack is called before any get_lib_docs call
     Then a background prefetch for the effect API reference is triggered
     And the next get_lib_docs("effect", ...) call will find a warm cache
@@ -188,12 +186,12 @@ Feature: Auto-Generated Lib Skills
     Given rokkit is indexed and .sensei/skills/rokkit.md exists
     And rokkit/src/dialog.ts has been modified
     When the developer runs sensei index
-    Then only the dialog-related sections of rokkit.md are regenerated
+    Then only the sections of rokkit.md related to the changed file are regenerated
     And unaffected sections are preserved
 
-  Scenario: Force flag triggers full skill rebuild
+  Scenario: Full rescan triggers a full skill rebuild
     Given .sensei/skills/rokkit.md exists
-    When the developer runs sensei index --force
+    When the developer requests a full rescan
     Then rokkit.md is fully regenerated from all current source files
     And the previous file is replaced
 ```
