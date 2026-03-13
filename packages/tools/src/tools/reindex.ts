@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 import yaml from "js-yaml";
 import fg from "fast-glob";
 import type { SymbolMap, LlmSpec, LlmsTxtSection } from "@sensei/shared";
-import { SENSEI_DIR, senseiPath } from "@sensei/shared";
+import { SENSEI_DIR, senseiPath, loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
 import { buildChunksAndEmbeddings } from "./chunker.js";
 import { inferEntryPoints } from "./entry-point-adapters.js";
 import type { EntryPointCandidate } from "./entry-point-adapters.js";
@@ -268,6 +268,24 @@ export async function reindexRepo(
   await generateClaudeMd(repoPath);
 
   const total = added + updated + unchanged + skipped;
+
+  // Dual-write symbols + docs to Supabase if config present
+  const supabaseConfig = await loadSenseiConfig(repoPath);
+  if (supabaseConfig) {
+    const client = await makeSenseiClient(repoPath);
+    if (client) {
+      const { upsertSymbols, upsertDocs } = await import("./supabase-index-writer.js");
+      // Convert traceability Record<string, string[]> to TraceabilityEntry[]
+      const traceabilityEntries = Object.entries(traceability as Record<string, string[]>).map(([docPath, covers]) => ({
+        docPath, covers, autoDetected: false,
+      }));
+      await Promise.all([
+        upsertSymbols(client, supabaseConfig.repo_id, symbolMap),
+        upsertDocs(client, supabaseConfig.repo_id, traceabilityEntries),
+      ]);
+    }
+  }
+
   return { added, updated, removed, unchanged, skipped, total, forced: force };
 }
 
