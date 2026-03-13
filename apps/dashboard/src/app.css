@@ -1,11 +1,4 @@
 @import '@unocss/reset/tailwind.css';
 @import '@rokkit/themes/base.css';
 @import '@rokkit/themes/rokkit.css';
-
-html {
-  @apply bg-surface-z1 text-surface-z8;
-}
-
-body {
-  @apply flex flex-col font-body font-extralight w-screen h-screen overflow-hidden;
-}
+@import 'uno.css';
