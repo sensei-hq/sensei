@@ -1,510 +1,379 @@
-version: 1
+version: 2
 
 # Single source of truth for feature → design → code traceability.
-# Status lives here only — do not add status tables to docs.
-# item.section anchors point into the feature doc markdown.
+# NOTE: sensei.traceability (Supabase) is the live source of truth.
+# This file is a generated export for CI and offline use.
+# To regenerate: sensei traceability export
+# Status, sprint, and cycle assignments live in the database only.
 
 features:
-  indexing:
-    doc: docs/features/01-indexing.md
-    title: Indexing
-    nfrs: [performance, accuracy, scalability, token-efficiency]
+  codebase-intelligence:
+    doc: docs/features/01-codebase-intelligence.md
+    title: Codebase Intelligence
+    goal: Sensei understands your repo so your agent doesn't have to explore it
+    nfrs: [performance, accuracy, scalability]
     items:
       - id: repo-scanner
-        section: "#repo-scanner"
+        section: "#repo-scanning"
         status: done
-      - id: llmspec-generation
-        section: "#llmspec-generation"
+      - id: language-adapters
+        section: "#language-agnostic-parsing"
+        status: planned
+      - id: symbol-extraction
+        section: "#symbol-extraction"
         status: done
-      - id: symbol-map
-        section: "#symbol-map"
+      - id: call-graph
+        section: "#symbol-extraction"
+        status: planned
+      - id: semantic-search
+        section: "#semantic-full-text-search"
         status: done
-      - id: llms-txt-generation
-        section: "#llmstxt-generation"
-        status: done
-      - id: multi-modal-search
-        section: "#multi-modal-search"
-        status: done
-      - id: symbol-graph
-        section: "#symbol-graph"
+      - id: full-text-search
+        section: "#semantic-full-text-search"
         status: planned
       - id: incremental-indexing
         section: "#incremental-indexing"
-        status: planned
-      - id: force-full-reindex
-        section: "#force-full-reindex"
-        status: planned
-      - id: index-summary
-        section: "#index-summary-output"
         status: done
+      - id: three-layer-metadata
+        section: "#three-layer-metadata-model"
+        status: planned
+      - id: external-doc-adapters
+        section: "#external-documentation-adapters"
+        status: planned
+      - id: doc-generation
+        section: "#documentation-generation"
+        status: planned
+      - id: goal-intent-analysis
+        section: "#codebase-goal--intent-analysis"
+        status: planned
+      - id: quality-gap-analysis
+        section: "#code-quality--gap-analysis"
+        status: planned
 
-  resolution:
-    doc: docs/features/02-resolution.md
-    title: Resolution
-    nfrs: [token-efficiency, accuracy]
+  smart-context-delivery:
+    doc: docs/features/02-smart-context-delivery.md
+    title: Smart Context Delivery
+    goal: Your agent gets exactly what it needs for the current task, nothing more
+    nfrs: [token-efficiency, latency, accuracy]
     items:
-      - id: resolution-levels
-        section: "#resolution-levels"
+      - id: context-pack
+        section: "#context_pack"
         status: planned
-      - id: docstring-stripping
-        section: "#docstring-and-comment-stripping"
+      - id: diff-first-ranking
+        section: "#diff-first-bfs-ranking"
         status: planned
-      - id: logic-flow-notation
-        section: "#logic-flow-notation"
+      - id: ast-symbol-slicing
+        section: "#ast-symbol-slicing"
         status: planned
-      - id: io-pattern-notation
-        section: "#io-pattern-notation"
+      - id: session-dedup
+        section: "#session-deduplication"
         status: planned
-      - id: task-to-level-mapping
-        section: "#task-to-level-mapping"
+      - id: token-budget
+        section: "#token-budget-management"
+        status: planned
+      - id: load-context
+        section: "#load_context--recommend_next"
+        status: done
+      - id: recommend-next
+        section: "#load_context--recommend_next"
+        status: done
+      - id: relevance-learning
+        section: "#answer-driven-relevance-learning"
         status: planned
 
-  workflow:
-    doc: docs/features/03-workflow.md
-    title: Workflow
-    nfrs: [reliability, token-efficiency]
+  session-continuity:
+    doc: docs/features/03-session-continuity.md
+    title: Session Continuity
+    goal: Sensei remembers where you were and picks up from there
+    nfrs: [reliability, usability]
     items:
       - id: session-orientation
-        section: "#session-orientation-protocol"
+        section: "#session-orientation"
+        status: done
+      - id: interrupt-detection
+        section: "#interrupt-detection--recovery"
         status: planned
-      - id: targeted-context-loading
-        section: "#targeted-context-loading"
+      - id: worktree-snapshots
+        section: "#worktree-aware-snapshots"
         status: planned
-      - id: mcp-offload
-        section: "#mcp-offload-protocol"
+      - id: snapshot-cadence
+        section: "#snapshot-cadence"
+        status: planned
+      - id: project-memory
+        section: "#project-memory"
         status: planned
       - id: task-transition
-        section: "#task-transition-protocol"
-        status: planned
-      - id: plan-implementation-efficiency
-        section: "#plan-to-implementation-efficiency"
-        status: planned
-      - id: analysis-gate
-        section: "#analysis-before-implementation-gate"
-        status: planned
-      - id: session-resume
-        section: "#session-resume"
-        status: planned
-      - id: decision-capture
-        section: "#decision-capture"
-        status: planned
-      - id: pattern-capture
-        section: "#pattern-capture"
-        status: planned
-      - id: session-checkpoint
-        section: "#session-checkpoint"
-        status: planned
-      - id: open-items
-        section: "#open-items-tracking"
+        section: "#task-transition"
         status: planned
 
-  traceability:
-    doc: docs/features/04-traceability.md
-    title: Traceability
-    nfrs: [accuracy, reliability]
+  multi-agent-support:
+    doc: docs/features/04-multi-agent-support.md
+    title: Multi-Agent Support
+    goal: Sensei works with Claude, Cursor, opencode, and any agent you use
+    nfrs: [compatibility, usability]
     items:
-      - id: coverage-declaration
-        section: "#declare-coverage-in-llmspec"
-        status: done
-      - id: auto-detection
-        section: "#auto-detection-from-doc-content"
-        status: done
-      - id: git-change-detection
-        section: "#git-based-change-detection"
-        status: done
-      - id: drift-cross-reference
-        section: "#precise-drift-cross-reference"
-        status: done
-      - id: on-demand-reporting
-        section: "#on-demand-drift-reporting"
-        status: done
-      - id: pre-commit-hook
-        section: "#pre-commit-hook-integration"
+      - id: agent-adapters
+        section: "#agent-adapter-pattern"
         status: planned
-      - id: ci-integration
-        section: "#ci-integration"
+      - id: agents-md
+        section: "#agentsmd"
+        status: planned
+      - id: skills-installation
+        section: "#skills-installation"
+        status: planned
+      - id: agent-config-detection
+        section: "#agent-config--capability-detection"
+        status: planned
+      - id: per-agent-token-tracking
+        section: "#token-usage-tracking-per-agent"
         status: planned
 
-  context:
-    doc: docs/features/05-context.md
-    title: Context
-    nfrs: [token-efficiency, usability]
+  library-intelligence:
+    doc: docs/features/05-library-intelligence.md
+    title: Library & Documentation Intelligence
+    goal: Sensei knows about the libraries you use — internal and external
+    nfrs: [accuracy, token-efficiency, freshness]
     items:
-      - id: slice-loading
-        section: "#targeted-slice-loading"
-        status: done
-      - id: token-budget
-        section: "#token-budget-reporting"
+      - id: custom-lib-indexing
+        section: "#custom-library-indexing"
         status: planned
-      - id: checkpoint-restore
-        section: "#checkpoint-and-restore"
+      - id: llms-txt-priority
+        section: "#llmstxt-priority"
         status: planned
-      - id: recommend-next
-        section: "#recommend_next"
-        status: done
-
-  benchmarking:
-    doc: docs/features/06-benchmarking.md
-    title: Benchmarking
-    nfrs: [accuracy, reproducibility]
-    items:
-      - id: task-corpus
-        section: "#task-corpus"
+      - id: external-doc-registry
+        section: "#external-doc-registry"
         status: planned
-      - id: ab-evaluation
-        section: "#ab-evaluation"
+      - id: two-tier-retrieval
+        section: "#two-tier-doc-retrieval"
         status: planned
-      - id: metrics-collection
-        section: "#metrics-collection"
+      - id: get-lib-docs
+        section: "#get_lib_docs-mcp-tool"
         status: planned
-      - id: results-comparison
-        section: "#results-comparison"
-        status: planned
-      - id: cli-prompt-comparison
-        section: "#cli-prompt-comparison"
-        status: planned
-      - id: improvement-loop
-        section: "#improvement-loop"
+      - id: lib-skills-generation
+        section: "#auto-generated-lib-skills"
         status: planned
 
-  cli:
-    doc: docs/features/07-cli.md
-    title: CLI
-    nfrs: [usability, reliability]
+  documentation-traceability:
+    doc: docs/features/06-documentation-traceability.md
+    title: Documentation & Traceability
+    goal: Sensei keeps design docs, code, and specs in sync
+    nfrs: [accuracy, reliability, maintainability]
     items:
-      - id: repo-setup
-        section: "#repo-setup"
+      - id: doc-code-coverage
+        section: "#doc-to-code-coverage"
         status: planned
-      - id: profile-management
-        section: "#profile-management"
-        status: planned
-      - id: company-profile
-        section: "#company-profile-management"
-        status: planned
-      - id: context-switching
-        section: "#context-switching"
-        status: planned
-      - id: shared-library-cache
-        section: "#shared-library-cache"
-        status: planned
-      - id: migration
-        section: "#migration-from-agents-folder"
-        status: planned
-      - id: pre-commit-hook
-        section: "#pre-commit-hook"
-        status: planned
-      - id: guidelines
-        section: "#guidelines-editability"
-        status: planned
-
-  documentation:
-    doc: docs/features/08-documentation.md
-    title: Documentation
-    nfrs: [accuracy, usability, maintainability]
-    items:
-      - id: doc-guide
-        section: "#doc-guide"
+      - id: drift-detection
+        section: "#drift-detection"
         status: done
+      - id: doc-doctor
+        section: "#doc-doctor"
+        status: planned
+      - id: feature-scaffold
+        section: "#feature-scaffold"
+        status: planned
       - id: find-doc
-        section: "#find-doc"
+        section: "#find_doc-mcp-tool"
         status: planned
-      - id: scaffold
-        section: "#new-feature-scaffold"
+      - id: traceability-from-generated-docs
+        section: "#traceability-from-generated-docs--gap-analysis"
         status: planned
-      - id: external-doc-ref
-        section: "#external-doc-reference"
+      - id: quality-metrics-reports
+        section: "#quality-metrics--reports"
         status: planned
-      - id: doctor-single-doc
-        section: "#doctor-a-single-doc"
-        status: planned
-      - id: doctor-directory
-        section: "#doctor-a-directory"
-        status: planned
-      - id: template-auto-detection
-        section: "#template-auto-detection"
-        status: planned
-      - id: doctor-rules
-        section: "#doctor-rules"
-        status: planned
-
-  patterns:
-    doc: docs/features/09-patterns.md
-    title: Patterns
-    nfrs: [token-efficiency, accuracy, reliability]
-    items:
-      - id: pattern-detection-code
-        section: "#pattern-detection"
-        status: planned
-      - id: pattern-detection-docs
-        section: "#pattern-detection"
-        status: planned
-      - id: pattern-templates
-        section: "#pattern-templates"
-        status: planned
-      - id: pattern-capture
-        section: "#pattern-capture"
-        status: planned
-      - id: pattern-search
-        section: "#pattern-search"
-        status: planned
-      - id: pattern-export
-        section: "#pattern-to-skill-export"
-        status: planned
-
-  caching:
-    doc: docs/features/10-caching.md
-    title: Caching
-    nfrs: [token-efficiency, reliability, scalability, security]
-    items:
-      - id: response-capture
-        section: "#response-capture"
-        status: planned
-      - id: proactive-offer
-        section: "#response-capture"
-        status: planned
-      - id: retrieval
-        section: "#response-retrieval"
-        status: planned
-      - id: cache-management
-        section: "#cache-management"
-        status: planned
-      - id: session-integration
-        section: "#integration-with-session-resume"
-        status: planned
-
-  implementation-sync:
-    doc: docs/features/11-implementation-sync.md
-    title: Implementation Sync
-    nfrs: [reliability, accuracy]
-    items:
-      - id: post-impl-doc-enrichment
-        section: "#post-implementation-doc-enrichment"
-        status: planned
-      - id: traceability-status-sync
-        section: "#traceability-status-sync"
-        status: planned
-      - id: plan-archival
-        section: "#plan-archival"
-        status: planned
-      - id: incremental-llms-txt
-        section: "#incremental-llmstxt-sync"
-        status: done
-      - id: drift-warning-on-sync
-        section: "#drift-warning-on-sync"
+      - id: sprint-cycle-planning
+        section: "#sprint--cycle-planning"
         status: planned
 
   analytics:
-    doc: docs/features/12-analytics.md
+    doc: docs/features/07-analytics.md
     title: Analytics
-    nfrs: [reliability, usability, accuracy]
+    goal: Sensei measures quality, attribution, and improvement — and makes it visible
+    nfrs: [reliability, accuracy, usability]
     items:
-      - id: collector-daemon
-        section: "#telemetry-collector"
+      - id: telemetry-collection
+        section: "#telemetry-collection"
         status: done
-      - id: jsonl-fallback
-        section: "#telemetry-collector"
+      - id: task-turn-tracking
+        section: "#task--turn-tracking"
+        status: planned
+      - id: ftr-scoring
+        section: "#ftr-scoring-first-time-right"
+        status: planned
+      - id: quality-rating-ui
+        section: "#quality-rating-ui"
+        status: planned
+      - id: req-quality-scoring
+        section: "#requirement-quality-scoring"
+        status: planned
+      - id: coaching-engine
+        section: "#developer-coaching-engine"
+        status: planned
+      - id: aggregate-benchmarks
+        section: "#aggregate-benchmarks--public-insights"
+        status: planned
+      - id: benchmarking
+        section: "#benchmarking"
+        status: planned
+      - id: analytics-cli-dashboard
+        section: "#analytics-cli--dashboard"
         status: done
-      - id: jsonl-drain
-        section: "#telemetry-collector"
+
+  setup-configuration:
+    doc: docs/features/08-setup-configuration.md
+    title: Setup & Configuration
+    goal: Sensei is one command to get started and adapts to your team
+    nfrs: [usability, reliability]
+    items:
+      - id: sensei-init
+        section: "#sensei-init"
         status: done
-      - id: uuid-generation
-        section: "#telemetry-collector"
+      - id: deployment-modes
+        section: "#deployment-modes"
         status: done
-      - id: hook-scripts
-        section: "#telemetry-collector"
-        status: done
-      - id: hook-installation
-        section: "#telemetry-collector"
-        status: done
-      - id: sqlite-storage
-        section: "#telemetry-collector"
-        status: done
-      - id: stats-default
-        section: "#analytics-cli"
-        status: done
-      - id: stats-all
-        section: "#analytics-cli"
-        status: done
-      - id: stats-tool
-        section: "#analytics-cli"
-        status: done
-      - id: stats-session
-        section: "#analytics-cli"
-        status: done
-      - id: stats-since
-        section: "#analytics-cli"
-        status: done
-      - id: stats-json
-        section: "#analytics-cli"
-        status: done
-      - id: stats-gaps
-        section: "#analytics-cli"
-        status: done
+      - id: model-config
+        section: "#model-configuration-hierarchy"
+        status: planned
+      - id: agent-adapter-setup
+        section: "#agent-adapter-setup"
+        status: planned
+      - id: ranking-config
+        section: "#ranking-strategy-configuration"
+        status: planned
+      - id: lib-registry-updates
+        section: "#library-registry-updates"
+        status: planned
+      - id: project-config-editing
+        section: "#project-config-editing"
+        status: planned
+
+  system-intelligence:
+    doc: docs/features/10-system-intelligence.md
+    title: System Intelligence
+    goal: Sensei understands your entire system — not just individual repos — and surfaces gaps where reality deviates from design
+    nfrs: [scalability, accuracy, reliability]
+    items:
+      - id: workspace-definition
+        section: "#workspace-definition"
+        status: planned
+      - id: cross-repo-indexing
+        section: "#cross-repo-indexing"
+        status: planned
+      - id: system-architecture-docs
+        section: "#system-architecture-documentation"
+        status: planned
+      - id: architecture-conformance
+        section: "#architecture-conformance"
+        status: planned
+      - id: cross-repo-drift
+        section: "#cross-repo-drift-detection"
+        status: planned
+      - id: system-gap-analysis
+        section: "#system-gap-analysis"
+        status: planned
+      - id: system-health-score
+        section: "#system-health-score"
+        status: planned
+
+  identity-access-pricing:
+    doc: docs/features/09-identity-access-pricing.md
+    title: Identity, Access & Pricing
+    goal: Sensei is free for open source, affordable for teams, and your code never leaves your control
+    nfrs: [security, privacy, usability]
+    items:
+      - id: authentication
+        section: "#authentication"
+        status: planned
+      - id: multi-tenancy
+        section: "#multi-tenancy--repo-isolation"
+        status: planned
+      - id: teams-authorization
+        section: "#teams--authorization"
+        status: planned
+      - id: github-app
+        section: "#github-app-integration"
+        status: planned
+      - id: pricing-model
+        section: "#pricing-model"
+        status: planned
+      - id: data-privacy
+        section: "#data-privacy-self-hosting--telemetry-control"
+        status: planned
+      - id: telemetry-control
+        section: "#data-privacy-self-hosting--telemetry-control"
+        status: planned
 
 # ─────────────────────────────────────────────────────────────
 # Design docs — declares which feature items each component covers
 # ─────────────────────────────────────────────────────────────
 
 design:
+  pipeline-adapter:
+    doc: docs/design/20-pipeline-adapter.md
+    title: Pipeline-First Adapter Pattern
+    implements:
+      - feature: codebase-intelligence
+        items: [language-adapters, symbol-extraction, call-graph, incremental-indexing, three-layer-metadata]
+      - feature: smart-context-delivery
+        items: [context-pack, diff-first-ranking, ast-symbol-slicing, session-dedup, token-budget, relevance-learning]
+
+  cc-rlm-analysis:
+    doc: docs/design/cc-rlm.md
+    title: CC-RLM Architecture Analysis
+    implements: []
+
   architecture:
-    doc: docs/design/01-architecture.md
-    title: Architecture
+    doc: docs/design/architecture.md
+    title: Architecture (Current + Future)
     implements: []
-
-  skills:
-    doc: docs/design/02-skills.md
-    title: Skills
-    implements: []
-
-  mcp-server:
-    doc: docs/design/03-mcp-server.md
-    title: MCP Server
-    implements:
-      - feature: indexing
-        items: [llmspec-generation, symbol-map, multi-modal-search, symbol-graph]
-      - feature: context
-        items: [slice-loading, recommend-next]
-      - feature: workflow
-        items: [mcp-offload, session-resume, session-checkpoint]
-      - feature: traceability
-        items: [on-demand-reporting]
-
-  llmspec:
-    doc: docs/design/04-llmspec.md
-    title: LLMSpec
-    implements:
-      - feature: indexing
-        items: [llmspec-generation]
 
   indexer:
     doc: docs/design/05-indexing.md
     title: Indexer
     implements:
-      - feature: indexing
-        items: [repo-scanner, symbol-map, llms-txt-generation, multi-modal-search, symbol-graph]
-
-  resolution-levels:
-    doc: docs/design/06-compression.md
-    title: Resolution Levels
-    implements:
-      - feature: resolution
-        items: [resolution-levels, docstring-stripping, logic-flow-notation, io-pattern-notation, task-to-level-mapping]
+      - feature: codebase-intelligence
+        items: [repo-scanner, symbol-extraction, semantic-search]
 
   drift-detector:
     doc: docs/design/07-drift.md
     title: Drift Detector
     implements:
-      - feature: traceability
-        items: [git-change-detection, drift-cross-reference, on-demand-reporting, pre-commit-hook, ci-integration]
-
-  benchmarking-runner:
-    doc: docs/design/08-benchmarking.md
-    title: Benchmarking Runner
-    implements:
-      - feature: benchmarking
-        items: [task-corpus, ab-evaluation, metrics-collection, results-comparison, cli-prompt-comparison, improvement-loop]
-
-  cli:
-    doc: docs/design/09-cli.md
-    title: CLI
-    implements:
-      - feature: cli
-        items: [repo-setup, profile-management, company-profile, context-switching, shared-library-cache, migration, pre-commit-hook, guidelines]
-
-  project-memory:
-    doc: docs/design/10-project-memory.md
-    title: Project Memory
-    implements:
-      - feature: workflow
-        items: [session-resume, decision-capture, pattern-capture, session-checkpoint, open-items]
-      - feature: context
-        items: [checkpoint-restore]
-
-  doc-tools:
-    doc: docs/design/11-doc-tools.md
-    title: Doc Tools
-    implements:
-      - feature: documentation
-        items: [doc-guide, find-doc, scaffold, external-doc-ref, doctor-single-doc, doctor-directory, template-auto-detection, doctor-rules]
+      - feature: documentation-traceability
+        items: [drift-detection]
 
   incremental-indexer:
     doc: docs/design/12-incremental-indexing.md
     title: Incremental Indexer
     implements:
-      - feature: indexing
-        items: [incremental-indexing, force-full-reindex, index-summary]
-
-  traceability-matrix:
-    doc: docs/design/13-traceability-matrix.md
-    title: Traceability Matrix
-    implements:
-      - feature: traceability
-        items: [coverage-declaration, auto-detection]
-
-  server-package:
-    doc: docs/design/14-server-package.md
-    title: Server Package
-    implements: []
-
-  package-adapters:
-    doc: docs/design/15-package-adapters.md
-    title: Package Adapters
-    implements:
-      - feature: indexing
-        items: [repo-scanner]
-
-  local-model-indexer:
-    doc: docs/design/16-local-model-indexer.md
-    title: Local Model Indexer
-    implements:
-      - feature: indexing
-        items: [multi-modal-search]
-
-  pattern-store:
-    doc: docs/design/17-pattern-store.md
-    title: Pattern Store
-    implements:
-      - feature: patterns
-        items: [pattern-detection-code, pattern-detection-docs, pattern-templates, pattern-capture, pattern-search, pattern-export]
-
-  response-cache:
-    doc: docs/design/18-response-cache.md
-    title: Response Cache
-    implements:
-      - feature: caching
-        items: [response-capture, proactive-offer, retrieval, cache-management, session-integration]
+      - feature: codebase-intelligence
+        items: [incremental-indexing]
 
   context-manager:
     doc: docs/design/19-context-manager.md
     title: Context Manager
     implements:
-      - feature: context
-        items: [slice-loading, token-budget, checkpoint-restore, recommend-next]
+      - feature: smart-context-delivery
+        items: [load-context, recommend-next, token-budget]
 
   analytics-collector:
     doc: docs/superpowers/specs/2026-03-11-analytics-design.md
     title: Analytics Collector
     implements:
       - feature: analytics
-        items: [collector-daemon, jsonl-fallback, jsonl-drain, uuid-generation, hook-scripts, hook-installation, sqlite-storage, stats-default, stats-all, stats-tool, stats-session, stats-since, stats-json, stats-gaps]
+        items: [telemetry-collection, analytics-cli-dashboard]
 
   supabase-store:
     doc: docs/superpowers/specs/2026-03-12-supabase-central-store-design.md
     title: Supabase Central Store
     implements:
       - feature: analytics
-        items: [collector-daemon, sqlite-storage]
-      - feature: benchmarking
-        items: [metrics-collection, results-comparison]
-      - feature: indexing
-        items: [multi-modal-search]
+        items: [telemetry-collection]
+      - feature: setup-configuration
+        items: [deployment-modes, sensei-init]
+      - feature: codebase-intelligence
+        items: [semantic-search]
 
 # ─────────────────────────────────────────────────────────────
 # Code entries — populated as implementation progresses
-# Format:
-#   src/path/file.ts:
-#     implements-design: [<design-id>]
-#     status: in-progress | done
 # ─────────────────────────────────────────────────────────────
 
 code:
@@ -515,7 +384,7 @@ code:
     implements-design: [indexer]
     status: done
   packages/tools/src/tools/embedder.ts:
-    implements-design: [indexer, local-model-indexer]
+    implements-design: [indexer]
     status: done
   packages/tools/src/tools/search.ts:
     implements-design: [indexer]
@@ -548,61 +417,7 @@ code:
     implements-design: [analytics-collector]
     status: done
   packages/cli/src/commands/setup.ts:
-    implements-design: [analytics-collector, cli]
-    status: done
-  database/ddl/table/sensei/repos.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/symbols.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/chunks.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/docs.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/events.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/benchmark_reports.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/libraries.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/references.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/sensei/repo_libraries.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/staging/repos.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/staging/libraries.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/staging/events.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/table/staging/benchmark_reports.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/procedure/staging/import_repos.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/procedure/staging/import_libraries.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/procedure/staging/import_events.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/ddl/procedure/staging/import_benchmark_reports.ddl:
-    implements-design: [supabase-store]
-    status: done
-  database/import/loader.sql:
-    implements-design: [supabase-store]
+    implements-design: [analytics-collector]
     status: done
   packages/shared/src/config.ts:
     implements-design: [supabase-store]
@@ -617,17 +432,5 @@ code:
     implements-design: [supabase-store, indexer]
     status: done
   packages/tools/src/tools/repo-registration.ts:
-    implements-design: [supabase-store]
-    status: done
-  packages/shared/src/config.spec.ts:
-    implements-design: [supabase-store]
-    status: done
-  packages/collector/src/supabase-writer.spec.ts:
-    implements-design: [supabase-store, analytics-collector]
-    status: done
-  packages/tools/src/tools/supabase-index-writer.spec.ts:
-    implements-design: [supabase-store, indexer]
-    status: done
-  packages/tools/src/tools/repo-registration.spec.ts:
     implements-design: [supabase-store]
     status: done
