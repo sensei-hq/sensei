@@ -1,87 +1,133 @@
 # Design Documentation
 
-Architecture, structure, and implementation details for the AI skills repo.
+Architecture, implementation details, and recorded decisions for the sensei project.
+
+> **Convention**: design docs answer *how* and *why*. Feature docs answer *what*. Every significant technical decision should record the reasoning here so future contributors understand the intent, not just the outcome.
+
+## How to Use This Index
+
+| You want to... | Start here |
+|---|---|
+| Understand the overall system | [01-architecture](./01-architecture.md) |
+| See the implementation roadmap | [30-implementation-phases](./30-implementation-phases.md) |
+| Understand the pipeline in depth | [20-pipeline-adapter](./20-pipeline-adapter.md) |
+| See the CC-RLM analysis that informed the pipeline | [cc-rlm](./cc-rlm.md) |
+| See the full future architecture with Mermaid flows | [architecture](./architecture.md) |
+
+---
 
 ## Core Design (01–09)
 
-| Document | Description |
-|----------|-------------|
-| [01-architecture](./01-architecture.md) | Overall system architecture, repo structure, component relationships |
-| [02-skills](./02-skills.md) | Skill file format, naming conventions, CSO, testing requirements |
-| [03-mcp-server](./03-mcp-server.md) | MCP server: tool categories, APIs, tool contracts (Claude-facing) |
-| [04-llmspec](./04-llmspec.md) | LLMSpec format (.llmspec.yaml), fields, generation, querying |
-| [05-indexing](./05-indexing.md) | Indexer design, extraction targets, storage format |
-| [06-compression](./06-compression.md) | Resolution levels (L0–L3), storage schema, serving logic |
-| [07-drift](./07-drift.md) | Git-diff + traceability-based drift detection, hook integration |
-| [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup |
-| [09-cli](./09-cli.md) | CLI design, layered profile system, command modules, config schemas |
+Authoritative design documents. When these conflict with older documents (10–19), these take precedence.
+
+| Document | Description | Status |
+|----------|-------------|--------|
+| [01-architecture](./01-architecture.md) | Package structure, interfaces, data flows, architectural decisions (ADRs), technology choices | Current |
+| [02-skills](./02-skills.md) | Skill file format, naming conventions, testing requirements | Superseded by multi-agent design in 20-pipeline-adapter |
+| [03-mcp-server](./03-mcp-server.md) | MCP server tool contracts (Claude-facing) | Partially superseded — see 20-pipeline-adapter for new tools |
+| [04-llmspec](./04-llmspec.md) | LLMSpec format — superseded by three-layer metadata model | Superseded |
+| [05-indexing](./05-indexing.md) | Indexer design (regex-based, v1) — superseded by pipeline adapter | Superseded |
+| [06-compression](./06-compression.md) | Resolution levels (L0–L3), storage schema, serving logic | Current — L0–L3 still used by load_context |
+| [07-drift](./07-drift.md) | Git-diff + traceability-based drift detection, hook integration | Current |
+| [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup | Current |
+| [09-cli](./09-cli.md) | CLI design, command modules, config schemas | Partially superseded — see 01-architecture for updated package structure |
+
+---
 
 ## Feature Extensions (10–19)
 
+Earlier design iterations. Superseded sections are noted. The pipeline adapter (20) and architecture (01) take precedence where there is conflict.
+
+| Document | Description | Status |
+|----------|-------------|--------|
+| [10-project-memory](./10-project-memory.md) | Cross-session knowledge: checkpoint distillation, decisions, open items | Current — now stored in Supabase |
+| [11-doc-tools](./11-doc-tools.md) | Doc guide skill, find_doc, doc new scaffold, doc-doctor | Current |
+| [12-incremental-indexing](./12-incremental-indexing.md) | Git-diff change detection, incremental update algorithm | Current |
+| [13-traceability-matrix](./13-traceability-matrix.md) | Doc-to-code traceability: schema, population, drift cross-reference | Current — extended by Layer 3 cross-repo traceability |
+| [14-server-package](./14-server-package.md) | Package split, server API, deployment models | Superseded by 01-architecture package structure |
+| [15-package-adapters](./15-package-adapters.md) | Glob-based package discovery, folder-map | Superseded by engine/Parse stage in 20-pipeline-adapter |
+| [16-local-model-indexer](./16-local-model-indexer.md) | ModelBackend interface, local model inference | Current — ModelBackend is in packages/shared |
+| [17-pattern-store](./17-pattern-store.md) | Pattern detection, capture, search, skill export | Current |
+| [18-response-cache](./18-response-cache.md) | Cross-session response cache, TTL, semantic retrieval | Current |
+| [19-context-manager](./19-context-manager.md) | Targeted slice loading, token budget, recommend_next | Current — extended by 20-pipeline-adapter Rank/Slice/Assemble |
+
+---
+
+## Reference & Analysis
+
 | Document | Description |
 |----------|-------------|
-| [10-project-memory](./10-project-memory.md) | Cross-session knowledge: checkpoint distillation, decisions, open items |
-| [11-doc-tools](./11-doc-tools.md) | Doc guide skill, find_doc fallback, sensei doc new scaffold, doc-doctor, external doc refs |
-| [12-incremental-indexing](./12-incremental-indexing.md) | Git-diff change detection, force flag, incremental update algorithm |
-| [13-traceability-matrix](./13-traceability-matrix.md) | Doc-to-code traceability: schema, population, drift cross-reference |
-| [14-server-package](./14-server-package.md) | Inference server: package split, server API, deployment models (local/org/cloud) |
-| [15-package-adapters](./15-package-adapters.md) | Glob-based package discovery, folder-map, README link extraction |
-| [16-local-model-indexer](./16-local-model-indexer.md) | Local model inference: ModelBackend interface, FileAnalysis schema, analysis cache |
-| [17-pattern-store](./17-pattern-store.md) | Pattern detection, capture, search, and skill export; .sensei/patterns.md storage |
-| [18-response-cache](./18-response-cache.md) | Cross-session response cache: TTL management, semantic retrieval, session hints |
-| [19-context-manager](./19-context-manager.md) | Targeted slice loading, token budget, checkpoints, recommend_next prescription |
+| [cc-rlm](./cc-rlm.md) | CC-RLM architecture analysis: flow, token reduction mechanics, what sensei borrows vs improves |
+| [architecture](./architecture.md) | Three-layer feature architecture with Mermaid component maps and data flow diagrams |
 
-## Language-Specific Adapters (20–29)
+---
 
-_Planned — not yet written._
+## Pipeline & Adapters (20–29)
 
-| Document | Description |
-|----------|-------------|
-| 20-adapter-js-ts | JS/TS adapter: package.json, TypeScript signatures, React/hooks detection |
-| 21-adapter-python | Python adapter: pyproject.toml, FastAPI/Django patterns |
-| 22-adapter-go | Go adapter: go.mod, exported function conventions |
-| 23-adapter-rust | Rust adapter: Cargo.toml, pub fn/struct/enum |
+| Document | Description | Status |
+|----------|-------------|--------|
+| [20-pipeline-adapter](./20-pipeline-adapter.md) | Pipeline stages, LanguageAdapterRegistry, ranking strategy chain, Supabase schema, agent adapter pattern, all resolved design decisions | Current |
+| 21-adapter-js-ts | JS/TS adapter: TypeScript signatures, React/hooks detection | Planned |
+| 22-adapter-python | Python adapter: pyproject.toml, FastAPI/Django patterns | Planned |
+| 23-adapter-go | Go adapter: go.mod, exported function conventions | Planned |
+| 24-adapter-rust | Rust adapter: Cargo.toml, pub fn/struct/enum | Planned |
+| 25-adapter-markdown | Markdown adapter: section parsing, traceability links | Planned |
+| 26-adapter-subprocess | Subprocess adapter protocol: external parser script contract | Planned |
+| 27-adapter-openapi | OpenAPI/REST contract adapter for cross-repo boundary resolution | Planned |
+| 28-adapter-protobuf | Protobuf/gRPC contract adapter | Planned |
+| 29-adapter-asyncapi | AsyncAPI/event schema adapter (Kafka, SQS, Pub/Sub) | Planned |
+
+---
+
+## Implementation Phases (30–39)
+
+| Document | Description | Status |
+|----------|-------------|--------|
+| [30-implementation-phases](./30-implementation-phases.md) | Phase-by-phase delivery plan: 9 phases from Foundation to Identity/Auth, each with TDD strategy and verifiable acceptance criteria | Current |
+
+---
 
 ## Numbering Convention
 
 | Range | Category |
 |-------|----------|
-| 01–09 | Core design — architecture, skills, MCP tools, llmspec, indexing, compression, drift, benchmarking, CLI |
-| 10–19 | Feature extensions — project memory, doc tools, incremental indexing, traceability, server package, package adapters, local model, pattern store, response cache, context manager |
-| 20–29 | Language-specific adapters |
-| 30–39 | Reserved |
+| 01–09 | Core design — architecture, package structure, tool contracts, resolution levels, drift, benchmarking, CLI |
+| 10–19 | Feature design — project memory, doc tools, incremental indexing, traceability, server, adapters, local model, pattern store, response cache, context manager |
+| 20–29 | Pipeline & language/contract adapters |
+| 30–39 | Implementation planning — phases, migration guides, deployment runbooks |
+
+---
 
 ## Document Relationships
 
 ```
-01-architecture ──────────────────── overall system
-  └── 14-server-package            package split: CLI / server / MCP
-        ├── 16-local-model-indexer  inference engine: ModelBackend, FileAnalysis
-        └── 15-package-adapters    folder map: glob discovery, README links
+01-architecture ──────────── package structure, interfaces, ADRs (authoritative)
+  │
+  ├── 20-pipeline-adapter    pipeline stages, Supabase schema, all resolved decisions
+  │     ├── 21–26            language adapters (per language)
+  │     └── 27–29            contract adapters (OpenAPI, Protobuf, AsyncAPI)
+  │
+  ├── 30-implementation-phases  phase-by-phase build plan (references 01 + 20)
+  │
+  └── architecture.md        Mermaid component maps + three-layer visual
 
-05-indexing ──────────────────────── symbol map (current regex approach)
-  ├── 12-incremental-indexing      git-diff change detection
-  └── 16-local-model-indexer       replaces regex with local model
-
-13-traceability-matrix ───────────── doc→code coverage (manual @covers)
-  ├── 15-package-adapters          extends with README link graph
-  └── 16-local-model-indexer       extends with embedding similarity
-
-03-mcp-server ────────────────────── MCP tool contracts (Claude-facing)
-  └── 14-server-package            inference server is separate from MCP server
+cc-rlm.md ────────────────── reference analysis that informed 20-pipeline-adapter
 ```
+
+---
 
 ## Traceability
 
-Feature → design → code coverage is tracked in [`docs/traceability.yaml`](../traceability.yaml).
+Feature → design → code coverage is tracked in `sensei.traceability` (Supabase — source of truth).
+`docs/traceability.yaml` is a generated export for CI and offline use. To regenerate:
 
-Query patterns:
-- Features with no design: feature ids not referenced in any `design[].implements[].feature`
-- Designs with no code: design ids not in any `code[].implements-design`
-- Backlog: all `items` with `status: planned`
+```
+sensei traceability export
+```
 
 ## Related
 
-- [Features](../features/) — What and why (needs, scenarios, status)
-- [Traceability](../traceability.yaml) — Feature/design/code coverage matrix
-- [Plans](../plans/) — Implementation plans
+- [Features](../features/) — What and why (10 functional modules, Gherkin scenarios)
+- [Traceability](../traceability.yaml) — Generated export of feature/design/code coverage
+- [Plans](../plans/) — Session-scoped implementation plans
+- [Superpowers specs](../superpowers/specs/) — Approved design specs from brainstorming sessions
