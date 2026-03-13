@@ -1,5 +1,5 @@
 ---
-name: agentic-dev-workflow
+name: running-agentic-sessions
 description: Use when starting an agentic developer session, beginning a new task in a codebase, or when an agent is spending too many tokens on orientation, broad searches, or loading full files unnecessarily.
 ---
 

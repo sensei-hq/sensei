@@ -1,5 +1,5 @@
 ---
-name: project-workflow
+name: managing-project-sessions
 description: Use when starting work on any project to establish the session protocol, capture decisions and patterns, and maintain knowledge across sessions without token bloat.
 ---
 
