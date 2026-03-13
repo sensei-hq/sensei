@@ -24,83 +24,19 @@ Project memory is the cross-session knowledge layer. It survives between session
 
 ---
 
-## Storage Layout
+## Storage
 
-```
-<repo-root>/
-  .index/
-    checkpoints/
-      memory.yaml         ← distilled project knowledge (decisions, context)
-      patterns.yaml       ← proven patterns (name + convention, no examples)
-      open-items.yaml     ← unresolved questions + next steps
-      sessions/
-        2026-03-06.yaml   ← archived session snapshot (not loaded on resume)
-        2026-03-05.yaml
-        ...
-```
+All project memory is stored in the `sensei.events` table in Supabase:
 
----
+| `event_type` | `payload` fields | Purpose |
+|---|---|---|
+| `'decision'` | `{ text, id }` | Individual architectural decisions |
+| `'pattern'` | `{ name, convention, uses, added }` | Proven coding patterns |
+| `'open-item'` | `{ id, question, status, resolution? }` | Unresolved questions + next steps |
+| `'checkpoint'` | `{ summary, decisions_added, patterns_added, items_closed, items_opened }` | Session-end distillation |
+| `'session'` | `{ date, summary }` | Session archive (not loaded on resume) |
 
-## File Schemas
-
-### `memory.yaml`
-
-```yaml
-version: 1
-updated: "2026-03-06"
-decisions:
-  - id: "repo-pattern"
-    text: "Use repository pattern for all DB access"
-    date: "2026-03-01"
-  - id: "zod-validation"
-    text: "All external inputs validated with Zod at boundary"
-    date: "2026-03-03"
-context:
-  project: "strategos"
-  stack: [typescript, bun, postgres]
-  phase: "Phase 2 — entity cleanup"
-```
-
-### `patterns.yaml`
-
-```yaml
-version: 1
-patterns:
-  - name: "data-attribute DOM"
-    convention: "data-{component} on root, data-{component}-{part} on children"
-    uses: 4
-    added: "2026-02-15"
-  - name: "navigator-wrapper-proxy"
-    convention: "ProxyItem (read) → Wrapper (state) → Navigator (DOM events)"
-    uses: 7
-    added: "2026-01-20"
-```
-
-### `open-items.yaml`
-
-```yaml
-version: 1
-items:
-  - id: "lock-strategy"
-    question: "Should we use optimistic locking or row versioning?"
-    added: "2026-03-06"
-    status: open
-  - id: "cache-ttl"
-    question: "What TTL for the MCP response cache?"
-    added: "2026-03-05"
-    status: open
-```
-
-### `sessions/<date>.yaml` (archived)
-
-```yaml
-date: "2026-03-06"
-summary: "Added POST /users endpoint. Tests pass. Next: validation middleware."
-decisions_added: ["zod-validation"]
-patterns_added: []
-items_closed: []
-items_opened: ["lock-strategy"]
-```
+The `.sensei/patterns.md` file remains on disk as a human-readable view of current patterns, regenerated from `sensei.events` on each checkpoint. It can be manually edited — manual edits are preserved on re-generation.
 
 ---
 
@@ -115,10 +51,10 @@ Agent (session end):
 
 MCP checkpoint() tool:
   1. Parse summary for: decisions, patterns, open items, next steps
-  2. Merge decisions → memory.yaml (dedup by semantic similarity of text)
-  3. Merge patterns → patterns.yaml
-  4. Update open-items.yaml (close resolved, add new)
-  5. Write session archive → sessions/<date>.yaml
+  2. Upsert decisions into `sensei.events` (dedup by semantic similarity of text)
+  3. Upsert patterns into `sensei.events`; regenerate `.sensei/patterns.md`
+  4. Update open-item events in Supabase (close resolved, add new)
+  5. Insert session archive event into `sensei.events` (event_type: 'session')
   6. Return: "Checkpointed. Resume with get_session_context()."
 ```
 
@@ -136,14 +72,14 @@ Agent (session start):
   1. Call get_session_context()
 
 MCP get_session_context() tool:
-  1. Load memory.yaml (compressed decisions + context)
-  2. Load open-items.yaml (unresolved questions + next steps)
-  3. Load active plan incomplete steps only (from .index/checkpoints/active-plan.yaml)
+  1. Query `sensei.events` for recent decisions and context
+  2. Query `sensei.events` for open-item events with status: open
+  3. Load active plan incomplete steps (stored in `sensei.events` with event_type: 'plan')
   4. Format as structured summary
   5. Return ~300 tokens regardless of project age
 ```
 
-**Context budget stays flat:** Only `memory.yaml`, `open-items.yaml`, and the active plan are loaded. Archived sessions are never loaded on resume — they exist for audit only.
+**Context budget stays flat:** Only recent decisions, open-item events, and the active plan are queried. Archived sessions are never loaded on resume — they exist for audit only.
 
 ---
 
@@ -167,6 +103,7 @@ output: string  // structured summary: memory + open items + active plan steps
 // - [ ] Step 3: Add validation middleware
 // - [ ] Step 4: Write e2e test
 
+// Storage: queries sensei.events for decisions, open-items, and plan events
 // Token budget: ~300 tokens
 // Falls back to get_llmspec() if no checkpoints exist
 ```
@@ -180,7 +117,7 @@ output: string  // "Checkpointed. Resume with get_session_context()."
 // summary: 1-3 sentence agent-provided distillation
 // decisions: optional explicit list (agent can extract from conversation)
 // patterns: optional explicit list
-// tool handles: merge to memory.yaml, archive session, update open-items
+// tool handles: upsert to sensei.events, archive session event, update open-item events
 ```
 
 ### `add_decision(text)`
@@ -189,7 +126,7 @@ output: string  // "Checkpointed. Resume with get_session_context()."
 input: { text: string }
 output: string  // "Decision recorded."
 
-// Appends to memory.yaml decisions[]
+// Inserts decision event into sensei.events
 // Deduplication: if semantically equivalent decision exists, updates timestamp only
 // No read required by the agent — append-only
 ```
@@ -200,7 +137,7 @@ output: string  // "Decision recorded."
 input: { name: string, convention: string }
 output: string  // "Pattern recorded."
 
-// Appends to patterns.yaml
+// Upserts pattern event into sensei.events
 // Increments uses counter if pattern already exists
 ```
 
@@ -210,7 +147,7 @@ output: string  // "Pattern recorded."
 input: { question: string }
 output: string  // "Question queued. ID: <id>"
 
-// Adds to open-items.yaml with status: open
+// Inserts open-item event into sensei.events with status: open
 // Non-blocking — agent continues without waiting for answer
 ```
 
@@ -220,7 +157,7 @@ output: string  // "Question queued. ID: <id>"
 input: {}
 output: string  // formatted list of open questions + next steps
 
-// Returns only status: open items
+// Queries sensei.events for open-item events with status: open
 // Included automatically in get_session_context() — call directly for mid-session check
 ```
 
@@ -230,25 +167,9 @@ output: string  // formatted list of open questions + next steps
 input: { id: string, resolution?: string }
 output: string  // "Item closed."
 
-// Marks item as resolved in open-items.yaml
-// Optional resolution text stored alongside the closed item
+// Updates open-item event in sensei.events (sets status: resolved)
+// Optional resolution text stored in the event payload
 ```
-
----
-
-## Migration from `agents/` Folder
-
-`sensei migrate` converts manual agent files to the MCP-managed structure:
-
-```
-agents/memory.md        → .index/checkpoints/memory.yaml  (LLM-distilled)
-agents/design-patterns.md → .index/checkpoints/patterns.yaml
-agents/journal.md       → last entry extracted as open item / next step
-agents/                 → archived to agents/_archived/   (not deleted)
-CLAUDE.md               → regenerated referencing sensei workflow
-```
-
-The migration uses LLM distillation — it reads each source file and produces a compressed YAML equivalent, not a raw copy. The `agents/_archived/` folder is kept until the developer manually verifies parity and removes it.
 
 ---
 
@@ -273,11 +194,11 @@ The `project-workflow` skill is a thin protocol that calls these tools at the ri
 
 ```
 Session 1:   get_session_context() → 300 tokens  (fallback to llmspec)
-Session 10:  get_session_context() → 300 tokens  (memory.yaml compressed)
+Session 10:  get_session_context() → 300 tokens  (sensei.events queried, deduped)
 Session 100: get_session_context() → 300 tokens  (same — archives not loaded)
 ```
 
 The budget is bounded because:
-- `memory.yaml` is a *distilled* file (not an append log) — deduplication keeps it small
+- Decisions in `sensei.events` are deduped (not an append log) — deduplication keeps results small
 - Only the last 2 session summaries are in active memory; the rest are archived
-- `open-items.yaml` shrinks as items are closed
+- Open-item events shrink as items are closed

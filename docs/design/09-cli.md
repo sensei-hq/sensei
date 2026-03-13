@@ -16,7 +16,7 @@ implements:
 
 | NFR | Requirement |
 |-----|-------------|
-| usability | `skills init` must complete setup with no more than 3 user prompts |
+| usability | `sensei init` must complete setup with no more than 3 user prompts |
 | reliability | All CLI commands must be idempotent — running twice must be safe |
 | performance | CLI commands must respond in under 2s for typical repos |
 
@@ -25,113 +25,39 @@ implements:
 ## Layered Profile System
 
 ```
-~/.skills/                              ← machine-level, developer-owned
-  config.yaml                           ← active profile, registered MCPs, global prefs
-  profiles/
-    personal/
-      profile.yaml                      ← developer identity and workflow preferences
-      guidelines.md                     ← personal coding standards + workflow cycle
-      skills.yaml                       ← which skills are active
-    companies/
-      <name>/
-        profile.yaml                    ← company identity, remote MCP endpoint, metrics
-        guidelines.md                   ← shared company standards
-        skills.yaml                     ← company-required skills
-  cache/
-    <lib-name>/                         ← indexed external library
-      symbol-map.json
-      stack.md
-      llmspec.yaml
+~/.config/sensei/                   ← global developer config
+  config.yaml                       ← active backend, auth tokens, global prefs
 
-<repo-root>/                            ← project-level
-  .skills/
-    project.yaml                        ← active profiles for this repo + overrides
-  .llmspec.yaml
-  .index/
+<repo-root>/                        ← project-level
+  .sensei/
+    config.yaml                     ← project config (custom_libs, ranking strategy)
   CLAUDE.md
-  llms.txt
+  .sensei/llmspec.yaml
+  .sensei/llms.txt
 ```
 
-**Profile resolution** — when in a repo, the MCP server merges in this order:
-1. Personal profile (`~/.skills/profiles/personal/`)
-2. Company profile (if `project.yaml` references one)
-3. Project overrides (`.skills/project.yaml`)
-
-Each layer extends, never replaces. Company guidelines append to personal. Project overrides append to both.
+Authentication and team isolation is a Phase 9 feature. Phase 1 uses simple global config at `~/.config/sensei/config.yaml`.
 
 ---
 
 ## Config Schemas
 
-### `~/.skills/config.yaml`
+### `~/.config/sensei/config.yaml`
 
 ```yaml
-activeProfile: personal          # Default active profile name
+backend: supabase                # Active storage backend
+supabaseUrl: https://...         # Supabase project URL
+supabaseKey: ...                 # Supabase anon/service key
 editor: $EDITOR                  # Editor for 'sensei guidelines edit'
-mcpRegistrations:                # All registered MCP servers
-  - name: repo-index-server
-    scope: project               # project | global
-    repoPath: /path/to/repo
 ```
 
-### `~/.skills/profiles/personal/profile.yaml`
+### `<repo-root>/.sensei/config.yaml`
 
 ```yaml
-name: personal
-displayName: Jerry                # Used in status output
-workflow: idea-feature-design-impl  # Preferred development cycle
-preferredLibs:
+custom_libs:                     # Library intelligence hints
   - name: rokkit
     path: ~/Developer/rokkit
-    cached: true
-  - name: kavach
-    path: ~/Developer/kavach
-    cached: true
-```
-
-### `~/.skills/profiles/companies/<name>/profile.yaml`
-
-```yaml
-name: acme
-displayName: Acme Corp
-remoteMcp:
-  endpoint: https://mcp.acme.internal
-  auth: bearer                   # bearer | none | custom
-  tokenEnv: ACME_MCP_TOKEN       # env var holding the token
-localCompanionMcp:
-  enabled: true                  # Cache remote responses locally
-  cacheDir: ~/.skills/mcp-cache/acme/
-  ttlSeconds: 3600
-metrics:
-  enabled: true
-  capture: [tokensIn, tokensOut, interactions, toolCalls]
-  reportEndpoint: https://metrics.acme.internal
-```
-
-### `~/.skills/profiles/personal/skills.yaml` (and company equivalent)
-
-```yaml
-active:
-  - codebase-indexer
-  - content-compression
-  - agentic-dev-workflow
-  - context-manager
-  - doc-drift-detector
-  - benchmark-runner
-installPath: ~/.claude/skills     # Where to symlink skills
-```
-
-### `<repo-root>/.skills/project.yaml`
-
-```yaml
-profiles:
-  personal: true                  # Always include personal profile
-  company: acme                   # Optional company profile reference
-overrides:
-  stack: [typescript, react]      # Project-specific stack hint
-  entryPoints:
-    - path: src/index.ts
-      role: server entry
+rankingStrategy: default         # Symbol ranking strategy for this project
 ```
 
 ---
@@ -182,8 +108,7 @@ export async function init() {
 
   note(
     [
-      "Created: .llmspec.yaml, CLAUDE.md, llms.txt, .index/",
-      "Profiles: " + (profiles as string[]).join(", "),
+      "Created: .sensei/llmspec.yaml, .sensei/llms.txt, CLAUDE.md",
       installHook ? "Hook: pre-commit drift check installed" : "Hook: skipped",
     ].join("\n"),
     "Setup complete"
@@ -229,20 +154,19 @@ Each command lives in `src/commands/<name>.ts` and imports from `src/tools/` (sh
 ### `sensei init`
 
 ```
-1. Detect if .skills/ already exists → warn and suggest 'sensei add' if so
+1. Detect if .sensei/ already exists → warn and suggest 'sensei add' if so
 2. Run reindexRepo(cwd)
-3. Prompt: which profiles to activate? (list available from ~/.skills/profiles/)
-4. Write .skills/project.yaml with selected profiles
-5. Prompt: install pre-commit drift hook? (y/n)
-6. If yes: run hooksInstall()
-7. Print summary: files created, profiles active, hook status
+3. Write .sensei/config.yaml with project defaults
+4. Prompt: install pre-commit drift hook? (y/n)
+5. If yes: run hooksInstall()
+6. Print summary: files created, hook status
 ```
 
 ### `sensei add`
 
 ```
-1. Run reindexRepo(cwd) — safe, won't overwrite .llmspec.yaml
-2. If no .skills/project.yaml → create with defaults
+1. Run reindexRepo(cwd) — safe, won't overwrite .sensei/llmspec.yaml
+2. If no .sensei/config.yaml → create with defaults
 3. If no CLAUDE.md → create template
 4. Report: what was added / what was skipped (already existed)
 ```
@@ -250,27 +174,24 @@ Each command lives in `src/commands/<name>.ts` and imports from `src/tools/` (sh
 ### `sensei upgrade`
 
 ```
-1. bun update repo-index-server (or pull from git if installed from source)
-2. Rebuild MCP server: bun run build
-3. Re-run reindexRepo(cwd, { force: true }) for .index/ refresh
-4. Regenerate llms.txt and CLAUDE.md (non-destructive merge for CLAUDE.md)
-5. Do NOT overwrite .llmspec.yaml
-6. Re-symlink skills to ~/.claude/skills/
-7. Print changelog of what changed
+1. bun update sensei (or pull from git if installed from source)
+2. Rebuild: bun run build
+3. Re-run reindexRepo(cwd, { force: true }) to refresh Supabase symbols
+4. Regenerate .sensei/llms.txt and CLAUDE.md (non-destructive merge for CLAUDE.md)
+5. Do NOT overwrite .sensei/llmspec.yaml
+6. Print changelog of what changed
 ```
 
 ### `sensei status`
 
 Output format:
 ```
-Skills status — /path/to/current/repo
-─────────────────────────────────────
-Profiles:   personal ✓  |  acme (company) ✓
-MCP:        repo-index-server ✓ (registered, running)
-            acme-companion ✓ (local cache, remote: https://mcp.acme.internal)
-Index:      last updated 2 days ago
+sensei status — /path/to/current/repo
+──────────────────────────────────────
+Config:     ~/.config/sensei/config.yaml ✓
+MCP:        packages/server ✓ (registered, running)
+Index:      last updated 2 days ago (sensei.symbols)
 Drift:      3 files drifted (run: sensei drift)
-Cache:      rokkit ✓ (indexed 5 days ago)  |  kavach ✓ (indexed 1 day ago)
 ```
 
 ### `sensei guidelines`
@@ -284,18 +205,19 @@ Cache:      rokkit ✓ (indexed 5 days ago)  |  kavach ✓ (indexed 1 day ago)
 ### `sensei guidelines edit`
 
 ```
-1. Determine active profile
-2. Open ~/.skills/profiles/<profile>/guidelines.md in $EDITOR
-3. Wait for editor to close
-4. Print: "Guidelines updated."
+1. Open ~/.config/sensei/guidelines.md in $EDITOR
+2. Wait for editor to close
+3. Print: "Guidelines updated."
 ```
 
 ### `sensei cache add <path> [--as <name>]`
 
+Library intelligence is handled via `custom_libs` in `.sensei/config.yaml` (see feature doc 05-library-intelligence). This command registers a library path and triggers indexing into Supabase.
+
 ```
 1. Resolve path
-2. Run reindexRepo(path) into ~/.skills/cache/<name>/
-3. Register cache entry in ~/.skills/config.yaml
+2. Run reindexRepo(path) — stores symbols in sensei.symbols
+3. Add entry to .sensei/config.yaml under custom_libs
 4. Print: "Cached <name> (N files indexed)"
 ```
 
@@ -324,49 +246,36 @@ New MCP tools to support CLI-level features:
 
 ---
 
-## Remote + Companion MCP Architecture
+## MCP Server
 
-```
-Agent
-  │
-  ├── repo-index-server (local)      ← handles: index, context, drift, guidelines
-  │
-  └── acme-companion (local)         ← handles: company tools + metrics
-        │
-        ├── local cache (~/.skills/mcp-cache/acme/)
-        │     ↑ cache hit: serve locally (no latency)
-        │
-        └── acme remote MCP          ← cache miss: fetch from remote, cache response
-              https://mcp.acme.internal
-```
-
-The companion MCP is a thin proxy registered in `~/.claude/mcp.json` alongside `repo-index-server`. It is configured in `company/profile.yaml` and started/stopped by the CLI.
+The MCP server lives at `packages/server/`. It is registered in `~/.claude/mcp.json` and handles: index, context, drift, guidelines tools. No companion proxy or remote MCP in Phase 1 — team isolation is a Phase 9 feature.
 
 ---
 
 ## Package Structure
 
 ```
-mcp/repo-index-server/
+packages/cli/         ← CLI entry point
   src/
-    index.ts          ← MCP server entry (unchanged)
-    cli.ts            ← CLI entry point (new)
-    commands/         ← CLI command modules (new)
+    cli.ts            ← CLI entry point
+    commands/         ← CLI command modules
       init.ts
       add.ts
       upgrade.ts
       status.ts
-      profile.ts
-      company.ts
       guidelines.ts
       cache.ts
       hooks.ts
       index-cmd.ts    ← wraps reindexRepo for CLI use
       drift-cmd.ts    ← wraps checkDrift for CLI use
-    tools/            ← shared: query, reindex, context, drift, generate, benchmark
-    types.ts
-    index-reader.ts
   package.json        ← "bin": { "sensei": "./dist/cli.js" }
+
+packages/server/      ← MCP server
+  src/
+    index.ts          ← MCP server entry
+    tools/            ← shared: query, reindex, context, drift, generate, benchmark
+
+packages/engine/      ← inference; used directly (no HTTP server)
 ```
 
 Adding `"bin"` to `package.json` makes `sensei` available as a global command after `bun add -g sensei`.
@@ -428,4 +337,4 @@ sensei drift --fail-on-drift
 exit $?
 ```
 
-Gracefully skips if `skills` isn't installed, so the hook doesn't break for teammates who haven't set up skills yet.
+Gracefully skips if `sensei` isn't installed, so the hook doesn't break for teammates who haven't set up sensei yet.

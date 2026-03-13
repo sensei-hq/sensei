@@ -100,34 +100,21 @@ update order status to "processing" → emit order.processed event → return or
 
 ### L3 — Full Source
 
-The actual file content, read directly from disk. Not stored in `symbol-map.json` — always read live.
+The actual file content, read directly from disk. Not stored — always read live.
 
 ---
 
 ## Storage Schema
 
-`symbol-map.json` stores L0, L1, and L2 arrays per file. Each array index corresponds to the same export (parallel arrays).
+L0, L1, and L2 data is stored in the `sensei.symbols` table in Supabase. Each row represents one exported symbol:
 
-```json
-{
-  "src/orders.ts": {
-    "L0": [
-      "export async function processOrder(orderId: string): Promise<Order>",
-      "export function cancelOrder(orderId: string, reason: string): Promise<void>"
-    ],
-    "L1": [
-      "order = processOrder(orderId)\n// orderId: string\n// returns: Promise<Order>",
-      "cancelOrder(orderId, reason)\n// orderId: string\n// reason: string\n// returns: void"
-    ],
-    "L2": [
-      "validate orderId → fetch order → charge payment → update status → emit event → return order",
-      "// L2 not yet generated"
-    ]
-  }
-}
-```
+| Column | Resolution Level | Content |
+|---|---|---|
+| `signature` | L0 | Export declaration line (stripped of body) |
+| `io_pattern` | L1 | Assignment notation showing inputs/outputs |
+| `logic_flow` | L2 | Plain-English logic description (Phase 2: LLM-generated) |
 
-L3 is never in `symbol-map.json`. `get_file_context(path, "L3")` reads the file from disk.
+L3 is never stored — `get_file_context(path, "L3")` reads the file live from disk.
 
 ---
 
@@ -137,10 +124,9 @@ L3 is never in `symbol-map.json`. `get_file_context(path, "L3")` reads the file 
 
 ```
 L0/L1/L2:
-  1. Read symbol-map.json
-  2. Find entry for path
-  3. Return the array joined with "\n"
-  4. If path not in map: error "File not in symbol map. Run reindex_repo first."
+  1. Query `sensei.symbols` for the given file_path
+  2. Return the relevant column(s) joined with "\n"
+  3. If no symbols found: error "File not indexed. Run `sensei index` first."
 
 L3:
   1. Read file from disk at REPO_PATH/path

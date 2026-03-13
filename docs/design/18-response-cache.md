@@ -10,7 +10,7 @@ implements:
 
 ## Overview
 
-The Response Cache persists notable Claude outputs to `.index/response-cache/` with semantic tags so they are retrievable across sessions by query, not just by label. Entries include the original prompt, topic tags, a one-line summary, timestamp, and a TTL; `get_session_context()` surfaces up to 3 relevant entries as hints without loading full content. A maintenance pass archives entries older than 90 days that haven't been retrieved; pinned entries are exempt.
+The Response Cache persists notable Claude outputs to Supabase (`sensei.events` or a dedicated cache table) with semantic tags so they are retrievable across sessions by query, not just by label. Entries include the original prompt, topic tags, a one-line summary, timestamp, and a TTL; `get_session_context()` surfaces up to 3 relevant entries as hints without loading full content. A maintenance pass archives entries older than 90 days that haven't been retrieved; pinned entries are exempt.
 
 ---
 
@@ -27,11 +27,7 @@ The Response Cache persists notable Claude outputs to `.index/response-cache/` w
 
 ## Data Model / Storage
 
-```
-.index/response-cache/
-  <id>.json     ← one file per cached response
-  index.json    ← lightweight index for fast search (id, label, summary, tags, timestamp, ttl, pinned)
-```
+Cache entries are stored in Supabase (a dedicated cache table or `sensei.events` with `event_type: 'response_cache'`). The schema below represents the row/document structure:
 
 Individual entry schema:
 ```json
@@ -57,12 +53,12 @@ Individual entry schema:
 
 Cache maintenance:
 ```
-Step 1: Load index.json
+Step 1: Query Supabase for all non-pinned cache entries
 Step 2: For each entry where pinned === false:
-  → If lastRetrieved is null and age > ttlDays: move to .index/response-cache/archive/
-  → If lastRetrieved exists and daysSince(lastRetrieved) > ttlDays: archive
+  → If lastRetrieved is null and age > ttlDays: mark archived (set archived = true)
+  → If lastRetrieved exists and daysSince(lastRetrieved) > ttlDays: mark archived
 Step 3: On successful retrieval: increment retrievalCount, set lastRetrieved = now, extend TTL by 90 days
-Step 4: Write updated index.json
+Step 4: Write updates to Supabase
 ```
 
 Proactive offer logic:
@@ -101,7 +97,7 @@ list_cached_responses(): CacheSummary
 ```
 No match (find_cached_response):  Return null, message: "No cached response found for that query."
 Invalid id (pin/delete):          "Cache entry '<id>' not found."
-Write failure:                    Retry once, then: "Failed to save cache entry. Check .index/ permissions."
+Write failure:                    Retry once, then: "Failed to save cache entry. Check Supabase connection."
 Possible secrets in content:      Warn: "Response may contain credentials — cache not saved. Review content first."
 ```
 

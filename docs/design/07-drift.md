@@ -10,9 +10,9 @@ implements:
 
 ## Overview
 
-Drift detection uses `git diff` against the last indexed commit to identify which files have changed, then cross-references those changes against a traceability matrix (`.index/traceability.json`) to flag docs whose linked code files have changed. This enables precise "code changed but doc didn't" detection without content analysis.
+Drift detection uses `git diff` against the last indexed commit to identify which files have changed, then cross-references those changes against a traceability matrix stored in Supabase to flag docs whose linked code files have changed. This enables precise "code changed but doc didn't" detection without content analysis.
 
-For non-git repos, falls back to mtime/size comparison against `doc-index.json` fingerprints.
+For non-git repos, falls back to mtime/size comparison against fingerprints stored in `sensei.scan_state`.
 
 ## Non-Functional Requirements
 
@@ -26,17 +26,9 @@ For non-git repos, falls back to mtime/size comparison against `doc-index.json` 
 
 ## Traceability Matrix
 
-`.index/traceability.json` maps design/feature docs to the code files they cover:
+The traceability matrix maps design/feature docs to the code files they cover.
 
-```json
-{
-  "docs/design/03-mcp-server.md": ["src/index.ts", "src/tools/query.ts", "src/tools/reindex.ts"],
-  "docs/design/07-drift.md": ["src/tools/drift.ts"],
-  "docs/design/10-project-memory.md": ["src/tools/project-memory.ts"],
-  "docs/features/01-CodebaseIndexing.md": ["src/tools/reindex.ts", "src/index-reader.ts"],
-  "README.md": ["packages/sensei/package.json"]
-}
-```
+Traceability data is stored in Supabase and queried at drift-check time. The source of truth for manual coverage declarations remains `.sensei/llmspec.yaml`.
 
 **Population:**
 - Declared in `.llmspec.yaml` under `docs[].covers[]` (manual, authoritative)
@@ -60,7 +52,7 @@ docs:
 ```
 checkDrift(repoPath):
 
-1. Read .index/doc-index.json → get lastIndexedCommit
+1. Read `sensei.repos` → get `indexed_at` (last index timestamp) and the `lastIndexedCommit` git SHA
    → if missing: return "No index found. Run sensei index first."
 
 2. Check if repo has git:
@@ -69,8 +61,8 @@ checkDrift(repoPath):
    b. If not git (fallback):
       changedFiles = files where mtime/size differ from doc-index fingerprints
 
-3. Read .index/traceability.json
-   → if missing: skip cross-reference, report raw changed files only
+3. Load traceability data from Supabase (doc_path → covered_files mapping)
+   → if empty: skip cross-reference, report raw changed files only
 
 4. For each (docPath, coveredFiles) in traceability:
    a. If ANY coveredFile is in changedFiles:
@@ -165,7 +157,7 @@ The hook runs `checkDrift` against staged changes. Blocks commit if docs are sta
 
 When `lastIndexedCommit` is absent (non-git repo or pre-index state):
 
-- Falls back to mtime/size comparison from `doc-index.json`
+- Falls back to mtime/size comparison from `sensei.scan_state`
 - No traceability cross-reference possible in this mode
 - Reports raw file modifications only: `"{path}: modified since last index"`
 
@@ -181,5 +173,5 @@ Unit: src/tools/drift.spec.ts
   - git: no changes since lastIndexedCommit → no drift
   - non-git fallback: mtime/size diff → raw-modified entry
   - missing traceability.json → raw changed files only, no cross-reference
-  - missing doc-index.json → returns error message
+  - no indexed repo in sensei.repos → returns error message
 ```

@@ -6,6 +6,10 @@ implements:
     items: [repo-scanner, symbol-map, llms-txt-generation, multi-modal-search, symbol-graph]
 ---
 
+> **SUPERSEDED** by `20-pipeline-adapter.md` and `40-metadata-model.md`. The regex-based extraction approach described here has been replaced by the AST-based pipeline (ts-morph for TypeScript). Extraction targets and output formats are now defined in those docs. The NFRs and framework detection tables remain useful reference.
+
+---
+
 # Indexing
 
 ## Overview

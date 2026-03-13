@@ -27,12 +27,12 @@ The Context Manager exposes targeted slices of the indexed repo — orientation,
 
 ## Slice Definitions
 
-| Scope | Content | Token target |
-|-------|---------|-------------|
-| `"orientation"` | project name, description, stack, entry points | < 250 |
-| `"src/<module>"` | L0 signatures for all exports in that module | < 150 |
-| `"patterns"` | `.sensei/patterns.md` full content | varies |
-| `"shortcuts"` | `.sensei/shortcuts.md` full content | varies |
+| Scope | Content | Source | Token target |
+|-------|---------|--------|-------------|
+| `"orientation"` | project name, description, stack, entry points | `sensei.repos` query | < 250 |
+| `"src/<module>"` | L0 signatures for all exports in that module | `sensei.symbols` table query | < 150 |
+| `"patterns"` | `.sensei/patterns.md` full content | on-disk file | varies |
+| `"shortcuts"` | `.sensei/shortcuts.md` full content | on-disk file | varies |
 
 Resolution levels used:
 - L0 — signatures only (function names, types, no body)
@@ -44,7 +44,7 @@ Resolution levels used:
 
 ## Checkpoint Storage
 
-Checkpoints are in-session only (not persisted to disk). Stored as an ordered list:
+Checkpoints are stored in `sensei.events` (event_type: 'checkpoint'). In-session checkpoints are also kept in memory as an ordered list for fast access:
 
 ```typescript
 interface Checkpoint {
@@ -125,7 +125,7 @@ E2E: e2e/context.e2e.ts
 
 | Question | Status |
 |----------|--------|
-| Should checkpoints optionally persist to disk for long-running sessions? | 🔲 Open |
+| Should checkpoints optionally persist to disk for long-running sessions? | Resolved — checkpoints persist to `sensei.events` (event_type: 'checkpoint') |
 
 ---
 

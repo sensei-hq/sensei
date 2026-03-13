@@ -8,6 +8,8 @@ implements:
 
 # Local Model Indexer
 
+> **Phase context:** The regex-based approach described in the problem statement is superseded by ts-morph (Phase 1). The local model inference described here is the Phase 3 plan for generating L2 logic flows and semantic embeddings. The `ModelBackend` interface and model recommendations remain valid.
+
 ## Problem with the Current Approach
 
 The current indexer (`reindex.ts`) uses regex to extract symbols. This is:
@@ -33,21 +35,21 @@ AST parsing would fix fragility but not shallowness, and adds heavy language-spe
 
 ## Approach: Local Model as Base Analyzer
 
-> **Architecture note:** inference runs inside `@sensei/server`, not the CLI. The CLI sends file paths to the server's `/analyze` endpoint; the server manages model backends and returns `FileAnalysis`. See `14-server-package.md` for the package split and deployment models (local, org shared, cloud).
+> **Architecture note:** inference is handled directly by `packages/engine/` using ts-morph for Phase 1 AST-based extraction. The local model pipeline described here (Phase 3) will be integrated into `packages/engine/` — no separate HTTP server.
 
 A small local model — running entirely on device, no API key, no token costs — replaces regex as the first layer of analysis. It reads a file and produces structured JSON:
 
 ```
 file content
     ↓
-@sensei/server  (persistent process, holds warm models)
+packages/engine/  (direct TypeScript library, no HTTP server)
   └── ModelBackend (Ollama llama3.2:3b / Transformers.js ONNX)
     ↓
 FileAnalysis {
   symbols, summary, flows, examples, relations
 }
     ↓
-symbol-map.json, folder-map.json, traceability.json, llmspec.yaml
+sensei.symbols, sensei.repos (Supabase), .sensei/llmspec.yaml
 ```
 
 This one interface covers all languages. New languages cost zero additional implementation. The model understands context — it can infer intent, detect patterns, and capture relationships that regex never could.
@@ -137,7 +139,7 @@ interface Relation {
 }
 ```
 
-This maps directly to the existing symbol-map levels:
+This maps directly to the `sensei.symbols` resolution levels:
 - `symbol.signature` → **L0** (~10 tokens per symbol)
 - `symbol.description` → **L1** (adds semantics)
 - `flows` + `examples` → **L2** (logic flow, deferred per file if model is slow)
@@ -273,12 +275,12 @@ The model reads the manifest as text and returns structured JSON — no field-by
 ```
 sensei index
   ↓
-1. PackageScanner       → folder-map.json     (package hierarchy, tech stack)
-2. FileAnalyzer         → analysis-cache/      (per-file analysis, embeddings)
-3. SymbolMapBuilder     → symbol-map.json      (L0/L1/L2 from FileAnalysis)
-4. TraceabilityBuilder  → traceability.json    (from relations + embedding similarity)
-5. LlmspecGenerator     → llmspec.yaml         (auto-populated sections: packages, stack, shortcuts)
-6. LlmsTxtGenerator     → llms.txt             (from llmspec + symbol map)
+1. PackageScanner       → sensei.repos (Supabase)         (package hierarchy, tech stack)
+2. FileAnalyzer         → analysis-cache/                  (per-file analysis, embeddings)
+3. SymbolMapBuilder     → sensei.symbols (Supabase)        (L0/L1/L2 from FileAnalysis)
+4. TraceabilityBuilder  → sensei.symbols relations column  (from relations + embedding similarity)
+5. LlmspecGenerator     → .sensei/llmspec.yaml             (auto-populated sections: packages, stack, shortcuts)
+6. LlmsTxtGenerator     → .sensei/llms.txt                 (from llmspec + symbol data)
 ```
 
 Each step reads the output of previous steps. Steps 1–2 are the model-heavy steps. Steps 3–6 are fast transforms over the cached analysis.
