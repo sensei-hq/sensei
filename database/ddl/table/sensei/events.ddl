@@ -9,6 +9,10 @@ create table if not exists events (
 , tool         text not null
 , project_path text
 , input        jsonb
+, seq          int4
+, duration_ms  int4
+, success      boolean
+, error        text
 , ts           timestamptz not null
 , created_at   timestamptz not null default now()
 );
