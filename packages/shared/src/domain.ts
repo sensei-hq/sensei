@@ -104,3 +104,38 @@ export interface IndexResult {
   durationMs: number;
   errors: string[];
 }
+
+// ─── Phase 2 context pack types ───────────────────────────────────────────────
+
+export interface CodeSlice {
+  kind: "code";
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  tokens: number;
+  symbolName: string;
+  score: number;
+}
+
+export interface DocSlice {
+  kind: "doc";
+  filePath: string;
+  heading: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  tokens: number;
+  score: number;
+}
+
+export type Slice = CodeSlice | DocSlice;
+
+export interface ContextPack {
+  id: string;
+  task: string;
+  slices: Slice[];
+  totalTokens: number;
+  modelId?: string;
+  createdAt: string;
+}
