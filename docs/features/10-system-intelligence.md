@@ -29,7 +29,7 @@ This means every capability that improves Layer 1 or Layer 2 automatically impro
 
 ### Workspace Definition
 
-A workspace is a named collection of repos and their roles that together form a system. Roles span the full spectrum of modern system decomposition: UI, backend, microservice, data, infra, shared-lib, gateway, schema-registry. System-level docs are declared alongside the repos. The workspace is stored in `sensei.workspaces` and orchestrates Layer 1 indexing across all member repos.
+A workspace is a named collection of repos and their roles that together form a system. Roles span the full spectrum of modern system decomposition: UI, backend, microservice, data, infra, shared-lib, gateway, schema-registry. System-level docs are declared alongside the repos. The workspace is stored persistently and orchestrates indexing across all member repos.
 
 ```gherkin
 Feature: Workspace Definition
@@ -38,7 +38,7 @@ Feature: Workspace Definition
     Given repos: payment-api (Go), payment-dashboard (TypeScript), payment-mobile (React Native), payment-data (Python), payment-infra (Terraform), payment-schemas (Protobuf)
     When the developer runs sensei workspace init --name payment-platform
     And adds each repo: sensei workspace add ./payment-api --role microservice
-    Then each repo is registered in sensei.workspace_repos with its role
+    Then each repo is registered with its role in the workspace
     And the workspace is accessible from any member repo's get_session_context()
 
   Scenario: Workspace roles reflect microservices decomposition
@@ -47,10 +47,10 @@ Feature: Workspace Definition
     And a repo can have multiple roles (e.g., a service that is both backend and schema-registry)
 
   Scenario: System docs are registered with the workspace
-    Given a workspace with architecture docs in Confluence space PAYMENT-ARCH and local ADRs in ../payment-docs/decisions/
+    Given a workspace with architecture docs in a Confluence space and local ADRs in a directory
     When the developer registers both sources
-    Then both are indexed via Layer 1's external doc adapters (Confluence adapter, local file adapter)
-    And the indexed content is stored in sensei.system_docs, distinct from per-repo doc_sections
+    Then both are indexed via the external doc adapters
+    And the indexed content is stored separately from per-repo documentation
     And it is available to all repos in the workspace for context delivery and conformance checks
 
   Scenario: Developer context includes workspace awareness
@@ -63,7 +63,7 @@ Feature: Workspace Definition
 
 ### Cross-Repo Indexing
 
-Cross-repo indexing orchestrates Layer 1 indexers across all workspace repos and then builds a workspace-level graph on top of the per-repo symbol indexes. It resolves cross-repo references by contract type — REST (OpenAPI), GraphQL, gRPC (Protobuf), event schemas (AsyncAPI, Avro), shared types, and shared database schemas. The result is stored in `sensei.workspace_edges` and is queryable like any other part of the index.
+Cross-repo indexing orchestrates Layer 1 indexers across all workspace repos and then builds a workspace-level graph on top of the per-repo symbol indexes. It resolves cross-repo references by contract type — REST (OpenAPI), GraphQL, gRPC (Protobuf), event schemas (AsyncAPI, Avro), shared types, and shared database schemas. The result is stored persistently and is queryable like any other part of the index.
 
 Microservices communicate through implicit contracts — a service publishing to a Kafka topic doesn't import the consumer. Sensei resolves these async dependencies through topic name matching, schema registry references, and event schema analysis.
 
@@ -71,34 +71,34 @@ Microservices communicate through implicit contracts — a service publishing to
 Feature: Cross-Repo Indexing
 
   Scenario: OpenAPI contract links backend service to consumers
-    Given payment-api exposes openapi.yaml
-    And payment-dashboard calls /api/v1/payments/process in 4 components
+    Given payment-api exposes an OpenAPI specification
+    And payment-dashboard calls the payments endpoint in 4 components
     And payment-mobile calls the same endpoint in 2 screens
     When the workspace index runs
-    Then sensei.workspace_edges records consuming call sites in both repos
+    Then cross-repo edges record consuming call sites in both repos
     And the endpoint is flagged if its contract changes
 
   Scenario: Protobuf schema links gRPC services
-    Given payment-schemas defines PaymentService.proto
+    Given payment-schemas defines a Protobuf service
     And payment-api implements the server
     And payment-data implements the client
     When the workspace index runs
-    Then workspace_edges record: payment-schemas → payment-api (server), payment-schemas → payment-data (client)
-    And any .proto change triggers cross-repo drift evaluation
+    Then cross-repo edges record: payment-schemas → payment-api (server), payment-schemas → payment-data (client)
+    And any schema change triggers cross-repo drift evaluation
 
   Scenario: Kafka topic links async producer and consumer
     Given payment-api publishes to topic "payments.completed"
     And payment-data subscribes to "payments.completed"
     And no direct import relationship exists between the two services
     When the workspace index runs
-    Then sensei resolves the implicit dependency via topic name matching and AsyncAPI schema
-    And a workspace_edge is created: payment-api → payment-data via topic "payments.completed"
+    Then sensei resolves the implicit dependency via topic name matching and event schema analysis
+    And a cross-repo edge is created: payment-api → payment-data via topic "payments.completed"
 
   Scenario: Shared database schema is tracked as a cross-repo contract
-    Given payment-api and payment-reporting both read from the payments table in a shared database
+    Given payment-api and payment-reporting both read from a shared database table
     When the workspace index runs
-    Then a workspace_edge is recorded: payments_db.payments → payment-api and payments_db.payments → payment-reporting
-    And schema migrations in the DB repo are evaluated for impact on both consumers
+    Then cross-repo edges record the dependency of each service on the shared table
+    And schema migrations are evaluated for impact on all consumers
 
   Scenario: Heterogeneous stacks index without conflict
     Given Go, TypeScript, Python, and Terraform repos in one workspace
@@ -114,7 +114,7 @@ Feature: Cross-Repo Indexing
 
 The service map is a first-class workspace artifact — a live graph of all services, their roles, their contracts (what they produce and consume), and their dependencies. It is generated from the workspace index and updated on every index run. It is the system-level equivalent of the per-repo call graph, and it is the foundation for conformance checking, gap analysis, and system health scoring.
 
-The service map is stored in `sensei.service_map` and rendered as a Mermaid diagram in the workspace dashboard. It replaces hand-drawn architecture diagrams that go stale the moment they are created.
+The service map is stored persistently and rendered as a Mermaid diagram in the workspace dashboard. It replaces hand-drawn architecture diagrams that go stale the moment they are created.
 
 ```gherkin
 Feature: Service Map
@@ -122,14 +122,14 @@ Feature: Service Map
   Scenario: Service map is generated from workspace index
     Given a workspace with 7 repos indexed
     When the workspace index completes
-    Then sensei.service_map is populated with: nodes (one per service), edges (one per contract boundary), and metadata (contract type, version, direction)
+    Then the service map is populated with: nodes (one per service), edges (one per contract boundary), and metadata (contract type, version, direction)
     And the map reflects the current actual state of the codebase, not a manually drawn diagram
 
   Scenario: Service map renders as Mermaid in dashboard
-    Given a workspace with service map data in sensei.service_map
+    Given a workspace with service map data available
     When a developer opens the Workspace Dashboard
     Then a Mermaid diagram renders showing all services as nodes and contracts as labelled edges
-    And async dependencies (Kafka, SQS) are shown with dashed edges to distinguish from synchronous calls
+    And async dependencies are shown with dashed edges to distinguish from synchronous calls
     And each node is clickable to navigate to that repo's detail view
 
   Scenario: Service map highlights drift and gaps
@@ -159,7 +159,7 @@ Feature: Architecture Conformance
     Given a system architecture doc stating: "All public API endpoints must validate requests against a JSON schema before processing"
     When sensei processes the system docs
     Then a conformance rule is created: type "request-validation", scope "public-endpoint-handlers"
-    And the rule is stored in sensei.conformance_rules with its source doc reference
+    And the rule is stored with its source doc reference
 
   Scenario: Per-service conformance is evaluated against extracted rules
     Given a conformance rule requiring structured JSON logging
@@ -192,10 +192,10 @@ Cross-repo drift extends Layer 2's per-repo drift detection across repo boundari
 Feature: Cross-Repo Drift Detection
 
   Scenario: REST endpoint rename causes cross-repo drift
-    Given payment-dashboard calls POST /api/v1/payments/process
-    And payment-api renames the endpoint to POST /api/v2/payments/initiate
+    Given payment-dashboard calls a payments endpoint in payment-api
+    And payment-api renames that endpoint
     When the workspace drift check runs
-    Then a cross-repo drift item is created: source payment-api, consumer payment-dashboard, contract REST, old path /v1/payments/process, new path /v2/payments/initiate
+    Then a cross-repo drift item is created identifying payment-api as the source and payment-dashboard as the consumer
     And affected call sites in payment-dashboard are listed with file and line references
 
   Scenario: Protobuf field removal causes cross-repo drift
@@ -259,23 +259,23 @@ Feature: System Gap Analysis
     When the developer runs sensei workspace analyse --gaps
     Then a prioritised report lists: designed-not-implemented capabilities, missing services, duplications, cross-service inconsistencies, and unguarded boundaries
     And each item includes: affected repos, source evidence, severity, and suggested resolution
-    And gap items are stored in sensei.traceability and assignable to teams and sprints
+    And gap items are stored as traceability entries and assignable to teams and sprints
 ```
 
 ---
 
 ### System Health Score
 
-The system health score aggregates Layer 2 per-repo quality metrics (complexity, test coverage, doc coverage, conformance) with Layer 3 cross-repo metrics (open drift items, gap items, contract coverage, service map completeness) into a single workspace-level indicator. It is not a new measurement system — it is an aggregation of existing measurements from the layers below, adding only the cross-repo signals.
+The system health score aggregates per-repo quality metrics (complexity, test coverage, doc coverage, conformance) with cross-repo metrics (open drift items, gap items, contract coverage, service map completeness) into a single workspace-level indicator. It is not a new measurement system — it is an aggregation of existing measurements from the layers below, adding only the cross-repo signals.
 
 ```gherkin
 Feature: System Health Score
 
   Scenario: System health score aggregates layer metrics
-    Given a workspace with 7 repos each having Layer 2 quality snapshots
+    Given a workspace with 7 repos each having quality snapshots
     When the workspace index completes
-    Then a system health snapshot is written with: average per-repo quality scores (50%), conformance score (20%), open drift items count (15%), open system gap items (15%)
-    And the composite score is stored in sensei.quality_reports with type "workspace-health"
+    Then a system health snapshot is recorded with: average per-repo quality scores (50%), conformance score (20%), open drift items count (15%), open system gap items (15%)
+    And the composite score is stored as a workspace-level quality report
 
   Scenario: Health score trend reflects system improvement over time
     Given 90 days of workspace health snapshots
