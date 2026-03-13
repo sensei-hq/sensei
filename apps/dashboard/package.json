@@ -22,6 +22,7 @@
 	},
 	"dependencies": {
 		"@rokkit/actions": "^1.0.0-next.133",
+		"@rokkit/app": "^1.0.0-next.133",
 		"@rokkit/core": "^1.0.0-next.133",
 		"@rokkit/icons": "^1.0.0-next.133",
 		"@rokkit/states": "^1.0.0-next.133",
