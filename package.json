@@ -13,11 +13,11 @@
     "coverage": "vitest run --coverage "
   },
   "overrides": {
-    "@kavach/sentry": "1.0.0-next.32",
-    "@kavach/cookie": "1.0.0-next.32",
-    "@kavach/hashing": "1.0.0-next.32",
-    "@kavach/logger": "1.0.0-next.32",
-    "@kavach/query": "1.0.0-next.32"
+    "@kavach/sentry": "1.0.0-next.34",
+    "@kavach/cookie": "1.0.0-next.34",
+    "@kavach/hashing": "1.0.0-next.34",
+    "@kavach/logger": "1.0.0-next.34",
+    "@kavach/query": "1.0.0-next.34"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
