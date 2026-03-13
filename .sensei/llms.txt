@@ -1,24 +1,275 @@
-# skills
+# 
+> A CLI and MCP server that indexes a codebase once, exposes exports at four resolution levels (L0-L3), and measures AI skills impact through A/B benchmarks.
 
-# sensei
+## Entry Points
+- [cli.ts](packages/cli/src/cli.ts): async
 
-A universal AI skills library and toolchain. Scan a repo once, produce structured orientation artifacts, and expose an MCP server so agents load only what they need — fewer tokens, fewer tool calls, better results.
+## .
+- [README.md](README.md): sensei
 
-## Core Idea
+## apps/dashboard
+- [README.md](apps/dashboard/README.md): sv
 
-AI agents dropped into an unfamiliar codebase waste most of their context window on orientation. Sensei solves this:
+## apps/dashboard/src/lib
+- [supabase.ts](apps/dashboard/src/lib/supabase.ts): supabase
 
-- **Index once** — `sensei init` scans your repo and writes `.sensei/` artifacts: symbol map, package hierarchy, traceability graph, llmspec
-- **Local model analysis** — a small on-device model (Transformers.js ONNX or Ollama) extracts symbols, summaries, flows, examples and relations — no regex, no AST, no API key
-- **Right resolution** — code stored at four levels: signature (L0, ~10 tokens), description (L1), logic flow (L2), full source (L3). Agents request the minimum needed
-- **Docs stay in sync** — traceability matrix built from model-extracted relations + embedding similarity. `git diff` against last index commit flags exactly which docs need attention
-- **Context stays flat** — project memory (decisions, patterns, open items) persists across sessions via MCP tools. `get_session_context()` loads ~300 tokens regardless of project age
-- **Improvements are measured** — benchmark task corpus compares token usage and interaction counts with and without skills
+## apps/dashboard/src/routes
+- [+page.ts](apps/dashboard/src/routes/+page.ts): load
 
-## Skills
+## apps/dashboard/src/routes/benchmarks
+- [+page.ts](apps/dashboard/src/routes/benchmarks/+page.ts): load
 
-Install to `~/.claude/skills/` (or equivalent). Teach agents when and how to use the tools.
+## apps/dashboard/src/routes/libraries
+- [+page.ts](apps/dashboard/src/routes/libraries/+page.ts): load
 
-| Skill | Purpose |
+## apps/dashboard/src/routes/references
+- [+page.ts](apps/dashboard/src/routes/references/+page.ts): load
+
+## apps/dashboard/src/routes/repos
+- [+page.ts](apps/dashboard/src/routes/repos/+page.ts): load
+
+## apps/dashboard/src/routes/stats
+- [+page.ts](apps/dashboard/src/routes/stats/+page.ts): load
+
+## docs/design
+- [01-architecture.md](docs/design/01-architecture.md): Architecture
+- [02-skills.md](docs/design/02-skills.md): Skills
+- [03-mcp-server.md](docs/design/03-mcp-server.md): MCP
+- [04-llmspec.md](docs/design/04-llmspec.md): LLMSpec
+- [05-indexing.md](docs/design/05-indexing.md): Indexing
+- [06-compression.md](docs/design/06-compression.md): Content
+- [07-drift.md](docs/design/07-drift.md): Doc
+- [08-benchmarking.md](docs/design/08-benchmarking.md): Benchmarking
+- [09-cli.md](docs/design/09-cli.md): CLI
+- [10-project-memory.md](docs/design/10-project-memory.md): Project
+- [11-doc-tools.md](docs/design/11-doc-tools.md): Doc
+- [12-incremental-indexing.md](docs/design/12-incremental-indexing.md): Incremental
+- [13-traceability-matrix.md](docs/design/13-traceability-matrix.md): Traceability
+- [14-server-package.md](docs/design/14-server-package.md): Server
+- [15-package-adapters.md](docs/design/15-package-adapters.md): Package
+- [16-local-model-indexer.md](docs/design/16-local-model-indexer.md): Local
+- [17-pattern-store.md](docs/design/17-pattern-store.md): Pattern
+- [18-response-cache.md](docs/design/18-response-cache.md): Response
+- [19-context-manager.md](docs/design/19-context-manager.md): Context
+- [README.md](docs/design/README.md): Design
+
+## docs/features
+- [01-indexing.md](docs/features/01-indexing.md): Indexing
+- [02-resolution.md](docs/features/02-resolution.md): Resolution
+- [03-workflow.md](docs/features/03-workflow.md): Workflow
+- [04-traceability.md](docs/features/04-traceability.md): Traceability
+- [05-context.md](docs/features/05-context.md): Context
+- [06-Benchmarking.md](docs/features/06-Benchmarking.md): Benchmarking
+- [07-CLI.md](docs/features/07-CLI.md): CLI
+- [08-documentation.md](docs/features/08-documentation.md): Documentation
+- [09-patterns.md](docs/features/09-patterns.md): Patterns
+- [10-caching.md](docs/features/10-caching.md): Caching
+- [11-implementation-sync.md](docs/features/11-implementation-sync.md): Implementation
+- [12-analytics.md](docs/features/12-analytics.md): Analytics
+- [README.md](docs/features/README.md): Features
+
+## docs/plans
+- [2026-03-06-ai-skills-repo-design.md](docs/plans/2026-03-06-ai-skills-repo-design.md): AI
+- [2026-03-06-ai-skills-repo.md](docs/plans/2026-03-06-ai-skills-repo.md): AI
+- [2026-03-06-benchmark-git-branches-design.md](docs/plans/2026-03-06-benchmark-git-branches-design.md): Benchmark
+- [2026-03-06-benchmark-git-branches.md](docs/plans/2026-03-06-benchmark-git-branches.md): Benchmark
+- [2026-03-06-doctor-benchmark-design.md](docs/plans/2026-03-06-doctor-benchmark-design.md): Doctor
+- [2026-03-06-doctor-benchmark.md](docs/plans/2026-03-06-doctor-benchmark.md): Doctor
+- [2026-03-06-promote-telemetry-design.md](docs/plans/2026-03-06-promote-telemetry-design.md): Promote
+- [2026-03-06-promote-telemetry.md](docs/plans/2026-03-06-promote-telemetry.md): Promote
+- [2026-03-07-benchmark-populate.md](docs/plans/2026-03-07-benchmark-populate.md): benchmark
+- [2026-03-07-extract-tools-package.md](docs/plans/2026-03-07-extract-tools-package.md): Extract
+- [2026-03-07-monorepo-package-split.md](docs/plans/2026-03-07-monorepo-package-split.md): Monorepo
+- [2026-03-07-populate-llmspec-skill.md](docs/plans/2026-03-07-populate-llmspec-skill.md): populate-llmspec
+- [2026-03-07-server-inference-package.md](docs/plans/2026-03-07-server-inference-package.md): Server
+
+## docs/superpowers/plans
+- [2026-03-10-indexer-comparison.md](docs/superpowers/plans/2026-03-10-indexer-comparison.md): Indexer
+- [2026-03-11-analytics-collector.md](docs/superpowers/plans/2026-03-11-analytics-collector.md): Analytics
+- [2026-03-11-doc-guide-traceability.md](docs/superpowers/plans/2026-03-11-doc-guide-traceability.md): Doc
+- [2026-03-11-indexer-multimodal-search.md](docs/superpowers/plans/2026-03-11-indexer-multimodal-search.md): Indexer
+- [2026-03-12-llms-txt-traceability.md](docs/superpowers/plans/2026-03-12-llms-txt-traceability.md): llms.txt
+- [2026-03-12-on-demand-reporting.md](docs/superpowers/plans/2026-03-12-on-demand-reporting.md): On-Demand
+- [2026-03-12-supabase-backend-migration.md](docs/superpowers/plans/2026-03-12-supabase-backend-migration.md): Supabase
+- [2026-03-12-supabase-database-setup.md](docs/superpowers/plans/2026-03-12-supabase-database-setup.md): Supabase
+- [2026-03-12-supabase-web-app.md](docs/superpowers/plans/2026-03-12-supabase-web-app.md): Supabase
+
+## docs/superpowers/specs
+- [2026-03-10-indexer-comparison-design.md](docs/superpowers/specs/2026-03-10-indexer-comparison-design.md): Indexer
+- [2026-03-11-analytics-design.md](docs/superpowers/specs/2026-03-11-analytics-design.md): Analytics
+- [2026-03-11-doc-guide-traceability-design.md](docs/superpowers/specs/2026-03-11-doc-guide-traceability-design.md): Doc
+- [2026-03-11-indexer-multimodal-search-design.md](docs/superpowers/specs/2026-03-11-indexer-multimodal-search-design.md): Indexer
+- [2026-03-12-on-demand-reporting-design.md](docs/superpowers/specs/2026-03-12-on-demand-reporting-design.md): On-Demand
+- [2026-03-12-supabase-central-store-design.md](docs/superpowers/specs/2026-03-12-supabase-central-store-design.md): Supabase
+
+## docs/templates
+- [design.md](docs/templates/design.md): [Component
+- [feature.md](docs/templates/feature.md): [Module
+
+## packages/cli/src
+- [claude.ts](packages/cli/src/claude.ts): ClaudeUsage, ClaudeResult, callClaude
+- [git.ts](packages/cli/src/git.ts): findRepoRoot, getCurrentBranch, isCleanWorkingTree, branchExists, createAndCheckoutBranch
+- [names.ts](packages/cli/src/names.ts): generateRunName
+
+## packages/cli/src/__stubs__
+- [bun-globals.ts](packages/cli/src/__stubs__/bun-globals.ts): function
+- [bun-sqlite.ts](packages/cli/src/__stubs__/bun-sqlite.ts): Database
+
+## packages/cli/src/commands
+- [add.ts](packages/cli/src/commands/add.ts): add
+- [benchmark-coverage.ts](packages/cli/src/commands/benchmark-coverage.ts): benchmarkCoverage
+- [benchmark-doctor.ts](packages/cli/src/commands/benchmark-doctor.ts): buildOutlineIndex, TargetedIndexPromptOptions, buildTargetedIndexPrompt, RawContentPromptOptions, buildRawContentPrompt
+- [benchmark-indexer.ts](packages/cli/src/commands/benchmark-indexer.ts): benchmarkIndexer
+- [benchmark-inspect.ts](packages/cli/src/commands/benchmark-inspect.ts): resolveBranchName, benchmarkInspect
+- [benchmark-populate.ts](packages/cli/src/commands/benchmark-populate.ts): buildPopulatePrompt, parseYamlOutput, parsePopulateScore, benchmarkPopulate
+- [benchmark-promote.ts](packages/cli/src/commands/benchmark-promote.ts): buildFeedback, submitReport, benchmarkPromote
+- [doctor.ts](packages/cli/src/commands/doctor.ts): doctor
+- [init.ts](packages/cli/src/commands/init.ts): init
+- [migrate.ts](packages/cli/src/commands/migrate.ts): migrate
+- [setup.ts](packages/cli/src/commands/setup.ts): setupMcp, setupHooks
+- [stats.spec.ts](packages/cli/src/commands/stats.spec.ts): function
+- [stats.ts](packages/cli/src/commands/stats.ts): StatsCommandOptions, formatStats, stats
+- [status.ts](packages/cli/src/commands/status.ts): status
+- [watch.spec.ts](packages/cli/src/commands/watch.spec.ts): function
+- [watch.ts](packages/cli/src/commands/watch.ts): WatchOptions, watch
+
+## packages/collector/src
+- [daemon.ts](packages/collector/src/daemon.ts): DaemonOptions, Daemon, startDaemon
+- [drain.spec.ts](packages/collector/src/drain.spec.ts): function, function
+- [drain.ts](packages/collector/src/drain.ts): drainJsonl
+- [gaps.ts](packages/collector/src/gaps.ts): GapEntry, BASH_TO_TOOL_PATTERNS, detectGapPatterns
+- [install.ts](packages/collector/src/install.ts): InstallOptions, installHooks
+- [schema.ts](packages/collector/src/schema.ts): createTables
+- [stats.spec.ts](packages/collector/src/stats.spec.ts): function
+- [stats.ts](packages/collector/src/stats.ts): ToolStat, StatsResult, StatsOptions, queryStats
+- [supabase-writer.ts](packages/collector/src/supabase-writer.ts): SupabaseEvent, writeEventToSupabase
+- [uuid.ts](packages/collector/src/uuid.ts): readOrCreateUuid
+
+## packages/collector/src/__stubs__
+- [bun-globals.ts](packages/collector/src/__stubs__/bun-globals.ts): function
+- [bun-sqlite.ts](packages/collector/src/__stubs__/bun-sqlite.ts): Database
+
+## packages/server/src
+- [serve.ts](packages/server/src/serve.ts): ServeOptions, createReportServer, serve
+
+## packages/server/src/__stubs__
+- [bun-globals.ts](packages/server/src/__stubs__/bun-globals.ts): function
+- [bun-sqlite.ts](packages/server/src/__stubs__/bun-sqlite.ts): Database
+
+## packages/server/src/model
+- [ollama-backend.ts](packages/server/src/model/ollama-backend.ts): OllamaOptions, extractJson, makeFallbackAnalysis, OllamaBackend
+- [system-check.ts](packages/server/src/model/system-check.ts): OLLAMA_MODEL, OLLAMA_MODEL_SIZE_GB, ONNX_MODEL_ID, ONNX_MODEL_SIZE_MB, OLLAMA_BASE_URL
+
+## packages/shared/src
+- [config.spec.ts](packages/shared/src/config.spec.ts): async
+- [config.ts](packages/shared/src/config.ts): SenseiRepoConfig, SenseiCredentials, loadSenseiConfig, loadCredentials
+- [constants.ts](packages/shared/src/constants.ts): SENSEI_DIR, senseiPath
+- [supabase-client.ts](packages/shared/src/supabase-client.ts): makeSenseiClient
+- [types.ts](packages/shared/src/types.ts): LlmSpec, ResolutionLevel, SymbolEntry, SymbolMap, LlmsTxtSection
+
+## packages/tools/src
+- [index-reader.ts](packages/tools/src/index-reader.ts): readLlmSpec, readSymbolMap, readIndexFile
+
+## packages/tools/src/benchmark/indexer-comparison
+- [cocoindex-adapter.ts](packages/tools/src/benchmark/indexer-comparison/cocoindex-adapter.ts): CocoIndex, connectCocoindex
+- [ground-truth.ts](packages/tools/src/benchmark/indexer-comparison/ground-truth.ts): GroundTruth, extractGroundTruth
+- [reporter.ts](packages/tools/src/benchmark/indexer-comparison/reporter.ts): printReport, writeMarkdownReport
+- [scorer.ts](packages/tools/src/benchmark/indexer-comparison/scorer.ts): score
+- [sensei-adapter.ts](packages/tools/src/benchmark/indexer-comparison/sensei-adapter.ts): SenseiIndex, loadSenseiIndex
+- [types.ts](packages/tools/src/benchmark/indexer-comparison/types.ts): IndexedFile, CocoChunk, SenseiSymbol, TestQuery, ComparisonReport
+
+## packages/tools/src/tools
+- [bm25.ts](packages/tools/src/tools/bm25.ts): scoreBM25
+- [chunker.ts](packages/tools/src/tools/chunker.ts): extractChunks, buildChunksAndEmbeddings
+- [context.ts](packages/tools/src/tools/context.ts): ContextSlice, loadContext, recommendNext
+- [coverage.spec.ts](packages/tools/src/tools/coverage.spec.ts): function
+- [coverage.ts](packages/tools/src/tools/coverage.ts): CoverageEntry, generateCoverage
+- [drift.spec.ts](packages/tools/src/tools/drift.spec.ts): function
+- [drift.ts](packages/tools/src/tools/drift.ts): DriftEntry, DriftResult, checkDrift
+- [embedder.ts](packages/tools/src/tools/embedder.ts): embed, isAvailable, ensureReady
+- [entry-point-adapters.ts](packages/tools/src/tools/entry-point-adapters.ts): EntryPointCandidate, inferEntryPoints
+- [llms-txt.ts](packages/tools/src/tools/llms-txt.ts): buildSections, renderSection, parseLlmsTxt, generateLlmsTxt
+- [project-memory.ts](packages/tools/src/tools/project-memory.ts): getSessionContext, addDecision, addPattern, askQuestion, getOpenItems
+- [query.ts](packages/tools/src/tools/query.ts): getLlmSpec, getFileContext, listExports, findPattern, getShortcuts
+- [reindex.spec.ts](packages/tools/src/tools/reindex.spec.ts): function
+- [reindex.ts](packages/tools/src/tools/reindex.ts): IndexSummary, reindexRepo, extractExports, extractMarkdownSymbols, extractHeuristic
+- [repo-registration.ts](packages/tools/src/tools/repo-registration.ts): RepoInfo, registerRepo
+- [search.ts](packages/tools/src/tools/search.ts): SearchResult, search
+- [supabase-index-writer.ts](packages/tools/src/tools/supabase-index-writer.ts): TraceabilityEntry, upsertSymbols, upsertDocs
+
+## results
+- [indexer-comparison-2026-03-11.md](results/indexer-comparison-2026-03-11.md): Indexer
+
+## skills/agentic-dev-workflow
+- [SKILL.md](skills/agentic-dev-workflow/SKILL.md): Agentic
+
+## skills/benchmark-runner
+- [SKILL.md](skills/benchmark-runner/SKILL.md): Benchmark
+
+## skills/codebase-indexer
+- [SKILL.md](skills/codebase-indexer/SKILL.md): Codebase
+- [extractor.md](skills/codebase-indexer/extractor.md): Codebase
+
+## skills/content-compression
+- [SKILL.md](skills/content-compression/SKILL.md): Content
+
+## skills/context-manager
+- [SKILL.md](skills/context-manager/SKILL.md): Context
+
+## skills/doc-doctor
+- [SKILL.md](skills/doc-doctor/SKILL.md): Doc
+
+## skills/doc-drift-detector
+- [SKILL.md](skills/doc-drift-detector/SKILL.md): Doc
+
+## skills/doc-guide
+- [SKILL.md](skills/doc-guide/SKILL.md): Doc
+- [design-template.md](skills/doc-guide/design-template.md): 
+- [feature-template.md](skills/doc-guide/feature-template.md):
+
+## skills/populate-llmspec
+- [SKILL.md](skills/populate-llmspec/SKILL.md): Populate
+
+## skills/project-workflow
+- [SKILL.md](skills/project-workflow/SKILL.md): Project
+
+## tasks
+- [score-coverage.ts](tasks/score-coverage.ts): function
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
+
+> Generated by sensei
 
 > Generated by sensei
