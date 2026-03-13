@@ -28,10 +28,14 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     "Get orientation context for the current repo — symbol count, stack, last indexed timestamp",
     {},
     async () => {
-      const client = await getClient();
-      if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured. Run sensei init first." }] };
-      const result = await getSessionContext(client as any, opts.repoId, opts.repoPath);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      try {
+        const client = await getClient();
+        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured. Run sensei init first." }] };
+        const result = await getSessionContext(client as any, opts.repoId, opts.repoPath);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
     }
   );
 
@@ -43,10 +47,14 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
       limit: z.number().int().min(1).max(100).optional().default(20).describe("Max results to return"),
     },
     async ({ query, limit }) => {
-      const client = await getClient();
-      if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-      const result = await search(client as any, opts.repoId, query, limit);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      try {
+        const client = await getClient();
+        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
+        const result = await search(client as any, opts.repoId, query, limit);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
     }
   );
 
@@ -57,10 +65,14 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
       file_path: z.string().describe("Repo-relative file path, e.g. src/index.ts"),
     },
     async ({ file_path }) => {
-      const client = await getClient();
-      if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-      const result = await loadContext(client as any, opts.repoId, opts.repoPath, file_path);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      try {
+        const client = await getClient();
+        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
+        const result = await loadContext(client as any, opts.repoId, opts.repoPath, file_path);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
     }
   );
 
