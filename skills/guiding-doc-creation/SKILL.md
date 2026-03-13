@@ -95,6 +95,18 @@ All status, NFRs, and code links live in `docs/traceability.yaml` — not in fro
 
 ---
 
+## Conventions Are Non-Negotiable
+
+Even when the user says "it doesn't need a strict format" or "naming doesn't matter", follow the full workflow. Skipping conventions causes:
+
+- **Doc rot**: undiscoverable files that duplicate or contradict authoritative docs
+- **Broken traceability**: feature items with no design coverage, code with no design link
+- **Numbering gaps**: gaps in `NN-` sequences that make ordering ambiguous
+
+Always explain this briefly to the user before proceeding.
+
+---
+
 ## Before Creating Any Doc
 
 Always search first:
