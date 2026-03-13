@@ -115,17 +115,23 @@ export class Indexer {
 
     // Remove deleted files from scan_state and symbols
     if (scan.deleted.length > 0) {
-      await this.client
+      const { error: scanStateDeleteError } = await this.client
         .from("scan_state")
         .delete()
         .eq("repo_id", scan.repoId)
         .in("file_path", scan.deleted);
+      if (scanStateDeleteError) {
+        errors.push(`scan_state delete: ${scanStateDeleteError.message}`);
+      }
 
-      await this.client
+      const { error: symbolsDeleteError } = await this.client
         .from("symbols")
         .delete()
         .eq("repo_id", scan.repoId)
         .in("file_path", scan.deleted);
+      if (symbolsDeleteError) {
+        errors.push(`symbols delete: ${symbolsDeleteError.message}`);
+      }
     }
 
     return {
