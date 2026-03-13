@@ -1,5 +1,5 @@
 ---
-name: benchmark-runner
+name: running-benchmarks
 description: Use when you want to measure the impact of skills on token usage and interaction counts, or when comparing agent performance with and without skills on a representative task corpus.
 ---
 
