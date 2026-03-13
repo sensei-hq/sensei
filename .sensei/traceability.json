@@ -1,32 +1,157 @@
 {
+  "docs/design/01-architecture.md": [
+    "packages/cli/src/cli.ts",
+    "packages/mcp/src/index.ts"
+  ],
+  "docs/design/03-mcp-server.md": [
+    "packages/mcp/src/index.ts",
+    "packages/tools/src/index.ts"
+  ],
+  "docs/design/04-llmspec.md": [
+    "packages/tools/src/tools/reindex.ts",
+    "packages/tools/src/index-reader.ts"
+  ],
+  "docs/design/05-indexing.md": [
+    "packages/tools/src/tools/reindex.ts"
+  ],
+  "docs/design/06-compression.md": [
+    "packages/tools/src/tools/query.ts",
+    "packages/shared/src/types.ts"
+  ],
+  "docs/design/07-drift.md": [
+    "packages/tools/src/tools/drift.ts"
+  ],
+  "docs/design/08-benchmarking.md": [
+    "packages/cli/src/commands/benchmark-doctor.ts",
+    "packages/cli/src/commands/benchmark-inspect.ts",
+    "packages/cli/src/commands/benchmark-promote.ts"
+  ],
+  "docs/design/09-cli.md": [
+    "packages/cli/src/cli.ts",
+    "packages/cli/src/commands/init.ts",
+    "packages/cli/src/commands/add.ts",
+    "packages/cli/src/commands/status.ts"
+  ],
+  "docs/design/10-project-memory.md": [
+    "packages/tools/src/tools/project-memory.ts"
+  ],
+  "docs/design/11-doc-doctor.md": [
+    "packages/cli/src/commands/doctor.ts"
+  ],
+  "docs/design/12-incremental-indexing.md": [
+    "packages/tools/src/tools/reindex.ts"
+  ],
+  "docs/design/13-traceability-matrix.md": [
+    "packages/tools/src/tools/drift.ts",
+    "packages/tools/src/index-reader.ts"
+  ],
+  "docs/design/14-server-package.md": [
+    "packages/server/src/serve.ts",
+    "packages/server/src/model/system-check.ts"
+  ],
+  "docs/design/16-local-model-indexer.md": [
+    "packages/tools/src/tools/reindex.ts",
+    "packages/server/src/model/ollama-backend.ts"
+  ],
+  "docs/features/01-CodebaseIndexing.md": [
+    "packages/tools/src/tools/reindex.ts",
+    "packages/tools/src/index-reader.ts"
+  ],
+  "docs/features/02-ContentCompression.md": [
+    "packages/tools/src/tools/query.ts"
+  ],
+  "docs/features/03-AgenticDevWorkflow.md": [
+    "packages/tools/src/tools/context.ts",
+    "packages/tools/src/tools/query.ts"
+  ],
+  "docs/features/04-DocDriftDetection.md": [
+    "packages/tools/src/tools/drift.ts"
+  ],
+  "docs/features/05-ContextManagement.md": [
+    "packages/tools/src/tools/context.ts"
+  ],
+  "docs/features/06-Benchmarking.md": [
+    "packages/cli/src/commands/benchmark-doctor.ts",
+    "packages/cli/src/commands/benchmark-inspect.ts",
+    "packages/cli/src/commands/benchmark-promote.ts"
+  ],
+  "docs/features/07-CLI.md": [
+    "packages/cli/src/cli.ts",
+    "packages/cli/src/commands/init.ts",
+    "packages/cli/src/commands/add.ts"
+  ],
+  "docs/features/08-ProjectWorkflow.md": [
+    "packages/tools/src/tools/project-memory.ts"
+  ],
+  "docs/features/09-DocDoctor.md": [
+    "packages/cli/src/commands/doctor.ts"
+  ],
+  "docs/features/10-IncrementalIndexing.md": [
+    "packages/tools/src/tools/reindex.ts"
+  ],
+  "docs/features/11-TraceabilityMatrix.md": [
+    "packages/tools/src/tools/drift.ts",
+    "packages/tools/src/index-reader.ts"
+  ],
+  "docs/plans/2026-03-07-monorepo-package-split.md": [],
+  "docs/plans/2026-03-06-doctor-benchmark.md": [],
+  "docs/plans/2026-03-07-server-inference-package.md": [],
+  "docs/plans/2026-03-06-benchmark-git-branches-design.md": [],
+  "docs/plans/2026-03-06-promote-telemetry.md": [],
+  "docs/plans/2026-03-06-benchmark-git-branches.md": [],
+  "docs/plans/2026-03-06-doctor-benchmark-design.md": [],
+  "docs/plans/2026-03-06-promote-telemetry-design.md": [],
+  "docs/plans/2026-03-06-ai-skills-repo.md": [],
+  "docs/plans/2026-03-06-ai-skills-repo-design.md": [],
+  "docs/plans/2026-03-07-extract-tools-package.md": [],
+  "docs/traceability.yaml": [
+    "src/path/file.ts",
+    "src/tools/chunker.ts",
+    "src/tools/bm25.ts",
+    "src/tools/embedder.ts",
+    "src/tools/search.ts",
+    "src/commands/watch.ts",
+    "src/uuid.ts",
+    "src/schema.ts",
+    "src/daemon.ts",
+    "src/drain.ts",
+    "src/stats.ts",
+    "src/gaps.ts",
+    "src/install.ts",
+    "src/commands/stats.ts",
+    "src/commands/setup.ts",
+    "src/config.ts",
+    "src/supabase-client.ts",
+    "src/supabase-writer.ts",
+    "src/tools/supabase-index-writer.ts",
+    "src/tools/repo-registration.ts",
+    "src/config.spec.ts",
+    "src/supabase-writer.spec.ts",
+    "src/tools/supabase-index-writer.spec.ts",
+    "src/tools/repo-registration.spec.ts"
+  ],
+  "results/indexer-comparison-2026-03-11.md": [
+    "src/index.ts",
+    "src/serve.ts",
+    "src/index-reader.ts",
+    "src/types.ts",
+    "src/constants.ts",
+    "src/cli.ts",
+    "src/names.ts",
+    "src/claude.ts",
+    "src/git.ts",
+    "src/__stubs__/bun-sqlite.ts",
+    "src/__stubs__/bun-globals.ts",
+    "src/model/system-check.ts",
+    "src/model/system-check.spec.ts"
+  ],
   "tasks/benchmark-coverage.yaml": [
     "src/tools/reindex.ts"
   ],
-  "docs/design/06-compression.md": [
-    "src/orders.ts"
-  ],
-  "docs/design/09-cli.md": [
-    "src/index.ts",
-    "src/cli.ts"
-  ],
-  "docs/design/16-local-model-indexer.md": [
-    "src/model/types.ts",
-    "src/model/transformers-backend.ts",
-    "src/model/ollama-backend.ts",
-    "src/model/resolve-backend.ts",
-    "src/adapters/js-ts.ts",
-    "src/tools/file-analyzer.ts",
-    "src/tools/reindex.ts",
-    "src/tools/traceability.ts"
-  ],
-  "docs/design/04-llmspec.md": [
-    "src/index.ts",
-    "src/workers/invoice.ts",
-    "src/services/subscriptions.ts",
-    "src/services/invoices.ts"
-  ],
-  "docs/design/11-doc-doctor.md": [
-    "src/commands/doctor.spec.ts"
+  "docs/design/11-doc-tools.md": [
+    "src/commands/doctor.spec.ts",
+    "src/commands/doc-new.spec.ts",
+    "src/doc-refs/fetch-doc-ref.spec.ts"
   ],
   "docs/design/15-package-adapters.md": [
     "src/commands/init.ts",
@@ -38,229 +163,198 @@
     "src/adapters/readme.ts",
     "src/tools/folder-map.ts"
   ],
-  "docs/design/13-traceability-matrix.md": [
+  "docs/design/17-pattern-store.md": [
+    "src/patterns/pattern-store.spec.ts"
+  ],
+  "docs/design/18-response-cache.md": [
+    "src/cache/response-cache.spec.ts"
+  ],
+  "docs/design/19-context-manager.md": [
+    "src/context/context-manager.spec.ts"
+  ],
+  "docs/features/01-indexing.md": [
     "src/index.ts",
-    "src/tools/query.ts",
-    "src/tools/drift.ts",
-    "src/tools/reindex.ts",
-    "src/index-reader.ts",
-    "src/foo.ts",
-    "src/tools/reindex.spec.ts",
-    "src/tools/drift.spec.ts"
-  ],
-  "docs/design/05-indexing.md": [
-    "src/auth.ts"
-  ],
-  "docs/design/01-architecture.md": [
-    "src/index.ts"
-  ],
-  "docs/design/14-server-package.md": [
-    "src/types.ts",
-    "src/constants.ts",
-    "src/commands/serve.ts",
-    "src/model/ollama-backend.ts",
-    "src/model/transformers-backend.ts",
-    "src/model/system-check.ts",
-    "src/tools/file-analyzer.ts",
-    "src/commands/init.ts",
-    "src/cli.ts",
-    "src/index.ts",
-    "src/tools/folder-map.ts"
-  ],
-  "docs/design/03-mcp-server.md": [
+    "src/router.ts",
     "src/auth.ts",
-    "src/nonexistent.ts",
-    "src/index.ts",
-    "src/tools/query.ts",
-    "src/tools/query.test.ts"
-  ],
-  "docs/design/07-drift.md": [
-    "src/index.ts",
-    "src/tools/query.ts",
-    "src/tools/reindex.ts",
-    "src/tools/drift.ts",
-    "src/tools/project-memory.ts",
-    "src/index-reader.ts",
-    "src/foo.ts",
-    "src/tools/drift.spec.ts"
-  ],
-  "docs/design/12-incremental-indexing.md": [
-    "src/auth.ts",
-    "src/tools/reindex.spec.ts"
-  ],
-  "docs/features/07-CLI.md": [
-    "src/list.ts"
-  ],
-  "docs/features/11-TraceabilityMatrix.md": [
-    "src/tools/drift.ts",
-    "src/index.ts",
-    "src/tools/query.ts"
-  ],
-  "docs/features/04-DocDriftDetection.md": [
-    "src/legacy.ts",
-    "src/index.ts",
-    "src/tools/drift.ts"
-  ],
-  "docs/features/10-IncrementalIndexing.md": [
     "src/payments/invoice.ts",
     "src/legacy.ts"
   ],
-  "docs/features/01-CodebaseIndexing.md": [
-    "src/index.ts",
-    "src/router.ts",
-    "src/auth.ts"
-  ],
-  "docs/features/02-ContentCompression.md": [
+  "docs/features/02-resolution.md": [
     "src/orders.ts"
   ],
-  "docs/plans/2026-03-07-monorepo-package-split.md": [
-    "src/types.ts",
-    "src/constants.ts",
+  "docs/features/04-traceability.md": [
+    "src/tools/drift.ts",
     "src/index.ts",
-    "src/model/types.ts",
-    "src/tools/reindex.ts",
-    "src/index-reader.ts",
-    "src/model/ollama-backend.ts",
-    "src/model/system-check.ts",
-    "src/commands/init.ts",
-    "src/__stubs__/bun-sqlite.ts",
-    "src/__stubs__/bun-globals.ts",
-    "src/serve.ts",
-    "src/model/ollama-backend.spec.ts",
-    "src/model/system-check.spec.ts",
-    "src/commands/serve.ts",
-    "src/commands/serve.spec.ts",
-    "src/serve.spec.ts",
-    "src/cli.ts",
-    "src/tools.ts",
-    "src/index-reader.spec.ts",
     "src/tools/query.ts",
-    "src/commands/add.ts",
-    "src/commands/status.ts",
-    "src/commands/setup.ts",
-    "src/git.ts",
-    "src/names.ts"
+    "src/legacy.ts"
   ],
-  "docs/plans/2026-03-06-doctor-benchmark.md": [
-    "src/claude.ts",
-    "src/commands/benchmark-doctor.ts",
-    "src/types.ts",
-    "src/commands/doctor.ts",
-    "src/commands/benchmark-doctor.spec.ts",
-    "src/cli.ts"
+  "docs/features/11-implementation-sync.md": [
+    "src/indexer/index.ts",
+    "src/utils/helper.ts",
+    "src/cache/response-cache.ts",
+    "src/legacy.ts",
+    "src/utils/parser.ts"
   ],
-  "docs/plans/2026-03-07-server-inference-package.md": [
-    "src/commands/serve.ts",
-    "src/commands/serve.spec.ts",
-    "src/model/types.ts",
-    "src/model/ollama-backend.ts",
-    "src/model/ollama-backend.spec.ts",
-    "src/foo.ts",
-    "src/bar.ts",
-    "src/bad.ts",
-    "src/model/system-check.ts",
-    "src/model/system-check.spec.ts",
+  "docs/plans/2026-03-07-benchmark-populate.md": [
+    "src/commands/benchmark-populate.ts",
+    "src/commands/benchmark-populate.spec.ts",
     "src/cli.ts",
-    "src/commands/init.ts"
+    "src/cli.spec.ts"
   ],
-  "docs/plans/2026-03-06-benchmark-git-branches-design.md": [
-    "src/commands/benchmark-doctor.ts",
-    "src/commands/benchmark-promote.ts",
-    "src/commands/benchmark-inspect.ts",
-    "src/cli.ts",
-    "src/commands/serve.ts",
-    "src/index.ts"
-  ],
-  "docs/plans/2026-03-06-promote-telemetry.md": [
-    "src/commands/benchmark-doctor.ts",
-    "src/commands/benchmark-doctor.spec.ts",
-    "src/commands/benchmark-promote.ts",
-    "src/commands/benchmark-promote.spec.ts",
-    "src/commands/serve.ts",
-    "src/commands/serve.spec.ts",
+  "docs/plans/2026-03-07-populate-llmspec-skill.md": [
     "src/cli.ts",
     "src/index.ts"
   ],
-  "docs/plans/2026-03-06-benchmark-git-branches.md": [
-    "src/git.ts",
-    "src/git.spec.ts",
-    "src/foo.ts",
-    "src/names.ts",
-    "src/names.spec.ts",
-    "src/commands/benchmark-doctor.ts",
-    "src/commands/benchmark-doctor.spec.ts",
-    "src/commands/benchmark-promote.ts",
-    "src/commands/benchmark-promote.spec.ts",
-    "src/commands/benchmark-inspect.ts",
-    "src/commands/benchmark-inspect.spec.ts",
-    "src/cli.ts"
-  ],
-  "docs/plans/2026-03-06-doctor-benchmark-design.md": [
-    "src/commands/benchmark-doctor.ts",
-    "src/claude.ts"
-  ],
-  "docs/plans/2026-03-06-promote-telemetry-design.md": [
-    "src/commands/benchmark-doctor.ts",
-    "src/commands/benchmark-promote.ts",
-    "src/commands/serve.ts",
-    "src/index.ts",
-    "src/cli.ts"
-  ],
-  "docs/plans/2026-03-06-ai-skills-repo.md": [
-    "src/index.ts",
-    "src/cli.ts",
-    "src/index-reader.ts",
-    "src/index-reader.test.ts",
-    "src/auth.ts",
-    "src/types.ts",
-    "src/tools/query.ts",
-    "src/tools/query.test.ts",
-    "src/tools/reindex.ts",
-    "src/tools/reindex.test.ts",
-    "src/tools/context.ts",
-    "src/tools/drift.ts",
-    "src/tools/context.test.ts",
-    "src/tools/drift.test.ts",
-    "src/benchmark.ts",
-    "src/tools/project-memory.ts",
-    "src/tools/project-memory.spec.ts",
-    "src/commands/migrate.ts"
-  ],
-  "docs/plans/2026-03-06-ai-skills-repo-design.md": [
-    "src/index.ts",
-    "src/router.ts",
-    "src/services/orders.ts"
-  ],
-  "docs/plans/2026-03-07-extract-tools-package.md": [
-    "src/tools.ts",
-    "src/index.ts",
-    "src/index-reader.ts",
-    "src/index-reader.spec.ts",
-    "src/tools/context.ts",
-    "src/tools/drift.ts",
-    "src/tools/project-memory.ts",
-    "src/tools/query.ts",
-    "src/tools/reindex.ts",
-    "src/tools/context.spec.ts",
-    "src/tools/drift.spec.ts",
-    "src/tools/project-memory.spec.ts",
-    "src/tools/query.spec.ts",
-    "src/tools/reindex.spec.ts",
-    "src/commands/add.ts",
-    "src/commands/init.ts",
-    "src/commands/status.ts",
-    "src/commands/migrate.ts",
-    "src/cli.ts"
+  "skills/benchmark-runner/SKILL.md": [
+    "src/auth/login.ts"
   ],
   "skills/context-manager/SKILL.md": [
     "src/auth/login.ts"
+  ],
+  "skills/doc-guide/SKILL.md": [
+    "src/path/file.ts"
   ],
   "skills/doc-drift-detector/SKILL.md": [
     "src/index.ts",
     "src/tools/query.ts",
     "src/tools/drift.ts"
   ],
-  "skills/benchmark-runner/SKILL.md": [
-    "src/auth/login.ts"
+  "docs/superpowers/plans/2026-03-10-indexer-comparison.md": [
+    "src/benchmark/indexer-comparison/types.ts",
+    "src/benchmark/indexer-comparison/ground-truth.ts",
+    "src/benchmark/indexer-comparison/ground-truth.test.ts",
+    "src/foo.ts",
+    "src/benchmark/indexer-comparison/sensei-adapter.ts",
+    "src/benchmark/indexer-comparison/sensei-adapter.test.ts",
+    "src/index.ts",
+    "src/benchmark/indexer-comparison/cocoindex-adapter.ts",
+    "src/benchmark/indexer-comparison/cocoindex-adapter.js",
+    "src/benchmark/indexer-comparison/scorer.ts",
+    "src/benchmark/indexer-comparison/scorer.test.ts",
+    "src/tools/reindex.ts",
+    "src/tools/drift.ts",
+    "src/benchmark/indexer-comparison/reporter.ts",
+    "src/commands/benchmark-indexer.ts",
+    "src/cli.ts"
+  ],
+  "docs/superpowers/plans/2026-03-11-analytics-collector.md": [
+    "src/index.ts",
+    "src/__stubs__/bun-globals.ts",
+    "src/__stubs__/bun-sqlite.ts",
+    "src/uuid.ts",
+    "src/uuid.spec.ts",
+    "src/schema.ts",
+    "src/schema.spec.ts",
+    "src/daemon.ts",
+    "src/daemon.spec.ts",
+    "src/drain.ts",
+    "src/drain.spec.ts",
+    "src/stats.ts",
+    "src/stats.spec.ts",
+    "src/gaps.ts",
+    "src/gaps.spec.ts",
+    "src/install.ts",
+    "src/install.spec.ts",
+    "src/commands/stats.ts",
+    "src/cli.ts",
+    "src/commands/stats.spec.ts",
+    "src/commands/setup.ts"
+  ],
+  "docs/superpowers/plans/2026-03-11-doc-guide-traceability.md": [
+    "src/path/a.ts",
+    "src/path/b.ts",
+    "src/patterns/store.spec.ts",
+    "src/cache/response-cache.spec.ts",
+    "src/context/context-manager.spec.ts",
+    "src/path/file.ts"
+  ],
+  "docs/superpowers/plans/2026-03-11-indexer-multimodal-search.md": [
+    "src/tools/chunker.ts",
+    "src/tools/chunker.spec.ts",
+    "src/auth.ts",
+    "src/empty.ts",
+    "src/tools/bm25.ts",
+    "src/tools/bm25.spec.ts",
+    "src/home.ts",
+    "src/tools/embedder.ts",
+    "src/tools/embedder.spec.ts",
+    "src/tools/reindex.ts",
+    "src/tools/reindex.spec.ts",
+    "src/tools/search.ts",
+    "src/tools/search.spec.ts",
+    "src/index.ts",
+    "src/commands/watch.ts",
+    "src/cli.ts",
+    "src/tools/search.e2e.ts"
+  ],
+  "docs/superpowers/plans/2026-03-12-llms-txt-traceability.md": [
+    "src/types.ts",
+    "src/tools/entry-point-adapters.spec.ts",
+    "src/cli.ts",
+    "src/index.ts",
+    "src/bin/main.rs",
+    "src/tools/entry-point-adapters.ts",
+    "src/foo.ts",
+    "src/X.ts",
+    "src/tools/llms-txt.spec.ts",
+    "src/tools/reindex.ts",
+    "src/tools/query.ts",
+    "src/empty.ts",
+    "src/tools/llms-txt.ts",
+    "src/tools/reindex.spec.ts",
+    "src/old.ts"
+  ],
+  "docs/superpowers/plans/2026-03-12-on-demand-reporting.md": [
+    "src/index.ts",
+    "src/cli.ts",
+    "src/commands/watch.ts",
+    "src/commands/watch.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-12-supabase-backend-migration.md": [
+    "src/config.ts",
+    "src/index.ts",
+    "src/config.spec.ts",
+    "src/supabase-client.ts",
+    "src/supabase-writer.ts",
+    "src/daemon.ts",
+    "src/supabase-writer.spec.ts",
+    "src/a.ts",
+    "src/tools/supabase-index-writer.ts",
+    "src/tools/supabase-index-writer.spec.ts",
+    "src/tools/reindex.ts",
+    "src/tools/repo-registration.ts",
+    "src/tools/repo-registration.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-12-supabase-web-app.md": [
+    "src/lib/supabase.ts"
+  ],
+  "docs/superpowers/specs/2026-03-10-indexer-comparison-design.md": [
+    "src/commands/benchmark/indexer.ts",
+    "src/benchmark/indexer-comparison/scorer.test.ts"
+  ],
+  "docs/superpowers/specs/2026-03-11-doc-guide-traceability-design.md": [
+    "src/path/file.ts",
+    "src/indexer/index.ts.implements"
+  ],
+  "docs/superpowers/specs/2026-03-11-indexer-multimodal-search-design.md": [
+    "src/auth.ts",
+    "src/tools/reindex.ts",
+    "src/index.ts",
+    "src/cli.ts",
+    "src/tools/search.spec.ts",
+    "src/tools/chunker.spec.ts",
+    "src/tools/bm25.spec.ts",
+    "src/tools/embedder.spec.ts",
+    "src/tools/search.e2e.ts",
+    "src/tools/search.ts",
+    "src/tools/chunker.ts",
+    "src/tools/bm25.ts",
+    "src/tools/embedder.ts",
+    "src/commands/watch.ts"
+  ],
+  "docs/superpowers/specs/2026-03-12-on-demand-reporting-design.md": [
+    "src/index.ts",
+    "src/cli.ts",
+    "src/commands/watch.ts"
   ]
 }
