@@ -14,3 +14,5 @@ export {
   ONNX_MODEL_ID,
   ONNX_MODEL_SIZE_MB,
 } from "./model/system-check.js";
+
+export * from "./mcp-server.js";
