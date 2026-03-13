@@ -71,7 +71,7 @@ describe("indexRepo with backend", () => {
     const backend = makeMockBackend();
     await indexRepo({ repoPath: dir, repoId: "repo-1", client: makePipelineClient(), backend });
 
-    expect(backend.embed).toHaveBeenCalled();
+    expect(backend.embed).toHaveBeenCalledWith(expect.stringContaining("foo"));
     await rm(dir, { recursive: true, force: true });
   });
 
