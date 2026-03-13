@@ -4,6 +4,10 @@ type: design
 implements: []
 ---
 
+> **ARCHIVED** — This doc described an early skills format that has been superseded by the superpowers plugin system. The skill format, CSO principles, and token efficiency guidance remain valid reference material. For active skill development, see the superpowers plugin skills directory.
+
+---
+
 # Skills
 
 ## Overview

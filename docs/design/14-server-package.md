@@ -4,6 +4,10 @@ type: design
 implements: []
 ---
 
+> **SUPERSEDED** by `01-architecture.md`. The package split described here (`@sensei/server`, `@sensei/mcp`, `@sensei/cli`, `@sensei/shared`) maps to the current `packages/` structure, but the deployment model has changed: inference is no longer a local HTTP server — all persistent state lives in Supabase. The deployment configuration sections and model recommendations remain useful context.
+
+---
+
 # Server Package
 
 ## What Changed and Why

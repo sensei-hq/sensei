@@ -41,6 +41,8 @@ The Pattern Store scans code and design docs during indexing to detect recurring
 
 **Pattern Templates:** Built-in patterns shipped with sensei covering: tree-vs-flat, adapter, strategy, command, observer. Each template has: name, when-to-use, when-not-to-use, code example.
 
+**Storage:** Auto-detected patterns and captured patterns are stored in `sensei.events` (event_type: 'pattern'). The `.sensei/patterns.md` file is a generated view that also accepts manual edits — manual edits are preserved across regeneration.
+
 ---
 
 ## Algorithm / Flow
