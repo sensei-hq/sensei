@@ -46,6 +46,7 @@ create table if not exists sensei.call_edges (
 );
 
 create index if not exists idx_call_edges_caller on sensei.call_edges(caller_id);
+create index if not exists idx_call_edges_repo on sensei.call_edges(repo_id);
 
 -- Imports: module-level import relationships
 create table if not exists sensei.imports (
@@ -89,6 +90,7 @@ create table if not exists sensei.events (
 
 create index if not exists idx_events_session on sensei.events(session_id);
 create index if not exists idx_events_ts on sensei.events(ts desc);
+create index if not exists idx_events_repo on sensei.events(repo_id);
 
 -- NOTE: The `embeddings` table (pgvector) is intentionally deferred to Phase 2.
 -- Phase 1 `search` uses ilike substring matching. Phase 2 adds semantic search via pgvector.
