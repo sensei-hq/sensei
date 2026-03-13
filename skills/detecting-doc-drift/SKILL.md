@@ -1,5 +1,5 @@
 ---
-name: doc-drift-detector
+name: detecting-doc-drift
 description: Use when you suspect design docs are out of sync with code, before committing changes that affect documented APIs or flows, or when setting up a repo to catch drift automatically.
 ---
 

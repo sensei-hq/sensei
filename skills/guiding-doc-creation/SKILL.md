@@ -1,5 +1,5 @@
 ---
-name: doc-guide
+name: guiding-doc-creation
 description: Use when creating, updating, or locating docs in this repo. Encodes the feature/design naming split, frontmatter spec, traceability.yaml workflow, and how to find existing docs before creating new ones.
 ---
 
