@@ -1,8 +1,5 @@
-import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
-import { readOrCreateUuid, createTables, queryStats, detectGapPatterns } from "@sensei/collector";
+import { makeSenseiClient } from "@sensei/shared";
+import { queryStats, detectGapPatterns } from "@sensei/collector";
 import type { StatsResult } from "@sensei/collector";
 
 export interface StatsCommandOptions {
@@ -12,8 +9,8 @@ export interface StatsCommandOptions {
   since?: string;
   json?: boolean;
   gaps?: boolean;
-  /** Override home directory — used in tests to avoid touching ~/.sensei */
-  _home?: string;
+  /** Override repo path — used in tests */
+  _repoPath?: string;
 }
 
 export function formatStats(result: StatsResult, opts: { json: boolean }): string {
@@ -41,7 +38,7 @@ export function formatStats(result: StatsResult, opts: { json: boolean }): strin
     lines.push(`\nSession events (${result.events.length}):`);
     for (const e of result.events) {
       const ts = new Date((e.ts as number) ?? 0).toISOString().slice(11, 19);
-      lines.push(`  [${ts}] ${e.phase} ${e.tool}${e.success === 0 ? " ✗" : ""}`);
+      lines.push(`  [${ts}] ${e.phase} ${e.tool}${e.success === false ? " ✗" : ""}`);
     }
     return lines.join("\n");
   }
@@ -68,77 +65,52 @@ export function formatStats(result: StatsResult, opts: { json: boolean }): strin
 }
 
 export async function stats(opts: StatsCommandOptions): Promise<void> {
-  const HOME = opts._home ?? homedir();
-  const uuidPath = join(HOME, ".sensei", "uuid");
-  const uuid = await readOrCreateUuid(uuidPath);
-  const dbPath = join(HOME, ".sensei", uuid, "analytics.db");
-
-  if (!existsSync(dbPath)) {
-    const parent = join(HOME, ".sensei", uuid);
-    mkdirSync(parent, { recursive: true });
+  const client = await makeSenseiClient(opts._repoPath ?? process.cwd());
+  if (!client) {
+    console.error("Supabase not configured. Run `sensei setup` to configure.");
+    return;
   }
 
-  const db = new Database(dbPath);
-  try {
-    createTables(db);
+  if (opts.gaps) {
+    const since = opts.all ? undefined : opts.since
+      ? new Date(opts.since).toISOString()
+      : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    if (opts.gaps) {
-      // Pre-events carry the tool input (the bash command). Post-events do not include input.
-      let gapsWhere = "tool = 'Bash' AND phase = 'pre' AND input IS NOT NULL";
-      const gapsParams: unknown[] = [];
-      if (opts.since) {
-        gapsWhere += " AND ts >= ?";
-        gapsParams.push(new Date(opts.since).getTime());
-      } else if (!opts.all) {
-        gapsWhere += " AND ts >= ?";
-        gapsParams.push(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    let query = client.from("events").select("input").eq("tool", "Bash").eq("phase", "pre").not("input", "is", null);
+    if (since) query = query.gte("ts", since);
+    const { data: bashEvents } = await query;
+
+    const commands = (bashEvents ?? [])
+      .map((e: any) => (e.input as { command?: string })?.command ?? "")
+      .filter(Boolean);
+
+    const gaps = detectGapPatterns(commands);
+
+    if (opts.json) {
+      console.log(JSON.stringify({ gaps }, null, 2));
+    } else {
+      const period = opts.all ? "all time" : opts.since ? `since ${opts.since}` : "last 7 days";
+      console.log(`\nMissed opportunity report — ${period}\n`);
+      if (gaps.length === 0) {
+        console.log("  No gaps detected.");
+        return;
       }
-      const bashEvents = db.prepare(`
-        SELECT input FROM events WHERE ${gapsWhere}
-      `).all(...gapsParams) as Array<{ input: string }>;
-
-      const commands = bashEvents
-        .map(e => {
-          try {
-            const parsed = JSON.parse(e.input) as { command?: string };
-            return parsed.command ?? "";
-          } catch {
-            return e.input;
-          }
-        })
-        .filter(Boolean);
-
-      const gaps = detectGapPatterns(commands);
-
-      if (opts.json) {
-        console.log(JSON.stringify({ gaps }, null, 2));
-      } else {
-        const period = opts.all ? "all time" : opts.since ? `since ${opts.since}` : "last 7 days";
-        console.log(`\nMissed opportunity report — ${period}\n`);
-        if (gaps.length === 0) {
-          console.log("  No gaps detected.");
-          return;
-        }
-        const header = "Pattern                          Count   Suggested tool";
-        const sep    = "─".repeat(header.length);
-        console.log(header);
-        console.log(sep);
-        for (const g of gaps) {
-          console.log(`${g.pattern.padEnd(32)} ${String(g.count).padStart(5)}   ${g.suggested_tool}`);
-        }
+      const header = "Pattern                          Count   Suggested tool";
+      const sep    = "─".repeat(header.length);
+      console.log(header);
+      console.log(sep);
+      for (const g of gaps) {
+        console.log(`${g.pattern.padEnd(32)} ${String(g.count).padStart(5)}   ${g.suggested_tool}`);
       }
-      return;
     }
-
-    const result = queryStats(db, {
-      all: opts.all,
-      tool: opts.tool,
-      session: opts.session,
-      since: opts.since,
-    });
-
-    console.log(formatStats(result, { json: opts.json ?? false }));
-  } finally {
-    db.close();
+    return;
   }
+
+  const result = await queryStats(client, {
+    all: opts.all,
+    tool: opts.tool,
+    session: opts.session,
+    since: opts.since,
+  });
+  console.log(formatStats(result, { json: opts.json ?? false }));
 }

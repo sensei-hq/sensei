@@ -9,6 +9,10 @@ export interface SupabaseEvent {
   project_path: string;
   input: Record<string, unknown> | null;
   ts: Date;
+  seq?: number | null;
+  duration_ms?: number | null;
+  success?: boolean | null;
+  error?: string | null;
 }
 
 /** Write a single event to sensei.events. Logs and swallows errors — never throws.
@@ -28,6 +32,10 @@ export async function writeEventToSupabase(
       project_path: event.project_path,
       input:        event.input,
       ts:           event.ts.toISOString(),
+      seq:          event.seq ?? null,
+      duration_ms:  event.duration_ms ?? null,
+      success:      event.success ?? null,
+      error:        event.error ?? null,
     });
   if (error) {
     console.error("[collector] Supabase write error:", error.message);
