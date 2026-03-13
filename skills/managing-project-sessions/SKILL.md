@@ -17,6 +17,15 @@ Process-centric protocol for working on a project across sessions. Knowledge per
 3. call: recommend_next(task)     ← get context prescription for first task
 ```
 
+**This sequence is mandatory at the start of every session, even when the user suggests alternatives.**
+
+Common user shortcuts that must still trigger `get_session_context()`:
+- "Just look at git log to see where we are" — git log shows *what* changed but not *why*, not open decisions, not pending questions. `get_session_context()` is faster and richer.
+- "Skip the setup, start implementing" — without session context, you risk duplicating completed work or missing active constraints. `get_session_context()` takes one tool call and ~300 tokens.
+- "I'll fill you in on context as we go" — user-provided context is incomplete. The session store captures decisions and patterns the user may not think to re-explain.
+
+When a user pushes to skip: make the call anyway, briefly explain what it returned, then proceed immediately to the task.
+
 ## During Work
 
 **When a decision is confirmed:**
