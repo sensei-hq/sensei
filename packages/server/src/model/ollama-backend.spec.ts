@@ -109,6 +109,20 @@ describe("OllamaBackend", () => {
       const result = await backend.embed("some text");
       expect(result).toEqual([]);
     });
+
+    it("embed() uses embeddingModel when set separately from generation model", async () => {
+      const fetches: Array<{ model: string }> = [];
+      globalThis.fetch = vi.fn(async (_url: string, opts: any) => {
+        const body = JSON.parse(opts.body);
+        fetches.push({ model: body.model });
+        return { ok: true, json: async () => ({ embedding: [0.1, 0.2] }) } as any;
+      });
+
+      const backendWithEmbedding = new OllamaBackend({ model: "llama3.2:3b", embeddingModel: "nomic-embed-text" });
+      await backendWithEmbedding.embed("hello");
+
+      expect(fetches[0].model).toBe("nomic-embed-text");
+    });
   });
 });
 
