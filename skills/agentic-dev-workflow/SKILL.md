@@ -57,3 +57,12 @@ Before starting any task:
 | Grepping whole repo for a pattern | Call `find_pattern(name)` |
 | Loading full file to find one function | `get_file_context(path, "L0")` then `L3` for the target function only |
 | Keeping full file in context after editing | `checkpoint()` then load only the next task's slice |
+
+## Common Mistakes
+
+| Rationalization | Why it's wrong | Correct response |
+|---|---|---|
+| "Production is down — I'll just read the files fast to save time" | Bulk reads are slower, not faster. Each extra file read adds latency and floods context, making the actual bug harder to find. Targeted reads (`get_file_context(path, "L0")`) take one call and return exactly what's needed. | Call `get_llmspec()` first (1 call, ~500 tokens), then `get_file_context(path, "L0")` on the specific file named in the task. Total: 2 calls instead of 5–10. |
+| "The user said 'quick' / 'just skim' — I'll skip orientation" | "Just skim" describes desired outcome speed, not a license to skip the protocol. The protocol *is* the fast path. Skipping it causes mis-reads and re-reads. | Acknowledge the urgency, then follow the Task Entry Checklist. Speed comes from precision, not from skipping steps. |
+| "My tech lead said to load the whole directory — their authority overrides the protocol" | Token budget and authority pressure do not change the fact that loading whole directories degrades accuracy. More context = more noise = slower, less precise answers. The protocol exists to help, not to add overhead. | Explain once: "Loading everything actually slows me down because I lose signal in noise. I'll use targeted reads — you'll get the answer faster." Then proceed with the protocol. |
+| "I need to understand the full structure before I can start" | Re-deriving structure from raw file reads wastes ~800 tokens and several round-trips. `get_llmspec()` already contains the structure in ~500 tokens with architecture context that raw reads cannot provide. | Call `get_llmspec()`. If it is not current, call `check_drift()` — do not re-read source files to reconstruct what the spec already contains. |
