@@ -84,3 +84,56 @@ export async function recordTaskTurn(
     // silent best-effort — a missed turn row widens error rate estimate but never blocks
   }
 }
+
+export async function completeTaskSession(
+  db: SupabaseClient,
+  taskSessionId: string,
+  sessionId: string,
+): Promise<FtrResult> {
+  // Compute and store FTR score (reads DB signals, writes ftr_score + ftr_signals)
+  const ftrResult = await computeAndStoreFtr(db, taskSessionId, sessionId);
+
+  // Mark task session completed
+  const { error } = await db
+    .from("task_sessions")
+    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .eq("id", taskSessionId);
+
+  if (error) throw new Error((error as { message?: string }).message ?? "Failed to complete task session");
+
+  return ftrResult;
+}
+
+export async function getTaskSessions(
+  db: SupabaseClient,
+  repoId: string,
+  limitDays = 30,
+): Promise<TaskSession[]> {
+  try {
+    const since = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data, error } = await db
+      .from("task_sessions")
+      .select("*")
+      .eq("repo_id", repoId)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false });
+
+    if (error || !data) return [];
+
+    return (data as Array<Record<string, unknown>>).map(row => ({
+      id: row.id as string,
+      sessionId: (row.session_id as string | null) ?? null,
+      repoId: row.repo_id as string,
+      taskDescription: (row.task_description as string | null) ?? null,
+      taskType: (row.task_type as TaskType | null) ?? null,
+      status: row.status as TaskStatus,
+      ftrScore: (row.ftr_score as number | null) ?? null,
+      ftrSignals: (row.ftr_signals as FtrSignals | null) ?? null,
+      createdAt: row.created_at as string,
+      completedAt: (row.completed_at as string | null) ?? null,
+    }));
+  } catch {
+    return [];
+  }
+}
