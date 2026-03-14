@@ -31,10 +31,11 @@ export async function buildContextPack(
   const counter = createTokenCounter(modelId);
 
   // 1. Load all candidates from scan_state
-  const { data: allFiles } = await db
+  const { data: allFiles, error: scanError } = await db
     .from("scan_state")
     .select("file_path")
     .eq("repo_id", repoId);
+  if (scanError) throw new Error(`Failed to load scan_state: ${scanError.message}`);
 
   const candidates: Candidate[] = (allFiles ?? []).map((f: { file_path: string }) => ({
     filePath: f.file_path,
@@ -75,7 +76,7 @@ export async function buildContextPack(
   const pack = new Assembler().assemble(allSlices, { maxTokens, counter, task, modelId, sessionContext });
 
   // 6. Persist
-  await db.from("context_packs").upsert({
+  const { error: upsertError } = await db.from("context_packs").upsert({
     id: pack.id,
     repo_id: repoId,
     session_id: sessionId ?? null,
@@ -85,6 +86,7 @@ export async function buildContextPack(
     total_tokens: pack.totalTokens,
     created_at: pack.createdAt,
   });
+  if (upsertError) throw new Error(`Failed to persist context pack: ${upsertError.message}`);
 
   return pack;
 }
