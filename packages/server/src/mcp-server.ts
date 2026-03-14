@@ -33,6 +33,8 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     return backendInstance;
   };
 
+  const sessionId = crypto.randomUUID();
+
   server.tool(
     "get_session_context",
     "Get orientation context for the current repo — symbol count, stack, last indexed timestamp",
@@ -41,7 +43,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
       try {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured. Run sensei init first." }] };
-        const result = await getSessionContext(client as any, opts.repoId, opts.repoPath);
+        const result = await getSessionContext(client as any, opts.repoId, opts.repoPath, sessionId);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
