@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { computeFtr } from "./ftr.js";
+import { describe, it, expect, vi } from "vitest";
+import { computeFtr, computeAndStoreFtr } from "./ftr.js";
 import type { FtrSignals } from "./ftr.js";
 
 const perfect: FtrSignals = {
@@ -64,5 +64,114 @@ describe("computeFtr", () => {
     expect(computeFtr({ ...perfect, completedCleanly: false, hasDescription: false })).toBe(0.7);
     // 1.0 - 0.30 - 0.30 = 0.40, then capped at min(0.40, 0.70) = 0.40
     expect(computeFtr({ ...perfect, snapshotCount: 10, completedCleanly: false, hasDescription: false })).toBe(0.4);
+  });
+});
+
+describe("computeAndStoreFtr", () => {
+  function makeDb(overrides: {
+    snapshotCount?: number;
+    turns?: Array<{ success: boolean | null }>;
+    sessionStatus?: string;
+    taskDescription?: string | null;
+    updateError?: string | null;
+  } = {}) {
+    const {
+      snapshotCount = 1,
+      turns = [],
+      sessionStatus = "completed",
+      taskDescription = "add new feature",
+      updateError = null,
+    } = overrides;
+
+    // Disambiguate the two task_sessions calls by their own counter
+    let taskSessionsCallCount = 0;
+    return {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "snapshots") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({ count: snapshotCount, error: null }),
+          };
+        }
+        if (table === "task_turns") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({ data: turns, error: null }),
+          };
+        }
+        if (table === "sessions") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: { status: sessionStatus }, error: null }),
+          };
+        }
+        // task_sessions: first call = select task_description, second = update ftr_score
+        taskSessionsCallCount++;
+        if (taskSessionsCallCount === 1) {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: { task_description: taskDescription }, error: null }),
+          };
+        }
+        return {
+          update: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ error: updateError ? { message: updateError } : null }),
+          }),
+        };
+      }),
+    } as any;
+  }
+
+  it("computes FTR from DB signals and stores result", async () => {
+    const db = makeDb({ snapshotCount: 2, turns: [{ success: true }, { success: true }] });
+    const result = await computeAndStoreFtr(db, "ts-1", "sess-1");
+    // snapshotCount=2 → -0.05, no errors, clean, hasDescription → 0.95
+    expect(result.score).toBe(0.95);
+    expect(result.signals.snapshotCount).toBe(2);
+    expect(result.signals.toolErrorRate).toBe(0);
+    expect(result.signals.completedCleanly).toBe(true);
+    expect(result.signals.hasDescription).toBe(true);
+  });
+
+  it("sets hasDescription=false when task_description is null", async () => {
+    const db = makeDb({ taskDescription: null });
+    const result = await computeAndStoreFtr(db, "ts-1", "sess-1");
+    expect(result.signals.hasDescription).toBe(false);
+    expect(result.score).toBeLessThanOrEqual(0.7);
+  });
+
+  it("sets completedCleanly=false when session status is not completed", async () => {
+    const db = makeDb({ sessionStatus: "crashed" });
+    const result = await computeAndStoreFtr(db, "ts-1", "sess-1");
+    expect(result.signals.completedCleanly).toBe(false);
+    expect(result.score).toBeLessThanOrEqual(0.7);
+  });
+
+  it("throws on DB update error", async () => {
+    const db = makeDb({ updateError: "write failed" });
+    await expect(computeAndStoreFtr(db, "ts-1", "sess-1")).rejects.toThrow("write failed");
+  });
+
+  it("zero-turn session gets toolErrorRate=0 (best-case default)", async () => {
+    const db = makeDb({ turns: [] });
+    const result = await computeAndStoreFtr(db, "ts-1", "sess-1");
+    expect(result.signals.toolErrorRate).toBe(0);
+    // Perfect signals (snapshotCount=1, no errors, clean, hasDescription) → 1.0
+    expect(result.score).toBe(1.0);
+  });
+
+  it("throws on DB read error (snapshots)", async () => {
+    const db = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "snapshots") {
+          return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ count: null, error: { message: "snapshots unavailable" } }) };
+        }
+        // Other tables never reached
+        return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) };
+      }),
+    } as any;
+    await expect(computeAndStoreFtr(db, "ts-1", "sess-1")).rejects.toThrow("snapshots unavailable");
   });
 });
