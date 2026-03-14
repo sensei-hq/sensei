@@ -15,3 +15,5 @@ export * from "./context-pack.js";
 export * from "./session/session-manager.js";
 export * from "./session/snapshot.js";
 export * from "./session/memory.js";
+export * from "./analytics/ftr.js";
+export * from "./analytics/task-session.js";
