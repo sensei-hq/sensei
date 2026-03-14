@@ -19,9 +19,9 @@ Layer 2: Documentation & Traceability — per-repo traceability, drift, quality 
 Layer 1: Codebase Intelligence — per-repo scan, parse, index, symbols, call graph, external doc adapters
 ```
 
-Each layer composes the one below — it never re-implements it. The workspace index is an orchestrator over per-repo indexers (Layer 1). Cross-repo traceability extends per-repo traceability (Layer 2) across repo boundaries. System health aggregates per-repo quality scores (Layer 2) with cross-repo metrics. Architecture conformance checks Layer 1 patterns against system docs indexed by Layer 1's external doc adapters.
+Each layer composes the one below — it never re-implements it. Cross-repo traceability extends per-repo traceability across repo boundaries. System health aggregates per-repo quality scores with cross-repo metrics. Architecture conformance checks per-repo patterns against system docs.
 
-This means every capability that improves Layer 1 or Layer 2 automatically improves Layer 3. Better language adapters → richer cross-repo symbol graphs. Better quality metrics → more accurate system health scores. Better generated docs → more complete system architecture coverage.
+This means every capability that improves Layer 1 or Layer 2 automatically improves Layer 3. Better language support → richer cross-repo symbol graphs. Better quality metrics → more accurate system health scores. Better generated docs → more complete system architecture coverage.
 
 ---
 
@@ -29,17 +29,17 @@ This means every capability that improves Layer 1 or Layer 2 automatically impro
 
 ### Workspace Definition
 
-A workspace is a named collection of repos and their roles that together form a system. Roles span the full spectrum of modern system decomposition: UI, backend, microservice, data, infra, shared-lib, gateway, schema-registry. System-level docs are declared alongside the repos. The workspace is stored persistently and orchestrates indexing across all member repos.
+A workspace is a named collection of repos and their roles that together form a system. Roles span the full spectrum of modern system decomposition: UI, backend, microservice, data, infra, shared-lib, gateway, schema-registry. System-level docs are declared alongside the repos. The workspace orchestrates indexing across all member repos.
 
 ```gherkin
 Feature: Workspace Definition
 
   Scenario: Developer defines a workspace from multiple repos
     Given repos: payment-api (Go), payment-dashboard (TypeScript), payment-mobile (React Native), payment-data (Python), payment-infra (Terraform), payment-schemas (Protobuf)
-    When the developer runs sensei workspace init --name payment-platform
-    And adds each repo: sensei workspace add ./payment-api --role microservice
+    When the developer initialises a workspace named payment-platform
+    And registers each repo with its role
     Then each repo is registered with its role in the workspace
-    And the workspace is accessible from any member repo's get_session_context()
+    And the workspace is accessible from any member repo's session context
 
   Scenario: Workspace roles reflect microservices decomposition
     Given a microservices system
@@ -55,7 +55,7 @@ Feature: Workspace Definition
 
   Scenario: Developer context includes workspace awareness
     Given a workspace payment-platform with 7 repos
-    When a developer opens payment-api in their IDE and calls get_session_context()
+    When a developer opens payment-api in their IDE and loads their session context
     Then the orientation includes: workspace name, this repo's role, sibling service names and roles, system doc summary, and any open cross-repo drift items affecting this repo
 ```
 
@@ -63,7 +63,7 @@ Feature: Workspace Definition
 
 ### Cross-Repo Indexing
 
-Cross-repo indexing orchestrates Layer 1 indexers across all workspace repos and then builds a workspace-level graph on top of the per-repo symbol indexes. It resolves cross-repo references by contract type — REST (OpenAPI), GraphQL, gRPC (Protobuf), event schemas (AsyncAPI, Avro), shared types, and shared database schemas. The result is stored persistently and is queryable like any other part of the index.
+Cross-repo indexing coordinates indexing across all workspace repos and then builds a workspace-level graph on top of the per-repo indexes. It resolves cross-repo references by contract type — REST (OpenAPI), GraphQL, gRPC (Protobuf), event schemas (AsyncAPI, Avro), shared types, and shared database schemas. The result is queryable like any other part of the index.
 
 Microservices communicate through implicit contracts — a service publishing to a Kafka topic doesn't import the consumer. Sensei resolves these async dependencies through topic name matching, schema registry references, and event schema analysis.
 
@@ -103,7 +103,7 @@ Feature: Cross-Repo Indexing
   Scenario: Heterogeneous stacks index without conflict
     Given Go, TypeScript, Python, and Terraform repos in one workspace
     When the workspace index runs
-    Then each repo uses its Layer 1 language adapter independently
+    Then each repo is indexed independently using its language support
     And cross-repo edges are resolved by contract boundaries, not by shared imports
     And the unified workspace graph is queryable regardless of per-repo language
 ```
@@ -114,7 +114,7 @@ Feature: Cross-Repo Indexing
 
 The service map is a first-class workspace artifact — a live graph of all services, their roles, their contracts (what they produce and consume), and their dependencies. It is generated from the workspace index and updated on every index run. It is the system-level equivalent of the per-repo call graph, and it is the foundation for conformance checking, gap analysis, and system health scoring.
 
-The service map is stored persistently and rendered as a Mermaid diagram in the workspace dashboard. It replaces hand-drawn architecture diagrams that go stale the moment they are created.
+The service map is rendered as a diagram in the workspace dashboard. It replaces hand-drawn architecture diagrams that go stale the moment they are created.
 
 ```gherkin
 Feature: Service Map
@@ -125,10 +125,10 @@ Feature: Service Map
     Then the service map is populated with: nodes (one per service), edges (one per contract boundary), and metadata (contract type, version, direction)
     And the map reflects the current actual state of the codebase, not a manually drawn diagram
 
-  Scenario: Service map renders as Mermaid in dashboard
+  Scenario: Service map renders as a diagram in the dashboard
     Given a workspace with service map data available
     When a developer opens the Workspace Dashboard
-    Then a Mermaid diagram renders showing all services as nodes and contracts as labelled edges
+    Then a diagram renders showing all services as nodes and contracts as labelled edges
     And async dependencies are shown with dashed edges to distinguish from synchronous calls
     And each node is clickable to navigate to that repo's detail view
 
@@ -150,7 +150,7 @@ Feature: Service Map
 
 ### Architecture Conformance
 
-Architecture conformance checks each repo's actual implementation patterns against system-level standards declared in the workspace's system docs. Conformance rules are extracted from system docs by the local model (e.g., "all services must use structured JSON logging") and then evaluated against Layer 1's per-repo symbol and pattern analysis. This builds directly on Layer 2's quality analysis — adding the system-level reference standard that per-repo quality checks lack.
+Architecture conformance checks each repo's actual implementation patterns against system-level standards declared in the workspace's system docs. Conformance rules are extracted from system docs and evaluated against each repo's symbol and pattern analysis. This adds the system-level reference standard that per-repo quality checks lack.
 
 ```gherkin
 Feature: Architecture Conformance
@@ -165,9 +165,9 @@ Feature: Architecture Conformance
     Given a conformance rule requiring structured JSON logging
     And 7 microservices in the workspace
     When the conformance check runs
-    Then each service's logging calls are analysed using Layer 1's call graph
-    And services using unstructured logging (fmt.Println, console.log) are flagged as non-conformant
-    And services using structured loggers (zap, winston, structlog) are marked as passing
+    Then each service's logging calls are analysed using the per-repo call graph
+    And services using unstructured logging are flagged as non-conformant
+    And services using structured loggers are marked as passing
 
   Scenario: Conformance deviation is linked to the source architecture doc
     Given payment-api is non-conformant on the request-validation rule
@@ -179,14 +179,14 @@ Feature: Architecture Conformance
     Given a workspace conformance score of 62% across 7 services
     When two teams resolve their violations and sensei workspace index runs
     Then the conformance score increases to 78%
-    And the improvement is recorded in the quality_reports time series
+    And the improvement is recorded in the quality trend history
 ```
 
 ---
 
 ### Cross-Repo Drift Detection
 
-Cross-repo drift extends Layer 2's per-repo drift detection across repo boundaries. When a contract changes in one repo — an API endpoint renamed, a Protobuf field removed, a Kafka topic schema updated, a shared type modified — all downstream consumers in the workspace are evaluated for compatibility. This builds directly on Layer 2 traceability and workspace_edges from cross-repo indexing.
+Cross-repo drift extends per-repo drift detection across repo boundaries. When a contract changes in one repo — an API endpoint renamed, a Protobuf field removed, a Kafka topic schema updated, a shared type modified — all downstream consumers in the workspace are evaluated for compatibility.
 
 ```gherkin
 Feature: Cross-Repo Drift Detection
@@ -212,10 +212,10 @@ Feature: Cross-Repo Drift Detection
     Then a drift item is created between payment-api (producer) and payment-data (consumer)
     And the schema version mismatch and affected field are recorded
 
-  Scenario: GitHub App notifies affected teams on PR
-    Given the GitHub App is connected to the workspace
+  Scenario: CI integration notifies affected teams on PR
+    Given sensei is connected to the workspace's CI pipeline
     When a PR in payment-api modifies an OpenAPI endpoint consumed by payment-dashboard (3 sites) and payment-mobile (1 site)
-    Then the GitHub App posts a PR comment listing all consuming repos and call sites
+    Then sensei posts a PR comment listing all consuming repos and call sites
     And the PR check status is set to "warning: cross-repo impact detected"
     And team leads of the affected repos are mentioned in the comment
 ```
@@ -224,7 +224,7 @@ Feature: Cross-Repo Drift Detection
 
 ### System Gap Analysis
 
-System gap analysis compares what the architecture designed against what the workspace has implemented — across all repos and all contract boundaries. It builds on Layer 2's per-repo gap analysis (which identifies local gaps) by adding the system-level reference: capabilities described in architecture docs but absent from all repos, services that should exist but don't, and cross-repo inconsistencies in how the same concern is handled.
+System gap analysis compares what the architecture designed against what the workspace has implemented — across all repos and all contract boundaries. It extends per-repo gap analysis by adding the system-level reference: capabilities described in architecture docs but absent from all repos, services that should exist but don't, and cross-repo inconsistencies in how the same concern is handled.
 
 ```gherkin
 Feature: System Gap Analysis
@@ -250,13 +250,13 @@ Feature: System Gap Analysis
 
   Scenario: Cross-service inconsistency in shared concern is detected
     Given the architecture mandates all services use retry-with-backoff on external calls
-    And only 3 of 7 services implement this pattern (detectable via Layer 1 call graph analysis)
+    And only 3 of 7 services implement this pattern
     When the system gap analysis runs
     Then a gap item lists the 4 non-conformant services and their affected external call sites
 
   Scenario: System gap report is generated for planning
     Given a workspace with 7 repos and a system architecture doc
-    When the developer runs sensei workspace analyse --gaps
+    When the developer requests a system gap analysis
     Then a prioritised report lists: designed-not-implemented capabilities, missing services, duplications, cross-service inconsistencies, and unguarded boundaries
     And each item includes: affected repos, source evidence, severity, and suggested resolution
     And gap items are stored as traceability entries and assignable to teams and sprints
@@ -266,7 +266,7 @@ Feature: System Gap Analysis
 
 ### System Health Score
 
-The system health score aggregates per-repo quality metrics (complexity, test coverage, doc coverage, conformance) with cross-repo metrics (open drift items, gap items, contract coverage, service map completeness) into a single workspace-level indicator. It is not a new measurement system — it is an aggregation of existing measurements from the layers below, adding only the cross-repo signals.
+The system health score aggregates per-repo quality metrics (complexity, test coverage, doc coverage, conformance) with cross-repo metrics (open drift items, gap items, contract coverage, service map completeness) into a single workspace-level indicator.
 
 ```gherkin
 Feature: System Health Score
@@ -292,9 +292,9 @@ Feature: System Health Score
     And other teams' repo contents are not exposed — only their quality score contributions
 
   Scenario: Health gate blocks CI when workspace health falls below threshold
-    Given a CI workflow with sensei workspace health-check --min-score 70
+    Given a CI workflow with a configured minimum workspace health threshold of 70
     And the current workspace health score is 64 due to 5 open cross-repo drift items
     When the CI job runs
-    Then it exits non-zero and prints: "Workspace health 64 is below threshold 70 — 5 open cross-repo drift items are the primary contributor"
+    Then it fails and reports: "Workspace health 64 is below threshold 70 — 5 open cross-repo drift items are the primary contributor"
     And it links to the workspace dashboard drift view
 ```

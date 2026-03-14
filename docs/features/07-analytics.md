@@ -13,41 +13,41 @@ Knowing that an agent finished a task is not the same as knowing it finished it 
 
 ### Telemetry Collection
 
-PreToolUse and PostToolUse hook events are captured for every tool call and stored persistently. When the backend is unavailable the collector writes events to disk and drains them on reconnect. Each event records: tool name, phase, duration, success, session, project, model, provider, and token counts.
+Every tool call is captured as a telemetry event and stored durably. Events are queued locally when the backend is unavailable and flushed automatically on reconnect. Each event records the tool used, phase, duration, outcome, session, project, model, provider, and token counts.
 
 ```gherkin
 Feature: Telemetry Collection
 
   Scenario: Tool call events are recorded
     Given the sensei daemon is running and the backend is reachable
-    When the agent calls the read_file MCP tool
-    Then a PreToolUse event is recorded before the call executes
-    And a PostToolUse event is recorded after the call completes
+    When the agent calls a tool
+    Then an event is recorded before the call executes
+    And an event is recorded after the call completes
     And both events include: tool name, session, duration, and success status
 
-  Scenario: Disk fallback activates when the backend is unavailable
+  Scenario: Local fallback activates when the backend is unavailable
     Given the backend is unreachable
     When the agent calls any MCP tool
-    Then the event is written to a fallback file on disk
+    Then the event is queued locally
     And no error is surfaced to the agent
 
   Scenario: Queued events are drained on reconnect
-    Given the fallback file contains 47 events written during an outage
+    Given events were queued locally during an outage
     When the sensei daemon starts and successfully connects to the backend
-    Then all 47 events are stored persistently
-    And the fallback file is cleared after successful drain
+    Then all queued events are stored persistently
+    And the local queue is cleared after successful drain
 ```
 
 ### Task and Turn Tracking
 
-Each agent session is recorded with metadata including the repo, agent name, model, task description, task type, and status. Individual turns capture per-turn model and token data. Task type is auto-detected from keywords or an optional local model classifier.
+Each agent session is recorded with metadata including the repo, agent name, model, task description, task type, and status. Individual turns capture per-turn model and token data. Task type is auto-detected from the task description.
 
 ```gherkin
 Feature: Task and Turn Tracking
 
   Scenario: Session is created when a task begins
-    Given the developer starts a new Claude session in a sensei-instrumented repo
-    When the UserPromptSubmit hook fires with "fix the broken auth middleware"
+    Given the developer starts a new agent session in a sensei-instrumented repo
+    When a new task is submitted with "fix the broken auth middleware"
     Then a session record is created with status "in_progress"
     And the task type is auto-detected as "fix" from the keyword
 
@@ -58,7 +58,7 @@ Feature: Task and Turn Tracking
 
   Scenario: Session is marked completed when the agent signals task done
     Given a task session with status "in_progress"
-    When the agent calls the MCP tool complete_task with a summary
+    When the agent signals task completion with a summary
     Then the session is updated to status "completed"
     And the end time is recorded
 
@@ -71,15 +71,15 @@ Feature: Task and Turn Tracking
 
 ### FTR Scoring (First-Time-Right)
 
-FTR is a composite score from 0.0 to 1.0 stored with each task outcome. It aggregates six weighted signals: turns taken (30%), refinements requested (20%), no reverts within N commits (20%), tests pass on first run (15%), no task revisit within 7 days (10%), and no bugs filed against session output (5%). Developer vs agent attribution distinguishes a vague spec from a clear spec with wrong output.
+FTR is a composite score from 0.0 to 1.0 stored with each task outcome. It aggregates multiple signals including turns taken, refinements requested, test results, revert history, and task revisit rate. Developer vs agent attribution distinguishes a vague spec from a clear spec with wrong output.
 
 ```gherkin
 Feature: FTR Scoring
 
   Scenario: FTR score is computed after session completion
-    Given a completed task_session where the task took 3 turns, no refinements, tests passed, and no revert within 10 commits
+    Given a completed session where the task took 3 turns, no refinements, tests passed, and no revert within 10 commits
     When sensei computes the FTR score for that session
-    Then a task_outcomes row is created with a score between 0.7 and 1.0
+    Then an outcome record is created with a score between 0.7 and 1.0
     And each contributing signal is stored alongside the composite score
 
   Scenario: Task revisit within 7 days reduces the FTR score
@@ -92,7 +92,7 @@ Feature: FTR Scoring
     Given a task where the developer rated the spec as vague
     And the agent produced multiple refinements
     When sensei computes attribution for that outcome
-    Then the developer_attribution field is high and agent_attribution field is low
+    Then developer attribution is high and agent attribution is low
     And the FTR penalty is applied to the developer signal, not the agent signal
 
   Scenario: FTR heuristic fallback runs when no user rating is provided
@@ -122,7 +122,7 @@ Feature: Quality Rating UI
     And the overall session FTR score is recalculated
 
   Scenario: FTR trend is visible per model in the dashboard
-    Given 30 days of task outcomes across two models: claude-3-5-sonnet and claude-3-opus
+    Given 30 days of task outcomes across two different models
     When the developer opens the Model Comparison view
     Then a trend chart shows average FTR score per week for each model
     And the chart allows filtering by repo and task type
@@ -130,27 +130,27 @@ Feature: Quality Rating UI
 
 ### Benchmarking
 
-A task corpus in `tasks/sample.yaml` provides representative developer tasks for A/B evaluation. Runs compare with-skills vs without-skills configurations across metrics: tokens, interactions, tool calls, and task completion. Results are stored persistently and compared via CLI.
+A task corpus of representative developer tasks enables A/B evaluation. Runs compare with-skills vs without-skills configurations across metrics: tokens, interactions, tool calls, and task completion. Results are stored and compared via CLI.
 
 ```gherkin
 Feature: Benchmarking
 
   Scenario: Benchmark run executes all corpus tasks and stores results
-    Given tasks/sample.yaml contains 10 representative tasks
-    When the developer runs sensei benchmark run --config with-skills
+    Given a set of representative tasks is configured
+    When the developer runs a benchmark with a named configuration
     Then each task is executed against the current agent configuration
     And results are stored with the run identifier, configuration, and per-task metrics
 
   Scenario: A/B comparison shows improvement from skills
-    Given two benchmark runs: run-001 (without-skills) and run-002 (with-skills)
-    When the developer runs sensei benchmark compare run-001 run-002
-    Then a report is printed showing delta for: tokens, interactions, tool_calls, completion_rate
+    Given two benchmark runs: one without skills and one with skills
+    When the developer compares the two runs
+    Then a report is printed showing delta for: tokens, interactions, tool calls, and completion rate
     And the improvement percentage is shown for each metric
 
   Scenario: FTR improvement from a skill change is measurable
     Given a baseline benchmark run before a skill file was updated
     And a new benchmark run after the skill update
-    When the developer runs sensei benchmark compare <before-id> <after-id>
+    When the developer compares the two runs
     Then the FTR delta is shown for tasks in the skill's coverage area
     And tasks outside the coverage area show no significant delta
 ```
@@ -159,7 +159,7 @@ Feature: Benchmarking
 
 The single highest-leverage variable in FTR is the quality of the requirement given to the agent. Vague requirements produce refinement loops. Concrete requirements with explicit constraints, acceptance criteria, and examples produce first-time-right output. Sensei measures requirement quality automatically and correlates it with outcomes across all sessions — showing developers precisely where upfront investment in elaboration pays off.
 
-Requirement quality is scored at task start (0.0–1.0) from: description length, presence of acceptance criteria, specificity keywords ("must", "should not", "returns", "given/when/then"), examples provided, and referenced context (files, symbols, docs). The score is stored with the session and correlated with FTR outcomes.
+Requirement quality is scored at task start (0.0–1.0) based on factors such as description completeness, presence of acceptance criteria, use of specific language, examples provided, and referenced context. The score is stored with the session and correlated with FTR outcomes.
 
 ```gherkin
 Feature: Requirement Quality Scoring
@@ -172,7 +172,7 @@ Feature: Requirement Quality Scoring
     And the dashboard shows the suggested elaboration prompt inline
 
   Scenario: Concrete requirement receives a high quality score
-    Given a developer submits the task: "The login endpoint returns 500 when the email contains a plus sign. It should return 200 and accept the user. Affected file: src/auth/login.ts. Acceptance: existing tests pass plus a new test for plus-sign emails."
+    Given a developer submits a task with a clear description, affected area, and acceptance criteria
     When sensei scores the requirement
     Then the requirement quality score is above 0.8
     And no elaboration prompt is shown
@@ -201,11 +201,10 @@ Sensei compares each developer's personal metrics against anonymised aggregate b
 Feature: Developer Coaching Engine
 
   Scenario: Developer receives personalised FTR improvement recommendation
-    Given a developer's FTR for bug-fix tasks is 0.54
-    And the aggregate FTR for bug-fix tasks among TypeScript/Claude users is 0.79
+    Given a developer's FTR for bug-fix tasks is below the aggregate average for similar teams
     When sensei generates coaching recommendations
-    Then the dashboard shows: "Your bug-fix FTR (0.54) is below the 0.79 average for similar teams"
-    And the top recommendation is: "Teams using context_pack before fix sessions see the largest FTR improvement — try calling context_pack with the error description before making changes"
+    Then the dashboard shows the developer's score compared to the average for similar teams
+    And the top recommendation identifies the highest-leverage habit change for their task type
 
   Scenario: Prompting pattern guidance is surfaced
     Given a developer's sessions show frequent mid-task refinements
@@ -254,49 +253,49 @@ Feature: Aggregate Benchmarks
     And the developer can opt out from the repo settings page at any time
 
   Scenario: Public benchmark page shows real-world token reduction
-    Given 10,000 sessions from opted-in users across 500 repos
-    When the benchmark page at sensei.dev/benchmarks is loaded
+    Given a large sample of sessions from opted-in users
+    When the public benchmark page is loaded
     Then it shows: median token reduction (%), average FTR score, average sessions-to-completion
     And metrics are broken down by agent, stack, and task type
     And each metric shows sample size and confidence interval
 
   Scenario: Aggregate insight feeds back into coaching
-    Given new aggregate data shows that repos using custom lib indexing have 22% higher FTR on UI tasks
-    When the coaching engine runs for a developer with rokkit indexed but custom lib indexing disabled
-    Then a coaching recommendation is generated: "Teams with custom lib indexing enabled see 22% better FTR on UI tasks — your rokkit library is a candidate"
+    Given new aggregate data shows that repos using a certain feature have higher FTR on UI tasks
+    When the coaching engine runs for a developer who has not enabled that feature
+    Then a coaching recommendation is generated highlighting the potential FTR improvement
 
   Scenario: Team benchmark compares against cohort
-    Given a team of 4 developers using sensei for 60 days
+    Given a team using sensei for 60 days
     When they open the Team Insights view
     Then their aggregate FTR, token reduction, and average turns are shown
     And each metric is compared against the anonymised cohort of teams with the same stack and team size
-    And percentile ranking is shown: "Your team is in the 72nd percentile for FTR among TypeScript teams"
+    And a percentile ranking is shown for each metric
 ```
 
 ---
 
 ### Analytics CLI and Dashboard
 
-`sensei stats` provides a 7-day summary of tool usage, session activity, and token spend from the command line. The `--gaps` flag surfaces files and tools that agents bypassed in favour of raw bash. The dashboard adds visual FTR scores, model comparisons, benchmark results, and per-session turn timelines.
+A CLI command provides a 7-day summary of tool usage, session activity, and token spend. A gaps flag surfaces files and tools that agents bypassed in favour of raw shell commands. The dashboard adds visual FTR scores, model comparisons, benchmark results, and per-session turn timelines.
 
 ```gherkin
 Feature: Analytics CLI and Dashboard
 
-  Scenario: sensei stats shows 7-day summary
-    Given the last 7 days contain 14 sessions across 3 repos
-    When the developer runs sensei stats
-    Then the output shows: total sessions, total turns, total tokens, top 5 tools by call count
+  Scenario: Stats command shows 7-day summary
+    Given the last 7 days contain sessions across multiple repos
+    When the developer runs the stats command
+    Then the output shows: total sessions, total turns, total tokens, top tools by call count
     And the output fits in a terminal without scrolling for a typical week
 
-  Scenario: sensei stats --gaps reports missed tool opportunities
-    Given 5 sessions where the agent ran raw bash cat/grep commands instead of sensei tools
-    When the developer runs sensei stats --gaps
+  Scenario: Gaps flag reports missed tool opportunities
+    Given sessions where the agent ran raw shell commands instead of sensei tools
+    When the developer requests the gaps report
     Then each bypassed tool usage is listed with: session, command used, and the sensei tool that could have been used
     And a summary count of total missed opportunities is shown
 
-  Scenario: sensei stats --json outputs machine-readable data
+  Scenario: Machine-readable output is available
     Given a week of session data
-    When the developer runs sensei stats --json
+    When the developer requests JSON output
     Then the output is valid JSON with the same fields as the default summary
     And it can be piped into standard tools or written to a file without parsing errors
 
