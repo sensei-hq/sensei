@@ -12,3 +12,6 @@ export * from "./slice/ast-slicer.js";
 export * from "./slice/section-slicer.js";
 export * from "./assemble/assembler.js";
 export * from "./context-pack.js";
+export * from "./session/session-manager.js";
+export * from "./session/snapshot.js";
+export * from "./session/memory.js";
