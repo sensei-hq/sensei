@@ -51,7 +51,8 @@ export async function closeMemory(
     .select("status")
     .eq("id", itemId)
     .single();
-  if (existing && (existing as Record<string, unknown>).status === "closed") {
+  if (!existing) throw new Error("Memory item not found");
+  if ((existing as Record<string, unknown>).status === "closed") {
     throw new Error("Memory item already closed");
   }
 
