@@ -59,6 +59,10 @@ describe("buildContextPack", () => {
     const contextPacksCalls = (db.from as ReturnType<typeof vi.fn>).mock.calls
       .filter((c: any[]) => c[0] === "context_packs");
     expect(contextPacksCalls.length).toBeGreaterThan(0);
+    // Verify upsert was called with correct fields
+    expect(db.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ repo_id: "repo-1", task: "fix auth" })
+    );
 
     await rm(dir, { recursive: true, force: true });
   });
