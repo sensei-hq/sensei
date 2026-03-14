@@ -30,7 +30,7 @@ export async function contextPack(
       content: s.content,
       tokens: s.tokens,
       score: s.score,
-      ...(s.kind === "code" ? { symbolName: (s as any).symbolName } : { heading: (s as any).heading }),
+      ...(s.kind === "code" ? { symbolName: s.symbolName } : { heading: s.heading }),
     })),
   };
 }
