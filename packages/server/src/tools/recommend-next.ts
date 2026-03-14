@@ -49,6 +49,7 @@ export async function recommendNext(
 
   return {
     recommendations: recs,
+    // Cap at 8000 — the default max_tokens for context_pack; multiply by 1.5 for headroom
     suggestedBudget: Math.min(Math.ceil(recs.reduce((s, r) => s + r.estimatedTokens, 0) * 1.5), 8000),
   };
 }
