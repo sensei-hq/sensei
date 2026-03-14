@@ -12,7 +12,7 @@ import { takeSnapshotTool } from "./tools/take-snapshot.js";
 import { checkpointTool } from "./tools/checkpoint.js";
 import { recordMemoryTool } from "./tools/record-memory.js";
 import { closeMemoryTool } from "./tools/close-memory.js";
-import { createSession, updateHeartbeat } from "@sensei/engine";
+import { createSession, updateHeartbeat, createTaskSession, recordTaskTurn, completeTaskSession } from "@sensei/engine";
 
 export interface McpServerOptions {
   repoId: string;
@@ -40,28 +40,35 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
 
   // Session state — stored per MCP server process
   let sessionId: string | null = null;
+  let taskSessionId: string | null = null;
 
-  const beat = (client: any) => {
+  const beat = (client: any, toolName: string, success: boolean) => {
     if (sessionId) updateHeartbeat(client, sessionId).catch(() => {});
+    if (taskSessionId) recordTaskTurn(client as any, taskSessionId, opts.repoId, toolName, success).catch(() => {});
   };
 
   server.tool(
     "get_session_context",
     "Get orientation context for the current repo — symbol count, stack, last indexed timestamp, interrupted sessions, and project memory",
-    {},
-    async () => {
+    {
+      task_description: z.string().optional().describe("Brief description of the task you are about to work on — used for FTR tracking"),
+    },
+    async ({ task_description }) => {
       try {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured. Run sensei init first." }] };
 
         // Create session on first call; reuse on subsequent calls (idempotent)
+        // Assign sessionId and taskSessionId atomically — both or neither
         if (!sessionId) {
           const session = await createSession(client as any, opts.repoId);
+          const taskSession = await createTaskSession(client as any, session.id, opts.repoId, task_description);
           sessionId = session.id;
+          taskSessionId = taskSession.id;
         }
 
         const result = await getSessionContext(client as any, opts.repoId, opts.repoPath, sessionId);
-        beat(client);
+        beat(client, "get_session_context", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -81,7 +88,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         const result = await search(client as any, opts.repoId, query, limit);
-        beat(client);
+        beat(client, "search", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -100,7 +107,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         const result = await loadContext(client as any, opts.repoId, opts.repoPath, file_path);
-        beat(client);
+        beat(client, "load_context", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -128,7 +135,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
           sessionId: session_id,
           sessionContext: session_context,
         });
-        beat(client);
+        beat(client, "context_pack", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -148,7 +155,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         const result = await recommendNext(client as any, getBackend(), opts.repoId, task, model_id);
-        beat(client);
+        beat(client, "recommend_next", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -167,7 +174,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         const result = await tokenStats(client as any, session_id);
-        beat(client);
+        beat(client, "token_stats", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -192,7 +199,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         if (!sessionId) return { content: [{ type: "text", text: "Error: No active session. Call get_session_context first." }], isError: true };
         const result = await takeSnapshotTool(client as any, sessionId, opts.repoId, params);
-        beat(client);
+        beat(client, "take_snapshot", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -213,7 +220,12 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         if (!sessionId) return { content: [{ type: "text", text: "Error: No active session. Call get_session_context first." }], isError: true };
         const result = await checkpointTool(client as any, sessionId, opts.repoId, params);
-        beat(client);
+        // completeTaskSession runs after checkpointTool so sessions.status is already 'completed'
+        // Throws on DB error — the outer try/catch surfaces it to the agent as isError: true
+        if (taskSessionId) {
+          await completeTaskSession(client as any, taskSessionId, sessionId);
+        }
+        beat(client, "checkpoint", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -235,7 +247,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         if (!sessionId) return { content: [{ type: "text", text: "Error: No active session. Call get_session_context first." }], isError: true };
         const result = await recordMemoryTool(client as any, opts.repoId, sessionId, params);
-        beat(client);
+        beat(client, "record_memory", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -255,7 +267,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         const result = await closeMemoryTool(client as any, params);
-        beat(client);
+        beat(client, "close_memory", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
