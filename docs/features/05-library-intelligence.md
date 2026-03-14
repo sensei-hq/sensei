@@ -7,80 +7,80 @@ type: feature
 
 > Sensei knows about the libraries you use — internal and external
 
-Third-party libraries and internal shared packages are a major source of agent confusion: the model either hallucinates an API it doesn't know or spends tokens crawling docs it has already seen. Sensei solves this by building a two-tier cache — root index for fast lookup, on-demand page cache for deep retrieval — and by generating concise skill files from custom library source so agents work with local knowledge rather than generic training data. Every library is a first-class citizen: indexing, ranking, and context assembly treat custom libs the same as project code.
+Third-party libraries and internal shared packages are a major source of agent confusion: the model either hallucinates an API it doesn't know or spends tokens crawling docs it has already seen. Sensei solves this by keeping documentation indexed and readily accessible, and by generating concise skill files for custom libraries so agents work with local knowledge rather than generic training data. Every library is a first-class citizen: indexing, ranking, and context assembly treat custom libs the same as project code.
 
 ## Features
 
 ### Custom Library Indexing
 
-Internal shared libraries (e.g. rokkit, kavach, dbd) are indexed from source using the same pipeline as project code. The source path is declared in `.sensei/config.yaml` under `custom_libs`, and each library is tracked separately so ranking and slicing queries treat them consistently with project code.
+Internal shared libraries are indexed from source using the same pipeline as project code. Source paths are declared in project configuration, and each library is tracked separately so ranking and slicing queries treat them consistently with project code.
 
 ```gherkin
 Feature: Custom Library Indexing
 
   Scenario: Developer registers a custom library
-    Given a .sensei/config.yaml with custom_libs entry for "rokkit" at "../rokkit/src"
+    Given a custom library is configured with its source path
     When the developer runs sensei index
-    Then rokkit source files are scanned and parsed
-    And rokkit symbols are indexed and appear in search results alongside project code
+    Then the library's source files are scanned and parsed
+    And its symbols are indexed and appear in search results alongside project code
 
   Scenario: Incremental re-index on file change
-    Given rokkit has been indexed and one file "rokkit/src/button.ts" has changed
+    Given a custom library has been indexed and one of its source files has changed
     When the developer runs sensei index
     Then only the changed file is re-parsed
-    And unchanged rokkit files are not re-processed
+    And unchanged library files are not re-processed
     And the symbol index for that file is updated
 
   Scenario: Force full rebuild of a custom library
-    Given rokkit has been indexed
+    Given a custom library has been indexed
     When the developer requests a full rescan
-    Then all rokkit source files are re-parsed regardless of prior change detection
-    And the complete symbol index for rokkit is rebuilt from scratch
+    Then all library source files are re-parsed regardless of prior change detection
+    And the complete symbol index for the library is rebuilt from scratch
 
-  Scenario: Custom lib symbols are included in context_pack
-    Given rokkit is indexed and a project file imports ButtonGroup from rokkit
-    When the agent calls context_pack for a task touching that import
-    Then rokkit/src/button-group.ts symbols appear in the packed context
+  Scenario: Custom lib symbols are included in packed context
+    Given a custom library is indexed and a project file imports a symbol from it
+    When the agent assembles context for a task touching that import
+    Then symbols from the custom library appear in the packed context
     And the response identifies them as library symbols
 ```
 
 ### llms.txt Priority
 
-`llms.txt` is the highest-priority documentation source for any library. When present — either as a bundled file path or a remote URL — sensei parses it first and supplements with source indexing only for symbols not covered by the llms.txt content.
+`llms.txt` is the highest-priority documentation source for any library. When present — either as a local file or a remote URL — sensei parses it first and supplements with source indexing only for symbols not covered by the llms.txt content.
 
 ```gherkin
 Feature: llms.txt Priority
 
   Scenario: Remote llms.txt is fetched and parsed first
-    Given a custom_libs entry for "rokkit" with a configured llms.txt URL
+    Given a custom library configured with an llms.txt URL
     When the developer runs sensei index
     Then sensei fetches the llms.txt content before scanning source
     And documentation from llms.txt is indexed with priority
     And source indexing only runs for symbols absent from the llms.txt content
 
   Scenario: Bundled llms.txt file is used when a URL is not set
-    Given a custom_libs entry for "kavach" with a local llms.txt path configured
+    Given a custom library configured with a local llms.txt path
     When the developer runs sensei index
     Then sensei reads the local llms.txt file
     And its content is parsed and indexed before source files are scanned
 
   Scenario: llms.txt chunks take precedence in search results
-    Given kavach is indexed with both llms.txt content and source symbols
-    When the agent calls get_lib_docs("kavach", "middleware")
+    Given a library indexed with both llms.txt content and source symbols
+    When the agent retrieves documentation for that library
     Then chunks sourced from llms.txt are ranked above source-derived chunks
-    And the response indicates each chunk's source as "llms_txt" or "source"
+    And the response indicates each chunk's origin
 ```
 
 ### External Doc Registry
 
-The bundled library registry maps known libraries to their documentation URL templates and section structure. The registry is updated via `sensei update-registry` and accepts community pull requests. Per-repo library usage is tracked and doc content is cached globally, shared across all repos.
+The bundled library registry maps known libraries to their documentation URL templates and section structure. The registry is kept up to date and accepts community contributions. Per-repo library usage is tracked and doc content is cached for reuse.
 
 ```gherkin
 Feature: External Doc Registry
 
   Scenario: Registry entry drives doc URL resolution
     Given the library registry contains an entry for "zod" with a documentation URL template
-    And the project's package.json lists "zod" as a dependency
+    And the project lists "zod" as a dependency
     When the agent calls get_lib_docs("zod", "schema")
     Then sensei constructs the URL from the template and fetches the relevant page
     And the fetched content is cached globally for reuse
@@ -101,7 +101,7 @@ Feature: External Doc Registry
 
 ### Two-Tier Doc Retrieval
 
-Tier 1 is a lightweight root index holding a summary per documentation page, refreshed periodically by a background daemon. Tier 2 is the on-demand page cache with semantic search enabled and a time-to-live expiry. Full crawl is opt-in per library; by default only API reference and changelog sections are targeted.
+Documentation retrieval uses a layered approach: a fast index of page summaries for quick lookup, and a deeper on-demand cache for full content retrieval with semantic search. Full crawl is opt-in per library; by default only the most relevant sections are targeted.
 
 ```gherkin
 Feature: Two-Tier Doc Retrieval
@@ -134,7 +134,7 @@ Feature: Two-Tier Doc Retrieval
 
 ### get_lib_docs MCP Tool
 
-`get_lib_docs` is a dedicated MCP tool for documentation retrieval, distinct from `search` which is code-first. It accepts a library name and a component or topic, consults the two-tier cache, and returns relevant doc chunks. Cache misses on small pages are resolved synchronously; larger prefetches run in the background.
+A dedicated documentation retrieval tool is distinct from code search. It accepts a library name and a component or topic and returns relevant doc chunks. Requests are resolved as quickly as possible, with background prefetching used when content is not yet available.
 
 ```gherkin
 Feature: get_lib_docs MCP Tool
@@ -154,9 +154,9 @@ Feature: get_lib_docs MCP Tool
     And the content is returned in the same response
 
   Scenario: Background prefetch fires when lib imports are ranked
-    Given "effect" is detected in ranked files during context_pack assembly
+    Given "effect" is detected in ranked files during context assembly
     And no cached documentation exists for "effect"
-    When context_pack is called before any get_lib_docs call
+    When context is assembled before any get_lib_docs call
     Then a background prefetch for the effect API reference is triggered
     And the next get_lib_docs("effect", ...) call will find a warm cache
 
@@ -170,28 +170,28 @@ Feature: get_lib_docs MCP Tool
 
 ### Auto-Generated Lib Skills
 
-After indexing a custom library, a local model generates a skill markdown file summarising the library's API surface, usage patterns, and conventions. The skill is stored in `.sensei/skills/<lib-name>.md` and referenced from the Skills section of `AGENTS.md`.
+After indexing a custom library, sensei generates a skill file summarising the library's API surface, usage patterns, and conventions. The skill is referenced from the project's shared agent context so all configured agents benefit from it.
 
 ```gherkin
 Feature: Auto-Generated Lib Skills
 
   Scenario: Skill file is generated after initial custom lib index
-    Given rokkit has just been indexed for the first time
+    Given a custom library has just been indexed for the first time
     When the indexing pipeline completes
-    Then .sensei/skills/rokkit.md is created
+    Then a skill file is created for that library
     And it contains sections: API Summary, Usage Patterns, Conventions
-    And AGENTS.md Skills section references rokkit.md
+    And the AGENTS.md Skills section references the new skill file
 
   Scenario: Skill file is regenerated incrementally on source change
-    Given rokkit is indexed and .sensei/skills/rokkit.md exists
-    And rokkit/src/dialog.ts has been modified
+    Given a custom library is indexed and its skill file exists
+    And one of its source files has been modified
     When the developer runs sensei index
-    Then only the sections of rokkit.md related to the changed file are regenerated
+    Then only the sections of the skill file related to the changed source are regenerated
     And unaffected sections are preserved
 
   Scenario: Full rescan triggers a full skill rebuild
-    Given .sensei/skills/rokkit.md exists
+    Given a custom library's skill file exists
     When the developer requests a full rescan
-    Then rokkit.md is fully regenerated from all current source files
+    Then the skill file is fully regenerated from all current source files
     And the previous file is replaced
 ```
