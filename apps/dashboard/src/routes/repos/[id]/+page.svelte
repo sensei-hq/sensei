@@ -51,3 +51,5 @@
 <SearchFilter bind:filters placeholder="Filter by name or file..." />
 
 <Table data={filtered} {columns} />
+
+<p><a href="/repos/{data.repo.id}/context-packs">View Context Packs →</a></p>
