@@ -6,14 +6,14 @@ Sensei makes AI coding agents more effective in software development by solving 
 
 ## Vision
 
-- **Index Once, Orient Fast** — Scan a repo once and produce structured artifacts. Future agents load a 500-token spec instead of reading dozens of files.
+- **Index Once, Orient Fast** — Scan a repo once and produce structured artifacts. Future agents orient in a single call instead of reading dozens of files.
 - **Right Resolution for the Task** — Code has four representations. Agents load signatures for discovery, logic flows for understanding, and full source only when editing. Never more than needed.
 - **Libraries Are First-Class** — Custom and third-party libraries are indexed, cached, and summarised into skills. Agents work from local knowledge rather than generic training data or expensive doc crawls.
-- **Docs Stay in Sync** — Design docs, code, and public documentation are tracked together in Supabase. Drift is detected automatically and reported before it becomes a problem.
+- **Docs Stay in Sync** — Design docs, code, and public documentation are tracked together. Drift is detected automatically and reported before it becomes a problem.
 - **Deterministic Work Belongs in Tools** — Generating llms.txt, checking drift, listing exports, fetching doc pages — these are repeatable, deterministic tasks. MCP tools handle them so the LLM's context stays clear for judgment.
 - **Context Is Managed, Not Accumulated** — Agents load targeted slices, checkpoint before switching tasks, and never carry stale context into new work.
 - **Quality Is Measured, Not Assumed** — First-Time-Right scores, benchmark comparisons, and gap reports quantify the real impact of skills and surface where agents are underperforming.
-- **One Command to Get Started** — `sensei init` sets up any repo in seconds. Model config, ranking strategies, and agent adapters adapt to your team without manual wiring.
+- **One Command to Get Started** — Setup takes seconds. Model config, ranking strategies, and agent adapters adapt to your team without manual wiring.
 
 ## Modules
 
@@ -32,14 +32,4 @@ Sensei makes AI coding agents more effective in software development by solving 
 
 ## Traceability
 
-Feature items and their status are tracked in `sensei.traceability` (Supabase). `traceability.yaml` is a generated export for CI and offline use — it is not the source of truth. Status lives in the database only. To generate a current snapshot run:
-
-```
-sensei traceability export
-```
-
-To filter by sprint:
-
-```
-sensei traceability export --sprint <sprint-id>
-```
+Feature items and their status are tracked in sensei's traceability store. The generated export for CI and offline use is not the source of truth — it is a snapshot. Snapshots can be generated on demand and filtered by sprint.

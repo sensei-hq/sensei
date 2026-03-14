@@ -7,7 +7,7 @@ type: feature
 
 > Sensei is free for open source, affordable for teams, and your code never leaves your control.
 
-Sensei's value is measurable: a 70–80% reduction in token usage turns a $100/month Claude subscription into a $20 one. That's $80 saved per developer per month. At $5/seat/month, sensei pays for itself 16x over. Open source projects are always free — no gates, no expiry. Local (self-hosted) mode is always free — Supabase runs on your machine, your data never leaves.
+Sensei's value is measurable: a significant reduction in token usage directly lowers what developers spend on AI subscriptions, and at sensei's per-seat price it pays for itself many times over. Open source projects are always free — no gates, no expiry. Local (self-hosted) mode is always free — everything runs on your machine, your data never leaves.
 
 ---
 
@@ -59,8 +59,8 @@ Feature: Repo Isolation
   Scenario: Private repo data is invisible to outsiders
     Given user A owns a private repo indexed in sensei
     And user B is not a member of user A's team
-    When user B queries the sensei API for that repo's symbols
-    Then they receive a 404 (not found, not 403)
+    When user B queries sensei for that repo's symbols
+    Then they receive a not-found response (no data leaked, no existence confirmed)
     And no data about the repo is leaked
 
   Scenario: Public repo is accessible to all
@@ -78,7 +78,7 @@ Feature: Repo Isolation
   Scenario: User leaves a team
     Given user B is removed from team T by an owner
     When user B attempts to access team T's private repos
-    Then all requests return 404
+    Then all requests return not-found responses
     And user B's active sessions on those repos are invalidated
 ```
 
@@ -104,7 +104,7 @@ Feature: Team Authorization
 
   Scenario: Viewer cannot trigger reindex
     Given a user with viewer role
-    When they attempt to call the reindex MCP tool
+    When they attempt to trigger a reindex
     Then they receive a permission denied error
     And no indexing occurs
 
@@ -138,8 +138,8 @@ Feature: GitHub App Integration
 
   Scenario: Drift check triggered on PR
     Given a PR is opened that modifies code files
-    When the GitHub App receives the pull_request event
-    Then sensei runs check_drift for the changed files
+    When the GitHub App receives the pull request event
+    Then sensei runs a drift check for the changed files
     And if drift is detected, posts a PR comment listing drifted doc pairs
     And the PR check status is set to "warning" if drift exists
 
@@ -154,15 +154,15 @@ Feature: GitHub App Integration
 
 ### Pricing Model
 
-Sensei's pricing is anchored to its value: token reduction that saves developers real money on AI subscriptions. The business case is clear — if sensei reduces Claude usage by 70%, a $100/month subscription becomes $20. Sensei at $5/seat costs less than one coffee per month and pays for itself immediately.
+Sensei's pricing is anchored to its value: token reduction that saves developers real money on AI subscriptions. The business case is clear — if sensei significantly reduces token usage, the subscription savings alone cover the cost many times over.
 
-**Local (self-hosted):** Always free. Supabase runs on your machine. No data leaves your environment. Full feature set.
+**Local (self-hosted):** Always free. Everything runs on your machine. No data leaves your environment. Full feature set.
 
-**Open Source:** Always free on cloud. Public repos indexed, full analytics, all features. No time limit, no feature gates. Open source maintainers can support development via GitHub Sponsors, Patreon, or Buy Me a Coffee — entirely optional.
+**Open Source:** Always free on cloud. Public repos indexed, full analytics, all features. No time limit, no feature gates. Open source maintainers can support development via optional donations — entirely optional.
 
-**Pro ($5/seat/month):** Private repos, team access, full analytics, FTR scoring, quality dashboard, external doc retrieval, custom lib indexing, GitHub App integration.
+**Pro:** Private repos, team access, full analytics, FTR scoring, quality dashboard, external doc retrieval, custom lib indexing, GitHub App integration.
 
-**Enterprise (custom):** SSO/SAML, dedicated hosted instance, SLA, priority support.
+**Enterprise:** SSO/SAML, dedicated hosted instance, SLA, priority support.
 
 ```gherkin
 Feature: Pricing Enforcement
@@ -176,21 +176,20 @@ Feature: Pricing Enforcement
   Scenario: Private repo requires Pro subscription
     Given a user registers a private repo
     And their team has no active subscription
-    When they attempt to run sensei init
-    Then they are shown the Pro plan pricing and a 14-day free trial offer
+    When they attempt to initialise sensei
+    Then they are shown the Pro plan details and a free trial offer
     And the trial starts automatically on confirmation
 
   Scenario: Developer calculates their ROI
-    Given a developer uses $100/month of Claude tokens
-    When sensei reduces usage by 75%
-    Then their effective Claude cost becomes $25/month
-    And the savings of $75/month are shown on the dashboard
-    And the $5/month sensei cost yields a net saving of $70/month per seat
+    Given a developer has measurable AI token spend per month
+    When sensei reduces usage significantly
+    Then the effective AI cost reduction is shown on the dashboard
+    And the net saving after sensei's cost is displayed per seat
 
   Scenario: Open source developer supports via donation
     Given an open source developer benefits from sensei
     When they visit the support page
-    Then they see options: GitHub Sponsors, Patreon, Buy Me a Coffee
+    Then they see available donation options
     And all donation amounts are accepted with no minimum
     And their account is marked as a supporter with no functional changes
 ```
@@ -199,16 +198,16 @@ Feature: Pricing Enforcement
 
 ### Data Privacy, Self-Hosting & Telemetry Control
 
-Sensei's architecture ensures code never has to leave your machine. Local deployment is a first-class option for compliance-sensitive teams. For users on cloud, raw source code is never stored — only extracted symbols, embeddings, and session metadata. Anonymous telemetry contribution is opt-in for private repos and opt-out for open source repos; all contributed data is de-identified (repo names, file paths, user IDs stripped) before aggregation. Contributed data powers the aggregate benchmarks and developer coaching engine that benefit all users.
+Sensei's architecture ensures code never has to leave your machine. Local deployment is a first-class option for compliance-sensitive teams. For users on cloud, raw source code is never stored — only the index artifacts and session metadata needed to deliver context. Anonymous telemetry contribution is opt-in for private repos and opt-out for open source repos; all contributed data is de-identified (repo names, file paths, user IDs stripped) before aggregation. Contributed data powers the aggregate benchmarks and developer coaching engine that benefit all users.
 
 ```gherkin
 Feature: Data Privacy and Telemetry Control
 
   Scenario: Local mode keeps all data on-device
     Given a developer runs sensei in local mode
-    When they index a repo and use context_pack
+    When they index a repo and request context
     Then all data is stored in the local backend instance
-    And no data is sent to sensei.dev or any external service
+    And no data is sent to any external service
     And the developer can verify this via network inspection
 
   Scenario: Cloud mode stores only index artifacts, not source code

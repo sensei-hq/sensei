@@ -7,53 +7,51 @@ type: feature
 
 > Sensei works with Claude, Cursor, opencode, and any agent you use
 
-Each AI coding agent has its own conventions for loading project context and skills: Claude Code reads `.claude/`, Cursor reads `.cursor/rules/`, opencode reads `.opencode/`. Without a shared layer, you'd have to maintain duplicate context files for every agent you use. Sensei provides a single source of truth — the three-layer metadata model — and installs the right files in the right places for each agent automatically.
+Each AI coding agent has its own conventions for loading project context and skills. Without a shared layer, you'd have to maintain duplicate context files for every agent you use. Sensei provides a single source of truth — the three-layer metadata model — and installs the right files in the right places for each agent automatically.
 
 ## Features
 
 ### Agent Adapter Pattern
 
-Sensei integrates with each agent through a dedicated adapter. The reference implementation targets Claude Code. Additional adapters cover opencode, Zed, Kilo, Kiro, Codex, Cursor, Copilot, Aider, and a generic fallback for agents with no structured skills concept. Each adapter is responsible for installing skills to the agent's expected location and format.
+Sensei integrates with each agent through a dedicated adapter. A generic fallback handles agents with no structured skills concept. Each adapter is responsible for installing skills to the agent's expected location and format.
 
 ```gherkin
 Feature: Agent Adapter Pattern
 
-  Scenario: ClaudeAdapter installs skills to the Claude skills directory
-    Given a repo with generated skills in .sensei/skills/
-    And Claude Code is configured for the repo
-    When the ClaudeAdapter runs
-    Then skill files are written to .claude/skills/
+  Scenario: Skills are installed to the Claude Code skills directory
+    Given a repo with generated skills and Claude Code configured
+    When the Claude adapter runs
+    Then skill files are written to the location expected by Claude Code
     And each file uses the format expected by Claude Code
 
-  Scenario: CursorAdapter installs skills as Cursor rules
-    Given a repo with generated skills in .sensei/skills/
-    And Cursor is configured for the repo
-    When the CursorAdapter runs
-    Then skill files are written to .cursor/rules/
-    And each file follows Cursor's MDC rule format
+  Scenario: Skills are installed as Cursor rules
+    Given a repo with generated skills and Cursor configured
+    When the Cursor adapter runs
+    Then skill files are written to the location expected by Cursor
+    And each file follows the format Cursor expects for rules
 
-  Scenario: GenericAdapter writes skill references into AGENTS.md
+  Scenario: Generic fallback writes skill references into AGENTS.md
     Given a repo configured for an agent with no native skills concept
-    When the GenericAdapter runs
+    When the generic adapter runs
     Then skill summaries are appended to the Skills section of AGENTS.md
     And no agent-specific directory is created
 
   Scenario: Adapter installation is idempotent
-    Given a ClaudeAdapter that has already run and installed skills
-    When the ClaudeAdapter runs again with no changes to the source skills
+    Given an adapter that has already run and installed skills
+    When the adapter runs again with no changes to the source skills
     Then no files are written or modified
     And the existing skill files are preserved unchanged
 ```
 
 ### AGENTS.md
 
-`AGENTS.md` is the universal project context file. It uses structured H2 sections — Goals, Stack, Guidelines, Patterns, Skills — that all agents can read as project context regardless of their native format. `CLAUDE.md` references `AGENTS.md` for agents that support both files. Sensei writes `AGENTS.md` on `sensei init` and updates it whenever `project_config` changes.
+`AGENTS.md` is the universal project context file. It uses structured H2 sections — Goals, Stack, Guidelines, Patterns, Skills — that all agents can read as project context regardless of their native format. Agents that support a primary context file can reference `AGENTS.md` from it for the full project context. Sensei writes `AGENTS.md` on first setup and keeps it updated whenever project configuration changes.
 
 ```gherkin
 Feature: AGENTS.md
 
   Scenario: sensei init writes AGENTS.md with all standard sections
-    Given a freshly indexed repo with a populated project_profile and project_config
+    Given a freshly indexed repo with a populated project profile and user configuration
     When the developer runs sensei init
     Then AGENTS.md is created at the repo root
     And it contains H2 sections for Goals, Stack, Guidelines, Patterns, and Skills
@@ -65,10 +63,10 @@ Feature: AGENTS.md
     Then CLAUDE.md contains a reference to AGENTS.md
     And the agent can follow the reference to read the full project context
 
-  Scenario: AGENTS.md is updated when project_config changes
-    Given an AGENTS.md with a Guidelines section populated from project_config
+  Scenario: AGENTS.md is updated when user configuration changes
+    Given an AGENTS.md with a Guidelines section populated from user configuration
     And the user has updated their guidelines in the dashboard
-    When the indexer detects the project_config change
+    When the indexer detects the configuration change
     Then AGENTS.md is rewritten with the updated Guidelines section
     And all other sections remain unchanged
 
@@ -81,37 +79,36 @@ Feature: AGENTS.md
 
 ### Skills Installation
 
-Skills are generated by a local model from the combined auto-extracted project profile and user-authored project configuration. They are not templated — each skill is authored from the actual project context. Generated skills are stored in `.sensei/skills/` and installed by the appropriate adapter to the agent-specific location. Skills are regenerated whenever the profile or config changes, using the same trigger as incremental indexing.
+Skills are generated from the combined auto-extracted project profile and user-authored project configuration. They are not templated — each skill is authored from the actual project context. Generated skills are installed by the appropriate adapter to each agent's expected location. Skills are regenerated whenever the profile or config changes, using the same trigger as incremental indexing.
 
 ```gherkin
 Feature: Skills Installation
 
   Scenario: Skills are generated from project profile and config
-    Given a repo with a populated project_profile and project_config
+    Given a repo with a populated project profile and user configuration
     When skill generation runs
-    Then skill files are written to .sensei/skills/
+    Then skill files are generated and stored
     And each skill's content reflects the actual project stack, patterns, and guidelines
     And no generic template text appears in the output
 
   Scenario: Skills are installed to the correct agent-specific location
-    Given skills in .sensei/skills/ and Claude Code configured for the repo
-    When the ClaudeAdapter installs skills
-    Then skills appear in .claude/skills/
+    Given generated skills and Claude Code configured for the repo
+    When the Claude adapter installs skills
+    Then skills are written to the location expected by Claude Code
     Given opencode is also configured for the repo
-    When the OpenCodeAdapter installs skills
-    Then skills appear in .opencode/skills/
+    When the opencode adapter installs skills
+    Then skills are written to the location expected by opencode
 
   Scenario: Skills are regenerated when profile or config changes
-    Given .sensei/skills/ containing skills generated from the previous project_config
-    And the user has added two new guidelines to project_config
+    Given skills generated from the previous configuration
+    And the user has added two new guidelines
     When the indexer detects the config change
     Then skill generation re-runs with the updated data
-    And the new skills replace the previous ones in .sensei/skills/
+    And the new skills replace the previous ones
     And each configured adapter re-installs the updated skills to its target directory
 
   Scenario: Skill generation does not run when nothing has changed
-    Given .sensei/skills/ with current skills
-    And neither project_profile nor project_config has changed since last generation
+    Given current skills with no profile or config changes since last generation
     When the indexer runs
     Then skill generation is skipped
     And the existing skill files are left untouched
@@ -119,7 +116,7 @@ Feature: Skills Installation
 
 ### Agent Config and Capability Detection
 
-Per-repo agent preferences are stored persistently. When installing context files, Sensei checks which agents are configured for the repo and dispatches to the appropriate adapters. Agents that have no native skills or rules concept are handled by a generic fallback, which writes skill references into `AGENTS.md` instead.
+Per-repo agent preferences are stored persistently. When installing context files, Sensei checks which agents are configured for the repo and dispatches to the appropriate adapters. Agents that have no native skills or rules concept are handled by a generic fallback, which surfaces skill references through `AGENTS.md` instead.
 
 ```gherkin
 Feature: Agent Config and Capability Detection
@@ -137,10 +134,10 @@ Feature: Agent Config and Capability Detection
     Then the Cursor adapter does not run
     And no Cursor-specific directories are created
 
-  Scenario: Agent without skills concept falls back to GenericAdapter
+  Scenario: Agent without skills concept falls back to generic adapter
     Given a repo configured for an agent that has no native skills or rules directory
     When Sensei detects this agent during capability detection
-    Then GenericAdapter is selected for that agent
+    Then the generic adapter is selected for that agent
     And skill summaries are written into the Skills section of AGENTS.md
 
   Scenario: Developer adds a new agent to the configuration
@@ -181,6 +178,6 @@ Feature: Token Usage Tracking Per Agent
     Given 30 sessions across Claude Code and Cursor working on the same repo
     When the developer views analytics in the dashboard
     Then token usage per task type is broken down by agent and model
-    And context_pack hit rates (cited vs loaded symbols) are shown per agent
+    And context hit rates are shown per agent
     And the developer can compare which agent is most token-efficient for each task type
 ```

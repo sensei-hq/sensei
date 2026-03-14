@@ -7,21 +7,20 @@ type: feature
 
 > Sensei keeps design docs, code, and specs in sync
 
-Design decisions made in documents and the code that implements them drift apart silently — a renamed function, a removed endpoint, a changed data model — until a future agent or developer discovers the gap at the worst possible moment. Sensei closes this loop by maintaining a live traceability graph in Supabase that links feature docs, code files, and test results, detects drift automatically on every git operation, and gives developers tools to query, scaffold, and export coverage without leaving their workflow. For codebases with missing documentation, traceability entries are auto-created from generated docs and from code quality gap analysis — making gaps first-class trackable work items that can be assigned to sprints, resolved, and verified automatically on the next index run.
+Design decisions made in documents and the code that implements them drift apart silently — a renamed function, a removed endpoint, a changed data model — until a future agent or developer discovers the gap at the worst possible moment. Sensei closes this loop by maintaining a live traceability graph that links feature docs, code files, and test results, detects drift automatically on every git operation, and gives developers tools to query, scaffold, and export coverage without leaving their workflow. For codebases with missing documentation, traceability entries are auto-created from generated docs and from code quality gap analysis — making gaps first-class trackable work items that can be assigned to sprints, resolved, and verified automatically on the next index run.
 
 ## Features
 
 ### Doc-to-Code Coverage
 
-Traceability records are stored persistently and track the relationship between feature docs, code files, and their status across sprints. `traceability.yaml` is a generated export used by CI and offline tooling — it is not the source of truth. The dashboard reads from the live store and renders feature docs as markdown with Mermaid diagrams.
+Traceability records track the relationship between feature docs, code files, and their status across sprints. A generated export is available for CI and offline tooling. The dashboard renders feature coverage with visual diagrams.
 
 ```gherkin
 Feature: Doc-to-Code Coverage
 
   Scenario: Traceability record is created when a feature doc is linked to a code file
-    Given a feature doc docs/features/05-library-intelligence.md
-    And a code file packages/collector/src/lib-indexer.ts that implements it
-    When the developer runs sensei traceability link 05-library-intelligence packages/collector/src/lib-indexer.ts
+    Given a feature doc and a code file that implements it
+    When the developer links them using the traceability command
     Then a traceability record is created linking the feature doc and code file
     And the status is set to "in-progress"
 
@@ -41,16 +40,16 @@ Feature: Doc-to-Code Coverage
 
 ### Drift Detection
 
-Drift occurs when a code file changes but its linked design document has not been updated within the same git operation. Sensei cross-references the git diff against the traceability records and flags mismatched pairs. The `check_drift` MCP tool returns the current drift list; a pre-commit hook and CI flag enforce it at commit and pipeline boundaries.
+Drift occurs when a code file changes but its linked design document has not been updated within the same git operation. Sensei cross-references each commit against the traceability records and flags mismatched pairs. A dedicated tool returns the current drift list; enforcement can be applied at commit and pipeline boundaries.
 
 ```gherkin
 Feature: Drift Detection
 
   Scenario: Drift is flagged when code changes without a doc update
-    Given packages/collector/src/lib-indexer.ts is linked to 05-library-intelligence.md in the traceability records
-    When a developer commits a change to lib-indexer.ts without touching 05-library-intelligence.md
+    Given a code file linked to a design doc in the traceability records
+    When a developer commits a change to the code file without updating the linked doc
     Then the pre-commit hook detects drift
-    And reports: "lib-indexer.ts changed but linked doc 05-library-intelligence.md was not updated"
+    And reports which code file changed without its linked doc being updated
     And blocks the commit (when mode is "block")
 
   Scenario: check_drift MCP tool returns drifted pairs
@@ -67,23 +66,23 @@ Feature: Drift Detection
     And the drifted pair is printed to stdout for the developer to resolve
 
   Scenario: Drift check passes when doc is updated alongside code
-    Given lib-indexer.ts is linked to 05-library-intelligence.md
-    When a developer commits changes to both files in the same commit
+    Given a code file linked to a design doc
+    When a developer commits changes to both in the same commit
     Then the pre-commit hook finds no drift
     And the commit proceeds without interruption
 ```
 
 ### Doc Doctor
 
-`sensei doctor` inspects documentation files against a configurable rule set and reports issues with file-and-line references. Rules are defined in `.sensei/config.yaml` or inherited from `project_config`. A single file or an entire directory can be checked.
+The doc doctor command inspects documentation files against a configurable rule set and reports issues with file-and-line references. Rules are defined in project configuration. A single file or an entire directory can be checked.
 
 ```gherkin
 Feature: Doc Doctor
 
   Scenario: Single file is checked for broken links
-    Given docs/features/05-library-intelligence.md contains a link to a file that no longer exists
-    When the developer runs sensei doctor docs/features/05-library-intelligence.md
-    Then the output reports: "05-library-intelligence.md:34 — broken link: ../design/lib-cache.md not found"
+    Given a documentation file contains a link to a file that no longer exists
+    When the developer runs sensei doctor on that file
+    Then the output reports the broken link with its file and line reference
     And exits with a non-zero code
 
   Scenario: Directory batch check reports issues across all docs
@@ -100,7 +99,7 @@ Feature: Doc Doctor
 
 ### Feature Scaffold
 
-`sensei doc new <feature-name>` generates a pre-populated feature document from the appropriate template, creates a corresponding traceability entry with `status: planned`, and links to any referenced design docs detected in the project.
+The feature scaffold command generates a pre-populated feature document from the appropriate template, creates a corresponding traceability entry with a planned status, and links to any referenced design docs detected in the project.
 
 ```gherkin
 Feature: Feature Scaffold
@@ -126,15 +125,15 @@ Feature: Feature Scaffold
 
 ### find_doc MCP Tool
 
-`find_doc` is a documentation-first MCP tool that accepts a topic or symbol name and returns matching sections from the indexed documentation using semantic search. It is distinct from `search`, which is code-first.
+A dedicated documentation search tool accepts a topic or symbol name and returns matching sections from the indexed documentation using semantic search. It is distinct from code search, which is source-first.
 
 ```gherkin
 Feature: find_doc MCP Tool
 
   Scenario: Agent retrieves doc sections by topic
-    Given docs/features/05-library-intelligence.md is indexed in the documentation store
+    Given a feature doc is indexed in the documentation store
     When the agent calls find_doc("library indexing pipeline")
-    Then the matching sections from 05-library-intelligence.md are returned
+    Then the matching sections from that doc are returned
     And each result includes: doc_path, section_heading, content_excerpt, and similarity_score
 
   Scenario: Agent retrieves doc sections by symbol name
@@ -152,17 +151,16 @@ Feature: find_doc MCP Tool
 
 ### Traceability from Generated Docs & Gap Analysis
 
-When sensei generates documentation from code, traceability entries are created automatically — linking the generated doc to its source module with `status: generated`. When code quality analysis identifies gaps (untested functions, undocumented modules, dead code, pattern inconsistencies), each gap becomes a traceability item with `status: gap`. Both types are first-class work items: visible in the dashboard, assignable to sprints, and auto-resolved when the underlying condition is fixed on the next index run.
+When sensei generates documentation from code, traceability entries are created automatically — linking the generated doc to its source module with a generated status. When code quality analysis identifies gaps (untested functions, undocumented modules, dead code, pattern inconsistencies), each gap becomes a traceability item with a gap status. Both types are first-class work items: visible in the dashboard, assignable to sprints, and auto-resolved when the underlying condition is fixed on the next index run.
 
 
 ```gherkin
 Feature: Traceability from Generated Docs and Gap Analysis
 
   Scenario: Generated doc creates a traceability entry
-    Given the developer runs sensei doc generate --module src/payments
-    And a doc is generated at docs/features/payments.md
+    Given the developer generates documentation for a module
     When the generation completes
-    Then a traceability entry is created linking the generated doc to the payments module with status "generated"
+    Then a traceability entry is created linking the generated doc to its source module with status "generated"
     And the entry appears in the dashboard under "Needs Review"
 
   Scenario: Generated doc is promoted to reviewed
@@ -172,14 +170,14 @@ Feature: Traceability from Generated Docs and Gap Analysis
     And the "Generated by sensei" header comment is removed from the doc file
 
   Scenario: Untested function creates a gap traceability item
-    Given sensei quality analysis identifies src/auth/token.ts:validateToken as having no test coverage
+    Given sensei quality analysis identifies a function with no test coverage
     When the analysis run completes
-    Then a traceability item is created for the test coverage gap in validateToken with status "gap"
+    Then a traceability item is created for the test coverage gap with status "gap"
     And it appears in the dashboard under "Quality Gaps"
 
   Scenario: Gap is auto-resolved when fixed
-    Given a traceability item with status "gap" for test coverage on validateToken
-    And the developer adds a test for validateToken in tests/auth/token.spec.ts
+    Given a traceability item with status "gap" for a test coverage gap
+    And the developer adds a test covering the affected function
     When the developer runs sensei index
     Then the gap item's status is automatically updated to "resolved"
     And the resolution timestamp and resolving commit are recorded
@@ -196,7 +194,7 @@ Feature: Traceability from Generated Docs and Gap Analysis
 
 ### Quality Metrics & Reports
 
-Code quality metrics are stored as time-series snapshots — not one-off CLI output. Each index run appends a new quality snapshot, enabling trend analysis: is complexity decreasing? Is test coverage improving? Is dead code being removed? Reports are queryable from CLI and visual in the dashboard.
+Code quality metrics are stored as time-series snapshots — not one-off output. Each index run appends a new quality snapshot, enabling trend analysis: is complexity decreasing? Is test coverage improving? Is dead code being removed? Reports are available from the CLI and visual in the dashboard.
 
 ```gherkin
 Feature: Quality Metrics and Reports
@@ -236,7 +234,7 @@ Feature: Quality Metrics and Reports
 
 ### Sprint and Cycle Planning
 
-Traceability items carry sprint and cycle assignments, enabling planning and progress tracking without leaving sensei. The dashboard supports drag-to-sprint assignment, and `sensei traceability export` produces a filtered snapshot for the current sprint.
+Traceability items carry sprint and cycle assignments, enabling planning and progress tracking without leaving sensei. The dashboard supports drag-to-sprint assignment, and a sprint export command produces a filtered snapshot for the current sprint.
 
 ```gherkin
 Feature: Sprint and Cycle Planning
