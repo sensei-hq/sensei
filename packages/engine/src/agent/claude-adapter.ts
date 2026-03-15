@@ -2,7 +2,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { mkdir, writeFile, readdir, stat } from "fs/promises";
 import { existsSync } from "fs";
-import type { AgentSkillFile } from "@sensei/shared";
+import type { AgentSkillFile, LibSkillFile } from "@sensei/shared";
 import type { AgentAdapter } from "./agent-adapter.js";
 
 export class ClaudeAdapter implements AgentAdapter {
@@ -30,6 +30,18 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     return result;
+  }
+
+  async writeLibSkill(
+    libName: string,
+    markdown: string,
+    repoSlug: string,
+  ): Promise<LibSkillFile> {
+    await mkdir(this.skillsDir, { recursive: true });
+    const fileName = `sensei-${repoSlug}-lib-${libName}.md`;
+    const filePath = join(this.skillsDir, fileName);
+    await writeFile(filePath, markdown, "utf-8");
+    return { libName, path: filePath, generatedAt: new Date().toISOString() };
   }
 
   async installedSkills(repoSlug: string): Promise<AgentSkillFile[]> {

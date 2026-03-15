@@ -52,4 +52,18 @@ describe("ClaudeAdapter", () => {
     const result = await adapter.installedSkills("any-repo");
     expect(result).toEqual([]);
   });
+
+  it("writeLibSkill writes sensei-{slug}-lib-{name}.md and returns LibSkillFile", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "sensei-adapter-test-"));
+    const adapter = new ClaudeAdapter(tmpDir);
+
+    const result = await adapter.writeLibSkill("rokkit", "---\nname: myrepo-lib-rokkit\n---\n# Rokkit", "my-repo");
+
+    expect(result.libName).toBe("rokkit");
+    expect(result.path).toBe(join(tmpDir, "sensei-my-repo-lib-rokkit.md"));
+    expect(result.generatedAt).toBeTruthy();
+    const { readFile } = await import("fs/promises");
+    const content = await readFile(result.path, "utf-8");
+    expect(content).toContain("# Rokkit");
+  });
 });
