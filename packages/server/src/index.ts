@@ -4,6 +4,8 @@ export type { ServeOptions } from "./serve.js";
 
 // Model / inference
 export { OllamaBackend, makeFallbackAnalysis, extractJson } from "./model/ollama-backend.js";
+export { ClaudeBackend } from "./model/claude-backend.js";
+export type { ClaudeBackendOptions } from "./model/claude-backend.js";
 export {
   checkSystemRequirements,
   getDiskFreeGB,

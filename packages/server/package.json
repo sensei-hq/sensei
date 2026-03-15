@@ -10,10 +10,11 @@
     "test": "bunx vitest run"
   },
   "dependencies": {
-    "@sensei/shared": "workspace:*",
+    "@anthropic-ai/sdk": "^0.78.0",
     "@clack/prompts": "^0.9.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@sensei/engine": "workspace:*",
+    "@sensei/shared": "workspace:*",
     "zod": "^3.22.0"
   },
   "devDependencies": {
