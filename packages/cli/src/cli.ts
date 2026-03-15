@@ -30,6 +30,7 @@ const { positionals, values } = parseArgs({
     hooks: { type: "boolean", default: false },
     drift: { type: "boolean", default: false },
     agent: { type: "string" },
+    lib: { type: "string" },
   },
 });
 
@@ -72,6 +73,7 @@ Commands:
   server status            Check if server is running and show model setup status
   stats                    Show tool usage analytics (last 7 days)
   update-registry          Index custom_libs from .sensei/config.yaml into Supabase
+  update-registry --lib <name>   Re-index a single named library
 
 Options:
   -h, --help               Show this help message
@@ -344,7 +346,7 @@ async function main() {
     }
     case "update-registry": {
       const { updateRegistry } = await import("./commands/update-registry.js");
-      await updateRegistry(repoRoot);
+      await updateRegistry(repoRoot, values.lib);
       break;
     }
     default:
