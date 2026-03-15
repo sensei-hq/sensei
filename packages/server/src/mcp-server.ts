@@ -13,6 +13,7 @@ import { checkpointTool } from "./tools/checkpoint.js";
 import { recordMemoryTool } from "./tools/record-memory.js";
 import { closeMemoryTool } from "./tools/close-memory.js";
 import { installSkillsTool } from "./tools/install-skills.js";
+import { getLibDocsTool } from "./tools/get-lib-docs.js";
 import { createSession, updateHeartbeat, createTaskSession, recordTaskTurn, completeTaskSession } from "@sensei/engine";
 
 export interface McpServerOptions {
@@ -286,6 +287,28 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         const result = await installSkillsTool(client as any, opts.repoId, opts.repoPath);
         beat(client, "install_skills", result.errors.length === 0);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "get_lib_docs",
+    "Retrieve indexed documentation sections for a library used in this repo. Use for third-party library API lookups.",
+    {
+      lib:       z.string().describe("Library name as registered in custom_libs"),
+      component: z.string().optional().describe("Optional component/section filter"),
+      query:     z.string().optional().describe("Semantic search query — omit to list all sections"),
+      limit:     z.number().int().min(1).max(50).optional().default(10),
+    },
+    async ({ lib, component, query, limit }) => {
+      try {
+        const client = await getClient();
+        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
+        const result = await getLibDocsTool(client as any, getBackend(), opts.repoId, lib, { component, query, limit });
+        beat(client, "get_lib_docs", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
