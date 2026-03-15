@@ -76,6 +76,7 @@ describe("stats() integration", () => {
   it("logs error when Supabase client not configured", async () => {
     vi.mock("@sensei/shared", () => ({
       makeSenseiClient: vi.fn().mockResolvedValue(null),
+      loadSenseiConfig: vi.fn().mockResolvedValue(null),
     }));
 
     const { stats } = await import("./stats.js");
