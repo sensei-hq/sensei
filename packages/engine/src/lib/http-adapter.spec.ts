@@ -63,7 +63,7 @@ describe("HttpAdapter", () => {
     const MD_BODY = `# Readme\n\n## Installation\n\nRun npm install mylib.\n\n## Usage\n\nImport and call init().`;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      headers: { get: () => "text/plain; charset=utf-8" },
+      headers: { get: () => null },
       text: () => Promise.resolve(MD_BODY),
     }));
 
@@ -94,5 +94,6 @@ describe("HttpAdapter", () => {
     const pages = await adapter.fetch({ name: "lib", source_type: "http", base_url: "https://example.com/docs" });
 
     expect(pages[0].content).toContain("API docs here");
+    expect(pages[0].sourceType).toBe("http");
   });
 });
