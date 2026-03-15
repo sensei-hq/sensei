@@ -1,3 +1,4 @@
+// packages/cli/src/lib/detect-libs.ts
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { LibEntry } from "@sensei/shared";

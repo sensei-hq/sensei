@@ -8,7 +8,7 @@ import { claudeMdTemplate } from "../templates/claude-md.js";
 import { agentsMdTemplate } from "../templates/agents-md.js";
 import { installHooks } from "@sensei/collector";
 import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
-import { updateRegistry } from "./update-registry.js";
+import { runUpdateRegistryCore } from "./update-registry.js";
 import type { LibEntry } from "@sensei/shared";
 
 async function detectUnknownLibs(deps: string[]): Promise<string[]> {
@@ -113,7 +113,7 @@ export async function init(cwd: string): Promise<void> {
   });
   if (isCancel(serviceKey)) { outro("Cancelled."); return; }
 
-  // 4. Create Supabase client and upsert repo row
+  // 3. Create Supabase client and upsert repo row
   const client = createClient(String(supabaseUrl), String(serviceKey), {
     db: { schema: "sensei" },
     auth: { persistSession: false },
@@ -133,10 +133,9 @@ export async function init(cwd: string): Promise<void> {
   }
   const repoId: string = repo.id;
 
-  // 5. Write .sensei/config.yaml and credentials
+  // 4. Write .sensei/config.yaml and credentials
   const senseiDir = join(cwd, ".sensei");
   await mkdir(senseiDir, { recursive: true });
-
   const customLibsYaml = customLibs.length > 0
     ? `custom_libs:\n${customLibs.map(l => {
         const urlField = l.base_url ? `    base_url: ${l.base_url}` : `    local_path: ${l.local_path}`;
@@ -156,12 +155,11 @@ export async function init(cwd: string): Promise<void> {
   // Restrict credentials file to owner-only (service role key — never share)
   await chmod(credsPath, 0o600);
 
-  // 6. Index library docs if custom_libs were added
   if (customLibs.length > 0) {
     const libSpin = spinner();
     libSpin.start("Indexing library docs...");
     try {
-      await updateRegistry(cwd);
+      await runUpdateRegistryCore(cwd);
       libSpin.stop(`Library docs indexed (${customLibs.length} ${customLibs.length === 1 ? "lib" : "libs"})`);
     } catch (err) {
       libSpin.stop("Library indexing skipped — run sensei update-registry when ready");
@@ -169,7 +167,7 @@ export async function init(cwd: string): Promise<void> {
     }
   }
 
-  // 8. Run first index
+  // 5. Run first index
   const indexSpinner = spinner();
   indexSpinner.start("Indexing repo (first full scan)...");
   let result;
@@ -187,11 +185,11 @@ export async function init(cwd: string): Promise<void> {
     log.warn("You can re-index later with: sensei index");
   }
 
-  // 9. Write CLAUDE.md and AGENTS.md
+  // 6. Write CLAUDE.md and AGENTS.md
   await writeFile(join(cwd, "CLAUDE.md"), claudeMdTemplate({ repoName, stack, repoId }));
   await writeFile(join(cwd, "AGENTS.md"), agentsMdTemplate({ repoName, stack }));
 
-  // 10. Install hooks
+  // 7. Install hooks
   const hookSpinner = spinner();
   hookSpinner.start("Installing collector hooks...");
   try {
