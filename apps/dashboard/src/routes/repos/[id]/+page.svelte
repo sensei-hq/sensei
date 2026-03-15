@@ -54,3 +54,4 @@
 
 <p><a href="/repos/{data.repo.id}/context-packs">View Context Packs →</a></p>
 <p><a href="/repos/{data.repo.id}/sessions">View Sessions →</a></p>
+<p><a href="/repos/{data.repo.id}/analytics">View Analytics →</a></p>
