@@ -28,6 +28,7 @@ export async function extractProjectProfile(
     .from("symbols")
     .select("name,file_path")
     .eq("repo_id", repoId)
+    .order("name", { ascending: true })
     .limit(100);
   if (symbolError) throw new Error(symbolError.message);
 
