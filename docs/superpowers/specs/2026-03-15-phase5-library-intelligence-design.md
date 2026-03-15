@@ -25,8 +25,8 @@ Agents working in repos that use external libraries (e.g. Rokkit, kavach) have n
 sensei update-registry
   → read custom_libs from .sensei/config.yaml
   → for each lib: SourceAdapter.fetch(entry) → DocPage[]
-  → LibIndexer.index(db, repoId, entry, pages, backend) → lib_doc_sections in Supabase
-  → if ANTHROPIC_API_KEY: LibSkillGenerator.generate() → ~/.claude/skills/
+  → new LibIndexer(db, ollamaBackend).index(repoId, entry, pages) → lib_doc_sections in Supabase
+  → if ANTHROPIC_API_KEY: LibSkillGenerator.generate(entry, pages) → ~/.claude/skills/
 
 get_lib_docs MCP tool
   → embed query (OllamaBackend) → cosine search on lib_doc_sections.embedding
@@ -36,7 +36,7 @@ get_lib_docs MCP tool
 Dashboard /repos/[id]/libraries
   → section counts, freshness, skill file status per lib
   → "Update Registry" button → spawns sensei update-registry (60s timeout)
-  → library detail: doc sections list
+  → click lib name → /repos/[id]/libraries/[name] → doc sections list
 ```
 
 **Key design decision — storage by source type:**
@@ -55,8 +55,8 @@ Libraries are **repo-scoped** — `lib_doc_sections` rows include `repo_id`. The
 export interface LibEntry {
   name: string;
   source_type: 'llms.txt' | 'http' | 'local';
-  base_url?: string;       // for llms.txt (URL) and http
-  local_path?: string;     // for llms.txt (local file) and local
+  base_url?: string;       // llms.txt: direct URL to the llms.txt file; http: root URL to crawl
+  local_path?: string;     // llms.txt: local path to the llms.txt file; local: directory path to scan
   description?: string;    // human-readable description of the library
 }
 
@@ -83,7 +83,18 @@ export interface LibSkillsManifest {
 }
 ```
 
-Config schema addition in `packages/shared/src/config.ts` — `custom_libs` array of `LibEntry` in the Zod schema for `.sensei/config.yaml`.
+Config schema: `packages/shared/src/config.ts` gains `custom_libs` on `SenseiRepoConfig` and Zod validation in `loadSenseiConfig()`:
+
+```typescript
+// Updated SenseiRepoConfig (packages/shared/src/config.ts)
+export interface SenseiRepoConfig {
+  repo_id: string;
+  supabase_url: string;
+  custom_libs?: LibEntry[];  // added in Phase 5
+}
+```
+
+`loadSenseiConfig()` parses `custom_libs` through a Zod schema (array of `LibEntry` objects) before returning. Other existing fields are left as plain cast — only `custom_libs` gains strict Zod validation.
 
 ---
 
@@ -144,13 +155,24 @@ export interface SourceAdapter {
 
 - If `entry.base_url` starts with `http`: fetch text via HTTP
 - If `entry.local_path` set: read file from disk
-- Parse llms.txt format: each line `# Title\nURL\nDescription` → one `DocPage`
+- Parse llms.txt format — standard markdown structure:
+  ```
+  # Project Name
+  > Optional description
+
+  ## Optional Section Header
+
+  - [Page Title](URL): short description
+  - [Page Title](URL): short description
+  ```
+  Each `- [Title](URL): description` line → one `DocPage` with `title`, `url`, `description`; `component` = parent `##` section heading if present
 - `content` is always `undefined` (index-only storage)
+- Lines not matching the link pattern are skipped gracefully
 - Throws if neither `base_url` nor `local_path` provided
 
 ### `HttpAdapter`
 
-- Fetches `entry.base_url` HTML
+- Fetches the single root URL `entry.base_url` (no recursive crawl — single page only)
 - Extracts readable content using `@mozilla/readability` + `jsdom`, converts to markdown via `turndown`
 - Splits content at `##` headings → one `DocPage` per section
 - `description` = first 200 chars of section content
@@ -159,8 +181,9 @@ export interface SourceAdapter {
 ### `LocalAdapter`
 
 - Walks `entry.local_path` recursively, collects `.md` and `.txt` files
-- Each file → one `DocPage`: `title` from filename, `content` from file text, `description` from first 200 chars
+- Each file → one `DocPage`: `title` from filename (without extension), `content` from file text, `description` from first 200 chars
 - `url` is undefined; `localPath` is absolute path
+- `component`: inferred from immediate parent directory name if nested (e.g. `components/Button/button.md` → `component: 'Button'`); undefined for files directly in the root path
 
 ### `LibIndexer`
 
@@ -177,7 +200,7 @@ export class LibIndexer {
 ```
 
 - Deletes existing rows for `(repo_id, lib_name)` before inserting — full refresh
-- For each page: embed `description` (llms.txt) or first 512 chars of `content` (http/local) using `backend.embed()`
+- For each page: embed `description` (llms.txt) or first 512 chars of `content` (http/local) using `backend.embed()`; if `content` is unexpectedly undefined for a non-llms.txt page, fall back to `description`
 - Upserts rows to `lib_doc_sections`
 - Returns `{ sectionsIndexed: N }`
 
@@ -186,21 +209,40 @@ export class LibIndexer {
 ```typescript
 export class LibSkillGenerator {
   constructor(
-    private model: ModelBackend,      // ClaudeBackend
-    private profile: ProjectProfile,  // from extractProjectProfile
+    private model: ModelBackend,        // ClaudeBackend
+    private profile: ProjectProfile,    // from extractProjectProfile
+    private validator: SkillValidator,  // injected — same pattern as SkillGenerator
   ) {}
 
   async generate(
     entry: LibEntry,
     pages: DocPage[],
-  ): Promise<string>                  // skill markdown
+  ): Promise<string>                    // skill markdown
 }
 ```
 
 - Prompt includes: lib name, description, top 20 doc sections (title + description), how lib appears in repo's symbol index (inferred from `profile.keySymbols` and `profile.senseiConfig`)
-- Uses `SkillValidator` (from Phase 4) to validate before returning — retries up to 3 attempts
-- Written to `~/.claude/skills/` via `ClaudeAdapter` as `sensei-{repoSlug}-lib-{libName}.md`
-- Manifest recorded at `.sensei/lib-skills.json` (`LibSkillsManifest`)
+- Uses injected `SkillValidator` to validate before returning — category string passed as `"lib-{entry.name}"` (e.g. `"lib-rokkit"`), retries up to 3 attempts
+- Returns validated skill markdown; caller (CLI) is responsible for writing and recording the manifest
+
+### `ClaudeAdapter` extension
+
+Phase 5 adds a new method to the existing `ClaudeAdapter` class:
+
+```typescript
+async writeLibSkill(
+  libName: string,
+  markdown: string,
+  repoSlug: string,
+): Promise<LibSkillFile>
+// Writes sensei-{repoSlug}-lib-{libName}.md to skillsDir
+// Returns LibSkillFile { libName, path, generatedAt }
+```
+
+- `LibSkillFile` is imported from `@sensei/shared` (alongside the existing `AgentSkillFile` import)
+- This avoids the `AgentSkillFile["category"]` union constraint on `writeSkills` which only accepts the four Phase 4 category literals
+- `installedSkills()` is not updated — it reads `AgentSkillFile` entries only and does not enumerate lib skills. Lib skill status is tracked exclusively via `.sensei/lib-skills.json`
+- `claude-adapter.spec.ts` gains a test for `writeLibSkill`: writes correct filename, returns `LibSkillFile` with correct `libName`, `path`, and `generatedAt`
 
 ---
 
@@ -210,9 +252,14 @@ New `updateRegistry(repoPath: string): Promise<void>` function:
 
 ```
 1. intro("sensei update-registry")
-2. makeSenseiClient(repoPath) + loadSenseiConfig(repoPath) — throws if not initialised
+2. const config = await loadSenseiConfig(repoPath)  // returns null if not initialised
+   if (!config) { cancel("Not initialised — run sensei init first"); return; }
+   const client = makeSenseiClient(config)
+   const repoId = config.repo_id                   // from SenseiRepoConfig
 3. Read config.custom_libs — exits cleanly if empty ("No custom_libs configured")
-4. new OllamaBackend() for embeddings
+4. const profile = await extractProjectProfile(client, repoId, repoPath)
+   const repoSlug = profile.repoName.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+   const ollamaBackend = new OllamaBackend()
 5. For each lib:
    a. spinner: "Fetching {lib.name}..."
    b. Create SourceAdapter from source_type
@@ -221,12 +268,16 @@ New `updateRegistry(repoPath: string): Promise<void>` function:
    e. new LibIndexer(client, ollamaBackend).index(repoId, entry, pages)
    f. spinner stop: "{lib.name}: N sections indexed"
    g. if ANTHROPIC_API_KEY:
-      - new ClaudeBackend().init()
-      - new LibSkillGenerator(claudeBackend, profile).generate(entry, pages)
-      - ClaudeAdapter.writeSkills({ [lib.name]: markdown }, repoSlug) — writes sensei-{slug}-lib-{name}.md
-      - update lib-skills.json manifest
+      - const claudeBackend = new ClaudeBackend(); await claudeBackend.init()
+      - const validator = new SkillValidator(claudeBackend, profile)
+      - const markdown = await new LibSkillGenerator(claudeBackend, profile, validator).generate(entry, pages)
+      - const libSkillFile = await new ClaudeAdapter().writeLibSkill(lib.name, markdown, repoSlug)
+        // writes sensei-{slug}-lib-{name}.md, returns LibSkillFile
+      - append libSkillFile to manifest; write {repoPath}/.sensei/lib-skills.json
 6. outro: summary
 ```
+
+The manifest at `{repoPath}/.sensei/lib-skills.json` (`LibSkillsManifest`) is read at start of step 5 if it exists (to preserve entries for other libs), then rewritten after each lib's skill file is generated. Created fresh if missing.
 
 `cli.ts` gains `update-registry` as a new subcommand. No flags required. Help text: `update-registry     Index custom_libs from .sensei/config.yaml into Supabase`.
 
@@ -241,12 +292,12 @@ export async function getLibDocsTool(
   repoId: string,
   lib: string,
   opts?: { component?: string; query?: string; limit?: number }
-): Promise<{ lib: string; sections: DocPageResult[] }>
+): Promise<{ lib: string; sections: DocPage[] }>
 ```
 
 - If `query` provided: embed query → cosine similarity search on `lib_doc_sections.embedding` WHERE `repo_id = repoId AND lib_name = lib [AND component = opts.component]`, return top `limit` (default 10)
 - If no `query`: return all sections for `(repo_id, lib_name[, component])` sorted by title
-- `DocPageResult`: `{ title, url?, localPath?, description, content?, sourceType, component? }`
+- Returns `DocPage[]` (same shape as the type used in the engine layer — no separate result type needed)
 
 Registered in `mcp-server.ts`:
 
@@ -330,8 +381,18 @@ server.tool(
 - Deletes old rows before inserting (full refresh verified)
 
 **`lib-skill-generator.spec.ts`:**
-- Mock ClaudeBackend: generate() called once, SkillValidator validates, returns skill markdown
+- Mock ClaudeBackend + injected SkillValidator: generate() called once, validator validates, returns skill markdown
 - Retries on invalid validation (same pattern as Phase 4 SkillGenerator tests)
+
+**`claude-adapter.spec.ts` (extended):**
+- `writeLibSkill()` writes `sensei-{slug}-lib-{name}.md` in a temp dir
+- Returns `LibSkillFile` with correct `libName`, `path`, and ISO `generatedAt`
+
+**`get-lib-docs.spec.ts`:**
+- Mock Supabase + OllamaBackend: query provided → embed called, cosine search returns matching rows
+- No query → returns all sections for (repo_id, lib_name) sorted by title
+- component filter applied when provided
+- Empty result → returns `{ lib, sections: [] }` without throwing
 
 ---
 
@@ -341,7 +402,7 @@ server.tool(
 supabase/migrations/YYYYMMDDXXXXXX_phase5_lib_doc_sections.sql
 
 packages/shared/src/types.ts                        ← add LibEntry, DocPage, LibSkillFile, LibSkillsManifest
-packages/shared/src/config.ts                       ← add custom_libs Zod schema
+packages/shared/src/config.ts                       ← add custom_libs to SenseiRepoConfig + Zod validation
 
 packages/engine/src/lib/
   source-adapter.ts
@@ -351,9 +412,11 @@ packages/engine/src/lib/
   lib-indexer.ts + spec
   lib-skill-generator.ts + spec
 
+packages/engine/src/agent/claude-adapter.ts         ← add writeLibSkill() method
+packages/engine/src/agent/claude-adapter.spec.ts    ← add writeLibSkill() test
 packages/engine/src/index.ts                        ← add lib/* exports
 
-packages/server/src/tools/get-lib-docs.ts
+packages/server/src/tools/get-lib-docs.ts + spec
 packages/server/src/mcp-server.ts                   ← register get_lib_docs
 
 packages/cli/src/commands/update-registry.ts
@@ -366,6 +429,8 @@ apps/dashboard/src/routes/repos/[id]/libraries/[name]/
   +page.server.ts
   +page.svelte
 apps/dashboard/src/routes/repos/[id]/+page.svelte   ← add "Library Docs →" link
+
+.sensei/lib-skills.json                             ← generated at runtime (not checked in)
 ```
 
 ---
@@ -375,6 +440,6 @@ apps/dashboard/src/routes/repos/[id]/+page.svelte   ← add "Library Docs →" l
 - `sensei update-registry` on the sensei repo indexes Rokkit (llms.txt) and kavach (http) sections into Supabase
 - `get_lib_docs({ lib: "rokkit", component: "Button" })` returns at least 2 relevant doc sections
 - `get_lib_docs({ lib: "rokkit", query: "theming" })` returns semantically relevant results
-- Lib skills written to `~/.claude/skills/sensei-sensei-lib-rokkit.md` and `sensei-sensei-lib-kavach.md` (if `ANTHROPIC_API_KEY` present)
+- Lib skills written to `~/.claude/skills/sensei-sensei-lib-rokkit.md` and `sensei-sensei-lib-kavach.md` (if `ANTHROPIC_API_KEY` present) — double `sensei` is expected: first is the prefix, second is the repo slug for this repo
 - Dashboard `/repos/[id]/libraries` shows both libs with section counts and freshness badges
 - "Update Registry" button re-runs the pipeline and updates the view
