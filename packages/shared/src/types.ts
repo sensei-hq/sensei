@@ -103,3 +103,30 @@ export interface SetupStatus {
   ramTotalGB: number;
   ramAvailableGB: number;
 }
+
+// ─── Agent skill generation types ────────────────────────────────────────────
+
+export interface ProjectProfile {
+  repoName: string;
+  repoPath: string;
+  dominantLanguage: string;             // 'typescript' | 'python' | etc.
+  framework: string | null;             // 'sveltekit' | 'react' | 'express' | null
+  packageNames: string[];               // monorepo packages e.g. ['engine', 'cli']
+  keySymbols: string[];                 // top 20 most-referenced exported symbols
+  testPattern: string;                  // e.g. '*.spec.ts'
+  cliCommands: Record<string, string>;  // from package.json scripts
+  senseiConfig: string;                 // serialised .sensei/config.yaml content
+}
+
+export interface AgentSkillFile {
+  category: 'orientation' | 'workflow' | 'context' | 'patterns';
+  path: string;          // absolute path to written skill file
+  generatedAt: string;   // ISO timestamp — new Date().toISOString()
+}
+
+export interface AgentSkillsManifest {
+  agent: 'claude';
+  repoSlug: string;
+  skills: AgentSkillFile[];
+  updatedAt: string;     // ISO timestamp
+}
