@@ -23,7 +23,7 @@ async function detectUnknownLibs(deps: string[]): Promise<string[]> {
       const response = await backend.generate(prompt);
       return response
         .split("\n")
-        .map(l => l.trim().replace(/^[-*•]\s*/, ""))
+        .map(l => l.trim().replace(/^(?:[-*•]|\d+[.):]?)\s*/, ""))
         .filter(name => deps.includes(name));
     } catch {
       // Fall through to multiselect
