@@ -14,11 +14,20 @@ export class HttpAdapter implements SourceAdapter {
     const res = await fetch(entry.base_url);
     if (!res.ok) throw new Error(`HttpAdapter: fetch failed for ${entry.base_url}: ${res.status}`);
 
-    const html = await res.text();
-    const dom = new JSDOM(html, { url: entry.base_url });
-    const reader = new Readability(dom.window.document);
-    const article = reader.parse();
-    const markdown = td.turndown(article?.content ?? html);
+    const body = await res.text();
+    const contentType = res.headers?.get("content-type") ?? "";
+    const isMarkdown = contentType.includes("text/plain")
+      || contentType.includes("text/markdown")
+      || entry.base_url.endsWith(".md");
+
+    let markdown: string;
+    if (isMarkdown) {
+      markdown = body;
+    } else {
+      const dom = new JSDOM(body, { url: entry.base_url });
+      const reader = new Readability(dom.window.document);
+      markdown = td.turndown(reader.parse()?.content ?? body);
+    }
 
     return splitIntoPages(markdown, entry.base_url);
   }
