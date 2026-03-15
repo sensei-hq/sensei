@@ -71,6 +71,7 @@ Commands:
   serve                    Start local telemetry report receiver
   server status            Check if server is running and show model setup status
   stats                    Show tool usage analytics (last 7 days)
+  update-registry          Index custom_libs from .sensei/config.yaml into Supabase
 
 Options:
   -h, --help               Show this help message
@@ -339,6 +340,11 @@ async function main() {
         json: values.json,
         gaps: values.gaps,
       });
+      break;
+    }
+    case "update-registry": {
+      const { updateRegistry } = await import("./commands/update-registry.js");
+      await updateRegistry(repoRoot);
       break;
     }
     default:
