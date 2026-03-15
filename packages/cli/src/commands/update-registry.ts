@@ -23,12 +23,12 @@ function createAdapter(sourceType: LibEntry["source_type"]): SourceAdapter {
 }
 
 /** Core logic without clack UI — safe to call programmatically (e.g. from init). */
-export async function runUpdateRegistryCore(repoPath: string, libName?: string): Promise<void> {
+export async function runUpdateRegistryCore(repoPath: string, libName?: string): Promise<number> {
   const config = await loadSenseiConfig(repoPath);
   if (!config) {
     log.error("Not initialised — run sensei init first");
     if (libName) process.exit(1);
-    return;
+    return 0;
   }
 
   if (!config.custom_libs?.length) {
@@ -37,7 +37,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
       process.exit(1);
     }
     log.info("No custom_libs configured in .sensei/config.yaml");
-    return;
+    return 0;
   }
 
   const libs = libName
@@ -52,7 +52,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
   const client = await makeSenseiClient(repoPath);
   if (!client) {
     log.error("Supabase client not configured. Run sensei init first.");
-    return;
+    return 0;
   }
 
   const repoId = config.repo_id;
@@ -125,17 +125,12 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
     }
   }
 
-  log.success(`Done. ${libs.length} librar${libs.length === 1 ? "y" : "ies"} processed.`);
+  return libs.length;
 }
 
 /** Full command with clack UI — called from CLI. */
 export async function updateRegistry(repoPath: string, libName?: string): Promise<void> {
   intro("sensei update-registry");
-  let completed = false;
-  try {
-    await runUpdateRegistryCore(repoPath, libName);
-    completed = true;
-  } finally {
-    if (completed) outro("Complete.");
-  }
+  const count = await runUpdateRegistryCore(repoPath, libName);
+  outro(`Done. ${count} librar${count === 1 ? "y" : "ies"} processed.`);
 }
