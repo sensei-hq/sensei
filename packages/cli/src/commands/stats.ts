@@ -1,5 +1,5 @@
 // packages/cli/src/commands/stats.ts
-import { makeSenseiClient } from "@sensei/shared";
+import { makeSenseiClient, loadSenseiConfig } from "@sensei/shared";
 import { detectGapPatterns } from "@sensei/collector";
 
 export interface StatsResult {
@@ -95,11 +95,16 @@ export function formatStats(result: StatsResult, opts: { json: boolean }): strin
 }
 
 export async function stats(opts: StatsCommandOptions): Promise<void> {
-  const client = await makeSenseiClient(opts._repoPath ?? process.cwd());
-  if (!client) {
+  const repoPath = opts._repoPath ?? process.cwd();
+  const [client, config] = await Promise.all([
+    makeSenseiClient(repoPath),
+    loadSenseiConfig(repoPath),
+  ]);
+  if (!client || !config) {
     console.error("Supabase not configured. Run `sensei init` to configure.");
     return;
   }
+  const repoId = config.repo_id;
 
   const days = opts.days ?? 7;
   const nowMs = Date.now();
@@ -131,12 +136,14 @@ export async function stats(opts: StatsCommandOptions): Promise<void> {
   const { data: sessions, error: sessionsError } = await (client as any)
     .from("task_sessions")
     .select("id,status,ftr_score")
+    .eq("repo_id", repoId)
     .gte("created_at", since);
   if (sessionsError) console.warn("Failed to load task_sessions:", sessionsError.message);
 
   const { data: turns, error: turnsError } = await (client as any)
     .from("task_turns")
     .select("tool,success,duration_ms,task_session_id")
+    .eq("repo_id", repoId)
     .gte("created_at", since);
   if (turnsError) console.warn("Failed to load task_turns:", turnsError.message);
 
