@@ -29,6 +29,7 @@ const { positionals, values } = parseArgs({
     gaps: { type: "boolean", default: false },
     hooks: { type: "boolean", default: false },
     drift: { type: "boolean", default: false },
+    agent: { type: "string" },
   },
 });
 
@@ -76,6 +77,8 @@ Options:
 
 setup:
   --mcp                    Register MCP server (writes ~/.claude/mcp.json)
+  --agent <name>           Generate and install project-specific skills (supported: claude)
+  --hooks                  Install Claude hook scripts and register daemon autostart
 
 index:
   --force                  Force full re-scan (ignore cached fingerprints)
@@ -150,6 +153,11 @@ async function main() {
       break;
     }
     case "setup": {
+      if (values.agent) {
+        const { setupAgent } = await import("./commands/setup.js");
+        await setupAgent(repoRoot, values.agent);
+        break;
+      }
       if (values.hooks) {
         const { setupHooks } = await import("./commands/setup.js");
         await setupHooks();
