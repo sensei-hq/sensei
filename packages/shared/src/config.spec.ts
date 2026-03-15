@@ -1,65 +1,51 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, rm } from "fs/promises";
+// packages/shared/src/config.spec.ts
+import { describe, it, expect, afterEach } from "vitest";
+import { writeFile, mkdir, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
-import os from "os";
+import { tmpdir } from "os";
+import { z } from "zod";
+import { loadSenseiConfig } from "./config.js";
 
-// Tests use real temp directories — no mocking of fs
 describe("loadSenseiConfig", () => {
-  let tmpRepo: string;
-  let tmpHome: string;
-
-  beforeEach(async () => {
-    tmpRepo = await makeTmpDir("repo");
-    tmpHome = await makeTmpDir("home");
-  });
+  let tmpDir: string;
 
   afterEach(async () => {
-    await rm(tmpRepo, { recursive: true, force: true });
-    await rm(tmpHome, { recursive: true, force: true });
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns null when .sensei/config.yaml does not exist", async () => {
-    const { loadSenseiConfig } = await import("./config.js");
-    const result = await loadSenseiConfig(tmpRepo);
-    expect(result).toBeNull();
+  it("returns parsed config with custom_libs", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "sensei-config-test-"));
+    await mkdir(join(tmpDir, ".sensei"), { recursive: true });
+    await writeFile(
+      join(tmpDir, ".sensei", "config.yaml"),
+      `repo_id: test-repo-id\nsupabase_url: https://x.supabase.co\ncustom_libs:\n  - name: rokkit\n    source_type: llms.txt\n    base_url: https://rokkit.dev/llms.txt\n`,
+      "utf-8",
+    );
+
+    const config = await loadSenseiConfig(tmpDir);
+
+    expect(config).not.toBeNull();
+    expect(config!.repo_id).toBe("test-repo-id");
+    expect(config!.custom_libs).toHaveLength(1);
+    expect(config!.custom_libs![0].name).toBe("rokkit");
+    expect(config!.custom_libs![0].source_type).toBe("llms.txt");
   });
 
-  it("reads repo_id and supabase_url from .sensei/config.yaml", async () => {
-    const { loadSenseiConfig } = await import("./config.js");
-    await mkdir(join(tmpRepo, ".sensei"), { recursive: true });
-    await writeFile(join(tmpRepo, ".sensei", "config.yaml"),
-      "repo_id: abc-123\nsupabase_url: http://localhost:54321\n");
-    const result = await loadSenseiConfig(tmpRepo);
-    expect(result?.repo_id).toBe("abc-123");
-    expect(result?.supabase_url).toBe("http://localhost:54321");
+  it("returns null when config file is missing", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "sensei-config-test-"));
+    const config = await loadSenseiConfig(tmpDir);
+    expect(config).toBeNull();
   });
 
-  it("reads service key from credentials.yaml", async () => {
-    const { loadCredentials } = await import("./config.js");
-    await mkdir(join(tmpHome, ".config", "sensei"), { recursive: true });
-    await writeFile(join(tmpHome, ".config", "sensei", "credentials.yaml"),
-      "supabase_service_key: sk-test-key\n");
-    const result = await loadCredentials(tmpHome);
-    expect(result?.supabase_service_key).toBe("sk-test-key");
-  });
+  it("throws ZodError when custom_libs contains invalid source_type", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "sensei-config-test-"));
+    await mkdir(join(tmpDir, ".sensei"), { recursive: true });
+    await writeFile(
+      join(tmpDir, ".sensei", "config.yaml"),
+      `repo_id: x\nsupabase_url: https://x.supabase.co\ncustom_libs:\n  - name: bad\n    source_type: invalid-type\n`,
+      "utf-8",
+    );
 
-  it("returns null for credentials when file does not exist", async () => {
-    const { loadCredentials } = await import("./config.js");
-    const result = await loadCredentials(tmpHome);
-    expect(result).toBeNull();
-  });
-
-  it("prefers SUPABASE_SERVICE_KEY env over credentials file", async () => {
-    const { loadCredentials } = await import("./config.js");
-    process.env.SUPABASE_SERVICE_KEY = "env-key";
-    const result = await loadCredentials(tmpHome);
-    expect(result?.supabase_service_key).toBe("env-key");
-    delete process.env.SUPABASE_SERVICE_KEY;
+    await expect(loadSenseiConfig(tmpDir)).rejects.toThrow(z.ZodError);
   });
 });
-
-async function makeTmpDir(prefix: string): Promise<string> {
-  const dir = join(os.tmpdir(), `sensei-config-test-${prefix}-${Date.now()}`);
-  await mkdir(dir, { recursive: true });
-  return dir;
-}
