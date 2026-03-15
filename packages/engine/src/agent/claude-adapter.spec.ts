@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { vi, describe, it, expect, afterEach } from "vitest";
+vi.unmock("fs/promises");
 import { mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
