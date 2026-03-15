@@ -12,6 +12,7 @@ import { takeSnapshotTool } from "./tools/take-snapshot.js";
 import { checkpointTool } from "./tools/checkpoint.js";
 import { recordMemoryTool } from "./tools/record-memory.js";
 import { closeMemoryTool } from "./tools/close-memory.js";
+import { installSkillsTool } from "./tools/install-skills.js";
 import { createSession, updateHeartbeat, createTaskSession, recordTaskTurn, completeTaskSession } from "@sensei/engine";
 
 export interface McpServerOptions {
@@ -268,6 +269,23 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         const result = await closeMemoryTool(client as any, params);
         beat(client, "close_memory", true);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "install_skills",
+    "Generate and install project-specific Claude skills derived from the indexed codebase. Requires ANTHROPIC_API_KEY in the environment.",
+    {},
+    async () => {
+      try {
+        const client = await getClient();
+        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
+        const result = await installSkillsTool(client as any, opts.repoId, opts.repoPath);
+        beat(client, "install_skills", result.errors.length === 0);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
