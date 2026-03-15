@@ -16,6 +16,12 @@ function makeDb(opts: { repoError?: boolean; symbolRows?: Array<{ name: string; 
             }
             return { data: null, error: null };
           },
+          order: (_col: string, _opts?: object) => ({
+            limit: async () => {
+              if (table === "symbols") return { data: opts.symbolRows ?? [], error: null };
+              return { data: [], error: null };
+            },
+          }),
           limit: async () => {
             if (table === "symbols") return { data: opts.symbolRows ?? [], error: null };
             return { data: [], error: null };
