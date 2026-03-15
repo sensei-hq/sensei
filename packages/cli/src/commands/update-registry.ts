@@ -1,7 +1,7 @@
 // packages/cli/src/commands/update-registry.ts
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
-import { intro, outro, log, spinner, cancel } from "@clack/prompts";
+import { intro, outro, log, spinner } from "@clack/prompts";
 import {
   extractProjectProfile,
   LibIndexer,
@@ -22,25 +22,37 @@ function createAdapter(sourceType: LibEntry["source_type"]): SourceAdapter {
   return new LocalAdapter();
 }
 
-export async function updateRegistry(repoPath: string): Promise<void> {
-  intro("sensei update-registry");
-
+/** Core logic without clack UI. Called directly from init (no libName arg) or via updateRegistry. When libName is provided and the lib is not found, exits non-zero. */
+export async function runUpdateRegistryCore(repoPath: string, libName?: string): Promise<number> {
   const config = await loadSenseiConfig(repoPath);
   if (!config) {
-    cancel("Not initialised — run sensei init first");
-    return;
+    log.error("Not initialised — run sensei init first");
+    if (libName) process.exit(1);
+    return 0;
   }
 
   if (!config.custom_libs?.length) {
+    if (libName) {
+      log.error("No custom_libs in config — add entries first");
+      process.exit(1);
+    }
     log.info("No custom_libs configured in .sensei/config.yaml");
-    outro("Nothing to do.");
-    return;
+    return 0;
+  }
+
+  const libs = libName
+    ? config.custom_libs.filter(l => l.name === libName)
+    : config.custom_libs;
+
+  if (libName && libs.length === 0) {
+    log.error(`Library '${libName}' not found in custom_libs`);
+    process.exit(1);
   }
 
   const client = await makeSenseiClient(repoPath);
   if (!client) {
-    cancel("Supabase client not configured. Run sensei init first.");
-    return;
+    log.error("Supabase client not configured. Run sensei init first.");
+    return 0;
   }
 
   const repoId = config.repo_id;
@@ -53,7 +65,6 @@ export async function updateRegistry(repoPath: string): Promise<void> {
   const repoSlug = profile.repoName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const ollamaBackend = new OllamaBackend({ model: "llama3.2:3b", embeddingModel: "nomic-embed-text" });
 
-  // Load existing manifest to preserve entries for other libs
   const manifestPath = join(repoPath, ".sensei", "lib-skills.json");
   let manifest: LibSkillsManifest = { repoSlug, skills: [], updatedAt: new Date().toISOString() };
   try {
@@ -64,8 +75,7 @@ export async function updateRegistry(repoPath: string): Promise<void> {
   const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
   let claudeBackend: ClaudeBackend | null = null;
 
-  for (const lib of config.custom_libs) {
-    // Fetch
+  for (const lib of libs) {
     const fetchSpin = spinner();
     fetchSpin.start(`Fetching ${lib.name}...`);
     let pages;
@@ -78,7 +88,6 @@ export async function updateRegistry(repoPath: string): Promise<void> {
       continue;
     }
 
-    // Index
     const indexSpin = spinner();
     indexSpin.start(`Indexing ${lib.name} (${pages.length} pages)...`);
     try {
@@ -90,7 +99,6 @@ export async function updateRegistry(repoPath: string): Promise<void> {
       continue;
     }
 
-    // Generate skill (only if ANTHROPIC_API_KEY present)
     if (hasAnthropicKey) {
       const skillSpin = spinner();
       skillSpin.start(`Generating skill for ${lib.name}...`);
@@ -117,5 +125,12 @@ export async function updateRegistry(repoPath: string): Promise<void> {
     }
   }
 
-  outro(`Done. ${config.custom_libs.length} librar${config.custom_libs.length === 1 ? "y" : "ies"} processed.`);
+  return libs.length;
+}
+
+/** Full command with clack UI — called from CLI. */
+export async function updateRegistry(repoPath: string, libName?: string): Promise<void> {
+  intro("sensei update-registry");
+  const count = await runUpdateRegistryCore(repoPath, libName);
+  outro(`Done. ${count} librar${count === 1 ? "y" : "ies"} processed.`);
 }
