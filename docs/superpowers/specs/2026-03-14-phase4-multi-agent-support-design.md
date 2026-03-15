@@ -113,9 +113,15 @@ export async function extractProjectProfile(
 
 ```typescript
 export class SkillGenerator {
-  constructor(private model: ModelBackend, private profile: ProjectProfile) {}
+  constructor(
+    private model: ModelBackend,
+    private profile: ProjectProfile,
+    private validator: SkillValidator  // injected — not constructed internally
+  ) {}
 
   async generate(): Promise<Record<'orientation' | 'workflow' | 'context' | 'patterns', string>>
+  // For each category: generate → validate → retry up to 2x on invalid result
+  // Throws if still invalid after 2 retries, listing the remaining issues
 }
 ```
 
@@ -142,7 +148,7 @@ export class SkillValidator {
 
 Sends review prompt: *"Check this skill for accuracy against the project profile. Verify: package names match, commands are real, no hallucinated file paths. Reply VALID or list issues."*
 
-`SkillGenerator` calls `validate()` after each generation; on invalid result, retries with issues appended to the prompt. Max 2 retries per skill. If still invalid after 2 retries, throws with the remaining issues listed.
+`SkillValidator` is constructed separately and injected into `SkillGenerator`. This keeps the retry loop in `SkillGenerator.generate()` and the validation logic in `SkillValidator.validate()` independently testable.
 
 ### `AgentAdapter` interface
 
@@ -159,9 +165,11 @@ export interface AgentAdapter {
 
 ### `ClaudeAdapter`
 
-- `skillsDir`: `~/.claude/skills/`
-- `writeSkills`: writes `sensei-{repoSlug}-{category}.md` for each category; creates dir if missing; returns `AgentSkillFile[]`
+- `skillsDir`: resolved at construction time via `path.join(os.homedir(), '.claude', 'skills')` — never uses `~` literally (Node.js `fs` does not expand it)
+- `writeSkills`: writes `sensei-{repoSlug}-{category}.md` for each category; creates dir if missing; returns `AgentSkillFile[]` with `generatedAt: new Date().toISOString()`
 - `installedSkills`: reads dir, filters by `sensei-{repoSlug}-` prefix, returns list with mtime as `generatedAt`
+
+Note: `ClaudeAdapter` is placed in `packages/engine/src/agent/` alongside the `AgentAdapter` interface. Engine is permitted I/O side effects at the adapter layer (consistent with `Indexer` writing to Supabase and `Scanner` reading from disk).
 
 ---
 
@@ -179,6 +187,9 @@ export class ClaudeBackend implements ModelBackend {
   async generate(prompt: string): Promise<string>
   // single messages.create call, returns assistant text content
   // model: opts.model ?? 'claude-sonnet-4-6'
+
+  async isAvailable(): Promise<boolean>
+  // returns true if ANTHROPIC_API_KEY is present in env (no network call)
 
   async embed(_text: string): Promise<number[]>
   // throws NotImplementedError('ClaudeBackend does not support embed')
@@ -209,7 +220,7 @@ New `setupAgent(repoPath: string, agent: 'claude'): Promise<void>` function:
 9. outro: "4 skill files written to ~/.claude/skills/"
 ```
 
-`cli.ts` gains `--agent <agent>` option on the `setup` subcommand. Accepted value: `claude` (others return a "not yet supported" message).
+`cli.ts` gains `--agent <agent>` option on the `setup` subcommand. Accepted value: `claude`. Unsupported values print "Agent '<value>' is not yet supported. Supported: claude" and exit with code 1.
 
 ---
 
@@ -223,7 +234,9 @@ export async function installSkillsTool(
 ): Promise<{ filesWritten: string[]; errors: string[] }>
 ```
 
-Same pipeline as `setupAgent`. Registered in `mcp-server.ts`:
+`installSkillsTool` runs the full pipeline including writing `.sensei/agent-skills.json` (same as `setupAgent`) — the dashboard reads this manifest, so it must be updated by both entry points. `repoPath` is available in the MCP server closure via `opts.repoPath`.
+
+Registered in `mcp-server.ts`:
 
 ```typescript
 server.tool("install_skills", {}, async () => {
@@ -252,7 +265,9 @@ export const load: PageServerLoad = async ({ params }) => {
 
 Form action `regenerate`:
 - spawns `sensei setup --agent claude` via `Bun.spawn` with `repoPath` set
-- waits for exit, redirects back on success, returns error message on failure
+- 60-second timeout — if process has not exited, kill it and return an error message
+- stderr captured and returned as error message on non-zero exit
+- redirects back to the page on success
 
 ### `+page.svelte`
 
@@ -287,6 +302,7 @@ Form action `regenerate`:
 **`project-profile.spec.ts`**:
 - `extractProjectProfile` with fixture symbols returns correct `dominantLanguage` and `keySymbols`
 - Missing `package.json` throws
+- DB error (mocked Supabase returning error) throws
 
 **`skill-generator.spec.ts`**:
 - `generate()` with mock `ModelBackend` calls `generate()` exactly 4 times
