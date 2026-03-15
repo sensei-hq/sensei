@@ -2,10 +2,21 @@ import { readFile, access } from "fs/promises";
 import { join } from "path";
 import yaml from "js-yaml";
 import os from "os";
+import { z } from "zod";
+import type { LibEntry } from "./types.js";
+
+const LibEntrySchema = z.object({
+  name: z.string(),
+  source_type: z.enum(['llms.txt', 'http', 'local']),
+  base_url: z.string().optional(),
+  local_path: z.string().optional(),
+  description: z.string().optional(),
+});
 
 export interface SenseiRepoConfig {
   repo_id: string;
   supabase_url: string;
+  custom_libs?: LibEntry[];
 }
 
 export interface SenseiCredentials {
@@ -18,8 +29,16 @@ export async function loadSenseiConfig(repoPath: string): Promise<SenseiRepoConf
   try {
     await access(configPath);
     const raw = await readFile(configPath, "utf-8");
-    return yaml.load(raw) as SenseiRepoConfig;
-  } catch {
+    const parsed = yaml.load(raw) as Record<string, unknown>;
+
+    let custom_libs: LibEntry[] | undefined;
+    if (Array.isArray(parsed?.custom_libs)) {
+      custom_libs = z.array(LibEntrySchema).parse(parsed.custom_libs) as LibEntry[];
+    }
+
+    return { ...(parsed as unknown as SenseiRepoConfig), custom_libs };
+  } catch (err) {
+    if (err instanceof z.ZodError) throw err;
     return null;
   }
 }
