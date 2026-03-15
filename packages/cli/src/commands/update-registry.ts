@@ -22,7 +22,7 @@ function createAdapter(sourceType: LibEntry["source_type"]): SourceAdapter {
   return new LocalAdapter();
 }
 
-/** Core logic without clack UI — safe to call programmatically (e.g. from init). */
+/** Core logic without clack UI. Called directly from init (no libName arg) or via updateRegistry. When libName is provided and the lib is not found, exits non-zero. */
 export async function runUpdateRegistryCore(repoPath: string, libName?: string): Promise<number> {
   const config = await loadSenseiConfig(repoPath);
   if (!config) {
