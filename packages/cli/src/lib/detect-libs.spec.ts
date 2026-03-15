@@ -1,3 +1,4 @@
+// packages/cli/src/lib/detect-libs.spec.ts
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
