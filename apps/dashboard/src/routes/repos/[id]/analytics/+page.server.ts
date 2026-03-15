@@ -16,19 +16,22 @@ export const load: PageServerLoad = async ({ params }) => {
 
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: rawSessions } = await db
+  const { data: rawSessions, error: sessionsError } = await db
     .from('task_sessions')
     .select('id,session_id,task_description,task_type,status,ftr_score,ftr_signals,created_at,completed_at')
     .eq('repo_id', params.id)
     .gte('created_at', since)
     .order('created_at', { ascending: false })
     .limit(100);
+  if (sessionsError) throw error(500, sessionsError.message);
 
-  const { data: rawTurns } = await db
+  // created_at is used as a filter only (PostgREST allows filtering on columns not in the select projection)
+  const { data: rawTurns, error: turnsError } = await db
     .from('task_turns')
-    .select('tool,success,duration_ms,task_session_id')
+    .select('tool,success,duration_ms')
     .eq('repo_id', params.id)
     .gte('created_at', since);
+  if (turnsError) throw error(500, turnsError.message);
 
   // Aggregate turns by tool client-side
   const toolMap = new Map<string, { calls: number; successes: number; totalDuration: number; durationCount: number }>();
