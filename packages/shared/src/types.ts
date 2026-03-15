@@ -130,3 +130,35 @@ export interface AgentSkillsManifest {
   skills: AgentSkillFile[];
   updatedAt: string;     // ISO timestamp
 }
+
+// ─── Library intelligence types ──────────────────────────────────────────────
+
+export interface LibEntry {
+  name: string;
+  source_type: 'llms.txt' | 'http' | 'local';
+  base_url?: string;       // llms.txt: direct URL to llms.txt file; http: root URL to crawl
+  local_path?: string;     // llms.txt: local path to llms.txt file; local: directory to scan
+  description?: string;    // human-readable description of the library
+}
+
+export interface DocPage {
+  title: string;
+  url?: string;            // remote sources
+  localPath?: string;      // local sources
+  description: string;     // short summary — embedding input for llms.txt; auto-extracted for others
+  content?: string;        // full extracted markdown — null for llms.txt entries
+  sourceType: 'llms.txt' | 'http' | 'local';
+  component?: string;      // optional grouping (e.g. 'Button', 'Form')
+}
+
+export interface LibSkillFile {
+  libName: string;
+  path: string;            // absolute path to written skill file
+  generatedAt: string;     // ISO timestamp
+}
+
+export interface LibSkillsManifest {
+  repoSlug: string;
+  skills: LibSkillFile[];
+  updatedAt: string;
+}
