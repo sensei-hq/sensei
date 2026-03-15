@@ -17,3 +17,8 @@ export * from "./session/snapshot.js";
 export * from "./session/memory.js";
 export * from "./analytics/ftr.js";
 export * from "./analytics/task-session.js";
+export * from "./project-profile.js";
+export * from "./skill-gen/skill-validator.js";
+export * from "./skill-gen/skill-generator.js";
+export * from "./agent/agent-adapter.js";
+export * from "./agent/claude-adapter.js";
