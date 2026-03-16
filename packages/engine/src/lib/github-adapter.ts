@@ -1,6 +1,7 @@
 // packages/engine/src/lib/github-adapter.ts
 import type { LibEntry, DocPage } from "@sensei/shared";
 import type { SourceAdapter } from "./source-adapter.js";
+import { extractSummary } from "./doc-utils.js";
 
 interface GitHubTreeItem { path: string; type: "blob" | "tree"; url: string; }
 interface GitHubTreeResponse { tree: GitHubTreeItem[]; truncated: boolean; }
@@ -26,6 +27,12 @@ export class GithubAdapter implements SourceAdapter {
     if (!treeRes.ok) throw new Error(`GithubAdapter: GitHub API error ${treeRes.status} for ${treeUrl}`);
 
     const tree: GitHubTreeResponse = await treeRes.json();
+    if (tree.truncated) {
+      console.warn(
+        `[GithubAdapter] Warning: tree truncated for ${owner}/${repo} — some files may be missing.\n` +
+        `Fetched ${tree.tree.length} of potentially more files.`
+      );
+    }
     const prefix = basePath ? basePath + "/" : "";
     const mdFiles = tree.tree.filter(item => item.type === "blob" && item.path.startsWith(prefix) && item.path.endsWith(".md"));
 
@@ -38,7 +45,7 @@ export class GithubAdapter implements SourceAdapter {
       pages.push({
         title: extractH1(content) ?? stemName(file.path),
         url: `https://github.com/${owner}/${repo}/blob/${branch}/${file.path}`,
-        description: extractFirstParagraph(content),
+        summary: extractSummary(content),
         content,
         sourceType: "github",
         component: inferComponent(file.path, basePath),
@@ -52,19 +59,6 @@ function extractH1(content: string): string | undefined {
   return content.match(/^#\s+(.+)$/m)?.[1]?.trim();
 }
 
-function extractFirstParagraph(content: string): string {
-  const lines = content.split("\n");
-  let started = false;
-  const buf: string[] = [];
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith("#")) continue;
-    if (t === "") { if (started) break; continue; }
-    started = true;
-    buf.push(t);
-  }
-  return buf.join(" ").slice(0, 200);
-}
 
 function stemName(filePath: string): string {
   return (filePath.split("/").pop() ?? filePath).replace(/\.md$/, "");
