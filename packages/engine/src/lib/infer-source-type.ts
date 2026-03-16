@@ -19,7 +19,7 @@ export function inferSourceType(input: string): InferredSource {
   if (input.startsWith('http://') || input.startsWith('https://')) {
     try {
       const url = new URL(input);
-      if (url.pathname.endsWith('/llms.txt')) {
+      if (url.pathname.endsWith('/llms.txt') || url.pathname.endsWith('.txt')) {
         return { source_type: 'llms.txt', base_url: input };
       }
       if (url.hostname === 'github.com' && /^\/[^/]+\/[^/]+\/tree\//.test(url.pathname)) {
