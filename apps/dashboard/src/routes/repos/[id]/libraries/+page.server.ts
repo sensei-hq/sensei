@@ -13,7 +13,7 @@ type Freshness = 'fresh' | 'stale' | 'missing';
 interface LibRow {
   libName: string;
   sourceType: string;
-  baseUrl: string | null;
+  baseUrl: string;
   sectionCount: number;
   lastFetched: string | null;
   freshness: Freshness;
@@ -92,7 +92,7 @@ export const load: PageServerLoad = async ({ params }) => {
       return {
         libName: lib.name,
         sourceType: lib.source_type,
-        baseUrl: lib.base_url ?? null,
+        baseUrl: lib.base_url,
         sectionCount: catalog?.section_count ?? 0,
         lastFetched: catalog?.indexed_at ?? null,
         freshness: computeFreshness(catalog?.indexed_at ?? null, catalog?.section_count ?? 0),
@@ -108,7 +108,7 @@ export const load: PageServerLoad = async ({ params }) => {
     return {
       libName: lib.name,
       sourceType: lib.source_type,
-      baseUrl: lib.base_url ?? null,
+      baseUrl: lib.base_url,
       sectionCount,
       lastFetched,
       freshness: computeFreshness(lastFetched, sectionCount),
@@ -232,7 +232,7 @@ export const actions: Actions = {
       library_id: lib.id,
       name: lib.name,
       source_type: lib.source_type,
-      base_url: lib.base_url ?? null,
+      base_url: lib.base_url,
     }, { onConflict: 'repo_id,name' });
     if (linkErr) return fail(500, { error: linkErr.message });
 
@@ -261,7 +261,7 @@ export const actions: Actions = {
         id: sharedLibId,
         name,
         source_type: (libRow as any).source_type,
-        base_url: (libRow as any).base_url ?? null,
+        base_url: (libRow as any).base_url,
       });
     }
 
@@ -284,7 +284,7 @@ export const actions: Actions = {
           id: lib.library_id,
           name: lib.name,
           source_type: lib.source_type,
-          base_url: lib.base_url ?? null,
+          base_url: lib.base_url,
         });
       }
     }
