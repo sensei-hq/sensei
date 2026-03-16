@@ -1,4 +1,4 @@
-import { intro, outro, spinner, note, log, isCancel, text, multiselect } from "@clack/prompts";
+import { intro, outro, spinner, note, log, isCancel, text, multiselect, confirm } from "@clack/prompts";
 import { writeFile, mkdir, access, readFile, chmod } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
@@ -32,6 +32,31 @@ async function detectUnknownLibs(deps: string[]): Promise<string[]> {
   return [];
 }
 
+/** Looks up a lib by name in the global shared pool. Returns catalog row or null. */
+export async function lookupSharedLib(
+  client: ReturnType<typeof import("@supabase/supabase-js").createClient>,
+  name: string,
+): Promise<{
+  id: string;
+  section_count: number;
+  indexed_at: string;
+  base_url: string | null;
+  local_path: string | null;
+  source_type: string;
+} | null> {
+  try {
+    const { data } = await (client as any)
+      .schema('sensei')
+      .from('shared_libs')
+      .select('id,section_count,indexed_at,base_url,local_path,source_type')
+      .eq('name', name)
+      .maybeSingle();
+    return data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function init(cwd: string): Promise<void> {
   intro("sensei init");
 
@@ -63,13 +88,10 @@ export async function init(cwd: string): Promise<void> {
 
   // 2. Scan dependencies for potential custom_libs candidates
   const allDeps = await scanDirectDeps(cwd);
-  let customLibs: LibEntry[] = [];
+  let candidates: string[] = [];
 
   if (allDeps.length > 0) {
     const llmCandidates = await detectUnknownLibs(allDeps);
-
-    // Decide which deps to show the user
-    let candidates: string[];
     if (llmCandidates.length > 0) {
       candidates = llmCandidates;
     } else {
@@ -85,21 +107,10 @@ export async function init(cwd: string): Promise<void> {
         candidates = selected as string[];
       }
     }
-
-    // Prompt for doc URL per candidate (LLM-filtered or user-selected)
-    for (const name of candidates) {
-      const input = await text({
-        message: `Docs for "${name}"? (llms.txt URL, HTTP page, raw .md URL, or local path — Enter to skip)`,
-        placeholder: "https://example.com/llms.txt",
-      });
-      if (isCancel(input) || !input?.trim()) continue;
-
-      const trimmed = String(input).trim();
-      customLibs.push({ name, ...inferSourceType(trimmed) });
-    }
   }
 
-  // 3. Prompt for Supabase URL and service key
+  // 3. Prompt for Supabase credentials and create client (moved before URL prompts
+  //    so client is available for shared-lib lookup in Pass 2 below)
   const supabaseUrl = await text({
     message: "Supabase URL (from supabase start or your hosted project):",
     placeholder: "http://localhost:54321",
@@ -113,7 +124,7 @@ export async function init(cwd: string): Promise<void> {
   });
   if (isCancel(serviceKey)) { outro("Cancelled."); return; }
 
-  // 3. Create Supabase client and upsert repo row
+  // Create client (needed for both repo upsert and shared-lib lookup below)
   const client = createClient(String(supabaseUrl), String(serviceKey), {
     db: { schema: "sensei" },
     auth: { persistSession: false },
@@ -133,11 +144,64 @@ export async function init(cwd: string): Promise<void> {
   }
   const repoId: string = repo.id;
 
+  // Pass 2: For each candidate, check shared pool first; else prompt for URL
+  // customLibs: will be indexed by runUpdateRegistryCore
+  // linkedLibEntries: linked to shared pool, written to config.yaml but NOT re-indexed
+  const customLibs: LibEntry[] = [];
+  const linkedLibEntries: LibEntry[] = [];
+
+  if (candidates.length > 0) {
+    for (const name of candidates) {
+      // Check global shared pool — silently falls through if lookup fails
+      const sharedLib = await lookupSharedLib(client, name);
+
+      if (sharedLib) {
+        const daysAgo = Math.floor((Date.now() - new Date(sharedLib.indexed_at).getTime()) / 86400000);
+        const confirmed = await confirm({
+          message: `${name} is already indexed globally (${sharedLib.section_count} sections, ${daysAgo}d ago). Link it?`,
+          initialValue: true,
+        });
+        if (!isCancel(confirmed) && confirmed) {
+          // Add to linkedLibEntries — goes into config.yaml but skips re-indexing
+          linkedLibEntries.push({
+            name,
+            source_type: sharedLib.source_type as LibEntry["source_type"],
+            base_url: sharedLib.base_url ?? undefined,
+            local_path: sharedLib.local_path ?? undefined,
+          });
+          // Upsert repo_libs immediately with shared_lib_id
+          try {
+            await (client as any).schema('sensei').from('repo_libs').upsert({
+              repo_id: repoId,
+              name,
+              source_type: sharedLib.source_type,
+              base_url: sharedLib.base_url ?? null,
+              local_path: sharedLib.local_path ?? null,
+              shared_lib_id: sharedLib.id,
+            }, { onConflict: 'repo_id,name' });
+          } catch {
+            log.warn(`  repo_libs upsert failed for ${name} (shared link)`);
+          }
+          continue; // Skip URL prompt and runUpdateRegistryCore for this lib
+        }
+      }
+
+      // URL prompt path (unchanged)
+      const input = await text({
+        message: `Docs for "${name}"? (llms.txt URL, HTTP page, raw .md URL, or local path — Enter to skip)`,
+        placeholder: "https://example.com/llms.txt",
+      });
+      if (isCancel(input) || !input?.trim()) continue;
+      customLibs.push({ name, ...inferSourceType(String(input).trim()) });
+    }
+  }
+
   // 4. Write .sensei/config.yaml and credentials
   const senseiDir = join(cwd, ".sensei");
   await mkdir(senseiDir, { recursive: true });
-  const customLibsYaml = customLibs.length > 0
-    ? `custom_libs:\n${customLibs.map(l => {
+  const allConfigLibs = [...customLibs, ...linkedLibEntries];
+  const customLibsYaml = allConfigLibs.length > 0
+    ? `custom_libs:\n${allConfigLibs.map(l => {
         const urlField = l.base_url ? `    base_url: ${l.base_url}` : `    local_path: ${l.local_path}`;
         return `  - name: ${l.name}\n    source_type: ${l.source_type}\n${urlField}`;
       }).join("\n")}\n`
@@ -152,10 +216,9 @@ export async function init(cwd: string): Promise<void> {
   await mkdir(credsDir, { recursive: true });
   const credsPath = join(credsDir, "credentials.yaml");
   await writeFile(credsPath, `supabase_service_key: ${String(serviceKey)}\n`);
-  // Restrict credentials file to owner-only (service role key — never share)
   await chmod(credsPath, 0o600);
 
-  if (customLibs.length > 0) {
+  if (customLibs.length > 0) {  // Only non-linked libs are re-indexed
     const libSpin = spinner();
     libSpin.start("Indexing library docs...");
     try {
