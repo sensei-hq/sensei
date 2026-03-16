@@ -8,20 +8,20 @@ export const load: PageServerLoad = async () => {
   const db = getDb();
 
   const { data: libs } = await db
-    .from('shared_libs')
+    .from('libraries')
     .select('id,name,source_type,base_url,local_path,section_count,indexed_at,index_status,index_error')
     .order('name');
 
   const { data: repoLinks } = await db
-    .from('repo_libs')
-    .select('shared_lib_id,repos!inner(id,name)')
-    .not('shared_lib_id', 'is', null);
+    .from('referenced_libraries')
+    .select('library_id,repos!inner(id,name)')
+    .not('library_id', 'is', null);
 
   const repoMap = new Map<string, Array<{ id: string; name: string }>>();
-  for (const link of (repoLinks ?? []) as Array<{ shared_lib_id: string; repos: { id: string; name: string } }>) {
-    if (!link.shared_lib_id) continue;
-    if (!repoMap.has(link.shared_lib_id)) repoMap.set(link.shared_lib_id, []);
-    repoMap.get(link.shared_lib_id)!.push(link.repos);
+  for (const link of (repoLinks ?? []) as unknown as Array<{ library_id: string; repos: { id: string; name: string } }>) {
+    if (!link.library_id) continue;
+    if (!repoMap.has(link.library_id)) repoMap.set(link.library_id, []);
+    repoMap.get(link.library_id)!.push(link.repos);
   }
 
   const libsWithRepos = (libs ?? []).map((lib: any) => ({
@@ -52,7 +52,7 @@ export const actions: Actions = {
     const local_path = 'local_path' in inferred ? inferred.local_path : null;
 
     const { data: existing } = await db
-      .from('shared_libs')
+      .from('libraries')
       .upsert(
         { name, source_type, base_url: base_url ?? null, local_path: local_path ?? null, index_status: 'pending' },
         { onConflict: 'name' }
