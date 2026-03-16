@@ -3,97 +3,124 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { HttpAdapter } from "./http-adapter.js";
 import type { LibEntry } from "@sensei/shared";
 
-const MULTI_SECTION_HTML = `<!DOCTYPE html><html><head><title>Kavach</title></head>
-<body><article>
-  <h1>Kavach Auth</h1><p>Zero-trust auth library.</p>
-  <h2>Installation</h2><p>Run npm install kavach to get started.</p>
-  <h2>Usage</h2><p>Import the module and call createClient with your config.</p>
-</article></body></html>`;
-
-const SINGLE_SECTION_HTML = `<!DOCTYPE html><html><body>
-<article><h1>Title</h1><p>Content without any h2 headings here.</p></article>
+// Entry page HTML — links to sub-pages
+const DOCS_HTML = `<!DOCTYPE html><html><body>
+<nav>
+  <a href="/docs/installation">Installation</a>
+  <a href="/docs/usage">Usage</a>
+  <a href="https://other.com/external">External (skip)</a>
+  <a href="/blog/post">Blog (skip — wrong prefix)</a>
+</nav>
+<article><h1>Docs Home</h1><p>Welcome to the docs.</p></article>
 </body></html>`;
+
+const INSTALL_MD = `# Installation\n\nRun npm install mylib to get started.`;
+const USAGE_MD = `# Usage\n\n## Quick Start\n\nImport and call init().\n\n## Advanced\n\nSee config options.`;
 
 describe("HttpAdapter", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("splits content at ## headings into one DocPage per section", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      headers: { get: () => null },
-      text: () => Promise.resolve(MULTI_SECTION_HTML),
+  function mockFetch(responses: Record<string, { body: string; type?: string }>) {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      const entry = responses[url];
+      if (!entry) return Promise.resolve({ ok: false, status: 404, headers: { get: () => null }, text: () => Promise.resolve("") });
+      const type = entry.type ?? "text/html";
+      return Promise.resolve({
+        ok: true,
+        headers: { get: (h: string) => h === "content-type" ? type : null },
+        text: () => Promise.resolve(entry.body),
+      });
     }));
+  }
+
+  it("discovers links with same path prefix and fetches each as a DocPage", async () => {
+    mockFetch({
+      "https://kavach.dev/docs": { body: DOCS_HTML },
+      "https://kavach.dev/docs/installation": { body: INSTALL_MD, type: "text/markdown" },
+      "https://kavach.dev/docs/usage": { body: USAGE_MD, type: "text/markdown" },
+    });
 
     const adapter = new HttpAdapter();
-    const entry: LibEntry = { name: "kavach", source_type: "http", base_url: "https://kavach.dev" };
+    const entry: LibEntry = { name: "kavach", source_type: "http", base_url: "https://kavach.dev/docs" };
     const pages = await adapter.fetch(entry);
 
+    // Entry URL + discovered sub-pages
     expect(pages.length).toBeGreaterThanOrEqual(2);
-    const titles = pages.map(p => p.title);
-    expect(titles).toContain("Installation");
-    expect(titles).toContain("Usage");
+    const urls = pages.map(p => p.url);
+    expect(urls).toContain("https://kavach.dev/docs/installation");
+    expect(urls).toContain("https://kavach.dev/docs/usage");
+    // External and off-prefix links are excluded
+    expect(urls).not.toContain("https://other.com/external");
+    expect(urls).not.toContain("https://kavach.dev/blog/post");
     pages.forEach(p => {
       expect(p.sourceType).toBe("http");
       expect(p.content).toBeTruthy();
-      expect(p.description.length).toBeLessThanOrEqual(200);
+      expect(p.summary.length).toBeLessThanOrEqual(200);
     });
   });
 
-  it("returns single DocPage when page has no ## headings", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      headers: { get: () => null },
-      text: () => Promise.resolve(SINGLE_SECTION_HTML),
-    }));
-
-    const adapter = new HttpAdapter();
-    const pages = await adapter.fetch({ name: "lib", source_type: "http", base_url: "https://x.com" });
-
-    expect(pages).toHaveLength(1);
-    expect(pages[0].content).toBeTruthy();
-  });
-
-  it("throws when fetch returns non-ok status", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, headers: { get: () => null }, text: () => Promise.resolve("") }));
-    const adapter = new HttpAdapter();
-    await expect(adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com" })).rejects.toThrow("404");
-  });
-
-  it("returns raw markdown content as-is when URL ends in .md", async () => {
-    const MD_BODY = `# Readme\n\n## Installation\n\nRun npm install mylib.\n\n## Usage\n\nImport and call init().`;
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      headers: { get: () => null },
-      text: () => Promise.resolve(MD_BODY),
-    }));
-
-    const adapter = new HttpAdapter();
-    const pages = await adapter.fetch({ name: "mylib", source_type: "http", base_url: "https://raw.githubusercontent.com/user/repo/main/README.md" });
-
-    expect(pages.length).toBeGreaterThanOrEqual(1);
-    // Content must not contain HTML artifacts from Readability/Turndown
-    pages.forEach(p => {
-      expect(p.content).not.toContain("<");
-      expect(p.sourceType).toBe("http");
+  it("assigns component from first path segment after base", async () => {
+    const html = `<html><body><a href="/docs/hooks/use-auth">UseAuth</a></body></html>`;
+    mockFetch({
+      "https://example.com/docs": { body: html },
+      "https://example.com/docs/hooks/use-auth": { body: "# UseAuth\n\nAuth hook.", type: "text/markdown" },
     });
-    // Should split at ## headings
-    const titles = pages.map(p => p.title);
-    expect(titles).toContain("Installation");
-    expect(titles).toContain("Usage");
-  });
-
-  it("returns markdown as-is when Content-Type is text/markdown", async () => {
-    const MD_BODY = `## API\n\nSome API docs here.\n`;
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      headers: { get: () => "text/markdown" },
-      text: () => Promise.resolve(MD_BODY),
-    }));
 
     const adapter = new HttpAdapter();
     const pages = await adapter.fetch({ name: "lib", source_type: "http", base_url: "https://example.com/docs" });
 
-    expect(pages[0].content).toContain("API docs here");
-    expect(pages[0].sourceType).toBe("http");
+    const hookPage = pages.find(p => p.url?.includes("use-auth"));
+    expect(hookPage?.component).toBe("hooks");
+    // Entry URL itself has no component
+    const entryPage = pages.find(p => p.url === "https://example.com/docs");
+    expect(entryPage?.component).toBeUndefined();
+  });
+
+  it("deduplicates URLs", async () => {
+    // Same link appears twice in the page
+    const html = `<html><body><a href="/docs/page">P1</a><a href="/docs/page">P1 again</a></body></html>`;
+    mockFetch({
+      "https://x.com/docs": { body: html },
+      "https://x.com/docs/page": { body: "# Page\n\nContent.", type: "text/markdown" },
+    });
+
+    const adapter = new HttpAdapter();
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    const withPage = pages.filter(p => p.url?.includes("/page"));
+    expect(withPage).toHaveLength(1);
+  });
+
+  it("includes entry URL at sequence 0 even if not linked", async () => {
+    const html = `<html><body><article><h1>Home</h1><p>Home page.</p></article><a href="/docs/sub">Sub</a></body></html>`;
+    mockFetch({
+      "https://x.com/docs": { body: html },
+      "https://x.com/docs/sub": { body: "# Sub\n\nContent.", type: "text/markdown" },
+    });
+
+    const adapter = new HttpAdapter();
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    expect(pages[0].url).toBe("https://x.com/docs");
+    expect(pages[0].sequence).toBe(0);
+  });
+
+  it("throws when entry URL fetch returns non-ok status", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, headers: { get: () => null }, text: () => Promise.resolve("") }));
+    const adapter = new HttpAdapter();
+    await expect(adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" })).rejects.toThrow("404");
+  });
+
+  it("skips sub-pages that fail to fetch (graceful degradation)", async () => {
+    const html = `<html><body><a href="/docs/ok">OK</a><a href="/docs/broken">Broken</a></body></html>`;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url === "https://x.com/docs") return Promise.resolve({ ok: true, headers: { get: () => "text/html" }, text: () => Promise.resolve(html) });
+      if (url === "https://x.com/docs/ok") return Promise.resolve({ ok: true, headers: { get: () => "text/markdown" }, text: () => Promise.resolve("# OK\n\nContent.") });
+      return Promise.resolve({ ok: false, status: 500, headers: { get: () => null }, text: () => Promise.resolve("") });
+    }));
+
+    const adapter = new HttpAdapter();
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    const urls = pages.map(p => p.url);
+    expect(urls).toContain("https://x.com/docs/ok");
+    expect(urls).not.toContain("https://x.com/docs/broken");
   });
 });
