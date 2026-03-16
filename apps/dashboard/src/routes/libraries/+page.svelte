@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
   import type { PageData, ActionData } from './$types';
+  import AddLibrarySidebar from '$lib/components/AddLibrarySidebar.svelte';
   const { data, form }: { data: PageData; form: ActionData } = $props();
 
   let search = $state('');
@@ -87,66 +88,7 @@
   }
 </script>
 
-<!-- Add Library Sidebar -->
-{#if sidebarOpen}
-  <div
-    class="fixed inset-0 bg-black/40 z-40"
-    role="presentation"
-    onclick={() => sidebarOpen = false}
-  ></div>
-  <div class="fixed right-0 top-0 h-full w-80 bg-surface-z1 border-l border-surface-z3 z-50 flex flex-col shadow-xl">
-    <div class="flex items-center justify-between px-5 py-4 border-b border-surface-z3">
-      <h2 class="text-sm font-semibold text-surface-z8">Add Library</h2>
-      <button
-        onclick={() => sidebarOpen = false}
-        class="text-surface-z5 hover:text-surface-z8 transition-colors"
-        aria-label="Close"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-          <path d="M18 6L6 18M6 6l12 12" stroke-linecap="round"/>
-        </svg>
-      </button>
-    </div>
-    <form method="POST" action="?/add" class="flex flex-col gap-4 px-5 py-5 flex-1">
-      {#if (form as any)?.error}
-        <p class="text-xs text-error-z6">{(form as any).error}</p>
-      {/if}
-      <label class="flex flex-col gap-1.5">
-        <span class="text-xs font-medium text-surface-z6">Name</span>
-        <input
-          type="text"
-          name="name"
-          placeholder="e.g. rokkit"
-          required
-          class="px-3 py-2 rounded border border-surface-z3 bg-surface-z2 text-surface-z8 text-sm focus:border-primary-z5 focus:outline-none"
-        />
-      </label>
-      <label class="flex flex-col gap-1.5">
-        <span class="text-xs font-medium text-surface-z6">Doc URL</span>
-        <input
-          type="text"
-          name="url"
-          placeholder="https://docs.example.com/llms.txt or https://github.com/org/repo/tree/main/docs"
-          required
-          class="px-3 py-2 rounded border border-surface-z3 bg-surface-z2 text-surface-z8 text-sm focus:border-primary-z5 focus:outline-none"
-        />
-        <span class="text-xs text-surface-z4">
-          Supports llms.txt URLs, GitHub folder URLs, and HTTP doc pages.
-          Local folders must be indexed via CLI: <code>sensei index</code>
-        </span>
-      </label>
-      <p class="text-xs text-surface-z4">
-        Adds to the shared pool. Link to a repo from its Library Docs page.
-      </p>
-      <button
-        type="submit"
-        class="mt-auto px-4 py-2 rounded bg-primary-z6 text-white text-sm font-medium hover:bg-primary-z7 transition-colors"
-      >
-        Add Library
-      </button>
-    </form>
-  </div>
-{/if}
+<AddLibrarySidebar open={sidebarOpen} action="?/add" onclose={() => sidebarOpen = false} />
 
 <!-- Header -->
 <div class="flex items-center justify-between mb-6">
