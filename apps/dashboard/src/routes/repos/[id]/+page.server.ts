@@ -28,24 +28,26 @@ export const load: PageServerLoad = async ({ params }) => {
     .select('name')
     .eq('repo_id', params.id);
 
-  const { data: libSections } = await db
+  const { data: libSections, error: libSectionsErr } = await db
     .from('lib_doc_sections')
     .select('lib_name,last_fetched')
     .eq('repo_id', params.id)
     .limit(10000);
 
-  const libSectionMap = new Map<string, string>();
-  for (const s of (libSections ?? []) as Array<{ lib_name: string; last_fetched: string }>) {
-    const existing = libSectionMap.get(s.lib_name);
-    if (!existing || s.last_fetched > existing) libSectionMap.set(s.lib_name, s.last_fetched);
-  }
-
-  const STALE_MS = 7 * 24 * 60 * 60 * 1000;
-  const libAttentionCount = (repoLibs ?? []).filter((l: any) => {
-    const lastFetched = libSectionMap.get(l.name);
-    if (!lastFetched) return true;
-    return Date.now() - new Date(lastFetched).getTime() > STALE_MS;
-  }).length;
+  // If the sections query fails, fall back to 0 to avoid showing a false attention badge
+  const libAttentionCount = libSectionsErr ? 0 : (() => {
+    const libSectionMap = new Map<string, string>();
+    for (const s of (libSections ?? []) as Array<{ lib_name: string; last_fetched: string }>) {
+      const existing = libSectionMap.get(s.lib_name);
+      if (!existing || s.last_fetched > existing) libSectionMap.set(s.lib_name, s.last_fetched);
+    }
+    const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+    return (repoLibs ?? []).filter((l: { name: string }) => {
+      const lastFetched = libSectionMap.get(l.name);
+      if (!lastFetched) return true;
+      return Date.now() - new Date(lastFetched).getTime() > STALE_MS;
+    }).length;
+  })();
 
   return { repo, symbols: symbols ?? [], libAttentionCount };
 };
