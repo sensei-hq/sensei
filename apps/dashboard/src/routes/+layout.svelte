@@ -22,7 +22,7 @@
 </svelte:head>
 <svelte:body use:themable={{ theme: vibe, storageKey: 'sensei-theme' }} />
 
-<div class="flex h-screen w-screen flex-col overflow-hidden">
+<div class="flex h-screen w-screen flex-col overflow-hidden bg-surface-z1 text-surface-z8">
   <header class="flex shrink-0 items-center justify-between border-b border-surface-z3 bg-surface-z2 px-6 py-3">
     <div class="flex items-center gap-8">
       <span class="text-lg font-semibold text-primary-z6">sensei</span>

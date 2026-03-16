@@ -1,4 +1,4 @@
 import type { Handle } from '@sveltejs/kit';
-import kavach from 'kavach';
 
-export const handle: Handle = ({ event, resolve }) => kavach.handle({ event, resolve });
+// Auth disabled — restore when kavach default export / handle pattern is resolved
+export const handle: Handle = ({ event, resolve }) => resolve(event);
