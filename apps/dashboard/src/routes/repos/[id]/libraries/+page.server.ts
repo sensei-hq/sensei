@@ -17,6 +17,7 @@ interface LibRow {
   lastFetched: string | null;
   freshness: Freshness;
   skillPath: string | null;
+  isShared: boolean;
 }
 
 const STALE_DAYS = 7;
@@ -51,19 +52,34 @@ export const load: PageServerLoad = async ({ params }) => {
 
   if (!repo) throw error(404, 'Repo not found');
 
-  // All configured libs from Supabase (replaces config.yaml + lib-skills.json reads)
+  // All configured libs (includes shared_lib_id for shared libs)
   const { data: repoLibs } = await db
     .from('repo_libs')
-    .select('name,source_type,base_url,local_path,skill_path')
+    .select('name,source_type,base_url,local_path,skill_path,shared_lib_id')
     .eq('repo_id', params.id);
 
-  // All indexed sections — aggregate by lib_name in JS (Supabase JS client has no GROUP BY)
+  // Per-repo indexed sections (only for non-shared libs)
   const { data: sections } = await db
     .from('lib_doc_sections')
     .select('lib_name,last_fetched')
     .eq('repo_id', params.id)
     .limit(10000);
 
+  // Shared lib catalog metadata (section_count, indexed_at)
+  const sharedIds = ((repoLibs ?? []) as Array<{ shared_lib_id: string | null }>)
+    .map(l => l.shared_lib_id)
+    .filter((id): id is string => Boolean(id));
+
+  const { data: sharedCatalog } = sharedIds.length > 0
+    ? await db.from('shared_libs').select('id,section_count,indexed_at').in('id', sharedIds)
+    : { data: [] as Array<{ id: string; section_count: number; indexed_at: string }> };
+
+  const sharedCatalogMap = new Map(
+    ((sharedCatalog ?? []) as Array<{ id: string; section_count: number; indexed_at: string }>)
+      .map(s => [s.id, s])
+  );
+
+  // Build section map for per-repo libs
   const sectionMap = new Map<string, { count: number; lastFetched: string | null }>();
   for (const s of (sections ?? []) as Array<{ lib_name: string; last_fetched: string }>) {
     const existing = sectionMap.get(s.lib_name);
@@ -77,7 +93,26 @@ export const load: PageServerLoad = async ({ params }) => {
     }
   }
 
-  const libs: LibRow[] = (repoLibs ?? []).map((lib: any) => {
+  const libs: LibRow[] = ((repoLibs ?? []) as any[]).map((lib: any) => {
+    const sharedLibId: string | null = lib.shared_lib_id ?? null;
+
+    if (sharedLibId) {
+      // Shared lib: use catalog metadata; fallback to 0/null if catalog row was deleted
+      const catalog = sharedCatalogMap.get(sharedLibId);
+      return {
+        libName: lib.name,
+        sourceType: lib.source_type,
+        baseUrl: lib.base_url ?? null,
+        localPath: lib.local_path ?? null,
+        sectionCount: catalog?.section_count ?? 0,
+        lastFetched: catalog?.indexed_at ?? null,
+        freshness: 'fresh' as Freshness, // Shared libs don't show freshness
+        skillPath: lib.skill_path ?? null,
+        isShared: true,
+      };
+    }
+
+    // Per-repo lib: aggregate from lib_doc_sections
     const info = sectionMap.get(lib.name);
     const sectionCount = info?.count ?? 0;
     const lastFetched = info?.lastFetched ?? null;
@@ -90,6 +125,7 @@ export const load: PageServerLoad = async ({ params }) => {
       lastFetched,
       freshness: computeFreshness(lastFetched, sectionCount),
       skillPath: lib.skill_path ?? null,
+      isShared: false,
     };
   });
 
