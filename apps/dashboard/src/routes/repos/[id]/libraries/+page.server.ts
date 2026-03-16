@@ -242,7 +242,7 @@ export const actions: Actions = {
       .single();
     if (!lib) return fail(404, { error: 'Library not found in catalog' });
 
-    await db.from('repo_libs').upsert({
+    const { error: linkErr } = await db.from('repo_libs').upsert({
       repo_id: params.id,
       shared_lib_id: lib.id,
       name: lib.name,
@@ -250,6 +250,7 @@ export const actions: Actions = {
       base_url: lib.base_url ?? null,
       local_path: lib.local_path ?? null,
     }, { onConflict: 'repo_id,name' });
+    if (linkErr) return fail(500, { error: linkErr.message });
 
     return { linked: true };
   },
