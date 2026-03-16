@@ -14,7 +14,7 @@ import {
   type SourceAdapter,
 } from "@sensei/engine";
 import { ClaudeBackend, OllamaBackend } from "@sensei/server";
-import { makeSenseiClient, loadSenseiConfig, type LibEntry, type LibSkillsManifest } from "@sensei/shared";
+import { makeSenseiClient, loadSenseiConfig, type LibEntry, type LibSkillFile, type LibSkillsManifest } from "@sensei/shared";
 
 function createAdapter(sourceType: LibEntry["source_type"]): SourceAdapter {
   if (sourceType === "llms.txt") return new LlmsTxtAdapter();
@@ -99,6 +99,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
       continue;
     }
 
+    let libSkillFile: LibSkillFile | undefined;
     if (hasAnthropicKey) {
       const skillSpin = spinner();
       skillSpin.start(`Generating skill for ${lib.name}...`);
@@ -109,7 +110,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
         }
         const validator = new SkillValidator(claudeBackend, profile);
         const markdown = await new LibSkillGenerator(claudeBackend, profile, validator).generate(lib, pages);
-        const libSkillFile = await new ClaudeAdapter().writeLibSkill(lib.name, markdown, repoSlug);
+        libSkillFile = await new ClaudeAdapter().writeLibSkill(lib.name, markdown, repoSlug);
 
         manifest.skills = manifest.skills.filter(s => s.libName !== lib.name);
         manifest.skills.push(libSkillFile);
@@ -123,6 +124,26 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
         log.warn(`  ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+
+    // Sync to repo_libs so dashboard can read config without local file access.
+    // Skill fields are only included when generation succeeded — avoids clobbering
+    // a previously stored skill_path if generation fails transiently.
+    try {
+      await (client as any)
+        .schema('sensei')
+        .from('repo_libs')
+        .upsert({
+          repo_id: repoId,
+          name: lib.name,
+          source_type: lib.source_type,
+          base_url: lib.base_url ?? null,
+          local_path: lib.local_path ?? null,
+          ...(libSkillFile ? { skill_path: libSkillFile.path, skill_generated_at: libSkillFile.generatedAt } : {}),
+        }, { onConflict: 'repo_id,name' });
+    } catch (err) {
+      log.warn(`  repo_libs upsert failed for ${lib.name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // ← upsert closes here; next line is the closing `}` of the for loop
   }
 
   return libs.length;
