@@ -27,9 +27,9 @@ create index if not exists lib_doc_sections_embedding_idx
 create or replace function sensei.match_lib_doc_sections(
   p_repo_id       uuid,
   p_lib_name      text,
-  p_component     text DEFAULT NULL,
   query_embedding vector(768),
-  match_count     int
+  match_count     int,
+  p_component     text DEFAULT NULL
 )
 returns table(
   title       text,
