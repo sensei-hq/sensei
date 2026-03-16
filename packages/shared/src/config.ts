@@ -7,9 +7,9 @@ import type { LibEntry } from "./types.js";
 
 const LibEntrySchema = z.object({
   name: z.string(),
-  source_type: z.enum(['llms.txt', 'http', 'local']),
+  source_type: z.enum(['llms.txt', 'http', 'local', 'github']),
   base_url: z.string().optional(),
-  local_path: z.string().optional(),
+  local_path: z.string().optional(),  // legacy — coerced to base_url on load
   description: z.string().optional(),
 });
 
@@ -33,7 +33,17 @@ export async function loadSenseiConfig(repoPath: string): Promise<SenseiRepoConf
 
     let custom_libs: LibEntry[] | undefined;
     if (Array.isArray(parsed?.custom_libs)) {
-      custom_libs = z.array(LibEntrySchema).parse(parsed.custom_libs) as LibEntry[];
+      const raw = z.array(LibEntrySchema).parse(parsed.custom_libs);
+      custom_libs = raw.map(entry => {
+        // Coerce legacy local_path to file:// base_url
+        if (!entry.base_url && entry.local_path) {
+          const fileUrl = entry.local_path.startsWith('/')
+            ? `file://${entry.local_path}`
+            : `file:///${entry.local_path}`;
+          return { ...entry, base_url: fileUrl, local_path: undefined } as LibEntry;
+        }
+        return entry as LibEntry;
+      });
     }
 
     return { ...(parsed as unknown as SenseiRepoConfig), custom_libs };
