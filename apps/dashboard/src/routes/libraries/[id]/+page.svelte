@@ -20,6 +20,12 @@
 
   let search = $state('');
   let sidebarMode = $state<'simulate' | 'edit' | null>(null);
+  let activeTab = $state<'documents' | 'sections'>('documents');
+  let expandedDocId = $state<string | null>(null);
+
+  function toggleDoc(id: string) {
+    expandedDocId = expandedDocId === id ? null : id;
+  }
 
   type SimResult = { id: string; title: string; url: string | null; description: string; component: string | null };
   let simResults = $state<SimResult[]>([]);
@@ -295,8 +301,12 @@
   </div>
 </div>
 
-<!-- Stat row — uniform sizing for all four cards -->
+<!-- Stat row — uniform sizing for all cards -->
 <div class="grid gap-3 mb-8" style="grid-template-columns: repeat(auto-fill, minmax(140px, 1fr))">
+  <div class="p-4 rounded-lg border border-surface-z3 bg-surface-z1">
+    <div class="text-2xl font-semibold text-primary-z6 leading-tight mb-1">{data.lib.document_count ?? 0}</div>
+    <div class="text-xs font-semibold text-surface-z5 uppercase tracking-wider">Documents</div>
+  </div>
   <div class="p-4 rounded-lg border border-surface-z3 bg-surface-z1">
     {#if data.lib.index_status === 'indexing'}
       <svg class="animate-spin text-primary-z6 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke-linecap="round"/></svg>
@@ -336,66 +346,74 @@
   </div>
 {/if}
 
-<!-- Sections table -->
-<div class="mb-4 flex items-center justify-between">
-  <h2 class="text-xs font-semibold text-surface-z5 uppercase tracking-wider">
-    Index Contents
-    <span class="text-surface-z4 font-normal normal-case">
-      ({filteredSections.length}{filteredSections.length !== data.sections.length ? ` of ${data.sections.length}` : ''} sections)
-    </span>
-  </h2>
-  {#if data.sections.length > 0}
-    <input
-      type="search"
-      placeholder="Filter sections…"
-      bind:value={search}
-      class="px-3 py-1.5 rounded border border-surface-z3 bg-surface-z2 text-surface-z8 text-xs focus:border-primary-z5 focus:outline-none w-48"
-    />
-  {/if}
+<!-- Tab bar -->
+<div class="flex gap-1 border-b border-surface-z3 mb-6">
+  <button
+    onclick={() => activeTab = 'documents'}
+    class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px {activeTab === 'documents' ? 'border-primary-z6 text-primary-z6' : 'border-transparent text-surface-z5 hover:text-surface-z7'}"
+  >
+    Documents
+  </button>
+  <button
+    onclick={() => activeTab = 'sections'}
+    class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px {activeTab === 'sections' ? 'border-primary-z6 text-primary-z6' : 'border-transparent text-surface-z5 hover:text-surface-z7'}"
+  >
+    Sections
+  </button>
 </div>
 
-{#if data.lib.index_status === 'indexing'}
-  <div class="rounded-lg border border-surface-z3 bg-surface-z1 p-8 text-center">
-    <svg class="animate-spin mx-auto mb-3 text-primary-z6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke-linecap="round"/></svg>
-    <p class="text-surface-z6 text-sm">Indexing in progress…</p>
-    <p class="text-surface-z4 text-xs mt-1">This page will update automatically.</p>
+<!-- Documents tab -->
+{#if activeTab === 'documents'}
+  <div class="space-y-2">
+    {#each data.documents ?? [] as doc (doc.id)}
+      <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <button
+          class="w-full flex items-center gap-3 p-4 text-left hover:bg-gray-50 transition-colors"
+          onclick={() => toggleDoc(doc.id)}
+        >
+          {#if doc.component}
+            <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono shrink-0">
+              {doc.component}
+            </span>
+          {/if}
+          <div class="min-w-0 flex-1">
+            <div class="font-medium text-gray-900 truncate">{doc.title}</div>
+            {#if doc.summary}
+              <div class="text-sm text-gray-500 truncate mt-0.5">{doc.summary}</div>
+            {/if}
+          </div>
+          {#if doc.url && data.lib.source_type !== 'local'}
+            <a
+              href={doc.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-blue-600 hover:underline text-sm shrink-0"
+              onclick={(e) => e.stopPropagation()}
+            >Open ↗</a>
+          {/if}
+          <svg class="w-4 h-4 text-gray-400 shrink-0 transition-transform {expandedDocId === doc.id ? 'rotate-180' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06z" clip-rule="evenodd" />
+          </svg>
+        </button>
+
+        {#if expandedDocId === doc.id}
+          <div class="border-t border-gray-200 p-4 bg-gray-50">
+            <p class="text-sm text-gray-600 italic">
+              {doc.summary || 'No summary available.'}
+            </p>
+          </div>
+        {/if}
+      </div>
+    {/each}
+    {#if (data.documents ?? []).length === 0}
+      <p class="text-gray-500 text-sm py-8 text-center">No documents indexed yet. Click Re-index to fetch.</p>
+    {/if}
   </div>
-{:else if data.sections.length === 0}
-  <div class="rounded-lg border border-surface-z3 bg-surface-z1 p-8 text-center">
-    <p class="text-surface-z5 text-sm mb-1">No sections indexed yet</p>
-    <p class="text-surface-z4 text-xs">Click Re-index to fetch docs.</p>
-  </div>
-{:else if filteredSections.length === 0}
-  <p class="text-surface-z5 text-sm">No sections match your filter.</p>
-{:else}
-  <div class="rounded-lg border border-surface-z3 overflow-hidden">
-    <table class="w-full border-collapse text-sm">
-      <thead>
-        <tr class="bg-surface-z2 border-b border-surface-z3">
-          <th class="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-surface-z5">Title</th>
-          <th class="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-surface-z5">Component</th>
-          <th class="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-surface-z5 max-w-xs">Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each filteredSections as section}
-          <tr class="border-b border-surface-z2 last:border-b-0 hover:bg-surface-z2 transition-colors">
-            <td class="px-4 py-3">
-              {#if section.url}
-                <a href={section.url} target="_blank" rel="noopener noreferrer" class="text-primary-z6 hover:text-primary-z7 transition-colors font-medium">
-                  {section.title}
-                </a>
-              {:else}
-                <span class="font-medium text-surface-z8">{section.title}</span>
-              {/if}
-            </td>
-            <td class="px-4 py-3 text-surface-z5 text-xs">{section.component ?? '—'}</td>
-            <td class="px-4 py-3 text-surface-z6 text-xs max-w-xs">
-              <p class="line-clamp-2">{section.description}</p>
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
+{/if}
+
+<!-- Sections tab -->
+{#if activeTab === 'sections'}
+  <p class="text-gray-500 text-sm py-4">
+    Sections are now organized under Documents. {data.lib.section_count ?? 0} sections indexed across {data.lib.document_count ?? 0} documents.
+  </p>
 {/if}
