@@ -7,7 +7,7 @@ function makeDb(overrides: Record<string, unknown> = {}) {
   const fromResult = {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
-    maybeSingle: vi.fn().mockResolvedValue({ data: { shared_lib_id: "shared-123" } }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: { library_id: "shared-123" } }),
     or: vi.fn().mockReturnThis(),
     order: vi.fn().mockReturnThis(),
     // limit must be defined — keyword fallback calls .order(...).limit(N) and awaits the result
