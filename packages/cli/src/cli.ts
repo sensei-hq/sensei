@@ -31,6 +31,7 @@ const { positionals, values } = parseArgs({
     drift: { type: "boolean", default: false },
     agent: { type: "string" },
     lib: { type: "string" },
+    global: { type: "boolean", default: false },
   },
 });
 
@@ -74,6 +75,7 @@ Commands:
   stats                    Show tool usage analytics (last 7 days)
   update-registry          Index custom_libs from .sensei/config.yaml into Supabase
   update-registry --lib <name>   Re-index a single named library
+  update-registry --global --lib <name>   Promote lib to shared pool (all repos can link to it)
 
 Options:
   -h, --help               Show this help message
@@ -346,7 +348,7 @@ async function main() {
     }
     case "update-registry": {
       const { updateRegistry } = await import("./commands/update-registry.js");
-      await updateRegistry(repoRoot, values.lib);
+      await updateRegistry(repoRoot, values.lib, { global: values.global });
       break;
     }
     default:
