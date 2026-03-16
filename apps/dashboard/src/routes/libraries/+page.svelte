@@ -167,7 +167,7 @@
             <span class="text-xs px-1.5 py-0.5 rounded bg-surface-z3 text-surface-z5">{CATEGORY_LABEL[category]}</span>
           </div>
           {#if url}
-            <p class="text-xs text-surface-z4 truncate mb-2">{url}</p>
+            <p class="text-xs text-surface-z4 truncate mb-2" title={url}>{url}</p>
           {/if}
           <div class="flex items-center gap-2 text-xs text-surface-z5 mb-2">
             {#if badge.label}

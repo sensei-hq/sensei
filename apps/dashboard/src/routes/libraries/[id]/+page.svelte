@@ -384,7 +384,7 @@
               <div class="text-sm text-surface-z5 truncate mt-0.5">{doc.summary}</div>
             {/if}
           </div>
-          {#if doc.url && !doc.url.startsWith('file://') && data.lib.source_type !== 'local'}
+          {#if doc.url && !doc.url.startsWith('file://')}
             <a
               href={doc.url}
               target="_blank"
