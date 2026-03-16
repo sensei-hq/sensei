@@ -103,10 +103,83 @@ describe("HttpAdapter", () => {
     expect(pages[0].sequence).toBe(0);
   });
 
-  it("throws when entry URL fetch returns non-ok status", async () => {
+  it("uses sitemap.xml to discover pages when available", async () => {
+    const sitemap = `<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://x.com/docs</loc></url>
+  <url><loc>https://x.com/docs/page-a</loc></url>
+  <url><loc>https://x.com/docs/page-b</loc></url>
+  <url><loc>https://x.com/about</loc></url>
+</urlset>`;
+    mockFetch({
+      "https://x.com/sitemap.xml": { body: sitemap, type: "application/xml" },
+      "https://x.com/docs": { body: `<html><body><h1>Home</h1></body></html>` },
+      "https://x.com/docs/page-a": { body: "# Page A\n\nContent A.", type: "text/markdown" },
+      "https://x.com/docs/page-b": { body: "# Page B\n\nContent B.", type: "text/markdown" },
+    });
+
+    const adapter = new HttpAdapter();
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    const urls = pages.map(p => p.url);
+    expect(urls).toContain("https://x.com/docs/page-a");
+    expect(urls).toContain("https://x.com/docs/page-b");
+    // /about is outside the /docs prefix — must be excluded
+    expect(urls).not.toContain("https://x.com/about");
+  });
+
+  it("falls back to HTML link extraction when sitemap is absent", async () => {
+    mockFetch({
+      // No sitemap entry — 404
+      "https://x.com/docs": { body: `<html><body><a href="/docs/page">Page</a></body></html>` },
+      "https://x.com/docs/page": { body: "# Page\n\nContent.", type: "text/markdown" },
+    });
+
+    const adapter = new HttpAdapter();
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    expect(pages.map(p => p.url)).toContain("https://x.com/docs/page");
+  });
+
+  it("strips URL fragments to avoid fetching the same page twice", async () => {
+    // Sidebar links often include fragment anchors like /docs/adapters/supabase#config
+    const html = `<html><body>
+      <a href="/docs/page">Page</a>
+      <a href="/docs/page#section-1">Page § 1</a>
+      <a href="/docs/page#section-2">Page § 2</a>
+    </body></html>`;
+    mockFetch({
+      "https://x.com/docs": { body: html },
+      "https://x.com/docs/page": { body: "# Page\n\nContent.", type: "text/markdown" },
+    });
+
+    const adapter = new HttpAdapter();
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    const pagePaths = pages.filter(p => p.url?.endsWith("/page"));
+    expect(pagePaths).toHaveLength(1);
+  });
+
+  it("does not follow links outside the entry URL subtree", async () => {
+    // /documentation starts with /docs but is NOT under /docs/
+    const html = `<html><body>
+      <a href="/docs/sub">Sub</a>
+      <a href="/documentation/other">Other (wrong prefix)</a>
+    </body></html>`;
+    mockFetch({
+      "https://x.com/docs": { body: html },
+      "https://x.com/docs/sub": { body: "# Sub\n\nContent.", type: "text/markdown" },
+    });
+
+    const adapter = new HttpAdapter();
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    const urls = pages.map(p => p.url);
+    expect(urls).toContain("https://x.com/docs/sub");
+    expect(urls).not.toContain("https://x.com/documentation/other");
+  });
+
+  it("returns empty pages when entry URL fetch returns non-ok status", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, headers: { get: () => null }, text: () => Promise.resolve("") }));
     const adapter = new HttpAdapter();
-    await expect(adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" })).rejects.toThrow("404");
+    const pages = await adapter.fetch({ name: "x", source_type: "http", base_url: "https://x.com/docs" });
+    expect(pages).toHaveLength(0);
   });
 
   it("skips sub-pages that fail to fetch (graceful degradation)", async () => {

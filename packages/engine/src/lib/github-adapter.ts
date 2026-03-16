@@ -1,7 +1,7 @@
 // packages/engine/src/lib/github-adapter.ts
 import type { LibEntry, DocPage } from "@sensei/shared";
 import type { SourceAdapter } from "./source-adapter.js";
-import { extractSummary } from "./doc-utils.js";
+import { extractSummary, parseLlmsIndex } from "./doc-utils.js";
 
 interface GitHubTreeItem { path: string; type: "blob" | "tree"; url: string; }
 interface GitHubTreeResponse { tree: GitHubTreeItem[]; truncated: boolean; }
@@ -39,10 +39,48 @@ export class GithubAdapter implements SourceAdapter {
       );
     }
     const prefix = basePath ? basePath + "/" : "";
-    const mdFiles = tree.tree.filter(item => item.type === "blob" && item.path.startsWith(prefix) && item.path.endsWith(".md"));
 
+    // Prefer llms.txt index if present — gives curated titles, summaries, and component grouping
+    const llmsTxtItem = tree.tree.find(
+      item => item.type === "blob" && item.path === (prefix + "llms.txt")
+    );
+    if (llmsTxtItem) {
+      const llmsRawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${llmsTxtItem.path}`;
+      const llmsRes = await fetch(llmsRawUrl, { headers: authHeaders });
+      if (llmsRes.ok) {
+        const llmsText = await llmsRes.text();
+        // Use the GitHub blob URL as base so relative links resolve correctly
+        const llmsBlobUrl = `https://github.com/${owner}/${repo}/blob/${branch}/${llmsTxtItem.path}`;
+        const entries = parseLlmsIndex(llmsText, llmsBlobUrl);
+        const pages: DocPage[] = [];
+        for (let i = 0; i < entries.length; i++) {
+          const e = entries[i];
+          // Convert blob URL to raw for fetching
+          const rawUrl = e.url.replace(
+            /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\//,
+            `https://raw.githubusercontent.com/$1/$2/$3/`
+          );
+          const res = await fetch(rawUrl, { headers: authHeaders });
+          if (!res.ok) {
+            console.warn(`[GithubAdapter] Failed to fetch ${rawUrl}: HTTP ${res.status}`);
+            pages.push({ title: e.title, url: e.url, summary: e.summary, content: e.summary, sourceType: "github", component: e.component, sequence: i });
+            continue;
+          }
+          const content = await res.text();
+          pages.push({ title: e.title, url: e.url, summary: e.summary, content, sourceType: "github", component: e.component, sequence: i });
+        }
+        return pages;
+      }
+    }
+
+    // Fallback: crawl all .md and .txt files under the base path
+    const docFiles = tree.tree.filter(
+      item => item.type === "blob" && item.path.startsWith(prefix) &&
+        (item.path.endsWith(".md") || item.path.endsWith(".txt")) &&
+        !item.path.endsWith("llms.txt")
+    );
     const pages: DocPage[] = [];
-    for (const file of mdFiles) {
+    for (const file of docFiles) {
       const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${file.path}`;
       const res = await fetch(rawUrl, { headers: authHeaders });
       if (!res.ok) {
