@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { getDb } from '$lib/server/db';
 import { startLibIndexing } from '$lib/server/lib-indexer';
-import { inferSourceType } from '@sensei/engine';
+import { inferSourceType } from '@sensei/engine/lib';
 import yaml from 'js-yaml';
 
 type Freshness = 'fresh' | 'stale' | 'missing';
@@ -14,7 +14,6 @@ interface LibRow {
   libName: string;
   sourceType: string;
   baseUrl: string | null;
-  localPath: string | null;
   sectionCount: number;
   lastFetched: string | null;
   freshness: Freshness;
@@ -47,7 +46,7 @@ export const load: PageServerLoad = async ({ params }) => {
   // All configured libs (includes library_id for shared libs)
   const { data: repoLibs } = await db
     .from('referenced_libraries')
-    .select('name,source_type,base_url,local_path,skill_path,library_id')
+    .select('name,source_type,base_url,skill_path,library_id')
     .eq('repo_id', params.id);
 
   // Per-repo indexed sections (only for non-shared libs)
@@ -94,7 +93,6 @@ export const load: PageServerLoad = async ({ params }) => {
         libName: lib.name,
         sourceType: lib.source_type,
         baseUrl: lib.base_url ?? null,
-        localPath: lib.local_path ?? null,
         sectionCount: catalog?.section_count ?? 0,
         lastFetched: catalog?.indexed_at ?? null,
         freshness: computeFreshness(catalog?.indexed_at ?? null, catalog?.section_count ?? 0),
@@ -111,14 +109,13 @@ export const load: PageServerLoad = async ({ params }) => {
       libName: lib.name,
       sourceType: lib.source_type,
       baseUrl: lib.base_url ?? null,
-      localPath: lib.local_path ?? null,
       sectionCount,
       lastFetched,
       freshness: computeFreshness(lastFetched, sectionCount),
       skillPath: lib.skill_path ?? null,
       isShared: false,
       sharedLibId: null,
-    };
+    } as LibRow;
   });
 
   // Fetch catalog for linking (mark already-linked ones)
@@ -161,9 +158,7 @@ export const actions: Actions = {
     }
 
     const inferred = inferSourceType(url);
-    const { source_type } = inferred;
-    const base_url = 'base_url' in inferred ? inferred.base_url : undefined;
-    const local_path = 'local_path' in inferred ? inferred.local_path : undefined;
+    const { source_type, base_url } = inferred;
 
     // Update config.yaml
     try {
@@ -172,7 +167,7 @@ export const actions: Actions = {
       const config = yaml.load(raw) as Record<string, unknown>;
       const customLibs = (Array.isArray(config.custom_libs) ? config.custom_libs : []) as unknown[];
       if (!customLibs.some((l: unknown) => (l as { name: string }).name === name)) {
-        customLibs.push({ name, source_type, ...(base_url ? { base_url } : { local_path }) });
+        customLibs.push({ name, source_type, base_url });
         config.custom_libs = customLibs;
         await writeFile(configPath, yaml.dump(config), 'utf-8');
       }
@@ -184,7 +179,7 @@ export const actions: Actions = {
     const { data: sharedLib, error: sharedLibErr } = await db
       .from('libraries')
       .upsert(
-        { name, source_type, base_url: base_url ?? null, local_path: local_path ?? null },
+        { name, source_type, base_url },
         { onConflict: 'name' }
       )
       .select('id')
@@ -200,8 +195,7 @@ export const actions: Actions = {
         repo_id: params.id,
         name,
         source_type,
-        base_url: base_url ?? null,
-        local_path: local_path ?? null,
+        base_url,
         library_id: sharedLib.id,
       },
       { onConflict: 'repo_id,name' }
@@ -213,8 +207,7 @@ export const actions: Actions = {
       id: sharedLib.id,
       name,
       source_type,
-      base_url: base_url ?? null,
-      local_path: local_path ?? null,
+      base_url,
     });
 
     redirect(303, `/repos/${params.id}/libraries`);
@@ -229,7 +222,7 @@ export const actions: Actions = {
 
     const { data: lib } = await db
       .from('libraries')
-      .select('id,name,source_type,base_url,local_path')
+      .select('id,name,source_type,base_url')
       .eq('id', sharedLibId)
       .single();
     if (!lib) return fail(404, { error: 'Library not found in catalog' });
@@ -240,7 +233,6 @@ export const actions: Actions = {
       name: lib.name,
       source_type: lib.source_type,
       base_url: lib.base_url ?? null,
-      local_path: lib.local_path ?? null,
     }, { onConflict: 'repo_id,name' });
     if (linkErr) return fail(500, { error: linkErr.message });
 
@@ -256,7 +248,7 @@ export const actions: Actions = {
 
     const { data: libRow } = await db
       .from('referenced_libraries')
-      .select('source_type,base_url,local_path,library_id')
+      .select('source_type,base_url,library_id')
       .eq('repo_id', params.id)
       .eq('name', name)
       .single();
@@ -270,7 +262,6 @@ export const actions: Actions = {
         name,
         source_type: (libRow as any).source_type,
         base_url: (libRow as any).base_url ?? null,
-        local_path: (libRow as any).local_path ?? null,
       });
     }
 
@@ -282,7 +273,7 @@ export const actions: Actions = {
     const db = getDb();
     const { data: repoLibs } = await db
       .from('referenced_libraries')
-      .select('name,source_type,base_url,local_path,library_id')
+      .select('name,source_type,base_url,library_id')
       .eq('repo_id', params.id);
 
     if (!repoLibs?.length) redirect(303, `/repos/${params.id}/libraries`);
@@ -294,7 +285,6 @@ export const actions: Actions = {
           name: lib.name,
           source_type: lib.source_type,
           base_url: lib.base_url ?? null,
-          local_path: lib.local_path ?? null,
         });
       }
     }

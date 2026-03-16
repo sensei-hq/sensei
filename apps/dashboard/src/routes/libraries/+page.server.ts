@@ -1,7 +1,7 @@
 import type { PageServerLoad, Actions } from './$types';
 import { fail } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
-import { inferSourceType } from '@sensei/engine';
+import { inferSourceType } from '@sensei/engine/lib';
 import { startLibFetch } from '$lib/server/lib-indexer';
 
 export const load: PageServerLoad = async () => {
@@ -9,7 +9,7 @@ export const load: PageServerLoad = async () => {
 
   const { data: libs } = await db
     .from('libraries')
-    .select('id,name,source_type,base_url,local_path,section_count,indexed_at,index_status,index_error')
+    .select('id,name,source_type,base_url,section_count,indexed_at,index_status,index_error')
     .order('name');
 
   const { data: repoLinks } = await db
@@ -47,23 +47,21 @@ export const actions: Actions = {
     }
 
     const inferred = inferSourceType(url);
-    const { source_type } = inferred;
-    const base_url = 'base_url' in inferred ? inferred.base_url : null;
-    const local_path = 'local_path' in inferred ? inferred.local_path : null;
+    const { source_type, base_url } = inferred;
 
     const { data: existing } = await db
       .from('libraries')
       .upsert(
-        { name, source_type, base_url: base_url ?? null, local_path: local_path ?? null, index_status: 'pending' },
+        { name, source_type, base_url, index_status: 'pending' },
         { onConflict: 'name' }
       )
-      .select('id,name,source_type,base_url,local_path')
+      .select('id,name,source_type,base_url')
       .single();
 
     if (!existing) return fail(500, { error: 'Failed to register library' });
 
     // Background index — returns immediately
-    await startLibFetch(db, existing as { id: string; name: string; source_type: string; base_url: string | null; local_path: string | null });
+    await startLibFetch(db, existing as { id: string; name: string; source_type: string; base_url: string });
 
     return { success: true };
   },
