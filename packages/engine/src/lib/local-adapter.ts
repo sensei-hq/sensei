@@ -2,6 +2,7 @@ import { readdir, readFile } from "fs/promises";
 import { join, extname, basename, dirname } from "path";
 import type { LibEntry, DocPage } from "@sensei/shared";
 import type { SourceAdapter } from "./source-adapter.js";
+import { extractSummary } from "./doc-utils.js";
 
 export class LocalAdapter implements SourceAdapter {
   async fetch(entry: LibEntry): Promise<DocPage[]> {
@@ -23,10 +24,10 @@ async function walkDir(dir: string, rootPath: string): Promise<DocPage[]> {
       if (ext !== ".md" && ext !== ".txt") continue;
       const content = await readFile(fullPath, "utf-8");
       const title = basename(dirent.name, ext);
-      const description = content.slice(0, 200);
+      const summary = extractSummary(content);
       const parentDir = dirname(fullPath);
       const component = parentDir !== rootPath ? basename(parentDir) : undefined;
-      pages.push({ title, localPath: fullPath, description, content, sourceType: "local", component });
+      pages.push({ title, localPath: fullPath, summary, content, sourceType: "local", component });
     }
   }
   return pages;

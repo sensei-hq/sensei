@@ -30,7 +30,7 @@ export class LibIndexer {
           title: page.title,
           url: page.url ?? null,
           local_path: page.localPath ?? null,
-          description: page.description,
+          summary: page.summary,
           content: page.content ?? null,
           source_type: entry.source_type,
           component: page.component ?? null,
@@ -65,7 +65,7 @@ export class LibIndexer {
           title: page.title,
           url: page.url ?? null,
           local_path: page.localPath ?? null,
-          description: page.description,
+          summary: page.summary,
           content: page.content ?? null,
           source_type: entry.source_type,
           component: page.component ?? null,
@@ -84,8 +84,8 @@ export class LibIndexer {
     if (!this.backend) return null;
     const input =
       entry.source_type === "llms.txt"
-        ? page.description
-        : (page.content ?? page.description).slice(0, 512);
+        ? page.summary
+        : page.content.slice(0, 512);
     return this.backend.embed(input);
   }
 }

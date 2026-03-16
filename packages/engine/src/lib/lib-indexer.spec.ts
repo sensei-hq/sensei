@@ -38,8 +38,8 @@ describe("LibIndexer", () => {
 
     const entry: LibEntry = { name: "rokkit", source_type: "llms.txt", base_url: "https://x.com/llms.txt" };
     const pages: DocPage[] = [
-      { title: "Button", url: "https://rokkit.dev/button", description: "A button", sourceType: "llms.txt" },
-      { title: "Input", url: "https://rokkit.dev/input", description: "An input", sourceType: "llms.txt" },
+      { title: "Button", url: "https://rokkit.dev/button", summary: "A button", content: "A button component docs.", sourceType: "llms.txt" },
+      { title: "Input", url: "https://rokkit.dev/input", summary: "An input", content: "An input component docs.", sourceType: "llms.txt" },
     ];
 
     const result = await indexer.index("repo-123", entry, pages);
@@ -60,7 +60,7 @@ describe("LibIndexer", () => {
 
     const content = "X".repeat(600);
     const pages: DocPage[] = [
-      { title: "Usage", url: "https://x.com", description: "Short desc", content, sourceType: "http" },
+      { title: "Usage", url: "https://x.com", summary: "Short desc", content, sourceType: "http" },
     ];
     const entry: LibEntry = { name: "kavach", source_type: "http", base_url: "https://kavach.dev" };
 
@@ -69,17 +69,17 @@ describe("LibIndexer", () => {
     expect(backend.embed).toHaveBeenCalledWith("X".repeat(512));
   });
 
-  it("falls back to description when content is undefined for non-llms.txt page", async () => {
+  it("embed input for non-llms.txt types uses content.slice(0,512)", async () => {
     const backend = makeMockBackend();
     const db = makeMockDb();
     const indexer = new LibIndexer(db as any, backend);
 
     const pages: DocPage[] = [
-      { title: "Page", url: "https://x.com", description: "fallback desc", sourceType: "http" },
+      { title: "Page", url: "https://x.com", summary: "fallback desc", content: "fallback content", sourceType: "http" },
     ];
 
     await indexer.index("repo-123", { name: "x", source_type: "http" }, pages);
-    expect(backend.embed).toHaveBeenCalledWith("fallback desc");
+    expect(backend.embed).toHaveBeenCalledWith("fallback content");
   });
 });
 
@@ -101,8 +101,8 @@ describe("LibIndexer.indexShared — no backend (Phase 1)", () => {
     const db = makeDb() as any;
     const indexer = new LibIndexer(db, null);
     const pages: DocPage[] = [
-      { title: "Button", description: "A button component", sourceType: "llms.txt", url: "https://x.com/btn" },
-      { title: "Input", description: "A text input", sourceType: "llms.txt", url: "https://x.com/inp" },
+      { title: "Button", summary: "A button component", content: "A button component docs.", sourceType: "llms.txt", url: "https://x.com/btn" },
+      { title: "Input", summary: "A text input", content: "An input component docs.", sourceType: "llms.txt", url: "https://x.com/inp" },
     ];
     const { sectionsIndexed } = await indexer.indexShared("lib-id-123", { name: "mylib", source_type: "llms.txt", base_url: "https://x.com" }, pages);
 
@@ -120,8 +120,8 @@ describe("LibIndexer.indexShared — no backend (Phase 1)", () => {
     };
     const indexer = new LibIndexer(db, backend as ModelBackend);
     const pages: DocPage[] = [
-      { title: "Button", description: "A button component", sourceType: "llms.txt", url: "https://x.com/btn" },
-      { title: "Input", description: "A text input", sourceType: "llms.txt", url: "https://x.com/inp" },
+      { title: "Button", summary: "A button component", content: "A button component docs.", sourceType: "llms.txt", url: "https://x.com/btn" },
+      { title: "Input", summary: "A text input", content: "An input component docs.", sourceType: "llms.txt", url: "https://x.com/inp" },
     ];
     await indexer.indexShared("lib-id-123", { name: "mylib", source_type: "llms.txt", base_url: "https://x.com" }, pages);
 
