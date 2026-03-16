@@ -1,6 +1,18 @@
 // packages/server/src/tools/get-lib-docs.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ModelBackend, DocPage } from "@sensei/shared";
+import type { ModelBackend } from "@sensei/shared";
+
+export interface LibSection {
+  title: string;        // section title (H2 heading)
+  content: string;      // section markdown
+  document: {
+    title: string;
+    url: string | null;
+    component: string | null;
+    summary: string;
+  };
+  similarity?: number;
+}
 
 export async function getLibDocsTool(
   db: SupabaseClient,
@@ -8,7 +20,7 @@ export async function getLibDocsTool(
   repoId: string,
   lib: string,
   opts?: { component?: string; query?: string; limit?: number },
-): Promise<{ lib: string; sections: DocPage[] }> {
+): Promise<{ lib: string; sections: LibSection[] }> {
   const limit = opts?.limit ?? 10;
   try {
     // Determine if this lib links to the shared pool.
@@ -34,8 +46,8 @@ export async function getLibDocsTool(
     if (opts?.query) {
       const embedding = await backend.embed(opts.query);
       if (sharedLibId) {
-        const { data, error } = await db.rpc("match_shared_lib_sections", {
-          p_shared_lib_id: sharedLibId,
+        const { data, error } = await db.rpc("match_libraries_sections", {
+          p_library_id: sharedLibId,
           p_component: opts.component ?? null,
           query_embedding: embedding,
           match_count: limit,
@@ -44,16 +56,15 @@ export async function getLibDocsTool(
         rows = (data ?? []) as Record<string, unknown>[];
         // Fallback to keyword search if no embeddings exist yet
         if (rows.length === 0) {
-          const q = opts.query;
-          const safeQ = q.replace(/[%,()]/g, '');
-          let kq = (db as any)
+          const safeQ = opts.query.replace(/[%,()]/g, '');
+          const { data: kData, error: kErr } = await (db as any)
             .schema('sensei')
-            .from('shared_lib_sections')
-            .select('title,url,local_path,description,content,source_type,component')
-            .eq('shared_lib_id', sharedLibId)
-            .or(`title.ilike.%${safeQ}%,description.ilike.%${safeQ}%`);
-          if (opts.component) kq = kq.eq('component', opts.component);
-          const { data: kData, error: kErr } = await kq.order('title').limit(limit);
+            .from('sections_in_document')
+            .select('id,title,content,document_id,documents_in_library!inner(title,url,local_path,component,summary)')
+            .eq('library_id', sharedLibId)
+            .or(`title.ilike.%${safeQ}%,content.ilike.%${safeQ}%`)
+            .order('title')
+            .limit(limit);
           if (kErr) throw new Error(kErr.message);
           rows = (kData ?? []) as Record<string, unknown>[];
         }
@@ -71,13 +82,12 @@ export async function getLibDocsTool(
     } else {
       // Browse path (no query): list all sections sorted by title
       if (sharedLibId) {
-        let q = (db as any)
+        const { data, error } = await (db as any)
           .schema('sensei')
-          .from('shared_lib_sections')
-          .select('title,url,local_path,description,content,source_type,component')
-          .eq('shared_lib_id', sharedLibId);
-        if (opts?.component) q = q.eq('component', opts.component) as typeof q;
-        const { data, error } = await q.order('title');
+          .from('sections_in_document')
+          .select('id,title,content,documents_in_library!inner(title,url,local_path,component,summary)')
+          .eq('library_id', sharedLibId)
+          .order('title');
         if (error) throw new Error(error.message);
         rows = (data ?? []) as Record<string, unknown>[];
       } else {
@@ -93,23 +103,34 @@ export async function getLibDocsTool(
       }
     }
 
-    const sections: DocPage[] = rows.map(r => ({
-      title: r.title as string,
-      url: (r.url as string | null) ?? undefined,
-      localPath: (r.local_path as string | null) ?? undefined,
-      description: r.description as string,
-      content: (r.content as string | null) ?? undefined,
-      sourceType: r.source_type as DocPage["sourceType"],
-      component: (r.component as string | null) ?? undefined,
-    }));
+    const sections: LibSection[] = rows.map(r => {
+      // Handle both RPC shape and JOIN shape
+      const doc = (r.documents_in_library as any) ?? {
+        title: r.doc_title as string,
+        url: r.url as string | null,
+        component: r.component as string | null,
+        summary: r.summary as string,
+      };
+      return {
+        title: (r.section_title ?? r.title) as string,
+        content: r.content as string,
+        document: {
+          title: doc.title,
+          url: doc.url ?? doc.local_path ?? null,
+          component: doc.component ?? null,
+          summary: doc.summary ?? "",
+        },
+        similarity: r.similarity as number | undefined,
+      };
+    });
 
     // Log MCP query (fire-and-forget, non-blocking)
     if (opts?.query && sharedLibId && rows.length >= 0) {
       try {
         (db as any)
           .schema('sensei')
-          .from('lib_queries')
-          .insert({ shared_lib_id: sharedLibId, query_text: opts.query, source: 'mcp', sections_hit: rows.length })
+          .from('queries_on_library')
+          .insert({ library_id: sharedLibId, query_text: opts.query, source: 'mcp', sections_hit: rows.length })
           .then(() => {/* ignore */})
           .catch(() => {/* ignore */});
       } catch { /* ignore */ }
