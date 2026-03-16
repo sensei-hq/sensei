@@ -1535,9 +1535,476 @@ git commit -m "feat(server): keyword fallback in getLibDocsTool when no embeddin
 
 ---
 
+---
+
+## Chunk 7: Shared AddLibrarySidebar + repo link integration
+
+### Task 12: Extract AddLibrarySidebar component
+
+**Goal:** Reuse the Add Library sidebar in both `/libraries` and `/repos/[id]/libraries` without duplicating UI.
+
+**Files:**
+- Create: `apps/dashboard/src/lib/components/AddLibrarySidebar.svelte`
+- Modify: `apps/dashboard/src/routes/libraries/+page.svelte` (use component)
+- Modify: `apps/dashboard/src/routes/repos/[id]/libraries/+page.svelte` (add sidebar)
+- Modify: `apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts` (add `link` action)
+
+The component accepts `action` (form action URL) and `open` (boolean). The parent controls open state. When used from the repo page, the form posts to `?/add` on the repo route which handles both config.yaml update AND `repo_libs` linking.
+
+- [ ] **Step 1: Create the shared component**
+
+```svelte
+<!-- apps/dashboard/src/lib/components/AddLibrarySidebar.svelte -->
+<script lang="ts">
+  import { enhance } from '$app/forms';
+
+  interface Props {
+    open: boolean;
+    action: string;
+    onclose: () => void;
+  }
+
+  const { open, action, onclose }: Props = $props();
+</script>
+
+{#if open}
+  <div
+    class="fixed inset-0 bg-black/40 z-40"
+    role="presentation"
+    onclick={onclose}
+  ></div>
+
+  <div class="fixed right-0 top-0 h-full w-96 bg-surface-z1 border-l border-surface-z3 z-50 flex flex-col shadow-xl">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-surface-z3 sticky top-0 bg-surface-z1">
+      <h2 class="text-sm font-semibold text-surface-z8">Add Library</h2>
+      <button onclick={onclose} class="text-surface-z5 hover:text-surface-z8 transition-colors" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <path d="M18 6L6 18M6 6l12 12" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <form method="POST" {action} use:enhance class="flex flex-col gap-4 px-5 py-5 flex-1">
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs font-medium text-surface-z6">Name <span class="text-error-z6">*</span></span>
+        <input
+          type="text"
+          name="name"
+          required
+          placeholder="e.g. rokkit"
+          class="px-3 py-2 rounded border border-surface-z3 bg-surface-z2 text-surface-z8 text-sm focus:border-primary-z5 focus:outline-none"
+        />
+      </label>
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs font-medium text-surface-z6">Doc URL <span class="text-error-z6">*</span></span>
+        <input
+          type="text"
+          name="url"
+          required
+          placeholder="https://docs.example.com/llms.txt or https://github.com/org/repo/tree/main/docs"
+          class="px-3 py-2 rounded border border-surface-z3 bg-surface-z2 text-surface-z8 text-sm focus:border-primary-z5 focus:outline-none"
+        />
+        <span class="text-xs text-surface-z4">
+          Supports llms.txt URLs, GitHub folder URLs, and HTTP doc pages.
+          Local folders must be indexed via CLI: <code>sensei index</code>
+        </span>
+      </label>
+      <div class="flex gap-2 mt-auto">
+        <button
+          type="submit"
+          class="flex-1 px-4 py-2 rounded bg-primary-z6 text-white text-sm font-medium hover:bg-primary-z7 transition-colors"
+        >
+          Add & Index
+        </button>
+        <button
+          type="button"
+          onclick={onclose}
+          class="px-4 py-2 rounded border border-surface-z3 bg-surface-z1 text-surface-z6 text-sm hover:border-primary-z5 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+{/if}
+```
+
+- [ ] **Step 2: Update `/libraries/+page.svelte` to use the component**
+
+Replace the inline Add Library sidebar in `/libraries/+page.svelte` with:
+```svelte
+<script lang="ts">
+  import AddLibrarySidebar from '$lib/components/AddLibrarySidebar.svelte';
+  // ... existing imports
+</script>
+
+<!-- Replace the existing inline sidebar with: -->
+<AddLibrarySidebar open={sidebarOpen} action="?/add" onclose={() => sidebarOpen = false} />
+```
+
+- [ ] **Step 3: Add `link` action to repo libraries server**
+
+In `apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts`, add a `link` action that links an existing shared lib to the repo:
+
+```typescript
+link: async ({ params, request }) => {
+  const db = getDb();
+  const formData = await request.formData();
+  const sharedLibId = String(formData.get('shared_lib_id') ?? '').trim();
+  if (!sharedLibId) return fail(400, { error: 'shared_lib_id is required' });
+
+  const { data: lib } = await db
+    .from('shared_libs')
+    .select('id,name,source_type,base_url,local_path')
+    .eq('id', sharedLibId)
+    .single();
+  if (!lib) return fail(404, { error: 'Library not found in catalog' });
+
+  await db.from('repo_libs').upsert({
+    repo_id: params.id,
+    shared_lib_id: lib.id,
+    name: lib.name,
+    source_type: lib.source_type,
+    base_url: lib.base_url ?? null,
+    local_path: lib.local_path ?? null,
+  }, { onConflict: 'repo_id,name' });
+
+  return { linked: true };
+},
+```
+
+- [ ] **Step 4: Update repo libraries page load to expose catalog**
+
+In `apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts`, add to `load`:
+```typescript
+// Fetch full catalog for linking (excluding already-linked libs)
+const linkedIds = new Set(libs.filter(l => l.sharedLibId).map(l => l.sharedLibId!));
+const { data: catalog } = await db
+  .from('shared_libs')
+  .select('id,name,source_type,icon_url,category,section_count,index_status')
+  .order('name');
+
+return {
+  repo,
+  libs,
+  hasAnthropicKey: Boolean(process.env.ANTHROPIC_API_KEY),
+  catalog: (catalog ?? []).map(c => ({ ...c, linked: linkedIds.has(c.id) })),
+};
+```
+
+- [ ] **Step 5: Update repo libraries page Svelte**
+
+In `apps/dashboard/src/routes/repos/[id]/libraries/+page.svelte`:
+
+1. Import the shared component and add a catalog section:
+```svelte
+<script lang="ts">
+  import AddLibrarySidebar from '$lib/components/AddLibrarySidebar.svelte';
+  // ... existing
+
+  let addOpen = $state(false);
+  let catalogSearch = $state('');
+
+  const filteredCatalog = $derived(
+    catalogSearch.trim()
+      ? data.catalog.filter((l: any) =>
+          l.name.toLowerCase().includes(catalogSearch.toLowerCase())
+        )
+      : data.catalog
+  );
+</script>
+
+<AddLibrarySidebar open={addOpen} action="?/add" onclose={() => addOpen = false} />
+```
+
+2. Add "Add Library" and catalog section to the page header:
+```svelte
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-semibold text-surface-z8">Library Docs</h1>
+  <div class="flex gap-2">
+    <form method="POST" action="?/update">
+      <button type="submit" class="text-xs px-3 py-1.5 rounded border border-surface-z3 bg-surface-z1 text-surface-z6 hover:border-primary-z5 hover:text-surface-z8 transition-colors">
+        Re-index All
+      </button>
+    </form>
+    <button
+      onclick={() => addOpen = true}
+      class="text-xs px-3 py-1.5 rounded border border-primary-z4 bg-surface-z1 text-primary-z6 hover:border-primary-z5 hover:bg-surface-z2 transition-colors"
+    >
+      + Add Library
+    </button>
+  </div>
+</div>
+```
+
+3. Below the existing libs table, add a catalog section:
+```svelte
+<!-- Catalog: link existing shared libs to this repo -->
+{#if data.catalog.length > 0}
+  <div class="mt-8">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xs font-semibold text-surface-z5 uppercase tracking-wider">Library Catalog</h2>
+      <input
+        type="search"
+        placeholder="Search catalog…"
+        bind:value={catalogSearch}
+        class="px-3 py-1.5 rounded border border-surface-z3 bg-surface-z2 text-surface-z8 text-xs focus:border-primary-z5 focus:outline-none w-44"
+      />
+    </div>
+    <div class="rounded-lg border border-surface-z3 overflow-hidden">
+      <table class="w-full border-collapse text-sm">
+        <tbody>
+          {#each filteredCatalog as lib}
+            <tr class="border-b border-surface-z2 last:border-b-0 hover:bg-surface-z2 transition-colors">
+              <td class="px-4 py-3">
+                <a href="/libraries/{lib.id}" class="font-medium text-primary-z6 hover:text-primary-z7 transition-colors">
+                  {lib.name}
+                </a>
+              </td>
+              <td class="px-4 py-3 text-surface-z5 text-xs">{lib.section_count} sections</td>
+              <td class="px-4 py-3 text-right">
+                {#if lib.linked}
+                  <span class="text-xs text-success-z6">✓ Linked</span>
+                {:else}
+                  <form method="POST" action="?/link" class="inline">
+                    <input type="hidden" name="shared_lib_id" value={lib.id} />
+                    <button type="submit" class="text-xs px-2 py-1 rounded border border-surface-z3 text-surface-z6 hover:border-primary-z5 hover:text-surface-z8 transition-colors">
+                      Link
+                    </button>
+                  </form>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{/if}
+```
+
+- [ ] **Step 6: Verify compiles**
+
+```bash
+cd /Users/Jerry/Developer/sensei/apps/dashboard
+bun run check 2>&1 | grep -E "error|Error" | head -20
+```
+
+Expected: no errors
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/dashboard/src/lib/components/AddLibrarySidebar.svelte \
+        apps/dashboard/src/routes/libraries/+page.svelte \
+        apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts \
+        apps/dashboard/src/routes/repos/[id]/libraries/+page.svelte
+git commit -m "feat(dashboard): shared AddLibrarySidebar component + repo catalog link action"
+```
+
+---
+
+## Chunk 8: Playwright e2e tests
+
+### Task 13: Playwright setup + libraries page smoke tests
+
+**Files:**
+- Modify: `apps/dashboard/package.json` (add Playwright)
+- Create: `apps/dashboard/playwright.config.ts`
+- Create: `apps/dashboard/tests/libraries.test.ts`
+- Create: `apps/dashboard/tests/library-detail.test.ts`
+
+- [ ] **Step 1: Install Playwright**
+
+```bash
+cd /Users/Jerry/Developer/sensei/apps/dashboard
+bun add -d @playwright/test
+bunx playwright install chromium
+```
+
+- [ ] **Step 2: Create playwright config**
+
+```typescript
+// apps/dashboard/playwright.config.ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests',
+  fullyParallel: false,
+  retries: 0,
+  workers: 1,
+  reporter: 'list',
+  use: {
+    baseURL: 'http://localhost:5173',
+    trace: 'on-first-retry',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
+  webServer: {
+    command: 'bun run dev',
+    url: 'http://localhost:5173',
+    reuseExistingServer: !process.env.CI,
+    timeout: 30_000,
+  },
+});
+```
+
+- [ ] **Step 3: Add test script to package.json**
+
+In `apps/dashboard/package.json`, add to `"scripts"`:
+```json
+"test:e2e": "playwright test"
+```
+
+- [ ] **Step 4: Write libraries page tests**
+
+```typescript
+// apps/dashboard/tests/libraries.test.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Libraries page', () => {
+  test('loads and shows grid view by default', async ({ page }) => {
+    await page.goto('/libraries');
+    // Grid view toggle button visible
+    await expect(page.locator('button[aria-label="Table view"], button[title*="table"], button[title*="Table"]').or(
+      page.locator('button').filter({ hasText: /table/i }).first()
+    )).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('Add Library button opens sidebar', async ({ page }) => {
+    await page.goto('/libraries');
+    const addBtn = page.locator('button').filter({ hasText: /add library/i }).first();
+    await expect(addBtn).toBeVisible({ timeout: 10_000 });
+    await addBtn.click();
+    // Sidebar form appears
+    await expect(page.locator('input[name="name"]')).toBeVisible();
+    await expect(page.locator('input[name="url"]')).toBeVisible();
+  });
+
+  test('Add Library sidebar closes on Cancel', async ({ page }) => {
+    await page.goto('/libraries');
+    await page.locator('button').filter({ hasText: /add library/i }).first().click();
+    await page.locator('button').filter({ hasText: /cancel/i }).click();
+    await expect(page.locator('input[name="name"]')).not.toBeVisible();
+  });
+
+  test('Add Library sidebar closes on overlay click', async ({ page }) => {
+    await page.goto('/libraries');
+    await page.locator('button').filter({ hasText: /add library/i }).first().click();
+    await expect(page.locator('input[name="name"]')).toBeVisible();
+    // Click overlay (outside sidebar)
+    await page.mouse.click(100, 300);
+    await expect(page.locator('input[name="name"]')).not.toBeVisible();
+  });
+
+  test('library cards link to detail page', async ({ page }) => {
+    await page.goto('/libraries');
+    const firstCard = page.locator('a[href^="/libraries/"]').first();
+    const count = await firstCard.count();
+    if (count === 0) {
+      test.skip(true, 'No libraries in DB — skipping navigation test');
+      return;
+    }
+    const href = await firstCard.getAttribute('href');
+    await firstCard.click();
+    await expect(page).toHaveURL(href!);
+  });
+});
+```
+
+- [ ] **Step 5: Write library detail page tests**
+
+```typescript
+// apps/dashboard/tests/library-detail.test.ts
+import { test, expect, type Page } from '@playwright/test';
+
+async function goToFirstLib(page: Page): Promise<boolean> {
+  await page.goto('/libraries');
+  const firstCard = page.locator('a[href^="/libraries/"]').first();
+  if (await firstCard.count() === 0) return false;
+  await firstCard.click();
+  await page.waitForURL(/\/libraries\/[a-z0-9-]+$/);
+  return true;
+}
+
+test.describe('Library detail page', () => {
+  test('shows Edit, Re-index / Re-index CLI only, and Simulate buttons', async ({ page }) => {
+    const found = await goToFirstLib(page);
+    if (!found) { test.skip(true, 'No libraries in DB'); return; }
+
+    await expect(page.locator('button').filter({ hasText: /edit/i }).first()).toBeVisible();
+    await expect(page.locator('button').filter({ hasText: /simulate/i }).first()).toBeVisible();
+    // Either Re-index or Re-index (CLI only) visible
+    const reindex = page.locator('button, span').filter({ hasText: /re-index/i }).first();
+    await expect(reindex).toBeVisible();
+  });
+
+  test('Simulate button opens sidebar', async ({ page }) => {
+    const found = await goToFirstLib(page);
+    if (!found) { test.skip(true, 'No libraries in DB'); return; }
+
+    await page.locator('button').filter({ hasText: /simulate/i }).first().click();
+    await expect(page.locator('textarea[name="query"]')).toBeVisible();
+  });
+
+  test('Edit button opens edit sidebar', async ({ page }) => {
+    const found = await goToFirstLib(page);
+    if (!found) { test.skip(true, 'No libraries in DB'); return; }
+
+    await page.locator('button').filter({ hasText: /^edit$/i }).first().click();
+    await expect(page.locator('input[name="url"]')).toBeVisible();
+    await expect(page.locator('select[name="category"]')).toBeVisible();
+  });
+
+  test('closing Simulate sidebar hides textarea', async ({ page }) => {
+    const found = await goToFirstLib(page);
+    if (!found) { test.skip(true, 'No libraries in DB'); return; }
+
+    await page.locator('button').filter({ hasText: /simulate/i }).first().click();
+    await expect(page.locator('textarea[name="query"]')).toBeVisible();
+
+    // Close via X button
+    await page.locator('button[aria-label="Close"]').first().click();
+    await expect(page.locator('textarea[name="query"]')).not.toBeVisible();
+  });
+
+  test('stat cards display Sections, Repos, Queries, Last Indexed', async ({ page }) => {
+    const found = await goToFirstLib(page);
+    if (!found) { test.skip(true, 'No libraries in DB'); return; }
+
+    await expect(page.getByText('Sections', { exact: true })).toBeVisible();
+    await expect(page.getByText('Repos', { exact: true })).toBeVisible();
+    await expect(page.getByText('Queries', { exact: true })).toBeVisible();
+    await expect(page.getByText('Last Indexed', { exact: true })).toBeVisible();
+  });
+});
+```
+
+- [ ] **Step 6: Run e2e tests**
+
+First ensure dev server is NOT already running (the config will start it):
+```bash
+cd /Users/Jerry/Developer/sensei/apps/dashboard
+bun run test:e2e 2>&1 | tail -30
+```
+
+Note: Tests that navigate to detail pages will be skipped if no libraries exist in the DB. They are designed to skip gracefully rather than fail.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/dashboard/playwright.config.ts \
+        apps/dashboard/tests/ \
+        apps/dashboard/package.json
+git commit -m "feat(dashboard): add Playwright e2e tests for libraries and library detail pages"
+```
+
+---
+
 ## TODO (future work)
 
 - Add optional `GITHUB_TOKEN` env var to `GithubAdapter` for authenticated requests (60 req/hr → 5000 req/hr)
 - Add `sensei embed-libs [name]` CLI command to trigger Phase 2 from command line
 - Show "Build Index" progress (N of M sections embedded) via polling
 - Per-repo `lib_doc_sections` embedding dimension migration (currently still 768-dim if used)
+- Repo libraries page: Rokkit `List` + `SearchFilter` components for catalog browsing (defer — test sensei doc lookup in a future session)
