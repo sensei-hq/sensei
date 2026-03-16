@@ -49,4 +49,40 @@ export class LibIndexer {
 
     return { sectionsIndexed: rows.length };
   }
+
+  async indexShared(sharedLibId: string, entry: LibEntry, pages: DocPage[]): Promise<{ sectionsIndexed: number }> {
+    const { error: deleteError } = await this.db
+      .from("shared_lib_sections")
+      .delete()
+      .eq("shared_lib_id", sharedLibId);
+
+    if (deleteError) throw new Error(`LibIndexer.indexShared: delete failed: ${deleteError.message}`);
+
+    const rows = await Promise.all(
+      pages.map(async page => {
+        const embedInput =
+          entry.source_type === "llms.txt"
+            ? page.description
+            : (page.content ?? page.description).slice(0, 512);
+
+        const embedding = await this.backend.embed(embedInput);
+        return {
+          shared_lib_id: sharedLibId,
+          title: page.title,
+          url: page.url ?? null,
+          local_path: page.localPath ?? null,
+          description: page.description,
+          content: page.content ?? null,
+          source_type: entry.source_type,
+          component: page.component ?? null,
+          embedding,
+        };
+      })
+    );
+
+    const { error: insertError } = await this.db.from("shared_lib_sections").insert(rows);
+    if (insertError) throw new Error(`LibIndexer.indexShared: insert failed: ${insertError.message}`);
+
+    return { sectionsIndexed: rows.length };
+  }
 }
