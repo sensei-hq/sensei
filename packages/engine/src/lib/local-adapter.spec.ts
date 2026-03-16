@@ -9,7 +9,7 @@ describe("LocalAdapter", () => {
   let tmpDir: string;
   afterEach(async () => { if (tmpDir) await rm(tmpDir, { recursive: true, force: true }); });
 
-  it("collects .md and .txt files, sets title from filename and description from first 200 chars", async () => {
+  it("collects .md and .txt files, sets title from filename and summary from extractSummary", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "sensei-local-test-"));
     await writeFile(join(tmpDir, "overview.md"), "# Overview\n\nThis is the overview.", "utf-8");
     await writeFile(join(tmpDir, "api.txt"), "API reference content here.", "utf-8");
@@ -25,7 +25,7 @@ describe("LocalAdapter", () => {
 
     const overview = pages.find(p => p.title === "overview")!;
     expect(overview.content).toContain("# Overview");
-    expect(overview.description).toBe(overview.content!.slice(0, 200));
+    expect(overview.summary).toBeTruthy();
     expect(overview.localPath).toContain("overview.md");
     expect(overview.url).toBeUndefined();
     expect(overview.component).toBeUndefined();
