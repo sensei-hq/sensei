@@ -42,7 +42,8 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
     if (sourceType === 'llms.txt') adapter = new LlmsTxtAdapter();
     else if (sourceType === 'github') adapter = new GithubAdapter();
     else if (sourceType === 'http') adapter = new HttpAdapter();
-    else adapter = new LocalAdapter();
+    else if (sourceType === 'local') adapter = new LocalAdapter();
+    else throw new Error(`[lib-indexer] Unknown source_type: "${lib.source_type}"`);
 
     const entry = {
       name: lib.name,
@@ -54,12 +55,12 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
     const pages = await adapter.fetch(entry);
 
     // Phase 1: no backend → sections stored without embeddings
-    await new LibIndexer(db, null).indexShared(lib.id, entry, pages);
+    const { sectionsIndexed } = await new LibIndexer(db, null).indexShared(lib.id, entry, pages);
 
     await db
       .from('shared_libs')
       .update({
-        section_count: pages.length,
+        section_count: sectionsIndexed,
         indexed_at: new Date().toISOString(),
         index_status: 'ready',
         index_error: null,
