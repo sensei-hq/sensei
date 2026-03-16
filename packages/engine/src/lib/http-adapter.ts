@@ -26,12 +26,8 @@ export class HttpAdapter implements SourceAdapter {
     const pages: DocPage[] = [];
 
     // Entry URL is always sequence 0 — convert already-fetched body (no second fetch)
-    try {
-      const entryMarkdown = bodyToMarkdown(entryBody, entryUrl, entryContentType);
-      pages.push(makeDocPage(entryMarkdown, entryUrl, entryUrl, 0));
-    } catch (err) {
-      console.warn(`[HttpAdapter] Failed to convert entry ${entryUrl}:`, err instanceof Error ? err.message : String(err));
-    }
+    const entryMarkdown = bodyToMarkdown(entryBody, entryUrl, entryContentType);
+    pages.push(makeDocPage(entryMarkdown, entryUrl, entryUrl, 0));
 
     // Fetch each discovered sub-page
     for (const url of discovered) {
