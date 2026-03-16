@@ -114,7 +114,12 @@ describe("LibIndexer.indexShared — two-level insert", () => {
       insert: vi.fn().mockImplementation((rows: unknown) => {
         if (table === "documents_in_library") {
           const arr = Array.isArray(rows) ? rows : [rows];
-          return Promise.resolve({ data: arr.map((_, i) => ({ id: `doc-id-${docInsertCall++}-${i}` })), error: null });
+          const mockData = arr.map((_, i) => ({ id: `doc-id-${docInsertCall++}-${i}` }));
+          return {
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockData[0] ?? null, error: null }),
+            }),
+          };
         }
         if (!db._insertsByTable[table]) db._insertsByTable[table] = [];
         db._insertsByTable[table].push(rows as unknown[]);
@@ -146,7 +151,12 @@ describe("LibIndexer.indexShared — two-level insert", () => {
       insert: vi.fn().mockImplementation((rows: unknown) => {
         const arr = Array.isArray(rows) ? rows : [rows];
         if (table === "documents_in_library") {
-          return Promise.resolve({ data: arr.map((_, i) => ({ id: `doc-${i}` })), error: null });
+          const mockData = arr.map((_, i) => ({ id: `doc-${i}` }));
+          return {
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockData[0] ?? null, error: null }),
+            }),
+          };
         }
         return Promise.resolve({ error: null });
       }),
@@ -167,7 +177,12 @@ describe("LibIndexer.indexShared — two-level insert", () => {
       insert: vi.fn().mockImplementation((rows: unknown) => {
         const arr = Array.isArray(rows) ? rows : [rows];
         if (table === "documents_in_library") {
-          return Promise.resolve({ data: arr.map((_, i) => ({ id: `doc-${i}` })), error: null });
+          const mockData = arr.map((_, i) => ({ id: `doc-${i}` }));
+          return {
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockData[0] ?? null, error: null }),
+            }),
+          };
         }
         return Promise.resolve({ error: null });
       }),
