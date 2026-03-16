@@ -108,20 +108,53 @@ export const actions: Actions = {
     const query = String(formData.get('query') ?? '').trim();
     if (!query) return fail(400, { error: 'Query is required' });
 
-    const safeQuery = query.replace(/[%,()]/g, '');
-    const { data: hits } = await db
-      .from('sections_in_document')
-      .select('id,title,content,document_id,documents_in_library!inner(title,url,component,summary)')
-      .eq('library_id', params.id)
-      .or(`title.ilike.%${safeQuery}%,content.ilike.%${safeQuery}%`)
-      .limit(10);
+    type SimResult = { id: string; title: string; content: string; document: unknown; similarity?: number };
+    let results: SimResult[] = [];
 
-    const results = (hits ?? []).map((h: any) => ({
-      id: h.id,
-      title: h.title,
-      content: h.content,
-      document: h.documents_in_library,
-    }));
+    // Try vector similarity search first (requires embeddings to have been built)
+    try {
+      const { TransformersBackend } = await import('@sensei/engine');
+      const backend = new TransformersBackend();
+      await backend.init();
+      const embedding = await backend.embed(query);
+
+      const { data: rpcData } = await db.rpc('match_libraries_sections', {
+        p_library_id: params.id,
+        p_component: null,
+        query_embedding: embedding,
+        match_count: 10,
+      });
+
+      if (rpcData && rpcData.length > 0) {
+        results = (rpcData as any[]).map(r => ({
+          id: r.section_id,
+          title: r.section_title,
+          content: r.content,
+          similarity: r.similarity,
+          document: { title: r.doc_title, url: r.url, component: r.component, summary: r.summary },
+        }));
+      }
+    } catch (err) {
+      console.warn('[simulate] Vector search failed:', err instanceof Error ? err.message : String(err));
+    }
+
+    // Keyword fallback — used when no embeddings built yet, or vector returned nothing
+    if (results.length === 0) {
+      const safeQuery = query.replace(/[%,()]/g, '');
+      const { data: hits } = await db
+        .from('sections_in_document')
+        .select('id,title,content,document_id,documents_in_library!inner(title,url,component,summary)')
+        .eq('library_id', params.id)
+        .or(`title.ilike.%${safeQuery}%,content.ilike.%${safeQuery}%`)
+        .limit(10);
+
+      results = (hits ?? []).map((h: any) => ({
+        id: h.id,
+        title: h.title,
+        content: h.content,
+        document: h.documents_in_library,
+      }));
+    }
 
     await db.from('queries_on_library').insert({
       library_id: params.id,
