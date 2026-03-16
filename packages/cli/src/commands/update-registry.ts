@@ -125,7 +125,9 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
       }
     }
 
-    // Sync to repo_libs so dashboard can read config without local file access
+    // Sync to repo_libs so dashboard can read config without local file access.
+    // Skill fields are only included when generation succeeded — avoids clobbering
+    // a previously stored skill_path if generation fails transiently.
     try {
       await (client as any)
         .schema('sensei')
@@ -136,8 +138,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
           source_type: lib.source_type,
           base_url: lib.base_url ?? null,
           local_path: lib.local_path ?? null,
-          skill_path: libSkillFile?.path ?? null,
-          skill_generated_at: libSkillFile ? new Date().toISOString() : null,
+          ...(libSkillFile ? { skill_path: libSkillFile.path, skill_generated_at: libSkillFile.generatedAt } : {}),
         }, { onConflict: 'repo_id,name' });
     } catch (err) {
       log.warn(`  repo_libs upsert failed for ${lib.name}: ${err instanceof Error ? err.message : String(err)}`);
