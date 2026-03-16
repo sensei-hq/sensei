@@ -31,3 +31,4 @@ export * from "./lib/lib-skill-generator.js";
 export * from "./lib/infer-source-type.js";
 export * from "./lib/github-adapter.js";
 export * from "./lib/transformers-backend.js";
+export * from "./lib/doc-utils.js";
