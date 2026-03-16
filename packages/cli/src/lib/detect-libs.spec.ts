@@ -57,8 +57,9 @@ describe("inferSourceType", () => {
     expect(inferSourceType("./docs").source_type).toBe("local");
   });
 
-  it("returns base_url for http/llms.txt and local_path for local", () => {
+  it("returns base_url for all source types — no local_path", () => {
     expect(inferSourceType("https://rokkit.dev/llms.txt").base_url).toBe("https://rokkit.dev/llms.txt");
-    expect(inferSourceType("/docs").local_path).toBe("/docs");
+    expect(inferSourceType("/docs").base_url).toBe("file:///docs");
+    expect((inferSourceType("/docs") as any).local_path).toBeUndefined();
   });
 });
