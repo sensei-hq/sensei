@@ -149,4 +149,44 @@ describe("GithubAdapter", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 403 }));
     await expect(new GithubAdapter().fetch({ name: "x", source_type: "github", base_url: "https://github.com/org/repo/tree/main/docs" })).rejects.toThrow("GitHub API error 403");
   });
+
+  it("uses llms.txt index when present in tree — returns curated titles, summaries, and components", async () => {
+    const LLMS_TXT = `# MyLib\n\n## Core\n\n- [Auth](./auth.txt): Core auth module\n- [UI](./ui.txt): UI components\n`;
+    const treeWithIndex = {
+      tree: [
+        { path: "docs/llms/llms.txt",  type: "blob", url: "" },
+        { path: "docs/llms/auth.txt",  type: "blob", url: "" },
+        { path: "docs/llms/ui.txt",    type: "blob", url: "" },
+      ],
+      truncated: false,
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("api.github.com")) return Promise.resolve({ ok: true, json: () => Promise.resolve(treeWithIndex) });
+      if (url.includes("raw.githubusercontent.com") && url.endsWith("llms.txt")) return Promise.resolve({ ok: true, text: () => Promise.resolve(LLMS_TXT) });
+      if (url.includes("raw.githubusercontent.com") && url.endsWith("auth.txt")) return Promise.resolve({ ok: true, text: () => Promise.resolve("# Auth\n\nFull auth docs.") });
+      if (url.includes("raw.githubusercontent.com") && url.endsWith("ui.txt")) return Promise.resolve({ ok: true, text: () => Promise.resolve("# UI\n\nFull UI docs.") });
+      return Promise.resolve({ ok: false, status: 404 });
+    }));
+
+    const pages = await new GithubAdapter().fetch({ name: "mylib", source_type: "github", base_url: "https://github.com/org/repo/tree/main/docs/llms" });
+
+    expect(pages).toHaveLength(2);
+    expect(pages.map(p => p.title)).toEqual(["Auth", "UI"]);
+    expect(pages[0].summary).toBe("Core auth module");
+    expect(pages[0].component).toBe("Core");
+    expect(pages[0].content).toContain("Full auth docs");
+    expect(pages[0].url).toBe("https://github.com/org/repo/blob/main/docs/llms/auth.txt");
+    expect(pages[0].sourceType).toBe("github");
+    expect(pages[0].sequence).toBe(0);
+  });
+
+  it("falls back to file scan when no llms.txt in tree", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(TREE_RESPONSE) })
+      .mockResolvedValue({ ok: true, text: () => Promise.resolve("# Doc\n\nContent.") })
+    );
+
+    const pages = await new GithubAdapter().fetch({ name: "lib", source_type: "github", base_url: "https://github.com/org/repo/tree/main/docs/llms" });
+    expect(pages).toHaveLength(3); // README.md, api.md, Button.md (no llms.txt in TREE_RESPONSE)
+  });
 });

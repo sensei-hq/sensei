@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./lib": "./src/lib-index.ts"
   },
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun",

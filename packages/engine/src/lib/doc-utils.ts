@@ -5,20 +5,68 @@ import TurndownService from "turndown";
 
 const td = new TurndownService({ headingStyle: "atx" });
 
-/** Resolve a relative URL against a base URL. */
+/** Resolve a relative URL against a base URL. Accepts file:// and http(s):// bases. */
 export function resolveUrl(base: string, relative: string): string {
   return new URL(relative, base).href;
 }
 
+/** Convert a GitHub blob URL to its raw.githubusercontent.com equivalent. */
+export function toRawGithubUrl(url: string): string {
+  const m = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/);
+  if (m) return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}/${m[4]}`;
+  return url;
+}
+
+// ─── llms.txt index parsing ──────────────────────────────────────────────────
+
+const LLMS_LINK_RE = /^-\s+\[([^\]]+)\]\(([^)]+)\)[:\s—–-]+\s*(.+)$/;
+const LLMS_SECTION_RE = /^##\s+(.+)$/;
+
+export interface LlmsIndexEntry {
+  title: string;
+  /** Absolute URL (http/https or file://) */
+  url: string;
+  summary: string;
+  component?: string;
+}
+
+/**
+ * Parse an llms.txt index file into a list of entries.
+ * @param text   Raw text of the llms.txt file
+ * @param baseUrl Absolute URL (http/https or file://) used to resolve relative links
+ */
+export function parseLlmsIndex(text: string, baseUrl: string): LlmsIndexEntry[] {
+  const entries: LlmsIndexEntry[] = [];
+  let currentSection: string | undefined;
+
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    const sectionMatch = line.match(LLMS_SECTION_RE);
+    if (sectionMatch) { currentSection = sectionMatch[1].trim(); continue; }
+    const linkMatch = line.match(LLMS_LINK_RE);
+    if (!linkMatch) continue;
+    const [, title, rel, summary] = linkMatch;
+    entries.push({
+      title: title.trim(),
+      url: resolveUrl(baseUrl, rel.trim()),
+      summary: summary.trim(),
+      component: currentSection,
+    });
+  }
+  return entries;
+}
+
 /**
  * Fetch a URL and return its content as Markdown.
- * - .md extension or text/plain|text/markdown content-type → returned as-is
+ * - .md / .txt extension or text/plain|text/markdown content-type → returned as-is
+ * - GitHub blob URLs → redirected to raw.githubusercontent.com automatically
  * - Otherwise → Readability + Turndown (HTML → Markdown)
  * Throws on network or HTTP error. Callers handle gracefully.
  */
 export async function fetchAsMarkdown(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`fetchAsMarkdown: HTTP ${res.status} for ${url}`);
+  const fetchUrl = toRawGithubUrl(url);
+  const res = await fetch(fetchUrl);
+  if (!res.ok) throw new Error(`fetchAsMarkdown: HTTP ${res.status} for ${fetchUrl}`);
 
   const contentType = res.headers.get("content-type") ?? "";
   const body = await res.text();

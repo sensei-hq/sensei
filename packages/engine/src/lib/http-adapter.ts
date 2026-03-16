@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
 import type { LibEntry, DocPage } from "@sensei/shared";
 import type { SourceAdapter } from "./source-adapter.js";
-import { resolveUrl, fetchAsMarkdown, extractSummary } from "./doc-utils.js";
+import { resolveUrl, extractSummary } from "./doc-utils.js";
 
 const MAX_PAGES = 100;
 const td = new TurndownService({ headingStyle: "atx" });
@@ -14,33 +14,37 @@ export class HttpAdapter implements SourceAdapter {
     if (!entry.base_url) throw new Error(`HttpAdapter: entry "${entry.name}" requires base_url`);
     const entryUrl = entry.base_url;
 
-    // Phase 1: Discover — fetch entry URL once, use body for both discovery and entry DocPage
-    const entryRes = await fetch(entryUrl);
-    if (!entryRes.ok) throw new Error(`HttpAdapter: HTTP ${entryRes.status} for ${entryUrl}`);
-    const entryBody = await entryRes.text();
-    const entryContentType = entryRes.headers.get("content-type") ?? "";
-
-    const discovered = discoverLinks(entryBody, entryUrl);
-
-    // Phase 2: Build DocPages
     const pages: DocPage[] = [];
+    const seen = new Set<string>([entryUrl]);
+    const queue: string[] = [entryUrl];
 
-    // Entry URL is always sequence 0 — convert already-fetched body (no second fetch)
-    const entryMarkdown = bodyToMarkdown(entryBody, entryUrl, entryContentType);
-    pages.push(makeDocPage(entryMarkdown, entryUrl, entryUrl, 0));
+    // Pre-populate queue from sitemap when available — works even for JS-rendered sites
+    for (const url of await fetchSitemapUrls(entryUrl)) {
+      if (!seen.has(url)) { seen.add(url); queue.push(url); }
+    }
 
-    // Fetch each discovered sub-page
-    for (const url of discovered) {
-      if (pages.length >= MAX_PAGES) break;
+    while (queue.length > 0 && pages.length < MAX_PAGES) {
+      const url = queue.shift()!;
+
+      let body: string;
+      let contentType: string;
       try {
         const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-        const body = await res.text();
-        const ct = res.headers.get("content-type") ?? "";
-        const markdown = bodyToMarkdown(body, url, ct);
-        pages.push(makeDocPage(markdown, url, entryUrl, pages.length));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        body = await res.text();
+        contentType = res.headers.get("content-type") ?? "";
       } catch (err) {
         console.warn(`[HttpAdapter] Failed to fetch ${url}:`, err instanceof Error ? err.message : String(err));
+        continue;
+      }
+
+      const markdown = bodyToMarkdown(body, url, contentType);
+      pages.push(makeDocPage(markdown, url, entryUrl, pages.length));
+
+      // Discover new links from this page and enqueue them (BFS)
+      for (const link of extractLinks(body, url, entryUrl, seen)) {
+        seen.add(link);
+        queue.push(link);
       }
     }
 
@@ -59,12 +63,10 @@ function bodyToMarkdown(body: string, url: string, contentType: string): string 
   return td.turndown(reader.parse()?.content ?? body);
 }
 
-function discoverLinks(html: string, entryUrl: string): string[] {
-  const dom = new JSDOM(html, { url: entryUrl });
-  const baseUrl = new URL(entryUrl);
-  const basePath = baseUrl.pathname;
-
-  const seen = new Set<string>([entryUrl]);
+function extractLinks(html: string, pageUrl: string, entryUrl: string, seen: Set<string>): string[] {
+  const dom = new JSDOM(html, { url: pageUrl });
+  // Normalize: ensure prefix ends with "/" so "/docs" doesn't match "/documentation"
+  const prefix = entryUrl.endsWith("/") ? entryUrl : entryUrl + "/";
   const links: string[] = [];
 
   for (const a of Array.from(dom.window.document.querySelectorAll("a[href]"))) {
@@ -72,20 +74,38 @@ function discoverLinks(html: string, entryUrl: string): string[] {
     if (!href) continue;
     let absolute: string;
     try {
-      absolute = resolveUrl(entryUrl, href);
+      absolute = resolveUrl(pageUrl, href);
     } catch {
       continue;
     }
-    const parsed = new URL(absolute);
-    // Must be same origin, same path prefix, not already seen
-    if (parsed.hostname !== baseUrl.hostname) continue;
-    if (!parsed.pathname.startsWith(basePath)) continue;
-    if (seen.has(absolute)) continue;
-    seen.add(absolute);
-    links.push(absolute);
-    if (links.length >= MAX_PAGES - 1) break;
+    // Strip fragment — /page#section and /page are the same document
+    const withoutFragment = absolute.split("#")[0];
+    // Keep only URLs under the entry subtree (full URL prefix, not just path)
+    if (withoutFragment !== entryUrl && !withoutFragment.startsWith(prefix)) continue;
+    if (seen.has(withoutFragment)) continue;
+    seen.add(withoutFragment);
+    links.push(withoutFragment);
   }
   return links;
+}
+
+async function fetchSitemapUrls(entryUrl: string): Promise<string[]> {
+  const sitemapUrl = new URL("/sitemap.xml", entryUrl).href;
+  try {
+    const res = await fetch(sitemapUrl);
+    if (!res.ok) return [];
+    const xml = await res.text();
+    const prefix = entryUrl.endsWith("/") ? entryUrl : entryUrl + "/";
+    const urls: string[] = [];
+    for (const match of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) {
+      const url = match[1].trim();
+      if (url === entryUrl || url.startsWith(prefix)) urls.push(url);
+    }
+    if (urls.length > 0) console.info(`[HttpAdapter] Sitemap: found ${urls.length} URLs under ${entryUrl}`);
+    return urls;
+  } catch {
+    return [];
+  }
 }
 
 function makeDocPage(markdown: string, url: string, entryUrl: string, sequence: number): DocPage {
