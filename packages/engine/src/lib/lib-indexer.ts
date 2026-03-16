@@ -77,7 +77,9 @@ export class LibIndexer {
 
       const { data: docData, error: docErr } = await this.db
         .from("documents_in_library")
-        .insert(docRow);
+        .insert(docRow)
+        .select()
+        .single();
       if (docErr) throw new Error(`LibIndexer.indexShared: doc insert failed: ${docErr.message}`);
 
       // docData may be an array or a single object depending on the client
