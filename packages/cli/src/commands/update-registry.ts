@@ -23,11 +23,11 @@ function createAdapter(sourceType: LibEntry["source_type"]): SourceAdapter {
 }
 
 /** Core logic without clack UI. Called directly from init (no libName arg) or via updateRegistry. When libName is provided and the lib is not found, exits non-zero. */
-export async function runUpdateRegistryCore(repoPath: string, libName?: string): Promise<number> {
+export async function runUpdateRegistryCore(repoPath: string, libName?: string, opts?: { global?: boolean }): Promise<number> {
   const config = await loadSenseiConfig(repoPath);
   if (!config) {
     log.error("Not initialised — run sensei init first");
-    if (libName) process.exit(1);
+    if (libName || opts?.global) process.exit(1);
     return 0;
   }
 
@@ -90,9 +90,39 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
 
     const indexSpin = spinner();
     indexSpin.start(`Indexing ${lib.name} (${pages.length} pages)...`);
+    let sectionsIndexed = 0;
+    let sharedLibId: string | null = null;
+
     try {
-      const { sectionsIndexed } = await new LibIndexer(client as any, ollamaBackend).index(repoId, lib, pages);
-      indexSpin.stop(`${lib.name}: ${sectionsIndexed} sections indexed`);
+      if (opts?.global) {
+        // Upsert shared_libs catalog
+        const { data: sharedLib, error: sharedLibErr } = await (client as any)
+          .schema('sensei')
+          .from('shared_libs')
+          .upsert(
+            { name: lib.name, source_type: lib.source_type, base_url: lib.base_url ?? null, local_path: lib.local_path ?? null },
+            { onConflict: 'name' }
+          )
+          .select('id')
+          .single();
+
+        if (sharedLibErr || !sharedLib) throw new Error(`shared_libs upsert failed: ${sharedLibErr?.message}`);
+        sharedLibId = sharedLib.id;
+
+        // Index into shared pool
+        const result = await new LibIndexer(client as any, ollamaBackend).indexShared(sharedLibId!, lib, pages);
+        sectionsIndexed = result.sectionsIndexed;
+        indexSpin.stop(`${lib.name}: ${sectionsIndexed} sections indexed (shared pool)`);
+
+        // Update catalog counts
+        await (client as any).schema('sensei').from('shared_libs')
+          .update({ section_count: sectionsIndexed, indexed_at: new Date().toISOString() })
+          .eq('id', sharedLibId);
+      } else {
+        const result = await new LibIndexer(client as any, ollamaBackend).index(repoId, lib, pages);
+        sectionsIndexed = result.sectionsIndexed;
+        indexSpin.stop(`${lib.name}: ${sectionsIndexed} sections indexed`);
+      }
     } catch (err) {
       indexSpin.stop(`Error indexing ${lib.name}`);
       log.error(`  ${err instanceof Error ? err.message : String(err)}`);
@@ -126,8 +156,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
     }
 
     // Sync to repo_libs so dashboard can read config without local file access.
-    // Skill fields are only included when generation succeeded — avoids clobbering
-    // a previously stored skill_path if generation fails transiently.
+    // Skill fields only included when generation succeeded — avoids clobbering a good skill_path.
     try {
       await (client as any)
         .schema('sensei')
@@ -138,6 +167,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
           source_type: lib.source_type,
           base_url: lib.base_url ?? null,
           local_path: lib.local_path ?? null,
+          ...(sharedLibId ? { shared_lib_id: sharedLibId } : {}),
           ...(libSkillFile ? { skill_path: libSkillFile.path, skill_generated_at: libSkillFile.generatedAt } : {}),
         }, { onConflict: 'repo_id,name' });
     } catch (err) {
@@ -150,8 +180,8 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string):
 }
 
 /** Full command with clack UI — called from CLI. */
-export async function updateRegistry(repoPath: string, libName?: string): Promise<void> {
+export async function updateRegistry(repoPath: string, libName?: string, opts?: { global?: boolean }): Promise<void> {
   intro("sensei update-registry");
-  const count = await runUpdateRegistryCore(repoPath, libName);
+  const count = await runUpdateRegistryCore(repoPath, libName, opts);
   outro(`Done. ${count} librar${count === 1 ? "y" : "ies"} processed.`);
 }
