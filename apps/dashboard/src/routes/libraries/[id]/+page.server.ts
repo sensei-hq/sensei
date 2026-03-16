@@ -1,7 +1,7 @@
 import type { PageServerLoad, Actions } from './$types';
 import { error, fail } from '@sveltejs/kit';
 import { getDb } from '$lib/server/db';
-import { inferSourceType } from '@sensei/engine';
+import { inferSourceType } from '@sensei/engine/lib';
 import { startLibFetch, startLibEmbed, type LibInfo } from '$lib/server/lib-indexer';
 
 const CATEGORIES = ['ui','auth','api','data','test','build','other'] as const;
@@ -12,7 +12,7 @@ export const load: PageServerLoad = async ({ params }) => {
 
   const { data: lib } = await db
     .from('libraries')
-    .select('id,name,source_type,base_url,local_path,section_count,document_count,indexed_at,index_status,index_error,created_at,icon_url,category,embed_status')
+    .select('id,name,source_type,base_url,section_count,document_count,indexed_at,index_status,index_error,created_at,icon_url,category,embed_status')
     .eq('id', params.id)
     .single();
 
@@ -27,10 +27,10 @@ export const load: PageServerLoad = async ({ params }) => {
 
   const { data: repoLinks } = await db
     .from('referenced_libraries')
-    .select('repos!inner(id,name,local_path)')
+    .select('repos!inner(id,name)')
     .eq('library_id', params.id);
 
-  const repos = ((repoLinks ?? []) as unknown as Array<{ repos: { id: string; name: string; local_path: string } }>)
+  const repos = ((repoLinks ?? []) as unknown as Array<{ repos: { id: string; name: string } }>)
     .map(l => l.repos);
 
   const { data: queries } = await db
@@ -41,7 +41,7 @@ export const load: PageServerLoad = async ({ params }) => {
     .limit(20);
 
   return {
-    lib: lib as { id: string; name: string; source_type: string; base_url: string | null; local_path: string | null; section_count: number; document_count: number; indexed_at: string | null; index_status: string; index_error: string | null; created_at: string; icon_url: string | null; category: Category | null; embed_status: string | null },
+    lib: lib as { id: string; name: string; source_type: string; base_url: string; section_count: number; document_count: number; indexed_at: string | null; index_status: string; index_error: string | null; created_at: string; icon_url: string | null; category: Category | null; embed_status: string | null },
     documents: (documents ?? []) as Array<{ id: string; title: string; url: string | null; local_path: string | null; summary: string | null; component: string | null; source_type: string | null; sequence: number; last_fetched: string | null }>,
     repos,
     queries: (queries ?? []) as Array<{ id: string; query_text: string; source: string; sections_hit: number; created_at: string }>,
@@ -65,16 +65,13 @@ export const actions: Actions = {
     }
 
     const inferred = inferSourceType(url);
-    const { source_type } = inferred;
-    const base_url = 'base_url' in inferred ? (inferred.base_url ?? null) : null;
-    const local_path = 'local_path' in inferred ? (inferred.local_path ?? null) : null;
+    const { source_type, base_url } = inferred;
 
     const { error: updateErr } = await db
       .from('libraries')
       .update({
         source_type,
-        base_url: base_url ?? null,
-        local_path: local_path ?? null,
+        base_url,
         icon_url: iconUrl,
         category: category as Category | null,
         index_status: 'pending',
@@ -86,12 +83,12 @@ export const actions: Actions = {
 
     await db
       .from('referenced_libraries')
-      .update({ source_type, base_url: base_url ?? null, local_path: local_path ?? null })
+      .update({ source_type, base_url })
       .eq('library_id', params.id);
 
     const { data: lib } = await db
       .from('libraries')
-      .select('id,name,source_type,base_url,local_path')
+      .select('id,name,source_type,base_url')
       .eq('id', params.id)
       .single();
 
@@ -113,7 +110,7 @@ export const actions: Actions = {
 
     // Try vector similarity search first (requires embeddings to have been built)
     try {
-      const { TransformersBackend } = await import('@sensei/engine');
+      const { TransformersBackend } = await import('@sensei/engine/lib');
       const backend = new TransformersBackend();
       await backend.init();
       const embedding = await backend.embed(query);
@@ -170,13 +167,13 @@ export const actions: Actions = {
     const db = getDb();
     const { data: lib } = await db
       .from('libraries')
-      .select('id,name,source_type,base_url,local_path')
+      .select('id,name,source_type,base_url')
       .eq('id', params.id)
       .single();
 
     if (!lib) return fail(404, { error: 'Library not found' });
 
-    await startLibFetch(db, lib as { id: string; name: string; source_type: string; base_url: string | null; local_path: string | null });
+    await startLibFetch(db, lib as LibInfo);
     return { reindexing: true };
   },
 
