@@ -44,10 +44,10 @@ export const load: PageServerLoad = async ({ params }) => {
 
   if (!repo) throw error(404, 'Repo not found');
 
-  // All configured libs (includes shared_lib_id for shared libs)
+  // All configured libs (includes library_id for shared libs)
   const { data: repoLibs } = await db
-    .from('repo_libs')
-    .select('name,source_type,base_url,local_path,skill_path,shared_lib_id')
+    .from('referenced_libraries')
+    .select('name,source_type,base_url,local_path,skill_path,library_id')
     .eq('repo_id', params.id);
 
   // Per-repo indexed sections (only for non-shared libs)
@@ -58,12 +58,12 @@ export const load: PageServerLoad = async ({ params }) => {
     .limit(10000);
 
   // Shared lib catalog metadata (section_count, indexed_at)
-  const sharedIds = ((repoLibs ?? []) as Array<{ shared_lib_id: string | null }>)
-    .map(l => l.shared_lib_id)
+  const sharedIds = ((repoLibs ?? []) as Array<{ library_id: string | null }>)
+    .map(l => l.library_id)
     .filter((id): id is string => Boolean(id));
 
   const { data: sharedCatalog } = sharedIds.length > 0
-    ? await db.from('shared_libs').select('id,section_count,indexed_at,index_status').in('id', sharedIds)
+    ? await db.from('libraries').select('id,section_count,indexed_at,index_status').in('id', sharedIds)
     : { data: [] as Array<{ id: string; section_count: number; indexed_at: string; index_status: string }> };
 
   const sharedCatalogMap = new Map(
@@ -86,7 +86,7 @@ export const load: PageServerLoad = async ({ params }) => {
   }
 
   const libs: LibRow[] = ((repoLibs ?? []) as any[]).map((lib: any) => {
-    const sharedLibId: string | null = lib.shared_lib_id ?? null;
+    const sharedLibId: string | null = lib.library_id ?? null;
 
     if (sharedLibId) {
       const catalog = sharedCatalogMap.get(sharedLibId);
@@ -124,7 +124,7 @@ export const load: PageServerLoad = async ({ params }) => {
   // Fetch catalog for linking (mark already-linked ones)
   const linkedIds = new Set(libs.filter((l: any) => l.sharedLibId).map((l: any) => l.sharedLibId!));
   const { data: catalogData } = await db
-    .from('shared_libs')
+    .from('libraries')
     .select('id,name,source_type,icon_url,category,section_count,index_status')
     .order('name');
 
@@ -180,9 +180,9 @@ export const actions: Actions = {
       return fail(500, { error: `Could not update config.yaml: ${err instanceof Error ? err.message : String(err)}` });
     }
 
-    // Upsert to shared_libs (by name — idempotent)
+    // Upsert to libraries (by name — idempotent)
     const { data: sharedLib, error: sharedLibErr } = await db
-      .from('shared_libs')
+      .from('libraries')
       .upsert(
         { name, source_type, base_url: base_url ?? null, local_path: local_path ?? null },
         { onConflict: 'name' }
@@ -191,18 +191,18 @@ export const actions: Actions = {
       .single();
 
     if (sharedLibErr || !sharedLib) {
-      return fail(500, { error: `shared_libs upsert failed: ${sharedLibErr?.message}` });
+      return fail(500, { error: `libraries upsert failed: ${sharedLibErr?.message}` });
     }
 
     // Link this repo to the shared lib
-    const { error: upsertErr } = await db.from('repo_libs').upsert(
+    const { error: upsertErr } = await db.from('referenced_libraries').upsert(
       {
         repo_id: params.id,
         name,
         source_type,
         base_url: base_url ?? null,
         local_path: local_path ?? null,
-        shared_lib_id: sharedLib.id,
+        library_id: sharedLib.id,
       },
       { onConflict: 'repo_id,name' }
     );
@@ -228,15 +228,15 @@ export const actions: Actions = {
     if (!sharedLibId) return fail(400, { error: 'shared_lib_id is required' });
 
     const { data: lib } = await db
-      .from('shared_libs')
+      .from('libraries')
       .select('id,name,source_type,base_url,local_path')
       .eq('id', sharedLibId)
       .single();
     if (!lib) return fail(404, { error: 'Library not found in catalog' });
 
-    const { error: linkErr } = await db.from('repo_libs').upsert({
+    const { error: linkErr } = await db.from('referenced_libraries').upsert({
       repo_id: params.id,
-      shared_lib_id: lib.id,
+      library_id: lib.id,
       name: lib.name,
       source_type: lib.source_type,
       base_url: lib.base_url ?? null,
@@ -255,15 +255,15 @@ export const actions: Actions = {
     if (!name) return fail(400, { error: 'Library name is required' });
 
     const { data: libRow } = await db
-      .from('repo_libs')
-      .select('source_type,base_url,local_path,shared_lib_id')
+      .from('referenced_libraries')
+      .select('source_type,base_url,local_path,library_id')
       .eq('repo_id', params.id)
       .eq('name', name)
       .single();
 
     if (!libRow) return fail(404, { error: `Library '${name}' not found` });
 
-    const sharedLibId: string | null = (libRow as any).shared_lib_id ?? null;
+    const sharedLibId: string | null = (libRow as any).library_id ?? null;
     if (sharedLibId) {
       await startLibIndexing(db, {
         id: sharedLibId,
@@ -281,16 +281,16 @@ export const actions: Actions = {
   update: async ({ params }) => {
     const db = getDb();
     const { data: repoLibs } = await db
-      .from('repo_libs')
-      .select('name,source_type,base_url,local_path,shared_lib_id')
+      .from('referenced_libraries')
+      .select('name,source_type,base_url,local_path,library_id')
       .eq('repo_id', params.id);
 
     if (!repoLibs?.length) redirect(303, `/repos/${params.id}/libraries`);
 
     for (const lib of (repoLibs ?? []) as any[]) {
-      if (lib.shared_lib_id) {
+      if (lib.library_id) {
         await startLibIndexing(db, {
-          id: lib.shared_lib_id,
+          id: lib.library_id,
           name: lib.name,
           source_type: lib.source_type,
           base_url: lib.base_url ?? null,

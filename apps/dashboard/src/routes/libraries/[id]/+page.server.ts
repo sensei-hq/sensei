@@ -11,38 +11,38 @@ export const load: PageServerLoad = async ({ params }) => {
   const db = getDb();
 
   const { data: lib } = await db
-    .from('shared_libs')
-    .select('id,name,source_type,base_url,local_path,section_count,indexed_at,index_status,index_error,created_at,icon_url,category,embed_status')
+    .from('libraries')
+    .select('id,name,source_type,base_url,local_path,section_count,document_count,indexed_at,index_status,index_error,created_at,icon_url,category,embed_status')
     .eq('id', params.id)
     .single();
 
   if (!lib) throw error(404, 'Library not found');
 
-  const { data: sections } = await db
-    .from('shared_lib_sections')
-    .select('id,title,url,description,component,last_fetched')
-    .eq('shared_lib_id', params.id)
-    .order('title')
+  const { data: documents } = await db
+    .from('documents_in_library')
+    .select('id,title,url,local_path,summary,component,source_type,sequence,last_fetched')
+    .eq('library_id', params.id)
+    .order('sequence')
     .limit(200);
 
   const { data: repoLinks } = await db
-    .from('repo_libs')
+    .from('referenced_libraries')
     .select('repos!inner(id,name,local_path)')
-    .eq('shared_lib_id', params.id);
+    .eq('library_id', params.id);
 
-  const repos = ((repoLinks ?? []) as Array<{ repos: { id: string; name: string; local_path: string } }>)
+  const repos = ((repoLinks ?? []) as unknown as Array<{ repos: { id: string; name: string; local_path: string } }>)
     .map(l => l.repos);
 
   const { data: queries } = await db
-    .from('lib_queries')
+    .from('queries_on_library')
     .select('id,query_text,source,sections_hit,created_at')
-    .eq('shared_lib_id', params.id)
+    .eq('library_id', params.id)
     .order('created_at', { ascending: false })
     .limit(20);
 
   return {
-    lib: lib as { id: string; name: string; source_type: string; base_url: string | null; local_path: string | null; section_count: number; indexed_at: string | null; index_status: string; index_error: string | null; created_at: string; icon_url: string | null; category: Category | null; embed_status: string | null },
-    sections: (sections ?? []) as Array<{ id: string; title: string; url: string | null; description: string; component: string | null; last_fetched: string }>,
+    lib: lib as { id: string; name: string; source_type: string; base_url: string | null; local_path: string | null; section_count: number; document_count: number; indexed_at: string | null; index_status: string; index_error: string | null; created_at: string; icon_url: string | null; category: Category | null; embed_status: string | null },
+    documents: (documents ?? []) as Array<{ id: string; title: string; url: string | null; local_path: string | null; summary: string | null; component: string | null; source_type: string | null; sequence: number; last_fetched: string | null }>,
     repos,
     queries: (queries ?? []) as Array<{ id: string; query_text: string; source: string; sections_hit: number; created_at: string }>,
   };
@@ -70,7 +70,7 @@ export const actions: Actions = {
     const local_path = 'local_path' in inferred ? (inferred.local_path ?? null) : null;
 
     const { error: updateErr } = await db
-      .from('shared_libs')
+      .from('libraries')
       .update({
         source_type,
         base_url: base_url ?? null,
@@ -85,12 +85,12 @@ export const actions: Actions = {
     if (updateErr) return fail(500, { error: updateErr.message });
 
     await db
-      .from('repo_libs')
+      .from('referenced_libraries')
       .update({ source_type, base_url: base_url ?? null, local_path: local_path ?? null })
-      .eq('shared_lib_id', params.id);
+      .eq('library_id', params.id);
 
     const { data: lib } = await db
-      .from('shared_libs')
+      .from('libraries')
       .select('id,name,source_type,base_url,local_path')
       .eq('id', params.id)
       .single();
@@ -110,16 +110,21 @@ export const actions: Actions = {
 
     const safeQuery = query.replace(/[%,()]/g, '');
     const { data: hits } = await db
-      .from('shared_lib_sections')
-      .select('id,title,url,description,component')
-      .eq('shared_lib_id', params.id)
-      .or(`title.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`)
+      .from('sections_in_document')
+      .select('id,title,content,document_id,documents_in_library!inner(title,url,component,summary)')
+      .eq('library_id', params.id)
+      .or(`title.ilike.%${safeQuery}%,content.ilike.%${safeQuery}%`)
       .limit(10);
 
-    const results = hits ?? [];
+    const results = (hits ?? []).map((h: any) => ({
+      id: h.id,
+      title: h.title,
+      content: h.content,
+      document: h.documents_in_library,
+    }));
 
-    await db.from('lib_queries').insert({
-      shared_lib_id: params.id,
+    await db.from('queries_on_library').insert({
+      library_id: params.id,
       query_text: query,
       source: 'simulate',
       sections_hit: results.length,
@@ -131,7 +136,7 @@ export const actions: Actions = {
   reindex: async ({ params }) => {
     const db = getDb();
     const { data: lib } = await db
-      .from('shared_libs')
+      .from('libraries')
       .select('id,name,source_type,base_url,local_path')
       .eq('id', params.id)
       .single();
@@ -145,7 +150,7 @@ export const actions: Actions = {
   embed: async ({ params }) => {
     const db = getDb();
     const { data: lib } = await db
-      .from('shared_libs')
+      .from('libraries')
       .select('id,name,embed_status')
       .eq('id', params.id)
       .single();
