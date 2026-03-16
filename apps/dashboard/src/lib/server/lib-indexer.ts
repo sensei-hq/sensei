@@ -22,7 +22,7 @@ export interface LibInfo {
 
 export async function startLibFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
   await db
-    .from('shared_libs')
+    .from('libraries')
     .update({ index_status: 'indexing', index_error: null, embed_status: null })
     .eq('id', lib.id);
 
@@ -55,11 +55,12 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
     const pages = await adapter.fetch(entry);
 
     // Phase 1: no backend → sections stored without embeddings
-    const { sectionsIndexed } = await new LibIndexer(db, null).indexShared(lib.id, entry, pages);
+    const { documentsIndexed, sectionsIndexed } = await new LibIndexer(db, null).indexShared(lib.id, entry, pages);
 
     await db
-      .from('shared_libs')
+      .from('libraries')
       .update({
+        document_count: documentsIndexed,
         section_count: sectionsIndexed,
         indexed_at: new Date().toISOString(),
         index_status: 'ready',
@@ -70,7 +71,7 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[lib-indexer] fetch failed for ${lib.name}:`, msg);
     await db
-      .from('shared_libs')
+      .from('libraries')
       .update({ index_status: 'error', index_error: msg })
       .eq('id', lib.id);
   }
@@ -80,7 +81,7 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
 
 export async function startLibEmbed(db: SupabaseClient, libId: string, libName: string): Promise<void> {
   await db
-    .from('shared_libs')
+    .from('libraries')
     .update({ embed_status: 'embedding' })
     .eq('id', libId);
 
@@ -96,14 +97,14 @@ async function runEmbed(db: SupabaseClient, libId: string, libName: string): Pro
 
     // Fetch sections that need embedding (NULL embedding)
     const { data: sections, error: fetchErr } = await db
-      .from('shared_lib_sections')
-      .select('id,description,content,source_type')
-      .eq('shared_lib_id', libId)
+      .from('sections_in_document')
+      .select('id,content')
+      .eq('library_id', libId)
       .is('embedding', null);
 
     if (fetchErr) throw new Error(fetchErr.message);
     if (!sections || sections.length === 0) {
-      await db.from('shared_libs').update({ embed_status: 'ready' }).eq('id', libId);
+      await db.from('libraries').update({ embed_status: 'ready' }).eq('id', libId);
       return;
     }
 
@@ -112,26 +113,42 @@ async function runEmbed(db: SupabaseClient, libId: string, libName: string): Pro
     for (let i = 0; i < sections.length; i += BATCH) {
       const batch = sections.slice(i, i + BATCH);
       await Promise.all(
-        batch.map(async (section: { id: string; description: string; content: string | null; source_type: string }) => {
-          const input =
-            section.source_type === 'llms.txt'
-              ? section.description
-              : (section.content ?? section.description).slice(0, 512);
-          const embedding = await backend.embed(input);
+        batch.map(async (section: { id: string; content: string }) => {
+          const embedding = await backend.embed(section.content.slice(0, 512));
           await db
-            .from('shared_lib_sections')
+            .from('sections_in_document')
             .update({ embedding })
             .eq('id', section.id);
         })
       );
     }
 
-    await db.from('shared_libs').update({ embed_status: 'ready' }).eq('id', libId);
+    // Embed document summaries
+    const { data: docs } = await db
+      .from('documents_in_library')
+      .select('id,summary')
+      .eq('library_id', libId)
+      .is('embedding', null);
+
+    if (docs && docs.length > 0) {
+      for (let i = 0; i < docs.length; i += BATCH) {
+        const batch = docs.slice(i, i + BATCH);
+        await Promise.all(
+          batch.map(async (doc: { id: string; summary: string }) => {
+            if (!doc.summary) return;
+            const embedding = await backend.embed(doc.summary);
+            await db.from('documents_in_library').update({ embedding }).eq('id', doc.id);
+          })
+        );
+      }
+    }
+
+    await db.from('libraries').update({ embed_status: 'ready' }).eq('id', libId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[lib-embedder] embed failed for ${libName}:`, msg);
     // Don't set index_status to error — sections are still usable via keyword search
-    await db.from('shared_libs').update({ embed_status: null }).eq('id', libId);
+    await db.from('libraries').update({ embed_status: null }).eq('id', libId);
   }
 }
 
