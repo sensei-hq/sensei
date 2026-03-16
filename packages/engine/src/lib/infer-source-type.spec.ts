@@ -21,10 +21,29 @@ describe("inferSourceType", () => {
     expect(r.base_url).toBe("https://docs.example.com/api");
   });
 
-  it("detects local path", () => {
+  it("converts absolute path to file:// URL with source_type local", () => {
     const r = inferSourceType("/Users/jerry/projects/mylib/docs");
     expect(r.source_type).toBe("local");
-    expect((r as any).local_path).toBe("/Users/jerry/projects/mylib/docs");
+    expect(r.base_url).toBe("file:///Users/jerry/projects/mylib/docs");
+    expect((r as any).local_path).toBeUndefined();
+  });
+
+  it("converts absolute .txt path to file:// URL with source_type llms.txt", () => {
+    const r = inferSourceType("/Users/jerry/projects/mylib/docs/llms.txt");
+    expect(r.source_type).toBe("llms.txt");
+    expect(r.base_url).toBe("file:///Users/jerry/projects/mylib/docs/llms.txt");
+  });
+
+  it("passes through file:// URL as local source type", () => {
+    const r = inferSourceType("file:///Users/jerry/projects/mylib/docs");
+    expect(r.source_type).toBe("local");
+    expect(r.base_url).toBe("file:///Users/jerry/projects/mylib/docs");
+  });
+
+  it("passes through file:// .txt URL as llms.txt source type", () => {
+    const r = inferSourceType("file:///Users/jerry/projects/mylib/llms.txt");
+    expect(r.source_type).toBe("llms.txt");
+    expect(r.base_url).toBe("file:///Users/jerry/projects/mylib/llms.txt");
   });
 
   it("falls through to http (not github) for non-tree github URLs", () => {
