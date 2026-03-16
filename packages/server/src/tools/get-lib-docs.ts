@@ -45,12 +45,13 @@ export async function getLibDocsTool(
         // Fallback to keyword search if no embeddings exist yet
         if (rows.length === 0) {
           const q = opts.query;
+          const safeQ = q.replace(/[%,()]/g, '');
           let kq = (db as any)
             .schema('sensei')
             .from('shared_lib_sections')
             .select('title,url,local_path,description,content,source_type,component')
             .eq('shared_lib_id', sharedLibId)
-            .or(`title.ilike.%${q}%,description.ilike.%${q}%`);
+            .or(`title.ilike.%${safeQ}%,description.ilike.%${safeQ}%`);
           if (opts.component) kq = kq.eq('component', opts.component);
           const { data: kData, error: kErr } = await kq.order('title').limit(limit);
           if (kErr) throw new Error(kErr.message);
