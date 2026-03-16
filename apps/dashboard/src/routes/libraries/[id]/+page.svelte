@@ -94,7 +94,7 @@
         <input
           type="text"
           name="url"
-          value={data.lib.base_url ?? data.lib.local_path ?? ''}
+          value={data.lib.base_url ?? ''}
           required
           class="px-3 py-2 rounded border border-surface-z3 bg-surface-z2 text-surface-z8 text-sm focus:border-primary-z5 focus:outline-none"
         />
@@ -239,9 +239,11 @@
     <p class="text-sm text-surface-z5">
       {data.lib.source_type}
       {#if data.lib.base_url}
-        · <a href={data.lib.base_url} target="_blank" rel="noopener noreferrer" class="text-primary-z6 hover:text-primary-z7 transition-colors">{data.lib.base_url}</a>
-      {:else if data.lib.local_path}
-        · <span class="font-mono">{data.lib.local_path}</span>
+        {#if data.lib.base_url.startsWith('file://')}
+          · <span class="font-mono">{data.lib.base_url.replace('file://', '')}</span>
+        {:else}
+          · <a href={data.lib.base_url} target="_blank" rel="noopener noreferrer" class="text-primary-z6 hover:text-primary-z7 transition-colors">{data.lib.base_url}</a>
+        {/if}
       {/if}
     </p>
     {#if data.lib.index_status === 'error' && data.lib.index_error}
@@ -366,39 +368,39 @@
 {#if activeTab === 'documents'}
   <div class="space-y-2">
     {#each data.documents ?? [] as doc (doc.id)}
-      <div class="border border-gray-200 rounded-lg overflow-hidden">
+      <div class="border border-surface-z3 rounded-lg overflow-hidden">
         <button
-          class="w-full flex items-center gap-3 p-4 text-left hover:bg-gray-50 transition-colors"
+          class="w-full flex items-center gap-3 p-4 text-left hover:bg-surface-z2 transition-colors"
           onclick={() => toggleDoc(doc.id)}
         >
           {#if doc.component}
-            <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono shrink-0">
+            <span class="text-xs bg-primary-z1 text-primary-z6 border border-primary-z3 px-2 py-0.5 rounded font-mono shrink-0">
               {doc.component}
             </span>
           {/if}
           <div class="min-w-0 flex-1">
-            <div class="font-medium text-gray-900 truncate">{doc.title}</div>
+            <div class="font-medium text-surface-z8 truncate">{doc.title}</div>
             {#if doc.summary}
-              <div class="text-sm text-gray-500 truncate mt-0.5">{doc.summary}</div>
+              <div class="text-sm text-surface-z5 truncate mt-0.5">{doc.summary}</div>
             {/if}
           </div>
-          {#if doc.url && data.lib.source_type !== 'local'}
+          {#if doc.url && !doc.url.startsWith('file://') && data.lib.source_type !== 'local'}
             <a
               href={doc.url}
               target="_blank"
               rel="noopener noreferrer"
-              class="text-blue-600 hover:underline text-sm shrink-0"
+              class="text-primary-z5 hover:underline text-sm shrink-0"
               onclick={(e) => e.stopPropagation()}
             >Open ↗</a>
           {/if}
-          <svg class="w-4 h-4 text-gray-400 shrink-0 transition-transform {expandedDocId === doc.id ? 'rotate-180' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+          <svg class="w-4 h-4 text-surface-z4 shrink-0 transition-transform {expandedDocId === doc.id ? 'rotate-180' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06z" clip-rule="evenodd" />
           </svg>
         </button>
 
         {#if expandedDocId === doc.id}
-          <div class="border-t border-gray-200 p-4 bg-gray-50">
-            <p class="text-sm text-gray-600 italic">
+          <div class="border-t border-surface-z3 p-4 bg-surface-z0">
+            <p class="text-sm text-surface-z6 italic">
               {doc.summary || 'No summary available.'}
             </p>
           </div>
@@ -406,14 +408,14 @@
       </div>
     {/each}
     {#if (data.documents ?? []).length === 0}
-      <p class="text-gray-500 text-sm py-8 text-center">No documents indexed yet. Click Re-index to fetch.</p>
+      <p class="text-surface-z5 text-sm py-8 text-center">No documents indexed yet. Click Re-index to fetch.</p>
     {/if}
   </div>
 {/if}
 
 <!-- Sections tab -->
 {#if activeTab === 'sections'}
-  <p class="text-gray-500 text-sm py-4">
-    Sections are now organized under Documents. {data.lib.section_count ?? 0} sections indexed across {data.lib.document_count ?? 0} documents.
+  <p class="text-surface-z5 text-sm py-4">
+    Sections are organized under Documents. {data.lib.section_count ?? 0} sections indexed across {data.lib.document_count ?? 0} documents.
   </p>
 {/if}
