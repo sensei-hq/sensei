@@ -43,15 +43,23 @@
           <td>{lib.sourceType}</td>
           <td>{lib.sectionCount}</td>
           <td>{formatDate(lib.lastFetched)}</td>
-          <td class={freshnessColor[lib.freshness] ?? ''}>{freshnessLabel[lib.freshness] ?? lib.freshness}</td>
+          {#if lib.isShared}
+            <td class="status-shared">Shared</td>
+          {:else}
+            <td class={freshnessColor[lib.freshness] ?? ''}>{freshnessLabel[lib.freshness] ?? lib.freshness}</td>
+          {/if}
           {#if data.hasAnthropicKey}
             <td class={lib.skillPath ? 'skill-generated' : ''}>{lib.skillPath ? 'Generated' : 'None'}</td>
           {/if}
           <td>
-            <form method="POST" action="?/reindex">
-              <input type="hidden" name="name" value={lib.libName} />
-              <button type="submit">Re-index</button>
-            </form>
+            {#if lib.isShared}
+              <span class="managed-label">Managed globally</span>
+            {:else}
+              <form method="POST" action="?/reindex">
+                <input type="hidden" name="name" value={lib.libName} />
+                <button type="submit">Re-index</button>
+              </form>
+            {/if}
           </td>
         </tr>
       {/each}
@@ -76,6 +84,8 @@
   .status-fresh   { color: green; }
   .status-stale   { color: goldenrod; }
   .status-missing { color: red; }
+  .status-shared  { color: #2563eb; font-weight: 500; }
+  .managed-label  { color: #6b7280; font-style: italic; }
   .skill-generated { color: green; }
   .error { color: red; }
   table { border-collapse: collapse; width: 100%; }
