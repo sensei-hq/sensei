@@ -36,6 +36,12 @@ vi.mock("@sensei/engine", async () => {
     },
   };
 });
+vi.mock("fs/promises", () => ({
+  readFile: vi.fn().mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" })),
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  chmod: vi.fn().mockResolvedValue(undefined),
+}));
 
 const MOCK_CONFIG = {
   repo_id: "repo-abc",
