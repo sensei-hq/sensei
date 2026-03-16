@@ -50,7 +50,14 @@ export class LibIndexer {
     entry: LibEntry,
     pages: DocPage[],
   ): Promise<{ documentsIndexed: number; sectionsIndexed: number }> {
-    // 1. Delete existing documents (cascade-deletes sections via FK)
+    // 1. Delete all existing sections first (including orphans with document_id = NULL from pre-migration)
+    const { error: secDeleteError } = await this.db
+      .from("sections_in_document")
+      .delete()
+      .eq("library_id", libraryId);
+    if (secDeleteError) throw new Error(`LibIndexer.indexShared: section delete failed: ${secDeleteError.message}`);
+
+    // Then delete documents (cascade would now be a no-op, but keeps FK integrity)
     const { error: deleteError } = await this.db
       .from("documents_in_library")
       .delete()
