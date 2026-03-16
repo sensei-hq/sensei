@@ -186,11 +186,18 @@ llms_txt:
   - name: apps/dashboard
     sources:
       - apps/dashboard/README.md
+  - name: apps/dashboard/src
+    sources:
+      - apps/dashboard/src/hooks.server.ts
   - name: apps/dashboard/src/lib
     sources:
       - apps/dashboard/src/lib/supabase.ts
+  - name: apps/dashboard/src/lib/server
+    sources:
+      - apps/dashboard/src/lib/server/db.ts
   - name: apps/dashboard/src/routes
     sources:
+      - apps/dashboard/src/routes/+layout.server.ts
       - apps/dashboard/src/routes/+page.ts
   - name: apps/dashboard/src/routes/benchmarks
     sources:
@@ -203,7 +210,28 @@ llms_txt:
       - apps/dashboard/src/routes/references/+page.ts
   - name: apps/dashboard/src/routes/repos
     sources:
-      - apps/dashboard/src/routes/repos/+page.ts
+      - apps/dashboard/src/routes/repos/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/agents
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/agents/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/analytics
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/analytics/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/context-packs
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/context-packs/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/libraries
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/libraries/[name]
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/libraries/[name]/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/sessions
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/sessions/+page.server.ts
   - name: apps/dashboard/src/routes/stats
     sources:
       - apps/dashboard/src/routes/stats/+page.ts
@@ -228,21 +256,27 @@ llms_txt:
       - docs/design/17-pattern-store.md
       - docs/design/18-response-cache.md
       - docs/design/19-context-manager.md
+      - docs/design/20-pipeline-adapter.md
+      - docs/design/30-implementation-phases.md
+      - docs/design/40-mcp-tool-contracts.md
+      - docs/design/40-metadata-model.md
+      - docs/design/40-skill-development.md
       - docs/design/README.md
+      - docs/design/architecture.md
+      - docs/design/cc-rlm.md
   - name: docs/features
     sources:
-      - docs/features/01-indexing.md
-      - docs/features/02-resolution.md
-      - docs/features/03-workflow.md
-      - docs/features/04-traceability.md
-      - docs/features/05-context.md
-      - docs/features/06-Benchmarking.md
-      - docs/features/07-CLI.md
-      - docs/features/08-documentation.md
-      - docs/features/09-patterns.md
-      - docs/features/10-caching.md
-      - docs/features/11-implementation-sync.md
-      - docs/features/12-analytics.md
+      - docs/features/01-codebase-intelligence.md
+      - docs/features/02-smart-context-delivery.md
+      - docs/features/03-session-continuity.md
+      - docs/features/04-multi-agent-support.md
+      - docs/features/05-library-intelligence.md
+      - docs/features/06-documentation-traceability.md
+      - docs/features/07-analytics.md
+      - docs/features/08-setup-configuration.md
+      - docs/features/09-identity-access-pricing.md
+      - docs/features/10-system-intelligence.md
+      - docs/features/11-skill-tooling.md
       - docs/features/README.md
   - name: docs/plans
     sources:
@@ -270,6 +304,17 @@ llms_txt:
       - docs/superpowers/plans/2026-03-12-supabase-backend-migration.md
       - docs/superpowers/plans/2026-03-12-supabase-database-setup.md
       - docs/superpowers/plans/2026-03-12-supabase-web-app.md
+      - docs/superpowers/plans/2026-03-13-decomposing-broad-tasks.md
+      - docs/superpowers/plans/2026-03-13-phase1-foundation.md
+      - docs/superpowers/plans/2026-03-13-phase2-smart-context-delivery.md
+      - docs/superpowers/plans/2026-03-13-phase3-session-continuity.md
+      - docs/superpowers/plans/2026-03-13-phase4-analytics-ftr.md
+      - docs/superpowers/plans/2026-03-13-skill-tdd-tests.md
+      - docs/superpowers/plans/2026-03-14-phase4-multi-agent-support.md
+      - docs/superpowers/plans/2026-03-15-phase5-library-intelligence.md
+      - docs/superpowers/plans/2026-03-15-phase6-library-knowledge-detection.md
+      - docs/superpowers/plans/2026-03-15-phase7-dashboard-library-management.md
+      - docs/superpowers/plans/2026-03-15-phase8-shared-lib-pool.md
   - name: docs/superpowers/specs
     sources:
       - docs/superpowers/specs/2026-03-10-indexer-comparison-design.md
@@ -278,6 +323,17 @@ llms_txt:
       - docs/superpowers/specs/2026-03-11-indexer-multimodal-search-design.md
       - docs/superpowers/specs/2026-03-12-on-demand-reporting-design.md
       - docs/superpowers/specs/2026-03-12-supabase-central-store-design.md
+      - docs/superpowers/specs/2026-03-13-decomposing-broad-tasks-design.md
+      - docs/superpowers/specs/2026-03-13-phase3-session-continuity-design.md
+      - docs/superpowers/specs/2026-03-13-phase4-analytics-ftr-design.md
+      - docs/superpowers/specs/2026-03-13-smart-context-delivery-design.md
+      - docs/superpowers/specs/2026-03-14-phase4-multi-agent-support-design.md
+      - docs/superpowers/specs/2026-03-15-phase5-library-intelligence-design.md
+      - >-
+        docs/superpowers/specs/2026-03-15-phase6-library-knowledge-detection-design.md
+      - >-
+        docs/superpowers/specs/2026-03-15-phase7-dashboard-library-management-design.md
+      - docs/superpowers/specs/2026-03-15-phase8-shared-lib-pool-design.md
   - name: docs/templates
     sources:
       - docs/templates/design.md
@@ -301,14 +357,25 @@ llms_txt:
       - packages/cli/src/commands/benchmark-populate.ts
       - packages/cli/src/commands/benchmark-promote.ts
       - packages/cli/src/commands/doctor.ts
+      - packages/cli/src/commands/init-shared-linking.spec.ts
+      - packages/cli/src/commands/init.spec.ts
       - packages/cli/src/commands/init.ts
       - packages/cli/src/commands/migrate.ts
       - packages/cli/src/commands/setup.ts
       - packages/cli/src/commands/stats.spec.ts
       - packages/cli/src/commands/stats.ts
       - packages/cli/src/commands/status.ts
+      - packages/cli/src/commands/update-registry-global.spec.ts
+      - packages/cli/src/commands/update-registry.ts
       - packages/cli/src/commands/watch.spec.ts
       - packages/cli/src/commands/watch.ts
+  - name: packages/cli/src/lib
+    sources:
+      - packages/cli/src/lib/detect-libs.ts
+  - name: packages/cli/src/templates
+    sources:
+      - packages/cli/src/templates/agents-md.ts
+      - packages/cli/src/templates/claude-md.ts
   - name: packages/collector/src
     sources:
       - packages/collector/src/daemon.ts
@@ -325,8 +392,81 @@ llms_txt:
     sources:
       - packages/collector/src/__stubs__/bun-globals.ts
       - packages/collector/src/__stubs__/bun-sqlite.ts
+  - name: packages/engine/src
+    sources:
+      - packages/engine/src/context-pack.spec.ts
+      - packages/engine/src/context-pack.ts
+      - packages/engine/src/indexer.spec.ts
+      - packages/engine/src/indexer.ts
+      - packages/engine/src/pipeline.spec.ts
+      - packages/engine/src/pipeline.ts
+      - packages/engine/src/project-profile.spec.ts
+      - packages/engine/src/project-profile.ts
+      - packages/engine/src/scanner.ts
+  - name: packages/engine/src/adapters
+    sources:
+      - packages/engine/src/adapters/markdown.ts
+      - packages/engine/src/adapters/typescript.ts
+  - name: packages/engine/src/adapters/fixtures
+    sources:
+      - packages/engine/src/adapters/fixtures/sample.ts
+  - name: packages/engine/src/agent
+    sources:
+      - packages/engine/src/agent/agent-adapter.ts
+      - packages/engine/src/agent/claude-adapter.ts
+  - name: packages/engine/src/analytics
+    sources:
+      - packages/engine/src/analytics/ftr.ts
+      - packages/engine/src/analytics/task-session.spec.ts
+      - packages/engine/src/analytics/task-session.ts
+  - name: packages/engine/src/assemble
+    sources:
+      - packages/engine/src/assemble/assembler.spec.ts
+      - packages/engine/src/assemble/assembler.ts
+  - name: packages/engine/src/lib
+    sources:
+      - packages/engine/src/lib/http-adapter.ts
+      - packages/engine/src/lib/lib-indexer-shared.spec.ts
+      - packages/engine/src/lib/lib-indexer.spec.ts
+      - packages/engine/src/lib/lib-indexer.ts
+      - packages/engine/src/lib/lib-skill-generator.spec.ts
+      - packages/engine/src/lib/lib-skill-generator.ts
+      - packages/engine/src/lib/llms-txt-adapter.ts
+      - packages/engine/src/lib/local-adapter.ts
+      - packages/engine/src/lib/source-adapter.ts
+  - name: packages/engine/src/rank
+    sources:
+      - packages/engine/src/rank/bm25.spec.ts
+      - packages/engine/src/rank/bm25.ts
+      - packages/engine/src/rank/chain.spec.ts
+      - packages/engine/src/rank/chain.ts
+      - packages/engine/src/rank/diff-first-bfs.spec.ts
+      - packages/engine/src/rank/diff-first-bfs.ts
+      - packages/engine/src/rank/ranking-strategy.ts
+      - packages/engine/src/rank/semantic.spec.ts
+      - packages/engine/src/rank/semantic.ts
+  - name: packages/engine/src/session
+    sources:
+      - packages/engine/src/session/memory.spec.ts
+      - packages/engine/src/session/memory.ts
+      - packages/engine/src/session/session-manager.ts
+      - packages/engine/src/session/snapshot.spec.ts
+      - packages/engine/src/session/snapshot.ts
+  - name: packages/engine/src/skill-gen
+    sources:
+      - packages/engine/src/skill-gen/skill-generator.spec.ts
+      - packages/engine/src/skill-gen/skill-generator.ts
+      - packages/engine/src/skill-gen/skill-validator.spec.ts
+      - packages/engine/src/skill-gen/skill-validator.ts
+  - name: packages/engine/src/slice
+    sources:
+      - packages/engine/src/slice/ast-slicer.spec.ts
+      - packages/engine/src/slice/ast-slicer.ts
+      - packages/engine/src/slice/section-slicer.spec.ts
+      - packages/engine/src/slice/section-slicer.ts
   - name: packages/server/src
     sources:
+      - packages/server/src/mcp-server.ts
       - packages/server/src/serve.ts
   - name: packages/server/src/__stubs__
     sources:
@@ -334,14 +474,33 @@ llms_txt:
       - packages/server/src/__stubs__/bun-sqlite.ts
   - name: packages/server/src/model
     sources:
+      - packages/server/src/model/claude-backend.ts
       - packages/server/src/model/ollama-backend.ts
       - packages/server/src/model/system-check.ts
+  - name: packages/server/src/tools
+    sources:
+      - packages/server/src/tools/checkpoint.ts
+      - packages/server/src/tools/close-memory.ts
+      - packages/server/src/tools/context-pack.ts
+      - packages/server/src/tools/get-lib-docs-routing.spec.ts
+      - packages/server/src/tools/get-lib-docs.spec.ts
+      - packages/server/src/tools/get-lib-docs.ts
+      - packages/server/src/tools/get-session-context.ts
+      - packages/server/src/tools/install-skills.ts
+      - packages/server/src/tools/load-context.ts
+      - packages/server/src/tools/recommend-next.ts
+      - packages/server/src/tools/record-memory.ts
+      - packages/server/src/tools/search.ts
+      - packages/server/src/tools/take-snapshot.ts
+      - packages/server/src/tools/token-stats.ts
   - name: packages/shared/src
     sources:
       - packages/shared/src/config.spec.ts
       - packages/shared/src/config.ts
       - packages/shared/src/constants.ts
+      - packages/shared/src/domain.ts
       - packages/shared/src/supabase-client.ts
+      - packages/shared/src/token-counter.ts
       - packages/shared/src/types.ts
   - name: packages/tools/src
     sources:
@@ -376,39 +535,81 @@ llms_txt:
   - name: results
     sources:
       - results/indexer-comparison-2026-03-11.md
-  - name: skills/agentic-dev-workflow
+  - name: skills/compressing-content
     sources:
-      - skills/agentic-dev-workflow/SKILL.md
-  - name: skills/benchmark-runner
+      - skills/compressing-content/SKILL.md
+      - skills/compressing-content/test-baseline.md
+      - skills/compressing-content/test-pressure-1.md
+      - skills/compressing-content/test-pressure-2.md
+  - name: skills/decomposing-broad-tasks
     sources:
-      - skills/benchmark-runner/SKILL.md
-  - name: skills/codebase-indexer
+      - skills/decomposing-broad-tasks/SKILL.md
+      - skills/decomposing-broad-tasks/test-baseline.md
+      - skills/decomposing-broad-tasks/test-pressure-1.md
+      - skills/decomposing-broad-tasks/test-pressure-2.md
+  - name: skills/detecting-doc-drift
     sources:
-      - skills/codebase-indexer/SKILL.md
-      - skills/codebase-indexer/extractor.md
-  - name: skills/content-compression
+      - skills/detecting-doc-drift/SKILL.md
+      - skills/detecting-doc-drift/test-baseline.md
+      - skills/detecting-doc-drift/test-pressure-1.md
+      - skills/detecting-doc-drift/test-pressure-2.md
+  - name: skills/guiding-doc-creation
     sources:
-      - skills/content-compression/SKILL.md
-  - name: skills/context-manager
+      - skills/guiding-doc-creation/SKILL.md
+      - skills/guiding-doc-creation/design-template.md
+      - skills/guiding-doc-creation/feature-template.md
+      - skills/guiding-doc-creation/test-baseline.md
+      - skills/guiding-doc-creation/test-pressure-1.md
+      - skills/guiding-doc-creation/test-pressure-2.md
+  - name: skills/identify-unknown-libs
     sources:
-      - skills/context-manager/SKILL.md
-  - name: skills/doc-doctor
+      - skills/identify-unknown-libs/SKILL.md
+  - name: skills/indexing-codebase
     sources:
-      - skills/doc-doctor/SKILL.md
-  - name: skills/doc-drift-detector
+      - skills/indexing-codebase/SKILL.md
+      - skills/indexing-codebase/extractor.md
+      - skills/indexing-codebase/test-baseline.md
+      - skills/indexing-codebase/test-pressure-1.md
+      - skills/indexing-codebase/test-pressure-2.md
+  - name: skills/managing-context
     sources:
-      - skills/doc-drift-detector/SKILL.md
-  - name: skills/doc-guide
+      - skills/managing-context/SKILL.md
+      - skills/managing-context/test-baseline.md
+      - skills/managing-context/test-pressure-1.md
+      - skills/managing-context/test-pressure-2.md
+  - name: skills/managing-project-sessions
     sources:
-      - skills/doc-guide/SKILL.md
-      - skills/doc-guide/design-template.md
-      - skills/doc-guide/feature-template.md
-  - name: skills/populate-llmspec
+      - skills/managing-project-sessions/SKILL.md
+      - skills/managing-project-sessions/test-baseline.md
+      - skills/managing-project-sessions/test-pressure-1.md
+      - skills/managing-project-sessions/test-pressure-2.md
+  - name: skills/populating-llmspec
     sources:
-      - skills/populate-llmspec/SKILL.md
-  - name: skills/project-workflow
+      - skills/populating-llmspec/SKILL.md
+      - skills/populating-llmspec/test-baseline.md
+      - skills/populating-llmspec/test-pressure-1.md
+      - skills/populating-llmspec/test-pressure-2.md
+  - name: skills/reformatting-docs
     sources:
-      - skills/project-workflow/SKILL.md
+      - skills/reformatting-docs/SKILL.md
+      - skills/reformatting-docs/test-baseline.md
+      - skills/reformatting-docs/test-pressure-1.md
+      - skills/reformatting-docs/test-pressure-2.md
+  - name: skills/running-agentic-sessions
+    sources:
+      - skills/running-agentic-sessions/SKILL.md
+      - skills/running-agentic-sessions/test-baseline.md
+      - skills/running-agentic-sessions/test-pressure-1.md
+      - skills/running-agentic-sessions/test-pressure-2.md
+  - name: skills/running-benchmarks
+    sources:
+      - skills/running-benchmarks/SKILL.md
+      - skills/running-benchmarks/test-baseline.md
+      - skills/running-benchmarks/test-pressure-1.md
+      - skills/running-benchmarks/test-pressure-2.md
+  - name: skills/zero-errors-policy
+    sources:
+      - skills/zero-errors-policy/SKILL.md
   - name: tasks
     sources:
       - tasks/score-coverage.ts
