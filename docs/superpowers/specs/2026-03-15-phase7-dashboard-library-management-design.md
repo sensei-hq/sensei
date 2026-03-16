@@ -19,11 +19,11 @@ CLI (update-registry)
 
 Dashboard (libraries page)
   └─ reads repo_libs + lib_doc_sections aggregate → joined LibRow[]
-  └─ add action   → insert repo_libs → runUpdateRegistryCore(repoPath, name)
-  └─ reindex action → runUpdateRegistryCore(repoPath, name)
+  └─ add action    → write config.yaml + insert repo_libs → spawn sensei update-registry --lib <name>
+  └─ reindex action → spawn sensei update-registry --lib <name>
 
 Dashboard (repo detail page)
-  └─ counts repo_libs with not_indexed or stale status → badge
+  └─ counts repo_libs with missing or stale status → badge
 ```
 
 Config.yaml remains the local CLI source of truth. Supabase gets a synced copy after every `update-registry` run. The dashboard never reads config.yaml or `lib-skills.json`.
@@ -57,24 +57,37 @@ CREATE INDEX repo_libs_repo_id_idx ON sensei.repo_libs(repo_id);
 
 ## Component 2: CLI Sync (`update-registry.ts`)
 
-After the skill generation step for each lib (whether skill was generated or not), upsert into `repo_libs`:
+Declare `libSkillFile` before the skill-generation block so it is in scope at the upsert call site:
 
 ```typescript
-await (client as any)
-  .schema('sensei')
-  .from('repo_libs')
-  .upsert({
-    repo_id: repoId,
-    name: lib.name,
-    source_type: lib.source_type,
-    base_url: lib.base_url ?? null,
-    local_path: lib.local_path ?? null,
-    skill_path: libSkillFile?.path ?? null,
-    skill_generated_at: libSkillFile ? new Date().toISOString() : null,
-  }, { onConflict: 'repo_id,name' });
+let libSkillFile: LibSkillFile | undefined;
+
+if (hasAnthropicKey) {
+  // ... existing skill generation logic ...
+  libSkillFile = await new ClaudeAdapter().writeLibSkill(lib.name, markdown, repoSlug);
+  // ... manifest write ...
+}
+
+// Upsert to repo_libs — runs only after a successful fetch + index
+try {
+  await (client as any)
+    .schema('sensei')
+    .from('repo_libs')
+    .upsert({
+      repo_id: repoId,
+      name: lib.name,
+      source_type: lib.source_type,
+      base_url: lib.base_url ?? null,
+      local_path: lib.local_path ?? null,
+      skill_path: libSkillFile?.path ?? null,
+      skill_generated_at: libSkillFile ? new Date().toISOString() : null,
+    }, { onConflict: 'repo_id,name' });
+} catch (err) {
+  log.warn(`  repo_libs upsert failed for ${lib.name}: ${err instanceof Error ? err.message : String(err)}`);
+}
 ```
 
-This upsert runs for every lib successfully fetched and indexed, regardless of whether skill generation was attempted. If skill generation was skipped (no API key), `skill_path` and `skill_generated_at` remain null.
+This upsert is placed after the skill-generation block, inside the loop body after both the fetch and index steps succeed. If fetch or index fails (`continue` is called), the upsert is skipped for that lib. If skill generation was skipped (no API key), `skill_path` and `skill_generated_at` are null.
 
 ---
 
@@ -88,11 +101,11 @@ This upsert runs for every lib successfully fetched and indexed, regardless of w
 4. Join on `lib_name = repo_libs.name`:
    - `sectionCount`: 0 if no matching sections row
    - `lastFetched`: null if no sections
-5. Compute status:
-   - `not_indexed`: `sectionCount === 0`
+5. Compute freshness (reuse existing `Freshness = 'fresh' | 'stale' | 'missing'` type):
+   - `missing`: `sectionCount === 0`
    - `stale`: `sectionCount > 0` and `lastFetched` older than 7 days
    - `fresh`: `sectionCount > 0` and `lastFetched` within 7 days
-6. Compute attention count: entries where `status !== 'fresh'`
+6. Compute attention count: entries where `freshness !== 'fresh'`
 7. Remove `lib-skills.json` file read — skill data comes from `repo_libs.skill_path` and `repo_libs.skill_generated_at`
 
 ### Form Actions
@@ -101,25 +114,26 @@ This upsert runs for every lib successfully fetched and indexed, regardless of w
 - Inputs: `name` (string), `url` (string)
 - Validate `name` is non-empty; validate `url` with `URL` constructor (if HTTP) or accept as local path
 - Call `inferSourceType(url)` to determine `source_type`, `base_url`, `local_path`
-- Insert into `repo_libs` (upsert on conflict)
-- Call `runUpdateRegistryCore(repoPath, name)`
+- Append entry to `.sensei/config.yaml` under `custom_libs` (read → parse YAML → push entry → write)
+- Upsert into `repo_libs` (for immediate dashboard visibility before indexing completes)
+- Spawn `sensei update-registry --lib <name>` as subprocess (same pattern as existing `update` action)
 - Redirect to same page
 
 **`reindex`** — Re-index a single existing lib:
 - Input: `name` (string, hidden form field)
-- Call `runUpdateRegistryCore(repoPath, name)`
+- Spawn `sensei update-registry --lib <name>` as subprocess
 - Redirect to same page
 
 **`update`** (existing) — Re-index all libs:
-- Unchanged: calls `sensei update-registry` as subprocess
+- Unchanged: spawns `sensei update-registry` as subprocess
 
 ### UI (`+page.svelte`)
 
 Table columns: Library | Source | Sections | Last Fetched | Status | Skill | Actions
 
-- `not_indexed` rows: status cell shows "Not indexed" in red; Actions cell shows a URL `<input>` + Submit button (the `add` form, pre-filled with `name`)
-- `stale` rows: Actions cell shows a Re-index button (the `reindex` form)
-- `fresh` rows: Actions cell shows a Re-index button (always available)
+- `missing` rows: status cell shows "Not indexed" in red; Actions cell shows a URL `<input>` + Submit button (the `add` form, pre-filled with `name`)
+- `stale` rows: status cell shows "Stale" in amber; Actions cell shows a Re-index button (the `reindex` form)
+- `fresh` rows: status cell shows "Fresh" in green; Actions cell shows a Re-index button (always available)
 - Skill column: show "Generated" if `skill_path` is set, "None" otherwise (only when `hasAnthropicKey`)
 
 "Add Library" form at bottom of page: `name` text input + `url` text input + Add button (the `add` form without pre-filled name).
@@ -134,7 +148,7 @@ Add to existing load:
 
 ```typescript
 // Count libs needing attention
-const { data: repLibs } = await db
+const { data: repoLibs } = await db
   .from('repo_libs')
   .select('name')
   .eq('repo_id', params.id);
@@ -151,9 +165,9 @@ for (const s of (sections ?? [])) {
 }
 
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
-const libAttentionCount = (repLibs ?? []).filter(l => {
+const libAttentionCount = (repoLibs ?? []).filter(l => {
   const lastFetched = sectionMap.get(l.name);
-  if (!lastFetched) return true; // not indexed
+  if (!lastFetched) return true; // missing
   return Date.now() - new Date(lastFetched).getTime() > STALE_MS; // stale
 }).length;
 ```
@@ -183,9 +197,10 @@ With:
 | Scenario | Behaviour |
 |----------|-----------|
 | `add` with malformed URL | Validate with `URL` constructor; return `fail(400, { error: "..." })` |
-| `add` with duplicate lib name | Upsert on conflict — silently updates |
-| `reindex` for lib not in `repo_libs` | `runUpdateRegistryCore` handles "not found" with `process.exit(1)`; catch and return `fail(500)` |
+| `add` with duplicate lib name | Upsert on conflict — silently updates; config.yaml append is skipped if name already present |
+| `reindex` for lib not in `repo_libs` | `sensei update-registry --lib` exits non-zero; catch stderr and return `fail(500, { error })` |
 | `update-registry` upsert to `repo_libs` fails | Log warning, continue — indexing still proceeded |
+| fetch or index fails for a lib | `continue` is called; upsert to `repo_libs` is skipped for that lib |
 | `repo_libs` query returns empty | Libraries page shows empty table with "Add Library" form only |
 
 ---
@@ -195,9 +210,9 @@ With:
 | File | Change |
 |------|--------|
 | `supabase/migrations/20260315000001_phase7_repo_libs.sql` | New `repo_libs` table + index |
-| `packages/cli/src/commands/update-registry.ts` | Upsert to `repo_libs` after each lib processed |
-| `apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts` | Rewrite load; add `add` and `reindex` actions; remove `lib-skills.json` read |
-| `apps/dashboard/src/routes/repos/[id]/libraries/+page.svelte` | Show all libs; URL input for `not_indexed` rows; Re-index button per row; Add Library form |
+| `packages/cli/src/commands/update-registry.ts` | Declare `libSkillFile` before skill block; upsert to `repo_libs` after successful fetch + index |
+| `apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts` | Rewrite load (join `repo_libs` + `lib_doc_sections`); add `add` and `reindex` actions; remove `lib-skills.json` read |
+| `apps/dashboard/src/routes/repos/[id]/libraries/+page.svelte` | Show all libs; URL input for `missing` rows; Re-index button per row; Add Library form |
 | `apps/dashboard/src/routes/repos/[id]/+page.server.ts` | Add `libAttentionCount` query |
 | `apps/dashboard/src/routes/repos/[id]/+page.svelte` | Attention badge on Library Docs link |
 
