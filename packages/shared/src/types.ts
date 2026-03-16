@@ -135,7 +135,7 @@ export interface AgentSkillsManifest {
 
 export interface LibEntry {
   name: string;
-  source_type: 'llms.txt' | 'http' | 'local';
+  source_type: 'llms.txt' | 'http' | 'local' | 'github';
   base_url?: string;       // llms.txt: direct URL to llms.txt file; http: root URL to crawl
   local_path?: string;     // llms.txt: local path to llms.txt file; local: directory to scan
   description?: string;    // human-readable description of the library
@@ -147,7 +147,7 @@ export interface DocPage {
   localPath?: string;      // local sources
   description: string;     // short summary — embedding input for llms.txt; auto-extracted for others
   content?: string;        // full extracted markdown — null for llms.txt entries
-  sourceType: 'llms.txt' | 'http' | 'local';
+  sourceType: 'llms.txt' | 'http' | 'local' | 'github';
   component?: string;      // optional grouping (e.g. 'Button', 'Form')
 }
 
