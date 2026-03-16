@@ -42,6 +42,20 @@ export async function getLibDocsTool(
         });
         if (error) throw new Error(error.message);
         rows = (data ?? []) as Record<string, unknown>[];
+        // Fallback to keyword search if no embeddings exist yet
+        if (rows.length === 0) {
+          const q = opts.query;
+          let kq = (db as any)
+            .schema('sensei')
+            .from('shared_lib_sections')
+            .select('title,url,local_path,description,content,source_type,component')
+            .eq('shared_lib_id', sharedLibId)
+            .or(`title.ilike.%${q}%,description.ilike.%${q}%`);
+          if (opts.component) kq = kq.eq('component', opts.component);
+          const { data: kData, error: kErr } = await kq.order('title').limit(limit);
+          if (kErr) throw new Error(kErr.message);
+          rows = (kData ?? []) as Record<string, unknown>[];
+        }
       } else {
         const { data, error } = await db.rpc("match_lib_doc_sections", {
           p_repo_id: repoId,
@@ -87,6 +101,18 @@ export async function getLibDocsTool(
       sourceType: r.source_type as DocPage["sourceType"],
       component: (r.component as string | null) ?? undefined,
     }));
+
+    // Log MCP query (fire-and-forget, non-blocking)
+    if (opts?.query && sharedLibId && rows.length >= 0) {
+      try {
+        (db as any)
+          .schema('sensei')
+          .from('lib_queries')
+          .insert({ shared_lib_id: sharedLibId, query_text: opts.query, source: 'mcp', sections_hit: rows.length })
+          .then(() => {/* ignore */})
+          .catch(() => {/* ignore */});
+      } catch { /* ignore */ }
+    }
 
     return { lib, sections };
   } catch (err) {
