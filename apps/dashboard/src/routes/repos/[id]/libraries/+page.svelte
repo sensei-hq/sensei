@@ -48,18 +48,10 @@
             <td class={lib.skillPath ? 'skill-generated' : ''}>{lib.skillPath ? 'Generated' : 'None'}</td>
           {/if}
           <td>
-            {#if lib.freshness === 'missing'}
-              <form method="POST" action="?/add" class="inline-form">
-                <input type="hidden" name="name" value={lib.libName} />
-                <input type="text" name="url" placeholder="https://example.com/llms.txt" required />
-                <button type="submit">Add Docs</button>
-              </form>
-            {:else}
-              <form method="POST" action="?/reindex">
-                <input type="hidden" name="name" value={lib.libName} />
-                <button type="submit">Re-index</button>
-              </form>
-            {/if}
+            <form method="POST" action="?/reindex">
+              <input type="hidden" name="name" value={lib.libName} />
+              <button type="submit">Re-index</button>
+            </form>
           </td>
         </tr>
       {/each}
@@ -88,6 +80,5 @@
   .error { color: red; }
   table { border-collapse: collapse; width: 100%; }
   th, td { padding: 0.5rem 1rem; text-align: left; border-bottom: 1px solid #eee; }
-  .inline-form { display: flex; gap: 0.5rem; align-items: center; }
-  .add-form { display: flex; flex-direction: column; gap: 0.5rem; max-width: 400px; margin: 1rem 0; }
+.add-form { display: flex; flex-direction: column; gap: 0.5rem; max-width: 400px; margin: 1rem 0; }
 </style>
