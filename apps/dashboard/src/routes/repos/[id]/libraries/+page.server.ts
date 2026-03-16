@@ -5,6 +5,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { getDb } from '$lib/server/db';
 import { startLibIndexing } from '$lib/server/lib-indexer';
+import { inferSourceType } from '@sensei/engine';
 import yaml from 'js-yaml';
 
 type Freshness = 'fresh' | 'stale' | 'missing';
@@ -30,18 +31,6 @@ function computeFreshness(lastFetched: string | null, sectionCount: number): Fre
   return ageMs / (1000 * 60 * 60 * 24) > STALE_DAYS ? 'stale' : 'fresh';
 }
 
-function inferSourceType(input: string): { source_type: 'llms.txt' | 'http' | 'local'; base_url?: string; local_path?: string } {
-  if (input.startsWith('http://') || input.startsWith('https://')) {
-    try {
-      const url = new URL(input);
-      if (url.pathname.endsWith('/llms.txt') || url.pathname === '/llms.txt') {
-        return { source_type: 'llms.txt', base_url: input };
-      }
-    } catch { /* fall through */ }
-    return { source_type: 'http', base_url: input };
-  }
-  return { source_type: 'local', local_path: input };
-}
 
 
 export const load: PageServerLoad = async ({ params }) => {
@@ -171,7 +160,10 @@ export const actions: Actions = {
       try { new URL(url); } catch { return fail(400, { error: 'Invalid URL' }); }
     }
 
-    const { source_type, base_url, local_path } = inferSourceType(url);
+    const inferred = inferSourceType(url);
+    const { source_type } = inferred;
+    const base_url = 'base_url' in inferred ? inferred.base_url : undefined;
+    const local_path = 'local_path' in inferred ? inferred.local_path : undefined;
 
     // Update config.yaml
     try {
