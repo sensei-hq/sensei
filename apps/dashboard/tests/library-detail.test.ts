@@ -52,11 +52,12 @@ test.describe('Library detail page', () => {
     await expect(page.locator('textarea[name="query"]')).not.toBeVisible();
   });
 
-  test('stat cards display Sections, Repos, Queries, Last Indexed', async ({ page }) => {
+  test('stat cards display Documents, Sections, Repos, Queries, Last Indexed', async ({ page }) => {
     const found = await goToFirstLib(page);
     if (!found) { test.skip(true, 'No libraries in DB'); return; }
 
     const main = page.locator('main');
+    await expect(main.getByText('Documents', { exact: true })).toBeVisible();
     await expect(main.getByText('Sections', { exact: true })).toBeVisible();
     // Use first() to avoid strict mode violation when 'Repos' appears in nav too
     await expect(main.getByText('Repos', { exact: true }).first()).toBeVisible();
