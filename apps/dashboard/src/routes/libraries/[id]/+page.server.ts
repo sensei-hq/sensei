@@ -108,11 +108,12 @@ export const actions: Actions = {
     const query = String(formData.get('query') ?? '').trim();
     if (!query) return fail(400, { error: 'Query is required' });
 
+    const safeQuery = query.replace(/[%,()]/g, '');
     const { data: hits } = await db
       .from('shared_lib_sections')
       .select('id,title,url,description,component')
       .eq('shared_lib_id', params.id)
-      .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
+      .or(`title.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`)
       .limit(10);
 
     const results = hits ?? [];
@@ -145,11 +146,12 @@ export const actions: Actions = {
     const db = getDb();
     const { data: lib } = await db
       .from('shared_libs')
-      .select('id,name')
+      .select('id,name,embed_status')
       .eq('id', params.id)
       .single();
 
     if (!lib) return fail(404, { error: 'Library not found' });
+    if (lib.embed_status === 'embedding') return fail(409, { error: 'Embedding already in progress' });
 
     await startLibEmbed(db, lib.id, lib.name);
     return { embedding: true };
