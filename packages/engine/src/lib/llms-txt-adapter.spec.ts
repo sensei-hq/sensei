@@ -1,5 +1,8 @@
 // packages/engine/src/lib/llms-txt-adapter.spec.ts
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
 import { LlmsTxtAdapter } from "./llms-txt-adapter.js";
 import type { LibEntry } from "@sensei/shared";
 
@@ -107,8 +110,36 @@ describe("LlmsTxtAdapter", () => {
     expect(pages[0].title).toBe("Valid");
   });
 
-  it("throws if neither base_url nor local_path provided", async () => {
-    const adapter = new LlmsTxtAdapter();
-    await expect(adapter.fetch({ name: "t", source_type: "llms.txt" })).rejects.toThrow();
+  it("reads local files when base_url is a file:// URL", async () => {
+    let tmpDir!: string;
+    try {
+      tmpDir = await mkdtemp(join(tmpdir(), "sensei-llms-test-"));
+      const llmsTxt = `## Core\n\n- [Auth](./auth.txt): Core auth module\n- [UI](./ui.txt): UI components\n`;
+      await writeFile(join(tmpDir, "llms.txt"), llmsTxt, "utf-8");
+      await writeFile(join(tmpDir, "auth.txt"), "# Auth\n\nFull auth docs.", "utf-8");
+      await writeFile(join(tmpDir, "ui.txt"), "# UI\n\nFull UI docs.", "utf-8");
+
+      const pages = await new LlmsTxtAdapter().fetch({
+        name: "lib",
+        source_type: "llms.txt",
+        base_url: `file://${join(tmpDir, "llms.txt")}`,
+      });
+
+      expect(pages).toHaveLength(2);
+      expect(pages.map(p => p.title)).toEqual(["Auth", "UI"]);
+      expect(pages[0].summary).toBe("Core auth module");
+      expect(pages[0].component).toBe("Core");
+      expect(pages[0].content).toContain("Full auth docs");
+      expect(pages[0].url).toBeUndefined();
+      expect(pages[0].localPath).toContain("auth.txt");
+      expect(pages[0].sourceType).toBe("llms.txt");
+    } finally {
+      if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws if base_url not provided", async () => {
+    // @ts-expect-error — testing runtime guard
+    await expect(new LlmsTxtAdapter().fetch({ name: "t", source_type: "llms.txt" })).rejects.toThrow();
   });
 });

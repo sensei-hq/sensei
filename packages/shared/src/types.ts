@@ -136,8 +136,7 @@ export interface AgentSkillsManifest {
 export interface LibEntry {
   name: string;
   source_type: 'llms.txt' | 'http' | 'local' | 'github';
-  base_url?: string;       // llms.txt: direct URL to llms.txt file; http: root URL to crawl
-  local_path?: string;     // llms.txt: local path to llms.txt file; local: directory to scan
+  base_url: string;        // All sources: http(s)://, file://, or https://github.com/...
 }
 
 export interface DocPage {
