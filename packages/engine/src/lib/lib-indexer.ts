@@ -5,7 +5,7 @@ import type { LibEntry, DocPage, ModelBackend } from "@sensei/shared";
 export class LibIndexer {
   constructor(
     private readonly db: SupabaseClient,
-    private readonly backend: ModelBackend,
+    private readonly backend: ModelBackend | null = null,
   ) {}
 
   async index(
@@ -23,12 +23,7 @@ export class LibIndexer {
 
     const rows = await Promise.all(
       pages.map(async page => {
-        const embedInput =
-          entry.source_type === "llms.txt"
-            ? page.description
-            : (page.content ?? page.description).slice(0, 512);
-
-        const embedding = await this.backend.embed(embedInput);
+        const embedding = await this.embedPage(entry, page);
         return {
           repo_id: repoId,
           lib_name: entry.name,
@@ -50,7 +45,11 @@ export class LibIndexer {
     return { sectionsIndexed: rows.length };
   }
 
-  async indexShared(sharedLibId: string, entry: LibEntry, pages: DocPage[]): Promise<{ sectionsIndexed: number }> {
+  async indexShared(
+    sharedLibId: string,
+    entry: LibEntry,
+    pages: DocPage[],
+  ): Promise<{ sectionsIndexed: number }> {
     const { error: deleteError } = await this.db
       .from("shared_lib_sections")
       .delete()
@@ -60,12 +59,7 @@ export class LibIndexer {
 
     const rows = await Promise.all(
       pages.map(async page => {
-        const embedInput =
-          entry.source_type === "llms.txt"
-            ? page.description
-            : (page.content ?? page.description).slice(0, 512);
-
-        const embedding = await this.backend.embed(embedInput);
+        const embedding = await this.embedPage(entry, page);
         return {
           shared_lib_id: sharedLibId,
           title: page.title,
@@ -84,5 +78,14 @@ export class LibIndexer {
     if (insertError) throw new Error(`LibIndexer.indexShared: insert failed: ${insertError.message}`);
 
     return { sectionsIndexed: rows.length };
+  }
+
+  private async embedPage(entry: LibEntry, page: DocPage): Promise<number[] | null> {
+    if (!this.backend) return null;
+    const input =
+      entry.source_type === "llms.txt"
+        ? page.description
+        : (page.content ?? page.description).slice(0, 512);
+    return this.backend.embed(input);
   }
 }
