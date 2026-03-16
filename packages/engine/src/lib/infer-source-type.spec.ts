@@ -36,4 +36,15 @@ describe("inferSourceType", () => {
     const r = inferSourceType("https://");
     expect(r.source_type).toBe("http");
   });
+
+  it("detects .txt URLs (not ending in /llms.txt) as llms.txt type", () => {
+    const r = inferSourceType("https://rokkit.vercel.app/llms/index.txt");
+    expect(r.source_type).toBe("llms.txt");
+    expect(r.base_url).toBe("https://rokkit.vercel.app/llms/index.txt");
+  });
+
+  it("detects any .txt URL as llms.txt, not just /llms.txt suffix", () => {
+    const r = inferSourceType("https://example.com/components.txt");
+    expect(r.source_type).toBe("llms.txt");
+  });
 });
