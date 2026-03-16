@@ -138,17 +138,17 @@ export interface LibEntry {
   source_type: 'llms.txt' | 'http' | 'local' | 'github';
   base_url?: string;       // llms.txt: direct URL to llms.txt file; http: root URL to crawl
   local_path?: string;     // llms.txt: local path to llms.txt file; local: directory to scan
-  description?: string;    // human-readable description of the library
 }
 
 export interface DocPage {
   title: string;
   url?: string;            // remote sources
   localPath?: string;      // local sources
-  description: string;     // short summary — embedding input for llms.txt; auto-extracted for others
-  content?: string;        // full extracted markdown — null for llms.txt entries
+  summary: string;         // ≤200 chars — curated or auto-extracted (renamed from description)
+  content: string;         // REQUIRED — full markdown
   sourceType: 'llms.txt' | 'http' | 'local' | 'github';
   component?: string;      // optional grouping (e.g. 'Button', 'Form')
+  sequence?: number;       // hint from adapter (order in index)
 }
 
 export interface LibSkillFile {
