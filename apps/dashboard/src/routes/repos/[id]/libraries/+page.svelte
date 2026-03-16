@@ -7,7 +7,7 @@
     fresh: 'status-fresh', stale: 'status-stale', missing: 'status-missing',
   };
   const freshnessLabel: Record<string, string> = {
-    fresh: 'Fresh', stale: 'Stale', missing: 'Missing',
+    fresh: 'Fresh', stale: 'Stale', missing: 'Not indexed',
   };
 
   function formatDate(iso: string | null): string {
@@ -31,8 +31,9 @@
         <th>Source</th>
         <th>Sections</th>
         <th>Last Fetched</th>
-        <th>Freshness</th>
+        <th>Status</th>
         {#if data.hasAnthropicKey}<th>Skill</th>{/if}
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -44,19 +45,31 @@
           <td>{formatDate(lib.lastFetched)}</td>
           <td class={freshnessColor[lib.freshness] ?? ''}>{freshnessLabel[lib.freshness] ?? lib.freshness}</td>
           {#if data.hasAnthropicKey}
-            <td class={lib.skill ? 'skill-generated' : ''}>{lib.skill ? 'Generated' : 'None'}</td>
+            <td class={lib.skillPath ? 'skill-generated' : ''}>{lib.skillPath ? 'Generated' : 'None'}</td>
           {/if}
+          <td>
+            <form method="POST" action="?/reindex">
+              <input type="hidden" name="name" value={lib.libName} />
+              <button type="submit">Re-index</button>
+            </form>
+          </td>
         </tr>
       {/each}
     </tbody>
   </table>
 {:else}
-  <p>No library docs indexed yet.</p>
-  <p><code>Add custom_libs to .sensei/config.yaml then run sensei update-registry</code></p>
+  <p>No library docs configured yet.</p>
 {/if}
 
+<h2>Add Library</h2>
+<form method="POST" action="?/add" class="add-form">
+  <label>Name <input type="text" name="name" placeholder="my-lib" required /></label>
+  <label>URL or path <input type="text" name="url" placeholder="https://example.com/llms.txt" required /></label>
+  <button type="submit">Add &amp; Index</button>
+</form>
+
 <form method="POST" action="?/update">
-  <button type="submit">Update Registry</button>
+  <button type="submit">Re-index All</button>
 </form>
 
 <style>
@@ -67,4 +80,5 @@
   .error { color: red; }
   table { border-collapse: collapse; width: 100%; }
   th, td { padding: 0.5rem 1rem; text-align: left; border-bottom: 1px solid #eee; }
+.add-form { display: flex; flex-direction: column; gap: 0.5rem; max-width: 400px; margin: 1rem 0; }
 </style>

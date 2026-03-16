@@ -56,4 +56,8 @@
 <p><a href="/repos/{data.repo.id}/sessions">View Sessions →</a></p>
 <p><a href="/repos/{data.repo.id}/analytics">View Analytics →</a></p>
 <p><a href="/repos/{data.repo.id}/agents">Agent Skills →</a></p>
-<p><a href="/repos/{data.repo.id}/libraries">Library Docs →</a></p>
+<p>
+  <a href="/repos/{data.repo.id}/libraries">
+    Library Docs →{#if data.libAttentionCount > 0} ⚠ {data.libAttentionCount} need attention{/if}
+  </a>
+</p>
