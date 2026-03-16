@@ -46,38 +46,72 @@ export class LibIndexer {
   }
 
   async indexShared(
-    sharedLibId: string,
+    libraryId: string,
     entry: LibEntry,
     pages: DocPage[],
-  ): Promise<{ sectionsIndexed: number }> {
+  ): Promise<{ documentsIndexed: number; sectionsIndexed: number }> {
+    // 1. Delete existing documents (cascade-deletes sections via FK)
     const { error: deleteError } = await this.db
-      .from("shared_lib_sections")
+      .from("documents_in_library")
       .delete()
-      .eq("shared_lib_id", sharedLibId);
-
+      .eq("library_id", libraryId);
     if (deleteError) throw new Error(`LibIndexer.indexShared: delete failed: ${deleteError.message}`);
 
-    const rows = await Promise.all(
-      pages.map(async page => {
-        const embedding = await this.embedPage(entry, page);
-        return {
-          shared_lib_id: sharedLibId,
-          title: page.title,
-          url: page.url ?? null,
-          local_path: page.localPath ?? null,
-          summary: page.summary,
-          content: page.content ?? null,
-          source_type: entry.source_type,
-          component: page.component ?? null,
-          embedding,
-        };
-      })
-    );
+    let documentsIndexed = 0;
+    let sectionsIndexed = 0;
 
-    const { error: insertError } = await this.db.from("shared_lib_sections").insert(rows);
-    if (insertError) throw new Error(`LibIndexer.indexShared: insert failed: ${insertError.message}`);
+    const { splitSections } = await import("./doc-utils.js");
 
-    return { sectionsIndexed: rows.length };
+    for (const page of pages) {
+      // 2a. Insert document row
+      const docRow = {
+        library_id: libraryId,
+        sequence: page.sequence ?? documentsIndexed,
+        title: page.title,
+        url: page.url ?? null,
+        local_path: page.localPath ?? null,
+        summary: page.summary,
+        component: page.component ?? null,
+        source_type: entry.source_type,
+      };
+
+      const { data: docData, error: docErr } = await this.db
+        .from("documents_in_library")
+        .insert(docRow);
+      if (docErr) throw new Error(`LibIndexer.indexShared: doc insert failed: ${docErr.message}`);
+
+      // docData may be an array or a single object depending on the client
+      const docRecord = Array.isArray(docData) ? docData[0] : docData;
+      const documentId: string | null = docRecord?.id ?? null;
+      documentsIndexed++;
+
+      // 2b. Split content into sections
+      const sections = splitSections(page.content);
+
+      if (sections.length > 0) {
+        const sectionRows = await Promise.all(
+          sections.map(async (section) => {
+            const embedding = this.backend
+              ? await this.backend.embed(section.content.slice(0, 512))
+              : null;
+            return {
+              library_id: libraryId,
+              document_id: documentId,
+              sequence: section.sequence,
+              title: section.title,
+              content: section.content,
+              embedding,
+            };
+          })
+        );
+
+        const { error: secErr } = await this.db.from("sections_in_document").insert(sectionRows);
+        if (secErr) throw new Error(`LibIndexer.indexShared: section insert failed: ${secErr.message}`);
+        sectionsIndexed += sectionRows.length;
+      }
+    }
+
+    return { documentsIndexed, sectionsIndexed };
   }
 
   private async embedPage(entry: LibEntry, page: DocPage): Promise<number[] | null> {
