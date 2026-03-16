@@ -22,8 +22,8 @@ interface LibRow {
 const STALE_DAYS = 7;
 
 function computeFreshness(lastFetched: string | null, sectionCount: number): Freshness {
-  if (sectionCount === 0) return 'missing';
-  const ageMs = Date.now() - new Date(lastFetched!).getTime();
+  if (sectionCount === 0 || !lastFetched) return 'missing';
+  const ageMs = Date.now() - new Date(lastFetched).getTime();
   return ageMs / (1000 * 60 * 60 * 24) > STALE_DAYS ? 'stale' : 'fresh';
 }
 
@@ -61,7 +61,8 @@ export const load: PageServerLoad = async ({ params }) => {
   const { data: sections } = await db
     .from('lib_doc_sections')
     .select('lib_name,last_fetched')
-    .eq('repo_id', params.id);
+    .eq('repo_id', params.id)
+    .limit(10000);
 
   const sectionMap = new Map<string, { count: number; lastFetched: string | null }>();
   for (const s of (sections ?? []) as Array<{ lib_name: string; last_fetched: string }>) {
@@ -135,10 +136,11 @@ export const actions: Actions = {
     }
 
     // Upsert to repo_libs for immediate dashboard visibility
-    await db.from('repo_libs').upsert(
+    const { error: upsertErr } = await db.from('repo_libs').upsert(
       { repo_id: params.id, name, source_type, base_url: base_url ?? null, local_path: local_path ?? null },
       { onConflict: 'repo_id,name' }
     );
+    if (upsertErr) return fail(500, { error: upsertErr.message });
 
     // Index the new lib
     try {
