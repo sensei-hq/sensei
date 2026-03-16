@@ -58,7 +58,7 @@ describe("GithubAdapter", () => {
     );
   });
 
-  it("sets title from first H1, description from first paragraph, url to github blob URL", async () => {
+  it("sets title from first H1, summary from first paragraph, url to github blob URL", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ tree: [{ path: "docs/readme.md", type: "blob", url: "" }], truncated: false }) })
       .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(README_CONTENT) })
@@ -67,10 +67,48 @@ describe("GithubAdapter", () => {
     const pages = await new GithubAdapter().fetch({ name: "lib", source_type: "github", base_url: "https://github.com/org/repo/tree/main/docs" });
 
     expect(pages[0].title).toBe("My Library");
-    expect(pages[0].description).toBe("This is the main introduction paragraph.");
+    expect(pages[0].summary).toBe("This is the main introduction paragraph.");
     expect(pages[0].url).toBe("https://github.com/org/repo/blob/main/docs/readme.md");
     expect(pages[0].sourceType).toBe("github");
     expect(pages[0].content).toBe(README_CONTENT);
+  });
+
+  it("logs a warning when tree.truncated is true", async () => {
+    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("api.github.com")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            tree: [{ path: "docs/intro.md", type: "blob" }],
+            truncated: true,
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("# Intro\n\nContent.") });
+    }));
+
+    const adapter = new GithubAdapter();
+    await adapter.fetch({ name: "dbd", source_type: "github", base_url: "https://github.com/org/repo/tree/main/docs" });
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("truncated"));
+    consoleSpy.mockRestore();
+  });
+
+  it("DocPage has summary field (renamed from description)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("api.github.com")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ tree: [{ path: "docs/guide.md", type: "blob" }], truncated: false }) });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("# Guide\n\nThis is a guide.") });
+    }));
+
+    const adapter = new GithubAdapter();
+    const pages = await adapter.fetch({ name: "repo", source_type: "github", base_url: "https://github.com/org/repo/tree/main/docs" });
+
+    expect(pages[0].summary).toBeTruthy();
+    expect(pages[0].content).toContain("This is a guide");
+    expect((pages[0] as any).description).toBeUndefined();
   });
 
   it("infers component from immediate parent dir when nested deeper than basePath", async () => {
