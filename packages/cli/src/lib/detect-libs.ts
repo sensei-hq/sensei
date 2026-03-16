@@ -41,18 +41,27 @@ export async function scanDirectDeps(cwd: string): Promise<string[]> {
 }
 
 /**
- * Infer source_type and URL/path fields from a user-provided string.
- * Evaluation order: llms.txt URL → any other HTTP URL → local path.
+ * Infer source_type and base_url from a user-provided string.
+ * Local paths are normalized to file:// URLs.
+ * Evaluation order: file:// → llms.txt URL → github URL → http URL → local path.
  */
-export function inferSourceType(input: string): Pick<LibEntry, "source_type" | "base_url" | "local_path"> {
+export function inferSourceType(input: string): Pick<LibEntry, "source_type" | "base_url"> {
+  if (input.startsWith('file://')) {
+    return { source_type: input.endsWith('.txt') ? 'llms.txt' : 'local', base_url: input };
+  }
   if (input.startsWith("http://") || input.startsWith("https://")) {
     try {
       const url = new URL(input);
-      if (url.pathname.endsWith("/llms.txt") || url.pathname === "/llms.txt") {
+      if (url.pathname.endsWith("/llms.txt") || url.pathname.endsWith('.txt')) {
         return { source_type: "llms.txt", base_url: input };
       }
-    } catch { /* malformed URL — fall through to local */ }
+      if (url.hostname === 'github.com' && /^\/[^/]+\/[^/]+\/tree\//.test(url.pathname)) {
+        return { source_type: 'github', base_url: input };
+      }
+    } catch { /* malformed URL — fall through */ }
     return { source_type: "http", base_url: input };
   }
-  return { source_type: "local", local_path: input };
+  // Absolute filesystem path
+  const fileUrl = input.startsWith('/') ? `file://${input}` : `file:///${input}`;
+  return { source_type: input.endsWith('.txt') ? 'llms.txt' : 'local', base_url: fileUrl };
 }
