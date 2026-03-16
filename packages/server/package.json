@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./model": "./src/model/ollama-backend.ts",
+    "./tools": "./src/tools/get-lib-docs.ts"
   },
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun",

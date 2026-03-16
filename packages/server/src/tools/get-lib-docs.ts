@@ -30,14 +30,14 @@ export async function getLibDocsTool(
     const { data: repoLib } = typeof (db as any).schema === 'function'
       ? await (db as any)
           .schema('sensei')
-          .from('repo_libs')
-          .select('shared_lib_id')
+          .from('referenced_libraries')
+          .select('library_id')
           .eq('repo_id', repoId)
           .eq('name', lib)
           .maybeSingle()
       : { data: null };
 
-    const sharedLibId: string | null = repoLib?.shared_lib_id ?? null;
+    const sharedLibId: string | null = repoLib?.library_id ?? null;
     let rows: Record<string, unknown>[];
 
     // Note: the null-check on db.schema preserves backward compatibility with existing tests

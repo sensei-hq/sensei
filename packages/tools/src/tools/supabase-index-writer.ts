@@ -26,10 +26,10 @@ export async function upsertSymbols(
   }));
 
   const { error } = await client
-    .from("symbols")
+    .from("symbol_map")
     .upsert(rows, { onConflict: "repo_id,file_path" });
 
-  if (error) console.error("[indexer] Supabase symbols upsert error:", error.message);
+  if (error) console.error("[indexer] Supabase symbol_map upsert error:", error.message);
 }
 
 /** Upsert all doc coverage rows for a repo. No-op if empty.
