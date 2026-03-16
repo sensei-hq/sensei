@@ -14,8 +14,7 @@ export interface LibInfo {
   id: string;
   name: string;
   source_type: string;
-  base_url: string | null;
-  local_path: string | null;
+  base_url: string;
 }
 
 // ─── Phase 1: Fetch ──────────────────────────────────────────────────────────
@@ -23,7 +22,7 @@ export interface LibInfo {
 export async function startLibFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
   await db
     .from('libraries')
-    .update({ index_status: 'indexing', index_error: null, embed_status: null })
+    .update({ index_status: 'indexing', index_error: null, embed_status: 'pending' })
     .eq('id', lib.id);
 
   runFetch(db, lib).catch(err => {
@@ -34,7 +33,7 @@ export async function startLibFetch(db: SupabaseClient, lib: LibInfo): Promise<v
 async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
   try {
     const { LlmsTxtAdapter, HttpAdapter, LocalAdapter, GithubAdapter, LibIndexer } =
-      await import('@sensei/engine');
+      await import('@sensei/engine/lib');
 
     // Use the stored source_type (canonical) — do NOT re-derive from URL
     const sourceType = lib.source_type as 'llms.txt' | 'http' | 'local' | 'github';
@@ -48,8 +47,7 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
     const entry = {
       name: lib.name,
       source_type: sourceType,
-      base_url: lib.base_url ?? undefined,
-      local_path: lib.local_path ?? undefined,
+      base_url: lib.base_url,
     };
 
     const pages = await adapter.fetch(entry);
@@ -67,6 +65,9 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
         index_error: null,
       })
       .eq('id', lib.id);
+
+    // Automatically embed after fetch — no separate "Build Index" step needed
+    await runEmbed(db, lib.id, lib.name);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[lib-indexer] fetch failed for ${lib.name}:`, msg);
@@ -92,7 +93,7 @@ export async function startLibEmbed(db: SupabaseClient, libId: string, libName: 
 
 async function runEmbed(db: SupabaseClient, libId: string, libName: string): Promise<void> {
   try {
-    const { TransformersBackend } = await import('@sensei/engine');
+    const { TransformersBackend } = await import('@sensei/engine/lib');
     const backend = new TransformersBackend();
 
     // Fetch sections that need embedding (NULL embedding)
