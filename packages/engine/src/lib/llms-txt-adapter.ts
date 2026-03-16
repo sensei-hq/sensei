@@ -4,7 +4,7 @@ import type { LibEntry, DocPage } from "@sensei/shared";
 import type { SourceAdapter } from "./source-adapter.js";
 import { resolveUrl, fetchAsMarkdown } from "./doc-utils.js";
 
-const LINK_RE = /^-\s+\[([^\]]+)\]\(([^)]+)\):\s*(.+)$/;
+const LINK_RE = /^-\s+\[([^\]]+)\]\(([^)]+)\)[:\s—–-]+\s*(.+)$/;
 const SECTION_RE = /^##\s+(.+)$/;
 
 interface IndexEntry { title: string; url: string; summary: string; component?: string; }

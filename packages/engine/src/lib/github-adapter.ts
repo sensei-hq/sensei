@@ -22,8 +22,13 @@ export class GithubAdapter implements SourceAdapter {
     if (!parsed) throw new Error(`GithubAdapter: invalid GitHub tree URL: ${entry.base_url}`);
 
     const { owner, repo, branch, basePath } = parsed;
+    const token = process.env.GITHUB_TOKEN;
+    const authHeaders: Record<string, string> = {
+      Accept: "application/vnd.github.v3+json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
     const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
-    const treeRes = await fetch(treeUrl, { headers: { Accept: "application/vnd.github.v3+json" } });
+    const treeRes = await fetch(treeUrl, { headers: authHeaders });
     if (!treeRes.ok) throw new Error(`GithubAdapter: GitHub API error ${treeRes.status} for ${treeUrl}`);
 
     const tree: GitHubTreeResponse = await treeRes.json();
@@ -39,8 +44,11 @@ export class GithubAdapter implements SourceAdapter {
     const pages: DocPage[] = [];
     for (const file of mdFiles) {
       const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${file.path}`;
-      const res = await fetch(rawUrl);
-      if (!res.ok) continue;
+      const res = await fetch(rawUrl, { headers: authHeaders });
+      if (!res.ok) {
+        console.warn(`[GithubAdapter] Failed to fetch ${rawUrl}: HTTP ${res.status}`);
+        continue;
+      }
       const content = await res.text();
       pages.push({
         title: extractH1(content) ?? stemName(file.path),
