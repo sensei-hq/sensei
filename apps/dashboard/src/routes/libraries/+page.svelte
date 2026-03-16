@@ -62,9 +62,9 @@
 
   function displayUrl(lib: any): string | null {
     if (lib.base_url) {
+      if (lib.base_url.startsWith('file://')) return lib.base_url.replace('file://', '');
       try { return new URL(lib.base_url).hostname; } catch { return lib.base_url; }
     }
-    if (lib.local_path) return lib.local_path;
     return null;
   }
 
