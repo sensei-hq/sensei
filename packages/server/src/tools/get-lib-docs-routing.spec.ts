@@ -18,7 +18,7 @@ function makeDbWithSharedLib(sharedLibId: string | null) {
       eq: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
           maybeSingle: vi.fn().mockResolvedValue({
-            data: { shared_lib_id: sharedLibId },
+            data: { library_id: sharedLibId },
             error: null,
           }),
         }),
@@ -34,7 +34,7 @@ function makeDbWithSharedLib(sharedLibId: string | null) {
       from: vi.fn().mockReturnValue(repoLibsChain),
     }),
     rpc: vi.fn().mockImplementation((name: string) => {
-      if (name === "match_shared_lib_sections") return Promise.resolve(sharedRpcResult);
+      if (name === "match_libraries_sections") return Promise.resolve(sharedRpcResult);
       return Promise.resolve(perRepoRpcResult);
     }),
     from: vi.fn().mockReturnValue({
@@ -54,8 +54,8 @@ describe("getLibDocsTool routing", () => {
     const db = makeDbWithSharedLib("shared-uuid-1");
     const result = await getLibDocsTool(db as any, makeMockBackend(), "repo-1", "rokkit", { query: "button" });
 
-    expect(db.rpc).toHaveBeenCalledWith("match_shared_lib_sections", expect.objectContaining({
-      p_shared_lib_id: "shared-uuid-1",
+    expect(db.rpc).toHaveBeenCalledWith("match_libraries_sections", expect.objectContaining({
+      p_library_id: "shared-uuid-1",
     }));
     expect(db.rpc).not.toHaveBeenCalledWith("match_lib_doc_sections", expect.anything());
     expect(result.sections).toHaveLength(1);
@@ -69,7 +69,7 @@ describe("getLibDocsTool routing", () => {
     expect(db.rpc).toHaveBeenCalledWith("match_lib_doc_sections", expect.objectContaining({
       p_repo_id: "repo-1",
     }));
-    expect(db.rpc).not.toHaveBeenCalledWith("match_shared_lib_sections", expect.anything());
+    expect(db.rpc).not.toHaveBeenCalledWith("match_libraries_sections", expect.anything());
   });
 
   it("queries shared_lib_sections directly when shared_lib_id is set (browse path, no query)", async () => {
@@ -77,12 +77,12 @@ describe("getLibDocsTool routing", () => {
     const db = {
       schema: vi.fn().mockReturnValue({
         from: vi.fn().mockImplementation((table: string) => {
-          if (table === "repo_libs") {
+          if (table === "referenced_libraries") {
             return {
               select: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
                   eq: vi.fn().mockReturnValue({
-                    maybeSingle: vi.fn().mockResolvedValue({ data: { shared_lib_id: "shared-uuid-1" }, error: null }),
+                    maybeSingle: vi.fn().mockResolvedValue({ data: { library_id: "shared-uuid-1" }, error: null }),
                   }),
                 }),
               }),
