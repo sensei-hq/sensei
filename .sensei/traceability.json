@@ -104,8 +104,25 @@
   "docs/plans/2026-03-06-ai-skills-repo.md": [],
   "docs/plans/2026-03-06-ai-skills-repo-design.md": [],
   "docs/plans/2026-03-07-extract-tools-package.md": [],
+  "tasks/benchmark-coverage.yaml": [
+    "src/tools/reindex.ts"
+  ],
+  "results/indexer-comparison-2026-03-11.md": [
+    "src/index.ts",
+    "src/serve.ts",
+    "src/index-reader.ts",
+    "src/types.ts",
+    "src/constants.ts",
+    "src/cli.ts",
+    "src/names.ts",
+    "src/claude.ts",
+    "src/git.ts",
+    "src/__stubs__/bun-sqlite.ts",
+    "src/__stubs__/bun-globals.ts",
+    "src/model/system-check.ts",
+    "src/model/system-check.spec.ts"
+  ],
   "docs/traceability.yaml": [
-    "src/path/file.ts",
     "src/tools/chunker.ts",
     "src/tools/bm25.ts",
     "src/tools/embedder.ts",
@@ -124,34 +141,28 @@
     "src/supabase-client.ts",
     "src/supabase-writer.ts",
     "src/tools/supabase-index-writer.ts",
-    "src/tools/repo-registration.ts",
-    "src/config.spec.ts",
-    "src/supabase-writer.spec.ts",
-    "src/tools/supabase-index-writer.spec.ts",
-    "src/tools/repo-registration.spec.ts"
+    "src/tools/repo-registration.ts"
   ],
-  "results/indexer-comparison-2026-03-11.md": [
-    "src/index.ts",
-    "src/serve.ts",
-    "src/index-reader.ts",
-    "src/types.ts",
-    "src/constants.ts",
+  "docs/plans/2026-03-07-populate-llmspec-skill.md": [
     "src/cli.ts",
-    "src/names.ts",
-    "src/claude.ts",
-    "src/git.ts",
-    "src/__stubs__/bun-sqlite.ts",
-    "src/__stubs__/bun-globals.ts",
-    "src/model/system-check.ts",
-    "src/model/system-check.spec.ts"
+    "src/index.ts"
   ],
-  "tasks/benchmark-coverage.yaml": [
-    "src/tools/reindex.ts"
+  "docs/plans/2026-03-07-benchmark-populate.md": [
+    "src/commands/benchmark-populate.ts",
+    "src/commands/benchmark-populate.spec.ts",
+    "src/cli.ts",
+    "src/cli.spec.ts"
   ],
-  "docs/design/11-doc-tools.md": [
-    "src/commands/doctor.spec.ts",
-    "src/commands/doc-new.spec.ts",
-    "src/doc-refs/fetch-doc-ref.spec.ts"
+  "docs/design/17-pattern-store.md": [
+    "src/patterns/pattern-store.spec.ts"
+  ],
+  "docs/design/architecture.md": [
+    "src/auth/login.ts",
+    "src/middleware/jwt.ts"
+  ],
+  "docs/design/40-mcp-tool-contracts.md": [
+    "src/mcp-server.ts",
+    "src/install.ts"
   ],
   "docs/design/15-package-adapters.md": [
     "src/commands/init.ts",
@@ -163,61 +174,87 @@
     "src/adapters/readme.ts",
     "src/tools/folder-map.ts"
   ],
-  "docs/design/17-pattern-store.md": [
-    "src/patterns/pattern-store.spec.ts"
+  "docs/design/19-context-manager.md": [
+    "src/context/context-manager.spec.ts"
+  ],
+  "docs/design/11-doc-tools.md": [
+    "src/commands/doctor.spec.ts",
+    "src/commands/doc-new.spec.ts",
+    "src/doc-refs/fetch-doc-ref.spec.ts"
   ],
   "docs/design/18-response-cache.md": [
     "src/cache/response-cache.spec.ts"
   ],
-  "docs/design/19-context-manager.md": [
-    "src/context/context-manager.spec.ts"
+  "docs/features/02-smart-context-delivery.md": [
+    "src/payments/charge.ts",
+    "src/payments/retry.ts",
+    "src/billing/invoice.ts"
   ],
-  "docs/features/01-indexing.md": [
-    "src/index.ts",
-    "src/router.ts",
-    "src/auth.ts",
-    "src/payments/invoice.ts",
-    "src/legacy.ts"
-  ],
-  "docs/features/02-resolution.md": [
-    "src/orders.ts"
-  ],
-  "docs/features/04-traceability.md": [
-    "src/tools/drift.ts",
-    "src/index.ts",
-    "src/tools/query.ts",
-    "src/legacy.ts"
-  ],
-  "docs/features/11-implementation-sync.md": [
-    "src/indexer/index.ts",
-    "src/utils/helper.ts",
-    "src/cache/response-cache.ts",
-    "src/legacy.ts",
-    "src/utils/parser.ts"
-  ],
-  "docs/plans/2026-03-07-benchmark-populate.md": [
-    "src/commands/benchmark-populate.ts",
-    "src/commands/benchmark-populate.spec.ts",
-    "src/cli.ts",
-    "src/cli.spec.ts"
-  ],
-  "docs/plans/2026-03-07-populate-llmspec-skill.md": [
-    "src/cli.ts",
-    "src/index.ts"
-  ],
-  "skills/benchmark-runner/SKILL.md": [
-    "src/auth/login.ts"
-  ],
-  "skills/context-manager/SKILL.md": [
-    "src/auth/login.ts"
-  ],
-  "skills/doc-guide/SKILL.md": [
+  "skills/guiding-doc-creation/SKILL.md": [
     "src/path/file.ts"
   ],
-  "skills/doc-drift-detector/SKILL.md": [
+  "skills/running-agentic-sessions/test-baseline.md": [
+    "src/install.ts"
+  ],
+  "skills/running-agentic-sessions/test-pressure-1.md": [
+    "src/pipeline.ts"
+  ],
+  "skills/compressing-content/test-pressure-2.md": [
+    "src/adapters/typescript.ts"
+  ],
+  "skills/detecting-doc-drift/test-pressure-1.md": [
+    "src/scanner.ts"
+  ],
+  "skills/detecting-doc-drift/SKILL.md": [
     "src/index.ts",
     "src/tools/query.ts",
     "src/tools/drift.ts"
+  ],
+  "skills/managing-context/test-baseline.md": [
+    "src/indexer.ts"
+  ],
+  "skills/managing-context/SKILL.md": [
+    "src/auth/login.ts"
+  ],
+  "skills/running-benchmarks/SKILL.md": [
+    "src/auth/login.ts"
+  ],
+  "docs/superpowers/plans/2026-03-15-phase6-library-knowledge-detection.md": [
+    "src/lib/http-adapter.ts",
+    "src/lib/http-adapter.spec.ts",
+    "src/commands/update-registry.ts",
+    "src/cli.ts",
+    "src/lib/detect-libs.ts",
+    "src/lib/detect-libs.spec.ts",
+    "src/commands/init.ts"
+  ],
+  "docs/superpowers/plans/2026-03-13-phase4-analytics-ftr.md": [
+    "src/analytics/ftr.ts",
+    "src/analytics/ftr.spec.ts",
+    "src/analytics/task-session.ts",
+    "src/analytics/task-session.spec.ts",
+    "src/index.ts",
+    "src/mcp-server.ts",
+    "src/commands/stats.ts",
+    "src/commands/stats.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-12-supabase-backend-migration.md": [
+    "src/config.ts",
+    "src/index.ts",
+    "src/config.spec.ts",
+    "src/supabase-client.ts",
+    "src/supabase-writer.ts",
+    "src/daemon.ts",
+    "src/supabase-writer.spec.ts",
+    "src/a.ts",
+    "src/tools/supabase-index-writer.ts",
+    "src/tools/supabase-index-writer.spec.ts",
+    "src/tools/reindex.ts",
+    "src/tools/repo-registration.ts",
+    "src/tools/repo-registration.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-15-phase7-dashboard-library-management.md": [
+    "src/commands/update-registry.ts"
   ],
   "docs/superpowers/plans/2026-03-10-indexer-comparison.md": [
     "src/benchmark/indexer-comparison/types.ts",
@@ -236,6 +273,116 @@
     "src/benchmark/indexer-comparison/reporter.ts",
     "src/commands/benchmark-indexer.ts",
     "src/cli.ts"
+  ],
+  "docs/superpowers/plans/2026-03-13-phase2-smart-context-delivery.md": [
+    "src/token-counter.ts",
+    "src/token-counter.spec.ts",
+    "src/rank/ranking-strategy.ts",
+    "src/rank/diff-first-bfs.ts",
+    "src/rank/diff-first-bfs.spec.ts",
+    "src/rank/bm25.ts",
+    "src/rank/bm25.spec.ts",
+    "src/rank/semantic.ts",
+    "src/rank/semantic.spec.ts",
+    "src/rank/chain.ts",
+    "src/rank/chain.spec.ts",
+    "src/slice/ast-slicer.ts",
+    "src/slice/ast-slicer.spec.ts",
+    "src/slice/section-slicer.ts",
+    "src/slice/section-slicer.spec.ts",
+    "src/assemble/assembler.ts",
+    "src/assemble/assembler.spec.ts",
+    "src/adapters/markdown.ts",
+    "src/adapters/markdown.spec.ts",
+    "src/context-pack.ts",
+    "src/context-pack.spec.ts",
+    "src/tools/context-pack.ts",
+    "src/tools/recommend-next.ts",
+    "src/tools/token-stats.ts",
+    "src/domain.ts",
+    "src/index.ts",
+    "src/model/ollama-backend.ts",
+    "src/pipeline.ts",
+    "src/mcp-server.ts",
+    "src/model/ollama-backend.spec.ts",
+    "src/auth.ts",
+    "src/utils.ts",
+    "src/unknown.ts",
+    "src/db.ts",
+    "src/a.ts",
+    "src/nonexistent.ts",
+    "src/empty.ts",
+    "src/pipeline.spec.ts",
+    "src/foo.ts",
+    "src/mcp-server.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-13-phase1-foundation.md": [
+    "src/types.ts",
+    "src/domain.ts",
+    "src/index.ts",
+    "src/domain.spec.ts",
+    "src/a.ts",
+    "src/old.ts",
+    "src/scanner.ts",
+    "src/scanner.spec.ts",
+    "src/b.ts",
+    "src/adapters/typescript.ts",
+    "src/adapters/typescript.spec.ts",
+    "src/adapters/fixtures/sample.ts",
+    "src/fixtures/sample.ts",
+    "src/indexer.ts",
+    "src/indexer.spec.ts",
+    "src/indexer.integration.spec.ts",
+    "src/test.ts",
+    "src/pipeline.ts",
+    "src/pipeline.spec.ts",
+    "src/mcp-server.ts",
+    "src/tools/get-session-context.ts",
+    "src/tools/search.ts",
+    "src/tools/load-context.ts",
+    "src/mcp-server.spec.ts",
+    "src/mcp-entry.ts",
+    "src/commands/init.ts",
+    "src/templates/claude-md.ts",
+    "src/templates/agents-md.ts",
+    "src/cli.ts",
+    "src/hooks.server.ts",
+    "src/app.d.ts",
+    "src/lib/server/db.ts",
+    "src/tools/search.integration.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-12-llms-txt-traceability.md": [
+    "src/types.ts",
+    "src/tools/entry-point-adapters.spec.ts",
+    "src/cli.ts",
+    "src/index.ts",
+    "src/bin/main.rs",
+    "src/tools/entry-point-adapters.ts",
+    "src/foo.ts",
+    "src/X.ts",
+    "src/tools/llms-txt.spec.ts",
+    "src/tools/reindex.ts",
+    "src/tools/query.ts",
+    "src/empty.ts",
+    "src/tools/llms-txt.ts",
+    "src/tools/reindex.spec.ts",
+    "src/old.ts"
+  ],
+  "docs/superpowers/plans/2026-03-11-doc-guide-traceability.md": [
+    "src/path/a.ts",
+    "src/path/b.ts",
+    "src/patterns/store.spec.ts",
+    "src/cache/response-cache.spec.ts",
+    "src/context/context-manager.spec.ts",
+    "src/path/file.ts"
+  ],
+  "docs/superpowers/plans/2026-03-12-supabase-web-app.md": [
+    "src/lib/supabase.ts"
+  ],
+  "docs/superpowers/plans/2026-03-13-skill-tdd-tests.md": [
+    "src/pipeline.ts",
+    "src/adapters/typescript.ts",
+    "src/scanner.ts"
   ],
   "docs/superpowers/plans/2026-03-11-analytics-collector.md": [
     "src/index.ts",
@@ -260,13 +407,26 @@
     "src/commands/stats.spec.ts",
     "src/commands/setup.ts"
   ],
-  "docs/superpowers/plans/2026-03-11-doc-guide-traceability.md": [
-    "src/path/a.ts",
-    "src/path/b.ts",
-    "src/patterns/store.spec.ts",
-    "src/cache/response-cache.spec.ts",
-    "src/context/context-manager.spec.ts",
-    "src/path/file.ts"
+  "docs/superpowers/plans/2026-03-12-on-demand-reporting.md": [
+    "src/index.ts",
+    "src/cli.ts",
+    "src/commands/watch.ts",
+    "src/commands/watch.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-13-phase3-session-continuity.md": [
+    "src/session/session-manager.ts",
+    "src/session/session-manager.spec.ts",
+    "src/session/snapshot.ts",
+    "src/session/snapshot.spec.ts",
+    "src/session/memory.ts",
+    "src/session/memory.spec.ts",
+    "src/tools/take-snapshot.ts",
+    "src/tools/checkpoint.ts",
+    "src/tools/record-memory.ts",
+    "src/tools/close-memory.ts",
+    "src/index.ts",
+    "src/tools/get-session-context.ts",
+    "src/mcp-server.ts"
   ],
   "docs/superpowers/plans/2026-03-11-indexer-multimodal-search.md": [
     "src/tools/chunker.ts",
@@ -287,46 +447,124 @@
     "src/cli.ts",
     "src/tools/search.e2e.ts"
   ],
-  "docs/superpowers/plans/2026-03-12-llms-txt-traceability.md": [
+  "docs/superpowers/plans/2026-03-15-phase5-library-intelligence.md": [
     "src/types.ts",
-    "src/tools/entry-point-adapters.spec.ts",
-    "src/cli.ts",
-    "src/index.ts",
-    "src/bin/main.rs",
-    "src/tools/entry-point-adapters.ts",
-    "src/foo.ts",
-    "src/X.ts",
-    "src/tools/llms-txt.spec.ts",
-    "src/tools/reindex.ts",
-    "src/tools/query.ts",
-    "src/empty.ts",
-    "src/tools/llms-txt.ts",
-    "src/tools/reindex.spec.ts",
-    "src/old.ts"
-  ],
-  "docs/superpowers/plans/2026-03-12-on-demand-reporting.md": [
-    "src/index.ts",
-    "src/cli.ts",
-    "src/commands/watch.ts",
-    "src/commands/watch.spec.ts"
-  ],
-  "docs/superpowers/plans/2026-03-12-supabase-backend-migration.md": [
     "src/config.ts",
-    "src/index.ts",
     "src/config.spec.ts",
-    "src/supabase-client.ts",
-    "src/supabase-writer.ts",
-    "src/daemon.ts",
-    "src/supabase-writer.spec.ts",
-    "src/a.ts",
-    "src/tools/supabase-index-writer.ts",
-    "src/tools/supabase-index-writer.spec.ts",
-    "src/tools/reindex.ts",
-    "src/tools/repo-registration.ts",
-    "src/tools/repo-registration.spec.ts"
+    "src/lib/source-adapter.ts",
+    "src/lib/llms-txt-adapter.ts",
+    "src/lib/llms-txt-adapter.spec.ts",
+    "src/lib/http-adapter.ts",
+    "src/lib/http-adapter.spec.ts",
+    "src/lib/local-adapter.ts",
+    "src/lib/local-adapter.spec.ts",
+    "src/lib/lib-indexer.ts",
+    "src/lib/lib-indexer.spec.ts",
+    "src/lib/lib-skill-generator.ts",
+    "src/lib/lib-skill-generator.spec.ts",
+    "src/agent/claude-adapter.ts",
+    "src/agent/claude-adapter.spec.ts",
+    "src/index.ts",
+    "src/commands/update-registry.ts",
+    "src/cli.ts",
+    "src/tools/get-lib-docs.ts",
+    "src/tools/get-lib-docs.spec.ts",
+    "src/mcp-server.ts"
   ],
-  "docs/superpowers/plans/2026-03-12-supabase-web-app.md": [
-    "src/lib/supabase.ts"
+  "docs/superpowers/plans/2026-03-15-phase8-shared-lib-pool.md": [
+    "src/lib/lib-indexer.ts",
+    "src/lib/lib-indexer.spec.ts",
+    "src/cli.ts",
+    "src/commands/update-registry.ts",
+    "src/commands/update-registry-global.spec.ts",
+    "src/commands/init.ts",
+    "src/commands/init-shared-linking.spec.ts",
+    "src/tools/get-lib-docs.ts",
+    "src/tools/get-lib-docs-routing.spec.ts",
+    "src/tools/get-lib-docs.spec.ts"
+  ],
+  "docs/superpowers/plans/2026-03-14-phase4-multi-agent-support.md": [
+    "src/types.ts",
+    "src/model/claude-backend.ts",
+    "src/model/claude-backend.spec.ts",
+    "src/index.ts",
+    "src/project-profile.ts",
+    "src/project-profile.spec.ts",
+    "src/client.ts",
+    "src/indexer.ts",
+    "src/cli.ts",
+    "src/skill-gen/skill-validator.ts",
+    "src/skill-gen/skill-validator.spec.ts",
+    "src/skill-gen/skill-generator.ts",
+    "src/skill-gen/skill-generator.spec.ts",
+    "src/agent/agent-adapter.ts",
+    "src/agent/claude-adapter.ts",
+    "src/agent/claude-adapter.spec.ts",
+    "src/commands/setup.ts",
+    "src/tools/install-skills.ts",
+    "src/mcp-server.ts"
+  ],
+  "docs/superpowers/specs/2026-03-15-phase5-library-intelligence-design.md": [
+    "src/types.ts",
+    "src/config.ts",
+    "src/commands/update-registry.ts",
+    "src/tools/get-lib-docs.ts",
+    "src/agent/claude-adapter.ts",
+    "src/agent/claude-adapter.spec.ts",
+    "src/index.ts",
+    "src/mcp-server.ts",
+    "src/cli.ts"
+  ],
+  "docs/superpowers/specs/2026-03-14-phase4-multi-agent-support-design.md": [
+    "src/types.ts",
+    "src/index.ts",
+    "src/model/claude-backend.ts",
+    "src/commands/setup.ts",
+    "src/tools/install-skills.ts",
+    "src/mcp-server.ts"
+  ],
+  "docs/superpowers/specs/2026-03-12-on-demand-reporting-design.md": [
+    "src/index.ts",
+    "src/cli.ts",
+    "src/commands/watch.ts"
+  ],
+  "docs/superpowers/specs/2026-03-15-phase6-library-knowledge-detection-design.md": [
+    "src/cli.ts",
+    "src/commands/update-registry.ts",
+    "src/lib/http-adapter.ts",
+    "src/commands/init.ts",
+    "src/lib/http-adapter.spec.ts"
+  ],
+  "docs/superpowers/specs/2026-03-15-phase7-dashboard-library-management-design.md": [
+    "src/commands/update-registry.ts"
+  ],
+  "docs/superpowers/specs/2026-03-15-phase8-shared-lib-pool-design.md": [
+    "src/lib/lib-indexer.ts",
+    "src/commands/update-registry-global.spec.ts",
+    "src/commands/init-shared-linking.spec.ts",
+    "src/tools/get-lib-docs-routing.spec.ts",
+    "src/cli.ts",
+    "src/commands/update-registry.ts",
+    "src/commands/init.ts",
+    "src/tools/get-lib-docs.ts"
+  ],
+  "docs/superpowers/specs/2026-03-13-smart-context-delivery-design.md": [
+    "src/token-counter.ts",
+    "src/rank/ranking-strategy.ts",
+    "src/index.ts",
+    "src/types.ts",
+    "src/context-pack.ts",
+    "src/adapters/markdown.ts"
+  ],
+  "docs/superpowers/specs/2026-03-13-phase3-session-continuity-design.md": [
+    "src/index.ts",
+    "src/tools/get-session-context.ts",
+    "src/mcp-server.ts"
+  ],
+  "docs/superpowers/specs/2026-03-13-phase4-analytics-ftr-design.md": [
+    "src/index.ts",
+    "src/commands/stats.ts",
+    "src/mcp-server.ts"
   ],
   "docs/superpowers/specs/2026-03-10-indexer-comparison-design.md": [
     "src/commands/benchmark/indexer.ts",
@@ -350,11 +588,6 @@
     "src/tools/chunker.ts",
     "src/tools/bm25.ts",
     "src/tools/embedder.ts",
-    "src/commands/watch.ts"
-  ],
-  "docs/superpowers/specs/2026-03-12-on-demand-reporting-design.md": [
-    "src/index.ts",
-    "src/cli.ts",
     "src/commands/watch.ts"
   ]
 }
