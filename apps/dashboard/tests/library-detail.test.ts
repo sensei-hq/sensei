@@ -59,7 +59,7 @@ test.describe('Library detail page', () => {
     const main = page.locator('main');
     await expect(main.getByText('Sections', { exact: true })).toBeVisible();
     // Use first() to avoid strict mode violation when 'Repos' appears in nav too
-    await expect(main.locator('.text-surface-z5').filter({ hasText: /^Repos$/i }).first()).toBeVisible();
+    await expect(main.getByText('Repos', { exact: true }).first()).toBeVisible();
     await expect(main.getByText('Queries', { exact: true })).toBeVisible();
     await expect(main.getByText('Last Indexed', { exact: true })).toBeVisible();
   });

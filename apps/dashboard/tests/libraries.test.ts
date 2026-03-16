@@ -33,8 +33,8 @@ test.describe('Libraries page', () => {
     await page.waitForLoadState('networkidle');
     await page.locator('button').filter({ hasText: /add library/i }).first().click();
     await expect(page.locator('input[name="name"]')).toBeVisible();
-    // Click overlay (outside sidebar)
-    await page.mouse.click(100, 300);
+    // Click overlay element directly
+    await page.locator('[role="presentation"]').click();
     await expect(page.locator('input[name="name"]')).not.toBeVisible();
   });
 
