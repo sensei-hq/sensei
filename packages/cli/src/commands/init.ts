@@ -4,8 +4,6 @@ import { join } from "path";
 import { homedir } from "os";
 import { createClient } from "@supabase/supabase-js";
 import { indexRepo } from "@sensei/engine";
-import { claudeMdTemplate } from "../templates/claude-md.js";
-import { agentsMdTemplate } from "../templates/agents-md.js";
 import { installHooks } from "@sensei/collector";
 import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
 import { promptAndInstallSkills } from "./install-skills.js";
@@ -250,11 +248,7 @@ export async function init(cwd: string): Promise<void> {
     log.warn("You can re-index later with: sensei index");
   }
 
-  // 6. Write CLAUDE.md and AGENTS.md
-  await writeFile(join(cwd, "CLAUDE.md"), claudeMdTemplate({ repoName, stack, repoId }));
-  await writeFile(join(cwd, "AGENTS.md"), agentsMdTemplate({ repoName, stack }));
-
-  // 7. Install hooks
+  // 6. Install hooks
   const hookSpinner = spinner();
   hookSpinner.start("Installing collector hooks...");
   try {
@@ -269,7 +263,7 @@ export async function init(cwd: string): Promise<void> {
 
   note(
     [
-      `Created: .sensei/config.yaml, CLAUDE.md, AGENTS.md`,
+      `Created: .sensei/config.yaml`,
       ``,
       `Next steps:`,
       `  1. Start the dashboard: cd apps/dashboard && bun run dev`,
