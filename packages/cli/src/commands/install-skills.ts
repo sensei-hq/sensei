@@ -3,6 +3,7 @@ import { copyFile, mkdir, readdir, access } from "fs/promises";
 import { join, dirname, resolve } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
+import { SKILL_CATALOG } from "../lib/skill-catalog.js";
 
 /** Locate the bundled skills directory relative to this CLI script. */
 async function findSkillsDir(): Promise<string | null> {
@@ -122,4 +123,77 @@ export async function installSkills(repoPath: string, scope: InstallScope): Prom
 
   const { installed } = await installSkillsToDir(skillsDir, targetDir);
   s.stop(`Installed ${installed.length} skill${installed.length !== 1 ? "s" : ""} → ${targetDir}`);
+}
+
+/** Interactive catalog-driven install — recommended skills pre-checked. */
+export async function promptAndInstallSkillsFromCatalog(repoPath: string): Promise<void> {
+  const skillsDir = await findSkillsDir();
+  if (!skillsDir) {
+    log.warn("Could not locate sensei skills directory — skipping skill installation.");
+    return;
+  }
+
+  const selected = await multiselect({
+    message: "Which sensei skills would you like to install? (space to toggle, enter to confirm)",
+    options: SKILL_CATALOG.map(entry => ({
+      value: entry.name,
+      label: entry.name,
+      hint: entry.description,
+    })),
+    initialValues: SKILL_CATALOG.filter(e => e.recommended).map(e => e.name),
+    required: false,
+  });
+  if (isCancel(selected) || (selected as string[]).length === 0) return;
+
+  const targetDir = join(repoPath, ".claude", "skills");
+  const s = spinner();
+  s.start("Installing skills...");
+
+  let installedCount = 0;
+  await mkdir(targetDir, { recursive: true });
+  for (const skillName of selected as string[]) {
+    const skillMd = join(skillsDir, skillName, "SKILL.md");
+    try {
+      await access(skillMd);
+      await copyFile(skillMd, join(targetDir, `${skillName}.md`));
+      installedCount++;
+    } catch {
+      // skill not present in this build — skip
+    }
+  }
+  s.stop(`Installed ${installedCount} skill${installedCount !== 1 ? "s" : ""} → ${targetDir}`);
+}
+
+/** Non-interactive: install skills from the catalog filtered by mode. */
+export async function installSkillsFromCatalog(
+  repoPath: string,
+  mode: "recommended" | "all",
+): Promise<void> {
+  const skillsDir = await findSkillsDir();
+  if (!skillsDir) {
+    log.warn("Could not locate sensei skills directory.");
+    return;
+  }
+
+  const entries = mode === "recommended"
+    ? SKILL_CATALOG.filter(e => e.recommended)
+    : SKILL_CATALOG;
+
+  const targetDir = join(repoPath, ".claude", "skills");
+  const s = spinner();
+  s.start(`Installing ${mode} skills...`);
+
+  let installedCount = 0;
+  await mkdir(targetDir, { recursive: true });
+  for (const entry of entries) {
+    const skillMd = join(skillsDir, entry.name, "SKILL.md");
+    try {
+      await access(skillMd);
+      await copyFile(skillMd, join(targetDir, `${entry.name}.md`));
+      installedCount++;
+    } catch {
+      // skill not present in this build — skip
+    }
+  }
+  s.stop(`Installed ${installedCount} skill${installedCount !== 1 ? "s" : ""} → ${targetDir}`);
 }
