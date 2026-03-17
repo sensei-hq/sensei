@@ -269,12 +269,8 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
   const hookSpinner = spinner();
   hookSpinner.start("Installing collector hooks...");
   try {
-    if (opts.global) {
-      await installHooks({ global: true });
-    } else {
-      await installHooks({ projectPath: cwd });
-    }
-    hookSpinner.stop(`Hooks installed${opts.global ? " (global)" : " (repo-local)"}`);
+    await installHooks();
+    hookSpinner.stop(`Hooks installed${opts.global ? " (global)" : ""}`);
   } catch (err) {
     hookSpinner.stop(`Hook install skipped: ${err instanceof Error ? err.message : String(err)}`);
   }
