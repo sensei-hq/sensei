@@ -9,11 +9,6 @@ declare module '$kavach/auth' {
   export const logger: unknown;
 }
 
-declare module '@kavach/vite' {
-  import type { Plugin } from 'vite';
-  export function kavach(options?: Record<string, unknown>): Plugin;
-}
-
 declare module '@kavach/adapter-supabase' {
   export interface ActionResponse {
     data: unknown | null;
