@@ -29,17 +29,18 @@ function bunServe(opts: BunServeOptions): BunServer {
       else if (Array.isArray(v)) headers[k] = v.join(", ");
     }
 
-    let body: BodyInit | undefined;
+    let bodyBytes: Uint8Array | undefined;
     if (method !== "GET" && method !== "HEAD") {
-      body = await new Promise<Buffer>((resolve, reject) => {
+      bodyBytes = await new Promise<Uint8Array>((resolve, reject) => {
         const chunks: Buffer[] = [];
         nodeReq.on("data", (c: Buffer) => chunks.push(c));
-        nodeReq.on("end", () => resolve(Buffer.concat(chunks)));
+        nodeReq.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
         nodeReq.on("error", reject);
       });
     }
 
-    const webReq = new Request(url, { method, headers, body: body?.length ? body : undefined });
+    const body: BodyInit | undefined = bodyBytes && bodyBytes.byteLength > 0 ? bodyBytes.buffer as ArrayBuffer : undefined;
+    const webReq = new Request(url, { method, headers, body });
     let webRes: Response;
     try {
       webRes = await opts.fetch(webReq);
