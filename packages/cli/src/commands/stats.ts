@@ -13,6 +13,10 @@ export interface StatsResult {
 
 export interface StatsCommandOptions {
   days?: number;
+  all?: boolean;
+  tool?: string;
+  session?: string;
+  since?: string;
   json?: boolean;
   gaps?: boolean;
   /** Override repo path — used in tests */
