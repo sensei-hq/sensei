@@ -17,12 +17,13 @@ describe.skipIf(!RUN || !SUPABASE_KEY)("Indexer integration", () => {
 
   beforeAll(async () => {
     client = createClient(SUPABASE_URL, SUPABASE_KEY, {
-      db: { schema: "sensei" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: { schema: "sensei" } as any,
       auth: { persistSession: false },
     });
 
     // Ensure a repo row exists for foreign key constraints
-    await client.from("repos").upsert({
+    await (client as any).from("repos").upsert({
       id: testRepoId,
       name: "test-repo",
       local_path: `/tmp/test-${testRepoId}`,
@@ -61,7 +62,7 @@ describe.skipIf(!RUN || !SUPABASE_KEY)("Indexer integration", () => {
     expect(result.errors).toHaveLength(0);
     expect(result.symbolsUpserted).toBe(1);
 
-    const { data } = await client
+    const { data } = await (client as any)
       .from("symbols")
       .select("*")
       .eq("repo_id", testRepoId)

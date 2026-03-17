@@ -138,6 +138,7 @@ describe("GithubAdapter", () => {
   });
 
   it("throws if no base_url provided", async () => {
+    // @ts-expect-error — testing runtime guard when base_url is omitted
     await expect(new GithubAdapter().fetch({ name: "x", source_type: "github" })).rejects.toThrow("requires base_url");
   });
 

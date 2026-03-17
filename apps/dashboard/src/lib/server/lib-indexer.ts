@@ -8,7 +8,10 @@
  * Phase 2 (startLibEmbed): generate 384-dim embeddings via TransformersBackend.
  *   Runs on "Build Index". Enables semantic search in getLibDocsTool.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 import type { SupabaseClient } from '@supabase/supabase-js';
+// Accept any schema variant (e.g. "sensei") — the lib-indexer only uses runtime .from() calls
+type AnySupabaseClient = SupabaseClient<any, any, any>;
 
 export interface LibInfo {
   id: string;
@@ -19,7 +22,7 @@ export interface LibInfo {
 
 // ─── Phase 1: Fetch ──────────────────────────────────────────────────────────
 
-export async function startLibFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
+export async function startLibFetch(db: AnySupabaseClient, lib: LibInfo): Promise<void> {
   await db
     .from('libraries')
     .update({ index_status: 'indexing', index_error: null, embed_status: 'pending' })
@@ -30,7 +33,7 @@ export async function startLibFetch(db: SupabaseClient, lib: LibInfo): Promise<v
   });
 }
 
-async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
+async function runFetch(db: AnySupabaseClient, lib: LibInfo): Promise<void> {
   try {
     const { LlmsTxtAdapter, HttpAdapter, LocalAdapter, GithubAdapter, LibIndexer } =
       await import('@sensei/engine/lib');
@@ -80,7 +83,7 @@ async function runFetch(db: SupabaseClient, lib: LibInfo): Promise<void> {
 
 // ─── Phase 2: Embed ──────────────────────────────────────────────────────────
 
-export async function startLibEmbed(db: SupabaseClient, libId: string, libName: string): Promise<void> {
+export async function startLibEmbed(db: AnySupabaseClient, libId: string, libName: string): Promise<void> {
   await db
     .from('libraries')
     .update({ embed_status: 'embedding' })
@@ -91,7 +94,7 @@ export async function startLibEmbed(db: SupabaseClient, libId: string, libName: 
   });
 }
 
-async function runEmbed(db: SupabaseClient, libId: string, libName: string): Promise<void> {
+async function runEmbed(db: AnySupabaseClient, libId: string, libName: string): Promise<void> {
   try {
     const { TransformersBackend } = await import('@sensei/engine/lib');
     const backend = new TransformersBackend();
