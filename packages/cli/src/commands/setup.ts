@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { existsSync } from "fs";
+import { createRequire } from "module";
 import { intro, outro, log, spinner } from "@clack/prompts";
 import { extractProjectProfile, SkillGenerator, SkillValidator, ClaudeAdapter } from "@sensei/engine";
 import { ClaudeBackend } from "@sensei/server";
@@ -9,8 +10,17 @@ import { makeSenseiClient, loadSenseiConfig, type AgentSkillsManifest } from "@s
 
 const MCP_CONFIG = join(homedir(), ".claude", "mcp.json");
 
-export async function setupMcp(repoPath: string, indexJsPath: string): Promise<void> {
+/** Resolve path to the instrumented MCP entry point in @sensei/server */
+export function resolveMcpEntryPath(): string {
+  const _require = createRequire(import.meta.url);
+  const serverPkgPath = _require.resolve("@sensei/server/package.json");
+  return join(dirname(serverPkgPath), "src", "mcp-entry.ts");
+}
+
+export async function setupMcp(repoPath: string, mcpEntryPath?: string): Promise<void> {
   intro("sensei setup --mcp");
+
+  const entryPath = mcpEntryPath ?? resolveMcpEntryPath();
 
   await mkdir(dirname(MCP_CONFIG), { recursive: true });
 
@@ -26,14 +36,14 @@ export async function setupMcp(repoPath: string, indexJsPath: string): Promise<v
   config.mcpServers ??= {};
   config.mcpServers["sensei"] = {
     command: "bun",
-    args: [indexJsPath],
-    env: { REPO_PATH: repoPath },
+    args: [entryPath],
+    env: { SENSEI_REPO_PATH: repoPath },
   };
 
   await writeFile(MCP_CONFIG, JSON.stringify(config, null, 2), "utf-8");
   log.success(`MCP server registered in ${MCP_CONFIG}`);
-  log.info(`command: bun ${indexJsPath}`);
-  log.info(`REPO_PATH: ${repoPath}`);
+  log.info(`command: bun ${entryPath}`);
+  log.info(`SENSEI_REPO_PATH: ${repoPath}`);
   outro("Done. Restart Claude Code to pick up the MCP server.");
 }
 

@@ -32,6 +32,9 @@ const { positionals, values } = parseArgs({
     agent: { type: "string" },
     lib: { type: "string" },
     global: { type: "boolean", default: false },
+    // init options
+    "supabase-url": { type: "string" },
+    "service-key": { type: "string" },
   },
 });
 
@@ -56,7 +59,7 @@ Usage:
   sensei <command> [options]
 
 Commands:
-  init                     Set up a new repo (index + profiles + hook)
+  init                     Set up a new repo (index + CLAUDE.md + hooks + skills)
   add                      Add sensei to an existing repo (non-destructive)
   setup --mcp              Register sensei MCP server in ~/.claude/mcp.json
   setup --hooks            Install Claude hook scripts and register daemon autostart
@@ -81,6 +84,11 @@ Commands:
 
 Options:
   -h, --help               Show this help message
+
+init:
+  --global                 Install skills and hooks globally (~/.claude/) instead of repo-local
+  --supabase-url <url>     Supabase URL (default: $SUPABASE_URL or prompts; fallback: http://localhost:54321)
+  --service-key <key>      Supabase service role key (default: $SUPABASE_SERVICE_KEY or prompts)
 
 setup:
   --mcp                    Register MCP server (writes ~/.claude/mcp.json)
@@ -127,7 +135,6 @@ benchmark promote:
 
 serve:
   --port <n>               Port to listen on (default: 7744)
-  --db <path>              Path to SQLite database file
 
 watch:
   --repo <path>            Repo to watch (default: auto-detected repo root)
@@ -151,7 +158,11 @@ async function main() {
   switch (cmd) {
     case "init": {
       const { init } = await import("./commands/init.js");
-      await init(repoRoot);
+      await init(repoRoot, {
+        global: values.global,
+        supabaseUrl: values["supabase-url"] ?? process.env.SUPABASE_URL,
+        serviceKey: values["service-key"] ?? process.env.SUPABASE_SERVICE_KEY,
+      });
       break;
     }
     case "add": {
@@ -175,12 +186,7 @@ async function main() {
         process.exit(1);
       }
       const { setupMcp } = await import("./commands/setup.js");
-      const { createRequire } = await import("module");
-      const { dirname: _dirname, join: _join } = await import("path");
-      const _require = createRequire(import.meta.url);
-      const mcpPkgPath = _require.resolve("@sensei/mcp/package.json");
-      const mcpIndexJs = _join(_dirname(mcpPkgPath), "dist", "index.js");
-      await setupMcp(repoRoot, mcpIndexJs);
+      await setupMcp(repoRoot);
       break;
     }
     case "status": {
@@ -237,7 +243,6 @@ async function main() {
       const { serve } = await import("./commands/serve.js");
       await serve(repoRoot, {
         port: values.port ? parseInt(values.port, 10) : undefined,
-        db: values.db,
       });
       break;
     }
