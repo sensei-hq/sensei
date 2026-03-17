@@ -35,6 +35,7 @@ const { positionals, values } = parseArgs({
     // init options
     "supabase-url": { type: "string" },
     "service-key": { type: "string" },
+    "use-recommended": { type: "boolean", default: false },
   },
 });
 
@@ -89,6 +90,7 @@ init:
   --global                 Install skills and hooks globally (~/.claude/) instead of repo-local
   --supabase-url <url>     Supabase URL (default: $SUPABASE_URL or prompts; fallback: http://localhost:54321)
   --service-key <key>      Supabase service role key (default: $SUPABASE_SERVICE_KEY or prompts)
+  --use-recommended        Install recommended skills without prompting
 
 setup:
   --mcp                    Register MCP server (writes ~/.claude/mcp.json)
@@ -162,6 +164,7 @@ async function main() {
         global: values.global,
         supabaseUrl: values["supabase-url"] ?? process.env.SUPABASE_URL,
         serviceKey: values["service-key"] ?? process.env.SUPABASE_SERVICE_KEY,
+        useRecommended: values["use-recommended"],
       });
       break;
     }
