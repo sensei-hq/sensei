@@ -16,11 +16,11 @@
     "bump:next": "bumpp --configFilePath config/bump.config.js --preid=next"
   },
   "overrides": {
-    "@kavach/sentry": "1.0.0-next.34",
-    "@kavach/cookie": "1.0.0-next.34",
-    "@kavach/hashing": "1.0.0-next.34",
-    "@kavach/logger": "1.0.0-next.34",
-    "@kavach/query": "1.0.0-next.34"
+    "@kavach/sentry": "1.0.0-next.36",
+    "@kavach/cookie": "1.0.0-next.36",
+    "@kavach/hashing": "1.0.0-next.36",
+    "@kavach/logger": "1.0.0-next.36",
+    "@kavach/query": "1.0.0-next.36"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
