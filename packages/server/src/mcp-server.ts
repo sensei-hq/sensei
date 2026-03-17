@@ -222,7 +222,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         const client = await getClient();
         if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
         if (!sessionId) return { content: [{ type: "text", text: "Error: No active session. Call get_session_context first." }], isError: true };
-        const result = await checkpointTool(client as any, sessionId, opts.repoId, params);
+        const result = await checkpointTool(client as any, sessionId, opts.repoId, params, opts.repoPath);
         // completeTaskSession runs after checkpointTool so sessions.status is already 'completed'
         // Throws on DB error — the outer try/catch surfaces it to the agent as isError: true
         if (taskSessionId) {
