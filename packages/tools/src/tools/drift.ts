@@ -2,7 +2,7 @@ import { stat, readFile } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import { execSync } from "child_process";
-import { senseiPath } from "@sensei/shared";
+import { senseiPath, loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
 
 export interface DriftEntry {
   docPath: string;
@@ -24,17 +24,53 @@ interface DocIndexData {
 }
 
 export async function checkDrift(repoPath: string): Promise<DriftResult> {
-  const indexPath = senseiPath(repoPath, "doc-index.json");
-  if (!existsSync(indexPath)) {
-    return { drifted: [], summary: "No doc-index.json found. Run sensei index first." };
+  let fingerprints: Record<string, { mtime: number; size: number }> = {};
+  let lastIndexedCommit: string | undefined;
+  let traceabilityData: Record<string, string[]> = {};
+
+  // Try DB first
+  const config = await loadSenseiConfig(repoPath);
+  if (config) {
+    const client = await makeSenseiClient(repoPath);
+    if (client) {
+      const { data: repoRow } = await (client as any)
+        .schema("sensei").from("repos")
+        .select("doc_fingerprints, last_indexed_commit")
+        .eq("id", config.repo_id)
+        .maybeSingle();
+      if (repoRow?.doc_fingerprints) {
+        fingerprints = repoRow.doc_fingerprints;
+        lastIndexedCommit = repoRow.last_indexed_commit ?? undefined;
+      }
+      const { data: docsRows } = await (client as any)
+        .schema("sensei").from("docs")
+        .select("doc_path, covers")
+        .eq("repo_id", config.repo_id);
+      if (docsRows) {
+        for (const row of docsRows) {
+          traceabilityData[row.doc_path] = row.covers;
+        }
+      }
+    }
   }
 
-  const raw: DocIndexData = JSON.parse(await readFile(indexPath, "utf-8"));
+  // Fallback to legacy files
+  if (Object.keys(fingerprints).length === 0) {
+    const indexPath = senseiPath(repoPath, "doc-index.json");
+    if (!existsSync(indexPath)) {
+      return { drifted: [], summary: "No index found. Run sensei index first." };
+    }
+    const raw: DocIndexData = JSON.parse(await readFile(indexPath, "utf-8"));
+    fingerprints = (raw.files ?? raw) as Record<string, { mtime: number; size: number }>;
+    lastIndexedCommit = raw.lastIndexedCommit as string | undefined;
+  }
 
-  // Support both new schema (with files key) and old flat schema
-  const fingerprints: Record<string, { mtime: number; size: number }> =
-    raw.files ?? (raw as Record<string, { mtime: number; size: number }>);
-  const lastIndexedCommit = raw.lastIndexedCommit as string | undefined;
+  if (Object.keys(traceabilityData).length === 0) {
+    const traceabilityPath = senseiPath(repoPath, "traceability.json");
+    if (existsSync(traceabilityPath)) {
+      traceabilityData = JSON.parse(await readFile(traceabilityPath, "utf-8"));
+    }
+  }
 
   const drifted: DriftEntry[] = [];
 
@@ -64,14 +100,9 @@ export async function checkDrift(repoPath: string): Promise<DriftResult> {
       }
     }
   } else {
-    // Git mode: cross-reference changed files with traceability matrix
-    const traceabilityPath = senseiPath(repoPath, "traceability.json");
-    if (existsSync(traceabilityPath)) {
-      const traceability: Record<string, string[]> = JSON.parse(
-        await readFile(traceabilityPath, "utf-8")
-      );
-
-      for (const [docPath, coveredFiles] of Object.entries(traceability)) {
+    // Git mode: cross-reference changed files with traceability data
+    if (Object.keys(traceabilityData).length > 0) {
+      for (const [docPath, coveredFiles] of Object.entries(traceabilityData)) {
         const triggeringFiles = coveredFiles.filter(f => changedFiles.has(f));
         if (triggeringFiles.length === 0) continue;
 
@@ -87,9 +118,9 @@ export async function checkDrift(repoPath: string): Promise<DriftResult> {
       }
 
       // Also flag docs that changed without their code changing
-      for (const [docPath] of Object.entries(traceability)) {
+      for (const [docPath] of Object.entries(traceabilityData)) {
         if (changedFiles.has(docPath)) {
-          const coveredFiles = traceability[docPath] ?? [];
+          const coveredFiles = traceabilityData[docPath] ?? [];
           const codeChanged = coveredFiles.some(f => changedFiles.has(f));
           if (!codeChanged) {
             drifted.push({ docPath, reason: "doc-changed" });
