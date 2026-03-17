@@ -1,6 +1,10 @@
 ---
 name: managing-project-sessions
-description: Use when starting work on any project to establish the session protocol, capture decisions and patterns, and maintain knowledge across sessions without token bloat.
+description: Use at the start of every project session — calls get_session_context()
+to resume from the last checkpoint, surface open decisions and pending questions,
+and orient in ~300 tokens instead of re-deriving state from git log or file reads.
+Also use whenever a decision is confirmed or a pattern is reused, to persist it
+before it is lost at session end.
 ---
 
 # Project Workflow

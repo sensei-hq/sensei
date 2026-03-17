@@ -1,6 +1,10 @@
 ---
 name: managing-context
-description: Use when starting a new task in a session, switching between tasks, or when context is getting large and needs to be trimmed to stay efficient.
+description: Use before loading any code into a session — calls recommend_next(task)
+to get the minimal scope and resolution level, preventing the context from bloating
+with dead files from previous tasks.
+Also use when switching between tasks or when context window is growing large, to
+checkpoint current state and unload the previous task's files.
 ---
 
 # Context Manager

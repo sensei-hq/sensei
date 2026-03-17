@@ -1,6 +1,10 @@
 ---
 name: reformatting-docs
-description: Use when asked to reformat, restructure, or migrate docs to match a canonical template. Works for single files or entire directories.
+description: Use when a doc's structure diverges from the canonical feature or design
+template — restructures the content in place without losing any information, adding
+TODO placeholders for missing sections.
+Also use before running sensei index on a docs directory to ensure all docs are
+correctly structured so the index and traceability matrix are accurate.
 ---
 
 # Doc Doctor
