@@ -175,7 +175,9 @@ shortcuts:
   test: bunx vitest run
   test:e2e: bun run --filter='*' test:e2e
   dev: bun run --filter='@sensei/cli' dev
-  coverage: 'vitest run --coverage '
+  coverage: vitest run --coverage
+  bump: bumpp --configFilePath config/bump.config.js
+  bump:next: bumpp --configFilePath config/bump.config.js --preid=next
 llms_txt:
   - name: Entry Points
     sources:

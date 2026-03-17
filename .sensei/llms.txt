@@ -16,6 +16,7 @@
 - [hooks.server.ts](apps/dashboard/src/hooks.server.ts): handle
 
 ## apps/dashboard/src/lib
+- [demo-stubs.ts](apps/dashboard/src/lib/demo-stubs.ts): demoUser, demoWorkspaces, demoRepos, demoTeams, demoLibraries
 - [supabase.ts](apps/dashboard/src/lib/supabase.ts): supabase
 
 ## apps/dashboard/src/lib/server
@@ -24,7 +25,7 @@
 
 ## apps/dashboard/src/routes
 - [+layout.server.ts](apps/dashboard/src/routes/+layout.server.ts): load
-- [+page.ts](apps/dashboard/src/routes/+page.ts): load
+- [+page.server.ts](apps/dashboard/src/routes/+page.server.ts): load
 
 ## apps/dashboard/src/routes/benchmarks
 - [+page.ts](apps/dashboard/src/routes/benchmarks/+page.ts): load
@@ -94,6 +95,7 @@
 
 ## docs
 - [reverse-engineer.md](docs/reverse-engineer.md): INVOCATION
+- [todo.md](docs/todo.md): docs/todo
 
 ## docs/design
 - [01-architecture.md](docs/design/01-architecture.md): Architecture
@@ -116,13 +118,18 @@
 - [18-response-cache.md](docs/design/18-response-cache.md): Response
 - [19-context-manager.md](docs/design/19-context-manager.md): Context
 - [20-pipeline-adapter.md](docs/design/20-pipeline-adapter.md): Pipeline-First
+- [21-claude-host-integration.md](docs/design/21-claude-host-integration.md): Claude
+- [22-telemetry-resilience.md](docs/design/22-telemetry-resilience.md): Telemetry
+- [23-plugin-packaging.md](docs/design/23-plugin-packaging.md): Sensei
 - [30-implementation-phases.md](docs/design/30-implementation-phases.md): Implementation
 - [40-mcp-tool-contracts.md](docs/design/40-mcp-tool-contracts.md): MCP
 - [40-metadata-model.md](docs/design/40-metadata-model.md): Metadata
 - [40-skill-development.md](docs/design/40-skill-development.md): Skill
 - [README.md](docs/design/README.md): Design
+- [architecture-diagram.md](docs/design/architecture-diagram.md): Architecture
 - [architecture.md](docs/design/architecture.md): Sensei
 - [cc-rlm.md](docs/design/cc-rlm.md): CC-RLM
+- [gaps.md](docs/design/gaps.md): Design
 
 ## docs/features
 - [01-codebase-intelligence.md](docs/features/01-codebase-intelligence.md): Codebase
@@ -136,6 +143,7 @@
 - [09-identity-access-pricing.md](docs/features/09-identity-access-pricing.md): Identity,
 - [10-system-intelligence.md](docs/features/10-system-intelligence.md): System
 - [11-skill-tooling.md](docs/features/11-skill-tooling.md): Skill
+- [12-code-explorer.md](docs/features/12-code-explorer.md): Code
 - [README.md](docs/features/README.md): Features
 
 ## docs/plans
@@ -199,6 +207,11 @@
 - [2026-03-15-phase8-shared-lib-pool-design.md](docs/superpowers/specs/2026-03-15-phase8-shared-lib-pool-design.md): Phase
 - [2026-03-16-adapter-documents-redesign.md](docs/superpowers/specs/2026-03-16-adapter-documents-redesign.md): Adapter
 - [2026-03-16-lib-indexing-redesign-design.md](docs/superpowers/specs/2026-03-16-lib-indexing-redesign-design.md): Library
+- [2026-03-17-in-app-mockups-design.md](docs/superpowers/specs/2026-03-17-in-app-mockups-design.md): In-App
+- [2026-03-17-otel-usage-tracking-design.md](docs/superpowers/specs/2026-03-17-otel-usage-tracking-design.md): OTel
+- [2026-03-17-pattern-skills-design.md](docs/superpowers/specs/2026-03-17-pattern-skills-design.md): Pattern
+- [2026-03-17-sensei-init-skill-selection-design.md](docs/superpowers/specs/2026-03-17-sensei-init-skill-selection-design.md): sensei
+- [2026-03-17-skill-description-auditor-design.md](docs/superpowers/specs/2026-03-17-skill-description-auditor-design.md): Skill
 
 ## docs/templates
 - [design.md](docs/templates/design.md): [Component
@@ -225,7 +238,7 @@
 - [init-shared-linking.spec.ts](packages/cli/src/commands/init-shared-linking.spec.ts): function, function
 - [init.spec.ts](packages/cli/src/commands/init.spec.ts): function
 - [init.ts](packages/cli/src/commands/init.ts): InitOptions, lookupSharedLib, init
-- [install-skills.ts](packages/cli/src/commands/install-skills.ts): installSkillsToDir, InstallScope, promptAndInstallSkills, installSkills
+- [install-skills.ts](packages/cli/src/commands/install-skills.ts): installSkillsToDir, InstallScope, promptAndInstallSkills, installSkills, promptAndInstallSkillsFromCatalog
 - [migrate.ts](packages/cli/src/commands/migrate.ts): migrate
 - [setup.ts](packages/cli/src/commands/setup.ts): resolveMcpEntryPath, setupMcp, setupHooks, setupAgent
 - [stats.spec.ts](packages/cli/src/commands/stats.spec.ts): function
@@ -340,6 +353,7 @@
 
 ## packages/server/src
 - [mcp-server.ts](packages/server/src/mcp-server.ts): McpServerOptions, createSenseiMcpServer
+- [otlp-endpoint.ts](packages/server/src/otlp-endpoint.ts): OtlpEvent, parseOtlpBody, OtlpEndpointOptions, createOtlpEndpoint
 - [serve.ts](packages/server/src/serve.ts): ServeOptions, createReportServer, serve
 
 ## packages/server/src/__stubs__
@@ -390,6 +404,7 @@
 
 ## packages/tools/src/tools
 - [bm25.ts](packages/tools/src/tools/bm25.ts): scoreBM25
+- [chunker.spec.ts](packages/tools/src/tools/chunker.spec.ts): function
 - [chunker.ts](packages/tools/src/tools/chunker.ts): extractChunks, buildChunksAndEmbeddings
 - [context.ts](packages/tools/src/tools/context.ts): ContextSlice, loadContext, recommendNext
 - [coverage.spec.ts](packages/tools/src/tools/coverage.spec.ts): function
@@ -500,6 +515,10 @@
 
 ## tasks
 - [score-coverage.ts](tasks/score-coverage.ts): function
+
+> Generated by sensei
+
+> Generated by sensei
 
 > Generated by sensei
 
