@@ -1,6 +1,10 @@
 ---
 name: running-agentic-sessions
-description: Use when starting an agentic developer session, beginning a new task in a codebase, or when an agent is spending too many tokens on orientation, broad searches, or loading full files unnecessarily.
+description: Use at the start of every agentic developer session — enforces the
+orient-narrow protocol (get_llmspec → recommend_next → load targeted slice) so
+the agent completes tasks in fewer turns and with less token waste than raw file reads.
+Also use when an agent is tempted to grep the whole repo, load full directories,
+or skip checkpoints when switching tasks.
 ---
 
 # Agentic Dev Workflow
