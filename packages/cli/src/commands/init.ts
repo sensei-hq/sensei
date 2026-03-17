@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { indexRepo } from "@sensei/engine";
 import { installHooks } from "@sensei/collector";
 import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
-import { installSkills } from "./install-skills.js";
+import { installSkills, installSkillsFromCatalog, promptAndInstallSkillsFromCatalog } from "./install-skills.js";
 import { runUpdateRegistryCore } from "./update-registry.js";
 import { setupMcp } from "./setup.js";
 import type { LibEntry } from "@sensei/shared";
@@ -22,6 +22,8 @@ export interface InitOptions {
   supabaseUrl?: string;
   /** Supabase service role key — skips prompt when provided */
   serviceKey?: string;
+  /** Install recommended skills without prompting */
+  useRecommended?: boolean;
 }
 
 async function detectUnknownLibs(deps: string[]): Promise<string[]> {
@@ -288,13 +290,12 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
   await writeFile(join(cwd, "AGENTS.md"), agentsMdTemplate({ repoName, stack }));
 
   // 9. Install skills
-  //    --global → install to ~/.claude/skills/; default → install to .claude/skills/
   if (opts.global) {
     await installSkills(cwd, "global");
+  } else if (opts.useRecommended) {
+    await installSkillsFromCatalog(cwd, "recommended");
   } else {
-    // Interactive prompt for scope
-    const { promptAndInstallSkills } = await import("./install-skills.js");
-    await promptAndInstallSkills(cwd);
+    await promptAndInstallSkillsFromCatalog(cwd);
   }
 
   note(
