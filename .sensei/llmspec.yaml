@@ -182,6 +182,8 @@ llms_txt:
       - packages/cli/src/cli.ts
   - name: .
     sources:
+      - AGENTS.md
+      - PATTERNS.md
       - README.md
   - name: apps/dashboard
     sources:
@@ -191,6 +193,7 @@ llms_txt:
       - apps/dashboard/src/hooks.server.ts
   - name: apps/dashboard/src/lib
     sources:
+      - apps/dashboard/src/lib/demo-stubs.ts
       - apps/dashboard/src/lib/supabase.ts
   - name: apps/dashboard/src/lib/server
     sources:
@@ -199,16 +202,31 @@ llms_txt:
   - name: apps/dashboard/src/routes
     sources:
       - apps/dashboard/src/routes/+layout.server.ts
-      - apps/dashboard/src/routes/+page.ts
+      - apps/dashboard/src/routes/+page.server.ts
   - name: apps/dashboard/src/routes/benchmarks
     sources:
       - apps/dashboard/src/routes/benchmarks/+page.ts
+  - name: apps/dashboard/src/routes/data
+    sources:
+      - apps/dashboard/src/routes/data/+server.ts
   - name: apps/dashboard/src/routes/libraries
     sources:
       - apps/dashboard/src/routes/libraries/+page.server.ts
   - name: apps/dashboard/src/routes/libraries/[id]
     sources:
       - apps/dashboard/src/routes/libraries/[id]/+page.server.ts
+  - name: apps/dashboard/src/routes/option-a
+    sources:
+      - apps/dashboard/src/routes/option-a/+page.server.ts
+  - name: apps/dashboard/src/routes/orgs
+    sources:
+      - apps/dashboard/src/routes/orgs/+page.server.ts
+  - name: apps/dashboard/src/routes/orgs/[id]
+    sources:
+      - apps/dashboard/src/routes/orgs/[id]/+page.server.ts
+  - name: apps/dashboard/src/routes/orgs/[id]/teams/[tid]
+    sources:
+      - apps/dashboard/src/routes/orgs/[id]/teams/[tid]/+page.server.ts
   - name: apps/dashboard/src/routes/references
     sources:
       - apps/dashboard/src/routes/references/+page.ts
@@ -227,6 +245,12 @@ llms_txt:
   - name: apps/dashboard/src/routes/repos/[id]/context-packs
     sources:
       - apps/dashboard/src/routes/repos/[id]/context-packs/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/drift
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/drift/+page.server.ts
+  - name: apps/dashboard/src/routes/repos/[id]/explore
+    sources:
+      - apps/dashboard/src/routes/repos/[id]/explore/+page.server.ts
   - name: apps/dashboard/src/routes/repos/[id]/libraries
     sources:
       - apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts
@@ -236,12 +260,19 @@ llms_txt:
   - name: apps/dashboard/src/routes/repos/[id]/simulate
     sources:
       - apps/dashboard/src/routes/repos/[id]/simulate/+page.server.ts
+  - name: apps/dashboard/src/routes/settings
+    sources:
+      - apps/dashboard/src/routes/settings/+page.server.ts
   - name: apps/dashboard/src/routes/stats
     sources:
       - apps/dashboard/src/routes/stats/+page.ts
   - name: apps/dashboard/tests
     sources:
       - apps/dashboard/tests/library-detail.test.ts
+  - name: docs
+    sources:
+      - docs/reverse-engineer.md
+      - docs/todo.md
   - name: docs/design
     sources:
       - docs/design/01-architecture.md
@@ -264,13 +295,18 @@ llms_txt:
       - docs/design/18-response-cache.md
       - docs/design/19-context-manager.md
       - docs/design/20-pipeline-adapter.md
+      - docs/design/21-claude-host-integration.md
+      - docs/design/22-telemetry-resilience.md
+      - docs/design/23-plugin-packaging.md
       - docs/design/30-implementation-phases.md
       - docs/design/40-mcp-tool-contracts.md
       - docs/design/40-metadata-model.md
       - docs/design/40-skill-development.md
       - docs/design/README.md
+      - docs/design/architecture-diagram.md
       - docs/design/architecture.md
       - docs/design/cc-rlm.md
+      - docs/design/gaps.md
   - name: docs/features
     sources:
       - docs/features/01-codebase-intelligence.md
@@ -284,6 +320,7 @@ llms_txt:
       - docs/features/09-identity-access-pricing.md
       - docs/features/10-system-intelligence.md
       - docs/features/11-skill-tooling.md
+      - docs/features/12-code-explorer.md
       - docs/features/README.md
   - name: docs/plans
     sources:
@@ -300,6 +337,9 @@ llms_txt:
       - docs/plans/2026-03-07-monorepo-package-split.md
       - docs/plans/2026-03-07-populate-llmspec-skill.md
       - docs/plans/2026-03-07-server-inference-package.md
+  - name: docs/superpowers
+    sources:
+      - docs/superpowers/backlog.md
   - name: docs/superpowers/plans
     sources:
       - docs/superpowers/plans/2026-03-10-indexer-comparison.md
@@ -325,6 +365,11 @@ llms_txt:
       - docs/superpowers/plans/2026-03-16-adapter-documents-redesign.md
       - docs/superpowers/plans/2026-03-16-file-url-refactor.md
       - docs/superpowers/plans/2026-03-16-lib-indexing-redesign.md
+      - docs/superpowers/plans/2026-03-17-in-app-mockups.md
+      - docs/superpowers/plans/2026-03-17-otel-usage-tracking.md
+      - docs/superpowers/plans/2026-03-17-pattern-skills.md
+      - docs/superpowers/plans/2026-03-17-sensei-init-skill-selection.md
+      - docs/superpowers/plans/2026-03-17-skill-description-auditor.md
   - name: docs/superpowers/specs
     sources:
       - docs/superpowers/specs/2026-03-10-indexer-comparison-design.md
@@ -346,6 +391,11 @@ llms_txt:
       - docs/superpowers/specs/2026-03-15-phase8-shared-lib-pool-design.md
       - docs/superpowers/specs/2026-03-16-adapter-documents-redesign.md
       - docs/superpowers/specs/2026-03-16-lib-indexing-redesign-design.md
+      - docs/superpowers/specs/2026-03-17-in-app-mockups-design.md
+      - docs/superpowers/specs/2026-03-17-otel-usage-tracking-design.md
+      - docs/superpowers/specs/2026-03-17-pattern-skills-design.md
+      - docs/superpowers/specs/2026-03-17-sensei-init-skill-selection-design.md
+      - docs/superpowers/specs/2026-03-17-skill-description-auditor-design.md
   - name: docs/templates
     sources:
       - docs/templates/design.md
@@ -385,6 +435,7 @@ llms_txt:
   - name: packages/cli/src/lib
     sources:
       - packages/cli/src/lib/detect-libs.ts
+      - packages/cli/src/lib/skill-catalog.ts
   - name: packages/cli/src/templates
     sources:
       - packages/cli/src/templates/agents-md.ts
@@ -481,9 +532,13 @@ llms_txt:
       - packages/engine/src/slice/ast-slicer.ts
       - packages/engine/src/slice/section-slicer.spec.ts
       - packages/engine/src/slice/section-slicer.ts
+  - name: packages/mcp
+    sources:
+      - packages/mcp/README.md
   - name: packages/server/src
     sources:
       - packages/server/src/mcp-server.ts
+      - packages/server/src/otlp-endpoint.ts
       - packages/server/src/serve.ts
   - name: packages/server/src/__stubs__
     sources:
@@ -496,6 +551,7 @@ llms_txt:
       - packages/server/src/model/system-check.ts
   - name: packages/server/src/tools
     sources:
+      - packages/server/src/tools/checkpoint.spec.ts
       - packages/server/src/tools/checkpoint.ts
       - packages/server/src/tools/close-memory.ts
       - packages/server/src/tools/context-pack.ts
@@ -508,6 +564,7 @@ llms_txt:
       - packages/server/src/tools/load-context.ts
       - packages/server/src/tools/recommend-next.ts
       - packages/server/src/tools/record-memory.ts
+      - packages/server/src/tools/record-pattern-use.ts
       - packages/server/src/tools/search.ts
       - packages/server/src/tools/take-snapshot.ts
       - packages/server/src/tools/token-stats.ts
@@ -534,6 +591,7 @@ llms_txt:
   - name: packages/tools/src/tools
     sources:
       - packages/tools/src/tools/bm25.ts
+      - packages/tools/src/tools/chunker.spec.ts
       - packages/tools/src/tools/chunker.ts
       - packages/tools/src/tools/context.ts
       - packages/tools/src/tools/coverage.spec.ts
@@ -548,11 +606,18 @@ llms_txt:
       - packages/tools/src/tools/reindex.spec.ts
       - packages/tools/src/tools/reindex.ts
       - packages/tools/src/tools/repo-registration.ts
+      - packages/tools/src/tools/search.spec.ts
       - packages/tools/src/tools/search.ts
       - packages/tools/src/tools/supabase-index-writer.ts
   - name: results
     sources:
       - results/indexer-comparison-2026-03-11.md
+  - name: skills/auditing-skill-descriptions
+    sources:
+      - skills/auditing-skill-descriptions/SKILL.md
+  - name: skills/building-app-mockups
+    sources:
+      - skills/building-app-mockups/SKILL.md
   - name: skills/compressing-content
     sources:
       - skills/compressing-content/SKILL.md
@@ -582,6 +647,9 @@ llms_txt:
   - name: skills/identify-unknown-libs
     sources:
       - skills/identify-unknown-libs/SKILL.md
+  - name: skills/identifying-patterns
+    sources:
+      - skills/identifying-patterns/SKILL.md
   - name: skills/indexing-codebase
     sources:
       - skills/indexing-codebase/SKILL.md
@@ -601,6 +669,9 @@ llms_txt:
       - skills/managing-project-sessions/test-baseline.md
       - skills/managing-project-sessions/test-pressure-1.md
       - skills/managing-project-sessions/test-pressure-2.md
+  - name: skills/pattern-based-development
+    sources:
+      - skills/pattern-based-development/SKILL.md
   - name: skills/populating-llmspec
     sources:
       - skills/populating-llmspec/SKILL.md

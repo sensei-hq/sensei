@@ -9,6 +9,7 @@ import { ClaudeBackend } from "@sensei/server";
 import { makeSenseiClient, loadSenseiConfig, type AgentSkillsManifest } from "@sensei/shared";
 
 const MCP_CONFIG = join(homedir(), ".claude", "mcp.json");
+const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 
 /** Resolve path to the instrumented MCP entry point in @sensei/server */
 export function resolveMcpEntryPath(): string {
@@ -24,26 +25,34 @@ export async function setupMcp(repoPath: string, mcpEntryPath?: string): Promise
 
   await mkdir(dirname(MCP_CONFIG), { recursive: true });
 
-  let config: { mcpServers?: Record<string, unknown> } = { mcpServers: {} };
+  // 1. Register MCP server
+  let mcpConfig: { mcpServers?: Record<string, unknown> } = { mcpServers: {} };
   if (existsSync(MCP_CONFIG)) {
-    try {
-      config = JSON.parse(await readFile(MCP_CONFIG, "utf-8"));
-    } catch {
-      // start fresh
-    }
+    try { mcpConfig = JSON.parse(await readFile(MCP_CONFIG, "utf-8")); } catch {}
   }
-
-  config.mcpServers ??= {};
-  config.mcpServers["sensei"] = {
+  mcpConfig.mcpServers ??= {};
+  mcpConfig.mcpServers["sensei"] = {
     command: "bun",
     args: [entryPath],
     env: { SENSEI_REPO_PATH: repoPath },
   };
-
-  await writeFile(MCP_CONFIG, JSON.stringify(config, null, 2), "utf-8");
+  await writeFile(MCP_CONFIG, JSON.stringify(mcpConfig, null, 2), "utf-8");
   log.success(`MCP server registered in ${MCP_CONFIG}`);
   log.info(`command: bun ${entryPath}`);
   log.info(`SENSEI_REPO_PATH: ${repoPath}`);
+
+  // 2. Write OTEL_EXPORTER_OTLP_ENDPOINT into ~/.claude/settings.json so Claude Code
+  //    sends telemetry to the collector daemon OTLP endpoint.
+  let settings: Record<string, unknown> = {};
+  if (existsSync(SETTINGS_PATH)) {
+    try { settings = JSON.parse(await readFile(SETTINGS_PATH, "utf-8")); } catch {}
+  }
+  const env = (settings.env as Record<string, string>) ?? {};
+  env["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:51789";
+  settings.env = env;
+  await writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf-8");
+  log.success(`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:51789 written to ${SETTINGS_PATH}`);
+
   outro("Done. Restart Claude Code to pick up the MCP server.");
 }
 

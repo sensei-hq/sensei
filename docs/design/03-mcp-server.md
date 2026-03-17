@@ -1,18 +1,16 @@
 ---
 id: mcp-server
 type: design
-implements:
-  - feature: indexing
-    items: [llmspec-generation, symbol-map, multi-modal-search, symbol-graph]
-  - feature: context
-    items: [targeted-slice-loading, recommend-next]
-  - feature: workflow
-    items: [mcp-offload, session-resume, session-checkpoint]
-  - feature: traceability
-    items: [on-demand-reporting]
+status: superseded
+superseded_by: 40-mcp-tool-contracts.md
+implements: []
 ---
 
-# MCP Server
+> **SUPERSEDED** by `40-mcp-tool-contracts.md`. The tool set, server name, and architecture described here applied to the bare `packages/mcp/` server (now deprecated). The current MCP server is `packages/server/src/mcp-entry.ts` — it wraps every tool with `beat()`, reads from Supabase, and is registered by `sensei init` automatically.
+
+---
+
+# MCP Server (historical)
 
 ## Overview
 

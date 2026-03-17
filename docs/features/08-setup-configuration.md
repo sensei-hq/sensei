@@ -216,3 +216,87 @@ Feature: Project Config Editing
     Then the project configuration is updated immediately
     And a toast notification confirms the save and notes that skill regeneration has been queued
 ```
+
+---
+
+### CLI Commands
+
+Sensei exposes a focused set of CLI commands. Setup commands are run once per machine or repo; operational commands manage the daemon and diagnose issues.
+
+| Command | Purpose |
+|---|---|
+| `sensei init` | One-time repo setup: creates Supabase schema, writes `.sensei/config.yaml`, generates `CLAUDE.md` + `AGENTS.md`, runs initial index |
+| `sensei init --local` | Install for a specific repo — sets `SENSEI_REPO_PATH` in `mcp.json` for this repo only |
+| `sensei setup --mcp` | Register MCP server in `~/.claude/mcp.json`; sets `OTEL_EXPORTER_OTLP_ENDPOINT=localhost:51789` |
+| `sensei setup --hooks` | Install `PreToolUse`, `PostToolUse`, `SessionStart` hook scripts; write launchd plist for daemon autostart |
+| `sensei setup --agent` | Generate repo-specific skills and write agent guidance files |
+| `sensei start` | Start the collector daemon via `launchctl start com.sensei.collector` |
+| `sensei restart` | Restart the collector daemon via `launchctl stop` then `start` |
+| `sensei status` | Show daemon health, index age, last session timestamp, and OTLP event count |
+| `sensei doctor` | Diagnose and fix config issues (missing hooks, stale index, daemon not running, missing credentials) |
+
+```gherkin
+Feature: CLI Commands
+
+  Scenario: Developer runs setup --mcp
+    Given a developer has run sensei init on a repo
+    When they run sensei setup --mcp
+    Then ~/.claude/mcp.json is written with the MCP server entry for this repo
+    And the OTEL_EXPORTER_OTLP_ENDPOINT env variable is set to localhost:51789 in the mcp.json env block
+
+  Scenario: Developer checks daemon health
+    Given the collector daemon is running
+    When the developer runs sensei status
+    Then the output shows the daemon port, index age, last session ID, and OTLP event count
+
+  Scenario: sensei doctor detects and fixes a missing hook
+    Given a repo where sensei init has been run but hooks were manually deleted
+    When the developer runs sensei doctor
+    Then the missing hooks are detected and reported
+    And on confirmation, the hooks are reinstalled
+```
+
+---
+
+### Daemon Lifecycle
+
+The collector daemon is a single persistent process per machine, not per repo. All Claude sessions on the machine share one daemon instance.
+
+- **Starts at login** via launchd (`com.sensei.collector.plist` installed by `sensei setup --hooks`)
+- **Autorestarts** if it crashes; launchd monitors the process
+- **Owns port 51789** — both the collector event endpoint (`/event`) and the OTLP endpoint (`/v1/logs`) are served on this port
+- **Single instance per machine** — all repos and all Claude sessions on the same machine route events to this one daemon
+- **JSONL fallback** — if Supabase is unreachable, events are written to `.sensei/events.jsonl` and drained on reconnect
+
+```gherkin
+Feature: Daemon Lifecycle
+
+  Scenario: Daemon starts automatically at login
+    Given sensei setup --hooks has been run
+    When the developer logs in to their machine
+    Then the collector daemon starts automatically
+    And it is listening on port 51789
+
+  Scenario: Daemon restarts after crash
+    Given the daemon process exits unexpectedly
+    When launchd detects the process exit
+    Then launchd restarts the daemon within 5 seconds
+    And events queued in the JSONL fallback are drained on reconnect
+
+  Scenario: Multiple Claude sessions share one daemon
+    Given two Claude Code sessions are running in different repos
+    When both sessions send hook events
+    Then both sets of events are received and processed by the single daemon instance
+    And events are attributed to the correct session and repo via the session ID
+```
+
+---
+
+### Plugin (Planned)
+
+Sensei will be distributable as a Claude Code plugin, allowing installation without any per-repo setup steps beyond `sensei init`.
+
+- **Plugin provides:** static skills, `SessionStart` hook, slash commands (e.g. `/sensei status`, `/sensei snapshot`)
+- **`sensei init` remains** the per-repo setup step — it writes `.sensei/config.yaml` and runs the initial index
+- **No daemon change** — the plugin still routes hook events through the same launchd-managed collector daemon
+- **Distribution** — the plugin is published to a plugin registry; developers install it once and it activates for all repos where `sensei init` has been run

@@ -27,7 +27,7 @@ describe("ClaudeAdapter", () => {
 
     expect(result).toHaveLength(4);
     expect(result.map(f => f.category).sort()).toEqual(["context", "orientation", "patterns", "workflow"]);
-    expect(result[0].path).toContain("sensei-my-repo-");
+    expect(result[0].path).toContain("my-repo-");
     expect(result[0].generatedAt).toBeTruthy();
   });
 
@@ -53,14 +53,14 @@ describe("ClaudeAdapter", () => {
     expect(result).toEqual([]);
   });
 
-  it("writeLibSkill writes sensei-{slug}-lib-{name}.md and returns LibSkillFile", async () => {
+  it("writeLibSkill writes {slug}-lib-{name}.md and returns LibSkillFile", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "sensei-adapter-test-"));
     const adapter = new ClaudeAdapter(tmpDir);
 
     const result = await adapter.writeLibSkill("rokkit", "---\nname: myrepo-lib-rokkit\n---\n# Rokkit", "my-repo");
 
     expect(result.libName).toBe("rokkit");
-    expect(result.path).toBe(join(tmpDir, "sensei-my-repo-lib-rokkit.md"));
+    expect(result.path).toBe(join(tmpDir, "my-repo-lib-rokkit.md"));
     expect(result.generatedAt).toBeTruthy();
     const { readFile } = await import("fs/promises");
     const content = await readFile(result.path, "utf-8");

@@ -40,19 +40,6 @@
     if (f?.edited) sidebarMode = null;
   });
 
-  const filteredSections = $derived(
-    search.trim()
-      ? data.sections.filter(s =>
-          s.title.toLowerCase().includes(search.toLowerCase()) ||
-          s.description.toLowerCase().includes(search.toLowerCase())
-        )
-      : data.sections
-  );
-
-  const components = $derived(
-    [...new Set(data.sections.map(s => s.component ?? 'General'))].sort()
-  );
-
   $effect(() => {
     const busy = data.lib.index_status === 'indexing' || data.lib.embed_status === 'embedding';
     if (!busy) return;

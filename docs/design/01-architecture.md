@@ -8,7 +8,34 @@ implements: []
 
 > Sensei is a TypeScript/Bun monorepo that makes AI coding agents more effective through codebase intelligence, documentation traceability, and session continuity — exposed via an MCP server, a CLI, and a web dashboard.
 
-## Overview
+## System Overview
+
+Sensei makes AI coding agents more effective by:
+
+1. **Indexing** — `sensei init` or `sensei index` scans the repo, extracts symbols, computes embeddings, and stores everything in Supabase. All indexed data lives in Supabase — no JSON files on disk.
+
+2. **Collecting** — The collector daemon (`sensei serve`) receives events from agent hooks (PreToolUse, PostToolUse, UserPromptSubmit) and writes them to Supabase. This captures which skills were used, how many tokens were saved, and FTR scores — all for individuals and teams.
+
+3. **Serving** — The MCP server exposes tools so agents can call `search()`, `get_session_context()`, `context_pack()`, and others to get ranked, token-budgeted context from the Supabase index.
+
+4. **Setup** — `sensei init` sets up a repo: detects stack, creates `.sensei/config.yaml` (the only file on disk), writes `CLAUDE.md` + `AGENTS.md`, installs git hooks, and installs skills to `.claude/skills/`.
+
+5. **Doctoring** — `sensei doctor` finds and fixes config issues, stale indexes, missing hooks, and library drift.
+
+6. **Dashboard** — The web app reads Supabase directly to show per-repo library references, session analytics, FTR scores, and skill usage — for both individual developers and teams.
+
+### Data storage principle
+
+**Supabase is the single source of truth.** All indexed content — symbols, call edges, embeddings, BM25 chunks, doc sections, session events, telemetry reports — lives in Supabase. On disk, only two files exist per project:
+
+- `<repo>/.sensei/config.yaml` — Supabase URL and repo ID (not secret)
+- `~/.config/sensei/credentials.yaml` — Supabase service key (global, not committed)
+
+Everything else lives in Supabase. This enables cross-session queries, real-time dashboard updates, team sharing, and multi-repo analysis without any file sync.
+
+---
+
+## Capability Layers
 
 Sensei organises its capabilities into three layers. **Layer 1 (Codebase Intelligence)** handles the foundational work: scanning files, parsing ASTs, extracting symbols and call edges, computing embeddings, and indexing everything into Supabase. **Layer 2 (Documentation & Traceability)** builds on that index to track relationships between code and documentation — detecting drift, measuring quality, and generating docs from the symbol graph. **Layer 3 (System Intelligence)** composes the lower layers across multiple repositories to produce a cross-repo dependency graph, a service map, and conformance checks against shared architectural standards.
 
@@ -21,8 +48,6 @@ Layer 1: Codebase Intelligence      — scan, parse, index, symbol extraction, c
 ```
 
 Cross-cutting concerns serve all layers: **Smart Context Delivery** (ranking and slicing code into token-budgeted packs), **Session Continuity** (crash recovery, snapshots, decision memory), **Multi-Agent Support** (skill generation for Claude, opencode, and others), **Analytics** (FTR scoring, coaching), and **Identity/Auth** (GitHub OAuth, team isolation, RLS).
-
-All persistent state lives in **Supabase** (PostgreSQL + pgvector). There are no JSON artifacts written to disk for indexed data — only `.sensei/config.yaml` lives on disk per project. This enables cross-session queries, real-time dashboard updates, cross-repo analysis, and future team sharing without file sync complexity.
 
 ## Package Structure
 
