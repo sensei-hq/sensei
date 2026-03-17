@@ -100,7 +100,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string, 
           .schema('sensei')
           .from('shared_libs')
           .upsert(
-            { name: lib.name, source_type: lib.source_type, base_url: lib.base_url ?? null, local_path: lib.local_path ?? null },
+            { name: lib.name, source_type: lib.source_type, base_url: lib.base_url },
             { onConflict: 'name' }
           )
           .select('id')
@@ -165,8 +165,7 @@ export async function runUpdateRegistryCore(repoPath: string, libName?: string, 
           repo_id: repoId,
           name: lib.name,
           source_type: lib.source_type,
-          base_url: lib.base_url ?? null,
-          local_path: lib.local_path ?? null,
+          base_url: lib.base_url,
           ...(sharedLibId ? { shared_lib_id: sharedLibId } : {}),
           ...(libSkillFile ? { skill_path: libSkillFile.path, skill_generated_at: libSkillFile.generatedAt } : {}),
         }, { onConflict: 'repo_id,name' });

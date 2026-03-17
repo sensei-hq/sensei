@@ -1,4 +1,5 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySupabaseClient = any;
 import type { SymbolMap } from "@sensei/shared";
 
 export interface TraceabilityEntry {
@@ -10,7 +11,7 @@ export interface TraceabilityEntry {
 /** Upsert all symbol rows for a repo. No-op if symbolMap is empty.
  *  Client must be created with db: { schema: "sensei" } (via makeSenseiClient). */
 export async function upsertSymbols(
-  client: SupabaseClient,
+  client: AnySupabaseClient,
   repoId: string,
   symbolMap: SymbolMap,
 ): Promise<void> {
@@ -35,7 +36,7 @@ export async function upsertSymbols(
 /** Upsert all doc coverage rows for a repo. No-op if empty.
  *  Client must be created with db: { schema: "sensei" } (via makeSenseiClient). */
 export async function upsertDocs(
-  client: SupabaseClient,
+  client: AnySupabaseClient,
   repoId: string,
   traceability: TraceabilityEntry[],
 ): Promise<void> {

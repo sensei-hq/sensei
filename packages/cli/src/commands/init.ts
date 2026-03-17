@@ -8,6 +8,7 @@ import { claudeMdTemplate } from "../templates/claude-md.js";
 import { agentsMdTemplate } from "../templates/agents-md.js";
 import { installHooks } from "@sensei/collector";
 import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
+import { promptAndInstallSkills } from "./install-skills.js";
 import { runUpdateRegistryCore } from "./update-registry.js";
 import type { LibEntry } from "@sensei/shared";
 
@@ -34,7 +35,8 @@ async function detectUnknownLibs(deps: string[]): Promise<string[]> {
 
 /** Looks up a lib by name in the global shared pool. Returns catalog row or null. */
 export async function lookupSharedLib(
-  client: ReturnType<typeof import("@supabase/supabase-js").createClient>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any,
   name: string,
 ): Promise<{
   id: string;
@@ -162,12 +164,14 @@ export async function init(cwd: string): Promise<void> {
           initialValue: true,
         });
         if (!isCancel(confirmed) && confirmed) {
+          // Convert local_path to file:// URL if needed
+          const baseUrl = sharedLib.base_url
+            ?? (sharedLib.local_path ? `file://${sharedLib.local_path}` : "");
           // Add to linkedLibEntries — goes into config.yaml but skips re-indexing
           linkedLibEntries.push({
             name,
             source_type: sharedLib.source_type as LibEntry["source_type"],
-            base_url: sharedLib.base_url ?? undefined,
-            local_path: sharedLib.local_path ?? undefined,
+            base_url: baseUrl,
           });
           // Upsert repo_libs immediately with shared_lib_id
           try {
@@ -175,8 +179,7 @@ export async function init(cwd: string): Promise<void> {
               repo_id: repoId,
               name,
               source_type: sharedLib.source_type,
-              base_url: sharedLib.base_url ?? null,
-              local_path: sharedLib.local_path ?? null,
+              base_url: baseUrl,
               shared_lib_id: sharedLib.id,
             }, { onConflict: 'repo_id,name' });
           } catch {
@@ -202,8 +205,7 @@ export async function init(cwd: string): Promise<void> {
   const allConfigLibs = [...customLibs, ...linkedLibEntries];
   const customLibsYaml = allConfigLibs.length > 0
     ? `custom_libs:\n${allConfigLibs.map(l => {
-        const urlField = l.base_url ? `    base_url: ${l.base_url}` : `    local_path: ${l.local_path}`;
-        return `  - name: ${l.name}\n    source_type: ${l.source_type}\n${urlField}`;
+        return `  - name: ${l.name}\n    source_type: ${l.source_type}\n    base_url: ${l.base_url}`;
       }).join("\n")}\n`
     : "";
   await writeFile(
@@ -261,6 +263,9 @@ export async function init(cwd: string): Promise<void> {
   } catch (err) {
     hookSpinner.stop(`Hook install skipped: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  // 8. Install skills
+  await promptAndInstallSkills(cwd);
 
   note(
     [

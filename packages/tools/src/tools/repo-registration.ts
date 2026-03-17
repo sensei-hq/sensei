@@ -1,4 +1,5 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySupabaseClient = any;
 
 export interface RepoInfo {
   name: string;
@@ -11,7 +12,7 @@ export interface RepoInfo {
 /** Upsert repo into sensei.repos. Returns the repo UUID, or null on error.
  *  Client must be created with db: { schema: "sensei" } (via makeSenseiClient). */
 export async function registerRepo(
-  client: SupabaseClient,
+  client: AnySupabaseClient,
   info: RepoInfo,
 ): Promise<string | null> {
   const { data, error } = await client

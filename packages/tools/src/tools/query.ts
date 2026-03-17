@@ -7,7 +7,7 @@ import type { ResolutionLevel } from "@sensei/shared";
 export async function getLlmSpec(repoPath: string, section?: string): Promise<string> {
   const spec = await readLlmSpec(repoPath);
   if (!section) return yaml.dump(spec);
-  const value = (spec as Record<string, unknown>)[section];
+  const value = (spec as unknown as Record<string, unknown>)[section];
   if (value === undefined) throw new Error(`Section '${section}' not found in llmspec`);
   return yaml.dump({ [section]: value });
 }

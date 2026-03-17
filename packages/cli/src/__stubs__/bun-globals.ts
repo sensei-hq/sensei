@@ -35,17 +35,18 @@ function bunServe(opts: BunServeOptions): BunServer {
       else if (Array.isArray(v)) headers[k] = v.join(", ");
     }
 
-    let body: BodyInit | undefined;
+    let body: ArrayBuffer | undefined;
     if (method !== "GET" && method !== "HEAD") {
-      body = await new Promise<Buffer>((resolve, reject) => {
+      const raw = await new Promise<Buffer>((resolve, reject) => {
         const chunks: Buffer[] = [];
         nodeReq.on("data", (c: Buffer) => chunks.push(c));
         nodeReq.on("end", () => resolve(Buffer.concat(chunks)));
         nodeReq.on("error", reject);
       });
+      if (raw.byteLength > 0) body = raw.buffer as ArrayBuffer;
     }
 
-    const webReq = new Request(url, { method, headers, body: body?.length ? body : undefined });
+    const webReq = new Request(url, { method, headers, body });
     let webRes: Response;
     try {
       webRes = await opts.fetch(webReq);
@@ -77,7 +78,7 @@ function bunServe(opts: BunServeOptions): BunServer {
 
 // Install Bun global if not already present (i.e. running under Node/Vitest)
 if (typeof globalThis.Bun === "undefined") {
-  globalThis.Bun = {
+  (globalThis as unknown as Record<string, unknown>).Bun = {
     serve: bunServe,
   };
 }
