@@ -1,6 +1,8 @@
 ---
 id: server-package
 type: design
+status: superseded
+superseded_by: 01-architecture.md
 implements: []
 ---
 

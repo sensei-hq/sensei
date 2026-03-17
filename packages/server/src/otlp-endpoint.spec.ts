@@ -59,7 +59,7 @@ describe("createOtlpEndpoint", () => {
 
   it("returns 200 and logs event in dry-run mode (metrics format)", async () => {
     const logs: string[] = [];
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation((...args) => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
       logs.push(args.join(" "));
     });
 

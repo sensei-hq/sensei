@@ -1,10 +1,11 @@
 ---
 id: response-cache
 type: design
-implements:
-  - feature: caching
-    items: [response-capture, proactive-offer, retrieval, cache-management, session-integration]
+status: not-implemented
+implements: []
 ---
+
+> **NOT IMPLEMENTED — BACKLOG.** No response caching exists. `get_session_context()` does not surface cached responses. This design is a target for a future iteration.
 
 # Response Cache
 
