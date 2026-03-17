@@ -35,12 +35,20 @@ vi.mock("fs/promises", () => ({
   chmod: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("./install-skills.js", () => ({
+  installSkills: vi.fn().mockResolvedValue(undefined),
+  promptAndInstallSkills: vi.fn().mockResolvedValue(undefined),
+  promptAndInstallSkillsFromCatalog: vi.fn().mockResolvedValue(undefined),
+  installSkillsFromCatalog: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { init } from "./init.js";
 import { indexRepo } from "@sensei/engine";
 import { installHooks } from "@sensei/collector";
 import { createClient } from "@supabase/supabase-js";
 import { text, isCancel } from "@clack/prompts";
 import { writeFile, mkdir, access, readFile } from "fs/promises";
+import { promptAndInstallSkillsFromCatalog, installSkillsFromCatalog } from "./install-skills.js";
 
 const mockIndexRepo = indexRepo as ReturnType<typeof vi.fn>;
 const mockInstallHooks = installHooks as ReturnType<typeof vi.fn>;
@@ -158,5 +166,19 @@ describe("init command", () => {
       (c: unknown[]) => String(c[0]).endsWith("config.yaml")
     );
     expect(configCall).toBeDefined();
+  });
+
+  describe("skill installation routing", () => {
+    it("calls promptAndInstallSkillsFromCatalog by default (no --use-recommended)", async () => {
+      await init("/repo", {});
+      expect(promptAndInstallSkillsFromCatalog).toHaveBeenCalledWith("/repo");
+      expect(installSkillsFromCatalog).not.toHaveBeenCalled();
+    });
+
+    it("calls installSkillsFromCatalog('recommended') when useRecommended=true", async () => {
+      await init("/repo", { useRecommended: true });
+      expect(installSkillsFromCatalog).toHaveBeenCalledWith("/repo", "recommended");
+      expect(promptAndInstallSkillsFromCatalog).not.toHaveBeenCalled();
+    });
   });
 });
