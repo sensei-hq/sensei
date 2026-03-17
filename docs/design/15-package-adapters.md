@@ -1,9 +1,9 @@
 ---
 id: package-adapters
 type: design
-implements:
-  - feature: indexing
-    items: [repo-scanner]
+status: superseded
+superseded_by: 40-metadata-model.md
+implements: []
 ---
 
 > **SUPERSEDED** by `40-metadata-model.md` and `20-pipeline-adapter.md`. The PackageAdapter interface and PackageInfo shape described here are absorbed into the metadata model. The glob-based adapter discovery approach, JS/TS adapter logic, monorepo awareness, and README extraction patterns all remain valid and are referenced by the Parse stage design.

@@ -1,33 +1,24 @@
-import { Database } from "bun:sqlite";
 import { mkdir } from "fs/promises";
 import { dirname } from "path";
 import { intro, log } from "@clack/prompts";
-import { senseiPath } from "@sensei/shared";
+import { senseiPath, loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
 import { checkSystemRequirements, OLLAMA_BASE_URL, OLLAMA_MODEL } from "./model/system-check.js";
 import { OllamaBackend, makeFallbackAnalysis } from "./model/ollama-backend.js";
 
 export interface ServeOptions {
   port?: number;
-  dbPath?: string;
   repoPath?: string;
-  isAvailableFn?: () => Promise<{ ollamaRunning: boolean; ollamaModel: boolean }>;  // injectable for tests
-  ollamaBackendFn?: () => OllamaBackend;  // injectable for tests
+  supabaseClient?: any;
+  isAvailableFn?: () => Promise<{ ollamaRunning: boolean; ollamaModel: boolean }>;
+  ollamaBackendFn?: () => OllamaBackend;
 }
 
 export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void; port: number }> {
   const port = opts.port ?? 7744;
-  const dbPath = opts.dbPath ?? senseiPath(".", "reports.db");
+  const supabaseClient = opts.supabaseClient ?? null;
 
-  await mkdir(dirname(dbPath), { recursive: true });
-
-  const db = new Database(dbPath);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS reports (
-      id TEXT PRIMARY KEY,
-      timestamp TEXT NOT NULL,
-      payload TEXT NOT NULL
-    )
-  `);
+  // In-memory fallback when no Supabase client (test environments)
+  const inMemoryReports = new Map<string, unknown>();
 
   const server = Bun.serve({
     port,
@@ -48,10 +39,19 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
           const body = await req.json() as Record<string, unknown>;
           const id = (body.id as string) ?? crypto.randomUUID();
           const timestamp = (body.timestamp as string) ?? new Date().toISOString();
-          db.run(
-            "INSERT OR REPLACE INTO reports (id, timestamp, payload) VALUES (?, ?, ?)",
-            [id, timestamp, JSON.stringify(body)],
-          );
+
+          if (supabaseClient) {
+            try {
+              await (supabaseClient as any)
+                .schema("sensei").from("reports")
+                .upsert({ id, timestamp, payload: body }, { onConflict: "id" });
+            } catch {
+              // Supabase write failed — silently continue
+            }
+          } else {
+            inMemoryReports.set(id, { id, timestamp, payload: body });
+          }
+
           return Response.json({ ok: true, id });
         } catch {
           return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
@@ -116,17 +116,17 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         try {
           const backendFn = opts.ollamaBackendFn ?? (() => new OllamaBackend());
           const ollama = backendFn();
-          await ollama.init(); // no-op now; ensures future stateful backends warm up correctly
+          await ollama.init();
           const available = await ollama.isAvailable();
           if (!available) {
             return Response.json(makeFallbackAnalysis(body.filePath));
           }
           const analysis = await ollama.extract(body.content, {
             ...(body.instructions ?? {}),
-            filePath: body.filePath,  // always wins over instructions spread
+            filePath: body.filePath,
           });
           return Response.json(analysis);
-        } catch (err) {
+        } catch {
           return Response.json({ ok: false, error: "Extraction failed" }, { status: 500 });
         }
       }
@@ -139,15 +139,27 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
   return { stop: () => s.stop(), port: s.port };
 }
 
-export async function serve(repoPath: string, opts: { port?: number; db?: string }): Promise<void> {
+export async function serve(repoPath: string, opts: { port?: number }): Promise<void> {
   const port = opts.port ?? parseInt(process.env.SENSEI_PORT ?? "7744", 10);
-  const dbPath = opts.db ?? process.env.SENSEI_DB ?? senseiPath(repoPath, "reports.db");
+
+  // Load Supabase client from repo config
+  let supabaseClient: any = null;
+  try {
+    const config = await loadSenseiConfig(repoPath);
+    if (config) {
+      supabaseClient = await makeSenseiClient(repoPath);
+    }
+  } catch { /* no config — reports will use in-memory only */ }
 
   intro("sensei serve");
   log.info(`Listening on :${port}`);
-  log.info(`Database: ${dbPath}`);
+  if (supabaseClient) {
+    log.info("Reports → Supabase");
+  } else {
+    log.warn("No Supabase config found — reports stored in memory only");
+  }
 
-  await createReportServer({ port, dbPath });
+  await createReportServer({ port, supabaseClient });
   // Keep process alive
   await new Promise(() => {});
 }

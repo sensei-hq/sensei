@@ -1,6 +1,6 @@
 // packages/tools/src/tools/search.spec.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { search } from "./search.js";
 
@@ -70,43 +70,8 @@ vi.mock("@sensei/shared", async (importOriginal) => {
   };
 });
 
-const chunksData = {
-  version: 1,
-  corpusSize: 2,
-  avgChunkLength: 6,
-  chunks: {
-    "src/auth.ts:login": {
-      file: "src/auth.ts",
-      type: "symbol",
-      text: "login(email: string, password: string): Promise<User | null>\nAuthenticate user",
-      contentHash: "abc123",
-      tf: { login: 1, email: 1, authenticate: 1, user: 1 },
-    },
-    "src/home.ts:render": {
-      file: "src/home.ts",
-      type: "symbol",
-      text: "render(): void\nRender the home page",
-      contentHash: "def456",
-      tf: { render: 1, home: 1, page: 1 },
-    },
-  },
-};
-
-const embeddingsData = {
-  version: 1,
-  model: "Xenova/all-MiniLM-L6-v2",
-  dimensions: 384,
-  vectors: {
-    "src/auth.ts:login": AUTH_VECTOR,
-    "src/home.ts:render": HOME_VECTOR,
-  },
-};
-
 beforeEach(() => {
   mkdirSync(join(TMP, ".sensei"), { recursive: true });
-  // chunks and embeddings still use local files as fallback
-  writeFileSync(join(TMP, ".sensei/chunks.json"), JSON.stringify(chunksData));
-  writeFileSync(join(TMP, ".sensei/embeddings.json"), JSON.stringify(embeddingsData));
 });
 afterEach(() => rmSync(TMP, { recursive: true, force: true }));
 
@@ -165,8 +130,6 @@ describe("search — zero-hit reindex guard", () => {
   beforeEach(() => {
     vi.resetModules();
     HOISTED_DB_FLAGS.empty = true; // DB returns null so all layers have zero hits
-    rmSync(join(TMP, ".sensei/chunks.json"), { force: true });
-    rmSync(join(TMP, ".sensei/embeddings.json"), { force: true });
   });
   afterEach(() => { HOISTED_DB_FLAGS.empty = false; });
 

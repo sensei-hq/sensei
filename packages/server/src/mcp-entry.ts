@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createSenseiMcpServer } from "./mcp-server.js";
-import { loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
-import { createOtlpEndpoint } from "./otlp-endpoint.js";
+import { loadSenseiConfig } from "@sensei/shared";
 
 const repoPath = process.env.SENSEI_REPO_PATH ?? process.cwd();
 const config = await loadSenseiConfig(repoPath);
@@ -12,14 +11,13 @@ if (!config) {
   process.exit(1);
 }
 
-// Start OTLP endpoint for Claude Code telemetry
-const otlpPort = parseInt(process.env.SENSEI_OTEL_PORT ?? "4318", 10);
-const dryRun = process.env.SENSEI_OTEL_DRY_RUN === "true";
-let supabaseClient: any = null;
-try { supabaseClient = await makeSenseiClient(repoPath); } catch { /* no client — write mode silently skipped */ }
-
-const otlp = createOtlpEndpoint({ port: otlpPort, dryRun, repoId: config.repo_id, supabaseClient });
-console.error(`[sensei-otel] Listening on :${otlp.port} (${dryRun ? "dry-run" : "live"})`);
+// Register with collector daemon so OTLP events are attributed to this repo
+fetch("http://localhost:51789/otlp/register", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ repoId: config.repo_id, repoPath }),
+  signal: AbortSignal.timeout(500),
+}).catch(() => { /* daemon not running — OTLP attribution silently skipped */ });
 
 const server = createSenseiMcpServer({ repoId: config.repo_id, repoPath });
 const transport = new StdioServerTransport();

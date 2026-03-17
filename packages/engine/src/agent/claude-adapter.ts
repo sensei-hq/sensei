@@ -19,7 +19,7 @@ export class ClaudeAdapter implements AgentAdapter {
     const result: AgentSkillFile[] = [];
 
     for (const [category, markdown] of Object.entries(skills)) {
-      const fileName = `sensei-${repoSlug}-${category}.md`;
+      const fileName = `${repoSlug}-${category}.md`;
       const filePath = join(this.skillsDir, fileName);
       await writeFile(filePath, markdown, "utf-8");
       result.push({
@@ -38,7 +38,7 @@ export class ClaudeAdapter implements AgentAdapter {
     repoSlug: string,
   ): Promise<LibSkillFile> {
     await mkdir(this.skillsDir, { recursive: true });
-    const fileName = `sensei-${repoSlug}-lib-${libName}.md`;
+    const fileName = `${repoSlug}-lib-${libName}.md`;
     const filePath = join(this.skillsDir, fileName);
     await writeFile(filePath, markdown, "utf-8");
     return { libName, path: filePath, generatedAt: new Date().toISOString() };
@@ -48,7 +48,7 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!existsSync(this.skillsDir)) return [];
 
     const entries = await readdir(this.skillsDir);
-    const prefix = `sensei-${repoSlug}-`;
+    const prefix = `${repoSlug}-`;
     const result: AgentSkillFile[] = [];
 
     for (const entry of entries) {

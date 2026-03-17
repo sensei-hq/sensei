@@ -1,10 +1,11 @@
 ---
 id: pattern-store
 type: design
-implements:
-  - feature: patterns
-    items: [pattern-detection-code, pattern-detection-docs, pattern-templates, pattern-capture, pattern-search, pattern-export]
+status: not-implemented
+implements: []
 ---
+
+> **NOT IMPLEMENTED — BACKLOG.** No pattern detection, `search_patterns()`, or `capture_pattern()` MCP tools exist. `PATTERNS.md` is created by `reindexRepo` as a user-editable file but is not parsed or indexed. This design is a target for a future iteration.
 
 # Pattern Store
 

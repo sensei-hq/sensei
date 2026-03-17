@@ -1,0 +1,27 @@
+{
+  "agent": "claude",
+  "repoSlug": "sensei",
+  "skills": [
+    {
+      "category": "orientation",
+      "path": "/Users/Jerry/.claude/skills/orientation.md",
+      "generatedAt": "2026-03-16T00:00:00.000Z"
+    },
+    {
+      "category": "workflow",
+      "path": "/Users/Jerry/.claude/skills/workflow.md",
+      "generatedAt": "2026-03-16T00:00:00.000Z"
+    },
+    {
+      "category": "context",
+      "path": "/Users/Jerry/.claude/skills/context.md",
+      "generatedAt": "2026-03-16T00:00:00.000Z"
+    },
+    {
+      "category": "patterns",
+      "path": "/Users/Jerry/.claude/skills/patterns.md",
+      "generatedAt": "2026-03-16T00:00:00.000Z"
+    }
+  ],
+  "updatedAt": "2026-03-16T00:00:00.000Z"
+}

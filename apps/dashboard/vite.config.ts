@@ -9,12 +9,6 @@ export default defineConfig({
     UnoCSS(),
     sveltekit(),
   ],
-  resolve: {
-    alias: {
-      // kavach exports point to .ts source — alias directly so Vite SSR runner can transform it
-      'kavach': '/Users/Jerry/Developer/kavach/packages/auth/src/index.ts'
-    }
-  },
   optimizeDeps: {
     exclude: ['@rokkit/ui', '@rokkit/states', '@rokkit/actions', '@rokkit/core', '@rokkit/app']
   }

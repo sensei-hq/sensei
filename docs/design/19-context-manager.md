@@ -1,10 +1,13 @@
 ---
 id: context-manager
 type: design
+status: partial
 implements:
   - feature: context
     items: [slice-loading, token-budget, checkpoints, recommend-next]
 ---
+
+> **PARTIALLY IMPLEMENTED.** `load_context()` and `context_pack()` exist in `packages/server/src/mcp-server.ts` and work. The budget-aware context graph and `recommend_next()` prescription described here are not implemented — context loading is simpler: it builds slices from the symbol map and chunk DB on each call without a persistent graph structure. The token budget targets and slice definitions below remain accurate for the current implementation.
 
 # Context Manager
 

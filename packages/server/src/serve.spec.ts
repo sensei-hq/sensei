@@ -1,11 +1,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { createReportServer } from "./serve.js";
 import type { OllamaBackend } from "./model/ollama-backend.js";
-import { tmpdir } from "os";
-import { join } from "path";
 
 const PORT = 17744; // non-default to avoid conflicts
-const DB_PATH = join(tmpdir(), `sensei-test-${Date.now()}.db`);
 
 describe("createReportServer", () => {
   let server: { stop: () => void; port: number };
@@ -13,7 +10,7 @@ describe("createReportServer", () => {
   afterAll(() => server?.stop());
 
   it("returns health ok", async () => {
-    server = await createReportServer({ port: PORT, dbPath: DB_PATH, isAvailableFn: async () => ({ ollamaRunning: false, ollamaModel: false }) });
+    server = await createReportServer({ port: PORT, isAvailableFn: async () => ({ ollamaRunning: false, ollamaModel: false }) });
     const res = await fetch(`http://localhost:${PORT}/health`);
     const body = await res.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);

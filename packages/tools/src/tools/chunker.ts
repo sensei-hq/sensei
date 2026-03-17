@@ -1,9 +1,8 @@
-import { readFile, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import type { SymbolMap } from "@sensei/shared";
-import { senseiPath } from "@sensei/shared";
 import { embed, ensureReady } from "./embedder.js";
 
 interface Chunk {
@@ -21,12 +20,6 @@ interface ChunksFile {
   chunks: Record<string, Chunk>;
 }
 
-interface EmbeddingsFile {
-  version: 1;
-  model: string;
-  dimensions: number;
-  vectors: Record<string, number[]>;
-}
 
 function tokenize(text: string): string[] {
   // Split on non-alphanumeric boundaries, then further split camelCase tokens
@@ -141,28 +134,36 @@ export async function buildChunksAndEmbeddings(
   repoPath: string,
   symbolMap: SymbolMap,
   docFiles: string[],
-  options?: { force?: boolean }
+  options?: { force?: boolean; client?: any; repoId?: string }
 ): Promise<void> {
-  const chunksPath = senseiPath(repoPath, "chunks.json");
-  const embeddingsPath = senseiPath(repoPath, "embeddings.json");
+  const client = options?.client ?? null;
+  const repoId = options?.repoId ?? null;
+  const useDb = !!(client && repoId);
 
-  // Load existing data
-  let existingChunks: ChunksFile["chunks"] = {};
+  // Chunks and embeddings are DB-only — no local file storage
+  if (!useDb) return;
+
+  // Load existing data for incremental embedding (skip unchanged chunks)
+  let existingChunks: Record<string, { contentHash: string; tf: Record<string, number> }> = {};
   let existingVectors: Record<string, number[]> = {};
 
   if (!options?.force) {
-    if (existsSync(chunksPath)) {
-      try {
-        const data = JSON.parse(await readFile(chunksPath, "utf-8")) as ChunksFile;
-        existingChunks = data.chunks ?? {};
-      } catch { /* start fresh */ }
-    }
-    if (existsSync(embeddingsPath)) {
-      try {
-        const data = JSON.parse(await readFile(embeddingsPath, "utf-8")) as EmbeddingsFile;
-        existingVectors = data.vectors ?? {};
-      } catch { /* start fresh */ }
-    }
+    try {
+      const { data } = await (client as any)
+        .schema("sensei").from("chunks")
+        .select("id, content_hash, tf, embedding")
+        .eq("repo_id", repoId);
+      if (data) {
+        for (const row of data) {
+          existingChunks[row.id] = { contentHash: row.content_hash, tf: row.tf ?? {} };
+          if (row.embedding) {
+            existingVectors[row.id] = typeof row.embedding === 'string'
+              ? JSON.parse(row.embedding)
+              : row.embedding as number[];
+          }
+        }
+      }
+    } catch { /* start fresh */ }
   }
 
   // Ensure model is ready before the embedding loop — downloads if not cached
@@ -201,22 +202,45 @@ export async function buildChunksAndEmbeddings(
     ? Math.round(tokenCounts.reduce((a, b) => a + b, 0) / corpusSize)
     : 0;
 
-  const chunksFile: ChunksFile = {
-    version: 1,
-    corpusSize,
-    avgChunkLength,
-    chunks: newChunks,
-  };
+  {
+    // Upsert all chunks to DB in batches
+    const BATCH = 200;
+    const allNewIds = Object.keys(newChunks);
+    const rows = allNewIds.map(id => {
+      const chunk = newChunks[id];
+      return {
+        repo_id: repoId,
+        id,
+        file_path: chunk.file,
+        chunk_type: chunk.type,
+        text: chunk.text,
+        content_hash: chunk.contentHash,
+        tf: chunk.tf,
+        embedding: newVectors[id] ? `[${newVectors[id].join(",")}]` : null,
+        updated_at: new Date().toISOString(),
+      };
+    });
 
-  const embeddingsFile: EmbeddingsFile = {
-    version: 1,
-    model: "Xenova/all-MiniLM-L6-v2",
-    dimensions: 384,
-    vectors: newVectors,
-  };
+    for (let i = 0; i < rows.length; i += BATCH) {
+      await (client as any).schema("sensei").from("chunks")
+        .upsert(rows.slice(i, i + BATCH), { onConflict: "repo_id,id" });
+    }
 
-  await Promise.all([
-    writeFile(chunksPath, JSON.stringify(chunksFile, null, 2)),
-    writeFile(embeddingsPath, JSON.stringify(embeddingsFile, null, 2)),
-  ]);
+    // Delete stale chunks (IDs no longer in the index)
+    if (allNewIds.length > 0) {
+      const { data: oldRows } = await (client as any)
+        .schema("sensei").from("chunks")
+        .select("id")
+        .eq("repo_id", repoId);
+      const toDelete = (oldRows ?? [])
+        .map((r: { id: string }) => r.id)
+        .filter((id: string) => !new Set(allNewIds).has(id));
+      if (toDelete.length > 0) {
+        await (client as any).schema("sensei").from("chunks")
+          .delete()
+          .eq("repo_id", repoId)
+          .in("id", toDelete);
+      }
+    }
+  }
 }
