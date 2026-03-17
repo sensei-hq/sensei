@@ -1,6 +1,11 @@
 ---
 name: running-benchmarks
-description: Use when you want to measure the impact of skills on token usage and interaction counts, or when comparing agent performance with and without skills on a representative task corpus.
+description: Use when evaluating whether a new skill or workflow change actually
+reduces token usage and interaction counts — runs A/B comparisons on a task corpus
+(with-skills vs without-skills branches) and produces a metrics report to confirm
+or reject the improvement.
+Also use before shipping significant skill changes to verify the token reduction
+target (>40%) is still being met.
 ---
 
 # Benchmark Runner
