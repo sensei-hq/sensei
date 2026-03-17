@@ -20,4 +20,4 @@ Plans ready to execute, ordered by priority.
 
 | Spec | File | Notes |
 |------|------|-------|
-| In-App Mockups | `specs/2026-03-17-in-app-mockups-design.md` | Plan not yet written |
+| OTel Usage Tracking | `specs/2026-03-17-otel-usage-tracking-design.md` | Plan not yet written |
