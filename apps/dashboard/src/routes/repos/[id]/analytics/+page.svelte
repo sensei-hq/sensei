@@ -65,6 +65,67 @@
   </div>
 {/if}
 
+{#if Object.keys(data.costBySession).length > 0}
+<h2>Cost — Last 30 Days</h2>
+<table class="cost-table">
+  <thead>
+    <tr>
+      <th>Session</th>
+      <th class="num">Input tokens</th>
+      <th class="num">Output tokens</th>
+      <th class="num">Cache read</th>
+      <th class="num">Cache write</th>
+      <th class="num">Cost (USD)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {#each data.sessions as session}
+      {#if data.costBySession[session.id]}
+        {@const cost = data.costBySession[session.id]}
+        <tr>
+          <td class="desc">{truncate(session.taskDescription)}</td>
+          <td class="num mono">{cost.inputTokens.toLocaleString()}</td>
+          <td class="num mono">{cost.outputTokens.toLocaleString()}</td>
+          <td class="num mono">{cost.cacheReadTokens.toLocaleString()}</td>
+          <td class="num mono">{cost.cacheCreationTokens.toLocaleString()}</td>
+          <td class="num mono">${cost.costUsd.toFixed(4)}</td>
+        </tr>
+      {/if}
+    {/each}
+  </tbody>
+</table>
+{/if}
+
+{#if data.benchmarkPairs.length > 0}
+<h2>Benchmark Comparison</h2>
+<table class="cost-table">
+  <thead>
+    <tr>
+      <th>Task</th>
+      <th>Branch</th>
+      <th class="num">Without sensei</th>
+      <th class="num">With sensei</th>
+      <th class="num">Savings ($)</th>
+      <th class="num">Savings (%)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {#each data.benchmarkPairs as pair}
+      {@const savings = (pair.withoutSensei?.costUsd ?? 0) - (pair.withSensei?.costUsd ?? 0)}
+      {@const savingsPct = pair.withoutSensei?.costUsd ? (savings / pair.withoutSensei.costUsd) * 100 : 0}
+      <tr>
+        <td class="desc">{truncate(pair.taskDescription)}</td>
+        <td class="mono" style="font-size:0.75rem">{pair.branch}</td>
+        <td class="num mono">${pair.withoutSensei?.costUsd.toFixed(4)}</td>
+        <td class="num mono">${pair.withSensei?.costUsd.toFixed(4)}</td>
+        <td class="num mono" class:savings-pos={savings > 0} class:savings-neg={savings <= 0}>${savings.toFixed(4)}</td>
+        <td class="num" class:savings-pos={savingsPct > 0} class:savings-neg={savingsPct <= 0}>{savingsPct.toFixed(1)}%</td>
+      </tr>
+    {/each}
+  </tbody>
+</table>
+{/if}
+
 <style>
   h2 { margin: 24px 0 12px; font-size: 1rem; font-weight: 600; color: #374151; }
   .session-list { display: flex; flex-direction: column; gap: 8px; }
@@ -82,4 +143,13 @@
   .ftr-low  { color: #991b1b; }
   .ftr-null { color: #94a3b8; }
   .ts { font-size: 0.75rem; color: #94a3b8; white-space: nowrap; }
+  .cost-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-bottom: 8px; }
+  .cost-table th { text-align: left; padding: 6px 12px 6px 0; border-bottom: 2px solid #e2e8f0; color: #64748b; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .cost-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid #f1f5f9; }
+  .cost-table tr:hover td { background: #f8fafc; }
+  .cost-table .num { text-align: right; }
+  .cost-table .mono { font-family: monospace; }
+  .cost-table .desc { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .savings-pos { color: #166534; }
+  .savings-neg { color: #991b1b; }
 </style>
