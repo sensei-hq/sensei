@@ -1,6 +1,9 @@
 ---
 name: compressing-content
-description: Use when working with code in LLM context and needing to reduce token usage, choose representation levels, or compress code for agent consumption without losing reasoning ability.
+description: Use when about to load a file, module, or code context into an LLM session
+— selects the minimal resolution level (L0 signature through L3 full source) that
+lets the agent complete its task, preventing token bloat without sacrificing accuracy.
+Also use before any broad context-load to decide the right representation level first.
 ---
 
 # Content Compression

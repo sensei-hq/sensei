@@ -1,6 +1,10 @@
 ---
 name: indexing-codebase
-description: Use when starting work on an unfamiliar codebase, when a codebase has changed significantly, when an agent is doing broad file searches to orient itself, or when setting up a repo for efficient AI agent use.
+description: Use when first working on a repo or after a major refactor — runs the
+sensei indexer to produce llmspec.yaml, CLAUDE.md, llms.txt, and symbol-map so
+future agents orient in ~500 tokens instead of dozens of file reads.
+Also use before running benchmarks or when an agent is spending multiple turns on
+orientation broad file searches.
 ---
 
 # Codebase Indexer

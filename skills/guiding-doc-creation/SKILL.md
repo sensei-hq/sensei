@@ -1,6 +1,10 @@
 ---
 name: guiding-doc-creation
-description: Use when creating, updating, or locating docs in this repo. Encodes the feature/design naming split, frontmatter spec, traceability.yaml workflow, and how to find existing docs before creating new ones.
+description: Use before creating or updating any doc in this repo — provides the
+feature/design naming split, NN-prefix conventions, frontmatter spec, and
+traceability.yaml workflow so docs are discoverable and correctly linked.
+Also use proactively when asked to "add a doc" to avoid creating duplicates or
+misnamed files that break the index.
 ---
 
 # Doc Guide
