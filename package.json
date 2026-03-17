@@ -1,5 +1,6 @@
 {
   "name": "sensei",
+  "version": "0.1.0",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -10,7 +11,9 @@
     "test": "bunx vitest run",
     "test:e2e": "bun run --filter='*' test:e2e",
     "dev": "bun run --filter='@sensei/cli' dev",
-    "coverage": "vitest run --coverage "
+    "coverage": "vitest run --coverage",
+    "bump": "bumpp --configFilePath config/bump.config.js",
+    "bump:next": "bumpp --configFilePath config/bump.config.js --preid=next"
   },
   "overrides": {
     "@kavach/sentry": "1.0.0-next.34",
@@ -22,6 +25,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@vitest/coverage-v8": "4.0.18",
+    "bumpp": "^10.2.3",
     "coverage-v8": "^0.0.1-security",
     "js-yaml": "^4.1.1",
     "typescript": "^5.9.3",
