@@ -14,6 +14,85 @@ target (>40%) is still being met.
 
 Quantify skill value with A/B comparisons. Run the same task corpus on two branches — one with skills active, one without — and compare: tokens in, tokens out, interactions, tool calls, and task success rate.
 
+## Benchmark Pair (with vs. without sensei)
+
+Use this for a direct cost comparison on a single task using OTel telemetry. Results appear automatically in the repo's Analytics page under "Benchmark Comparison".
+
+### Prerequisites
+
+1. `CLAUDE_CODE_ENABLE_TELEMETRY=1` must be set in the shell environment
+2. The sensei MCP server must be running (it hosts the OTLP endpoint on port 4318)
+3. `SENSEI_OTEL_DRY_RUN` must be unset or `false` so costs are written to Supabase
+
+### Procedure
+
+**Step 1: Create a benchmark worktree**
+
+```bash
+SLUG=<short-task-name>
+STAMP=$(date +%Y%m%d-%H%M)
+git worktree add .worktrees/benchmark-${SLUG}-${STAMP} -b benchmark/${SLUG}-${STAMP}
+cd .worktrees/benchmark-${SLUG}-${STAMP}
+```
+
+**Step 2: Run WITHOUT sensei**
+
+1. Back up and strip sensei from the worktree's `.mcp.json`:
+   ```bash
+   cp .mcp.json .mcp.json.sensei-backup
+   # Remove the sensei server entry from .mcp.json
+   ```
+2. Export OTel env vars:
+   ```bash
+   export CLAUDE_CODE_ENABLE_TELEMETRY=1
+   export OTEL_METRICS_EXPORTER=otlp
+   export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+   export SENSEI_OTEL_DRY_RUN=false
+   ```
+3. Insert a `benchmark_runs` row (sensei_enabled: false) — note the returned `id` as `$NO_SENSEI_RUN_ID`
+4. Run the task with Claude Code using the exact task prompt
+5. After completion: update the `benchmark_runs` row with `ended_at` and aggregate totals from `api_requests` rows where `recorded_at` is between `started_at` and `ended_at`
+
+**Step 3: Run WITH sensei**
+
+1. Restore `.mcp.json`:
+   ```bash
+   cp .mcp.json.sensei-backup .mcp.json && rm .mcp.json.sensei-backup
+   ```
+2. Same OTel env vars (already exported)
+3. Insert a `benchmark_runs` row (sensei_enabled: true) — note the `id` as `$WITH_SENSEI_RUN_ID`
+4. Run the exact same task prompt with Claude Code
+5. Update the `benchmark_runs` row with `ended_at` and aggregate totals
+
+**Step 4: Clean up**
+
+```bash
+cd ../..
+git worktree remove .worktrees/benchmark-${SLUG}-${STAMP}
+git branch -d benchmark/${SLUG}-${STAMP}
+```
+
+**Step 5: View results**
+
+Open the repo's Analytics page in the sensei dashboard. The "Benchmark Comparison" table shows the paired runs side-by-side with cost delta and savings percentage. Pairs are matched by `(task_description, branch)`.
+
+### What makes a good benchmark task
+
+- Identical prompt for both runs — copy it verbatim, do not paraphrase
+- Same branch/codebase state (hence the worktree approach)
+- Task genuinely exercises sensei context tools (`context_pack`, `search`, `get_session_context`) — otherwise savings will be minimal
+- Tasks in the 5–20 tool call range show the clearest variance; single-tool tasks are too noisy
+
+### Environment variables reference
+
+| Variable | Value | Purpose |
+|---|---|---|
+| `CLAUDE_CODE_ENABLE_TELEMETRY` | `1` | Enables OTel emission from Claude Code |
+| `OTEL_METRICS_EXPORTER` | `otlp` | Routes metrics to OTLP HTTP |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Points to sensei's OTLP endpoint |
+| `SENSEI_OTEL_DRY_RUN` | `false` (or unset) | Enables DB writes; set to `true` to verify event parsing only |
+| `SENSEI_OTEL_PORT` | `4318` (default) | Override OTLP port if 4318 is taken |
+
 ## A/B Setup
 
 ```
