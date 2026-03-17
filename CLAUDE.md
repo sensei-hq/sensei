@@ -14,3 +14,12 @@ See `.sensei/shortcuts.md`
 
 ## Patterns
 See `.sensei/patterns.md`
+
+## Code Quality Policy
+
+**Zero Errors Policy:** Before starting any implementation task, run the full test suite and TypeScript check. Fix ALL errors before writing new code. After completing any task, run again — zero errors means zero, not "same as before". Use the `zero-errors-policy` skill.
+
+```
+Checkpoint 1 (before coding): bun run --filter '*' test && bunx tsc --noEmit
+Checkpoint 2 (after coding):  bun run --filter '*' test && bunx tsc --noEmit
+```
