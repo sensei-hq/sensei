@@ -9,6 +9,8 @@ import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
 import { promptAndInstallSkills } from "./install-skills.js";
 import { runUpdateRegistryCore } from "./update-registry.js";
 import type { LibEntry } from "@sensei/shared";
+import { claudeMdTemplate } from "../templates/claude-md.js";
+import { agentsMdTemplate } from "../templates/agents-md.js";
 
 async function detectUnknownLibs(deps: string[]): Promise<string[]> {
   if (!deps.length) return [];
@@ -257,6 +259,10 @@ export async function init(cwd: string): Promise<void> {
   } catch (err) {
     hookSpinner.stop(`Hook install skipped: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  // 7b. Write CLAUDE.md and AGENTS.md
+  await writeFile(join(cwd, "CLAUDE.md"), claudeMdTemplate({ repoName, stack, repoId }));
+  await writeFile(join(cwd, "AGENTS.md"), agentsMdTemplate({ repoName, stack }));
 
   // 8. Install skills
   await promptAndInstallSkills(cwd);
