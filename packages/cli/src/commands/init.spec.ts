@@ -98,30 +98,17 @@ describe("init command", () => {
     expect(content).toContain("http://localhost:54321");
   });
 
-  it("writes CLAUDE.md to cwd", async () => {
+  it("does not write CLAUDE.md or AGENTS.md", async () => {
     await init("/tmp/test-repo");
 
     const claudeCall = mockWriteFile.mock.calls.find(
       (c: unknown[]) => String(c[0]).endsWith("CLAUDE.md")
     );
-    expect(claudeCall).toBeDefined();
-    const content = String(claudeCall![1]);
-    expect(content).toContain("test-repo");
-    expect(content).toContain("get_session_context()");
-    expect(content).toContain("get_llmspec()");
-  });
-
-  it("writes AGENTS.md to cwd", async () => {
-    await init("/tmp/test-repo");
-
     const agentsCall = mockWriteFile.mock.calls.find(
       (c: unknown[]) => String(c[0]).endsWith("AGENTS.md")
     );
-    expect(agentsCall).toBeDefined();
-    const content = String(agentsCall![1]);
-    expect(content).toContain("test-repo");
-    expect(content).toContain("get_session_context()");
-    expect(content).toContain("search(query)");
+    expect(claudeCall).toBeUndefined();
+    expect(agentsCall).toBeUndefined();
   });
 
   it("calls indexRepo with repoPath, repoId, and client", async () => {
@@ -142,12 +129,9 @@ describe("init command", () => {
 
     await init("/tmp/test-repo");
 
-    const claudeCall = mockWriteFile.mock.calls.find(
-      (c: unknown[]) => String(c[0]).endsWith("CLAUDE.md")
-    );
-    const content = String(claudeCall![1]);
-    expect(content).toContain("typescript");
-    expect(content).toContain("react");
+    // Stack is detected but not written to files (stored in Supabase via repo upsert)
+    const upsertCall = makeSupabaseClient().from("repos").upsert;
+    expect(mockIndexRepo).toHaveBeenCalledOnce();
   });
 
   it("calls installHooks", async () => {
@@ -169,10 +153,10 @@ describe("init command", () => {
 
     await expect(init("/tmp/test-repo")).resolves.toBeUndefined();
 
-    // CLAUDE.md and AGENTS.md should still be written
-    const claudeCall = mockWriteFile.mock.calls.find(
-      (c: unknown[]) => String(c[0]).endsWith("CLAUDE.md")
+    // config.yaml should still be written
+    const configCall = mockWriteFile.mock.calls.find(
+      (c: unknown[]) => String(c[0]).endsWith("config.yaml")
     );
-    expect(claudeCall).toBeDefined();
+    expect(configCall).toBeDefined();
   });
 });
