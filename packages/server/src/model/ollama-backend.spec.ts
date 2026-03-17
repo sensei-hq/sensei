@@ -112,7 +112,8 @@ describe("OllamaBackend", () => {
 
     it("embed() uses embeddingModel when set separately from generation model", async () => {
       const fetches: Array<{ model: string }> = [];
-      globalThis.fetch = vi.fn(async (_url: string, opts: any) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.stubGlobal("fetch", async (_url: string, opts: any) => {
         const body = JSON.parse(opts.body);
         fetches.push({ model: body.model });
         return { ok: true, json: async () => ({ embedding: [0.1, 0.2] }) } as any;
