@@ -6,11 +6,23 @@ import { createClient } from "@supabase/supabase-js";
 import { indexRepo } from "@sensei/engine";
 import { installHooks } from "@sensei/collector";
 import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
-import { promptAndInstallSkills } from "./install-skills.js";
+import { installSkills } from "./install-skills.js";
 import { runUpdateRegistryCore } from "./update-registry.js";
+import { setupMcp } from "./setup.js";
 import type { LibEntry } from "@sensei/shared";
 import { claudeMdTemplate } from "../templates/claude-md.js";
 import { agentsMdTemplate } from "../templates/agents-md.js";
+
+const DEFAULT_SUPABASE_URL = "http://localhost:54321";
+
+export interface InitOptions {
+  /** Install skills and hooks globally (~/.claude/) rather than repo-local */
+  global?: boolean;
+  /** Supabase URL — skips prompt when provided */
+  supabaseUrl?: string;
+  /** Supabase service role key — skips prompt when provided */
+  serviceKey?: string;
+}
 
 async function detectUnknownLibs(deps: string[]): Promise<string[]> {
   if (!deps.length) return [];
@@ -59,7 +71,7 @@ export async function lookupSharedLib(
   }
 }
 
-export async function init(cwd: string): Promise<void> {
+export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
   intro("sensei init");
 
   // 1. Detect stack from manifest files
@@ -97,7 +109,6 @@ export async function init(cwd: string): Promise<void> {
     if (llmCandidates.length > 0) {
       candidates = llmCandidates;
     } else {
-      // No LLM or LLM returned nothing — let user pick from all deps
       const selected = await multiselect({
         message: "Which libraries would you like to index docs for? (space to select, enter to confirm)",
         options: allDeps.map(d => ({ value: d, label: d })),
@@ -111,23 +122,33 @@ export async function init(cwd: string): Promise<void> {
     }
   }
 
-  // 3. Prompt for Supabase credentials and create client (moved before URL prompts
-  //    so client is available for shared-lib lookup in Pass 2 below)
-  const supabaseUrl = await text({
-    message: "Supabase URL (from supabase start or your hosted project):",
-    placeholder: "http://localhost:54321",
-    validate: v => (v.startsWith("http") ? undefined : "Must be a URL"),
-  });
-  if (isCancel(supabaseUrl)) { outro("Cancelled."); return; }
+  // 3. Resolve Supabase credentials
+  //    Priority: CLI flag / env var → prompt
+  let supabaseUrl = opts.supabaseUrl ?? "";
+  let serviceKey = opts.serviceKey ?? "";
 
-  const serviceKey = await text({
-    message: "Supabase service role key:",
-    validate: v => (v.length > 10 ? undefined : "Looks too short"),
-  });
-  if (isCancel(serviceKey)) { outro("Cancelled."); return; }
+  if (!supabaseUrl) {
+    const val = await text({
+      message: "Supabase URL:",
+      placeholder: DEFAULT_SUPABASE_URL,
+      defaultValue: DEFAULT_SUPABASE_URL,
+      validate: v => (v.startsWith("http") ? undefined : "Must be a URL"),
+    });
+    if (isCancel(val)) { outro("Cancelled."); return; }
+    supabaseUrl = String(val) || DEFAULT_SUPABASE_URL;
+  }
 
-  // Create client (needed for both repo upsert and shared-lib lookup below)
-  const client = createClient(String(supabaseUrl), String(serviceKey), {
+  if (!serviceKey) {
+    const val = await text({
+      message: "Supabase service role key:",
+      validate: v => (v.length > 10 ? undefined : "Looks too short"),
+    });
+    if (isCancel(val)) { outro("Cancelled."); return; }
+    serviceKey = String(val);
+  }
+
+  // Create Supabase client
+  const client = createClient(supabaseUrl, serviceKey, {
     db: { schema: "sensei" },
     auth: { persistSession: false },
   });
@@ -147,14 +168,11 @@ export async function init(cwd: string): Promise<void> {
   const repoId: string = repo.id;
 
   // Pass 2: For each candidate, check shared pool first; else prompt for URL
-  // customLibs: will be indexed by runUpdateRegistryCore
-  // linkedLibEntries: linked to shared pool, written to config.yaml but NOT re-indexed
   const customLibs: LibEntry[] = [];
   const linkedLibEntries: LibEntry[] = [];
 
   if (candidates.length > 0) {
     for (const name of candidates) {
-      // Check global shared pool — silently falls through if lookup fails
       const sharedLib = await lookupSharedLib(client, name);
 
       if (sharedLib) {
@@ -164,16 +182,13 @@ export async function init(cwd: string): Promise<void> {
           initialValue: true,
         });
         if (!isCancel(confirmed) && confirmed) {
-          // Convert local_path to file:// URL if needed
           const baseUrl = sharedLib.base_url
             ?? (sharedLib.local_path ? `file://${sharedLib.local_path}` : "");
-          // Add to linkedLibEntries — goes into config.yaml but skips re-indexing
           linkedLibEntries.push({
             name,
             source_type: sharedLib.source_type as LibEntry["source_type"],
             base_url: baseUrl,
           });
-          // Upsert repo_libs immediately with shared_lib_id
           try {
             await (client as any).schema('sensei').from('repo_libs').upsert({
               repo_id: repoId,
@@ -185,11 +200,10 @@ export async function init(cwd: string): Promise<void> {
           } catch {
             log.warn(`  repo_libs upsert failed for ${name} (shared link)`);
           }
-          continue; // Skip URL prompt and runUpdateRegistryCore for this lib
+          continue;
         }
       }
 
-      // URL prompt path (unchanged)
       const input = await text({
         message: `Docs for "${name}"? (llms.txt URL, HTTP page, raw .md URL, or local path — Enter to skip)`,
         placeholder: "https://example.com/llms.txt",
@@ -210,17 +224,17 @@ export async function init(cwd: string): Promise<void> {
     : "";
   await writeFile(
     join(senseiDir, "config.yaml"),
-    `repo_id: ${repoId}\nsupabase_url: ${String(supabaseUrl)}\n${customLibsYaml}`,
+    `repo_id: ${repoId}\nsupabase_url: ${supabaseUrl}\n${customLibsYaml}`,
   );
 
   // Write credentials to ~/.config/sensei/ (global, not committed)
   const credsDir = join(homedir(), ".config", "sensei");
   await mkdir(credsDir, { recursive: true });
   const credsPath = join(credsDir, "credentials.yaml");
-  await writeFile(credsPath, `supabase_service_key: ${String(serviceKey)}\n`);
+  await writeFile(credsPath, `supabase_service_key: ${serviceKey}\n`);
   await chmod(credsPath, 0o600);
 
-  if (customLibs.length > 0) {  // Only non-linked libs are re-indexed
+  if (customLibs.length > 0) {
     const libSpin = spinner();
     libSpin.start("Indexing library docs...");
     try {
@@ -243,7 +257,6 @@ export async function init(cwd: string): Promise<void> {
       log.warn(`${result.errors.length} indexing errors — see details below`);
       result.errors.slice(0, 3).forEach((e: string) => log.warn(e));
     }
-    // Update last_indexed_at
     await client.from("repos").update({ last_indexed_at: new Date().toISOString() }).eq("id", repoId);
   } catch (err) {
     indexSpinner.stop(`Indexing failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -251,30 +264,51 @@ export async function init(cwd: string): Promise<void> {
   }
 
   // 6. Install hooks
+  //    --global → hooks in ~/.claude/settings.json + daemon autostart
+  //    default  → hooks in <repo>/.claude/settings.json (no daemon; collector started manually)
   const hookSpinner = spinner();
   hookSpinner.start("Installing collector hooks...");
   try {
-    await installHooks({});
-    hookSpinner.stop("Hooks installed");
+    if (opts.global) {
+      await installHooks({ global: true });
+    } else {
+      await installHooks({ projectPath: cwd });
+    }
+    hookSpinner.stop(`Hooks installed${opts.global ? " (global)" : " (repo-local)"}`);
   } catch (err) {
     hookSpinner.stop(`Hook install skipped: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 7b. Write CLAUDE.md and AGENTS.md
+  // 7. Register MCP server in ~/.claude/mcp.json (always — same server for all repos via env var)
+  try {
+    await setupMcp(cwd);
+    log.success("MCP server registered — restart Claude Code to activate");
+  } catch (err) {
+    log.warn(`MCP registration skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 8. Write CLAUDE.md and AGENTS.md — always local to the repo
   await writeFile(join(cwd, "CLAUDE.md"), claudeMdTemplate({ repoName, stack, repoId }));
   await writeFile(join(cwd, "AGENTS.md"), agentsMdTemplate({ repoName, stack }));
 
-  // 8. Install skills
-  await promptAndInstallSkills(cwd);
+  // 9. Install skills
+  //    --global → install to ~/.claude/skills/; default → install to .claude/skills/
+  if (opts.global) {
+    await installSkills(cwd, "global");
+  } else {
+    // Interactive prompt for scope
+    const { promptAndInstallSkills } = await import("./install-skills.js");
+    await promptAndInstallSkills(cwd);
+  }
 
   note(
     [
       `Created: .sensei/config.yaml`,
       ``,
       `Next steps:`,
-      `  1. Start the dashboard: cd apps/dashboard && bun run dev`,
-      `  2. Start the collector: sensei serve`,
-      `  3. Add the MCP server to your agent config`,
+      `  1. Restart Claude Code to activate the MCP server`,
+      `  2. Start the dashboard: cd apps/dashboard && bun run dev`,
+      `  3. Start the collector: sensei serve`,
     ].join("\n"),
     "Setup complete"
   );

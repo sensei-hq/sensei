@@ -2,7 +2,7 @@
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import type { SymbolMap } from "@sensei/shared";
-import { senseiPath } from "@sensei/shared";
+import { senseiPath, loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
 import { scoreBM25 } from "./bm25.js";
 import { embed } from "./embedder.js";
 
@@ -40,6 +40,16 @@ const chunksCache = new Map<string, ChunksFile>();
 const embeddingsCache = new Map<string, EmbeddingsFile>();
 let reindexInProgress = false;
 
+function tokenize(text: string): string[] {
+  const raw = text.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const tokens: string[] = [];
+  for (const tok of raw) {
+    const parts = tok.split(/(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/);
+    for (const p of parts) tokens.push(p.toLowerCase());
+  }
+  return tokens;
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, magA = 0, magB = 0;
   for (let i = 0; i < a.length; i++) {
@@ -56,8 +66,64 @@ function symbolNameFromL0(l0: string): string {
            .split(/[(<: ]/)[0].trim();
 }
 
-async function loadChunks(repoPath: string): Promise<ChunksFile | null> {
+async function loadChunksFromDb(client: any, repoId: string): Promise<ChunksFile | null> {
+  try {
+    const { data } = await (client as any)
+      .schema("sensei").from("chunks")
+      .select("id, file_path, chunk_type, text, content_hash, tf")
+      .eq("repo_id", repoId);
+    if (!data || data.length === 0) return null;
+
+    const chunks: Record<string, Chunk> = {};
+    for (const row of data) {
+      chunks[row.id] = {
+        file: row.file_path,
+        type: row.chunk_type as "symbol" | "doc",
+        text: row.text,
+        contentHash: row.content_hash,
+        tf: row.tf ?? {},
+      };
+    }
+
+    const tokenCounts = Object.values(chunks).map(c => tokenize(c.text).length);
+    const corpusSize = tokenCounts.length;
+    const avgChunkLength = corpusSize > 0
+      ? Math.round(tokenCounts.reduce((a, b) => a + b, 0) / corpusSize)
+      : 0;
+
+    return { version: 1, corpusSize, avgChunkLength, chunks };
+  } catch {
+    return null;
+  }
+}
+
+async function loadEmbeddingsFromDb(client: any, repoId: string): Promise<EmbeddingsFile | null> {
+  try {
+    const { data } = await (client as any)
+      .schema("sensei").from("chunks")
+      .select("id, embedding")
+      .eq("repo_id", repoId)
+      .not("embedding", "is", null);
+    if (!data || data.length === 0) return null;
+
+    const vectors: Record<string, number[]> = {};
+    for (const row of data) {
+      if (row.embedding) vectors[row.id] = row.embedding as number[];
+    }
+    return { version: 1, model: "Xenova/all-MiniLM-L6-v2", dimensions: 384, vectors };
+  } catch {
+    return null;
+  }
+}
+
+async function loadChunks(repoPath: string, dbClient?: any, repoId?: string): Promise<ChunksFile | null> {
   if (chunksCache.has(repoPath)) return chunksCache.get(repoPath)!;
+
+  if (dbClient && repoId) {
+    const data = await loadChunksFromDb(dbClient, repoId);
+    if (data) { chunksCache.set(repoPath, data); return data; }
+  }
+
   const path = senseiPath(repoPath, "chunks.json");
   if (!existsSync(path)) return null;
   try {
@@ -67,8 +133,14 @@ async function loadChunks(repoPath: string): Promise<ChunksFile | null> {
   } catch { return null; }
 }
 
-async function loadEmbeddings(repoPath: string): Promise<EmbeddingsFile | null> {
+async function loadEmbeddings(repoPath: string, dbClient?: any, repoId?: string): Promise<EmbeddingsFile | null> {
   if (embeddingsCache.has(repoPath)) return embeddingsCache.get(repoPath)!;
+
+  if (dbClient && repoId) {
+    const data = await loadEmbeddingsFromDb(dbClient, repoId);
+    if (data) { embeddingsCache.set(repoPath, data); return data; }
+  }
+
   const path = senseiPath(repoPath, "embeddings.json");
   if (!existsSync(path)) return null;
   try {
@@ -78,14 +150,40 @@ async function loadEmbeddings(repoPath: string): Promise<EmbeddingsFile | null> 
   } catch { return null; }
 }
 
-async function loadSymbolMap(repoPath: string): Promise<SymbolMap> {
+async function loadSymbolMapFromDb(client: any, repoId: string): Promise<SymbolMap | null> {
+  try {
+    const { data } = await (client as any)
+      .schema("sensei").from("symbol_map")
+      .select("file_path, l0, l1")
+      .eq("repo_id", repoId);
+    if (!data || data.length === 0) return null;
+
+    const symbolMap: SymbolMap = {};
+    for (const row of data) {
+      symbolMap[row.file_path] = {
+        L0: Array.isArray(row.l0) ? row.l0 : (typeof row.l0 === "string" ? row.l0.split("\n").filter(Boolean) : []),
+        L1: Array.isArray(row.l1) ? row.l1 : (typeof row.l1 === "string" ? row.l1.split("\n").filter(Boolean) : []),
+        L2: [],
+      };
+    }
+    return symbolMap;
+  } catch {
+    return null;
+  }
+}
+
+async function loadSymbolMap(repoPath: string, dbClient?: any, repoId?: string): Promise<SymbolMap> {
+  if (dbClient && repoId) {
+    const data = await loadSymbolMapFromDb(dbClient, repoId);
+    if (data && Object.keys(data).length > 0) return data;
+  }
+
   const path = senseiPath(repoPath, "symbol-map.json");
   if (!existsSync(path)) return {};
   try { return JSON.parse(await readFile(path, "utf-8")) as SymbolMap; } catch { return {}; }
 }
 
 function splitCamel(s: string): string[] {
-  // Split camelCase/PascalCase into lowercase tokens: "reindexRepo" → ["reindex", "repo"]
   return s.split(/(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|[^a-zA-Z0-9]+/)
     .filter(Boolean)
     .map(t => t.toLowerCase());
@@ -105,7 +203,6 @@ function symbolSearch(query: string, symbolMap: SymbolMap): Array<{ id: string; 
       else if (name.startsWith(q)) score = 0.8;
       else if (name.includes(q)) score = 0.5;
       else if (queryTokens.length > 0) {
-        // Word-level match: split symbol name by camelCase and check token overlap
         const nameTokens = splitCamel(name);
         const matchCount = queryTokens.filter(qt => nameTokens.some(nt => nt.startsWith(qt) || qt.startsWith(nt))).length;
         if (matchCount > 0) score = 0.3 * (matchCount / queryTokens.length);
@@ -140,7 +237,6 @@ function rrfMerge(
     }
   }
 
-  // Build result lookup for symbol layer (has file/type info not in chunks.json)
   const symbolById = Object.fromEntries(symbolLayerResults.map(r => [r.id, r]));
 
   return Object.entries(scores)
@@ -170,10 +266,21 @@ export async function search(
   const top = options?.top ?? 10;
   const type = options?.type ?? "all";
 
+  // Auto-load Supabase client from config if present
+  let dbClient: any = null;
+  let repoId: string | undefined;
+  try {
+    const config = await loadSenseiConfig(repoPath);
+    if (config) {
+      dbClient = await makeSenseiClient(repoPath);
+      repoId = config.repo_id;
+    }
+  } catch { /* offline or no config — use file fallback */ }
+
   const [symbolMap, chunks, embeddings] = await Promise.all([
-    loadSymbolMap(repoPath),
-    loadChunks(repoPath),
-    loadEmbeddings(repoPath),
+    loadSymbolMap(repoPath, dbClient, repoId),
+    loadChunks(repoPath, dbClient, repoId),
+    loadEmbeddings(repoPath, dbClient, repoId),
   ]);
 
   const layers: Array<Array<{ id: string }>> = [];
@@ -211,13 +318,11 @@ export async function search(
         layerNames.push("semantic");
       }
     } catch {
-      // Semantic layer unavailable — skip and warn
       console.warn("Semantic search unavailable — run sensei index to generate embeddings");
     }
   }
 
   if (layers.length === 0) {
-    // Zero hits across all layers
     if (!reindexInProgress) {
       reindexInProgress = true;
       import("./reindex.js")

@@ -45,6 +45,7 @@
       attention: data.libAttentionCount > 0,
     },
     { href: `/repos/${data.repo.id}/simulate`, label: 'Simulate', desc: 'Test library queries as Claude sees them' },
+    { href: `/repos/${data.repo.id}/drift`, label: 'Doc Drift', desc: 'Docs out of sync with code' },
   ]);
 </script>
 
