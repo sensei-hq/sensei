@@ -4,7 +4,7 @@ import type { SkillValidator } from "../skill-gen/skill-validator.js";
 
 function buildPrompt(entry: LibEntry, pages: DocPage[], profile: ProjectProfile): string {
   const slug = profile.repoName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  const topSections = pages.slice(0, 20).map(p => `- ${p.title}: ${p.description}`).join("\n");
+  const topSections = pages.slice(0, 20).map(p => `- ${p.title}: ${p.summary}`).join("\n");
   const relevantSymbols = profile.keySymbols
     .filter(s => s.toLowerCase().includes(entry.name.toLowerCase()))
     .join(", ");
@@ -12,7 +12,7 @@ function buildPrompt(entry: LibEntry, pages: DocPage[], profile: ProjectProfile)
   return `Generate a skill file in SKILL.md format for the library "${entry.name}".
 
 Project: ${profile.repoName}
-Library description: ${entry.description ?? entry.name}
+Library description: ${entry.name}
 Relevant project symbols: ${relevantSymbols || "none detected"}
 Project config: ${profile.senseiConfig.slice(0, 300)}
 

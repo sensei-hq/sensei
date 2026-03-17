@@ -2,7 +2,10 @@
   "extends": "../../config/tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "paths": {
+      "@supabase/supabase-js": ["../../node_modules/.bun/@supabase+supabase-js@2.99.1/node_modules/@supabase/supabase-js"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

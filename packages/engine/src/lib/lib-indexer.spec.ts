@@ -78,7 +78,7 @@ describe("LibIndexer", () => {
       { title: "Page", url: "https://x.com", summary: "fallback desc", content: "fallback content", sourceType: "http" },
     ];
 
-    await indexer.index("repo-123", { name: "x", source_type: "http" }, pages);
+    await indexer.index("repo-123", { name: "x", source_type: "http", base_url: "https://x.com" }, pages);
     expect(backend.embed).toHaveBeenCalledWith("fallback content");
   });
 });

@@ -32,8 +32,8 @@ describe("LibSkillGenerator", () => {
 
     const validator = new SkillValidator(model, makeProfile());
     const generator = new LibSkillGenerator(model, makeProfile(), validator);
-    const entry: LibEntry = { name: "rokkit", source_type: "llms.txt", description: "UI lib" };
-    const pages: DocPage[] = [{ title: "Button", description: "A button", sourceType: "llms.txt" }];
+    const entry: LibEntry = { name: "rokkit", source_type: "llms.txt", base_url: "https://rokkit.dev/llms.txt" };
+    const pages: DocPage[] = [{ title: "Button", summary: "A button", content: "", sourceType: "llms.txt" }];
 
     const result = await generator.generate(entry, pages);
 
@@ -54,7 +54,7 @@ describe("LibSkillGenerator", () => {
     };
 
     const generator = new LibSkillGenerator(model, makeProfile(), new SkillValidator(model, makeProfile()));
-    const result = await generator.generate({ name: "rokkit", source_type: "llms.txt" }, []);
+    const result = await generator.generate({ name: "rokkit", source_type: "llms.txt", base_url: "https://rokkit.dev/llms.txt" }, []);
     expect(result).toBe(VALID_SKILL);
   });
 
@@ -64,6 +64,6 @@ describe("LibSkillGenerator", () => {
       generate: vi.fn().mockResolvedValue(INVALID), embed: vi.fn().mockResolvedValue([]), extract: vi.fn().mockResolvedValue({}),
     };
     const generator = new LibSkillGenerator(model, makeProfile(), new SkillValidator(model, makeProfile()));
-    await expect(generator.generate({ name: "rokkit", source_type: "llms.txt" }, [])).rejects.toThrow("3 attempts");
+    await expect(generator.generate({ name: "rokkit", source_type: "llms.txt", base_url: "https://rokkit.dev/llms.txt" }, [])).rejects.toThrow("3 attempts");
   });
 });

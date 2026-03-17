@@ -135,7 +135,7 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
     },
   });
 
-  return { stop: () => server.stop(), port: server.port };
+  return { stop: () => server.stop(), port: server.port! };
 }
 
 export async function serve(repoPath: string, opts: { port?: number; db?: string }): Promise<void> {
