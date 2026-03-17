@@ -4,6 +4,7 @@
   import { vibe } from '@rokkit/states'
   import { themable } from '@rokkit/actions'
   import { page } from '$app/stores'
+  import { setContext, onMount } from 'svelte'
 
   let { children } = $props()
 
@@ -11,6 +12,19 @@
   const isStandalone = $derived(
     $page.url.pathname === '/' || $page.url.pathname.startsWith('/option-')
   )
+
+  // Provide kavach instance to all child components via Svelte context
+  const kavach = $state({})
+  setContext('kavach', kavach)
+
+  onMount(async () => {
+    const { createKavach } = await import('kavach')
+    const { adapter, logger } = await import('$kavach/auth')
+    const { invalidateAll } = await import('$app/navigation')
+    const instance = createKavach(adapter, { logger, invalidateAll })
+    Object.assign(kavach, instance)
+    instance.onAuthChange($page.url)
+  })
 </script>
 
 <svelte:head>
