@@ -3,7 +3,7 @@ export default {
   env: { url: 'PUBLIC_SUPABASE_URL', anonKey: 'PUBLIC_SUPABASE_ANON_KEY' },
   app: {
     home: '/',
-    login: '/login',
+    login: '/auth',
     logout: '/logout',
     session: '/auth/session',
     data: '/data',
@@ -14,6 +14,6 @@ export default {
     { path: '/data', public: true },
   ],
   providers: [
-    // Phase 1: no providers configured. Phase 9 adds GitHub OAuth.
+    { mode: 'otp', name: 'magic', label: 'Sign in with Email' },
   ],
 }
