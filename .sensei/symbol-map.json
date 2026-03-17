@@ -2128,15 +2128,6 @@
     ],
     "L2": []
   },
-  "apps/dashboard/src/routes/libraries/+page.ts": {
-    "L0": [
-      "export const load: PageLoad"
-    ],
-    "L1": [
-      "// export const load: PageLoad"
-    ],
-    "L2": []
-  },
   "apps/dashboard/src/routes/benchmarks/+page.ts": {
     "L0": [
       "export const load: PageLoad"
@@ -4632,9 +4623,11 @@
   },
   "packages/server/src/tools/get-lib-docs.ts": {
     "L0": [
+      "export interface LibSection",
       "export async function getLibDocsTool("
     ],
     "L1": [
+      "// export interface LibSection",
       "// export async function getLibDocsTool("
     ],
     "L2": []
@@ -4647,15 +4640,6 @@
     "L1": [
       "// export const load: PageServerLoad",
       "// export const actions: Actions"
-    ],
-    "L2": []
-  },
-  "apps/dashboard/src/routes/repos/[id]/libraries/[name]/+page.server.ts": {
-    "L0": [
-      "export const load: PageServerLoad"
-    ],
-    "L1": [
-      "// export const load: PageServerLoad"
     ],
     "L2": []
   },
@@ -4721,11 +4705,11 @@
   "packages/cli/src/lib/detect-libs.ts": {
     "L0": [
       "export async function scanDirectDeps(cwd: string): Promise<string[]>",
-      "export function inferSourceType(input: string): Pick<LibEntry, \"source_type\" | \"base_url\" | \"local_path\">"
+      "export function inferSourceType(input: string): Pick<LibEntry, \"source_type\" | \"base_url\">"
     ],
     "L1": [
       "// Scan direct dependencies from package.json / requirements.txt / go.mod.\n// export async function scanDirectDeps(cwd: string): Promise<string[]>",
-      "// Infer source_type and URL/path fields from a user-provided string. Evaluation order: llms.txt URL → any other HTTP URL →\n// export function inferSourceType(input: string): Pick<LibEntry, \"source_type\" | \"base_url\" | \"local_path\">"
+      "// Infer source_type and base_url from a user-provided string. Local paths are normalized to file:// URLs. Evaluation order\n// export function inferSourceType(input: string): Pick<LibEntry, \"source_type\" | \"base_url\">"
     ],
     "L2": []
   },
@@ -4874,13 +4858,13 @@
   "packages/engine/src/lib/lib-indexer-shared.spec.ts": {
     "L0": [
       "const makeMockBackend = (",
-      "const makeMockDbShared = (",
+      "const makeMockDb = (",
       "const makeEntry = (",
       "const makePages = ("
     ],
     "L1": [
       "// const makeMockBackend = (",
-      "// const makeMockDbShared = (",
+      "// const makeMockDb = (",
       "// const makeEntry = (",
       "// const makePages = ("
     ],
@@ -4943,6 +4927,289 @@
       "// ## Error Handling",
       "// ## Files Changed",
       "// ## Out of Scope"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/tests/library-detail.test.ts": {
+    "L0": [
+      "async function goToFirstLib"
+    ],
+    "L1": [
+      "// async function goToFirstLib"
+    ],
+    "L2": []
+  },
+  "packages/cli/src/commands/install-skills.ts": {
+    "L0": [
+      "export async function installSkillsToDir(",
+      "export type InstallScope",
+      "export async function promptAndInstallSkills(repoPath: string): Promise<void>",
+      "export async function installSkills(repoPath: string, scope: InstallScope): Promise<void>"
+    ],
+    "L1": [
+      "// Copy skills from the bundled skills dir to a target .claude/skills/ directory.\n// export async function installSkillsToDir(",
+      "// export type InstallScope",
+      "// Interactive: prompt user where to install skills, then install them.\n// export async function promptAndInstallSkills(repoPath: string): Promise<void>",
+      "// Non-interactive: install all skills to the given scope.\n// export async function installSkills(repoPath: string, scope: InstallScope): Promise<void>"
+    ],
+    "L2": []
+  },
+  "packages/engine/src/lib/doc-utils.ts": {
+    "L0": [
+      "export function resolveUrl(base: string, relative: string): string",
+      "export function toRawGithubUrl(url: string): string",
+      "export interface LlmsIndexEntry",
+      "export function parseLlmsIndex(text: string, baseUrl: string): LlmsIndexEntry[]",
+      "export async function fetchAsMarkdown(url: string): Promise<string>",
+      "export function extractSummary(markdown: string): string",
+      "export function splitSections("
+    ],
+    "L1": [
+      "// Resolve a relative URL against a base URL. Accepts file:// and http(s):// bases.\n// export function resolveUrl(base: string, relative: string): string",
+      "// Convert a GitHub blob URL to its raw.githubusercontent.com equivalent.\n// export function toRawGithubUrl(url: string): string",
+      "// export interface LlmsIndexEntry",
+      "// Parse an llms.txt index file into a list of entries.\n// export function parseLlmsIndex(text: string, baseUrl: string): LlmsIndexEntry[]",
+      "// Fetch a URL and return its content as Markdown. - .md / .txt extension or text/plain|text/markdown content-type → return\n// export async function fetchAsMarkdown(url: string): Promise<string>",
+      "// First non-heading paragraph, trimmed to ≤200 chars.\n// export function extractSummary(markdown: string): string",
+      "// Split markdown at H2 headings into sections. - Content before first ## → title \"Overview\" (omit if empty after trim) - E\n// export function splitSections("
+    ],
+    "L2": []
+  },
+  "packages/engine/src/lib/github-adapter.ts": {
+    "L0": [
+      "export interface ParsedGithubUrl",
+      "export function parseGithubUrl(url: string): ParsedGithubUrl | null",
+      "export class GithubAdapter implements SourceAdapter"
+    ],
+    "L1": [
+      "// export interface ParsedGithubUrl",
+      "// export function parseGithubUrl(url: string): ParsedGithubUrl | null",
+      "// export class GithubAdapter implements SourceAdapter"
+    ],
+    "L2": []
+  },
+  "packages/engine/src/lib/infer-source-type.ts": {
+    "L0": [
+      "export type InferredSource",
+      "export function inferSourceType(input: string): InferredSource"
+    ],
+    "L1": [
+      "// export type InferredSource",
+      "// Infer source_type and base_url from a user-provided URL or path. Detection order: 1. URL ending in /llms.txt or .txt    \n// export function inferSourceType(input: string): InferredSource"
+    ],
+    "L2": []
+  },
+  "packages/engine/src/lib/transformers-backend.ts": {
+    "L0": [
+      "export class TransformersBackend implements ModelBackend"
+    ],
+    "L1": [
+      "// export class TransformersBackend implements ModelBackend"
+    ],
+    "L2": []
+  },
+  "packages/server/src/tools/get-lib-docs-fallback.spec.ts": {
+    "L0": [
+      "function makeDb"
+    ],
+    "L1": [
+      "// function makeDb"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/lib/server/lib-indexer.ts": {
+    "L0": [
+      "export interface LibInfo",
+      "export async function startLibFetch(db: AnySupabaseClient, lib: LibInfo): Promise<void>",
+      "export async function startLibEmbed(db: AnySupabaseClient, libId: string, libName: string): Promise<void>",
+      "export const startLibIndexing"
+    ],
+    "L1": [
+      "// export interface LibInfo",
+      "// export async function startLibFetch(db: AnySupabaseClient, lib: LibInfo): Promise<void>",
+      "// export async function startLibEmbed(db: AnySupabaseClient, libId: string, libName: string): Promise<void>",
+      "// export const startLibIndexing"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/libraries/+page.server.ts": {
+    "L0": [
+      "export const load: PageServerLoad",
+      "export const actions: Actions"
+    ],
+    "L1": [
+      "// export const load: PageServerLoad",
+      "// export const actions: Actions"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/libraries/[id]/+page.server.ts": {
+    "L0": [
+      "export const load: PageServerLoad",
+      "export const actions: Actions"
+    ],
+    "L1": [
+      "// export const load: PageServerLoad",
+      "// export const actions: Actions"
+    ],
+    "L2": []
+  },
+  "apps/dashboard/src/routes/repos/[id]/simulate/+page.server.ts": {
+    "L0": [
+      "export const load: PageServerLoad",
+      "export const actions: Actions"
+    ],
+    "L1": [
+      "// export const load: PageServerLoad",
+      "// export const actions: Actions"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-16-adapter-documents-redesign.md": {
+    "L0": [
+      "Adapter & Document Model Redesign Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Adapter & Document Model Redesign Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Database Migration + Shared Type Update",
+      "// ### Task 1: DB Migration — Table Renames + New Tables + Updated RPC",
+      "// ### Task 2: Update DocPage Type + LibEntry",
+      "// ## Chunk 2: Engine Utilities + Adapter Rewrites",
+      "// ### Task 3: Create Shared Utilities (doc-utils.ts)",
+      "// ### Task 4: Fix inferSourceType — Add .txt Extension Detection",
+      "// ### Task 5: Rewrite LlmsTxtAdapter — Discover + Fetch",
+      "// ## Buttons",
+      "// ## Forms",
+      "// ### Task 6: Rewrite HttpAdapter — Link Discovery + Multi-Page Fetch",
+      "// ### Task 7: Fix GithubAdapter Truncation + Update description→summary",
+      "// ### Task 8: Update LocalAdapter + lib-indexer.spec.ts",
+      "// ## Chunk 3: LibIndexer Two-Level Insert",
+      "// ### Task 9: Rewrite LibIndexer.indexShared — Two-Level Insert",
+      "// ## Chunk 4: Dashboard Server Updates",
+      "// ### Task 10: Update Dashboard lib-indexer.ts (Table Names + document_count)",
+      "// ### Task 11: Update Library Detail Page Server Actions",
+      "// ### Task 12: Update Libraries List Page + Repos Library Page",
+      "// ## Chunk 5: getLibDocsTool Update + Dashboard UI",
+      "// ### Task 13: Update getLibDocsTool — New Result Shape + New Queries",
+      "// ### Task 14: Dashboard UI — Documents Tab with Inline Markdown Rendering",
+      "// ## Final Verification"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-16-file-url-refactor.md": {
+    "L0": [
+      "file:// URL Refactor Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// file:// URL Refactor Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## Chunk 1: Core types and inferSourceType",
+      "// ### Task 1: Update `inferSourceType` in engine to emit `file://` URLs",
+      "// ### Task 2: Update CLI `inferSourceType` and `detect-libs` spec",
+      "// ### Task 3: Update `LibEntry` type and `LibEntrySchema`",
+      "// ## Chunk 2: Adapter updates",
+      "// ### Task 4: Update `LlmsTxtAdapter` to use `base_url` only",
+      "// ### Task 5: Update `LocalAdapter` and consistency spec",
+      "// ## Chunk 3: Dashboard server layer",
+      "// ### Task 6: Update `lib-indexer.ts` — drop `local_path` from `LibInfo`",
+      "// ### Task 7: DB migration — move `local_path` → `base_url`, drop columns",
+      "// ### Task 8: Update `libraries/+page.server.ts`",
+      "// ### Task 9: Update `libraries/[id]/+page.server.ts`",
+      "// ## Chunk 4: Repos library page + UI",
+      "// ### Task 10: Update `repos/[id]/libraries/+page.server.ts`",
+      "// ### Task 11: Update `libraries/[id]/+page.svelte` display",
+      "// ### Task 12: Final verification"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/plans/2026-03-16-lib-indexing-redesign.md": {
+    "L0": [
+      "Library Indexing Redesign Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement "
+    ],
+    "L1": [
+      "// Library Indexing Redesign Implementation Plan — > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement ",
+      "// ## File Map",
+      "// ## Chunk 1: DB migration + shared types",
+      "// ### Task 1: DB migration — phase split schema",
+      "// ### Task 2: Update shared types",
+      "// ## Chunk 2: GithubAdapter + inferSourceType utility",
+      "// ### Task 3: `inferSourceType` utility",
+      "// ### Task 4: GithubAdapter",
+      "// ## Chunk 3: LibIndexer phase split + TransformersBackend",
+      "// ### Task 5: LibIndexer — optional backend (Phase 1 without embeddings)",
+      "// ### Task 6: TransformersBackend",
+      "// ## Chunk 4: Dashboard — Phase 1 fetch (remove Ollama)",
+      "// ### Task 7: Dashboard lib-indexer — Phase 1 only + embed phase",
+      "// ### Task 8: Dashboard server — `inferSourceType` + `embed` action",
+      "// ## Chunk 5: Dashboard UI — embed button, local lib indicator",
+      "// ### Task 9: Library detail page UI updates",
+      "// ### Task 10: Libraries list page — remove local path input, GitHub detection",
+      "// ## Chunk 6: getLibDocsTool — keyword fallback",
+      "// ### Task 11: Keyword fallback when no embeddings",
+      "// ## Chunk 7: Shared AddLibrarySidebar + repo link integration",
+      "// ### Task 12: Extract AddLibrarySidebar component",
+      "// ## Chunk 8: Playwright e2e tests",
+      "// ### Task 13: Playwright setup + libraries page smoke tests",
+      "// ## TODO (future work)"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-16-adapter-documents-redesign.md": {
+    "L0": [
+      "Adapter & Document Model Redesign — Design Spec — **Date:** 2026-03-16 **Status:** Approved ---"
+    ],
+    "L1": [
+      "// Adapter & Document Model Redesign — Design Spec — **Date:** 2026-03-16 **Status:** Approved ---",
+      "// ## Goal",
+      "// ## Problems Being Fixed",
+      "// ## Table Renames",
+      "// ## Data Model",
+      "// ### Hierarchy",
+      "// ### `libraries` (renamed from `shared_libs`)",
+      "// ### `documents_in_library` (new)",
+      "// ### `sections_in_document` (restructured from `shared_lib_sections`)",
+      "// ### `referenced_libraries` (renamed from `repo_libs`)",
+      "// ### `queries_on_library` (renamed from `lib_queries`)",
+      "// ## `DocPage` Interface Change",
+      "// ## `inferSourceType` Changes",
+      "// ## Adapter Architecture: Discover + Fetch",
+      "// ### Shared utilities (new)",
+      "// ### `LlmsTxtAdapter` (rewritten)",
+      "// ### `HttpAdapter` (rewritten)",
+      "// ### `GithubAdapter` (fix only)",
+      "// ### `LocalAdapter` (unchanged interface, internal fix)",
+      "// ## Section Splitting in `LibIndexer`",
+      "// ## `match_libraries_sections` RPC (updated)",
+      "// ## Dashboard UI — Library Detail Page",
+      "// ### Documents tab (replaces flat sections list)",
+      "// ### Source-type open behaviour",
+      "// ## `getLibDocsTool` Result Shape",
+      "// ## What Does NOT Change",
+      "// ## TODO (future)"
+    ],
+    "L2": []
+  },
+  "docs/superpowers/specs/2026-03-16-lib-indexing-redesign-design.md": {
+    "L0": [
+      "Library Indexing Redesign — Design Spec — **Date:** 2026-03-16 **Status:** Approved ---"
+    ],
+    "L1": [
+      "// Library Indexing Redesign — Design Spec — **Date:** 2026-03-16 **Status:** Approved ---",
+      "// ## Goal",
+      "// ## Context",
+      "// ## Source Types",
+      "// ## Two-Phase Architecture",
+      "// ### Phase 1 — Fetch (immediate, no AI)",
+      "// ### Phase 2 — Embed (optional, separate trigger)",
+      "// ### Query Fallback",
+      "// ## GitHub Adapter",
+      "// ## Transformers.js Backend",
+      "// ## Database Changes",
+      "// ### `shared_lib_sections`",
+      "// ### `shared_libs`",
+      "// ### `match_shared_lib_sections` RPC",
+      "// ## Dashboard UI Changes",
+      "// ## CLI Changes",
+      "// ## What Does NOT Change"
     ],
     "L2": []
   }

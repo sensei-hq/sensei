@@ -98,7 +98,7 @@ describe("init command", () => {
     expect(content).toContain("http://localhost:54321");
   });
 
-  it("does not write CLAUDE.md or AGENTS.md", async () => {
+  it("writes CLAUDE.md and AGENTS.md", async () => {
     await init("/tmp/test-repo");
 
     const claudeCall = mockWriteFile.mock.calls.find(
@@ -107,8 +107,8 @@ describe("init command", () => {
     const agentsCall = mockWriteFile.mock.calls.find(
       (c: unknown[]) => String(c[0]).endsWith("AGENTS.md")
     );
-    expect(claudeCall).toBeUndefined();
-    expect(agentsCall).toBeUndefined();
+    expect(claudeCall).toBeDefined();
+    expect(agentsCall).toBeDefined();
   });
 
   it("calls indexRepo with repoPath, repoId, and client", async () => {

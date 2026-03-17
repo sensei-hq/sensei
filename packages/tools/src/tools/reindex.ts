@@ -58,18 +58,51 @@ export async function reindexRepo(
   const docIndexPath = senseiPath(repoPath, "doc-index.json");
   const symbolMapPath = senseiPath(repoPath, "symbol-map.json");
 
-  // Load existing state
+  // Load existing state — prefer DB, fall back to legacy files
   let existingDocIndex: DocIndexData | null = null;
   let existingSymbolMap: SymbolMap = {};
 
-  if (existsSync(docIndexPath) && existsSync(symbolMapPath)) {
+  const supabaseConfigEarly = await loadSenseiConfig(repoPath);
+  if (supabaseConfigEarly) {
+    const clientEarly = await makeSenseiClient(repoPath);
+    if (clientEarly) {
+      const { data: repoRow } = await (clientEarly as any)
+        .schema("sensei").from("repos")
+        .select("doc_fingerprints, last_indexed_commit")
+        .eq("id", supabaseConfigEarly.repo_id)
+        .maybeSingle();
+      if (repoRow?.doc_fingerprints) {
+        existingDocIndex = {
+          lastIndexedCommit: repoRow.last_indexed_commit ?? undefined,
+          files: repoRow.doc_fingerprints as Record<string, { mtime: number; size: number }>,
+        };
+      }
+      const { data: symbolRows } = await (clientEarly as any)
+        .schema("sensei").from("symbol_map")
+        .select("file_path, l0, l1")
+        .eq("repo_id", supabaseConfigEarly.repo_id);
+      if (symbolRows) {
+        for (const row of symbolRows) {
+          existingSymbolMap[row.file_path] = {
+            L0: row.l0,
+            L1: typeof row.l1 === "string" ? row.l1.split("\n").filter(Boolean) : (row.l1 ?? []),
+            L2: [],
+          };
+        }
+      }
+    }
+  }
+
+  // Fallback to legacy files if DB had nothing
+  if (!existingDocIndex && existsSync(docIndexPath) && existsSync(symbolMapPath)) {
     try {
       existingDocIndex = JSON.parse(await readFile(docIndexPath, "utf-8"));
-      // Handle old format (flat object without files key)
       if (existingDocIndex && !existingDocIndex.files) {
         existingDocIndex = { files: existingDocIndex as unknown as Record<string, { mtime: number; size: number }> };
       }
-      existingSymbolMap = JSON.parse(await readFile(symbolMapPath, "utf-8"));
+      if (Object.keys(existingSymbolMap).length === 0) {
+        existingSymbolMap = JSON.parse(await readFile(symbolMapPath, "utf-8"));
+      }
     } catch {
       existingDocIndex = null;
     }
@@ -217,14 +250,7 @@ export async function reindexRepo(
     detectShortcuts(repoPath),
   ]);
 
-  await Promise.all([
-    writeFile(senseiPath(repoPath, "stack.md"), formatStack(stack)),
-    writeFile(senseiPath(repoPath, "shortcuts.md"), formatShortcuts(shortcuts)),
-    writeFile(senseiPath(repoPath, "symbol-map.json"), JSON.stringify(symbolMap, null, 2)),
-    writeFile(senseiPath(repoPath, "doc-index.json"), JSON.stringify(newDocIndex, null, 2)),
-    writeFile(senseiPath(repoPath, "traceability.json"), JSON.stringify(traceability, null, 2)),
-    ensurePatternsMd(repoPath),
-  ]);
+  await ensurePatternsMd(repoPath);
 
   await buildChunksAndEmbeddings(repoPath, symbolMap, docFiles, { force });
 
@@ -255,7 +281,7 @@ export async function reindexRepo(
     llms_txt: [],
   };
 
-  const llmsTxtSections = await buildLlmsTxt(repoPath, specForHeader, symbolMap, changedFiles);
+  const { sections: llmsTxtSections, content: llmsTxtContent } = await buildLlmsTxt(repoPath, specForHeader, symbolMap, changedFiles);
 
   await mergeLlmSpec(repoPath, {
     stack: [...stack.languages, ...stack.frameworks],
@@ -304,13 +330,19 @@ export async function reindexRepo(
     const client = await makeSenseiClient(repoPath);
     if (client) {
       const { upsertSymbols, upsertDocs } = await import("./supabase-index-writer.js");
-      // Convert traceability Record<string, string[]> to TraceabilityEntry[]
       const traceabilityEntries = Object.entries(traceability as Record<string, string[]>).map(([docPath, covers]) => ({
         docPath, covers, autoDetected: false,
       }));
       await Promise.all([
         upsertSymbols(client, supabaseConfig.repo_id, symbolMap),
         upsertDocs(client, supabaseConfig.repo_id, traceabilityEntries),
+        (client as any).schema("sensei").from("repos").update({
+          doc_fingerprints:    newDocIndex.files,
+          last_indexed_commit: newDocIndex.lastIndexedCommit ?? null,
+          stack_md:            formatStack(stack),
+          shortcuts_md:        formatShortcuts(shortcuts),
+          llms_txt:            llmsTxtContent,
+        }).eq("id", supabaseConfig.repo_id),
       ]);
     }
   }
