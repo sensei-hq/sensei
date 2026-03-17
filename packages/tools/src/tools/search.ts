@@ -177,10 +177,7 @@ async function loadSymbolMap(repoPath: string, dbClient?: any, repoId?: string):
     const data = await loadSymbolMapFromDb(dbClient, repoId);
     if (data && Object.keys(data).length > 0) return data;
   }
-
-  const path = senseiPath(repoPath, "symbol-map.json");
-  if (!existsSync(path)) return {};
-  try { return JSON.parse(await readFile(path, "utf-8")) as SymbolMap; } catch { return {}; }
+  return {};
 }
 
 function splitCamel(s: string): string[] {
