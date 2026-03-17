@@ -14,6 +14,7 @@ import { recordMemoryTool } from "./tools/record-memory.js";
 import { closeMemoryTool } from "./tools/close-memory.js";
 import { installSkillsTool } from "./tools/install-skills.js";
 import { getLibDocsTool } from "./tools/get-lib-docs.js";
+import { recordPatternUse } from "./tools/record-pattern-use.js";
 import { createSession, updateHeartbeat, createTaskSession, recordTaskTurn, completeTaskSession } from "@sensei/engine";
 
 export interface McpServerOptions {
@@ -310,6 +311,25 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
         const result = await getLibDocsTool(client as any, getBackend(), opts.repoId, lib, { component, query, limit });
         beat(client, "get_lib_docs", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "record_pattern_use",
+    "Record that a named pattern from PATTERNS.md is being applied in this session — call at the start of any pattern-guided implementation",
+    {
+      pattern_name: z.string().describe("Pattern name exactly as it appears in PATTERNS.md"),
+    },
+    async ({ pattern_name }) => {
+      try {
+        const client = await getClient();
+        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
+        const result = await recordPatternUse(client as any, opts.repoId, sessionId, pattern_name);
+        beat(client, "record_pattern_use", true);
+        return { content: [{ type: "text", text: result }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
       }
