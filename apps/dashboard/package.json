@@ -45,6 +45,7 @@
 		"@sensei/engine": "workspace:*",
 		"@sensei/server": "workspace:*",
 		"@sensei/shared": "workspace:*",
+		"@sensei/tools": "workspace:*",
 		"js-yaml": "^4.1.0"
 	}
 }
