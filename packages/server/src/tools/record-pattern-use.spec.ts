@@ -9,10 +9,10 @@ describe("recordPatternUse", () => {
         from: (table: string) => {
           expect(table).toBe("pattern_usages");
           return {
-            insert: (row: any) => {
+            insert: vi.fn().mockImplementation((row: any) => {
               inserted.push(row);
-              return { then: (r: any) => r({ error: null }) };
-            },
+              return Promise.resolve({ error: null });
+            }),
           };
         },
       }),
@@ -33,10 +33,10 @@ describe("recordPatternUse", () => {
     const mockClient = {
       schema: () => ({
         from: () => ({
-          insert: (row: any) => {
+          insert: vi.fn().mockImplementation((row: any) => {
             inserted.push(row);
-            return { then: (r: any) => r({ error: null }) };
-          },
+            return Promise.resolve({ error: null });
+          }),
         }),
       }),
     };
@@ -49,7 +49,7 @@ describe("recordPatternUse", () => {
     const mockClient = {
       schema: () => ({
         from: () => ({
-          insert: () => ({ then: (r: any) => r({ error: { message: "db down" } }) }),
+          insert: vi.fn().mockResolvedValue({ error: { message: "db down" } }),
         }),
       }),
     };
