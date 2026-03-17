@@ -21,7 +21,7 @@
 			// Kavach packages resolved via bun link (point to dist .d.ts to avoid checking JS source)
 			"kavach": ["./node_modules/kavach/dist/index.d.ts"],
 			"@kavach/adapter-supabase": ["./node_modules/@kavach/adapter-supabase/dist/index.d.ts"],
-			"@kavach/query": ["../../node_modules/.bun/@kavach+query@1.0.0-next.34/node_modules/@kavach/query/src/index.js"],
+			"@kavach/query": ["../../node_modules/.bun/@kavach+query@1.0.0-next.36/node_modules/@kavach/query/src/index.js"],
 			// @kavach/vite has no dist — declare module in kavach.d.ts handles types
 			"@kavach/vite": ["./src/lib/kavach.d.ts"]
 		}
