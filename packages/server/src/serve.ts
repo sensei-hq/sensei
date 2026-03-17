@@ -31,7 +31,7 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
 
   const server = Bun.serve({
     port,
-    async fetch(req) {
+    async fetch(req: Request) {
       const url = new URL(req.url);
 
       if (req.method === "GET" && url.pathname === "/health") {
@@ -135,7 +135,8 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
     },
   });
 
-  return { stop: () => server.stop(), port: server.port! };
+  const s = server as { stop: () => void; port: number };
+  return { stop: () => s.stop(), port: s.port };
 }
 
 export async function serve(repoPath: string, opts: { port?: number; db?: string }): Promise<void> {

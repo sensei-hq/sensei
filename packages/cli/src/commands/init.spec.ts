@@ -46,7 +46,8 @@ const mockIndexRepo = indexRepo as ReturnType<typeof vi.fn>;
 const mockInstallHooks = installHooks as ReturnType<typeof vi.fn>;
 const mockCreateClient = createClient as ReturnType<typeof vi.fn>;
 const mockText = text as ReturnType<typeof vi.fn>;
-const mockIsCancel = isCancel as ReturnType<typeof vi.fn>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockIsCancel = isCancel as unknown as ReturnType<typeof vi.fn>;
 const mockWriteFile = writeFile as ReturnType<typeof vi.fn>;
 const mockMkdir = mkdir as ReturnType<typeof vi.fn>;
 

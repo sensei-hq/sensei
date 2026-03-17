@@ -76,6 +76,8 @@ Commands:
   update-registry          Index custom_libs from .sensei/config.yaml into Supabase
   update-registry --lib <name>   Re-index a single named library
   update-registry --global --lib <name>   Promote lib to shared pool (all repos can link to it)
+  install-skills           Install bundled sensei skills for Claude Code (prompts for repo/global)
+  install-skills --global  Install all skills globally (~/.claude/skills/)
 
 Options:
   -h, --help               Show this help message
@@ -349,6 +351,18 @@ async function main() {
     case "update-registry": {
       const { updateRegistry } = await import("./commands/update-registry.js");
       await updateRegistry(repoRoot, values.lib, { global: values.global });
+      break;
+    }
+    case "install-skills": {
+      const { installSkills, promptAndInstallSkills } = await import("./commands/install-skills.js");
+      if (values.global) {
+        await installSkills(repoRoot, "global");
+      } else if (positionals.length > 1) {
+        // sensei install-skills <repo-path>
+        await installSkills(positionals[1], "repo");
+      } else {
+        await promptAndInstallSkills(repoRoot);
+      }
       break;
     }
     default:

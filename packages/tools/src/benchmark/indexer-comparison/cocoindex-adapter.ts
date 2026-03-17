@@ -14,7 +14,7 @@ export async function connectCocoindex(repoPath: string): Promise<CocoIndex> {
   const transport = new StdioClientTransport({
     command: "cocoindex-code",
     args: ["serve"],
-    env: { ...process.env },
+    env: Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined)) as Record<string, string>,
     cwd: repoPath,
   });
 
