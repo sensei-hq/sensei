@@ -40,7 +40,8 @@ function isValidEvent(body: unknown): body is EventPayload {
 }
 
 export async function startDaemon(port: number, opts: DaemonOptions = {}): Promise<Daemon> {
-  let supabaseClient: SupabaseClient | null = opts.supabaseClient ?? null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let supabaseClient: any = opts.supabaseClient ?? null;
   if (!supabaseClient) {
     makeSenseiClient(opts.repoPath ?? process.cwd()).then(c => { supabaseClient = c; });
   }

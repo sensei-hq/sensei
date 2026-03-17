@@ -15,7 +15,7 @@ describe("buildFeedback", () => {
 
 describe("submitReport", () => {
   beforeEach(() => {
-    global.fetch = vi.fn().mockResolvedValue({ json: async () => ({ ok: true }) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: async () => ({ ok: true }) }));
   });
 
   it("POSTs to telemetry URL", async () => {
@@ -27,7 +27,7 @@ describe("submitReport", () => {
   });
 
   it("does not throw when server is down", async () => {
-    global.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
     await expect(submitReport({ id: "test-id" }, "http://localhost:7744")).resolves.toBeUndefined();
   });
 });
