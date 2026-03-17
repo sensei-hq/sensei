@@ -14,10 +14,16 @@ results/**/c/
 .env
 database/.env.local
 
-# Sensei generated index artifacts (large; stored in Supabase after Phase 1)
+# Sensei generated index artifacts — all stored in Supabase; only config.yaml and llmspec.yaml belong on disk
 .sensei/reports.db
 .sensei/chunks.json
 .sensei/embeddings.json
+.sensei/symbol-map.json
+.sensei/doc-index.json
+.sensei/traceability.json
+.sensei/stack.md
+.sensei/shortcuts.md
+.sensei/llms.txt
 
 # Superpowers plugin cache
 .superpowers/

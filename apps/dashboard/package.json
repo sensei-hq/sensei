@@ -26,6 +26,9 @@
 	},
 	"dependencies": {
 		"kavach": "^1.0.0-next.34",
+		"@kavach/adapter-supabase": "^1.0.0-next.34",
+		"@kavach/logger": "^1.0.0-next.34",
+		"@kavach/query": "^1.0.0-next.34",
 		"@kavach/vite": "^1.0.0-next.34",
 		"@kavach/sentry": "^1.0.0-next.34",
 		"@kavach/ui": "^1.0.0-next.34",

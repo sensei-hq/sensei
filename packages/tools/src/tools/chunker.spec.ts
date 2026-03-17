@@ -69,8 +69,35 @@ describe("extractChunks", () => {
   });
 });
 
+function makeStatefulMockClient() {
+  const store: Record<string, { id: string; content_hash: string; tf: Record<string, number>; embedding: number[] | null }> = {};
+  return {
+    schema: () => ({
+      from: (table: string) => {
+        if (table !== "chunks") return { select: () => ({ eq: () => ({ then: (r: (v: { data: unknown[] }) => void) => r({ data: [] }) }) }) };
+        return {
+          select: (_cols: string) => ({
+            eq: (_col: string, _val: string) => ({
+              then: (resolve: (v: { data: unknown[] }) => void) => resolve({ data: Object.values(store) }),
+            }),
+          }),
+          upsert: (rows: Array<{ id: string; content_hash: string; tf: Record<string, number>; embedding: string | number[] | null }>, _opts: unknown) => {
+            for (const row of rows) {
+              // Supabase returns embeddings as number[], not as the "[x,y,z]" string we write
+              const embedding = typeof row.embedding === "string" ? JSON.parse(row.embedding) : row.embedding;
+              store[row.id] = { ...row, embedding };
+            }
+            return { then: (r: (v: { error: null }) => void) => r({ error: null }) };
+          },
+          delete: () => ({ eq: () => ({ in: () => ({ then: (r: (v: { error: null }) => void) => r({ error: null }) }) }) }),
+        };
+      },
+    }),
+  };
+}
+
 describe("buildChunksAndEmbeddings", () => {
-  it("writes chunks.json and embeddings.json", async () => {
+  it("does nothing without a DB client (no local file fallback)", async () => {
     const symbolMap: SymbolMap = {
       "src/auth.ts": {
         L0: ["login(email: string): Promise<User>"],
@@ -79,11 +106,26 @@ describe("buildChunksAndEmbeddings", () => {
       }
     };
     await buildChunksAndEmbeddings(TMP, symbolMap, [], {});
-    expect(existsSync(senseiPath(TMP, "chunks.json"))).toBe(true);
-    expect(existsSync(senseiPath(TMP, "embeddings.json"))).toBe(true);
+    expect(mockEmbed.mock.calls.length).toBe(0);
+    expect(existsSync(senseiPath(TMP, "chunks.json"))).toBe(false);
+    expect(existsSync(senseiPath(TMP, "embeddings.json"))).toBe(false);
   });
 
-  it("does not call embed() for unchanged chunks (contentHash match)", async () => {
+  it("upserts chunks to DB when client and repoId provided", async () => {
+    const mockClient = makeStatefulMockClient();
+    const symbolMap: SymbolMap = {
+      "src/auth.ts": {
+        L0: ["login(email: string): Promise<User>"],
+        L1: ["// login(email: string): Promise<User>"],
+        L2: [],
+      }
+    };
+    await buildChunksAndEmbeddings(TMP, symbolMap, [], { client: mockClient, repoId: "test-repo" });
+    expect(mockEmbed.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("does not call embed() for unchanged chunks when DB returns matching contentHash", async () => {
+    const mockClient = makeStatefulMockClient();
     const symbolMap: SymbolMap = {
       "src/auth.ts": {
         L0: ["login(email: string): Promise<User>"],
@@ -92,12 +134,12 @@ describe("buildChunksAndEmbeddings", () => {
       }
     };
     // First run — should call embed() for the new chunk
-    await buildChunksAndEmbeddings(TMP, symbolMap, [], {});
+    await buildChunksAndEmbeddings(TMP, symbolMap, [], { client: mockClient, repoId: "test-repo" });
     expect(mockEmbed.mock.calls.length).toBeGreaterThan(0);
 
     // Second run with same symbolMap — contentHash unchanged, must NOT re-embed
     mockEmbed.mockClear();
-    await buildChunksAndEmbeddings(TMP, symbolMap, [], {});
+    await buildChunksAndEmbeddings(TMP, symbolMap, [], { client: mockClient, repoId: "test-repo" });
     expect(mockEmbed.mock.calls.length).toBe(0);
   });
 });

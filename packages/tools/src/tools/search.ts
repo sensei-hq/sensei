@@ -1,8 +1,6 @@
 // packages/tools/src/tools/search.ts
-import { readFile } from "fs/promises";
-import { existsSync } from "fs";
 import type { SymbolMap } from "@sensei/shared";
-import { senseiPath, loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
+import { loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
 import { scoreBM25 } from "./bm25.js";
 import { embed } from "./embedder.js";
 
@@ -124,13 +122,7 @@ async function loadChunks(repoPath: string, dbClient?: any, repoId?: string): Pr
     if (data) { chunksCache.set(repoPath, data); return data; }
   }
 
-  const path = senseiPath(repoPath, "chunks.json");
-  if (!existsSync(path)) return null;
-  try {
-    const data = JSON.parse(await readFile(path, "utf-8")) as ChunksFile;
-    chunksCache.set(repoPath, data);
-    return data;
-  } catch { return null; }
+  return null;
 }
 
 async function loadEmbeddings(repoPath: string, dbClient?: any, repoId?: string): Promise<EmbeddingsFile | null> {
@@ -141,13 +133,7 @@ async function loadEmbeddings(repoPath: string, dbClient?: any, repoId?: string)
     if (data) { embeddingsCache.set(repoPath, data); return data; }
   }
 
-  const path = senseiPath(repoPath, "embeddings.json");
-  if (!existsSync(path)) return null;
-  try {
-    const data = JSON.parse(await readFile(path, "utf-8")) as EmbeddingsFile;
-    embeddingsCache.set(repoPath, data);
-    return data;
-  } catch { return null; }
+  return null;
 }
 
 async function loadSymbolMapFromDb(client: any, repoId: string): Promise<SymbolMap | null> {

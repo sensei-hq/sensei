@@ -17,6 +17,9 @@
       "name": "dashboard",
       "version": "0.0.1",
       "dependencies": {
+        "@kavach/adapter-supabase": "^1.0.0-next.34",
+        "@kavach/logger": "^1.0.0-next.34",
+        "@kavach/query": "^1.0.0-next.34",
         "@kavach/sentry": "^1.0.0-next.34",
         "@kavach/ui": "^1.0.0-next.34",
         "@kavach/vite": "^1.0.0-next.34",
@@ -320,6 +323,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@kavach/adapter-supabase": ["@kavach/adapter-supabase@1.0.0-next.34", "", { "dependencies": { "@kavach/query": "1.0.0-next.32", "@supabase/supabase-js": "^2.49.4", "kavach": "1.0.0-next.32", "ramda": "^0.30.1" } }, "sha512-H8pbwdO4o4Sab25okYa+cxwFvyrnrhvx2Ww6pZrw+8Zer5zmfJzwxNIcoXJ5UT36UuRQZVvi2GvzqJou3cWN4w=="],
 
     "@kavach/cookie": ["@kavach/cookie@1.0.0-next.34", "", {}, "sha512-PWpNBirT9qKTNXFRh/6SLmirKOCmK2H8oxJyAc2wSt/HHA07wRSR1eGLmVQhsdXWzaFjwjkricTgBdKdy5s9Fg=="],
 
@@ -1051,7 +1056,7 @@
 
     "keyv": ["keyv@4.5.4", "", { "dependencies": { "json-buffer": "3.0.1" } }, "sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw=="],
 
-    "kit-monorepo": ["kit-monorepo@github:sveltejs/kit#56c57f7", {}, "sveltejs-kit-56c57f7", "sha512-XrcKXVEvfEFZEh5mJ+Q61KqRpOfTmz3u62kLvS3u2L4i02rnBfvpSwEicwj/3sGUAVC5jxmOV1r3z+/jdyB1/A=="],
+    "kit-monorepo": ["kit-monorepo@github:sveltejs/kit#03670ad", {}, "sveltejs-kit-03670ad", "sha512-DYTsdZ6gADxSczRpvmGd/OEURhE8NhBUcmbB80U1MdomUWD4hzYbA3bU4Hvg2voU4g4WDNtpci2quXacvIXoeg=="],
 
     "kleur": ["kleur@4.1.5", "", {}, "sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ=="],
 
@@ -1463,6 +1468,8 @@
 
     "@eslint-community/eslint-utils/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
 
+    "@kavach/adapter-supabase/kavach": ["kavach@1.0.0-next.32", "", { "dependencies": { "@kavach/cookie": "1.0.0-next.31", "@kavach/hashing": "1.0.0-next.31", "@kavach/logger": "1.0.0-next.31", "@kavach/query": "1.0.0-next.31", "@kavach/sentry": "1.0.0-next.31", "@sveltejs/kit": "^2.53.4", "kit-monorepo": "sveltejs/kit", "ramda": "^0.30.1" } }, "sha512-zZZo3MUC3D0VEyzSgzVc4JBqc+rQMf5zUAQUsnUROGHoyE1JtX1hRtnSf+ZERRPj2oO6hb1LkXefgOkynzDMGg=="],
+
     "@kavach/ui/kavach": ["kavach@1.0.0-next.32", "", { "dependencies": { "@kavach/cookie": "1.0.0-next.31", "@kavach/hashing": "1.0.0-next.31", "@kavach/logger": "1.0.0-next.31", "@kavach/query": "1.0.0-next.31", "@kavach/sentry": "1.0.0-next.31", "@sveltejs/kit": "^2.53.4", "kit-monorepo": "sveltejs/kit", "ramda": "^0.30.1" } }, "sha512-zZZo3MUC3D0VEyzSgzVc4JBqc+rQMf5zUAQUsnUROGHoyE1JtX1hRtnSf+ZERRPj2oO6hb1LkXefgOkynzDMGg=="],
 
     "@kavach/vite/magicast": ["magicast@0.3.5", "", { "dependencies": { "@babel/parser": "^7.25.4", "@babel/types": "^7.25.4", "source-map-js": "^1.2.0" } }, "sha512-L0WhttDl+2BOsybvEOLK7fW3UA0OQ0IQ2d6Zl2x/a6vVRs3bAY0ECOSHHeL5jD+SbOpOCUEi0y1DgHEn9Qn1AQ=="],
@@ -1526,6 +1533,10 @@
     "svelte-check/chokidar": ["chokidar@4.0.3", "", { "dependencies": { "readdirp": "^4.0.1" } }, "sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA=="],
 
     "type-is/mime-types": ["mime-types@3.0.2", "", { "dependencies": { "mime-db": "^1.54.0" } }, "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A=="],
+
+    "@kavach/adapter-supabase/kavach/kit-monorepo": ["kit-monorepo@github:sveltejs/kit#56c57f7", {}, "sveltejs-kit-56c57f7", "sha512-XrcKXVEvfEFZEh5mJ+Q61KqRpOfTmz3u62kLvS3u2L4i02rnBfvpSwEicwj/3sGUAVC5jxmOV1r3z+/jdyB1/A=="],
+
+    "@kavach/ui/kavach/kit-monorepo": ["kit-monorepo@github:sveltejs/kit#56c57f7", {}, "sveltejs-kit-56c57f7", "sha512-XrcKXVEvfEFZEh5mJ+Q61KqRpOfTmz3u62kLvS3u2L4i02rnBfvpSwEicwj/3sGUAVC5jxmOV1r3z+/jdyB1/A=="],
 
     "@rokkit/app/@rokkit/core/ramda": ["ramda@0.32.0", "", {}, "sha512-GQWAHhxhxWBWA8oIBr1XahFVjQ9Fic6MK9ikijfd4TZHfE2+urfk+irVlR5VOn48uwMgM+loRRBJd6Yjsbc0zQ=="],
 

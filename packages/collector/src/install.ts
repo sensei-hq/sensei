@@ -13,6 +13,14 @@ export interface InstallOptions {
   launchdDir?: string;
   /** Override ~/.sensei directory — used in tests to avoid writing to real home */
   senseiDir?: string;
+  /**
+   * Install hooks globally (~/.claude/settings.json) with daemon/launchd autostart.
+   * When false (default), hooks go into projectPath/.claude/settings.json only.
+   * Never set both global and projectPath — that would create duplicates.
+   */
+  global?: boolean;
+  /** Project root for local (non-global) hook installation */
+  projectPath?: string;
 }
 
 function preHookContent(uuidPath: string): string {
@@ -163,10 +171,19 @@ function launchdPlist(bunPath: string, daemonScript: string, senseiDir: string):
 
 export async function installHooks(opts: InstallOptions = {}): Promise<void> {
   const HOME = homedir();
+  const isGlobal = opts.global !== false && !opts.projectPath; // default is global
+
   const senseiDir = opts.senseiDir ?? join(HOME, ".sensei");
-  const hooksDir = opts.hooksDir ?? join(HOME, ".claude", "hooks");
-  const settingsPath = opts.settingsPath ?? join(HOME, ".claude", "settings.json");
   const uuidPath = opts.uuidPath ?? join(senseiDir, "uuid");
+
+  // Global: ~/.claude/hooks + ~/.claude/settings.json
+  // Local:  <project>/.claude/hooks + <project>/.claude/settings.json
+  const baseDir = isGlobal
+    ? join(HOME, ".claude")
+    : join(opts.projectPath!, ".claude");
+
+  const hooksDir = opts.hooksDir ?? join(baseDir, "hooks");
+  const settingsPath = opts.settingsPath ?? join(baseDir, "settings.json");
   const launchdDir = opts.launchdDir ?? join(HOME, "Library", "LaunchAgents");
 
   mkdirSync(hooksDir, { recursive: true });
@@ -199,16 +216,18 @@ export async function installHooks(opts: InstallOptions = {}): Promise<void> {
   mkdirSync(dirname(settingsPath), { recursive: true });
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
 
-  // Write daemon entry point
-  mkdirSync(senseiDir, { recursive: true });
-  const daemonScript = join(senseiDir, "collector-daemon.ts");
-  const daemonSrc = join(_srcDir, "daemon.ts");
-  const uuidSrc = join(_srcDir, "uuid.ts");
-  writeFileSync(daemonScript, daemonEntryContent(daemonSrc, uuidSrc), "utf8");
-  chmodSync(daemonScript, 0o755);
+  // Daemon + launchd autostart only for global installs
+  if (isGlobal) {
+    mkdirSync(senseiDir, { recursive: true });
+    mkdirSync(launchdDir, { recursive: true });
+    const daemonScript = join(senseiDir, "collector-daemon.ts");
+    const daemonSrc = join(_srcDir, "daemon.ts");
+    const uuidSrc = join(_srcDir, "uuid.ts");
+    writeFileSync(daemonScript, daemonEntryContent(daemonSrc, uuidSrc), "utf8");
+    chmodSync(daemonScript, 0o755);
 
-  // Write launchd plist (macOS autostart)
-  const bunPath = process.execPath; // path to bun binary
-  const plistPath = join(launchdDir, "com.sensei.collector.plist");
-  writeFileSync(plistPath, launchdPlist(bunPath, daemonScript, senseiDir), "utf8");
+    const bunPath = process.execPath;
+    const plistPath = join(launchdDir, "com.sensei.collector.plist");
+    writeFileSync(plistPath, launchdPlist(bunPath, daemonScript, senseiDir), "utf8");
+  }
 }

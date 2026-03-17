@@ -79,11 +79,14 @@ export interface OtlpEndpointOptions {
   dryRun?: boolean;
   repoId: string;
   supabaseClient?: any;
+  log?: (msg: string) => void;
 }
 
 export function createOtlpEndpoint(opts: OtlpEndpointOptions): { stop: () => void; port: number } {
   const port = opts.port ?? 4318;
   const dryRun = opts.dryRun ?? process.env.SENSEI_OTEL_DRY_RUN === "true";
+
+  const log = opts.log ?? ((msg: string) => console.error(msg));
 
   const server = Bun.serve({
     port,
@@ -99,7 +102,7 @@ export function createOtlpEndpoint(opts: OtlpEndpointOptions): { stop: () => voi
 
         if (dryRun) {
           for (const event of events) {
-            console.log("[sensei-otel dry-run]", JSON.stringify(event));
+            log(`[sensei-otel dry-run] ${JSON.stringify(event)}`);
           }
           return Response.json({ ok: true, received: events.length, mode: "dry-run" });
         }
@@ -135,6 +138,9 @@ export function createOtlpEndpoint(opts: OtlpEndpointOptions): { stop: () => voi
           }
         }
 
+        if (events.length > 0) {
+          log(`[sensei-otel] received ${events.length} event(s): ${events.map(e => e.promptId).join(", ")}`);
+        }
         return Response.json({ ok: true, received: events.length });
       }
 

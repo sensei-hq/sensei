@@ -242,3 +242,113 @@ Feature: Data Privacy and Telemetry Control
     Then all repos, symbols, sessions, and analytics for that team are deleted
     And deletion is confirmed via email within 24 hours
 ```
+
+---
+
+### Organization & Team Hierarchy
+
+Users belong to organizations (many-to-many via `org_members`). Organizations contain teams; teams group repos and members for access control.
+
+- **Organizations** — top-level namespace, inferred from the repo's remote URL where possible (see Repo Identity below)
+- **Teams** — scoped within an organization; unique per org; used to grant access to a set of repos
+- **`org_members`** — join table linking users to organizations with a role (`owner`, `member`, `viewer`)
+- **Automatic inference** — if a repo has a remote URL, the org and user are inferred from it (e.g. GitHub: `github.com/{org}/{repo}` → org = `{org}`)
+- **Manual fallback** — if the org cannot be inferred (self-hosted Git, bare remote, no remote), the developer configures org and team manually in settings
+
+```gherkin
+Feature: Organization & Team Hierarchy
+
+  Scenario: Org is inferred from GitHub remote URL
+    Given a repo with remote URL github.com/acme/my-service
+    When the developer runs sensei init
+    Then the org is set to "acme" automatically
+    And the repo is registered under the "acme" organization
+
+  Scenario: Org cannot be inferred from remote URL
+    Given a repo hosted on a self-hosted Git server with no recognised URL pattern
+    When the developer runs sensei init
+    Then sensei prompts the developer to specify their organization name manually
+    And the entered value is saved to .sensei/config.yaml as the org field
+
+  Scenario: Team member accesses a team repo
+    Given user B is a member of team "backend" in org "acme"
+    And the repo "my-service" is registered under team "backend"
+    When user B queries sensei for that repo
+    Then full access is granted to the repo's index and analytics
+```
+
+---
+
+### Repo Identity & Remote URL Adapters
+
+Sensei uses an adapter pattern to parse repo remote URLs and infer org, user, and repo name. Adapters are tried in order; the first match wins. Unknown patterns fall back to a manual prompt.
+
+| Provider | URL Pattern | Org inferred as | Notes |
+|---|---|---|---|
+| GitHub | `github.com/{org}/{repo}` | `{org}` | Also `git@github.com:{org}/{repo}.git` |
+| GitLab.com | `gitlab.com/{group}/{subgroup}/{repo}` | `{group}` | Subgroups are flattened |
+| Bitbucket | `bitbucket.org/{workspace}/{repo}` | `{workspace}` | |
+| Azure DevOps | `dev.azure.com/{org}/{project}/_git/{repo}` | `{org}` | Also `ssh.dev.azure.com/v3/{org}/...` |
+| Self-hosted GitLab | `{configured-base-url}/{group}/{repo}` | `{group}` | Base URL configured in `~/.config/sensei/config.yaml` |
+| Unknown | any unrecognised pattern | — | Prompts user to set org manually |
+
+**Privacy default:** all repos are treated as private unless an explicit `public: true` flag is set in `.sensei/config.yaml`. This prevents accidental data exposure when the URL is public but the intended audience is not.
+
+```gherkin
+Feature: Repo Identity Adapters
+
+  Scenario: GitHub SSH remote URL is parsed correctly
+    Given a repo with remote git@github.com:acme/api.git
+    When sensei init runs
+    Then the org is parsed as "acme" and the repo name as "api"
+    And no manual prompt is shown
+
+  Scenario: Azure DevOps URL is parsed correctly
+    Given a repo with remote https://dev.azure.com/contoso/MyProject/_git/my-service
+    When sensei init runs
+    Then the org is parsed as "contoso" and the repo name as "my-service"
+
+  Scenario: Unknown remote URL prompts for manual org entry
+    Given a repo with remote https://git.internal.corp/team/service.git
+    And no self-hosted GitLab base URL is configured
+    When sensei init runs
+    Then the developer is prompted to enter their organization name
+    And the value is saved and used for all future requests
+```
+
+---
+
+### User Registration & Identity Linking
+
+Developers register on the sensei website, then link their machine to their account using a CLI auth command. All repos configured with sensei on that machine are automatically associated with the registered account.
+
+1. Developer signs up at the sensei website (GitHub OAuth or magic link)
+2. Developer runs `sensei auth login` on their machine — opens browser, completes OAuth, generates a device token
+3. Token is stored in `~/.config/sensei/credentials.yaml` alongside the Supabase service key
+4. All repos with `.sensei/config.yaml` on that machine auto-associate with the user's account
+5. Dashboard shows all repos across all machines under the user's account
+
+```gherkin
+Feature: User Registration & Identity Linking
+
+  Scenario: Developer links their machine after registration
+    Given a developer has registered on the sensei website
+    When they run sensei auth login on their machine
+    Then a browser window opens for OAuth confirmation
+    And on completion, a device token is written to ~/.config/sensei/credentials.yaml
+    And the CLI confirms the machine is linked to the registered account
+
+  Scenario: Repos auto-associate with the registered account
+    Given a developer has completed sensei auth login on their machine
+    And multiple repos have .sensei/config.yaml on that machine
+    When they open the sensei dashboard
+    Then all repos from that machine are listed under their account
+    And session analytics for each repo are visible
+
+  Scenario: Developer uses sensei on a second machine
+    Given the developer has an existing account with repos linked from machine A
+    When they run sensei auth login on machine B
+    Then the machine B is linked to the same account
+    And repos initialised on machine B are added to the existing account view in the dashboard
+    And repos from machine A remain accessible
+```

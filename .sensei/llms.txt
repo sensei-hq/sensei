@@ -5,6 +5,8 @@
 - [cli.ts](packages/cli/src/cli.ts): async
 
 ## .
+- [AGENTS.md](AGENTS.md): sensei
+- [PATTERNS.md](PATTERNS.md): Patterns
 - [README.md](README.md): sensei
 
 ## apps/dashboard
@@ -27,11 +29,26 @@
 ## apps/dashboard/src/routes/benchmarks
 - [+page.ts](apps/dashboard/src/routes/benchmarks/+page.ts): load
 
+## apps/dashboard/src/routes/data
+- [+server.ts](apps/dashboard/src/routes/data/+server.ts): GET
+
 ## apps/dashboard/src/routes/libraries
 - [+page.server.ts](apps/dashboard/src/routes/libraries/+page.server.ts): load, actions
 
 ## apps/dashboard/src/routes/libraries/[id]
 - [+page.server.ts](apps/dashboard/src/routes/libraries/[id]/+page.server.ts): load, actions
+
+## apps/dashboard/src/routes/option-a
+- [+page.server.ts](apps/dashboard/src/routes/option-a/+page.server.ts): load
+
+## apps/dashboard/src/routes/orgs
+- [+page.server.ts](apps/dashboard/src/routes/orgs/+page.server.ts): load
+
+## apps/dashboard/src/routes/orgs/[id]
+- [+page.server.ts](apps/dashboard/src/routes/orgs/[id]/+page.server.ts): load
+
+## apps/dashboard/src/routes/orgs/[id]/teams/[tid]
+- [+page.server.ts](apps/dashboard/src/routes/orgs/[id]/teams/[tid]/+page.server.ts): load
 
 ## apps/dashboard/src/routes/references
 - [+page.ts](apps/dashboard/src/routes/references/+page.ts): load
@@ -51,6 +68,12 @@
 ## apps/dashboard/src/routes/repos/[id]/context-packs
 - [+page.server.ts](apps/dashboard/src/routes/repos/[id]/context-packs/+page.server.ts): load
 
+## apps/dashboard/src/routes/repos/[id]/drift
+- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/drift/+page.server.ts): load
+
+## apps/dashboard/src/routes/repos/[id]/explore
+- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/explore/+page.server.ts): load
+
 ## apps/dashboard/src/routes/repos/[id]/libraries
 - [+page.server.ts](apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts): load, actions
 
@@ -60,11 +83,17 @@
 ## apps/dashboard/src/routes/repos/[id]/simulate
 - [+page.server.ts](apps/dashboard/src/routes/repos/[id]/simulate/+page.server.ts): load, actions
 
+## apps/dashboard/src/routes/settings
+- [+page.server.ts](apps/dashboard/src/routes/settings/+page.server.ts): load
+
 ## apps/dashboard/src/routes/stats
 - [+page.ts](apps/dashboard/src/routes/stats/+page.ts): load
 
 ## apps/dashboard/tests
 - [library-detail.test.ts](apps/dashboard/tests/library-detail.test.ts): async
+
+## docs
+- [reverse-engineer.md](docs/reverse-engineer.md): INVOCATION
 
 ## docs/design
 - [01-architecture.md](docs/design/01-architecture.md): Architecture
@@ -123,6 +152,9 @@
 - [2026-03-07-monorepo-package-split.md](docs/plans/2026-03-07-monorepo-package-split.md): Monorepo
 - [2026-03-07-populate-llmspec-skill.md](docs/plans/2026-03-07-populate-llmspec-skill.md): populate-llmspec
 - [2026-03-07-server-inference-package.md](docs/plans/2026-03-07-server-inference-package.md): Server
+
+## docs/superpowers
+- [backlog.md](docs/superpowers/backlog.md): Superpowers
 
 ## docs/superpowers/plans
 - [2026-03-10-indexer-comparison.md](docs/superpowers/plans/2026-03-10-indexer-comparison.md): Indexer
@@ -192,10 +224,10 @@
 - [doctor.ts](packages/cli/src/commands/doctor.ts): doctor
 - [init-shared-linking.spec.ts](packages/cli/src/commands/init-shared-linking.spec.ts): function, function
 - [init.spec.ts](packages/cli/src/commands/init.spec.ts): function
-- [init.ts](packages/cli/src/commands/init.ts): lookupSharedLib, init
+- [init.ts](packages/cli/src/commands/init.ts): InitOptions, lookupSharedLib, init
 - [install-skills.ts](packages/cli/src/commands/install-skills.ts): installSkillsToDir, InstallScope, promptAndInstallSkills, installSkills
 - [migrate.ts](packages/cli/src/commands/migrate.ts): migrate
-- [setup.ts](packages/cli/src/commands/setup.ts): setupMcp, setupHooks, setupAgent
+- [setup.ts](packages/cli/src/commands/setup.ts): resolveMcpEntryPath, setupMcp, setupHooks, setupAgent
 - [stats.spec.ts](packages/cli/src/commands/stats.spec.ts): function
 - [stats.ts](packages/cli/src/commands/stats.ts): StatsResult, StatsCommandOptions, buildStatsResult, formatStats, stats
 - [status.ts](packages/cli/src/commands/status.ts): status
@@ -303,6 +335,9 @@
 - [section-slicer.spec.ts](packages/engine/src/slice/section-slicer.spec.ts): function
 - [section-slicer.ts](packages/engine/src/slice/section-slicer.ts): SectionSlicer
 
+## packages/mcp
+- [README.md](packages/mcp/README.md): @sensei/mcp
+
 ## packages/server/src
 - [mcp-server.ts](packages/server/src/mcp-server.ts): McpServerOptions, createSenseiMcpServer
 - [serve.ts](packages/server/src/serve.ts): ServeOptions, createReportServer, serve
@@ -363,17 +398,24 @@
 - [drift.ts](packages/tools/src/tools/drift.ts): DriftEntry, DriftResult, checkDrift
 - [embedder.ts](packages/tools/src/tools/embedder.ts): embed, isAvailable, ensureReady
 - [entry-point-adapters.ts](packages/tools/src/tools/entry-point-adapters.ts): EntryPointCandidate, inferEntryPoints
-- [llms-txt.ts](packages/tools/src/tools/llms-txt.ts): buildSections, renderSection, parseLlmsTxt, generateLlmsTxt
+- [llms-txt.ts](packages/tools/src/tools/llms-txt.ts): buildSections, renderSection, parseLlmsTxt, GenerateLlmsTxtResult, generateLlmsTxt
 - [project-memory.ts](packages/tools/src/tools/project-memory.ts): getSessionContext, addDecision, addPattern, askQuestion, getOpenItems
 - [query.ts](packages/tools/src/tools/query.ts): getLlmSpec, getFileContext, listExports, findPattern, getShortcuts
 - [reindex.spec.ts](packages/tools/src/tools/reindex.spec.ts): function
 - [reindex.ts](packages/tools/src/tools/reindex.ts): IndexSummary, reindexRepo, extractExports, extractMarkdownSymbols, extractHeuristic
 - [repo-registration.ts](packages/tools/src/tools/repo-registration.ts): RepoInfo, registerRepo
+- [search.spec.ts](packages/tools/src/tools/search.spec.ts): function
 - [search.ts](packages/tools/src/tools/search.ts): SearchResult, search
 - [supabase-index-writer.ts](packages/tools/src/tools/supabase-index-writer.ts): TraceabilityEntry, upsertSymbols, upsertDocs
 
 ## results
 - [indexer-comparison-2026-03-11.md](results/indexer-comparison-2026-03-11.md): Indexer
+
+## skills/auditing-skill-descriptions
+- [SKILL.md](skills/auditing-skill-descriptions/SKILL.md): Auditing
+
+## skills/building-app-mockups
+- [SKILL.md](skills/building-app-mockups/SKILL.md): Building
 
 ## skills/compressing-content
 - [SKILL.md](skills/compressing-content/SKILL.md): Content
@@ -404,6 +446,9 @@
 ## skills/identify-unknown-libs
 - [SKILL.md](skills/identify-unknown-libs/SKILL.md): Identifying
 
+## skills/identifying-patterns
+- [SKILL.md](skills/identifying-patterns/SKILL.md): Identifying
+
 ## skills/indexing-codebase
 - [SKILL.md](skills/indexing-codebase/SKILL.md): Codebase
 - [extractor.md](skills/indexing-codebase/extractor.md): Codebase
@@ -422,6 +467,9 @@
 - [test-baseline.md](skills/managing-project-sessions/test-baseline.md): Baseline
 - [test-pressure-1.md](skills/managing-project-sessions/test-pressure-1.md): Pressure
 - [test-pressure-2.md](skills/managing-project-sessions/test-pressure-2.md): Pressure
+
+## skills/pattern-based-development
+- [SKILL.md](skills/pattern-based-development/SKILL.md): Pattern-Based
 
 ## skills/populating-llmspec
 - [SKILL.md](skills/populating-llmspec/SKILL.md): Populate
@@ -452,52 +500,6 @@
 
 ## tasks
 - [score-coverage.ts](tasks/score-coverage.ts): function
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
-
-> Generated by sensei
 
 > Generated by sensei
 

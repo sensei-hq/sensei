@@ -1,10 +1,13 @@
 ---
 id: pipeline-adapter
 type: design
+status: not-implemented
 implements: []
 ---
 
 # Pipeline-First Adapter Pattern
+
+> **NOT IMPLEMENTED.** The formal `PipelineAdapter` abstraction described here does not exist. The current implementation uses ad-hoc `if (useDb) { ... }` branching in `chunker.ts`, `reindex.ts`, and `search.ts`. This document is a design target for a future refactor — the stage model (Scan → Parse → Index → Rank → Slice → Assemble) and language-adapter interface remain a useful conceptual guide.
 
 > Defines the language-agnostic, stage-based pipeline for code and doc parsing, indexing, ranking, slicing, and context assembly. Extends sensei's current indexing with CC-RLM-inspired structural analysis while keeping all existing MCP tools unchanged.
 

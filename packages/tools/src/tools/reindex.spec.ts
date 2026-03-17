@@ -114,53 +114,8 @@ describe("reindexRepo", () => {
     const summary1 = await reindexRepo(TMP);
     expect(summary1.forced).toBe(true);
     const summary2 = await reindexRepo(TMP);
-    // Without DB or legacy files, existingDocIndex is null → force=true
+    // Without DB, existingDocIndex is always null → force=true
     expect(summary2.forced).toBe(true);
-  });
-
-  it("incremental via legacy files: is not forced when legacy files exist", async () => {
-    // Seed legacy files to simulate pre-existing state
-    mkdirSync(join(TMP, ".sensei"), { recursive: true });
-    // Use far-future mtime so files appear unchanged
-    const futureTime = Date.now() + 10_000_000;
-    const idxStats = require("fs").statSync(join(TMP, "src/index.ts"));
-    const readmeStats = require("fs").statSync(join(TMP, "README.md"));
-    const pkgStats = require("fs").statSync(join(TMP, "package.json"));
-    writeFileSync(join(TMP, ".sensei/doc-index.json"), JSON.stringify({
-      files: {
-        "src/index.ts": { mtime: idxStats.mtimeMs, size: idxStats.size },
-        "README.md":    { mtime: readmeStats.mtimeMs, size: readmeStats.size },
-        "package.json": { mtime: pkgStats.mtimeMs, size: pkgStats.size },
-      }
-    }));
-    writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({
-      "src/index.ts": { L0: ["export const app"], L1: [], L2: [] },
-      "README.md": { L0: ["Test App"], L1: [], L2: [] },
-    }));
-    const summary2 = await reindexRepo(TMP);
-    expect(summary2.forced).toBe(false);
-  });
-
-  it("incremental: new file detected on second run (via legacy fallback)", async () => {
-    mkdirSync(join(TMP, ".sensei"), { recursive: true });
-    const idxStats = require("fs").statSync(join(TMP, "src/index.ts"));
-    const readmeStats = require("fs").statSync(join(TMP, "README.md"));
-    const pkgStats = require("fs").statSync(join(TMP, "package.json"));
-    writeFileSync(join(TMP, ".sensei/doc-index.json"), JSON.stringify({
-      files: {
-        "src/index.ts": { mtime: idxStats.mtimeMs, size: idxStats.size },
-        "README.md":    { mtime: readmeStats.mtimeMs, size: readmeStats.size },
-        "package.json": { mtime: pkgStats.mtimeMs, size: pkgStats.size },
-      }
-    }));
-    writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({
-      "src/index.ts": { L0: ["export const app"], L1: [], L2: [] },
-      "README.md": { L0: ["Test App"], L1: [], L2: [] },
-    }));
-    writeFileSync(join(TMP, "src/new.ts"), "export function newFn(): void {}\n");
-    const summary2 = await reindexRepo(TMP);
-    expect(summary2.added).toBeGreaterThanOrEqual(1);
-    expect(summary2.forced).toBe(false);
   });
 
   it("force: re-extracts all files regardless of fingerprints", async () => {
@@ -190,17 +145,6 @@ describe("reindexRepo", () => {
     expect(summary.total).toBeGreaterThan(0);
   });
 
-  it("indexes markdown files not in symbol map on incremental run (legacy fallback)", async () => {
-    // Simulate a repo that was indexed before markdown support was added:
-    // doc-index exists but symbol map has no README.md entry
-    mkdirSync(join(TMP, ".sensei"), { recursive: true });
-    const stats = require("fs").statSync(join(TMP, "src/index.ts"));
-    writeFileSync(join(TMP, ".sensei/doc-index.json"), JSON.stringify({ files: { "README.md": { mtime: Date.now(), size: 100 } } }));
-    writeFileSync(join(TMP, ".sensei/symbol-map.json"), JSON.stringify({}));
-    const summary = await reindexRepo(TMP);
-    // README.md was not in symbol map, so it gets added
-    expect(summary.added).toBeGreaterThan(0);
-  });
 });
 
 describe("extractExports", () => {
