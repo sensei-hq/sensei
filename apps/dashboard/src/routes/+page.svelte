@@ -13,7 +13,10 @@
 
   let rail         = $state<Rail>('repos');
   let wsId         = $state('personal');
-  let selectedId   = $state<string | null>(data.repos[0]?.id ?? null);
+  let selectedId   = $state<string | null>(null);
+  $effect(() => {
+    if (!data.repos.find(r => r.id === selectedId)) selectedId = data.repos[0]?.id ?? null;
+  });
   let repoTab      = $state<RepoTab>('sessions');
   let wsOpen       = $state(false);
   let userMenuOpen = $state(false);

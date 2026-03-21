@@ -1,4 +1,4 @@
-import { get_encoding, type Tiktoken } from "tiktoken";
+import { getEncoding, type Tiktoken } from "js-tiktoken";
 
 export interface TokenCounter {
   readonly name: string;
@@ -17,7 +17,7 @@ export class OpenAITokenCounter implements TokenCounter {
   private enc: Tiktoken | null = null;
 
   count(text: string): number {
-    if (!this.enc) this.enc = get_encoding("cl100k_base");
+    if (!this.enc) this.enc = getEncoding("cl100k_base");
     return this.enc.encode(text).length;
   }
 }
@@ -28,7 +28,7 @@ export class AnthropicTokenCounter implements TokenCounter {
 
   count(text: string): number {
     // Claude uses a BPE tokenizer compatible with cl100k_base (~95% accuracy)
-    if (!this.enc) this.enc = get_encoding("cl100k_base");
+    if (!this.enc) this.enc = getEncoding("cl100k_base");
     return this.enc.encode(text).length;
   }
 }

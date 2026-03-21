@@ -10,19 +10,6 @@
 		"skipLibCheck": true,
 		"sourceMap": true,
 		"strict": true,
-		"moduleResolution": "bundler",
-		"paths": {
-			// SvelteKit paths (mirrors .svelte-kit/tsconfig.json — must be re-stated when overriding paths)
-			"$lib": ["./src/lib"],
-			"$lib/*": ["./src/lib/*"],
-			"$app/types": ["./.svelte-kit/types/index.d.ts"],
-			// Workspace package transitive deps — point to bun cache types
-			"@supabase/supabase-js": ["../../node_modules/.bun/@supabase+supabase-js@2.99.1/node_modules/@supabase/supabase-js/dist/index.d.mts"],
-			// Kavach packages resolved via bun link (point to dist .d.ts to avoid checking JS source)
-			"kavach": ["./node_modules/kavach/dist/index.d.ts"],
-			"@kavach/adapter-supabase": ["./node_modules/@kavach/adapter-supabase/dist/index.d.ts"],
-			"@kavach/query": ["../../node_modules/.bun/@kavach+query@1.0.0-next.36/node_modules/@kavach/query/src/index.js"],
-			"@kavach/vite": ["./node_modules/@kavach/vite/dist/index.d.ts"]
-		}
+		"moduleResolution": "bundler"
 	}
 }

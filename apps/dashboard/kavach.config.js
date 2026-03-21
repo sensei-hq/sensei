@@ -12,6 +12,7 @@ export default {
   rules: [
     { path: '/', public: true },
     { path: '/data', public: true },
+    { path: '/mockups', public: true },
   ],
   providers: [
     { mode: 'otp', name: 'magic', label: 'Sign in with Email' },

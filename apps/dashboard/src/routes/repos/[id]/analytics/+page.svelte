@@ -21,14 +21,14 @@
     { name: 'avgDuration',  label: 'Avg Duration', sortable: true },
   ];
 
-  const toolRows = data.toolUsage.map((t) => ({
+  const toolRows = $derived(data.toolUsage.map((t) => ({
     tool: t.tool,
     calls: t.calls,
     successPct: `${Math.round(t.successRate * 100)}%`,
     avgDuration: t.avgDurationMs !== null
       ? (t.avgDurationMs >= 1000 ? `${(t.avgDurationMs / 1000).toFixed(1)}s` : `${t.avgDurationMs}ms`)
       : '—',
-  }));
+  })));
 </script>
 
 <a href="/repos/{data.repo.id}">← {data.repo.name}</a>
