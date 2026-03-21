@@ -13,7 +13,9 @@
     "dev": "bun run --filter='@sensei/cli' dev",
     "coverage": "vitest run --coverage",
     "bump": "bumpp --configFilePath config/bump.config.js",
-    "bump:next": "bumpp --configFilePath config/bump.config.js --preid=next"
+    "bump:next": "bumpp --configFilePath config/bump.config.js --preid=next",
+    "plugin:install": "bun run plugin/scripts/install.ts",
+    "plugin:uninstall": "bun run plugin/scripts/uninstall.ts"
   },
   "overrides": {
     "@kavach/sentry": "1.0.0-next.36",
