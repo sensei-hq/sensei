@@ -1,14 +1,14 @@
 export default {
   colors: {
-    primary: 'blue',
-    secondary: 'purple',
-    accent: 'sky',
-    surface: 'zinc',
-    success: 'green',
-    warning: 'yellow',
-    danger: 'red',
-    error: 'red',
-    info: 'cyan'
+    primary: 'violet',
+    secondary: 'sky',
+    accent: 'pink',
+    surface: 'slate',
+    success: 'emerald',
+    warning: 'amber',
+    danger: 'rose',
+    error: 'rose',
+    info: 'sky'
   },
   themes: ['rokkit'],
   switcher: 'manual',

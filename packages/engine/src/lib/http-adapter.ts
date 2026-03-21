@@ -1,6 +1,7 @@
 // packages/engine/src/lib/http-adapter.ts
+import "./dom-init.js"; // must be first — sets globalThis.DOMParser before readability initializes
 import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
+import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 import type { LibEntry, DocPage } from "@sensei/shared";
 import type { SourceAdapter } from "./source-adapter.js";
@@ -58,18 +59,18 @@ function bodyToMarkdown(body: string, url: string, contentType: string): string 
     contentType.includes("text/plain") ||
     contentType.includes("text/markdown");
   if (isMarkdown) return body;
-  const dom = new JSDOM(body, { url });
-  const reader = new Readability(dom.window.document);
+  const { document } = parseHTML(body);
+  const reader = new Readability(document as unknown as Document);
   return td.turndown(reader.parse()?.content ?? body);
 }
 
 function extractLinks(html: string, pageUrl: string, entryUrl: string, seen: Set<string>): string[] {
-  const dom = new JSDOM(html, { url: pageUrl });
+  const { document } = parseHTML(html);
   // Normalize: ensure prefix ends with "/" so "/docs" doesn't match "/documentation"
   const prefix = entryUrl.endsWith("/") ? entryUrl : entryUrl + "/";
   const links: string[] = [];
 
-  for (const a of Array.from(dom.window.document.querySelectorAll("a[href]"))) {
+  for (const a of Array.from(document.querySelectorAll("a[href]"))) {
     const href = (a as HTMLAnchorElement).getAttribute("href");
     if (!href) continue;
     let absolute: string;
