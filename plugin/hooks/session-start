@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+# Derive project slug from project root path
+PROJECT_ROOT="${CLAUDE_PROJECT_ROOT:-${PWD}}"
+# Replace / with - to match ~/.claude/projects/ slug format
+SLUG="${PROJECT_ROOT//\//-}"
+CONFIG_FILE="${HOME}/.claude/projects/${SLUG}/sensei.config.json"
+
+escape_for_json() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+# If no project config, output empty and exit
+if [ ! -f "$CONFIG_FILE" ]; then
+  cat <<EOF
+{
+  "additional_context": "",
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": ""
+  }
+}
+EOF
+  exit 0
+fi
+
+# Read opt-in skills list
+SKILLS_JSON=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{"skills":[]}')
+SKILLS=$(echo "$SKILLS_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+skills = d.get('skills', [])
+print(', '.join(skills))
+" 2>/dev/null || echo "")
+
+if [ -z "$SKILLS" ]; then
+  cat <<EOF
+{
+  "additional_context": "",
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": ""
+  }
+}
+EOF
+  exit 0
+fi
+
+CONTEXT="<sensei-opt-in-skills>
+The following opt-in skills are active for this project: ${SKILLS}
+Use the Skill tool to invoke them when their trigger conditions are met.
+</sensei-opt-in-skills>"
+
+ESCAPED=$(escape_for_json "$CONTEXT")
+
+cat <<EOF
+{
+  "additional_context": "${ESCAPED}",
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "${ESCAPED}"
+  }
+}
+EOF
+exit 0
