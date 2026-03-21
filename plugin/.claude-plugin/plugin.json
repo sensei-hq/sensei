@@ -1,0 +1,11 @@
+{
+  "name": "sensei",
+  "version": "1.0.0",
+  "description": "Dev workflow skills and commands — cross-project guardrails plus project-specific opt-ins",
+  "author": {
+    "name": "Jerry"
+  },
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json"
+}
