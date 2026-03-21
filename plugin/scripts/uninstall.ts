@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 const PLUGIN_NAME = "sensei";
+const PLUGIN_VERSION = "1.0.0";
 const PLUGIN_KEY = `${PLUGIN_NAME}@local`;
 
 const claudeDir = join(homedir(), ".claude");
 const pluginsDir = join(claudeDir, "plugins");
-const installPath = join(pluginsDir, "cache", PLUGIN_NAME, "local");
+const installPath = join(pluginsDir, "cache", PLUGIN_NAME, "local", PLUGIN_VERSION);
 const installedPluginsPath = join(pluginsDir, "installed_plugins.json");
 
 async function uninstall() {
@@ -23,7 +24,13 @@ async function uninstall() {
   // Remove from registry
   if (existsSync(installedPluginsPath)) {
     const raw = await readFile(installedPluginsPath, "utf-8");
-    const registry = JSON.parse(raw);
+    let registry;
+    try {
+      registry = JSON.parse(raw);
+    } catch {
+      console.error("installed_plugins.json is corrupted.");
+      process.exit(1);
+    }
     if (registry.plugins[PLUGIN_KEY]) {
       delete registry.plugins[PLUGIN_KEY];
       await writeFile(installedPluginsPath, JSON.stringify(registry, null, 2));
