@@ -9,6 +9,8 @@ description: Use when first working on a repo, after a major refactor, or when l
 
 Scan a repo once, produce structured artifacts so future agents orient in ~500 tokens instead of hundreds of file reads. Outputs: `.sensei/llmspec.yaml`, `CLAUDE.md`, `llms.txt`, `.sensei/` index directory.
 
+**Output directory:** All artifacts go to `.sensei/` (llmspec.yaml, symbol-map.json, patterns.md, etc.)
+
 ## When to Run
 
 - First time working on a repo
@@ -27,13 +29,13 @@ ls .sensei/ 2>/dev/null && cat .sensei/llmspec.yaml 2>/dev/null
 
 If index exists and is recent (< 7 days or no major commits since), call `get_llmspec()` MCP tool and stop — no need to re-index.
 
-### Step 2: Run the indexer MCP tool
+### Step 2: Run the indexer
 
-```
-call: reindex_repo({ path: ".", output: ".sensei/" })
+```bash
+sensei index
 ```
 
-This scans the repo using the extractor guide and writes all output artifacts.
+This scans the repo using the extractor guide and writes all output artifacts to `.sensei/`.
 
 ### Step 3: Populate semantic fields
 
@@ -116,7 +118,7 @@ git commit -m "chore: add/update codebase index"
 
 ## Re-indexing
 
-Call `reindex_repo()` again any time. It diffs against the previous index and only re-processes changed files.
+Run `sensei index` again any time. It diffs against the previous index and only re-processes changed files.
 
 ## Quick Reference
 
