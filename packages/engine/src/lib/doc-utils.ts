@@ -1,6 +1,7 @@
 // packages/engine/src/lib/doc-utils.ts
+import "./dom-init.js"; // must be first — sets globalThis.DOMParser before readability initializes
 import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
+import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 
 const td = new TurndownService({ headingStyle: "atx" });
@@ -78,8 +79,8 @@ export async function fetchAsMarkdown(url: string): Promise<string> {
 
   if (isMarkdown) return body;
 
-  const dom = new JSDOM(body, { url });
-  const reader = new Readability(dom.window.document);
+  const { document } = parseHTML(body);
+  const reader = new Readability(document as unknown as Document);
   const article = reader.parse();
   return td.turndown(article?.content ?? body);
 }

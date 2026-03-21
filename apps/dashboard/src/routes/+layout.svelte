@@ -10,7 +10,7 @@
 
   // Root and option-* routes are full-screen (no layout chrome)
   const isStandalone = $derived(
-    $page.url.pathname === '/' || $page.url.pathname.startsWith('/option-')
+    $page.url.pathname === '/' || $page.url.pathname.startsWith('/mockups')
   )
 
   // Provide kavach instance to all child components via Svelte context
