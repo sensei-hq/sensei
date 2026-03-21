@@ -1,5 +1,5 @@
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -28,7 +28,12 @@ async function install() {
   };
   if (existsSync(installedPluginsPath)) {
     const raw = await readFile(installedPluginsPath, "utf-8");
-    registry = JSON.parse(raw);
+    try {
+      registry = JSON.parse(raw);
+    } catch {
+      console.error("installed_plugins.json is corrupted. Delete it and retry.");
+      process.exit(1);
+    }
   }
 
   // 3. Upsert plugin entry
@@ -49,7 +54,6 @@ async function install() {
   // 5. Summary
   const skillsDir = join(installPath, "skills");
   const commandsDir = join(installPath, "commands");
-  const { readdirSync } = await import("node:fs");
   const skills = existsSync(skillsDir) ? readdirSync(skillsDir) : [];
   const commands = existsSync(commandsDir) ? readdirSync(commandsDir).filter(f => f.endsWith(".md")) : [];
   console.log(`\nSensei plugin installed:`);
