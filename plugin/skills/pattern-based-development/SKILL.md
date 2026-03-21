@@ -11,20 +11,21 @@ Before writing new code, check whether a structural pattern already exists for w
 
 ## Procedure
 
-1. Read `PATTERNS.md` (repo root) — scan for patterns relevant to the current task
-2. Match task description to pattern entries:
-   - "Add an MCP tool" → `mcp-tool` pattern
-   - "Add a CLI command" → `cli-command` pattern
-   - "Add a new adapter" → `adapter` pattern
-3. **If pattern found:**
+1. Check if `PATTERNS.md` exists in repo root
+   - **If no PATTERNS.md exists yet:** Proceed with standard implementation, then consider documenting the pattern for future reuse
+   - **If PATTERNS.md exists:** Continue to step 2
+2. Read `PATTERNS.md` — scan for patterns relevant to the current task
+3. Match task description to pattern entries:
+   - "Add an API endpoint" → `api-endpoint` pattern
+   - "Add a service module" → `service-module` pattern
+   - "Add a data model" → `data-model` pattern
+4. **If pattern found:**
    a. Load `skills/<pattern-name>/SKILL.md`
-   b. Call `record_pattern_use("<pattern-name>")` MCP tool to start tracking
-   c. Present the recipe to the agent before implementation
-   d. Implement following the recipe exactly — file structure, exports, registration
-4. **If no matching pattern:**
+   b. Present the recipe to the agent before implementation
+   c. Implement following the recipe exactly — file structure, exports, registration
+5. **If no matching pattern:**
    - Proceed with standard implementation
-   - Consider running `identifying-patterns` skill to document this new pattern afterwards
-5. At session end, `checkpoint()` automatically links outcome and changed files to the pattern usage row
+   - Consider documenting this new pattern for future reuse
 
 ## Why This Matters
 
@@ -35,13 +36,13 @@ When every implementation of a pattern follows the same recipe:
 
 ## Example
 
-Task: "Add a `record_pattern_use` MCP tool"
+Task: "Add a new user authentication service"
 
-1. Read `PATTERNS.md` → find `mcp-tool` pattern entry
-2. Load `skills/mcp-tool/SKILL.md`
-3. Call `record_pattern_use("mcp-tool")`
-4. Follow recipe:
-   - Create `packages/server/src/tools/record-pattern-use.ts`
-   - Export `recordPatternUse(client, repoId, sessionId, patternName)`
-   - Import and register in `mcp-server.ts` with `server.tool(...)`
-   - Write tests in `record-pattern-use.spec.ts`
+1. Check repo root for `PATTERNS.md` → find `service-module` pattern entry
+2. Load `skills/service-module/SKILL.md`
+3. Follow recipe:
+   - Create `src/services/auth-service.ts`
+   - Export core functions like `authenticate(credentials)`, `validateToken(token)`
+   - Follow established patterns for error handling, logging, and configuration
+   - Create corresponding test file `src/services/auth-service.spec.ts`
+   - Register/integrate with other modules as specified in pattern recipe
