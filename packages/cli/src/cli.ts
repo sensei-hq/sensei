@@ -82,6 +82,7 @@ Commands:
   update-registry --global --lib <name>   Promote lib to shared pool (all repos can link to it)
   install-skills           Install bundled sensei skills for Claude Code (prompts for repo/global)
   install-skills --global  Install all skills globally (~/.claude/skills/)
+  plugin install           Install and register the sensei plugin in Claude Code (~/.claude/plugins/)
 
 Options:
   -h, --help               Show this help message
@@ -370,6 +371,17 @@ async function main() {
         await installSkills(positionals[1], "repo");
       } else {
         await promptAndInstallSkills(repoRoot);
+      }
+      break;
+    }
+    case "plugin": {
+      const subCmd = rest[0];
+      if (subCmd === "install" || !subCmd) {
+        const { pluginInstall } = await import("./commands/plugin.js");
+        await pluginInstall();
+      } else {
+        console.error(`Unknown plugin subcommand: ${subCmd}\nUsage: sensei plugin install`);
+        process.exit(1);
       }
       break;
     }

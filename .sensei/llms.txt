@@ -39,8 +39,14 @@
 ## apps/dashboard/src/routes/libraries/[id]
 - [+page.server.ts](apps/dashboard/src/routes/libraries/[id]/+page.server.ts): load, actions
 
-## apps/dashboard/src/routes/option-a
-- [+page.server.ts](apps/dashboard/src/routes/option-a/+page.server.ts): load
+## apps/dashboard/src/routes/mockups
+- [+page.server.ts](apps/dashboard/src/routes/mockups/+page.server.ts): load
+
+## apps/dashboard/src/routes/mockups/option-a
+- [+page.server.ts](apps/dashboard/src/routes/mockups/option-a/+page.server.ts): load
+
+## apps/dashboard/src/routes/mockups/option-b
+- [+page.server.ts](apps/dashboard/src/routes/mockups/option-b/+page.server.ts): load
 
 ## apps/dashboard/src/routes/orgs
 - [+page.server.ts](apps/dashboard/src/routes/orgs/+page.server.ts): load
@@ -423,98 +429,77 @@
 - [search.ts](packages/tools/src/tools/search.ts): SearchResult, search
 - [supabase-index-writer.ts](packages/tools/src/tools/supabase-index-writer.ts): TraceabilityEntry, upsertSymbols, upsertDocs
 
+## plugin/commands
+- [audit.md](plugin/commands/audit.md): plugin/commands/audit
+- [backlog.md](plugin/commands/backlog.md): plugin/commands/backlog
+- [checkpoint.md](plugin/commands/checkpoint.md): plugin/commands/checkpoint
+- [commit.md](plugin/commands/commit.md): plugin/commands/commit
+- [disable.md](plugin/commands/disable.md): plugin/commands/disable
+- [enable.md](plugin/commands/enable.md): plugin/commands/enable
+- [feature.md](plugin/commands/feature.md): plugin/commands/feature
+- [help.md](plugin/commands/help.md): plugin/commands/help
+- [mockup.md](plugin/commands/mockup.md): plugin/commands/mockup
+- [pattern-extract.md](plugin/commands/pattern-extract.md): plugin/commands/pattern-extract
+- [pattern-use.md](plugin/commands/pattern-use.md): plugin/commands/pattern-use
+- [product.md](plugin/commands/product.md): plugin/commands/product
+- [session.md](plugin/commands/session.md): plugin/commands/session
+
+## plugin/scripts
+- [install.ts](plugin/scripts/install.ts): async
+- [uninstall.ts](plugin/scripts/uninstall.ts): async
+
+## plugin/skills/auditing-skill-descriptions
+- [SKILL.md](plugin/skills/auditing-skill-descriptions/SKILL.md): Auditing
+
+## plugin/skills/codebase-indexing
+- [SKILL.md](plugin/skills/codebase-indexing/SKILL.md): Codebase
+
+## plugin/skills/context-efficiency
+- [SKILL.md](plugin/skills/context-efficiency/SKILL.md): Context
+
+## plugin/skills/decomposing-broad-tasks
+- [SKILL.md](plugin/skills/decomposing-broad-tasks/SKILL.md): Decomposing
+
+## plugin/skills/detecting-doc-drift
+- [SKILL.md](plugin/skills/detecting-doc-drift/SKILL.md): Doc
+- [test-baseline.md](plugin/skills/detecting-doc-drift/test-baseline.md): Baseline
+- [test-pressure-1.md](plugin/skills/detecting-doc-drift/test-pressure-1.md): Pressure
+- [test-pressure-2.md](plugin/skills/detecting-doc-drift/test-pressure-2.md): Pressure
+
+## plugin/skills/guiding-doc-creation
+- [SKILL.md](plugin/skills/guiding-doc-creation/SKILL.md): Doc
+
+## plugin/skills/identify-unknown-libs
+- [SKILL.md](plugin/skills/identify-unknown-libs/SKILL.md): Identifying
+
+## plugin/skills/identifying-patterns
+- [SKILL.md](plugin/skills/identifying-patterns/SKILL.md): Identifying
+
+## plugin/skills/pattern-based-development
+- [SKILL.md](plugin/skills/pattern-based-development/SKILL.md): Pattern-Based
+
+## plugin/skills/reformatting-docs
+- [SKILL.md](plugin/skills/reformatting-docs/SKILL.md): Doc
+- [test-baseline.md](plugin/skills/reformatting-docs/test-baseline.md): Baseline
+- [test-pressure-1.md](plugin/skills/reformatting-docs/test-pressure-1.md): Pressure
+- [test-pressure-2.md](plugin/skills/reformatting-docs/test-pressure-2.md): Pressure
+
+## plugin/skills/running-benchmarks
+- [SKILL.md](plugin/skills/running-benchmarks/SKILL.md): Benchmark
+
+## plugin/skills/session-management
+- [SKILL.md](plugin/skills/session-management/SKILL.md): Session
+
+## plugin/skills/working-smarter
+- [SKILL.md](plugin/skills/working-smarter/SKILL.md): Working
+
 ## results
 - [indexer-comparison-2026-03-11.md](results/indexer-comparison-2026-03-11.md): Indexer
 
-## skills/auditing-skill-descriptions
-- [SKILL.md](skills/auditing-skill-descriptions/SKILL.md): Auditing
-
-## skills/building-app-mockups
-- [SKILL.md](skills/building-app-mockups/SKILL.md): Building
-
-## skills/compressing-content
-- [SKILL.md](skills/compressing-content/SKILL.md): Content
-- [test-baseline.md](skills/compressing-content/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/compressing-content/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/compressing-content/test-pressure-2.md): Pressure
-
-## skills/decomposing-broad-tasks
-- [SKILL.md](skills/decomposing-broad-tasks/SKILL.md): Decomposing
-- [test-baseline.md](skills/decomposing-broad-tasks/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/decomposing-broad-tasks/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/decomposing-broad-tasks/test-pressure-2.md): Pressure
-
-## skills/detecting-doc-drift
-- [SKILL.md](skills/detecting-doc-drift/SKILL.md): Doc
-- [test-baseline.md](skills/detecting-doc-drift/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/detecting-doc-drift/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/detecting-doc-drift/test-pressure-2.md): Pressure
-
-## skills/guiding-doc-creation
-- [SKILL.md](skills/guiding-doc-creation/SKILL.md): Doc
-- [design-template.md](skills/guiding-doc-creation/design-template.md): 
-- [feature-template.md](skills/guiding-doc-creation/feature-template.md): 
-- [test-baseline.md](skills/guiding-doc-creation/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/guiding-doc-creation/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/guiding-doc-creation/test-pressure-2.md): Pressure
-
-## skills/identify-unknown-libs
-- [SKILL.md](skills/identify-unknown-libs/SKILL.md): Identifying
-
-## skills/identifying-patterns
-- [SKILL.md](skills/identifying-patterns/SKILL.md): Identifying
-
-## skills/indexing-codebase
-- [SKILL.md](skills/indexing-codebase/SKILL.md): Codebase
-- [extractor.md](skills/indexing-codebase/extractor.md): Codebase
-- [test-baseline.md](skills/indexing-codebase/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/indexing-codebase/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/indexing-codebase/test-pressure-2.md): Pressure
-
-## skills/managing-context
-- [SKILL.md](skills/managing-context/SKILL.md): Context
-- [test-baseline.md](skills/managing-context/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/managing-context/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/managing-context/test-pressure-2.md): Pressure
-
-## skills/managing-project-sessions
-- [SKILL.md](skills/managing-project-sessions/SKILL.md): Project
-- [test-baseline.md](skills/managing-project-sessions/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/managing-project-sessions/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/managing-project-sessions/test-pressure-2.md): Pressure
-
-## skills/pattern-based-development
-- [SKILL.md](skills/pattern-based-development/SKILL.md): Pattern-Based
-
-## skills/populating-llmspec
-- [SKILL.md](skills/populating-llmspec/SKILL.md): Populate
-- [test-baseline.md](skills/populating-llmspec/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/populating-llmspec/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/populating-llmspec/test-pressure-2.md): Pressure
-
-## skills/reformatting-docs
-- [SKILL.md](skills/reformatting-docs/SKILL.md): Doc
-- [test-baseline.md](skills/reformatting-docs/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/reformatting-docs/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/reformatting-docs/test-pressure-2.md): Pressure
-
-## skills/running-agentic-sessions
-- [SKILL.md](skills/running-agentic-sessions/SKILL.md): Agentic
-- [test-baseline.md](skills/running-agentic-sessions/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/running-agentic-sessions/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/running-agentic-sessions/test-pressure-2.md): Pressure
-
-## skills/running-benchmarks
-- [SKILL.md](skills/running-benchmarks/SKILL.md): Benchmark
-- [test-baseline.md](skills/running-benchmarks/test-baseline.md): Baseline
-- [test-pressure-1.md](skills/running-benchmarks/test-pressure-1.md): Pressure
-- [test-pressure-2.md](skills/running-benchmarks/test-pressure-2.md): Pressure
-
-## skills/zero-errors-policy
-- [SKILL.md](skills/zero-errors-policy/SKILL.md): Zero
-
 ## tasks
 - [score-coverage.ts](tasks/score-coverage.ts): function
+
+> Generated by sensei
 
 > Generated by sensei
 
