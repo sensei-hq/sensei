@@ -178,6 +178,8 @@ shortcuts:
   coverage: vitest run --coverage
   bump: bumpp --configFilePath config/bump.config.js
   bump:next: bumpp --configFilePath config/bump.config.js --preid=next
+  plugin:install: bun run plugin/scripts/install.ts
+  plugin:uninstall: bun run plugin/scripts/uninstall.ts
 llms_txt:
   - name: Entry Points
     sources:
@@ -217,9 +219,15 @@ llms_txt:
   - name: apps/dashboard/src/routes/libraries/[id]
     sources:
       - apps/dashboard/src/routes/libraries/[id]/+page.server.ts
-  - name: apps/dashboard/src/routes/option-a
+  - name: apps/dashboard/src/routes/mockups
     sources:
-      - apps/dashboard/src/routes/option-a/+page.server.ts
+      - apps/dashboard/src/routes/mockups/+page.server.ts
+  - name: apps/dashboard/src/routes/mockups/option-a
+    sources:
+      - apps/dashboard/src/routes/mockups/option-a/+page.server.ts
+  - name: apps/dashboard/src/routes/mockups/option-b
+    sources:
+      - apps/dashboard/src/routes/mockups/option-b/+page.server.ts
   - name: apps/dashboard/src/routes/orgs
     sources:
       - apps/dashboard/src/routes/orgs/+page.server.ts
@@ -372,6 +380,7 @@ llms_txt:
       - docs/superpowers/plans/2026-03-17-pattern-skills.md
       - docs/superpowers/plans/2026-03-17-sensei-init-skill-selection.md
       - docs/superpowers/plans/2026-03-17-skill-description-auditor.md
+      - docs/superpowers/plans/2026-03-20-sensei-plugin.md
   - name: docs/superpowers/specs
     sources:
       - docs/superpowers/specs/2026-03-10-indexer-comparison-design.md
@@ -398,6 +407,7 @@ llms_txt:
       - docs/superpowers/specs/2026-03-17-pattern-skills-design.md
       - docs/superpowers/specs/2026-03-17-sensei-init-skill-selection-design.md
       - docs/superpowers/specs/2026-03-17-skill-description-auditor-design.md
+      - docs/superpowers/specs/2026-03-20-sensei-plugin-design.md
   - name: docs/templates
     sources:
       - docs/templates/design.md
@@ -426,6 +436,7 @@ llms_txt:
       - packages/cli/src/commands/init.ts
       - packages/cli/src/commands/install-skills.ts
       - packages/cli/src/commands/migrate.ts
+      - packages/cli/src/commands/plugin.ts
       - packages/cli/src/commands/setup.ts
       - packages/cli/src/commands/stats.spec.ts
       - packages/cli/src/commands/stats.ts
@@ -572,7 +583,6 @@ llms_txt:
       - packages/server/src/tools/token-stats.ts
   - name: packages/shared/src
     sources:
-      - packages/shared/src/config.spec.ts
       - packages/shared/src/config.ts
       - packages/shared/src/constants.ts
       - packages/shared/src/domain.ts
@@ -611,96 +621,73 @@ llms_txt:
       - packages/tools/src/tools/search.spec.ts
       - packages/tools/src/tools/search.ts
       - packages/tools/src/tools/supabase-index-writer.ts
+  - name: plugin/commands
+    sources:
+      - plugin/commands/audit.md
+      - plugin/commands/backlog.md
+      - plugin/commands/checkpoint.md
+      - plugin/commands/commit.md
+      - plugin/commands/disable.md
+      - plugin/commands/enable.md
+      - plugin/commands/feature.md
+      - plugin/commands/help.md
+      - plugin/commands/mockup.md
+      - plugin/commands/pattern-extract.md
+      - plugin/commands/pattern-use.md
+      - plugin/commands/product.md
+      - plugin/commands/session.md
+  - name: plugin/scripts
+    sources:
+      - plugin/scripts/install.ts
+      - plugin/scripts/uninstall.ts
+  - name: plugin/skills/auditing-skill-descriptions
+    sources:
+      - plugin/skills/auditing-skill-descriptions/SKILL.md
+  - name: plugin/skills/codebase-indexing
+    sources:
+      - plugin/skills/codebase-indexing/SKILL.md
+  - name: plugin/skills/context-efficiency
+    sources:
+      - plugin/skills/context-efficiency/SKILL.md
+  - name: plugin/skills/decomposing-broad-tasks
+    sources:
+      - plugin/skills/decomposing-broad-tasks/SKILL.md
+  - name: plugin/skills/detecting-doc-drift
+    sources:
+      - plugin/skills/detecting-doc-drift/SKILL.md
+      - plugin/skills/detecting-doc-drift/test-baseline.md
+      - plugin/skills/detecting-doc-drift/test-pressure-1.md
+      - plugin/skills/detecting-doc-drift/test-pressure-2.md
+  - name: plugin/skills/guiding-doc-creation
+    sources:
+      - plugin/skills/guiding-doc-creation/SKILL.md
+  - name: plugin/skills/identify-unknown-libs
+    sources:
+      - plugin/skills/identify-unknown-libs/SKILL.md
+  - name: plugin/skills/identifying-patterns
+    sources:
+      - plugin/skills/identifying-patterns/SKILL.md
+  - name: plugin/skills/pattern-based-development
+    sources:
+      - plugin/skills/pattern-based-development/SKILL.md
+  - name: plugin/skills/reformatting-docs
+    sources:
+      - plugin/skills/reformatting-docs/SKILL.md
+      - plugin/skills/reformatting-docs/test-baseline.md
+      - plugin/skills/reformatting-docs/test-pressure-1.md
+      - plugin/skills/reformatting-docs/test-pressure-2.md
+  - name: plugin/skills/running-benchmarks
+    sources:
+      - plugin/skills/running-benchmarks/SKILL.md
+  - name: plugin/skills/session-management
+    sources:
+      - plugin/skills/session-management/SKILL.md
+  - name: plugin/skills/working-smarter
+    sources:
+      - plugin/skills/working-smarter/SKILL.md
   - name: results
     sources:
       - results/indexer-comparison-2026-03-11.md
-  - name: skills/auditing-skill-descriptions
-    sources:
-      - skills/auditing-skill-descriptions/SKILL.md
-  - name: skills/building-app-mockups
-    sources:
-      - skills/building-app-mockups/SKILL.md
-  - name: skills/compressing-content
-    sources:
-      - skills/compressing-content/SKILL.md
-      - skills/compressing-content/test-baseline.md
-      - skills/compressing-content/test-pressure-1.md
-      - skills/compressing-content/test-pressure-2.md
-  - name: skills/decomposing-broad-tasks
-    sources:
-      - skills/decomposing-broad-tasks/SKILL.md
-      - skills/decomposing-broad-tasks/test-baseline.md
-      - skills/decomposing-broad-tasks/test-pressure-1.md
-      - skills/decomposing-broad-tasks/test-pressure-2.md
-  - name: skills/detecting-doc-drift
-    sources:
-      - skills/detecting-doc-drift/SKILL.md
-      - skills/detecting-doc-drift/test-baseline.md
-      - skills/detecting-doc-drift/test-pressure-1.md
-      - skills/detecting-doc-drift/test-pressure-2.md
-  - name: skills/guiding-doc-creation
-    sources:
-      - skills/guiding-doc-creation/SKILL.md
-      - skills/guiding-doc-creation/design-template.md
-      - skills/guiding-doc-creation/feature-template.md
-      - skills/guiding-doc-creation/test-baseline.md
-      - skills/guiding-doc-creation/test-pressure-1.md
-      - skills/guiding-doc-creation/test-pressure-2.md
-  - name: skills/identify-unknown-libs
-    sources:
-      - skills/identify-unknown-libs/SKILL.md
-  - name: skills/identifying-patterns
-    sources:
-      - skills/identifying-patterns/SKILL.md
-  - name: skills/indexing-codebase
-    sources:
-      - skills/indexing-codebase/SKILL.md
-      - skills/indexing-codebase/extractor.md
-      - skills/indexing-codebase/test-baseline.md
-      - skills/indexing-codebase/test-pressure-1.md
-      - skills/indexing-codebase/test-pressure-2.md
-  - name: skills/managing-context
-    sources:
-      - skills/managing-context/SKILL.md
-      - skills/managing-context/test-baseline.md
-      - skills/managing-context/test-pressure-1.md
-      - skills/managing-context/test-pressure-2.md
-  - name: skills/managing-project-sessions
-    sources:
-      - skills/managing-project-sessions/SKILL.md
-      - skills/managing-project-sessions/test-baseline.md
-      - skills/managing-project-sessions/test-pressure-1.md
-      - skills/managing-project-sessions/test-pressure-2.md
-  - name: skills/pattern-based-development
-    sources:
-      - skills/pattern-based-development/SKILL.md
-  - name: skills/populating-llmspec
-    sources:
-      - skills/populating-llmspec/SKILL.md
-      - skills/populating-llmspec/test-baseline.md
-      - skills/populating-llmspec/test-pressure-1.md
-      - skills/populating-llmspec/test-pressure-2.md
-  - name: skills/reformatting-docs
-    sources:
-      - skills/reformatting-docs/SKILL.md
-      - skills/reformatting-docs/test-baseline.md
-      - skills/reformatting-docs/test-pressure-1.md
-      - skills/reformatting-docs/test-pressure-2.md
-  - name: skills/running-agentic-sessions
-    sources:
-      - skills/running-agentic-sessions/SKILL.md
-      - skills/running-agentic-sessions/test-baseline.md
-      - skills/running-agentic-sessions/test-pressure-1.md
-      - skills/running-agentic-sessions/test-pressure-2.md
-  - name: skills/running-benchmarks
-    sources:
-      - skills/running-benchmarks/SKILL.md
-      - skills/running-benchmarks/test-baseline.md
-      - skills/running-benchmarks/test-pressure-1.md
-      - skills/running-benchmarks/test-pressure-2.md
-  - name: skills/zero-errors-policy
-    sources:
-      - skills/zero-errors-policy/SKILL.md
   - name: tasks
     sources:
       - tasks/score-coverage.ts

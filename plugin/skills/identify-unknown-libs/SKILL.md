@@ -1,6 +1,6 @@
 ---
 name: identify-unknown-libs
-description: Use when get_lib_docs returns sections: [] for a library you're about to use — detects missing indexed docs and guides you through registering them without hallucinating.
+description: "Use when get_lib_docs returns sections: [] for a library you're about to use — detects missing indexed docs and guides you through registering them without hallucinating."
 ---
 
 # Identifying and Registering Unknown Libraries
