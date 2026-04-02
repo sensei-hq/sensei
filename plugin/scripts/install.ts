@@ -3,57 +3,71 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const PLUGIN_NAME = "sensei";
 const PLUGIN_VERSION = "1.0.0";
-const PLUGIN_KEY = `${PLUGIN_NAME}@local`;
+const MARKETPLACE = "local";
+const PLUGIN_KEY = `${PLUGIN_NAME}@${MARKETPLACE}`;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pluginSrc = resolve(__dirname, "..");
 const claudeDir = join(homedir(), ".claude");
 const pluginsDir = join(claudeDir, "plugins");
-const installPath = join(pluginsDir, "cache", PLUGIN_NAME, "local", PLUGIN_VERSION);
-const installedPluginsPath = join(pluginsDir, "installed_plugins.json");
+const marketplacePath = join(pluginsDir, "marketplaces", MARKETPLACE);
+const marketplacePluginPath = join(marketplacePath, "plugins", PLUGIN_NAME);
+const marketplaceManifest = join(marketplacePath, ".claude-plugin", "marketplace.json");
 
 async function install() {
-  // 1. Copy plugin directory
-  await mkdir(installPath, { recursive: true });
-  await cp(pluginSrc, installPath, { recursive: true, force: true });
-  console.log(`✓ Copied plugin to ${installPath}`);
+  // 1. Create/update the local marketplace structure
+  await mkdir(join(marketplacePath, ".claude-plugin"), { recursive: true });
+  await mkdir(marketplacePluginPath, { recursive: true });
 
-  // 2. Read existing installed_plugins.json
-  let registry: { version: number; plugins: Record<string, unknown[]> } = {
-    version: 2,
-    plugins: {},
-  };
-  if (existsSync(installedPluginsPath)) {
-    const raw = await readFile(installedPluginsPath, "utf-8");
-    try {
-      registry = JSON.parse(raw);
-    } catch {
-      console.error("installed_plugins.json is corrupted. Delete it and retry.");
-      process.exit(1);
-    }
+  // Write marketplace.json if it doesn't exist
+  if (!existsSync(marketplaceManifest)) {
+    await writeFile(marketplaceManifest, JSON.stringify({
+      "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+      "name": MARKETPLACE,
+      "description": "Locally installed plugins",
+      "owner": { "name": "local" },
+      "plugins": [],
+    }, null, 2));
   }
 
-  // 3. Upsert plugin entry
-  registry.plugins[PLUGIN_KEY] = [
-    {
-      scope: "user",
-      installPath,
-      version: PLUGIN_VERSION,
-      installedAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-    },
-  ];
+  // Upsert sensei entry in marketplace.json
+  const raw = await readFile(marketplaceManifest, "utf-8");
+  const manifest = JSON.parse(raw);
+  const pluginEntry = {
+    name: PLUGIN_NAME,
+    description: "Dev workflow skills and commands — cross-project guardrails plus project-specific opt-ins",
+    version: PLUGIN_VERSION,
+    author: { name: "Jerry" },
+    source: `./plugins/${PLUGIN_NAME}`,
+    category: "development",
+  };
+  const idx = manifest.plugins.findIndex((p: { name: string }) => p.name === PLUGIN_NAME);
+  if (idx >= 0) manifest.plugins[idx] = pluginEntry;
+  else manifest.plugins.push(pluginEntry);
+  await writeFile(marketplaceManifest, JSON.stringify(manifest, null, 2));
 
-  // 4. Write back
-  await writeFile(installedPluginsPath, JSON.stringify(registry, null, 2));
-  console.log(`✓ Registered ${PLUGIN_KEY} in installed_plugins.json`);
+  // Copy plugin files to marketplace entry
+  await cp(pluginSrc, marketplacePluginPath, { recursive: true, force: true });
+  console.log(`✓ Updated marketplace entry at ${marketplacePluginPath}`);
 
-  // 5. Summary
-  const skillsDir = join(installPath, "skills");
-  const commandsDir = join(installPath, "commands");
+  // 2. Register marketplace (idempotent — ignore error if already registered)
+  try {
+    execFileSync("claude", ["plugin", "marketplace", "add", marketplacePath, "--scope", "user"], { stdio: "pipe" });
+  } catch {
+    // Already registered — fine
+  }
+
+  // 3. Install plugin via CLI
+  execFileSync("claude", ["plugin", "install", PLUGIN_KEY, "--scope", "user"], { stdio: "pipe" });
+  console.log(`✓ Installed ${PLUGIN_KEY} via claude CLI`);
+
+  // 4. Summary
+  const skillsDir = join(marketplacePluginPath, "skills");
+  const commandsDir = join(marketplacePluginPath, "commands");
   const skills = existsSync(skillsDir) ? readdirSync(skillsDir) : [];
   const commands = existsSync(commandsDir) ? readdirSync(commandsDir).filter(f => f.endsWith(".md")) : [];
   console.log(`\nSensei plugin installed:`);

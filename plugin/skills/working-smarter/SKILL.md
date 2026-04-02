@@ -1,6 +1,6 @@
 ---
 name: working-smarter
-description: Use when designing UI mockups, building new features, or starting/completing any implementation task — enforces commit-first discipline, framework-native mockups (no standalone HTML), and zero-errors checkpoints before and after coding.
+description: Use when designing UI mockups, building new features, or starting/completing any implementation task — enforces commit-first discipline, framework-native mockups with native data loading patterns, zero-errors checkpoints, and i18n-aware promotion.
 ---
 
 # Working Smarter
@@ -68,6 +68,64 @@ Each alternative should differ in **structure** (layout, hierarchy, information 
 2. Describe each option in 1–2 sentences so the user knows what they're comparing
 3. Iterate on feedback until user picks a winner
 
+### Data Loading in Mockups
+
+**Use the framework's native data loading pattern from day one — never hardcode data inline in the component.**
+
+The mockup phase uses a hardcoded API endpoint that returns static data. The component fetches from that endpoint exactly as it will in production. When the mockup is promoted, only the API implementation changes — the component, route, and data contract are already correct.
+
+**SvelteKit pattern:**
+
+```
+src/routes/mockups/a/
+  +page.svelte          ← component — fetches from /api/mockups/a
+  +page.ts              ← client load: calls fetch('/api/mockups/a')
+src/routes/(server)/api/mockups/a/
+  +server.ts            ← GET handler returning hardcoded data
+```
+
+`+page.ts` (client load):
+```typescript
+export async function load({ fetch }) {
+  const res = await fetch('/api/mockups/a')
+  return { data: await res.json() }
+}
+```
+
+`(server)/api/mockups/a/+server.ts` (hardcoded data):
+```typescript
+import { json } from '@sveltejs/kit'
+export function GET() {
+  return json({
+    items: [
+      { id: 1, label: 'Alpha', status: 'active' },
+      { id: 2, label: 'Beta',  status: 'pending' },
+    ]
+  })
+}
+```
+
+`+page.svelte`:
+```svelte
+<script>
+  let { data } = $props()
+</script>
+{#each data.items as item}
+  <div>{item.label}</div>
+{/each}
+```
+
+**Framework equivalents:**
+
+| Framework | Load pattern | Hardcoded API location |
+|-----------|-------------|----------------------|
+| SvelteKit | `+page.ts` load fn | `(server)/api/mockups/<name>/+server.ts` |
+| Next.js (app) | `page.tsx` async component or `route.ts` | `app/api/mockups/<name>/route.ts` |
+| Remix | `loader` function in route file | same file or separate `_api.mockups.<name>.ts` |
+| Nuxt | `useAsyncData` / `useFetch` in `<script setup>` | `server/api/mockups/<name>.get.ts` |
+
+**When the mockup is promoted:** swap the hardcoded API handler for the real backend call. The component and load function are untouched.
+
 ### Promoting the winner
 
 ```bash
@@ -76,6 +134,19 @@ mv src/routes/mockups/a/ src/routes/<final-path>/
 ```
 
 Then delete the entire `mockups/` directory — never leave losing variants in the repo.
+
+### Internationalization
+
+**If the codebase uses i18n, ask before promoting:**
+
+> "This codebase uses [i18n library]. Should I include internationalized strings when moving the mockup?"
+
+On confirmation, during the move:
+- Replace all hardcoded user-visible strings with translation keys
+- Add the new keys to the base locale file (e.g. `messages/en.json`, `locales/en.ts`)
+- Do not add translations for other locales — leave those as the key value or a TODO comment so translators can fill them in
+
+Do not internationalize on your own initiative — only on explicit user confirmation. Some mockups get promoted with strings intentionally left hardcoded for review first.
 
 ---
 
@@ -116,11 +187,14 @@ Starting a new feature?
 New design to explore?
   → mkdir src/routes/mockups/a/ + mockups/b/
   → Build with real components + real tokens
+  → Add load fn + hardcoded API endpoint (not inline data in component)
   → Add switcher pill to compare variants
   → Report URLs, iterate, pick winner
 
 Design approved?
   → mv src/routes/mockups/a/ src/routes/<final-path>/
+  → Swap hardcoded API handler for real backend call
+  → If i18n codebase: ask user → replace hardcoded strings + add keys to base locale
   → Delete the entire mockups/ directory
 
 Feature complete?
