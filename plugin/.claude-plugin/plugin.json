@@ -4,8 +4,5 @@
   "description": "Dev workflow skills and commands — cross-project guardrails plus project-specific opt-ins",
   "author": {
     "name": "Dev"
-  },
-  "skills": "./skills/",
-  "commands": "./commands/",
-  "hooks": "./hooks/hooks.json"
+  }
 }
