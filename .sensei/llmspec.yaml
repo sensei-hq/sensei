@@ -207,6 +207,15 @@ llms_txt:
     sources:
       - apps/dashboard/src/routes/+layout.server.ts
       - apps/dashboard/src/routes/+page.server.ts
+  - name: apps/dashboard/src/routes/account/invitations
+    sources:
+      - apps/dashboard/src/routes/account/invitations/+page.server.ts
+  - name: apps/dashboard/src/routes/account/members
+    sources:
+      - apps/dashboard/src/routes/account/members/+page.server.ts
+  - name: apps/dashboard/src/routes/account/team
+    sources:
+      - apps/dashboard/src/routes/account/team/+page.server.ts
   - name: apps/dashboard/src/routes/benchmarks
     sources:
       - apps/dashboard/src/routes/benchmarks/+page.ts
@@ -237,6 +246,9 @@ llms_txt:
   - name: apps/dashboard/src/routes/orgs/[id]/teams/[tid]
     sources:
       - apps/dashboard/src/routes/orgs/[id]/teams/[tid]/+page.server.ts
+  - name: apps/dashboard/src/routes/platform/analytics
+    sources:
+      - apps/dashboard/src/routes/platform/analytics/+page.server.ts
   - name: apps/dashboard/src/routes/references
     sources:
       - apps/dashboard/src/routes/references/+page.ts
@@ -308,6 +320,7 @@ llms_txt:
       - docs/design/21-claude-host-integration.md
       - docs/design/22-telemetry-resilience.md
       - docs/design/23-plugin-packaging.md
+      - docs/design/24-platform-architecture.md
       - docs/design/30-implementation-phases.md
       - docs/design/40-mcp-tool-contracts.md
       - docs/design/40-metadata-model.md
@@ -435,6 +448,7 @@ llms_txt:
       - packages/cli/src/commands/init.spec.ts
       - packages/cli/src/commands/init.ts
       - packages/cli/src/commands/install-skills.ts
+      - packages/cli/src/commands/login.ts
       - packages/cli/src/commands/migrate.ts
       - packages/cli/src/commands/plugin.ts
       - packages/cli/src/commands/setup.ts
@@ -464,6 +478,8 @@ llms_txt:
       - packages/collector/src/stats.spec.ts
       - packages/collector/src/stats.ts
       - packages/collector/src/supabase-writer.ts
+      - packages/collector/src/sync-to-cloud.spec.ts
+      - packages/collector/src/sync-to-cloud.ts
       - packages/collector/src/uuid.ts
   - name: packages/collector/src/__stubs__
     sources:
@@ -493,6 +509,8 @@ llms_txt:
       - packages/engine/src/agent/claude-adapter.ts
   - name: packages/engine/src/analytics
     sources:
+      - packages/engine/src/analytics/ftr-coaching.spec.ts
+      - packages/engine/src/analytics/ftr-coaching.ts
       - packages/engine/src/analytics/ftr.ts
       - packages/engine/src/analytics/task-session.spec.ts
       - packages/engine/src/analytics/task-session.ts
@@ -545,11 +563,10 @@ llms_txt:
       - packages/engine/src/slice/ast-slicer.ts
       - packages/engine/src/slice/section-slicer.spec.ts
       - packages/engine/src/slice/section-slicer.ts
-  - name: packages/mcp
-    sources:
-      - packages/mcp/README.md
   - name: packages/server/src
     sources:
+      - packages/server/src/auth-middleware.ts
+      - packages/server/src/e2e-session.ts
       - packages/server/src/mcp-server.ts
       - packages/server/src/otlp-endpoint.ts
       - packages/server/src/serve.ts
@@ -583,8 +600,11 @@ llms_txt:
       - packages/server/src/tools/token-stats.ts
   - name: packages/shared/src
     sources:
+      - packages/shared/src/account-repository.spec.ts
+      - packages/shared/src/account-repository.ts
       - packages/shared/src/config.ts
       - packages/shared/src/constants.ts
+      - packages/shared/src/crypto.ts
       - packages/shared/src/domain.ts
       - packages/shared/src/supabase-client.ts
       - packages/shared/src/token-counter.ts
@@ -643,15 +663,27 @@ llms_txt:
   - name: plugin/skills/auditing-skill-descriptions
     sources:
       - plugin/skills/auditing-skill-descriptions/SKILL.md
+  - name: plugin/skills/building-app-mockups
+    sources:
+      - plugin/skills/building-app-mockups/SKILL.md
   - name: plugin/skills/codebase-indexing
     sources:
       - plugin/skills/codebase-indexing/SKILL.md
+      - plugin/skills/codebase-indexing/test-baseline.md
+      - plugin/skills/codebase-indexing/test-pressure-1.md
+      - plugin/skills/codebase-indexing/test-pressure-2.md
   - name: plugin/skills/context-efficiency
     sources:
       - plugin/skills/context-efficiency/SKILL.md
+      - plugin/skills/context-efficiency/test-baseline.md
+      - plugin/skills/context-efficiency/test-pressure-1.md
+      - plugin/skills/context-efficiency/test-pressure-2.md
   - name: plugin/skills/decomposing-broad-tasks
     sources:
       - plugin/skills/decomposing-broad-tasks/SKILL.md
+      - plugin/skills/decomposing-broad-tasks/test-baseline.md
+      - plugin/skills/decomposing-broad-tasks/test-pressure-1.md
+      - plugin/skills/decomposing-broad-tasks/test-pressure-2.md
   - name: plugin/skills/detecting-doc-drift
     sources:
       - plugin/skills/detecting-doc-drift/SKILL.md
@@ -661,15 +693,27 @@ llms_txt:
   - name: plugin/skills/guiding-doc-creation
     sources:
       - plugin/skills/guiding-doc-creation/SKILL.md
+      - plugin/skills/guiding-doc-creation/test-baseline.md
+      - plugin/skills/guiding-doc-creation/test-pressure-1.md
+      - plugin/skills/guiding-doc-creation/test-pressure-2.md
   - name: plugin/skills/identify-unknown-libs
     sources:
       - plugin/skills/identify-unknown-libs/SKILL.md
+      - plugin/skills/identify-unknown-libs/test-baseline.md
+      - plugin/skills/identify-unknown-libs/test-pressure-1.md
+      - plugin/skills/identify-unknown-libs/test-pressure-2.md
   - name: plugin/skills/identifying-patterns
     sources:
       - plugin/skills/identifying-patterns/SKILL.md
+      - plugin/skills/identifying-patterns/test-baseline.md
+      - plugin/skills/identifying-patterns/test-pressure-1.md
+      - plugin/skills/identifying-patterns/test-pressure-2.md
   - name: plugin/skills/pattern-based-development
     sources:
       - plugin/skills/pattern-based-development/SKILL.md
+      - plugin/skills/pattern-based-development/test-baseline.md
+      - plugin/skills/pattern-based-development/test-pressure-1.md
+      - plugin/skills/pattern-based-development/test-pressure-2.md
   - name: plugin/skills/reformatting-docs
     sources:
       - plugin/skills/reformatting-docs/SKILL.md
@@ -679,15 +723,27 @@ llms_txt:
   - name: plugin/skills/running-benchmarks
     sources:
       - plugin/skills/running-benchmarks/SKILL.md
+      - plugin/skills/running-benchmarks/test-baseline.md
+      - plugin/skills/running-benchmarks/test-pressure-1.md
+      - plugin/skills/running-benchmarks/test-pressure-2.md
   - name: plugin/skills/session-management
     sources:
       - plugin/skills/session-management/SKILL.md
+      - plugin/skills/session-management/test-baseline.md
+      - plugin/skills/session-management/test-pressure-1.md
+      - plugin/skills/session-management/test-pressure-2.md
   - name: plugin/skills/working-smarter
     sources:
       - plugin/skills/working-smarter/SKILL.md
+      - plugin/skills/working-smarter/test-baseline.md
+      - plugin/skills/working-smarter/test-pressure-1.md
+      - plugin/skills/working-smarter/test-pressure-2.md
   - name: results
     sources:
       - results/indexer-comparison-2026-03-11.md
+  - name: scripts
+    sources:
+      - scripts/e2e-session.ts
   - name: tasks
     sources:
       - tasks/score-coverage.ts
