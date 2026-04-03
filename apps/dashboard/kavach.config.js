@@ -15,6 +15,6 @@ export default {
     { path: '/mockups', public: true },
   ],
   providers: [
-    { mode: 'otp', name: 'magic', label: 'Sign in with Email' },
+    { mode: 'password', name: 'email', label: 'Sign in with Email' },
   ],
 }

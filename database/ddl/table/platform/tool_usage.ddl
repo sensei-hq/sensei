@@ -2,14 +2,14 @@ set search_path to platform, extensions;
 
 create or replace view tool_usage as
 select
-  tool_name
-, count(*)                                                         as total_calls
-, round(
-    100.0 * count(*) filter (where status = 'error') / count(*), 2
-  )                                                                as error_rate_pct
-, round(avg(duration_ms)::numeric, 0)                             as avg_duration_ms
+  model
+, count(*)                                           as total_calls
+, sum(input_tokens)                                  as total_input_tokens
+, sum(output_tokens)                                 as total_output_tokens
+, round(avg(cost_usd)::numeric, 6)                   as avg_cost_usd
+, round(avg(duration_ms)::numeric, 0)                as avg_duration_ms
 from sensei.api_requests
-group by tool_name
+group by model
 order by total_calls desc;
 
 comment on view tool_usage is
