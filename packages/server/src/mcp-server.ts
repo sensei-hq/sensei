@@ -4,7 +4,7 @@ import { makeSenseiClient } from "@sensei/shared";
 import { getSessionContext } from "./tools/get-session-context.js";
 import { search } from "./tools/search.js";
 import { loadContext } from "./tools/load-context.js";
-import { OllamaBackend } from "./model/ollama-backend.js";
+import { TransformersBackend } from "@sensei/engine";
 import { contextPack } from "./tools/context-pack.js";
 import { recommendNext } from "./tools/recommend-next.js";
 import { tokenStats } from "./tools/token-stats.js";
@@ -35,9 +35,9 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     return clientPromise;
   };
 
-  let backendInstance: OllamaBackend | null = null;
+  let backendInstance: TransformersBackend | null = null;
   const getBackend = () => {
-    if (!backendInstance) backendInstance = new OllamaBackend({ model: "llama3.2:3b", embeddingModel: "nomic-embed-text" });
+    if (!backendInstance) backendInstance = new TransformersBackend();
     return backendInstance;
   };
 
