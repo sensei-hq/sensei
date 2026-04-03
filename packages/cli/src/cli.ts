@@ -385,6 +385,21 @@ async function main() {
       }
       break;
     }
+    case "login": {
+      const { loginCommand } = await import("./commands/login.js");
+      await loginCommand(values["supabase-url"]);
+      break;
+    }
+    case "logout": {
+      const { logoutCommand } = await import("./commands/login.js");
+      await logoutCommand();
+      break;
+    }
+    case "whoami": {
+      const { whoamiCommand } = await import("./commands/login.js");
+      await whoamiCommand();
+      break;
+    }
     default:
       if (cmd) console.error(`Unknown command: ${cmd}\n`);
       console.log(HELP);
