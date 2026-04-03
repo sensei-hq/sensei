@@ -29,11 +29,141 @@
       ? (t.avgDurationMs >= 1000 ? `${(t.avgDurationMs / 1000).toFixed(1)}s` : `${t.avgDurationMs}ms`)
       : '—',
   })));
+
+  // FTR trend chart — sessions ordered oldest→newest with a score
+  const W = 560;
+  const H = 120;
+  const PAD = { top: 12, right: 16, bottom: 24, left: 36 };
+
+  const ftrPoints = $derived(
+    [...data.sessions]
+      .reverse()
+      .filter(s => s.ftrScore !== null)
+      .map((s, i, arr) => ({ x: i, y: s.ftrScore as number, label: s.createdAt }))
+  );
+
+  function toSvgX(i: number, total: number) {
+    return total <= 1
+      ? PAD.left + (W - PAD.left - PAD.right) / 2
+      : PAD.left + (i / (total - 1)) * (W - PAD.left - PAD.right);
+  }
+  function toSvgY(score: number) {
+    return PAD.top + (1 - score) * (H - PAD.top - PAD.bottom);
+  }
+
+  const chartPath = $derived(() => {
+    if (ftrPoints.length < 2) return '';
+    return ftrPoints.map((p, i) => {
+      const x = toSvgX(i, ftrPoints.length);
+      const y = toSvgY(p.y);
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  });
+
+  // Rolling 7-session average line
+  const rollingAvgPath = $derived(() => {
+    if (ftrPoints.length < 3) return '';
+    const window = 7;
+    return ftrPoints.map((_, i) => {
+      const slice = ftrPoints.slice(Math.max(0, i - window + 1), i + 1);
+      const avg = slice.reduce((s, p) => s + p.y, 0) / slice.length;
+      const x = toSvgX(i, ftrPoints.length);
+      const y = toSvgY(avg);
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  });
+
+  // Outcome breakdown
+  const outcomes = $derived({
+    completed: data.sessions.filter(s => s.status === 'completed').length,
+    in_progress: data.sessions.filter(s => s.status === 'in_progress').length,
+    abandoned: data.sessions.filter(s => s.status === 'abandoned').length,
+    total: data.sessions.length,
+  });
+
+  // Avg FTR
+  const scoredSessions = $derived(data.sessions.filter(s => s.ftrScore !== null));
+  const avgFtr = $derived(
+    scoredSessions.length > 0
+      ? scoredSessions.reduce((s, x) => s + (x.ftrScore ?? 0), 0) / scoredSessions.length
+      : null
+  );
 </script>
 
 <a href="/repos/{data.repo.id}">← {data.repo.name}</a>
 <h1>Analytics — {data.repo.name}</h1>
 <p style="color:#64748b;font-size:0.875rem">Last 30 days</p>
+
+<h2>FTR Trend — Last 30 Days</h2>
+{#if ftrPoints.length === 0}
+  <p>No scored sessions yet. Sessions get an FTR score after calling <code>checkpoint()</code>.</p>
+{:else}
+  <div class="ftr-summary-row">
+    <div class="ftr-stat">
+      <span class="ftr-stat-label">Avg FTR</span>
+      <span class="ftr-stat-value {ftrColor(avgFtr)}">{avgFtr !== null ? avgFtr.toFixed(3) : '—'}</span>
+    </div>
+    <div class="ftr-stat">
+      <span class="ftr-stat-label">Completed</span>
+      <span class="ftr-stat-value">{outcomes.completed}</span>
+    </div>
+    <div class="ftr-stat">
+      <span class="ftr-stat-label">In progress</span>
+      <span class="ftr-stat-value">{outcomes.in_progress}</span>
+    </div>
+    <div class="ftr-stat">
+      <span class="ftr-stat-label">Abandoned</span>
+      <span class="ftr-stat-value">{outcomes.abandoned}</span>
+    </div>
+    <div class="ftr-stat">
+      <span class="ftr-stat-label">Scored</span>
+      <span class="ftr-stat-value">{scoredSessions.length} / {outcomes.total}</span>
+    </div>
+  </div>
+
+  <div class="chart-wrap" aria-label="FTR score trend chart">
+    <svg width={W} height={H} viewBox="0 0 {W} {H}">
+      <!-- grid lines at 0.3, 0.5, 0.7, 1.0 -->
+      {#each [0.3, 0.5, 0.7, 1.0] as tick}
+        {@const y = toSvgY(tick)}
+        <line x1={PAD.left} x2={W - PAD.right} y1={y} y2={y}
+              stroke={tick === 0.7 ? '#fbbf24' : '#e2e8f0'} stroke-width="1" stroke-dasharray={tick === 0.7 ? '4 3' : undefined} />
+        <text x={PAD.left - 4} y={y + 4} text-anchor="end" font-size="9" fill="#94a3b8">{tick.toFixed(1)}</text>
+      {/each}
+
+      <!-- raw score line -->
+      {#if chartPath()}
+        <path d={chartPath()} fill="none" stroke="#94a3b8" stroke-width="1" opacity="0.6" />
+      {/if}
+
+      <!-- rolling avg line -->
+      {#if rollingAvgPath()}
+        <path d={rollingAvgPath()} fill="none" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round" />
+      {/if}
+
+      <!-- data points colored by FTR band -->
+      {#each ftrPoints as p, i}
+        {@const cx = toSvgX(i, ftrPoints.length)}
+        {@const cy = toSvgY(p.y)}
+        {@const dotColor = p.y >= 0.8 ? '#16a34a' : p.y >= 0.5 ? '#d97706' : '#dc2626'}
+        <circle cx={cx} cy={cy} r="3" fill={dotColor}>
+          <title>FTR {p.y.toFixed(3)} — {new Date(p.label).toLocaleDateString()}</title>
+        </circle>
+      {/each}
+
+      <!-- x-axis label -->
+      <text x={PAD.left} y={H - 4} font-size="9" fill="#94a3b8">oldest</text>
+      <text x={W - PAD.right} y={H - 4} text-anchor="end" font-size="9" fill="#94a3b8">newest</text>
+    </svg>
+    <p class="chart-legend">
+      <span style="color:#94a3b8">— raw score</span>
+      &nbsp;&nbsp;
+      <span style="color:#3b82f6">— 7-session rolling avg</span>
+      &nbsp;&nbsp;
+      <span style="color:#fbbf24">— 0.7 threshold</span>
+    </p>
+  </div>
+{/if}
 
 <h2>Tool Usage</h2>
 {#if data.toolUsage.length === 0}
@@ -128,6 +258,12 @@
 
 <style>
   h2 { margin: 24px 0 12px; font-size: 1rem; font-weight: 600; color: #374151; }
+  .ftr-summary-row { display: flex; gap: 24px; margin-bottom: 12px; }
+  .ftr-stat { display: flex; flex-direction: column; gap: 2px; }
+  .ftr-stat-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; font-weight: 600; }
+  .ftr-stat-value { font-size: 1.125rem; font-weight: 700; font-family: monospace; color: #1e293b; }
+  .chart-wrap { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px 4px; display: inline-block; }
+  .chart-legend { font-size: 0.7rem; color: #94a3b8; margin: 4px 0 0; }
   .session-list { display: flex; flex-direction: column; gap: 8px; }
   .session-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
   .session-desc { font-size: 0.875rem; color: #1e293b; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
