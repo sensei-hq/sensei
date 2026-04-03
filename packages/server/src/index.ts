@@ -18,3 +18,7 @@ export {
 } from "./model/system-check.js";
 
 export * from "./mcp-server.js";
+
+// Platform auth middleware
+export { resolveCallerContext, handleAuthVerify, callerFilter } from "./auth-middleware.js";
+export type { SessionCallerContext, AuthVerifyResult } from "./auth-middleware.js";
