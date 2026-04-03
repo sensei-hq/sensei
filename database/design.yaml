@@ -8,7 +8,9 @@ project:
 schemas:
   - extensions
   - staging
+  - core
   - sensei
+  - platform
 
 extensions:
   - uuid-ossp
