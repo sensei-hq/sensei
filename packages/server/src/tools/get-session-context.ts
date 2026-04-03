@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { detectCrashedSessions, type CrashedSession } from "@sensei/engine";
 import { getMemoryItems, type MemoryItem } from "@sensei/engine";
+import { detectFtrCoaching, type FtrCoachingHint } from "@sensei/engine";
 import type { Snapshot } from "@sensei/engine";
 
 export interface SessionContextResult {
@@ -22,6 +23,7 @@ export interface SessionContextResult {
     patterns: MemoryItem[];
     openQuestions: MemoryItem[];
   };
+  coaching: FtrCoachingHint[];
   message: string;
 }
 
@@ -44,31 +46,39 @@ export async function getSessionContext(
     .select("*", { count: "exact", head: true })
     .eq("repo_id", repoId);
 
-  const crashed: CrashedSession[] = await detectCrashedSessions(client, repoId);
+  const [crashed, allMemory, coaching] = await Promise.all([
+    detectCrashedSessions(client, repoId),
+    getMemoryItems(client, repoId),
+    detectFtrCoaching(client, repoId),
+  ]);
 
-  const allMemory: MemoryItem[] = await getMemoryItems(client, repoId);
-  const decisions = allMemory.filter(m => m.type === "decision");
-  const patterns = allMemory.filter(m => m.type === "pattern");
-  const openQuestions = allMemory.filter(m => m.type === "question" && m.status === "open");
+  const decisions = allMemory.filter((m: MemoryItem) => m.type === "decision");
+  const patterns = allMemory.filter((m: MemoryItem) => m.type === "pattern");
+  const openQuestions = allMemory.filter((m: MemoryItem) => m.type === "question" && m.status === "open");
 
   const interruptedMsg = crashed.length > 0
     ? ` ${crashed.length} interrupted session(s) detected — check interrupted[] for recovery context.`
     : "";
 
+  const coachingMsg = coaching.length > 0
+    ? ` ${coaching.length} FTR coaching hint(s) — check coaching[] to improve your score.`
+    : "";
+
   return {
-    repo_name: repo?.name ?? "unknown",
+    repo_name: (repo as Record<string, unknown>)?.name as string ?? "unknown",
     repo_path: repoPath,
     symbol_count: symbolCount ?? 0,
     file_count: fileCount ?? 0,
-    last_indexed_at: repo?.last_indexed_at ?? null,
-    stack: repo?.stack ?? [],
+    last_indexed_at: (repo as Record<string, unknown>)?.last_indexed_at as string | null ?? null,
+    stack: (repo as Record<string, unknown>)?.stack as string[] ?? [],
     session_id: sessionId,
-    interrupted: crashed.map(c => ({
+    interrupted: (crashed as CrashedSession[]).map(c => ({
       sessionId: c.id,
       crashedAt: c.lastHeartbeat,
       snapshot: c.latestSnapshot,
     })),
     memory: { decisions, patterns, openQuestions },
-    message: `Repo "${repo?.name ?? "unknown"}" — ${symbolCount ?? 0} symbols across ${fileCount ?? 0} files.${interruptedMsg} Call search() to find code.`,
+    coaching,
+    message: `Repo "${(repo as Record<string, unknown>)?.name as string ?? "unknown"}" — ${symbolCount ?? 0} symbols across ${fileCount ?? 0} files.${interruptedMsg}${coachingMsg} Call search() to find code.`,
   };
 }
