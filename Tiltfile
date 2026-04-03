@@ -51,12 +51,26 @@ local_resource(
     labels=["infra"],
 )
 
-# ── 4. MCP server ──────────────────────────────────────────────────────────────
+# ── 4. Codebase indexing ───────────────────────────────────────────────────────
+# Populates sensei.symbols and sensei.scan_state via the engine indexer.
+# Re-runs on any source file change (broad dep — Tilt will debounce).
+# create-test-user.sh links the auth user to the seeded core.accounts row.
+local_resource(
+    "db-index",
+    cmd=" && ".join([
+        "bash scripts/create-test-user.sh",
+        "bun packages/server/src/e2e-index.ts",
+    ]),
+    resource_deps=["db-seed"],
+    labels=["infra"],
+)
+
+# ── 5. MCP server ──────────────────────────────────────────────────────────────
 # Starts the sensei MCP/HTTP server with hot reload via bun --watch.
 local_resource(
     "mcp-server",
     serve_cmd="bun run --watch packages/server/src/index.ts",
-    resource_deps=["db-seed"],
+    resource_deps=["db-index"],
     labels=["app"],
 )
 
