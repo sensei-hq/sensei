@@ -14,6 +14,7 @@ begin
     , stg.tool, stg.project_path, stg.input, stg.ts
     , coalesce(stg.created_at, now())
   from staging.events stg
+  join sensei.repos r on r.id = stg.repo_id   -- skip rows whose repo hasn't been imported yet
   where stg.user_uuid is not null
     and stg.phase in ('pre', 'post')
   on conflict (id) do nothing;

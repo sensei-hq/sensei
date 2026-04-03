@@ -15,6 +15,7 @@ begin
     , coalesce(stg.promoted, false)
     , coalesce(stg.created_at, now())
   from staging.benchmark_reports stg
+  join sensei.repos r on r.id = stg.repo_id   -- skip rows whose repo hasn't been imported yet
   where stg.run_name is not null
   on conflict (id) do nothing;
 end;
