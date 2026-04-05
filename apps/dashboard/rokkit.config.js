@@ -1,8 +1,8 @@
 export default {
   colors: {
     primary: 'violet',
-    secondary: 'sky',
-    accent: 'pink',
+    secondary: 'teal',
+    accent: 'indigo',
     surface: 'slate',
     success: 'emerald',
     warning: 'amber',

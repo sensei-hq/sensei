@@ -237,6 +237,9 @@ llms_txt:
   - name: apps/dashboard/src/routes/mockups/option-b
     sources:
       - apps/dashboard/src/routes/mockups/option-b/+page.server.ts
+  - name: apps/dashboard/src/routes/mockups/platform
+    sources:
+      - apps/dashboard/src/routes/mockups/platform/+page.server.ts
   - name: apps/dashboard/src/routes/orgs
     sources:
       - apps/dashboard/src/routes/orgs/+page.server.ts
