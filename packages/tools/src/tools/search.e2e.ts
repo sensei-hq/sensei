@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { reindexRepo } from "./reindex.js";
 import { search } from "./search.js";
 import { isAvailable } from "./embedder.js";
+import { loadSenseiConfig } from "@sensei/shared";
 import { join } from "path";
 import { existsSync } from "fs";
 
@@ -13,6 +14,21 @@ describe("search e2e", () => {
   it("reindex + search returns reindex.ts for 'reindex repository' query", async () => {
     if (!existsSync(join(SENSEI_ROOT, ".git"))) {
       console.warn("E2E: not in a git repo, skipping");
+      return;
+    }
+
+    const config = await loadSenseiConfig(SENSEI_ROOT);
+    if (!config) {
+      console.warn("E2E: no .sensei/config.yaml found — skipping (requires configured DB)");
+      return;
+    }
+
+    // Check DB reachability before running (supabase may be configured but not started)
+    try {
+      const res = await fetch(`${config.supabase_url}/rest/v1/`, { signal: AbortSignal.timeout(2000) });
+      if (!res.ok && res.status !== 401) throw new Error(`status ${res.status}`);
+    } catch {
+      console.warn("E2E: Supabase not reachable at", config.supabase_url, "— skipping");
       return;
     }
 
