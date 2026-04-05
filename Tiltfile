@@ -13,10 +13,20 @@ DB_DIR   = "database"
 GRANTS   = DB_DIR + "/ddl/grants.ddl"
 
 # ── 1. Supabase ────────────────────────────────────────────────────────────────
-# supabase start is idempotent — safe to re-run when already running.
+# Ensures the sensei supabase project is running.
+# If it is already up, skip. If another project is occupying Docker, stop it first.
 local_resource(
     "supabase",
-    serve_cmd="supabase start",
+    serve_cmd="""
+set -e
+if supabase status 2>/dev/null | grep -q 'API URL'; then
+  echo 'Sensei supabase already running — skipping start'
+else
+  supabase stop --no-backup 2>/dev/null || true
+  supabase start
+fi
+tail -f /dev/null
+""",
     readiness_probe=probe(
         period_secs=5,
         exec=exec_action(["supabase", "status"]),
@@ -77,7 +87,7 @@ local_resource(
 # ── 5. Dashboard (SvelteKit dev server) ────────────────────────────────────────
 local_resource(
     "dashboard",
-    serve_cmd="bun run dev --filter=dashboard",
+    serve_cmd="bun --filter=dashboard run dev",
     resource_deps=["supabase"],
     labels=["app"],
 )
