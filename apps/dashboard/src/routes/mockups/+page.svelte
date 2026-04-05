@@ -3,14 +3,20 @@
 
   const mockups = [
     {
+      href: '/mockups/platform',
+      label: 'Platform',
+      description: 'Full app shell — Developer dashboard, Org admin, and Platform admin views with sidebar nav, FTR ring, session table, and tenant list.',
+      tag: 'dashboard',
+    },
+    {
       href: '/mockups/option-a',
-      label: 'Option A',
+      label: 'Landing A',
       description: 'Minimal, developer-focused landing. Terminal snippet, feature grid, how-it-works steps.',
       tag: 'landing',
     },
     {
       href: '/mockups/option-b',
-      label: 'Option B',
+      label: 'Landing B',
       description: 'Visual, marketing-style landing. Split hero with stats mockup, deep-dive feature sections.',
       tag: 'landing',
     },
