@@ -1,5 +1,8 @@
 set search_path to sensei, extensions;
 
+-- Drop first so we can change/add parameter defaults without SQLSTATE 42P13.
+drop function if exists match_embeddings cascade;
+
 -- Vector similarity search against file embeddings.
 -- Requires the 'vector' extension and populated embeddings table.
 create or replace function match_embeddings(
