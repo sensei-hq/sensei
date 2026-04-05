@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { reindexRepo } from "./reindex.js";
 import { search } from "./search.js";
 import { isAvailable } from "./embedder.js";
-import { loadSenseiConfig } from "@sensei/shared";
+import { loadSenseiConfig, loadCredentials } from "@sensei/shared";
 import { join } from "path";
 import { existsSync } from "fs";
 
@@ -30,6 +30,21 @@ describe("search e2e", () => {
     } catch {
       console.warn("E2E: Supabase not reachable at", config.supabase_url, "— skipping");
       return;
+    }
+
+    // Check that sensei schema is set up (dbd apply may not have run yet)
+    const creds = await loadCredentials();
+    if (creds) {
+      try {
+        const res = await fetch(
+          `${config.supabase_url}/rest/v1/symbols?limit=1`,
+          { headers: { apikey: creds.supabase_service_key, Authorization: `Bearer ${creds.supabase_service_key}` }, signal: AbortSignal.timeout(2000) }
+        );
+        if (!res.ok) throw new Error(`status ${res.status}`);
+      } catch {
+        console.warn("E2E: sensei schema not ready (run dbd apply + dbd grants first) — skipping");
+        return;
+      }
     }
 
     await reindexRepo(SENSEI_ROOT);
