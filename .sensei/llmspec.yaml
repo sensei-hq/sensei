@@ -566,6 +566,10 @@ llms_txt:
   - name: packages/server/src
     sources:
       - packages/server/src/auth-middleware.ts
+      - packages/server/src/e2e-coaching.ts
+      - packages/server/src/e2e-collector.ts
+      - packages/server/src/e2e-context.ts
+      - packages/server/src/e2e-index.ts
       - packages/server/src/e2e-session.ts
       - packages/server/src/mcp-server.ts
       - packages/server/src/otlp-endpoint.ts
