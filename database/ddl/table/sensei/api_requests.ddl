@@ -14,6 +14,8 @@ create table if not exists api_requests (
 , duration_ms             int
 , model                   text
 , recorded_at             timestamptz   not null default now()
+, modified_at             timestamptz   not null default now()
+, modified_by             text          not null default current_user
 );
 
 create index if not exists api_requests_repo_recorded_idx
@@ -34,3 +36,19 @@ comment on table api_requests is
 - benchmark_run_id: linked benchmark run if this call occurred during a benchmark
 - cost_usd: total cost for this API call as reported by Claude Code
 - cache_*_tokens: separate cache read vs cache creation token counts for cost breakdown';
+
+comment on column api_requests.id is 'Surrogate primary key (UUID).';
+comment on column api_requests.repo_id is 'Foreign key to sensei.repos — scopes this row to a specific repository.';
+comment on column api_requests.task_session_id is 'Optional FK to sensei.task_sessions — the sensei session active when this API call was made.';
+comment on column api_requests.benchmark_run_id is 'Optional FK to sensei.benchmark_runs — the benchmark run during which this API call was made.';
+comment on column api_requests.prompt_id is 'Claude Code prompt or task identifier extracted from the OTel attribute.';
+comment on column api_requests.input_tokens is 'Number of input tokens consumed by this API call.';
+comment on column api_requests.output_tokens is 'Number of output tokens produced by this API call.';
+comment on column api_requests.cache_read_tokens is 'Number of prompt-cache read tokens used by this API call.';
+comment on column api_requests.cache_creation_tokens is 'Number of prompt-cache creation tokens used by this API call.';
+comment on column api_requests.cost_usd is 'Total cost of this API call in USD as reported by Claude Code.';
+comment on column api_requests.duration_ms is 'Wall-clock duration of this API call in milliseconds.';
+comment on column api_requests.model is 'Model identifier used for this API call (e.g. claude-3-5-sonnet-20241022).';
+comment on column api_requests.recorded_at is 'Timestamp when this API call was recorded by the telemetry pipeline.';
+comment on column api_requests.modified_at is 'Timestamp of the last modification to this row.';
+comment on column api_requests.modified_by is 'Identity (user, role, or service) that last modified this row.';

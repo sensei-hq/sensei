@@ -13,6 +13,7 @@ create table if not exists libraries (
 , llms_txt_fetched_at timestamptz
 , embedding           vector(384)   -- on description
 , modified_at         timestamptz not null default now()
+, modified_by         text        not null default current_user
 , unique(ecosystem, name)
 );
 
@@ -26,3 +27,17 @@ comment on table libraries is
 - ecosystem: npm | pypi | cargo | go
 - llms_txt: cached content from llms_txt_url
 - embedding: 384-dim vector on description for similarity search';
+
+comment on column libraries.id is 'Surrogate primary key (UUID).';
+comment on column libraries.name is 'Package name within the ecosystem (e.g. "react", "lodash").';
+comment on column libraries.ecosystem is 'Package registry the library belongs to: npm, pypi, cargo, or go.';
+comment on column libraries.version is 'Pinned or latest-known version string for this library entry.';
+comment on column libraries.description is 'Human-readable description of the library''s purpose.';
+comment on column libraries.homepage_url is 'URL of the library''s official homepage or repository.';
+comment on column libraries.docs_url is 'URL of the library''s primary documentation site.';
+comment on column libraries.llms_txt_url is 'URL where the library''s llms.txt file can be fetched.';
+comment on column libraries.llms_txt is 'Cached content fetched from llms_txt_url.';
+comment on column libraries.llms_txt_fetched_at is 'Timestamp when llms_txt was last successfully fetched.';
+comment on column libraries.embedding is '384-dimensional vector embedding computed from the description for similarity search.';
+comment on column libraries.modified_at is 'Timestamp of the last modification to this row.';
+comment on column libraries.modified_by is 'Identity (user, role, or service) that last modified this row.';

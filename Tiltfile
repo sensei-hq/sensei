@@ -26,19 +26,21 @@ local_resource(
 )
 
 # ── 2. Database setup (dbd) ───────────────────────────────────────────────────
-# reset → apply → grants → import, all from the database/ directory.
-# Re-runs automatically when DDL files, import data, or design.yaml change.
+# reset → apply → grants → policies → import
+# Re-runs automatically when DDL files, policies, import data, or design.yaml change.
 local_resource(
     "db:setup",
     cmd=(
         "cd " + DB_DIR + " && " +
         "DATABASE_URL={url} dbd reset && " +
         "DATABASE_URL={url} dbd apply && " +
-        "DATABASE_URL={url} dbd grants && " +
+        "DATABASE_URL={url} dbd grants --target supabase && " +
+        "DATABASE_URL={url} dbd policies && " +
         "DATABASE_URL={url} dbd import"
     ).format(url=DATABASE_URL),
     deps=[
         DB_DIR + "/ddl",
+        DB_DIR + "/policies",
         DB_DIR + "/import",
         DB_DIR + "/design.yaml",
     ],

@@ -10,6 +10,7 @@ create table if not exists chunks (
 , token_count integer
 , metadata    jsonb
 , modified_at timestamptz not null default now()
+, modified_by text        not null default current_user
 , unique(repo_id, file_path, chunk_index)
 );
 
@@ -25,3 +26,14 @@ comment on table chunks is
 - HNSW index for fast vector similarity search (cosine distance)
 - 384-dim embeddings from local model
 - metadata: {type: "symbol"|"doc", contentHash, tf}';
+
+comment on column chunks.id is 'Surrogate primary key (UUID).';
+comment on column chunks.repo_id is 'Foreign key to sensei.repos — scopes this row to a specific repository.';
+comment on column chunks.file_path is 'Repository-relative path of the source file this chunk was extracted from.';
+comment on column chunks.chunk_index is 'Zero-based position of this chunk within its source file.';
+comment on column chunks.content is 'Raw text content of this chunk as extracted from the source file.';
+comment on column chunks.embedding is '384-dimensional vector embedding of the chunk content for semantic similarity search.';
+comment on column chunks.token_count is 'Number of tokens in this chunk as counted by the embedding model tokenizer.';
+comment on column chunks.metadata is 'JSON metadata for the chunk, e.g. {type: "symbol"|"doc", contentHash, tf}.';
+comment on column chunks.modified_at is 'Timestamp of the last modification to this row.';
+comment on column chunks.modified_by is 'Identity (user, role, or service) that last modified this row.';

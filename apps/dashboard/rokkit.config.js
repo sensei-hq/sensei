@@ -11,6 +11,9 @@ export default {
     info: 'sky'
   },
   themes: ['rokkit'],
+  icons: {
+    auth: '@rokkit/icons/auth.json',
+  },
   switcher: 'manual',
   storageKey: 'sensei-theme'
 }
