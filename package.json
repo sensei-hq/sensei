@@ -15,7 +15,10 @@
     "bump": "bumpp --configFilePath config/bump.config.js",
     "bump:next": "bumpp --configFilePath config/bump.config.js --preid=next",
     "plugin:install": "bun run plugin/scripts/install.ts",
-    "plugin:uninstall": "bun run plugin/scripts/uninstall.ts"
+    "plugin:uninstall": "bun run plugin/scripts/uninstall.ts",
+    "upgrade:apps": "find ./apps -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
+    "upgrade:packages": "find ./packages -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
+    "upgrade:all": "bun upgrade:packages && bun upgrade:apps"
   },
   "overrides": {
     "@kavach/sentry": "1.0.0-next.36",
@@ -26,11 +29,14 @@
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
-    "@vitest/coverage-v8": "4.0.18",
-    "bumpp": "^10.2.3",
+    "@vitest/coverage-v8": "4.1.2",
+    "bumpp": "^11.0.1",
     "coverage-v8": "^0.0.1-security",
     "js-yaml": "^4.1.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  },
+  "dependencies": {
+    "@rokkit/ui": "^1.0.0-next.149"
   }
 }
