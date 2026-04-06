@@ -2,6 +2,7 @@
   import { List } from '@rokkit/ui';
   import { ThemeSwitcherToggle } from '@rokkit/app';
   import { vibe } from '@rokkit/states';
+  import type { ProxyItem } from '@rokkit/states';
   import { themable } from '@rokkit/actions';
   import type { PageData } from './$types';
 
@@ -296,10 +297,10 @@
           <List
             items={repoListItems}
             value={selectedId}
-            onselect={(v) => { selectedId = v as string; repoTab = 'sessions'; }}
+            onselect={(v: string) => { selectedId = v; repoTab = 'sessions'; }}
             class="py-1"
           >
-            {#snippet itemContent(proxy)}
+            {#snippet itemContent(proxy: ProxyItem)}
               <div class="flex w-full items-center gap-2.5 py-0.5">
                 <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-surface-z3 text-xs font-bold text-surface-z7">
                   {(proxy.label as string).charAt(0).toUpperCase()}
@@ -327,10 +328,10 @@
           <List
             items={libListItems}
             value={selectedId}
-            onselect={(v) => { selectedId = v as string; }}
+            onselect={(v: string) => { selectedId = v; }}
             class="py-1"
           >
-            {#snippet itemContent(proxy)}
+            {#snippet itemContent(proxy: ProxyItem)}
               <div class="flex w-full items-center gap-2.5 py-0.5">
                 <span class="mt-1 h-2 w-2 shrink-0 rounded-full
                   {proxy.get('status') === 'indexed' ? 'bg-success-z5'
@@ -349,7 +350,7 @@
           </List>
         {/if}
 
-      <!-- ── Analytics (recent sessions list) ──────────────────── -->
+      <!-- ── Analytics (recent sessions list) ──────────────────────── -->
       {:else if rail === 'analytics'}
         {#if allWsSessions.length === 0}
           <p class="px-4 py-6 text-sm text-surface-z4">No sessions in the last 30 days.</p>
@@ -357,13 +358,13 @@
           <List
             items={sessionListItems}
             class="py-1"
-            onselect={(v, proxy) => {
+            onselect={(v: string, proxy: ProxyItem) => {
               rail = 'repos';
               selectedId = proxy.get('repoId') as string;
               repoTab = 'sessions';
             }}
           >
-            {#snippet itemContent(proxy)}
+            {#snippet itemContent(proxy: ProxyItem)}
               <div class="flex w-full items-start gap-2 py-0.5">
                 <span class="mt-0.5 shrink-0 rounded bg-surface-z3 px-1.5 py-0.5 font-mono text-xs text-surface-z6">
                   {proxy.get('repoName')}
@@ -388,7 +389,7 @@
           items={settingsListItems}
           class="py-1"
         >
-          {#snippet itemContent(proxy)}
+          {#snippet itemContent(proxy: ProxyItem)}
             <div class="flex w-full items-center gap-3 py-0.5">
               <div class="min-w-0 flex-1">
                 <p class="text-sm font-medium text-surface-z8">{proxy.label}</p>

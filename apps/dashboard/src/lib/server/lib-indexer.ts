@@ -56,7 +56,8 @@ async function runFetch(db: AnySupabaseClient, lib: LibInfo): Promise<void> {
     const pages = await adapter.fetch(entry);
 
     // Phase 1: no backend → sections stored without embeddings
-    const { documentsIndexed, sectionsIndexed } = await new LibIndexer(db, null).indexShared(lib.id, entry, pages);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { documentsIndexed, sectionsIndexed } = await new LibIndexer(db as any, null).indexShared(lib.id, entry, pages);
 
     await db
       .from('libraries')

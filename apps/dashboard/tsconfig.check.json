@@ -11,7 +11,14 @@
 		"sourceMap": true,
 		"strict": true,
 		"moduleResolution": "bundler",
-		"types": ["bun"]
+		"types": ["bun"],
+		"paths": {
+			"$lib": ["./src/lib"],
+			"$lib/*": ["./src/lib/*"],
+			"@rokkit/ui": ["./src/lib/rokkit-stubs"],
+			"@rokkit/app": ["./src/lib/rokkit-stubs"],
+			"@rokkit/actions": ["./src/lib/rokkit-stubs"]
+		}
 	},
 	"exclude": [
 		"node_modules/**",
