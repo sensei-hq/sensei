@@ -5,8 +5,25 @@ project:
   staging:
     - staging
 
+external:
+  - name: auth.users
+    note: Supabase built-in authentication table
+    columns:
+      - id: uuid
+  - name: auth.identities
+    note: Supabase built-in identity table
+    columns:
+      - id: uuid
+      - user_id: uuid
+
+supabase:
+  - core
+  - sensei
+  - platform
+
 schemas:
   - extensions
+  - public
   - staging
   - core
   - sensei
@@ -19,6 +36,6 @@ extensions:
 import:
   options:
     truncate: true
-    nullValue: ''
+    nullValue: ""
   after:
     - import/loader.sql

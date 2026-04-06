@@ -20,13 +20,7 @@
     "upgrade:packages": "find ./packages -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
     "upgrade:all": "bun upgrade:packages && bun upgrade:apps"
   },
-  "overrides": {
-    "@kavach/sentry": "1.0.0-next.36",
-    "@kavach/cookie": "1.0.0-next.36",
-    "@kavach/hashing": "1.0.0-next.36",
-    "@kavach/logger": "1.0.0-next.36",
-    "@kavach/query": "1.0.0-next.36"
-  },
+  "overrides": {},
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@vitest/coverage-v8": "4.1.2",
@@ -37,6 +31,6 @@
     "vitest": "^4.1.2"
   },
   "dependencies": {
-    "@rokkit/ui": "^1.0.0-next.149"
+    "@rokkit/ui": "link:@rokkit/ui"
   }
 }

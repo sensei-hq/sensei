@@ -1,22 +1,45 @@
 export default {
-  adapter: 'supabase',
-  env: { url: 'PUBLIC_SUPABASE_URL', anonKey: 'PUBLIC_SUPABASE_ANON_KEY' },
-  app: {
-    home: '/home',
-    login: '/auth',
-    logout: '/logout',
-    session: '/auth/session',
-    data: '/data',
-  },
-  // Phase 1: all routes public. Phase 9 adds role-based protection.
-  rules: [
-    { path: '/', public: true },
-    { path: '/home', public: true },
-    { path: '/data', public: true },
-    { path: '/mockups', public: true },
-    { path: '/api/mockups', public: true },
-  ],
-  providers: [
-    { mode: 'password', name: 'email', label: 'Sign in with Email' },
-  ],
+	adapter: 'supabase',
+	providers: [
+		{
+			mode: 'password',
+			name: 'email',
+			label: 'Sign in with Email'
+		}
+	],
+	cachedLogins: false,
+	env: {
+		url: 'PUBLIC_SUPABASE_URL',
+		anonKey: 'PUBLIC_SUPABASE_ANON_KEY'
+	},
+	routes: {
+		auth: '/auth',
+		data: '/data',
+		rpc: '/rpc',
+		logout: '/logout',
+		home: '/home',
+		session: '/auth/session'
+	},
+	rules: [
+		{
+			path: '/',
+			public: true
+		},
+		{
+			path: '/data',
+			public: true
+		},
+		{
+			path: '/mockups',
+			public: true
+		},
+		{
+			path: '/api/mockups',
+			public: true
+		},
+		{
+			path: '/platform',
+			roles: ['platform_admin']
+		}
+	]
 }
