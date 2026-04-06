@@ -10,9 +10,13 @@ call staging.import_libraries();
 call staging.import_events();
 call staging.import_benchmark_reports();
 
--- Phase 3: Platform seed data (account for local dev)
--- profile_accounts is NOT seeded here — it requires a real auth.users row.
+-- Phase 3: Core accounts and teams (no auth.users dependency)
+-- profiles, profile_accounts, and team_members require real auth.users rows.
 -- After reset, run: bash scripts/create-test-user.sh
+call staging.import_accounts();
+call staging.import_teams();
+
+-- Legacy individual dev account (kept for MCP server compatibility)
 insert into core.accounts (id, slug, display_name, account_type)
 values (
   '00000002-0000-0000-0000-000000000001',
