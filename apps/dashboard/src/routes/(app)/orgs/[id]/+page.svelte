@@ -20,26 +20,24 @@
 
   const memberColumns = [
     { name: 'name', label: 'Name', sortable: true },
-    { name: 'email', label: 'Email', sortable: true },
     { name: 'role', label: 'Role', sortable: true },
-    { name: 'teamsDisplay', label: 'Teams', sortable: false },
     { name: 'joinedDisplay', label: 'Joined', sortable: true },
   ];
 
-  const memberRows = $derived(data.members.map(m => ({
+  const memberRows = $derived((data.members as { id: string; name: string; slug: string; avatarUrl: string | null; role: string; joinedAt: string }[]).map(m => ({
     ...m,
-    teamsDisplay: m.teams.join(', '),
-    joinedDisplay: new Date(m.joinedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+    joinedDisplay: m.joinedAt
+      ? new Date(m.joinedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      : '—',
   })));
 
   const repoColumns = [
     { name: 'name', label: 'Name', sortable: true },
-    { name: 'provider', label: 'Provider', sortable: true },
     { name: 'remoteUrl', label: 'Remote URL', sortable: false },
     { name: 'lastIndexedDisplay', label: 'Last Indexed', sortable: true },
   ];
 
-  const repoRows = $derived(data.repos.map(r => ({
+  const repoRows = $derived((data.repos as { id: string; name: string; remoteUrl: string | null; stack: string[] | null; lastIndexedAt: string | null }[]).map(r => ({
     ...r,
     lastIndexedDisplay: r.lastIndexedAt
       ? new Date(r.lastIndexedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -60,28 +58,28 @@
 <div class="flex items-start justify-between gap-4 mb-6">
   <div>
     <h1 class="text-2xl font-semibold text-surface-z8 mb-1">{data.org.name}</h1>
-    <p class="text-sm text-surface-z5">{data.org.description}</p>
+    <p class="text-sm text-surface-z5 font-mono">{data.org.slug}</p>
   </div>
-  <span class={planBadgeClass(data.org.plan)}>{data.org.plan}</span>
+  <span class={planBadgeClass(data.org.plan ?? '')}>{data.org.plan}</span>
 </div>
 
 <Tabs options={tabOptions} bind:value={activeTab} />
 
 <div class="mt-6">
   {#if activeTab === 'overview'}
-    <!-- Stat cards -->
+    <!-- Summary counts -->
     <div class="grid gap-3 mb-8" style="grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); max-width: 520px">
       <div class="p-4 rounded-lg border border-surface-z3 bg-surface-z1 text-center">
-        <div class="text-2xl font-semibold text-primary-z6 leading-tight mb-1">{data.stats.totalSessions}</div>
-        <div class="text-xs uppercase tracking-wider text-surface-z5">Sessions</div>
+        <div class="text-2xl font-semibold text-primary-z6 leading-tight mb-1">{data.members.length}</div>
+        <div class="text-xs uppercase tracking-wider text-surface-z5">Members</div>
       </div>
       <div class="p-4 rounded-lg border border-surface-z3 bg-surface-z1 text-center">
-        <div class="text-2xl font-semibold text-primary-z6 leading-tight mb-1">${data.stats.totalCostUsd.toFixed(2)}</div>
-        <div class="text-xs uppercase tracking-wider text-surface-z5">Total Cost</div>
+        <div class="text-2xl font-semibold text-primary-z6 leading-tight mb-1">{data.teams.length}</div>
+        <div class="text-xs uppercase tracking-wider text-surface-z5">Teams</div>
       </div>
       <div class="p-4 rounded-lg border border-surface-z3 bg-surface-z1 text-center">
-        <div class="text-2xl font-semibold text-primary-z6 leading-tight mb-1">{(data.stats.avgFtrScore * 100).toFixed(0)}%</div>
-        <div class="text-xs uppercase tracking-wider text-surface-z5">Avg FTR</div>
+        <div class="text-2xl font-semibold text-primary-z6 leading-tight mb-1">{data.repos.length}</div>
+        <div class="text-xs uppercase tracking-wider text-surface-z5">Repos</div>
       </div>
     </div>
 
@@ -95,19 +93,11 @@
           </div>
           <div class="flex justify-between">
             <span class="text-surface-z5">Plan</span>
-            <span class={planBadgeClass(data.org.plan)}>{data.org.plan}</span>
+            <span class={planBadgeClass(data.org.plan ?? '')}>{data.org.plan}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-surface-z5">Created</span>
             <span class="text-surface-z7">{new Date(data.org.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-surface-z5">Members</span>
-            <span class="text-surface-z7">{data.members.length}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-surface-z5">Teams</span>
-            <span class="text-surface-z7">{data.teams.length}</span>
           </div>
         </div>
       </div>
@@ -120,26 +110,29 @@
         Create Team
       </button>
     </div>
-    <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr))">
-      {#each data.teams as team}
-        <a
-          href="/orgs/{data.org.id}/teams/{team.id}"
-          class="flex flex-col p-4 rounded-lg border border-surface-z3 bg-surface-z1 no-underline transition-colors hover:border-primary-z5 hover:bg-surface-z2"
-        >
-          <div class="font-semibold text-surface-z8 mb-1">{team.name}</div>
-          <p class="text-xs text-surface-z5 mb-3 leading-snug">{team.description}</p>
-          <div class="flex gap-3 text-xs mt-auto">
-            <span class="text-surface-z4">members <span class="font-medium text-surface-z7">{team.memberCount}</span></span>
-            <span class="text-surface-z3">·</span>
-            <span class="text-surface-z4">repos <span class="font-medium text-surface-z7">{team.repoCount}</span></span>
-          </div>
-        </a>
-      {/each}
-    </div>
+    {#if data.teams.length === 0}
+      <p class="text-sm text-surface-z4">No teams yet.</p>
+    {:else}
+      <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr))">
+        {#each (data.teams as { id: string; name: string; slug: string }[]) as team}
+          <a
+            href="/team/{team.slug}"
+            class="flex flex-col p-4 rounded-lg border border-surface-z3 bg-surface-z1 no-underline transition-colors hover:border-primary-z5 hover:bg-surface-z2"
+          >
+            <div class="font-semibold text-surface-z8">{team.name}</div>
+            <p class="text-xs text-surface-z5 mt-1 font-mono">{team.slug}</p>
+          </a>
+        {/each}
+      </div>
+    {/if}
 
   {:else if activeTab === 'members'}
     <h2 class="text-xs font-semibold text-surface-z5 uppercase tracking-wider mb-3">Members ({data.members.length})</h2>
-    <Table data={memberRows} columns={memberColumns} />
+    {#if data.members.length === 0}
+      <p class="text-sm text-surface-z4">No members yet.</p>
+    {:else}
+      <Table data={memberRows} columns={memberColumns} />
+    {/if}
 
   {:else if activeTab === 'repos'}
     <div class="flex items-center justify-between mb-3">
@@ -148,7 +141,11 @@
         Add Repo
       </button>
     </div>
-    <Table data={repoRows} columns={repoColumns} />
+    {#if data.repos.length === 0}
+      <p class="text-sm text-surface-z4">No repos indexed for this org yet.</p>
+    {:else}
+      <Table data={repoRows} columns={repoColumns} />
+    {/if}
   {/if}
 </div>
 
