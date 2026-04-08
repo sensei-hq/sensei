@@ -38,6 +38,7 @@ export const load: PageServerLoad = async ({ fetch, locals }) => {
   const { data: accounts }    = await accountRes.json();
   const { data: apiRequests } = await costRes.json();
 
+  const isNewUser = (repos ?? []).length === 0 && (sessions ?? []).length === 0;
   const orgName = accounts?.[0]?.account?.display_name ?? '';
   const orgRole = accounts?.[0]?.role ?? '';
 
@@ -69,6 +70,7 @@ export const load: PageServerLoad = async ({ fetch, locals }) => {
     userName: user?.full_name ?? user?.email ?? 'You',
     orgName,
     orgRole,
+    isNewUser,
     email:    user?.email ?? '',
     ftr:      avgFtr,
     stats,

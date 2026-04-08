@@ -3,7 +3,7 @@
 #
 # Usage:
 #   tilt up          — start everything
-#   tilt down        — stop everything (keeps Supabase containers)
+#   tilt down        — stop everything (including Supabase)
 #   tilt up --stream — follow logs inline
 #
 # Prerequisites: supabase CLI, dbd, bun all on PATH
@@ -16,7 +16,8 @@ DB_DIR       = "database"
 # Re-running when already started is a no-op (exits 0).
 local_resource(
     "supabase",
-    cmd="supabase start",
+    cmd="supabase start --workdir .",
+    serve_teardown_cmd="supabase stop --workdir .",
     links=[
         link("http://127.0.0.1:54323", "Studio"),
         link("http://127.0.0.1:54321", "Supabase API"),

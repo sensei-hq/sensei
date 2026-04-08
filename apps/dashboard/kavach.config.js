@@ -38,6 +38,18 @@ export default {
 			public: true
 		},
 		{
+			path: '/connect',
+			public: true
+		},
+		{
+			path: '/setup',
+			public: true
+		},
+		{
+			path: '/orgs',
+			public: true
+		},
+		{
 			path: '/platform',
 			roles: ['platform_admin']
 		}
