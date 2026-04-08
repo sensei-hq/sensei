@@ -6,13 +6,20 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            #[cfg(debug_assertions)]
+            let window = app.get_webview_window("main").unwrap();
+
+            #[cfg(target_os = "macos")]
             {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
+                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None)
+                    .expect("Failed to apply vibrancy");
             }
+
+            #[cfg(debug_assertions)]
+            window.open_devtools();
+
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running sensei desktop");
+        .expect("error while running sensei desktop")
 }
