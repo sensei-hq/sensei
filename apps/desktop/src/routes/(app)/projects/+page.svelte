@@ -8,7 +8,8 @@
   let viewMode = $state<ViewMode>('split');
 
   // Selection
-  let selectedId = $state<string | null>(data.projects[0]?.id ?? null);
+  let selectedId = $state<string | null>(null);
+  $effect(() => { if (selectedId === null && data.projects[0]) selectedId = data.projects[0].id; });
   let selectedCardId = $state<string | null>(null);
   let activeTab = $state<'cards' | 'graph' | 'sessions'>('cards');
 
