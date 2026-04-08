@@ -1,0 +1,56 @@
+@import '@unocss/reset/tailwind.css';
+
+/* macOS system font stack */
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  /* Transparent bg lets Tauri vibrancy show through on macOS */
+  background: transparent;
+}
+
+/* Traffic light safe area — macOS overlay title bar adds ~28px of buttons */
+.titlebar-area {
+  height: env(titlebar-area-height, 28px);
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* Draggable region for window movement */
+.drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* No-drag for interactive elements inside drag regions */
+.no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* Subtle sidebar vibrancy overlay */
+.sidebar-vibrancy {
+  background: color-mix(in srgb, var(--color-surface-z2) 85%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Scrollbar styling — macOS-native thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-z4, #64748b) transparent;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-surface-z4, #64748b); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-surface-z5, #94a3b8); }
+
+/* Selection color */
+::selection {
+  background: color-mix(in srgb, var(--color-primary-z6, #7c3aed) 30%, transparent);
+}
