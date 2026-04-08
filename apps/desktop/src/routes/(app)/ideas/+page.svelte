@@ -33,6 +33,35 @@
     </div>
 
     <div class="flex-1 overflow-y-auto px-4 py-4">
+
+      <!-- Idea-tagged repos from scan -->
+      {#if data.ideaRepos?.length > 0}
+        <div class="mb-4">
+          <p class="text-[10px] font-semibold uppercase tracking-widest text-surface-z4 mb-2">From your repos</p>
+          <div class="flex flex-col gap-1.5">
+            {#each data.ideaRepos as repo}
+              <div class="flex items-center gap-2.5 rounded-xl border border-surface-z3/60 bg-surface-z2/50 px-3.5 py-2.5 hover:bg-surface-z2 transition-colors">
+                <span class="i-solar-lightbulb-bolt-bold-duotone text-base text-warning-z6 shrink-0"></span>
+                <div class="min-w-0 flex-1">
+                  <span class="text-sm font-medium text-surface-z8">{repo.name}</span>
+                  {#if repo.description}
+                    <p class="text-xs text-surface-z4 truncate">{repo.description}</p>
+                  {/if}
+                </div>
+                {#each repo.tech_stack.slice(0, 2) as t}
+                  <span class="text-[10px] bg-surface-z3 text-surface-z5 px-1.5 py-0.5 rounded shrink-0">{t}</span>
+                {/each}
+                <span class="text-[10px] bg-warning-z2 text-warning-z7 rounded-full px-1.5 py-0.5 shrink-0">idea</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Tracked ideas -->
+      {#if data.ideas.length > 0}
+        <p class="text-[10px] font-semibold uppercase tracking-widest text-surface-z4 mb-2">Tracked ideas</p>
+      {/if}
       <div class="grid grid-cols-2 gap-3 xl:grid-cols-3">
         {#each data.ideas as idea (idea.id)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -104,6 +133,14 @@
           <p class="mt-1 text-xs text-surface-z4">Start with a name and description</p>
         </button>
       </div>
+
+      {#if data.ideas.length === 0 && (data.ideaRepos?.length ?? 0) === 0}
+        <div class="flex flex-col items-center justify-center py-16 gap-3 text-center">
+          <span class="i-solar-lightbulb-bold-duotone text-3xl text-surface-z3"></span>
+          <p class="text-sm text-surface-z5">No ideas yet</p>
+          <p class="text-xs text-surface-z4">Repos tagged as "idea" during import will appear here</p>
+        </div>
+      {/if}
     </div>
 
     <!-- Prompt bar -->

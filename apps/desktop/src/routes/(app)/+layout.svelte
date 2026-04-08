@@ -4,11 +4,11 @@
   let { children } = $props();
 
   const navItems = [
-    { icon: 'i-solar-planets-bold-duotone',      label: 'Projects', href: '/projects'  },
-    { icon: 'i-solar-lightbulb-bold-duotone',    label: 'Ideas',    href: '/ideas'     },
-    { icon: 'i-solar-history-bold-duotone',      label: 'Sessions', href: '/sessions'  },
-    { icon: 'i-solar-graph-up-bold-duotone',     label: 'Graph',    href: '/graph'     },
-    { icon: 'i-solar-library-bold-duotone',      label: 'Libraries', href: '/libraries' },
+    { icon: 'i-solar-folder-with-files-bold-duotone', label: 'Projects',  href: '/projects'  },
+    { icon: 'i-solar-lightbulb-bold-duotone',         label: 'Ideas',     href: '/ideas'     },
+    { icon: 'i-solar-history-bold-duotone',           label: 'Sessions',  href: '/sessions'  },
+    { icon: 'i-solar-graph-up-bold-duotone',          label: 'Graph',     href: '/graph'     },
+    { icon: 'i-solar-box-bold-duotone',               label: 'Libraries', href: '/libraries' },
   ];
 </script>
 
@@ -43,14 +43,12 @@
 
       <div class="pt-4">
         <p class="mb-1.5 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Tools</p>
-        <button class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-surface-z5 no-drag transition-colors hover:bg-surface-z3/60 hover:text-surface-z7">
+        <a href="/settings#ai-editors"
+          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
+                 {$page.url.pathname === '/settings' ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
           <span class="text-base i-solar-cpu-bold-duotone"></span>
-          Coordinators
-        </button>
-        <button class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-surface-z5 no-drag transition-colors hover:bg-surface-z3/60 hover:text-surface-z7">
-          <span class="text-base i-solar-chat-square-bold-duotone"></span>
-          Prompt Bar
-        </button>
+          AI Editors
+        </a>
       </div>
     </nav>
 
