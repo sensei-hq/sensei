@@ -502,6 +502,119 @@ fn find_variants(repos: &mut Vec<AnalyzedRepo>) {
     }
 }
 
+// ── Dependency detection ───────────────────────────────────────────────────
+
+#[derive(serde::Serialize, Clone)]
+pub struct DetectedDep {
+    name: String,
+    file_count: usize,
+    total_files: usize,
+    usage_pct: f32,
+}
+
+/// Scan a repo's source files and return external package import counts.
+#[tauri::command]
+fn detect_dependencies(path: String) -> Vec<DetectedDep> {
+    let path = shellexpand::tilde(&path).to_string();
+    let root = std::path::Path::new(&path);
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut total: usize = 0;
+    collect_imports(root, &mut counts, &mut total);
+    if total == 0 { return vec![]; }
+    let mut deps: Vec<DetectedDep> = counts
+        .into_iter()
+        .map(|(name, file_count)| DetectedDep {
+            usage_pct: ((file_count as f32 / total as f32) * 1000.0).round() / 10.0,
+            name,
+            file_count,
+            total_files: total,
+        })
+        .collect();
+    deps.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+    deps.truncate(60);
+    deps
+}
+
+fn collect_imports(
+    dir: &std::path::Path,
+    counts: &mut std::collections::HashMap<String, usize>,
+    total: &mut usize,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    let mut children: Vec<_> = entries.flatten().collect();
+    children.sort_by_key(|e| e.file_name());
+    for entry in children {
+        let path = entry.path();
+        if path.is_dir() {
+            if !is_ignored(&path) {
+                collect_imports(&path, counts, total);
+            }
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if matches!(ext, "ts" | "tsx" | "js" | "jsx" | "svelte" | "vue") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    *total += 1;
+                    let pkgs = extract_file_imports(&content);
+                    let mut seen = std::collections::HashSet::new();
+                    for pkg in pkgs {
+                        if seen.insert(pkg.clone()) {
+                            *counts.entry(pkg).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn extract_file_imports(content: &str) -> Vec<String> {
+    let mut pkgs = vec![];
+    for line in content.lines() {
+        let l = line.trim();
+        if l.starts_with("//") || l.starts_with('*') || l.starts_with("/*") { continue; }
+        // ESM: import/export ... from 'pkg'
+        if let Some(pos) = l.rfind(" from ") {
+            if let Some(pkg) = parse_pkg_specifier(l[pos + 6..].trim()) {
+                pkgs.push(pkg);
+            }
+        }
+        // CJS: require('pkg')
+        if let Some(pos) = l.find("require(") {
+            if let Some(pkg) = parse_pkg_specifier(l[pos + 8..].trim()) {
+                pkgs.push(pkg);
+            }
+        }
+    }
+    pkgs
+}
+
+fn parse_pkg_specifier(s: &str) -> Option<String> {
+    let s = s.trim();
+    let quote = s.chars().next()?;
+    if !matches!(quote, '\'' | '"' | '`') { return None; }
+    let inner = &s[1..];
+    // Relative or absolute paths are not external packages
+    if inner.starts_with('.') || inner.starts_with('/') { return None; }
+    if inner.starts_with('@') {
+        // Scoped: @org/name
+        let inner = &inner[1..];
+        let slash = inner.find('/')?;
+        let org = &inner[..slash];
+        let rest = &inner[slash + 1..];
+        let end = rest.find(|c: char| matches!(c, '\'' | '"' | '`' | '/'))?;
+        let name = &rest[..end];
+        if !org.is_empty() && !name.is_empty() {
+            return Some(format!("@{}/{}", org, name));
+        }
+    } else {
+        let end = inner.find(|c: char| matches!(c, '\'' | '"' | '`' | '/'))?;
+        let name = &inner[..end];
+        if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
 // ── Tauri entry point ──────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -513,6 +626,7 @@ pub fn run() {
             detect_coordinators,
             configure_mcp,
             analyze_folder,
+            detect_dependencies,
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
