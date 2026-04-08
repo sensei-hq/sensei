@@ -35,9 +35,11 @@
     <div class="flex-1 overflow-y-auto px-4 py-4">
       <div class="grid grid-cols-2 gap-3 xl:grid-cols-3">
         {#each data.ideas as idea (idea.id)}
-          <button
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
             onclick={() => selectedId = selectedId === idea.id ? null : idea.id}
-            class="rounded-2xl border text-left transition-all
+            onkeydown={(e) => e.key === 'Enter' && (selectedId = selectedId === idea.id ? null : idea.id)}
+            class="rounded-2xl border cursor-pointer text-left transition-all
                    {selectedId === idea.id
                      ? 'border-primary-z4 bg-primary-z1'
                      : 'border-surface-z3/60 bg-surface-z2/50 hover:border-surface-z4 hover:bg-surface-z2'}"
@@ -92,7 +94,7 @@
                 </button>
               </div>
             {/if}
-          </button>
+          </div>
         {/each}
 
         <!-- New idea placeholder -->

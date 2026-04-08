@@ -78,11 +78,11 @@
     >All</button>
     {#each allProjects as proj}
       <button
-        onclick={() => projectFilter = proj}
+        onclick={() => projectFilter = proj as string}
         class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors
                {projectFilter === proj ? 'bg-primary-z2 text-primary-z7' : 'text-surface-z5 hover:text-surface-z7'}"
       >
-        <span class="h-1.5 w-1.5 rounded-full {projectColors[proj] ?? 'bg-surface-z4'}"></span>
+        <span class="h-1.5 w-1.5 rounded-full {projectColors[proj as string] ?? 'bg-surface-z4'}"></span>
         {proj}
       </button>
     {/each}
@@ -107,7 +107,7 @@
                 <div class="flex flex-wrap gap-1">
                   {#each c.godNodes as node}
                     <button
-                      onclick={() => { selectedNode = node; viewMode = 'godNodes'; }}
+                      onclick={() => { selectedNode = node as string; viewMode = 'godNodes'; }}
                       class="rounded-md bg-surface-z3 px-2 py-0.5 font-mono text-[10px] text-surface-z6 transition-colors hover:bg-primary-z2 hover:text-primary-z7"
                     >{node}</button>
                   {/each}
