@@ -4,6 +4,10 @@ Architecture, implementation details, and recorded decisions for the sensei proj
 
 > **Convention**: design docs answer *how* and *why*. Feature docs answer *what*. Every significant technical decision should record the reasoning here so future contributors understand the intent, not just the outcome.
 
+> **Direction as of 2026-04-08:** Sensei is shifting to a local-first Tauri desktop app with SQLite
+> replacing Supabase. See [`docs/roadmap/`](../roadmap/) for the current direction before reading
+> design docs here — some Supabase references are being superseded.
+
 ## How to Use This Index
 
 | You want to... | Start here |

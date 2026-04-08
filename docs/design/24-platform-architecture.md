@@ -2,8 +2,12 @@
 id: platform-architecture
 type: design
 created: 2026-04-02
-status: proposed
+status: deferred
 ---
+
+> **STATUS: DEFERRED as of 2026-04-08**
+> The multi-account SaaS model is preserved here for potential future revival.
+> Current active direction: self-hosted, individually managed — see `docs/product/self-hosted-model.md`.
 
 # Platform Architecture — Multi-Account SaaS
 
