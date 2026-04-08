@@ -21,6 +21,46 @@
   // Prompt
   let prompt = $state('');
 
+  // Import panel
+  let showImport = $state(false);
+  let importPath = $state('');
+  let importName = $state('');
+  let importPhase = $state<'idle' | 'indexing' | 'done'>('idle');
+  let importProgress = $state(0);
+  let importStep = $state(0);
+  const importSteps = ['Scanning files', 'Extracting symbols', 'Building graph', 'Detecting libraries'];
+  const importResults = ['3,241 files', '8,432 symbols', '142 nodes · 5 communities', '6 libraries'];
+  let importInterval: ReturnType<typeof setInterval> | null = null;
+
+  function onImportPath(e: Event) {
+    const v = (e.target as HTMLInputElement).value;
+    importPath = v;
+    importName = v.split('/').filter(Boolean).pop() ?? '';
+  }
+
+  function startImport() {
+    importPhase = 'indexing';
+    importProgress = 0;
+    importStep = 0;
+    importInterval = setInterval(() => {
+      importProgress = Math.min(100, importProgress + 2 + Math.random() * 4);
+      importStep = Math.min(3, Math.floor(importProgress / 26));
+      if (importProgress >= 100) {
+        clearInterval(importInterval!);
+        setTimeout(() => { importPhase = 'done'; }, 300);
+      }
+    }, 80);
+  }
+
+  function closeImport() {
+    if (importInterval) clearInterval(importInterval);
+    showImport = false;
+    importPath = '';
+    importName = '';
+    importPhase = 'idle';
+    importProgress = 0;
+  }
+
   const maturityLabel = ['Seed', 'Exploring', 'Developing', 'Maturing', 'Established', 'Mature'];
   const maturityBg    = ['bg-surface-z3', 'bg-info-z5', 'bg-warning-z5', 'bg-secondary-z5', 'bg-success-z5', 'bg-primary-z6'];
 
@@ -102,9 +142,12 @@
           <span class="i-solar-widget-3-bold-duotone text-sm"></span>
         </button>
       </div>
-      <button class="flex items-center gap-1.5 rounded-lg border border-surface-z3 bg-surface-z2 px-2.5 py-1.5 text-xs text-surface-z7 transition-colors hover:bg-surface-z3">
+      <button
+        onclick={() => { showImport = true; importPhase = 'idle'; }}
+        class="flex items-center gap-1.5 rounded-lg border border-surface-z3 bg-surface-z2 px-2.5 py-1.5 text-xs text-surface-z7 transition-colors hover:bg-surface-z3"
+      >
         <span class="i-solar-add-circle-bold-duotone text-sm"></span>
-        New project
+        Import project
       </button>
     </div>
   </div>
@@ -411,9 +454,13 @@
         </div>
       {:else}
         <div class="flex flex-1 items-center justify-center">
-          <div class="text-center">
-            <span class="i-solar-planets-bold-duotone text-3xl text-surface-z3 block mx-auto mb-2"></span>
-            <p class="text-sm text-surface-z5">Select a project</p>
+          <div class="text-center space-y-3">
+            <span class="i-solar-planets-bold-duotone text-3xl text-surface-z3 block mx-auto"></span>
+            <p class="text-sm text-surface-z5">No projects yet</p>
+            <button
+              onclick={() => { showImport = true; importPhase = 'idle'; }}
+              class="rounded-lg bg-primary-z6 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-z7 transition-colors"
+            >Import your first project</button>
           </div>
         </div>
       {/if}
@@ -472,3 +519,122 @@
   {/if}
 
 </div>
+
+<!-- ══ IMPORT PANEL ══════════════════════════════════════════════════ -->
+{#if showImport}
+  <!-- Backdrop -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-40 bg-surface-z9/20 backdrop-blur-sm"
+    onclick={closeImport}
+    onkeydown={(e) => e.key === 'Escape' && closeImport()}
+  ></div>
+
+  <!-- Panel -->
+  <div class="fixed right-0 top-0 bottom-0 z-50 flex w-96 flex-col border-l border-surface-z3 bg-surface-z1 shadow-2xl">
+    <div class="flex items-center justify-between border-b border-surface-z0/50 px-5 py-4 shrink-0">
+      <h2 class="text-sm font-semibold text-surface-z8">Import project</h2>
+      <button onclick={closeImport} class="text-surface-z4 hover:text-surface-z7 transition-colors">
+        <span class="i-solar-close-circle-bold-duotone text-lg"></span>
+      </button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-5 py-5">
+
+      {#if importPhase === 'idle'}
+        <div class="space-y-4">
+          <p class="text-sm text-surface-z5">
+            Choose a repository folder. Sensei will scan files, extract symbols, build a graph, and detect libraries.
+          </p>
+
+          <div>
+            <label for="import-path" class="mb-1.5 block text-xs text-surface-z5">Folder path</label>
+            <div class="flex gap-2">
+              <input
+                id="import-path"
+              value={importPath}
+              oninput={onImportPath}
+                placeholder="~/Developer/my-project"
+                class="min-w-0 flex-1 rounded-lg border border-surface-z3 bg-surface-z2 px-3 py-2 font-mono text-xs text-surface-z7 outline-none placeholder:text-surface-z4 focus:border-primary-z4"
+              />
+              <button
+                onclick={() => { importPath = '~/Developer/my-project'; importName = 'my-project'; }}
+                aria-label="Browse folders"
+              class="rounded-lg border border-surface-z3 bg-surface-z2 px-3 text-surface-z5 hover:bg-surface-z3 transition-colors"
+              title="Browse"
+            >
+                <span class="i-solar-folder-open-bold-duotone text-base"></span>
+              </button>
+            </div>
+          </div>
+
+          {#if importName}
+            <div class="rounded-xl border border-surface-z3 bg-surface-z2 px-4 py-3 flex items-center gap-3">
+              <span class="i-solar-code-square-bold-duotone text-xl text-primary-z5"></span>
+              <div>
+                <p class="text-sm font-medium text-surface-z8">{importName}</p>
+                <p class="text-xs text-surface-z4">{importPath}</p>
+              </div>
+            </div>
+          {/if}
+
+          <button
+            onclick={startImport}
+            disabled={!importPath}
+            class="w-full rounded-xl py-2.5 text-sm font-semibold transition-colors
+                   {importPath ? 'bg-primary-z6 text-white hover:bg-primary-z7' : 'bg-surface-z3 text-surface-z4 cursor-not-allowed'}"
+          >Start import</button>
+        </div>
+
+      {:else if importPhase === 'indexing'}
+        <div class="space-y-5">
+          <div>
+            <p class="text-sm font-medium text-surface-z8 mb-1">Indexing {importName}…</p>
+            <div class="h-1 w-full rounded-full bg-surface-z3 overflow-hidden">
+              <div class="h-full rounded-full bg-primary-z6 transition-all duration-150" style="width: {importProgress}%"></div>
+            </div>
+          </div>
+          <div class="space-y-3">
+            {#each importSteps as s, i}
+              {@const done = i < importStep || importProgress >= 100}
+              {@const active = i === importStep && importProgress < 100}
+              <div class="flex items-center gap-3 text-sm {done ? 'text-surface-z6' : active ? 'text-surface-z7' : 'text-surface-z3'}">
+                {#if done}
+                  <span class="i-solar-check-circle-bold-duotone text-success-z5 text-base shrink-0"></span>
+                {:else if active}
+                  <span class="i-solar-refresh-bold-duotone text-primary-z6 text-base shrink-0 animate-spin"></span>
+                {:else}
+                  <span class="h-4 w-4 rounded-full border border-surface-z3 shrink-0"></span>
+                {/if}
+                <span class="flex-1">{s}</span>
+                {#if done}<span class="text-xs text-surface-z4">{importResults[i]}</span>{/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+
+      {:else}
+        <!-- Done -->
+        <div class="space-y-5">
+          <div class="text-center py-4">
+            <div class="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-success-z2 text-xl mb-3">✓</div>
+            <p class="text-sm font-semibold text-surface-z8">{importName} imported</p>
+            <p class="text-xs text-surface-z5 mt-1">Ready to explore</p>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            {#each [['8,432', 'Symbols'], ['5', 'Communities'], ['6', 'Libraries'], ['3,241', 'Files']] as [v, l]}
+              <div class="rounded-xl border border-surface-z3 bg-surface-z2 px-3 py-2.5 text-center">
+                <p class="text-lg font-semibold text-surface-z8">{v}</p>
+                <p class="text-xs text-surface-z4">{l}</p>
+              </div>
+            {/each}
+          </div>
+          <button onclick={closeImport} class="w-full rounded-xl bg-primary-z6 py-2.5 text-sm font-semibold text-white hover:bg-primary-z7 transition-colors">
+            View project
+          </button>
+        </div>
+      {/if}
+
+    </div>
+  </div>
+{/if}
