@@ -49,6 +49,36 @@
     if (plan === 'enterprise') return 'badge-plan badge-plan-enterprise';
     return 'badge-plan badge-plan-free';
   };
+
+  // Invite form
+  let inviteEmail   = $state('');
+  let inviteRole    = $state('member');
+  let inviting      = $state(false);
+  let inviteError   = $state('');
+  let inviteSuccess = $state('');
+
+  async function sendInvite() {
+    if (!inviteEmail.trim()) return;
+    inviting = true;
+    inviteError = '';
+    inviteSuccess = '';
+    try {
+      const res = await fetch(`/api/orgs/${data.org.id}/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        inviteError = body.message ?? 'Failed to send invite';
+        return;
+      }
+      inviteSuccess = `Invite sent to ${inviteEmail.trim()}`;
+      inviteEmail = '';
+    } finally {
+      inviting = false;
+    }
+  }
 </script>
 
 <div class="mb-4">
@@ -127,7 +157,43 @@
     {/if}
 
   {:else if activeTab === 'members'}
-    <h2 class="text-xs font-semibold text-surface-z5 uppercase tracking-wider mb-3">Members ({data.members.length})</h2>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xs font-semibold text-surface-z5 uppercase tracking-wider">Members ({data.members.length})</h2>
+    </div>
+
+    <!-- Invite form -->
+    <div class="mb-5 rounded-xl border border-surface-z3 bg-surface-z2 p-4">
+      <p class="mb-3 text-xs font-semibold text-surface-z6 uppercase tracking-wider">Invite member</p>
+      <div class="flex flex-wrap gap-2">
+        <input
+          type="email"
+          bind:value={inviteEmail}
+          placeholder="colleague@example.com"
+          class="flex-1 min-w-48 rounded-lg border border-surface-z3 bg-surface-z1 px-3 py-2 text-sm text-surface-z8 placeholder-surface-z4 focus:border-primary-z5 focus:outline-none"
+        />
+        <select
+          bind:value={inviteRole}
+          class="rounded-lg border border-surface-z3 bg-surface-z1 px-3 py-2 text-sm text-surface-z7 focus:border-primary-z5 focus:outline-none"
+        >
+          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+        </select>
+        <button
+          onclick={sendInvite}
+          disabled={inviting || !inviteEmail.trim()}
+          class="rounded-lg bg-primary-z6 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-z7 disabled:opacity-50 transition-colors"
+        >
+          {inviting ? 'Sending…' : 'Send invite'}
+        </button>
+      </div>
+      {#if inviteError}
+        <p class="mt-2 text-xs text-error-z6">{inviteError}</p>
+      {/if}
+      {#if inviteSuccess}
+        <p class="mt-2 text-xs text-success-z6">{inviteSuccess}</p>
+      {/if}
+    </div>
+
     {#if data.members.length === 0}
       <p class="text-sm text-surface-z4">No members yet.</p>
     {:else}

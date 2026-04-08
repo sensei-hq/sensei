@@ -24,6 +24,19 @@
 
 <div class="p-4 sm:p-6 lg:p-7">
 
+  {#if data.isNewUser}
+    <!-- Onboarding banner -->
+    <div class="mb-6 rounded-xl border border-primary-z4 bg-primary-z1 px-5 py-4 flex items-center justify-between gap-4">
+      <div>
+        <p class="text-sm font-semibold text-primary-z8">Welcome to sensei! Let's get you set up.</p>
+        <p class="mt-0.5 text-xs text-primary-z6">Install the CLI, connect it to your account, and index your first repo.</p>
+      </div>
+      <a href="/setup" class="shrink-0 rounded-lg bg-primary-z6 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-z7 transition-colors">
+        Get started →
+      </a>
+    </div>
+  {/if}
+
   <!-- Header -->
   <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
     <div>

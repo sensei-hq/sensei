@@ -60,7 +60,7 @@ export async function loginCommand(platformUrl?: string): Promise<void> {
   const baseUrl = platformUrl ?? process.env.SENSEI_PLATFORM_URL ?? "https://app.sensei.dev";
   const redirectPort = 7788;
   const redirectUri = `http://localhost:${redirectPort}/callback`;
-  const loginUrl = `${baseUrl}/auth/cli?redirect_uri=${encodeURIComponent(redirectUri)}`;
+  const loginUrl = `${baseUrl}/connect/cli?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
   console.log("Opening browser for login…");
   console.log(`\nIf your browser didn't open, visit:\n  ${loginUrl}\n`);
@@ -96,7 +96,7 @@ export async function loginCommand(platformUrl?: string): Promise<void> {
   });
 
   // Resolve account context from platform API
-  const verifyRes = await fetch(`${baseUrl}/auth/verify`, {
+  const verifyRes = await fetch(`${baseUrl}/api/connect/verify`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!verifyRes.ok) throw new Error(`Auth verification failed: ${verifyRes.status}`);
