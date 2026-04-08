@@ -246,33 +246,17 @@
                     {/each}
                   </div>
                 </div>
-                <div class="flex-1 overflow-y-auto px-2 pb-3 space-y-1.5">
+                <div class="flex-1 overflow-y-auto pb-3">
                   {#each project.cards as card (card.id)}
                     <button
                       onclick={() => selectedCardId = card.id}
-                      class="w-full rounded-xl border px-3 py-2.5 text-left transition-all
-                             {selectedCardId === card.id
-                               ? 'border-primary-z4 bg-primary-z1'
-                               : 'border-surface-z3/50 bg-surface-z2/40 hover:border-surface-z3 hover:bg-surface-z2'}"
+                      class="flex w-full items-start gap-2.5 border-b border-surface-z0/30 px-3 py-2.5 text-left transition-colors
+                             {selectedCardId === card.id ? 'bg-primary-z1' : 'hover:bg-surface-z2/50'}"
                     >
-                      <div class="flex items-start gap-2">
-                        <span class="mt-0.5 text-sm shrink-0 {kindIcon[card.kind] ?? ''} {kindColor[card.kind] ?? ''}"></span>
-                        <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-1.5 mb-1">
-                            <span class="rounded px-1 py-0.5 text-[9px] font-bold {tagBg[card.kind] ?? 'bg-surface-z2 text-surface-z5'}">{card.tag}</span>
-                            <span class="ml-auto text-[9px] rounded-full px-1.5 py-0.5
-                              {card.status === 'done' ? 'bg-success-z2 text-success-z7' :
-                               card.status === 'active' ? 'bg-primary-z2 text-primary-z7' :
-                               'bg-surface-z2 text-surface-z5'}">{card.status}</span>
-                          </div>
-                          <p class="text-xs font-medium leading-snug text-surface-z8 line-clamp-2">{card.title}</p>
-                          {#if card.linkedSymbols > 0}
-                            <span class="mt-1 inline-flex items-center gap-0.5 text-[10px] text-surface-z4">
-                              <span class="i-solar-link-bold-duotone text-xs"></span>
-                              {card.linkedSymbols}
-                            </span>
-                          {/if}
-                        </div>
+                      <span class="mt-0.5 text-sm shrink-0 {kindIcon[card.kind] ?? ''} {kindColor[card.kind] ?? ''}"></span>
+                      <div class="min-w-0 flex-1">
+                        <p class="text-xs leading-snug text-surface-z8 line-clamp-2">{card.title}</p>
+                        <p class="mt-0.5 text-[10px] text-surface-z4 capitalize">{card.kind} · {card.status}</p>
                       </div>
                     </button>
                   {/each}
@@ -283,15 +267,12 @@
               {#if selectedCard}
                 <div class="flex flex-1 min-w-0 flex-col overflow-hidden">
                   <div class="flex-1 overflow-y-auto px-5 py-4">
-                    <div class="flex items-center gap-2 mb-2">
-                      <span class="text-xl {kindIcon[selectedCard.kind] ?? ''} {kindColor[selectedCard.kind] ?? ''}"></span>
-                      <span class="rounded-md px-1.5 py-0.5 text-[10px] font-bold {tagBg[selectedCard.kind] ?? ''}">{selectedCard.tag}</span>
-                      <span class="ml-auto rounded-full px-2 py-0.5 text-xs font-medium
-                        {selectedCard.status === 'done' ? 'bg-success-z2 text-success-z7' :
-                         selectedCard.status === 'active' ? 'bg-primary-z2 text-primary-z7' :
-                         'bg-surface-z2 text-surface-z5'}">{selectedCard.status}</span>
+                    <div class="flex items-center gap-2 mb-3">
+                      <span class="text-lg {kindIcon[selectedCard.kind] ?? ''} {kindColor[selectedCard.kind] ?? ''}"></span>
+                      <span class="text-xs text-surface-z5 capitalize">{selectedCard.kind}</span>
+                      <span class="ml-auto text-xs text-surface-z4 capitalize">{selectedCard.status}</span>
                     </div>
-                    <h3 class="text-base font-semibold leading-snug text-surface-z9">{selectedCard.title}</h3>
+                    <h3 class="text-sm font-semibold leading-snug text-surface-z9 mb-3">{selectedCard.title}</h3>
                     <p class="mt-3 text-sm leading-relaxed text-surface-z6">{selectedCard.body}</p>
                     {#if selectedCard.linkedSymbols > 0}
                       <div class="mt-5">
@@ -324,7 +305,7 @@
               {#if project.communities.length > 0}
                 <div class="grid grid-cols-2 gap-4">
                   <div>
-                    <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-surface-z4">Communities ({project.communities.length})</p>
+                    <p class="mb-3 text-xs text-surface-z4">Communities ({project.communities.length})</p>
                     <div class="space-y-2">
                       {#each project.communities as c (c.id)}
                         <div class="flex items-center gap-2.5 rounded-xl border border-surface-z3/50 bg-surface-z2/50 px-3 py-2.5">
@@ -336,7 +317,7 @@
                     </div>
                   </div>
                   <div>
-                    <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-surface-z4">God nodes</p>
+                    <p class="mb-3 text-xs text-surface-z4">God nodes</p>
                     <div class="space-y-2">
                       {#each project.godNodes as node (node.name)}
                         <div class="rounded-xl border border-surface-z3/50 bg-surface-z2/50 px-3 py-2.5">
@@ -353,7 +334,7 @@
                 </div>
                 {#if project.rationale.length > 0}
                   <div class="mt-5">
-                    <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-surface-z4">Rationale nodes</p>
+                    <p class="mb-3 text-xs text-surface-z4">Rationale nodes</p>
                     <div class="space-y-2">
                       {#each project.rationale as r (r.file)}
                         <div class="rounded-xl border border-surface-z3/50 bg-surface-z2/50 px-3 py-2.5">
@@ -379,13 +360,33 @@
             </div>
 
           {:else}
-            <!-- Sessions tab placeholder -->
-            <div class="flex-1 flex items-center justify-center">
-              <div class="text-center">
-                <span class="i-solar-history-bold-duotone text-3xl text-surface-z3 block mx-auto mb-2"></span>
-                <p class="text-sm text-surface-z5">No sessions yet</p>
-                <p class="mt-1 text-xs text-surface-z4">Sessions appear after running tasks via Claude Code</p>
-              </div>
+            <!-- Sessions tab -->
+            <div class="flex-1 overflow-y-auto">
+              {#if !project.sessions?.length}
+                <div class="flex h-full items-center justify-center">
+                  <div class="text-center">
+                    <span class="i-solar-history-bold-duotone text-3xl text-surface-z3 block mx-auto mb-2"></span>
+                    <p class="text-sm text-surface-z5">No sessions yet</p>
+                  </div>
+                </div>
+              {:else}
+                {#each project.sessions as s (s.id)}
+                  <div class="flex items-center gap-4 border-b border-surface-z0/30 px-5 py-3">
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate text-sm text-surface-z8">{s.task}</p>
+                      <p class="mt-0.5 text-xs text-surface-z4">{s.when} · {s.turns} turns</p>
+                    </div>
+                    <span class="flex items-center gap-1 text-xs text-surface-z5">
+                      <span class="h-1.5 w-1.5 rounded-full {s.status === 'completed' ? 'bg-success-z5' : 'bg-primary-z6 animate-pulse'}"></span>
+                      {s.status}
+                    </span>
+                    <span class="w-14 text-right text-xs font-mono {s.ftr === null ? 'text-surface-z4' : s.ftr >= 0.8 ? 'text-success-z6' : s.ftr >= 0.5 ? 'text-warning-z6' : 'text-error-z6'}">
+                      {s.ftr !== null ? `${Math.round(s.ftr * 100)}%` : '—'}
+                    </span>
+                    <span class="w-14 text-right text-xs text-surface-z5">${s.cost.toFixed(2)}</span>
+                  </div>
+                {/each}
+              {/if}
             </div>
           {/if}
 
