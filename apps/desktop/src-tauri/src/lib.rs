@@ -11,8 +11,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-                apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None)
-                    .expect("Failed to apply vibrancy");
+                let _ = apply_vibrancy(&window, NSVisualEffectMaterial::HudWindow, None, None);
             }
 
             #[cfg(debug_assertions)]
