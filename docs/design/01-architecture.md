@@ -4,6 +4,10 @@ type: design
 implements: []
 ---
 
+> **STATUS NOTE (2026-04-08):** The Supabase references in this document are being replaced by SQLite
+> as part of the local-first architecture shift. See `docs/roadmap/` for the current direction.
+> The engine package structure, interfaces, and pipeline stages documented here remain valid.
+
 # Architecture
 
 > Sensei is a TypeScript/Bun monorepo that makes AI coding agents more effective through codebase intelligence, documentation traceability, and session continuity — exposed via an MCP server, a CLI, and a web dashboard.

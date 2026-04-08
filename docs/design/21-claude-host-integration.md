@@ -4,6 +4,10 @@ type: design
 status: active
 ---
 
+> **NOTE (2026-04-08):** This document describes the Claude Code adapter specifically.
+> The patterns here become the reference implementation of `CoordinatorAdapter`.
+> For the coordinator-agnostic design see `docs/roadmap/05-coordinator-adapters.md`.
+
 # Claude Code Host Integration
 
 > How sensei integrates with Claude Code — hooks, MCP, telemetry, and the extension points we rely on. Documents observable behaviour so we know what to adapt when Claude Code changes.

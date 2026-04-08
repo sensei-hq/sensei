@@ -1,41 +1,80 @@
 project:
   name: sensei
+  note: >
+    Two active database backends. PostgreSQL (legacy, SaaS model — preserved for reference
+    and potential future team use). SQLite (current, local-first model — active development).
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SQLite backend — local-first (ACTIVE)
+# ──────────────────────────────────────────────────────────────────────────────
+sqlite:
+  databases:
+    - name: global
+      path: "~/.sensei/sensei.db"
+      note: >
+        One file per developer machine. Holds the workspace model (projects, ideas,
+        phases, cards), all session analytics, and library intelligence. Read by the
+        Tauri desktop app directly; written exclusively by the daemon.
+      ddl: ddl/sqlite/global/
+
+    - name: index
+      path: "<repo>/.sensei/index.db"
+      note: >
+        One file per indexed repository. Holds the code graph (symbols, call edges,
+        imports), semantic search data (chunks/embeddings), documentation sections,
+        and the new graph intelligence tables (confidence edges, rationale nodes,
+        community assignments, hyperedges).
+      ddl: ddl/sqlite/index/
+
+  extensions:
+    - sqlite-vec   # vector similarity search (optional — graceful degradation without it)
+    - fts5         # full-text search (built-in to SQLite 3.x, always available)
+
+  type_mapping:
+    # PostgreSQL → SQLite equivalents used throughout the DDL
+    uuid:        "text"          # stored as UUID string, generated in application layer
+    timestamptz: "text"          # ISO 8601: strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    "text[]":    "text"          # JSON array string: '[]'
+    jsonb:       "text"          # JSON string
+    boolean:     "integer"       # 0 = false, 1 = true
+    "vector(n)": "blob"          # sqlite-vec F32_BLOB format; null when extension absent
+    numeric:     "real"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PostgreSQL backend — SaaS / large-repo option (PRESERVED)
+# ──────────────────────────────────────────────────────────────────────────────
+postgres:
   database: PostgreSQL
   extensionSchema: extensions
   staging:
     - staging
-
-external:
-  - name: auth.users
-    note: Supabase built-in authentication table
-    columns:
-      - id: uuid
-  - name: auth.identities
-    note: Supabase built-in identity table
-    columns:
-      - id: uuid
-      - user_id: uuid
-
-supabase:
-  - core
-  - sensei
-  - platform
-
-schemas:
-  - extensions
-  - public
-  - staging
-  - core
-  - sensei
-  - platform
-
-extensions:
-  - uuid-ossp
-  - vector
-
-import:
-  options:
-    truncate: true
-    nullValue: ""
-  after:
-    - import/loader.sql
+  external:
+    - name: auth.users
+      note: Supabase built-in authentication table
+      columns:
+        - id: uuid
+    - name: auth.identities
+      note: Supabase built-in identity table
+      columns:
+        - id: uuid
+        - user_id: uuid
+  supabase:
+    - core
+    - sensei
+    - platform
+  schemas:
+    - extensions
+    - public
+    - staging
+    - core
+    - sensei
+    - platform
+  extensions:
+    - uuid-ossp
+    - vector
+  import:
+    options:
+      truncate: true
+      nullValue: ""
+    after:
+      - import/loader.sql
