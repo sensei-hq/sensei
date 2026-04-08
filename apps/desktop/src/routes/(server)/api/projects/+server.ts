@@ -28,6 +28,14 @@ export const GET: RequestHandler = () => {
         { id: 'c6', kind: 'finding',     tag: 'FINDING',  status: 'open',   title: 'setupAgent() hard-rejects non-Claude agents — must abstract (gap #4)',             body: 'Line 42 in packages/cli/src/commands/setup.ts: if (agent !== "claude") process.exit(1). Blocks coordinator adapter.',   linkedSymbols: 1, updatedAt: '1w ago'  },
         { id: 'c7', kind: 'decision',    tag: 'DECISION', status: 'done',   title: 'Two databases: ~/.sensei/sensei.db (global) + <repo>/.sensei/index.db (per-repo)', body: 'Remove repo_id from index tables — the per-repo db IS the scope. Cross-repo queries go via sensei.db projects table.',   linkedSymbols: 4, updatedAt: '2d ago'  },
       ],
+      sessions: [
+        { id: 's01', task: 'Scaffold Tauri desktop app with SvelteKit frontend',  status: 'in-progress', ftr: null, turns: 24, cost: 0.92, when: 'Now'       },
+        { id: 's02', task: 'Build SQLite schema for global + index databases',    status: 'completed',   ftr: 1.00, turns: 31, cost: 1.10, when: '2h ago'    },
+        { id: 's03', task: 'Create CoordinatorAdapter interface and registry',    status: 'completed',   ftr: 1.00, turns: 18, cost: 0.68, when: '5h ago'    },
+        { id: 's04', task: 'Write roadmap docs: paradigm shift + architecture',   status: 'completed',   ftr: 1.00, turns: 22, cost: 0.84, when: 'Yesterday' },
+        { id: 's07', task: 'Restructure database DDL — policies, RLS, views',     status: 'completed',   ftr: 0.50, turns: 27, cost: 1.02, when: '3d ago'    },
+        { id: 's09', task: 'Wire all dashboard pages to real Supabase data',      status: 'completed',   ftr: 0.50, turns: 35, cost: 1.32, when: '5d ago'    },
+      ],
       godNodes: [
         { name: 'CoordinatorAdapter', degree: 18, community: 'Agent Layer'  },
         { name: 'rankBfs',            degree: 14, community: 'Graph Engine' },
@@ -68,6 +76,10 @@ export const GET: RequestHandler = () => {
       godNodes: [],
       communities: [],
       rationale: [],
+      sessions: [
+        { id: 'r01', task: 'Fix ThemeSwitcherToggle type error in MessagesStore', status: 'completed', ftr: 0.60, turns: 14, cost: 0.52, when: 'Yesterday' },
+        { id: 'r02', task: 'Add presetRokkit documentation comments',             status: 'completed', ftr: 1.00, turns:  9, cost: 0.31, when: '3d ago'    },
+      ],
     },
     {
       id: 'proj-003', kind: 'repo',
@@ -89,6 +101,10 @@ export const GET: RequestHandler = () => {
       godNodes: [],
       communities: [],
       rationale: [],
+      sessions: [
+        { id: 'k01', task: 'Implement org membership with RLS policies',    status: 'completed', ftr: 1.00, turns: 19, cost: 0.71, when: '4d ago' },
+        { id: 'k02', task: 'Fix ESM cache issue with route rule activation', status: 'completed', ftr: 1.00, turns: 11, cost: 0.38, when: '1w ago' },
+      ],
     },
     {
       id: 'proj-004', kind: 'repo',
@@ -112,6 +128,10 @@ export const GET: RequestHandler = () => {
       godNodes: [],
       communities: [],
       rationale: [],
+      sessions: [
+        { id: 'a01', task: 'Design routing config — YAML vs code-based decision', status: 'completed', ftr: 1.00, turns: 11, cost: 0.41, when: '2d ago' },
+        { id: 'a02', task: 'Scaffold gateway service with basic routing',          status: 'completed', ftr: 1.00, turns: 16, cost: 0.55, when: '1w ago' },
+      ],
     },
     {
       id: 'proj-005', kind: 'repo',
@@ -133,6 +153,10 @@ export const GET: RequestHandler = () => {
       godNodes: [],
       communities: [],
       rationale: [],
+      sessions: [
+        { id: 'd01', task: 'Add SQLite DDL support to schema migration tool', status: 'completed', ftr: 1.00, turns: 16, cost: 0.60, when: '1w ago'  },
+        { id: 'd02', task: 'Add pg→sqlite type coercion to migration output', status: 'completed', ftr: 1.00, turns: 12, cost: 0.44, when: '2w ago'  },
+      ],
     },
   ]);
 };
