@@ -13,8 +13,8 @@
 html, body {
   height: 100%;
   overflow: hidden;
-  /* Transparent bg lets Tauri vibrancy show through on macOS */
-  background: transparent;
+  /* Solid fallback; vibrancy in Rust makes the window glass when supported */
+  background: rgb(var(--color-surface-z1));
 }
 
 /* Traffic light safe area — macOS overlay title bar adds ~28px of buttons */
