@@ -5,6 +5,7 @@ type ScannedRepo = {
   categories: string[]; status: string; last_commit_days: number | null;
   tech_stack: string[]; commit_count: number;
   duplicate_of: string | null; variant_group: string | null;
+  client?: string | null;
 };
 
 function activityLabel(days: number | null): string {
@@ -36,6 +37,7 @@ function repoToProject(repo: ScannedRepo, i: number) {
     maturity: MATURITY[repo.status] ?? 1,
     activePhase: PHASE[repo.status] ?? 'Exploration',
     lastActivity: activityLabel(repo.last_commit_days),
+    last_commit_days: repo.last_commit_days,
     sessionCount: 0, cardCount: 0, symbolCount: 0, ftrScore: 0,
     phases: [
       { name: 'Requirements',   done: false, active: false, cardCount: 0 },
@@ -52,6 +54,7 @@ function repoToProject(repo: ScannedRepo, i: number) {
     category: repo.categories?.[0] ?? 'unknown',
     categories: repo.categories ?? [],
     variant_group: repo.variant_group,
+    client: repo.client ?? null,
     remote: repo.remote,
   };
 }

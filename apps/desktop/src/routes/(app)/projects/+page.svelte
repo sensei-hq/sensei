@@ -4,25 +4,59 @@
 
   let { data }: { data: PageData } = $props();
 
-  const viewOptions = [
-    { value: 'split', icon: 'i-solar-sidebar-minimalistic-bold-duotone', label: 'Split', description: 'Split view' },
-    { value: 'board', icon: 'i-solar-widget-3-bold-duotone', label: 'Board', description: 'Board view' },
-  ];
-
-  // View modes
-  type ViewMode = 'split' | 'board';
-  let viewMode = $state<ViewMode>('split');
-
-  // Selection
+  // Selection — individual project OR variant group
   let selectedId = $state<string | null>(null);
-  $effect(() => { if (selectedId === null && data.projects[0]) selectedId = data.projects[0].id; });
+  let selectedGroupKey = $state<string | null>(null);
   let selectedCardId = $state<string | null>(null);
-  let activeTab = $state<'cards' | 'graph' | 'sessions'>('cards');
-
-  // Filters
-  let search = $state('');
-  let kindFilter = $state<'all' | 'repo' | 'idea'>('all');
+  let activeTab = $state<'cards' | 'graph' | 'sessions' | 'libraries'>('cards');
   let cardPhaseFilter = $state<string>('all');
+
+  // Navigator state
+  let search = $state('');
+  let groupMode = $state<'variants' | 'clients'>('variants');
+  let expandedGroupKeys = $state<Set<string>>(new Set());
+  let showAllOlder = $state(false);
+
+  // Per-repo edits (reactive overrides; persisted to localStorage on save)
+  type RepoEdit = { client?: string | null; categories?: string[] };
+  let repoEdits = $state<Map<string, RepoEdit>>(new Map());
+
+  function getEffective(p: typeof data.projects[0]) {
+    const e = repoEdits.get(p.path);
+    return e ? { ...p, ...e } : p;
+  }
+
+  function saveRepoEdit(path: string, edit: RepoEdit) {
+    const m = new Map(repoEdits);
+    m.set(path, { ...(m.get(path) ?? {}), ...edit });
+    repoEdits = m;
+    try {
+      const raw = localStorage.getItem('sensei:projects_raw');
+      if (!raw) return;
+      const all = JSON.parse(raw);
+      const idx = all.findIndex((r: { path: string }) => r.path === path);
+      if (idx !== -1) { all[idx] = { ...all[idx], ...edit }; localStorage.setItem('sensei:projects_raw', JSON.stringify(all)); }
+    } catch {}
+  }
+
+  // Inline edit form state
+  let editingRepoPath = $state<string | null>(null);
+  let editDraftClient = $state('');
+  let editDraftCats = $state<string[]>([]);
+
+  function startEdit(p: typeof data.projects[0]) {
+    const ep = getEffective(p);
+    editingRepoPath = ep.path;
+    editDraftClient = ep.client ?? '';
+    editDraftCats = (ep.categories ?? []).filter((c: string) => c !== 'unknown');
+  }
+
+  function cancelEdit() { editingRepoPath = null; }
+
+  function commitEdit(path: string) {
+    saveRepoEdit(path, { client: editDraftClient.trim() || null, categories: editDraftCats });
+    editingRepoPath = null;
+  }
 
   // Prompt
   let prompt = $state('');
@@ -30,9 +64,6 @@
   // Add project panel
   let showAdd = $state(false);
   let addMode = $state<'choose' | 'scan' | 'new'>('choose');
-
-  // Manage groups panel
-  let showGroups = $state(false);
 
   // Variant overrides from localStorage
   function loadVariantOverrides(): Record<string, string | null> {
@@ -46,18 +77,6 @@
   }
   let variantOverrides = $state<Record<string, string | null>>(loadVariantOverrides());
 
-  function removeFromGroup(projectId: string) {
-    const o = { ...variantOverrides, [projectId]: null };
-    variantOverrides = o;
-    saveVariantOverrides(o);
-  }
-  function ungroupAll(groupKey: string) {
-    const members = data.projects.filter((p: { variant_group: string | null }) => resolvedGroup(p) === groupKey);
-    const o = { ...variantOverrides };
-    for (const m of members) o[m.id] = null;
-    variantOverrides = o;
-    saveVariantOverrides(o);
-  }
   function resolvedGroup(p: { id: string; variant_group: string | null }): string | null {
     if (p.id in variantOverrides) return variantOverrides[p.id];
     return p.variant_group;
@@ -219,79 +238,92 @@
     finding:     'bg-secondary-z2 text-secondary-z7',
   };
 
-  let filteredProjects = $derived(
-    data.projects.filter((p: { kind: string; name: string; description: string }) => {
-      if (kindFilter !== 'all' && p.kind !== kindFilter) return false;
-      if (search && !p.name.toLowerCase().includes(search.toLowerCase()) &&
-          !p.description.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    })
-  );
+  // ── Nav entries: groups and solos sorted by recency ──
+  type NavEntry =
+    | { type: 'group'; key: string; items: typeof data.projects; minDays: number | null; categories: string[] }
+    | { type: 'solo';  item: (typeof data.projects)[0]; days: number | null };
 
-  // Group filteredProjects by variant_group (with overrides applied)
-  type GroupSection = { type: 'group'; key: string; name: string; items: typeof data.projects };
-  type SoloSection  = { type: 'solo';  item: (typeof data.projects)[0] };
-  type Section = GroupSection | SoloSection;
-
-  const groupedProjects = $derived.by<Section[]>(() => {
+  const navEntries = $derived.by<NavEntry[]>(() => {
     const groupMap = new Map<string, typeof data.projects>();
     const solos: (typeof data.projects)[0][] = [];
-
-    for (const p of filteredProjects) {
-      const g = resolvedGroup(p);
-      if (g) {
-        const arr = groupMap.get(g) ?? [];
-        arr.push(p);
-        groupMap.set(g, arr);
-      } else {
-        solos.push(p);
-      }
-    }
-
-    // Only treat as a group if 2+ members; otherwise fall through to solos
-    const sections: Section[] = [];
-    const pendingSolos = [...solos];
-
-    for (const [key, items] of groupMap) {
-      if (items.length >= 2) {
-        sections.push({ type: 'group', key, name: key, items });
-      } else {
-        pendingSolos.push(...items);
-      }
-    }
-
-    // Merge and re-sort solos by original order
-    const originalOrder = filteredProjects.map((p: { id: string }) => p.id);
-    pendingSolos.sort((a, b) => originalOrder.indexOf(a.id) - originalOrder.indexOf(b.id));
-    for (const item of pendingSolos) sections.push({ type: 'solo', item });
-
-    // Sort sections: groups first (preserving their first-item order), then solos
-    sections.sort((a, b) => {
-      const aIdx = a.type === 'group'
-        ? originalOrder.indexOf(a.items[0].id)
-        : originalOrder.indexOf(a.item.id);
-      const bIdx = b.type === 'group'
-        ? originalOrder.indexOf(b.items[0].id)
-        : originalOrder.indexOf(b.item.id);
-      return aIdx - bIdx;
-    });
-
-    return sections;
-  });
-
-  // All distinct groups across all projects (for Manage groups panel)
-  const allGroups = $derived.by(() => {
-    const map = new Map<string, typeof data.projects>();
     for (const p of data.projects) {
-      const g = resolvedGroup(p);
-      if (g) {
-        const arr = map.get(g) ?? [];
-        arr.push(p);
-        map.set(g, arr);
+      const ep = getEffective(p);
+      const g = groupMode === 'clients'
+        ? (ep.client?.trim() || null)
+        : resolvedGroup(p);
+      if (g) { const a = groupMap.get(g) ?? []; a.push(ep); groupMap.set(g, a); }
+      else { solos.push(ep); }
+    }
+    const entries: NavEntry[] = [];
+    const pendingSolos = [...solos];
+    const minSize = groupMode === 'clients' ? 1 : 2;
+    for (const [key, items] of groupMap) {
+      if (items.length >= minSize) {
+        const days = items.map(i => i.last_commit_days).filter((d): d is number => d != null);
+        const cats = [...new Set(items.flatMap(i => (i.categories ?? []).filter((c: string) => c !== 'unknown')))] as string[];
+        entries.push({ type: 'group', key, items, minDays: days.length ? Math.min(...days) : null, categories: cats });
+      } else { pendingSolos.push(...items); }
+    }
+    for (const item of pendingSolos) {
+      entries.push({ type: 'solo', item, days: item.last_commit_days ?? null });
+    }
+    entries.sort((a, b) => {
+      const ad = a.type === 'group' ? a.minDays : a.days;
+      const bd = b.type === 'group' ? b.minDays : b.days;
+      if (ad == null && bd == null) return 0;
+      if (ad == null) return 1;
+      if (bd == null) return -1;
+      return ad - bd;
+    });
+    return entries;
+  });
+
+  const RECENT_COUNT = 5;
+  const recentEntries = $derived(navEntries.slice(0, RECENT_COUNT));
+  const olderEntries  = $derived(navEntries.slice(RECENT_COUNT));
+
+  // Search-filtered view — flat list, groups show only matching members
+  type FilteredEntry =
+    | { type: 'group'; key: string; items: typeof data.projects; matchedItems: typeof data.projects; minDays: number | null; categories: string[]; groupMatches: boolean }
+    | { type: 'solo'; item: (typeof data.projects)[0]; days: number | null };
+
+  const filteredEntries = $derived.by<FilteredEntry[]>(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    const result: FilteredEntry[] = [];
+    for (const entry of navEntries) {
+      if (entry.type === 'group') {
+        const groupMatches = entry.key.toLowerCase().includes(q);
+        const matchedItems = entry.items.filter((p: { name: string; description?: string }) =>
+          p.name.toLowerCase().includes(q) || (p.description ?? '').toLowerCase().includes(q)
+        );
+        if (groupMatches || matchedItems.length > 0) {
+          result.push({ ...entry, matchedItems: groupMatches ? entry.items : matchedItems, groupMatches });
+        }
+      } else {
+        const { item } = entry;
+        if (item.name.toLowerCase().includes(q) || (item.description ?? '').toLowerCase().includes(q)) {
+          result.push(entry);
+        }
       }
     }
-    return [...map.entries()].filter(([, items]) => items.length >= 2).map(([key, items]) => ({ key, items }));
+    return result;
   });
+
+  const isSearching = $derived(search.trim().length > 0);
+
+  function toggleGroup(key: string) {
+    const s = new Set(expandedGroupKeys);
+    s.has(key) ? s.delete(key) : s.add(key);
+    expandedGroupKeys = s;
+  }
+
+  function selectGroup(key: string) {
+    selectedGroupKey = key;
+    selectedId = null;
+    selectedCardId = null;
+    activeTab = 'cards';
+  }
 
   let project = $derived(data.projects.find((p: { id: string }) => p.id === selectedId));
 
@@ -316,196 +348,476 @@
 
   function selectProject(id: string) {
     selectedId = id;
+    selectedGroupKey = null;
     selectedCardId = null;
     cardPhaseFilter = 'all';
     activeTab = 'cards';
+    showAllLibs = false;
   }
+
+  // ── Library detection & index state ────────────────────────────────────────
+  type DetectedDep = { name: string; file_count: number; total_files: number; usage_pct: number };
+  type LibOptState = 'auto' | 'in' | 'out';
+  type IndexStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed';
+
+  const LIB_AUTO_THRESHOLD = 30;   // ≥30% → auto opt-in
+  const LIB_SUGGEST_MIN   = 10;   // 10–29% → suggested
+
+  let libData    = $state(new Map<string, DetectedDep[]>());
+  let libLoading = $state(new Set<string>());
+  let showAllLibs = $state(false);
+
+  let libOpts = $state<Record<string, Record<string, LibOptState>>>(
+    (() => { try { return JSON.parse(localStorage.getItem('sensei:lib_opts') ?? '{}'); } catch { return {}; } })()
+  );
+  let indexStates = $state<Record<string, IndexStatus>>(
+    (() => { try { return JSON.parse(localStorage.getItem('sensei:index_states') ?? '{}'); } catch { return {}; } })()
+  );
+
+  function getLibOpt(repoPath: string, lib: string): LibOptState {
+    return libOpts[repoPath]?.[lib] ?? 'auto';
+  }
+  function setLibOpt(repoPath: string, lib: string, s: LibOptState) {
+    libOpts = { ...libOpts, [repoPath]: { ...(libOpts[repoPath] ?? {}), [lib]: s } };
+    localStorage.setItem('sensei:lib_opts', JSON.stringify(libOpts));
+  }
+  function isOptedIn(repoPath: string, dep: DetectedDep): boolean {
+    const s = getLibOpt(repoPath, dep.name);
+    if (s === 'in')  return true;
+    if (s === 'out') return false;
+    return dep.usage_pct >= LIB_AUTO_THRESHOLD;
+  }
+  function queueIndex(repoPath: string) {
+    indexStates = { ...indexStates, [repoPath]: 'queued' };
+    localStorage.setItem('sensei:index_states', JSON.stringify(indexStates));
+  }
+  async function loadDeps(path: string) {
+    if (libData.has(path) || libLoading.has(path)) return;
+    libLoading = new Set([...libLoading, path]);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const deps = await invoke<DetectedDep[]>('detect_dependencies', { path });
+      libData = new Map([...libData, [path, deps]]);
+    } catch { /* not in Tauri context */ }
+    finally {
+      const s = new Set(libLoading); s.delete(path); libLoading = s;
+    }
+  }
+  $effect(() => { if (project?.path) loadDeps(project.path); });
 </script>
 
-<div class="flex h-full min-h-0 flex-col">
+<!-- ── Snippets ──────────────────────────────────────────────────────── -->
 
-  <!-- Top bar -->
-  <div class="flex items-center justify-between border-b border-surface-z0/50 px-4 py-2 shrink-0">
-    <h1 class="text-sm font-semibold text-surface-z8">Projects</h1>
-    <div class="flex items-center gap-1.5">
-      <!-- View toggle -->
-      <Toggle bind:value={viewMode} options={viewOptions} showLabels={false} size="sm" />
-      <button
-        onclick={() => showGroups = !showGroups}
-        title="Manage groups"
-        class="flex items-center gap-1.5 rounded-lg border border-surface-z3 bg-surface-z2 px-2.5 py-1.5 text-xs transition-colors
-               {showGroups ? 'border-primary-z4 bg-primary-z1 text-primary-z7' : 'text-surface-z5 hover:text-surface-z7'}"
-      >
-        <span class="i-solar-layers-minimalistic-bold-duotone text-sm"></span>
-        Manage groups
+{#snippet dayLabel(d: number | null)}
+  {#if d != null}{d === 0 ? 'Today' : d < 7 ? d + 'd' : d < 30 ? Math.floor(d / 7) + 'w' : Math.floor(d / 30) + 'mo'}{/if}
+{/snippet}
+
+{#snippet editForm(p: typeof data.projects[0])}
+  <div class="border-t border-surface-z2 bg-surface-z1 px-3 py-3 space-y-2.5">
+    <div>
+      <p class="text-[10px] font-medium text-surface-z5 mb-1">Client</p>
+      <input
+        bind:value={editDraftClient}
+        placeholder="e.g. Acme Corp"
+        class="w-full rounded-lg border border-surface-z3 bg-surface-z2 px-2.5 py-1.5 text-xs outline-none focus:border-primary-z4 transition-colors"
+      />
+    </div>
+    <div>
+      <p class="text-[10px] font-medium text-surface-z5 mb-1.5">Tags</p>
+      <div class="flex flex-wrap gap-1">
+        {#each ['app', 'library', 'tool', 'idea'] as cat}
+          <button
+            onclick={() => { const s = new Set(editDraftCats); s.has(cat) ? s.delete(cat) : s.add(cat); editDraftCats = [...s]; }}
+            class="rounded-full border px-2 py-0.5 text-[10px] transition-colors
+                   {editDraftCats.includes(cat) ? 'border-primary-z4 bg-primary-z1 text-primary-z7' : 'border-surface-z3 text-surface-z5 hover:border-surface-z4'}"
+          >{cat}</button>
+        {/each}
+      </div>
+    </div>
+    <div class="flex gap-2">
+      <button onclick={() => commitEdit(p.path)} class="flex-1 rounded-lg bg-primary-z6 py-1.5 text-xs font-semibold text-white hover:bg-primary-z7 transition-colors">Save</button>
+      <button onclick={cancelEdit} class="flex-1 rounded-lg border border-surface-z3 py-1.5 text-xs text-surface-z6 hover:bg-surface-z3 transition-colors">Cancel</button>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet depRow(repoPath: string, dep: DetectedDep)}
+  {@const state = getLibOpt(repoPath, dep.name)}
+  {@const optedIn = isOptedIn(repoPath, dep)}
+  <div class="flex items-center gap-2.5 py-1">
+    <span class="text-xs font-mono text-surface-z7 w-36 truncate shrink-0" title={dep.name}>{dep.name}</span>
+    <div class="flex-1 min-w-0 h-1 rounded-full bg-surface-z3 overflow-hidden">
+      <div class="h-full rounded-full {optedIn ? 'bg-success-z5' : 'bg-surface-z4'}" style="width: {Math.min(dep.usage_pct, 100)}%"></div>
+    </div>
+    <span class="text-[10px] text-surface-z4 w-7 text-right shrink-0">{dep.usage_pct < 1 ? '<1' : Math.round(dep.usage_pct)}%</span>
+    <span class="text-[10px] text-surface-z4 shrink-0 w-10">{dep.file_count}f</span>
+    <div class="shrink-0 w-16 flex justify-end">
+      {#if optedIn && state === 'auto'}
+        <button onclick={() => setLibOpt(repoPath, dep.name, 'out')} title="Opt out"
+          class="flex items-center gap-0.5 text-[10px] text-success-z6 hover:text-danger-z5 transition-colors">
+          <span class="i-solar-check-circle-bold-duotone text-xs"></span> auto
+        </button>
+      {:else if state === 'in'}
+        <button onclick={() => setLibOpt(repoPath, dep.name, 'auto')} title="Undo opt-in"
+          class="flex items-center gap-0.5 text-[10px] text-success-z7 hover:text-surface-z5 transition-colors">
+          <span class="i-solar-check-circle-bold-duotone text-xs"></span> opted in
+        </button>
+      {:else if state === 'out'}
+        <button onclick={() => setLibOpt(repoPath, dep.name, 'auto')}
+          class="text-[10px] text-surface-z3 hover:text-surface-z6 transition-colors">undo skip</button>
+      {:else}
+        <button onclick={() => setLibOpt(repoPath, dep.name, 'in')}
+          class="rounded border border-surface-z3 px-1.5 py-0.5 text-[10px] text-surface-z5 hover:border-primary-z4 hover:text-primary-z7 transition-colors">+ opt in</button>
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet repoCard(p: typeof data.projects[0], selected: boolean)}
+  {@const ep = getEffective(p)}
+  {@const isEditing = editingRepoPath === ep.path}
+  <div class="group relative rounded-xl border transition-all overflow-hidden
+              {selected ? 'border-primary-z4 bg-primary-z1' : 'border-surface-z3/60 bg-surface-z2/50 hover:border-surface-z4 hover:bg-surface-z2'}">
+    <button onclick={() => selectProject(p.id)} class="w-full px-3 py-2.5 text-left">
+      <div class="flex items-center gap-2 pr-5">
+        <span class="text-sm shrink-0 {p.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z6' : 'i-solar-code-square-bold-duotone text-primary-z6'}"></span>
+        <span class="flex-1 truncate text-sm font-semibold {selected ? 'text-primary-z8' : 'text-surface-z8'}">{ep.name}</span>
+        {#if ep.scanStatus}
+          <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium capitalize {SCAN_STATUS_CLS[ep.scanStatus] ?? SCAN_STATUS_CLS.unknown}">{ep.scanStatus}</span>
+        {/if}
+      </div>
+      {#if ep.description && ep.description !== ep.name}
+        <p class="mt-0.5 truncate text-[11px] {selected ? 'text-primary-z6' : 'text-surface-z4'}">{ep.description}</p>
+      {/if}
+      <div class="mt-1.5 flex items-center gap-1 flex-wrap">
+        {#each (ep.tech_stack ?? []).slice(0, 2) as t}
+          <span class="rounded px-1.5 py-0.5 text-[9px] {selected ? 'bg-primary-z2 text-primary-z6' : 'bg-surface-z3 text-surface-z5'}">{t}</span>
+        {/each}
+        {#if groupMode === 'variants' && ep.client}
+          <span class="rounded-full border px-1.5 py-0.5 text-[9px] {selected ? 'border-primary-z3 text-primary-z6' : 'border-surface-z3 text-surface-z5'}">{ep.client}</span>
+        {/if}
+        <span class="ml-auto text-[10px] {selected ? 'text-primary-z5' : 'text-surface-z4'}">{@render dayLabel(ep.last_commit_days ?? null)}</span>
+      </div>
+    </button>
+    <button
+      onclick={(e) => { e.stopPropagation(); isEditing ? cancelEdit() : startEdit(ep); }}
+      title={isEditing ? 'Cancel edit' : 'Edit tags'}
+      class="absolute right-1.5 top-1.5 rounded-md p-1 opacity-0 group-hover:opacity-100 text-surface-z4 hover:text-surface-z7 hover:bg-surface-z3/60 transition-all"
+    ><span class="{isEditing ? 'i-solar-close-square-bold-duotone' : 'i-solar-pen-bold-duotone'} text-xs"></span></button>
+    {#if isEditing}{@render editForm(ep)}{/if}
+  </div>
+{/snippet}
+
+{#snippet memberRow(p: typeof data.projects[0])}
+  {@const ep = getEffective(p)}
+  {@const isEditing = editingRepoPath === ep.path}
+  <div class="group">
+    <div class="flex items-center gap-2 transition-colors {selectedId === p.id ? 'bg-primary-z2' : 'hover:bg-surface-z2'}">
+      <button onclick={() => selectProject(p.id)} class="flex flex-1 items-center gap-2 px-4 py-2 min-w-0 text-left">
+        <span class="text-xs shrink-0 {p.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z5' : 'i-solar-code-square-bold-duotone text-primary-z5'}"></span>
+        <span class="flex-1 truncate text-xs font-medium {selectedId === p.id ? 'text-primary-z8' : 'text-surface-z7'}">{ep.name}</span>
+        {#if ep.scanStatus}
+          <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] capitalize {SCAN_STATUS_CLS[ep.scanStatus] ?? SCAN_STATUS_CLS.unknown}">{ep.scanStatus}</span>
+        {/if}
       </button>
       <button
-        onclick={openAdd}
-        class="flex items-center gap-1.5 rounded-lg border border-surface-z3 bg-surface-z2 px-2.5 py-1.5 text-xs text-surface-z7 transition-colors hover:bg-surface-z3"
-      >
-        <span class="i-solar-add-circle-bold-duotone text-sm"></span>
-        Add project
-      </button>
+        onclick={(e) => { e.stopPropagation(); isEditing ? cancelEdit() : startEdit(ep); }}
+        title={isEditing ? 'Cancel' : 'Edit'}
+        class="mr-2 shrink-0 rounded-md p-0.5 opacity-0 group-hover:opacity-100 text-surface-z4 hover:text-surface-z7 transition-all"
+      ><span class="{isEditing ? 'i-solar-close-square-bold-duotone' : 'i-solar-pen-bold-duotone'} text-xs"></span></button>
+    </div>
+    {#if isEditing}{@render editForm(ep)}{/if}
+  </div>
+{/snippet}
+
+<div class="flex h-full min-h-0">
+
+  <!-- ══ NAV PANEL ════════════════════════════════════════════════════ -->
+  <div class="flex w-72 shrink-0 flex-col border-r border-surface-z0/50 overflow-hidden">
+
+    <!-- Top bar -->
+    <div class="border-b border-surface-z0/50 px-3 py-2 shrink-0 space-y-2">
+      <div class="flex items-center gap-2">
+        <h1 class="text-sm font-semibold text-surface-z8 mr-auto">Projects</h1>
+        <Toggle
+          bind:value={groupMode}
+          options={[
+            { value: 'variants', icon: 'i-solar-layers-minimalistic-bold-duotone', label: 'Variants', description: 'Group by variant' },
+            { value: 'clients',  icon: 'i-solar-buildings-bold-duotone',            label: 'Clients',  description: 'Group by client'  },
+          ]}
+          showLabels={false}
+          size="sm"
+        />
+        <button
+          onclick={openAdd}
+          class="flex items-center gap-1 rounded-lg border border-surface-z3 bg-surface-z2 px-2 py-1 text-xs text-surface-z6 transition-colors hover:bg-surface-z3"
+        >
+          <span class="i-solar-add-circle-bold-duotone text-sm"></span>
+          Add
+        </button>
+      </div>
+      <!-- Search -->
+      <div class="relative">
+        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs i-solar-magnifer-bold-duotone text-surface-z4 pointer-events-none"></span>
+        <input
+          bind:value={search}
+          placeholder="Search projects…"
+          class="w-full rounded-lg border border-surface-z3 bg-surface-z1 py-1.5 pl-7 pr-3 text-xs outline-none placeholder:text-surface-z4 focus:border-primary-z4 transition-colors"
+        />
+        {#if search}
+          <button
+            onclick={() => search = ''}
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-surface-z4 hover:text-surface-z7"
+            aria-label="Clear search"
+          >
+            <span class="i-solar-close-circle-bold-duotone text-sm"></span>
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Nav list -->
+    <div class="flex-1 overflow-y-auto">
+
+      {#if navEntries.length === 0}
+        <div class="flex flex-col items-center justify-center h-full gap-3 py-12 text-center">
+          <span class="i-solar-folder-with-files-bold-duotone text-3xl text-surface-z3"></span>
+          <p class="text-sm text-surface-z5">No projects yet</p>
+          <button onclick={openAdd} class="rounded-lg bg-primary-z6 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-z7 transition-colors">
+            Import your first project
+          </button>
+        </div>
+
+      {:else if isSearching}
+        <!-- ── Search results (flat list, groups auto-expanded) ── -->
+        <div class="px-2 pt-2 pb-3 space-y-1">
+          {#if filteredEntries.length === 0}
+            <div class="flex flex-col items-center justify-center py-10 text-center gap-2">
+              <span class="i-solar-magnifer-bold-duotone text-2xl text-surface-z3"></span>
+              <p class="text-xs text-surface-z5">No matches for "{search}"</p>
+            </div>
+          {:else}
+            {#each filteredEntries as entry}
+              {#if entry.type === 'group'}
+                {@const groupSelected = selectedGroupKey === entry.key}
+                <div class="rounded-xl border overflow-hidden transition-all
+                            {groupSelected ? 'border-primary-z4 bg-primary-z1' : 'border-surface-z3/60 bg-surface-z2/50'}">
+                  <!-- Group header -->
+                  <button
+                    onclick={() => selectGroup(entry.key)}
+                    class="w-full px-3 py-2 text-left"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="i-solar-layers-minimalistic-bold-duotone text-sm shrink-0 {groupSelected ? 'text-primary-z6' : 'text-info-z6'}"></span>
+                      <span class="flex-1 truncate text-sm font-semibold {groupSelected ? 'text-primary-z8' : 'text-surface-z8'}">{entry.key}</span>
+                      {#if !entry.groupMatches}
+                        <span class="text-[9px] rounded-full bg-info-z2 text-info-z7 px-1.5 py-0.5 shrink-0">{entry.matchedItems.length} of {entry.items.length}</span>
+                      {:else}
+                        <span class="text-[10px] text-surface-z4">{entry.items.length} repos</span>
+                      {/if}
+                    </div>
+                  </button>
+                  <!-- Always-expanded member list in search mode -->
+                  <div class="border-t border-surface-z2 divide-y divide-surface-z0/30">
+                    {#each entry.matchedItems as p (p.id)}
+                      {@render memberRow(p)}
+                    {/each}
+                    {#if !entry.groupMatches && entry.matchedItems.length < entry.items.length}
+                      <p class="px-4 py-1.5 text-[10px] text-surface-z4">{entry.items.length - entry.matchedItems.length} more not matching</p>
+                    {/if}
+                  </div>
+                </div>
+              {:else}
+                {@render repoCard(entry.item, selectedId === entry.item.id)}
+              {/if}
+            {/each}
+          {/if}
+        </div>
+
+      {:else}
+        <!-- ── Normal view: RECENT + OLDER ── -->
+        <!-- RECENT -->
+        <div class="px-3 pt-3 pb-1">
+          <p class="text-[10px] font-semibold uppercase tracking-widest text-surface-z4">Recent</p>
+        </div>
+        <div class="px-2 pb-2 space-y-1">
+          {#each recentEntries as entry}
+
+            {#if entry.type === 'group'}
+              <!-- Group card -->
+              {@const expanded = expandedGroupKeys.has(entry.key)}
+              {@const groupSelected = selectedGroupKey === entry.key}
+              <div class="rounded-xl border transition-all overflow-hidden
+                          {groupSelected ? 'border-primary-z4 bg-primary-z1' : 'border-surface-z3/60 bg-surface-z2/50 hover:border-surface-z4'}">
+                <button
+                  onclick={() => { toggleGroup(entry.key); if (!expanded) selectGroup(entry.key); }}
+                  class="w-full px-3 py-2.5 text-left"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="i-solar-layers-minimalistic-bold-duotone text-sm shrink-0 {groupSelected ? 'text-primary-z6' : 'text-info-z6'}"></span>
+                    <span class="flex-1 truncate text-sm font-semibold {groupSelected ? 'text-primary-z8' : 'text-surface-z8'}">{entry.key}</span>
+                    <span class="text-[10px] text-surface-z4">{entry.items.length} repos</span>
+                    <span class="text-xs {expanded ? 'i-solar-alt-arrow-up-bold-duotone' : 'i-solar-alt-arrow-down-bold-duotone'} text-surface-z4 shrink-0"></span>
+                  </div>
+                  <div class="mt-1 flex items-center gap-1.5">
+                    {#each entry.categories.slice(0, 3) as cat}
+                      <span class="rounded bg-surface-z3 px-1.5 py-0.5 text-[9px] text-surface-z5 capitalize">{cat}</span>
+                    {/each}
+                    {#if entry.minDays != null}
+                      <span class="ml-auto text-[10px] text-surface-z4">{entry.minDays === 0 ? 'Today' : entry.minDays < 7 ? entry.minDays + 'd ago' : entry.minDays < 30 ? Math.floor(entry.minDays / 7) + 'w ago' : Math.floor(entry.minDays / 30) + 'mo ago'}</span>
+                    {/if}
+                  </div>
+                </button>
+                {#if expanded}
+                  <div class="border-t border-surface-z2 divide-y divide-surface-z0/30">
+                    {#each entry.items as p (p.id)}
+                      {@render memberRow(p)}
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+
+            {:else}
+              {@render repoCard(entry.item, selectedId === entry.item.id)}
+            {/if}
+
+          {/each}
+        </div>
+
+        <!-- OLDER -->
+        {#if olderEntries.length > 0}
+          <div class="px-3 pt-2 pb-1.5 flex items-center justify-between">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-surface-z4">Older</p>
+            <button
+              onclick={() => showAllOlder = !showAllOlder}
+              class="flex items-center gap-1 text-[10px] text-surface-z4 hover:text-surface-z7 transition-colors"
+            >
+              Browse
+              <span class="text-[8px] {showAllOlder ? 'i-solar-alt-arrow-up-bold-duotone' : 'i-solar-alt-arrow-down-bold-duotone'}"></span>
+            </button>
+          </div>
+
+          {#if showAllOlder}
+            <!-- Expanded compact list -->
+            <div class="px-2 pb-3 space-y-0.5">
+              {#each olderEntries as entry}
+                {#if entry.type === 'group'}
+                  <button
+                    onclick={() => selectGroup(entry.key)}
+                    class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors
+                           {selectedGroupKey === entry.key ? 'bg-primary-z1 text-primary-z8' : 'hover:bg-surface-z2 text-surface-z7'}"
+                  >
+                    <span class="i-solar-layers-minimalistic-bold-duotone text-xs text-info-z5 shrink-0"></span>
+                    <span class="flex-1 truncate text-xs font-medium">{entry.key}</span>
+                    <span class="text-[9px] text-surface-z4">{entry.items.length}</span>
+                    {#if entry.minDays != null}
+                      <span class="text-[9px] text-surface-z4">{entry.minDays < 30 ? entry.minDays + 'd' : Math.floor(entry.minDays / 30) + 'mo'}</span>
+                    {/if}
+                  </button>
+                {:else}
+                  <button
+                    onclick={() => selectProject(entry.item.id)}
+                    class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors
+                           {selectedId === entry.item.id ? 'bg-primary-z1 text-primary-z8' : 'hover:bg-surface-z2 text-surface-z7'}"
+                  >
+                    <span class="text-xs shrink-0 {entry.item.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z5' : 'i-solar-code-square-bold-duotone text-primary-z5'}"></span>
+                    <span class="flex-1 truncate text-xs font-medium">{entry.item.name}</span>
+                    {#if entry.days != null}
+                      <span class="text-[9px] text-surface-z4">{entry.days < 30 ? entry.days + 'd' : Math.floor(entry.days / 30) + 'mo'}</span>
+                    {/if}
+                  </button>
+                {/if}
+              {/each}
+            </div>
+
+          {:else}
+            <!-- Compact chip row -->
+            <div class="px-3 pb-4 flex flex-wrap gap-1.5">
+              {#each olderEntries.slice(0, 10) as entry}
+                {#if entry.type === 'group'}
+                  <button
+                    onclick={() => selectGroup(entry.key)}
+                    class="flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] transition-colors
+                           {selectedGroupKey === entry.key ? 'border-primary-z4 bg-primary-z1 text-primary-z7' : 'border-surface-z3 bg-surface-z2 text-surface-z6 hover:border-surface-z4'}"
+                  >
+                    <span class="i-solar-layers-minimalistic-bold-duotone text-[9px] text-info-z5"></span>
+                    {entry.key}
+                  </button>
+                {:else}
+                  <button
+                    onclick={() => selectProject(entry.item.id)}
+                    class="rounded-full border px-2.5 py-1 text-[10px] transition-colors
+                           {selectedId === entry.item.id ? 'border-primary-z4 bg-primary-z1 text-primary-z7' : 'border-surface-z3 bg-surface-z2 text-surface-z6 hover:border-surface-z4'}"
+                  >{entry.item.name}</button>
+                {/if}
+              {/each}
+              {#if olderEntries.length > 10}
+                <span class="flex items-center px-1 text-[10px] text-surface-z4">+{olderEntries.length - 10} more</span>
+              {/if}
+            </div>
+          {/if}
+        {/if}
+
+      {/if}
     </div>
   </div>
 
-  <!-- Content switches on view mode -->
-  {#if viewMode === 'split'}
-    <!-- ══ SPLIT VIEW ════════════════════════════════════════════════ -->
-    <div class="flex flex-1 min-h-0 overflow-hidden">
-
-      <!-- Project list panel -->
-      <div class="flex w-64 shrink-0 flex-col border-r border-surface-z0/50 overflow-hidden">
-        <div class="px-3 py-2.5 space-y-2">
-          <div class="relative">
-            <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs i-solar-magnifer-bold-duotone text-surface-z4"></span>
-            <input
-              bind:value={search}
-              placeholder="Search…"
-              class="w-full rounded-lg border border-surface-z3 bg-surface-z2 py-1.5 pl-7 pr-3 text-xs outline-none placeholder:text-surface-z4 focus:border-primary-z5"
-            />
+  <!-- ══ DETAIL AREA ═══════════════════════════════════════════════════ -->
+  {#if selectedGroupKey && !project}
+    {@const groupEntry = navEntries.find(e => e.type === 'group' && e.key === selectedGroupKey)}
+    {#if groupEntry && groupEntry.type === 'group'}
+      <div class="flex flex-1 min-w-0 flex-col overflow-hidden">
+        <!-- Group header -->
+        <div class="border-b border-surface-z0/50 px-5 py-4 shrink-0">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="i-solar-layers-minimalistic-bold-duotone text-lg text-info-z6"></span>
+            <h2 class="text-base font-semibold text-surface-z9 capitalize">{groupEntry.key}</h2>
+            <span class="rounded-full bg-surface-z3 px-2 py-0.5 text-[10px] text-surface-z5">{groupEntry.items.length} variants</span>
           </div>
-          <div class="flex gap-0.5">
-            {#each (['all', 'repo', 'idea'] as const) as f}
-              <button
-                onclick={() => kindFilter = f}
-                class="flex-1 rounded-md py-1 text-[10px] font-medium transition-colors capitalize
-                       {kindFilter === f ? 'bg-primary-z2 text-primary-z7' : 'text-surface-z5 hover:text-surface-z7'}"
-              >{f === 'all' ? 'All' : f === 'repo' ? 'Repos' : 'Ideas'}</button>
-            {/each}
-          </div>
+          <p class="text-xs text-surface-z5">These repos share a common name stem. Pick one to work on, or ask about the group as a whole.</p>
         </div>
-
-        <div class="flex-1 overflow-y-auto px-1.5 pb-3 space-y-0.5">
-          {#each groupedProjects as section}
-            {#if section.type === 'group'}
-              <!-- Group header chip -->
-              <div class="mt-2 mb-0.5 flex items-center gap-1.5 px-2">
-                <span class="i-solar-layers-minimalistic-bold-duotone text-xs text-info-z6 shrink-0"></span>
-                <span class="flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-info-z6">{section.name}</span>
-                <span class="text-[10px] text-surface-z4">{section.items.length}</span>
-              </div>
-              <!-- Group items — slightly indented -->
-              {#each section.items as p (p.id)}
-                <button
-                  onclick={() => selectProject(p.id)}
-                  class="w-full rounded-xl pl-5 pr-3 py-2.5 text-left transition-colors
-                         {selectedId === p.id ? 'bg-primary-z2' : 'hover:bg-surface-z2/80'}"
-                >
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-sm shrink-0 {p.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z6' : 'i-solar-code-square-bold-duotone text-primary-z6'}"></span>
-                    <span class="truncate text-sm font-medium text-surface-z8">{p.name}</span>
-                    {#if p.scanStatus}
-                      <span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium capitalize {SCAN_STATUS_CLS[p.scanStatus] ?? SCAN_STATUS_CLS.unknown}">{p.scanStatus}</span>
-                    {:else if p.language}
-                      <span class="ml-auto shrink-0 text-[10px] text-surface-z4">{p.language}</span>
-                    {/if}
-                  </div>
-                  <p class="mt-0.5 truncate text-[11px] text-surface-z4">{p.description}</p>
-                  <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                    {#if p.tech_stack?.length > 1}
-                      {#each p.tech_stack.slice(0, 3) as t}
-                        <span class="rounded bg-surface-z3 px-1.5 py-0.5 text-[9px] text-surface-z5">{t}</span>
-                      {/each}
-                    {:else if p.maturity > 0}
-                      <div class="flex flex-1 gap-0.5">
-                        {#each Array(5) as _, i}
-                          <div class="h-1 flex-1 rounded-full {i < p.maturity ? maturityBg[p.maturity] : 'bg-surface-z3'}"></div>
-                        {/each}
-                      </div>
-                    {/if}
-                    <span class="ml-auto text-[10px] text-surface-z4">{p.lastActivity}</span>
-                  </div>
-                </button>
-              {/each}
-            {:else}
-              <!-- Solo (ungrouped) project -->
-              <button
-                onclick={() => selectProject(section.item.id)}
-                class="w-full rounded-xl px-3 py-2.5 text-left transition-colors
-                       {selectedId === section.item.id ? 'bg-primary-z2' : 'hover:bg-surface-z2/80'}"
-              >
-                <div class="flex items-center gap-1.5">
-                  <span class="text-sm shrink-0 {section.item.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z6' : 'i-solar-code-square-bold-duotone text-primary-z6'}"></span>
-                  <span class="truncate text-sm font-medium text-surface-z8">{section.item.name}</span>
-                  {#if section.item.scanStatus}
-                    <span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium capitalize {SCAN_STATUS_CLS[section.item.scanStatus] ?? SCAN_STATUS_CLS.unknown}">{section.item.scanStatus}</span>
-                  {:else if section.item.language}
-                    <span class="ml-auto shrink-0 text-[10px] text-surface-z4">{section.item.language}</span>
-                  {/if}
-                </div>
-                <p class="mt-0.5 truncate text-[11px] text-surface-z4">{section.item.description}</p>
+        <!-- Member list -->
+        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+          {#each groupEntry.items as p (p.id)}
+            <button
+              onclick={() => selectProject(p.id)}
+              class="flex w-full items-start gap-3 rounded-xl border border-surface-z3/60 bg-surface-z2/50 px-4 py-3 text-left transition-all hover:border-surface-z4 hover:bg-surface-z2"
+            >
+              <span class="mt-0.5 text-base shrink-0 {p.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z6' : 'i-solar-code-square-bold-duotone text-primary-z6'}"></span>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-semibold text-surface-z8">{p.name}</p>
+                {#if p.description && p.description !== p.name}
+                  <p class="mt-0.5 text-xs text-surface-z5 line-clamp-1">{p.description}</p>
+                {/if}
                 <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                  {#if section.item.tech_stack?.length > 1}
-                    {#each section.item.tech_stack.slice(0, 3) as t}
-                      <span class="rounded bg-surface-z3 px-1.5 py-0.5 text-[9px] text-surface-z5">{t}</span>
-                    {/each}
-                  {:else if section.item.maturity > 0}
-                    <div class="flex flex-1 gap-0.5">
-                      {#each Array(5) as _, i}
-                        <div class="h-1 flex-1 rounded-full {i < section.item.maturity ? maturityBg[section.item.maturity] : 'bg-surface-z3'}"></div>
-                      {/each}
-                    </div>
-                  {/if}
-                  <span class="ml-auto text-[10px] text-surface-z4">{section.item.lastActivity}</span>
+                  {#each (p.tech_stack ?? []).slice(0, 3) as t}
+                    <span class="rounded bg-surface-z3 px-1.5 py-0.5 text-[9px] text-surface-z5">{t}</span>
+                  {/each}
+                  <span class="ml-auto text-[10px] text-surface-z4">{p.lastActivity}</span>
                 </div>
-              </button>
-            {/if}
+              </div>
+              {#if p.scanStatus}
+                <span class="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-medium capitalize mt-0.5 {SCAN_STATUS_CLS[p.scanStatus] ?? SCAN_STATUS_CLS.unknown}">{p.scanStatus}</span>
+              {/if}
+            </button>
           {/each}
         </div>
-      </div>
-
-      <!-- Manage groups panel (slides in alongside list) -->
-      {#if showGroups}
-        <div class="flex w-64 shrink-0 flex-col border-r border-surface-z0/50 overflow-hidden bg-surface-z1">
-          <div class="flex items-center justify-between px-3 py-2.5 border-b border-surface-z0/50 shrink-0">
-            <span class="text-xs font-semibold text-surface-z7">Variant groups</span>
-            <button onclick={() => showGroups = false} title="Close" class="text-surface-z4 hover:text-surface-z7 transition-colors">
-              <span class="i-solar-close-circle-bold-duotone text-base"></span>
-            </button>
-          </div>
-          <div class="flex-1 overflow-y-auto px-2 py-2 space-y-3">
-            {#if allGroups.length === 0}
-              <div class="flex flex-col items-center justify-center py-8 text-center gap-2">
-                <span class="i-solar-layers-minimalistic-bold-duotone text-2xl text-surface-z3"></span>
-                <p class="text-xs text-surface-z4">No variant groups detected</p>
-              </div>
-            {:else}
-              {#each allGroups as group}
-                <div class="rounded-xl border border-surface-z3 bg-surface-z2/50 overflow-hidden">
-                  <div class="flex items-center gap-1.5 px-3 py-2 border-b border-surface-z2">
-                    <span class="i-solar-layers-minimalistic-bold-duotone text-xs text-info-z6 shrink-0"></span>
-                    <span class="flex-1 truncate text-xs font-semibold text-surface-z7">{group.key}</span>
-                    <button
-                      onclick={() => ungroupAll(group.key)}
-                      class="text-[10px] text-surface-z4 hover:text-error-z6 transition-colors"
-                      title="Ungroup all"
-                    >Ungroup</button>
-                  </div>
-                  <div class="divide-y divide-surface-z0/20">
-                    {#each group.items as p}
-                      <div class="flex items-center gap-2 px-3 py-2">
-                        <span class="text-xs shrink-0 {p.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z5' : 'i-solar-code-square-bold-duotone text-primary-z5'}"></span>
-                        <span class="flex-1 truncate text-xs text-surface-z7">{p.name}</span>
-                        <button
-                          onclick={() => removeFromGroup(p.id)}
-                          class="text-[10px] text-surface-z4 hover:text-error-z6 transition-colors shrink-0"
-                          title="Remove from group"
-                        >
-                          <span class="i-solar-close-square-bold-duotone text-xs"></span>
-                        </button>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/each}
-            {/if}
+        <!-- Group prompt bar -->
+        <div class="border-t border-surface-z0/50 bg-surface-z2/60 px-4 py-2.5 backdrop-blur-sm shrink-0">
+          <div class="flex items-center gap-2 rounded-xl border border-surface-z3 bg-surface-z1 px-3 py-2 focus-within:border-primary-z4 transition-all">
+            <span class="i-solar-magic-stick-3-bold-duotone text-sm text-primary-z6 shrink-0"></span>
+            <input
+              bind:value={prompt}
+              placeholder="Ask about all {groupEntry.key} variants…"
+              class="flex-1 bg-transparent text-sm text-surface-z7 outline-none placeholder:text-surface-z4"
+            />
+            <kbd class="rounded border border-surface-z3 px-1.5 py-0.5 text-[9px] text-surface-z4">⏎</kbd>
           </div>
         </div>
-      {/if}
+      </div>
+    {/if}
 
-      <!-- Detail panel -->
-      {#if project}
+  {:else if project}
         <div class="flex flex-1 min-w-0 flex-col overflow-hidden">
 
           <!-- Project header -->
@@ -582,22 +894,108 @@
               </div>
             {/if}
 
-            <!-- Tab bar: only shown when project has indexed data -->
-            {#if hasData}
-              <div class="mt-3 flex gap-1">
-                {#each (['cards', 'graph', 'sessions'] as const) as tab}
-                  <button
-                    onclick={() => activeTab = tab}
-                    class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors capitalize
-                           {activeTab === tab ? 'bg-primary-z2 text-primary-z7' : 'text-surface-z5 hover:text-surface-z7'}"
-                  >{tab}</button>
-                {/each}
-              </div>
-            {/if}
+            <!-- Tab bar: always shown; cards/graph/sessions dimmed when no data -->
+            <div class="mt-3 flex gap-1">
+              {#each (['cards', 'graph', 'sessions', 'libraries'] as const) as tab}
+                <button
+                  onclick={() => { if (hasData || tab === 'libraries') activeTab = tab; }}
+                  class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors capitalize
+                         {activeTab === tab ? 'bg-primary-z2 text-primary-z7' : 'text-surface-z5 hover:text-surface-z7'}
+                         {!hasData && tab !== 'libraries' ? 'opacity-30 pointer-events-none' : ''}"
+                >{tab}</button>
+              {/each}
+            </div>
           </div>
 
           <!-- Tab content -->
-          {#if !hasData}
+          {#if activeTab === 'libraries'}
+            <!-- ── Libraries tab — always available ── -->
+            <div class="flex-1 overflow-y-auto">
+              {#if libLoading.has(project.path)}
+                <div class="px-5 py-10 text-center">
+                  <span class="i-solar-refresh-circle-bold-duotone text-2xl text-surface-z3 block mx-auto mb-2 animate-spin"></span>
+                  <p class="text-xs text-surface-z4">Scanning imports…</p>
+                </div>
+              {:else}
+                {@const allDeps = libData.get(project.path) ?? []}
+                {@const highDeps = allDeps.filter((d: DetectedDep) => d.usage_pct >= LIB_AUTO_THRESHOLD)}
+                {@const midDeps = allDeps.filter((d: DetectedDep) => d.usage_pct >= LIB_SUGGEST_MIN && d.usage_pct < LIB_AUTO_THRESHOLD)}
+                {@const lowDeps = allDeps.filter((d: DetectedDep) => d.usage_pct < LIB_SUGGEST_MIN)}
+                {#if allDeps.length === 0}
+                  <div class="px-5 py-10 text-center space-y-2">
+                    <span class="i-solar-box-bold-duotone text-2xl text-surface-z3 block mx-auto"></span>
+                    <p class="text-sm font-medium text-surface-z7">No imports detected</p>
+                    <p class="text-xs text-surface-z4">Start a session in Claude Code first, or ensure source files exist at this path.</p>
+                  </div>
+                {:else}
+                  {@const idxStatus = indexStates[project.path] ?? 'idle'}
+                  {@const optedCount = allDeps.filter((d: DetectedDep) => isOptedIn(project.path, d)).length}
+                  <!-- Header: stats + index trigger -->
+                  <div class="px-5 pt-4 pb-3 flex items-center justify-between gap-3">
+                    <p class="text-xs text-surface-z5">{allDeps.length} packages · {allDeps[0]?.total_files ?? 0} source files</p>
+                    {#if idxStatus === 'done'}
+                      <span class="flex items-center gap-1 text-[10px] font-medium text-success-z6 shrink-0">
+                        <span class="i-solar-check-circle-bold-duotone text-xs"></span> Indexed
+                      </span>
+                    {:else if idxStatus === 'queued' || idxStatus === 'running'}
+                      <span class="flex items-center gap-1 text-[10px] text-primary-z6 animate-pulse shrink-0">
+                        <span class="i-solar-restart-bold-duotone text-xs"></span>
+                        {idxStatus === 'queued' ? 'Queued' : 'Indexing…'}
+                      </span>
+                    {:else}
+                      <button
+                        onclick={() => queueIndex(project.path)}
+                        disabled={optedCount === 0}
+                        class="flex shrink-0 items-center gap-1 rounded-lg bg-primary-z6 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-primary-z7 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      ><span class="i-solar-refresh-bold-duotone text-xs"></span> Index {optedCount}</button>
+                    {/if}
+                  </div>
+
+                  <!-- Auto-indexed (≥30%) -->
+                  {#if highDeps.length > 0}
+                    <div class="px-5 pb-3">
+                      <p class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-success-z6">Auto-indexed · ≥30%</p>
+                      <div class="space-y-0.5">
+                        {#each highDeps as dep (dep.name)}{@render depRow(project.path, dep)}{/each}
+                      </div>
+                    </div>
+                  {/if}
+
+                  <!-- Suggested (10–29%) -->
+                  {#if midDeps.length > 0}
+                    <div class="px-5 pb-3">
+                      <p class="mb-2 text-[10px] font-semibold uppercase tracking-widest text-warning-z6">Suggested · 10–29%</p>
+                      <div class="space-y-0.5">
+                        {#each midDeps as dep (dep.name)}{@render depRow(project.path, dep)}{/each}
+                      </div>
+                    </div>
+                  {/if}
+
+                  <!-- Low usage (<10%, collapsible) -->
+                  {#if lowDeps.length > 0}
+                    <div class="px-5 pb-4">
+                      <button
+                        onclick={() => showAllLibs = !showAllLibs}
+                        class="flex items-center gap-1.5 text-[10px] text-surface-z4 hover:text-surface-z7 transition-colors"
+                      >
+                        <span class="text-[8px] {showAllLibs ? 'i-solar-alt-arrow-up-bold-duotone' : 'i-solar-alt-arrow-down-bold-duotone'}"></span>
+                        {showAllLibs ? 'Hide' : 'Show'} {lowDeps.length} low-usage packages
+                      </button>
+                      {#if showAllLibs}
+                        <div class="mt-2 space-y-0.5">
+                          {#each lowDeps as dep (dep.name)}{@render depRow(project.path, dep)}{/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+
+                  <p class="px-5 pb-5 text-[10px] text-surface-z3 leading-relaxed">
+                    Opted-in libraries are indexed by the Sensei daemon and kept in sync with code changes.
+                  </p>
+                {/if}
+              {/if}
+            </div>
+          {:else if !hasData}
             <!-- No data yet — show project overview with scan metadata -->
             <div class="flex-1 overflow-y-auto px-5 py-5 space-y-5">
               {#if project.description && project.description !== project.name}
@@ -806,82 +1204,11 @@
             </div>
           </div>
         </div>
-      {:else}
-        <div class="flex flex-1 items-center justify-center">
-          <div class="text-center space-y-3">
-            <span class="i-solar-planets-bold-duotone text-3xl text-surface-z3 block mx-auto"></span>
-            <p class="text-sm text-surface-z5">No projects yet</p>
-            <button
-              onclick={openAdd}
-              class="rounded-lg bg-primary-z6 px-4 py-2 text-xs font-semibold text-white hover:bg-primary-z7 transition-colors"
-            >Import your first project</button>
-          </div>
-        </div>
-      {/if}
-    </div>
-
   {:else}
-    <!-- ══ BOARD VIEW ════════════════════════════════════════════════ -->
-    <div class="flex-1 overflow-y-auto px-5 py-4">
-      <div class="grid grid-cols-2 gap-3 xl:grid-cols-3">
-        {#each filteredProjects as p (p.id)}
-          <button
-            onclick={() => { selectProject(p.id); viewMode = 'split'; }}
-            class="rounded-2xl border border-surface-z3/60 bg-surface-z2/50 px-4 py-4 text-left transition-all hover:border-surface-z4 hover:bg-surface-z2"
-          >
-            <div class="flex items-start justify-between mb-2">
-              <div class="flex items-center gap-2">
-                <span class="text-lg {p.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z6' : 'i-solar-code-square-bold-duotone text-primary-z6'}"></span>
-                <span class="font-semibold text-surface-z8">{p.name}</span>
-              </div>
-              {#if p.language}
-                <span class="text-[10px] text-surface-z4 rounded bg-surface-z3 px-1.5 py-0.5">{p.language}</span>
-              {/if}
-            </div>
-
-            <p class="text-xs text-surface-z5 line-clamp-2 mb-3">{p.description}</p>
-
-            {#if p.scanStatus}
-              <!-- Scan-derived metadata -->
-              <div class="flex items-center gap-1.5 mb-3 flex-wrap">
-                <span class="rounded-full px-1.5 py-0.5 text-[9px] font-medium capitalize {SCAN_STATUS_CLS[p.scanStatus] ?? SCAN_STATUS_CLS.unknown}">{p.scanStatus}</span>
-                {#each (p.tech_stack ?? []).slice(0, 3) as t}
-                  <span class="rounded bg-surface-z3 px-1.5 py-0.5 text-[9px] text-surface-z5">{t}</span>
-                {/each}
-              </div>
-              <div class="flex items-center justify-between text-[10px] text-surface-z4">
-                <span>{p.commit_count ?? 0} commits · {p.lastActivity}</span>
-                {#if p.category && p.category !== 'unknown'}
-                  <span class="capitalize text-surface-z4">{p.category}</span>
-                {/if}
-              </div>
-            {:else}
-              <!-- Maturity bar for tracked projects -->
-              <div class="flex items-center gap-2 mb-2">
-                <div class="flex flex-1 gap-0.5">
-                  {#each Array(5) as _, i}
-                    <div class="h-1.5 flex-1 rounded-full {i < p.maturity ? maturityBg[p.maturity] : 'bg-surface-z3'}"></div>
-                  {/each}
-                </div>
-                <span class="text-[10px] text-surface-z5">{maturityLabel[p.maturity]}</span>
-              </div>
-              <!-- Phase pipeline mini -->
-              <div class="flex gap-1 mb-3">
-                {#each p.phases as phase}
-                  <div class="flex-1 text-center">
-                    <div class="h-0.5 w-full rounded-full {phase.done ? 'bg-success-z5' : phase.active ? 'bg-primary-z6' : 'bg-surface-z3'}"></div>
-                  </div>
-                {/each}
-              </div>
-              <div class="flex items-center justify-between text-[10px] text-surface-z4">
-                <span>{p.sessionCount} sessions · {p.cardCount} cards</span>
-                {#if p.ftrScore > 0}
-                  <span class="rounded-full bg-success-z2 px-1.5 py-0.5 text-[10px] font-semibold text-success-z7">FTR {Math.round(p.ftrScore * 100)}%</span>
-                {/if}
-              </div>
-            {/if}
-          </button>
-        {/each}
+    <div class="flex flex-1 items-center justify-center">
+      <div class="text-center space-y-2">
+        <span class="i-solar-cursor-bold-duotone text-3xl text-surface-z3 block mx-auto"></span>
+        <p class="text-sm text-surface-z5">Select a project or group</p>
       </div>
     </div>
   {/if}
