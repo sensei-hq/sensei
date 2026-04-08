@@ -1,6 +1,6 @@
 @import '@unocss/reset/tailwind.css';
 @import '@rokkit/themes/base.css';
-@import '@rokkit/themes/rokkit.css';
+@import '@rokkit/themes/frosted.css';
 
 /* Follow OS dark/light and expose system colors to native controls */
 :root {
