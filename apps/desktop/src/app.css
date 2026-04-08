@@ -1,7 +1,10 @@
 @import '@unocss/reset/tailwind.css';
+@import '@rokkit/themes/base.css';
+@import '@rokkit/themes/rokkit.css';
 
-/* macOS system font stack */
+/* Follow OS dark/light and expose system colors to native controls */
 :root {
+  color-scheme: light dark;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

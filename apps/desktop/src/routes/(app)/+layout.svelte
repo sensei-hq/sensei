@@ -1,6 +1,5 @@
 <script lang="ts">
   import { page } from '$app/stores';
-  import { ThemeSwitcherToggle } from '@rokkit/app';
 
   let { children } = $props();
 
@@ -56,11 +55,7 @@
     </nav>
 
     <!-- Bottom -->
-    <div class="border-t border-surface-z0/50 px-3 py-2.5 space-y-0.5">
-      <div class="flex items-center justify-between px-2.5 py-1.5">
-        <span class="text-xs text-surface-z4">Theme</span>
-        <div class="no-drag"><ThemeSwitcherToggle /></div>
-      </div>
+    <div class="border-t border-surface-z0/50 px-3 py-2.5">
       <a
         href="/settings"
         class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-surface-z5 no-drag transition-colors hover:bg-surface-z3/60 hover:text-surface-z7"
