@@ -1,0 +1,27 @@
+{
+  "name": "@sensei/graph-indexer",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "bunx tsc --project tsconfig.json",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@sensei/engine": "workspace:*",
+    "@sensei/shared": "workspace:*",
+    "fast-glob": "^3.3.3",
+    "kuzu": "^0.11.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^6.0.2"
+  }
+}
