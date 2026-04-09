@@ -5,10 +5,11 @@ import {
   type KuzuValue,
 } from "kuzu";
 import fg from "fast-glob";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve, dirname, relative } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { TypeScriptAdapter } from "@sensei/engine";
 import { extractTaggedComments } from "./parser.js";
 import { ensureSchemaWithConn } from "./schema.js";
@@ -385,6 +386,18 @@ export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
         }
       }
     }
+
+    // Persist index state for drift detection
+    let lastCommit: string | undefined;
+    try {
+      lastCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: opts.repoPath }).toString().trim();
+    } catch { /* not a git repo */ }
+
+    const dbDir = join(homedir(), ".sensei", "projects", opts.repoId);
+    await writeFile(
+      join(dbDir, "index-state.json"),
+      JSON.stringify({ lastCommit, indexedAt: new Date().toISOString(), repoPath: opts.repoPath }, null, 2),
+    );
 
     return {
       filesIndexed: files.length,
