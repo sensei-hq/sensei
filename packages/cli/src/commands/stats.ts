@@ -1,5 +1,6 @@
 // packages/cli/src/commands/stats.ts
-import { makeSenseiClient, loadSenseiConfig } from "@sensei/shared";
+import { loadSenseiConfig } from "@sensei/shared";
+import { getActivityLog } from "@sensei/server";
 import { detectGapPatterns } from "@sensei/collector";
 
 export interface StatsResult {
@@ -100,33 +101,28 @@ export function formatStats(result: StatsResult, opts: { json: boolean }): strin
 
 export async function stats(opts: StatsCommandOptions): Promise<void> {
   const repoPath = opts._repoPath ?? process.cwd();
-  const [client, config] = await Promise.all([
-    makeSenseiClient(repoPath),
-    loadSenseiConfig(repoPath),
-  ]);
-  if (!client || !config) {
-    console.error("Supabase not configured. Run `sensei init` to configure.");
+  const config = await loadSenseiConfig(repoPath);
+  if (!config) {
+    console.error("sensei not configured. Run `sensei init` to set up.");
     return;
   }
   const repoId = config.repo_id;
+  const log = getActivityLog(repoId);
 
   const days = opts.days ?? 7;
   const nowMs = Date.now();
-  const since = new Date(nowMs - days * 24 * 60 * 60 * 1000).toISOString();
-  const from = since.slice(0, 10);
+  const sinceMs = opts.all ? 0 : nowMs - days * 24 * 60 * 60 * 1000;
+  const sinceIso = new Date(sinceMs).toISOString();
+  const from = sinceIso.slice(0, 10);
   const to = new Date(nowMs).toISOString().slice(0, 10);
 
   if (opts.gaps) {
-    let query = (client as any).from("events").select("input").eq("tool", "Bash").eq("phase", "pre").not("input", "is", null).gte("ts", since);
-    const { data: bashEvents } = await query;
-    const commands = (bashEvents ?? [])
-      .map((e: any) => (e.input as { command?: string })?.command ?? "")
-      .filter(Boolean);
+    const commands = log.getBashCommandsSince(sinceIso);
     const gaps = detectGapPatterns(commands);
     if (opts.json) {
       console.log(JSON.stringify({ gaps }, null, 2));
     } else {
-      console.log(`\nMissed opportunity report — last ${days} days\n`);
+      console.log(`\nMissed opportunity report — last ${opts.all ? "all time" : `${days} days`}\n`);
       if (gaps.length === 0) { console.log("  No gaps detected."); return; }
       console.log("Pattern                          Count   Suggested tool");
       console.log("─".repeat(60));
@@ -137,20 +133,9 @@ export async function stats(opts: StatsCommandOptions): Promise<void> {
     return;
   }
 
-  const { data: sessions, error: sessionsError } = await (client as any)
-    .from("task_sessions")
-    .select("id,status,ftr_score")
-    .eq("repo_id", repoId)
-    .gte("created_at", since);
-  if (sessionsError) console.warn("Failed to load task_sessions:", sessionsError.message);
+  const sessions = log.getSessionsSince(sinceIso);
+  const turns = log.getToolCallsSince(sinceIso);
 
-  const { data: turns, error: turnsError } = await (client as any)
-    .from("task_turns")
-    .select("tool,success,duration_ms,task_session_id")
-    .eq("repo_id", repoId)
-    .gte("created_at", since);
-  if (turnsError) console.warn("Failed to load task_turns:", turnsError.message);
-
-  const result = buildStatsResult(sessions ?? [], turns ?? [], { from, to });
+  const result = buildStatsResult(sessions, turns, { from, to });
   console.log(formatStats(result, { json: opts.json ?? false }));
 }

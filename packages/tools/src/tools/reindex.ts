@@ -5,8 +5,7 @@ import { execSync } from "child_process";
 import yaml from "js-yaml";
 import fg from "fast-glob";
 import type { SymbolMap, LlmSpec, LlmsTxtSection } from "@sensei/shared";
-import { SENSEI_DIR, senseiPath, loadSenseiConfig, makeSenseiClient } from "@sensei/shared";
-import { buildChunksAndEmbeddings } from "./chunker.js";
+import { SENSEI_DIR, senseiPath } from "@sensei/shared";
 import { inferEntryPoints } from "./entry-point-adapters.js";
 import type { EntryPointCandidate } from "./entry-point-adapters.js";
 import { generateLlmsTxt as buildLlmsTxt } from "./llms-txt.js";
@@ -55,39 +54,15 @@ export async function reindexRepo(
   const gitignorePatterns = await loadGitignorePatterns(repoPath);
   const IGNORE = [...ALWAYS_IGNORE, ...gitignorePatterns];
 
-  // Load existing state from DB
+  // Load existing state from local doc-index.json
   let existingDocIndex: DocIndexData | null = null;
   let existingSymbolMap: SymbolMap = {};
 
-  const supabaseConfigEarly = await loadSenseiConfig(repoPath);
-  if (supabaseConfigEarly) {
-    const clientEarly = await makeSenseiClient(repoPath);
-    if (clientEarly) {
-      const { data: repoRow } = await (clientEarly as any)
-        .schema("sensei").from("repos")
-        .select("doc_fingerprints, last_indexed_commit")
-        .eq("id", supabaseConfigEarly.repo_id)
-        .maybeSingle();
-      if (repoRow?.doc_fingerprints) {
-        existingDocIndex = {
-          lastIndexedCommit: repoRow.last_indexed_commit ?? undefined,
-          files: repoRow.doc_fingerprints as Record<string, { mtime: number; size: number }>,
-        };
-      }
-      const { data: symbolRows } = await (clientEarly as any)
-        .schema("sensei").from("symbol_map")
-        .select("file_path, l0, l1")
-        .eq("repo_id", supabaseConfigEarly.repo_id);
-      if (symbolRows) {
-        for (const row of symbolRows) {
-          existingSymbolMap[row.file_path] = {
-            L0: row.l0,
-            L1: typeof row.l1 === "string" ? row.l1.split("\n").filter(Boolean) : (row.l1 ?? []),
-            L2: [],
-          };
-        }
-      }
-    }
+  const docIndexPath = join(repoPath, SENSEI_DIR, "doc-index.json");
+  if (existsSync(docIndexPath)) {
+    try {
+      existingDocIndex = JSON.parse(await readFile(docIndexPath, "utf-8")) as DocIndexData;
+    } catch { /* start fresh */ }
   }
 
   const force = options?.force ?? existingDocIndex === null;
@@ -223,9 +198,6 @@ export async function reindexRepo(
     files: fingerprints,
   };
 
-  // Build traceability matrix from .sensei/llmspec.yaml
-  const traceability = await buildTraceability(repoPath, docFiles);
-
   // Write all artifacts
   const [stack, shortcuts] = await Promise.all([
     detectStack(repoPath),
@@ -233,15 +205,6 @@ export async function reindexRepo(
   ]);
 
   await ensurePatternsMd(repoPath);
-
-  // Pass Supabase client to buildChunksAndEmbeddings so chunks/embeddings go to DB
-  // Use supabaseConfigEarly (already loaded above) — it's the same config as the later load
-  const chunkerClient = supabaseConfigEarly ? await makeSenseiClient(repoPath) : null;
-  await buildChunksAndEmbeddings(repoPath, symbolMap, docFiles, {
-    force,
-    client: chunkerClient ?? undefined,
-    repoId: supabaseConfigEarly?.repo_id ?? undefined,
-  });
 
   // Read existing description for llms.txt header
   let existingDescription = "";
@@ -270,7 +233,7 @@ export async function reindexRepo(
     llms_txt: [],
   };
 
-  const { sections: llmsTxtSections, content: llmsTxtContent } = await buildLlmsTxt(repoPath, specForHeader, symbolMap, changedFiles);
+  const { sections: llmsTxtSections } = await buildLlmsTxt(repoPath, specForHeader, symbolMap, changedFiles);
 
   await mergeLlmSpec(repoPath, {
     stack: [...stack.languages, ...stack.frameworks],
@@ -284,98 +247,10 @@ export async function reindexRepo(
 
   const total = added + updated + unchanged + skipped;
 
-  // Dual-write symbols + docs to Supabase if config present
-  let supabaseConfig = await loadSenseiConfig(repoPath);
-
-  // First-time: register repo and write .sensei/config.yaml
-  if (!supabaseConfig) {
-    const { loadCredentials } = await import("@sensei/shared");
-    const creds = await loadCredentials();
-    if (creds) {
-      const supabaseUrl = process.env.SUPABASE_URL ?? "http://localhost:54321";
-      const { createClient } = await import("@supabase/supabase-js");
-      const tempClient = createClient(supabaseUrl, creds.supabase_service_key, {
-        db: { schema: "sensei" },
-        auth: { persistSession: false },
-      });
-      const { registerRepo } = await import("./repo-registration.js");
-      const repoName = repoPath.split("/").at(-1) ?? "unknown";
-      const repoId = await registerRepo(tempClient, {
-        name:        repoName,
-        remote_url:  null,
-        description: undefined,
-        stack:       undefined,
-      });
-      if (repoId) {
-        const yamlLib = await import("js-yaml");
-        const configPath = join(repoPath, ".sensei", "config.yaml");
-        await writeFile(configPath, yamlLib.default.dump({ repo_id: repoId, supabase_url: supabaseUrl }));
-        supabaseConfig = { repo_id: repoId, supabase_url: supabaseUrl };
-      }
-    }
-  }
-
-  if (supabaseConfig) {
-    const client = await makeSenseiClient(repoPath);
-    if (client) {
-      const { upsertSymbols, upsertDocs } = await import("./supabase-index-writer.js");
-      const traceabilityEntries = Object.entries(traceability as Record<string, string[]>).map(([docPath, covers]) => ({
-        docPath, covers, autoDetected: false,
-      }));
-      await Promise.all([
-        upsertSymbols(client, supabaseConfig.repo_id, symbolMap),
-        upsertDocs(client, supabaseConfig.repo_id, traceabilityEntries),
-        (client as any).schema("sensei").from("repos").update({
-          doc_fingerprints:    newDocIndex.files,
-          last_indexed_commit: newDocIndex.lastIndexedCommit ?? null,
-          stack_md:            formatStack(stack),
-          shortcuts_md:        formatShortcuts(shortcuts),
-          llms_txt:            llmsTxtContent,
-        }).eq("id", supabaseConfig.repo_id),
-      ]);
-    }
-  }
+  // Persist local doc-index.json fingerprints for next run
+  await writeFile(docIndexPath, JSON.stringify(newDocIndex, null, 2));
 
   return { added, updated, removed, unchanged, skipped, total, forced: force };
-}
-
-async function buildTraceability(
-  repoPath: string,
-  docFiles: string[]
-): Promise<Record<string, string[]>> {
-  const result: Record<string, string[]> = {};
-
-  // Load manual declarations from .sensei/llmspec.yaml
-  const llmspecPath = senseiPath(repoPath, "llmspec.yaml");
-  if (existsSync(llmspecPath)) {
-    try {
-      const spec = yaml.load(await readFile(llmspecPath, "utf-8")) as Record<string, unknown>;
-      const docs = spec?.docs as Array<{ path: string; covers?: string[] }> | undefined;
-      if (Array.isArray(docs)) {
-        for (const entry of docs) {
-          if (entry.path && Array.isArray(entry.covers)) {
-            result[entry.path] = entry.covers;
-          }
-        }
-      }
-    } catch { /* malformed yaml */ }
-  }
-
-  // Auto-detect: scan doc content for filename references
-  for (const docFile of docFiles) {
-    if (result[docFile]) continue; // manual entry takes precedence
-    try {
-      const content = await readFile(join(repoPath, docFile), "utf-8");
-      const srcRefs = Array.from(
-        new Set(
-          Array.from(content.matchAll(/\bsrc\/[\w/.-]+\.[a-z]+\b/g)).map(m => m[0])
-        )
-      );
-      if (srcRefs.length > 0) result[docFile] = srcRefs;
-    } catch { /* skip unreadable */ }
-  }
-
-  return result;
 }
 
 async function ensurePatternsMd(repoPath: string): Promise<void> {
@@ -509,19 +384,6 @@ export function extractHeuristic(content: string, filename: string): { L0: strin
   }
 
   return { L0, L1: L0.map(s => `// ${s}`), L2: [] };
-}
-
-function formatStack(stack: Record<string, string[]>): string {
-  return "# Tech Stack\n\n" +
-    Object.entries(stack)
-      .filter(([, v]) => v.length)
-      .map(([k, v]) => `## ${k}\n${v.map(x => `- ${x}`).join("\n")}`)
-      .join("\n\n");
-}
-
-function formatShortcuts(shortcuts: Record<string, string>): string {
-  return "# Shortcuts\n\n" +
-    Object.entries(shortcuts).map(([k, v]) => `- **${k}**: \`${v}\``).join("\n");
 }
 
 export async function mergeLlmSpec(

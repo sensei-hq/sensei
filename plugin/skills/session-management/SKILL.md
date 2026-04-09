@@ -31,15 +31,17 @@ When a user pushes to skip: make the call anyway, briefly explain what it return
 Before loading any file, call `recommend_next(task)` to get a targeted context slice:
 
 ```
-call: recommend_next(task)     ← returns the minimal files/symbols needed
-call: load_context(file_path)  ← load only what recommend_next identified
+call: recommend_next(task)          ← returns the minimal files/symbols needed
+call: context_pack(task)            ← load ranked, token-budgeted slice
+call: get_bearings("src/module/")   ← explore a module's exports and callers
+call: get_symbol("name", depth)     ← inspect a specific symbol with call graph
 ```
 
 **Rules:**
 1. **Start with context tools, not file tree** — `get_session_context()` gives orientation in ~300 tokens
-2. **Use L0 before L3** — list signatures first, load source only when editing
-3. **Offload to MCP** — generation, validation, drift checks → MCP tools, not LLM reasoning
-4. **Never grep the whole repo** — use `query_index(query)` or `find_pattern(name)`
+2. **Use L0 before L3** — `get_bearings()` for discovery, `get_symbol(name, 0)` for signatures, read file only when editing
+3. **Search before reading** — `search(query)` or `search_code_graph(query)` to locate symbols before loading files
+4. **Never grep the whole repo** — use `search(query)` or `get_bearings(path)`
 
 ## During the Session
 
@@ -51,20 +53,25 @@ This preserves progress so an interrupted session can resume without re-deriving
 
 **When a decision is confirmed:**
 ```
-call: add_decision("Use repository pattern for all DB access")
+call: record_memory({ type: "decision", title: "Use repository pattern for all DB access", content: "..." })
 ```
 Fire-and-forget. No file reads needed.
 
-**When a pattern is used a second time:**
+**When a coding convention is established:**
 ```
-call: add_pattern("data-attribute DOM", "data-{component} on root, data-{component}-{part} on children")
+call: record_memory({ type: "pattern", title: "data-attribute DOM", content: "data-{component} on root, data-{component}-{part} on children" })
 ```
 
 **When a question needs user input (non-blocking):**
 ```
-call: ask_question("Should we use optimistic locking or row versioning?")
+call: record_memory({ type: "question", title: "Should we use optimistic locking or row versioning?", content: "..." })
 ```
-Continue working. The question surfaces at next session start.
+Continue working. The question surfaces at next session start via `get_session_context()`.
+
+**When a question is resolved:**
+```
+call: close_memory({ id: "<id from record_memory>", resolution: "Chose row versioning for auditability" })
+```
 
 **One question at a time** — if multiple questions arise, queue them sequentially. Never batch.
 
@@ -79,8 +86,8 @@ call: checkpoint("What was done, decisions made, what's next")
 
 ```
 call: checkpoint(
-  outcome: "completed|blocked|partial",
-  summary: "1-3 sentences: what was done, key decisions, next steps"
+  task_summary: "1-3 sentences: what was done, key decisions, next steps"
+  completed_steps: ["step 1", "step 2"]
 )
 ```
 
@@ -90,8 +97,8 @@ The MCP tool handles archiving. Next session resumes with `get_session_context()
 
 - [ ] All tests pass
 - [ ] Lint: 0 errors
-- [ ] Decisions captured via `add_decision()`
-- [ ] Open questions queued via `ask_question()`
+- [ ] Decisions captured via `record_memory({ type: "decision", ... })`
+- [ ] Open questions queued via `record_memory({ type: "question", ... })`
 - [ ] `checkpoint()` called
 
 ## Crash Recovery
@@ -99,9 +106,9 @@ The MCP tool handles archiving. Next session resumes with `get_session_context()
 If a session ends without a checkpoint (crash, timeout, interrupt):
 
 ```
-1. call: get_session_context()    ← loads last archived checkpoint
-2. review what was in progress
-3. call: ask_question("Verify: was <last action> completed?")
+1. call: get_session_context()    ← loads last archived checkpoint + interrupted sessions
+2. review interrupted[] array     ← shows incomplete sessions with task context
+3. record_memory({ type: "question", title: "Verify: was <last action> completed?" })
 4. resume from last known good state
 ```
 
@@ -109,11 +116,11 @@ If a session ends without a checkpoint (crash, timeout, interrupt):
 
 | Anti-pattern | Fix |
 |---|---|
-| Reading all files in a directory | Call `list_exports(module)` at L0 |
-| Writing llms.txt from scratch | Call `generate_llms_txt()` |
-| Grepping whole repo for a pattern | Call `find_pattern(name)` |
-| Loading full file to find one function | `get_file_context(path, "L0")` then `L3` for the target function only |
+| Reading all files in a directory | Call `get_bearings("src/module/")` |
+| Grepping whole repo for a pattern | Call `search(query)` or `search_code_graph(query)` |
+| Loading full file to find one function | `get_symbol("name", 0)` then read only if editing |
 | Keeping full file in context after editing | `checkpoint()` then load only the next task's slice |
+| Writing decisions to files manually | `record_memory({ type: "decision", ... })` |
 
 ## Plugin Handoff
 
@@ -125,5 +132,6 @@ If a session ends without a checkpoint (crash, timeout, interrupt):
 | TDD a module | `superpowers:test-driven-development` |
 | Debug a failure | `superpowers:systematic-debugging` |
 | **Start/resume any session** | **this skill → `get_session_context()`** |
-| **Capture decisions/patterns** | **this skill → `add_decision` / `add_pattern`** |
+| **Capture decisions/patterns/questions** | **this skill → `record_memory()`** |
+| **Resolve open questions** | **this skill → `close_memory()`** |
 | **End a session** | **this skill → `checkpoint()`** |

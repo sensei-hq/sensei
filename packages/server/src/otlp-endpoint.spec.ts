@@ -110,27 +110,16 @@ describe("createOtlpEndpoint", () => {
     expect(body.received).toBe(0);
   });
 
-  it("writes to supabase in write mode", async () => {
-    const inserted: any[] = [];
-    const mockClient = {
-      from: (table: string) => ({
-        insert: (row: any) => { inserted.push({ table, row }); return Promise.resolve({ error: null }); },
-        select: () => ({ eq: () => ({ eq: () => ({ lte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }) }) }),
-      }),
-    };
-
-    server = createOtlpEndpoint({ port, dryRun: false, repoId: "repo-1", supabaseClient: mockClient });
-    await fetch(`http://localhost:${port}/v1/metrics`, {
+  it("returns 200 with received count in write mode (no dry-run)", async () => {
+    server = createOtlpEndpoint({ port, dryRun: false, repoId: "repo-1" });
+    const res = await fetch(`http://localhost:${port}/v1/metrics`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(METRICS_BODY),
     });
-
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0].table).toBe("api_requests");
-    expect(inserted[0].row.prompt_id).toBe("prompt-abc");
-    expect(inserted[0].row.input_tokens).toBe(1000);
-    expect(inserted[0].row.cost_usd).toBe(0.015);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.received).toBe(1);
   });
 
   it("returns 404 for unknown paths", async () => {

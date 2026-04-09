@@ -19,6 +19,7 @@ export {
 
 export * from "./mcp-server.js";
 
-// Platform auth middleware
-export { resolveCallerContext, handleAuthVerify, callerFilter } from "./auth-middleware.js";
-export type { SessionCallerContext, AuthVerifyResult } from "./auth-middleware.js";
+export { getActivityLog, ActivityLog } from "./activity-log.js";
+export type { ActivitySession, ActivityAction, Decision, BacklogItem } from "./activity-log.js";
+
+export { LibIndexer } from "./lib-indexer.js";

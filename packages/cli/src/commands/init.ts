@@ -1,9 +1,7 @@
-import { intro, outro, spinner, note, log, isCancel, text, multiselect, confirm } from "@clack/prompts";
-import { writeFile, mkdir, access, readFile, chmod } from "fs/promises";
+import { intro, outro, spinner, note, log, isCancel, text, multiselect } from "@clack/prompts";
+import { writeFile, mkdir, access, readFile } from "fs/promises";
 import { join } from "path";
-import { homedir } from "os";
-import { createClient } from "@supabase/supabase-js";
-import { indexRepo } from "@sensei/engine";
+import { randomUUID } from "crypto";
 import { installHooks } from "@sensei/collector";
 import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
 import { installSkills, installSkillsFromCatalog, promptAndInstallSkillsFromCatalog } from "./install-skills.js";
@@ -12,16 +10,11 @@ import { setupMcp } from "./setup.js";
 import type { LibEntry } from "@sensei/shared";
 import { claudeMdTemplate } from "../templates/claude-md.js";
 import { agentsMdTemplate } from "../templates/agents-md.js";
-
-const DEFAULT_SUPABASE_URL = "http://localhost:54321";
+import { indexRepo } from "@sensei/graph-indexer";
 
 export interface InitOptions {
   /** Install skills and hooks globally (~/.claude/) rather than repo-local */
   global?: boolean;
-  /** Supabase URL — skips prompt when provided */
-  supabaseUrl?: string;
-  /** Supabase service role key — skips prompt when provided */
-  serviceKey?: string;
   /** Install recommended skills without prompting */
   useRecommended?: boolean;
 }
@@ -47,31 +40,6 @@ async function detectUnknownLibs(deps: string[]): Promise<string[]> {
   return [];
 }
 
-/** Looks up a lib by name in the global shared pool. Returns catalog row or null. */
-export async function lookupSharedLib(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  client: any,
-  name: string,
-): Promise<{
-  id: string;
-  section_count: number;
-  indexed_at: string;
-  base_url: string | null;
-  local_path: string | null;
-  source_type: string;
-} | null> {
-  try {
-    const { data } = await (client as any)
-      .schema('sensei')
-      .from('shared_libs')
-      .select('id,section_count,indexed_at,base_url,local_path,source_type')
-      .eq('name', name)
-      .maybeSingle();
-    return data ?? null;
-  } catch {
-    return null;
-  }
-}
 
 export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
   intro("sensei init");
@@ -124,88 +92,16 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
     }
   }
 
-  // 3. Resolve Supabase credentials
-  //    Priority: CLI flag / env var → prompt
-  let supabaseUrl = opts.supabaseUrl ?? "";
-  let serviceKey = opts.serviceKey ?? "";
-
-  if (!supabaseUrl) {
-    const val = await text({
-      message: "Supabase URL:",
-      placeholder: DEFAULT_SUPABASE_URL,
-      defaultValue: DEFAULT_SUPABASE_URL,
-      validate: v => (v.startsWith("http") ? undefined : "Must be a URL"),
-    });
-    if (isCancel(val)) { outro("Cancelled."); return; }
-    supabaseUrl = String(val) || DEFAULT_SUPABASE_URL;
-  }
-
-  if (!serviceKey) {
-    const val = await text({
-      message: "Supabase service role key:",
-      validate: v => (v.length > 10 ? undefined : "Looks too short"),
-    });
-    if (isCancel(val)) { outro("Cancelled."); return; }
-    serviceKey = String(val);
-  }
-
-  // Create Supabase client
-  const client = createClient(supabaseUrl, serviceKey, {
-    db: { schema: "sensei" },
-    auth: { persistSession: false },
-  });
-
+  // 3. Generate local repo ID (deterministic per path)
+  //    TODO: replace with SQLite-backed repo registry when graph indexer ships
   const repoName = cwd.split("/").pop() ?? "repo";
-  const { data: repo, error: repoErr } = await client.from("repos").upsert({
-    name: repoName,
-    local_path: cwd,
-    stack,
-    entry_points: entryPoints,
-  }, { onConflict: "local_path" }).select("id").single();
+  const repoId: string = randomUUID();
 
-  if (repoErr || !repo) {
-    log.error(`Failed to register repo: ${repoErr?.message ?? "no data returned"}`);
-    outro("Failed."); return;
-  }
-  const repoId: string = repo.id;
-
-  // Pass 2: For each candidate, check shared pool first; else prompt for URL
+  // Pass 2: Prompt for doc URLs for each candidate lib
   const customLibs: LibEntry[] = [];
-  const linkedLibEntries: LibEntry[] = [];
 
   if (candidates.length > 0) {
     for (const name of candidates) {
-      const sharedLib = await lookupSharedLib(client, name);
-
-      if (sharedLib) {
-        const daysAgo = Math.floor((Date.now() - new Date(sharedLib.indexed_at).getTime()) / 86400000);
-        const confirmed = await confirm({
-          message: `${name} is already indexed globally (${sharedLib.section_count} sections, ${daysAgo}d ago). Link it?`,
-          initialValue: true,
-        });
-        if (!isCancel(confirmed) && confirmed) {
-          const baseUrl = sharedLib.base_url
-            ?? (sharedLib.local_path ? `file://${sharedLib.local_path}` : "");
-          linkedLibEntries.push({
-            name,
-            source_type: sharedLib.source_type as LibEntry["source_type"],
-            base_url: baseUrl,
-          });
-          try {
-            await (client as any).schema('sensei').from('repo_libs').upsert({
-              repo_id: repoId,
-              name,
-              source_type: sharedLib.source_type,
-              base_url: baseUrl,
-              shared_lib_id: sharedLib.id,
-            }, { onConflict: 'repo_id,name' });
-          } catch {
-            log.warn(`  repo_libs upsert failed for ${name} (shared link)`);
-          }
-          continue;
-        }
-      }
-
       const input = await text({
         message: `Docs for "${name}"? (llms.txt URL, HTTP page, raw .md URL, or local path — Enter to skip)`,
         placeholder: "https://example.com/llms.txt",
@@ -215,26 +111,18 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
     }
   }
 
-  // 4. Write .sensei/config.yaml and credentials
+  // 4. Write .sensei/config.yaml
   const senseiDir = join(cwd, ".sensei");
   await mkdir(senseiDir, { recursive: true });
-  const allConfigLibs = [...customLibs, ...linkedLibEntries];
-  const customLibsYaml = allConfigLibs.length > 0
-    ? `custom_libs:\n${allConfigLibs.map(l => {
+  const customLibsYaml = customLibs.length > 0
+    ? `custom_libs:\n${customLibs.map(l => {
         return `  - name: ${l.name}\n    source_type: ${l.source_type}\n    base_url: ${l.base_url}`;
       }).join("\n")}\n`
     : "";
   await writeFile(
     join(senseiDir, "config.yaml"),
-    `repo_id: ${repoId}\nsupabase_url: ${supabaseUrl}\n${customLibsYaml}`,
+    `repo_id: ${repoId}\n${customLibsYaml}`,
   );
-
-  // Write credentials to ~/.config/sensei/ (global, not committed)
-  const credsDir = join(homedir(), ".config", "sensei");
-  await mkdir(credsDir, { recursive: true });
-  const credsPath = join(credsDir, "credentials.yaml");
-  await writeFile(credsPath, `supabase_service_key: ${serviceKey}\n`);
-  await chmod(credsPath, 0o600);
 
   if (customLibs.length > 0) {
     const libSpin = spinner();
@@ -251,18 +139,12 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
   // 5. Run first index
   const indexSpinner = spinner();
   indexSpinner.start("Indexing repo (first full scan)...");
-  let result;
   try {
-    result = await indexRepo({ repoPath: cwd, repoId, client: client as any });
-    indexSpinner.stop(`Indexed: ${result.filesIndexed} files, ${result.symbolsUpserted} symbols`);
-    if (result.errors.length > 0) {
-      log.warn(`${result.errors.length} indexing errors — see details below`);
-      result.errors.slice(0, 3).forEach((e: string) => log.warn(e));
-    }
-    await client.from("repos").update({ last_indexed_at: new Date().toISOString() }).eq("id", repoId);
+    const result = await indexRepo({ repoPath: cwd, repoId, project: repoId });
+    indexSpinner.stop(`Indexed: ${result.filesIndexed} files, ${result.functionsIndexed} functions, ${result.edgesCreated} edges (${result.durationMs}ms)`);
   } catch (err) {
     indexSpinner.stop(`Indexing failed: ${err instanceof Error ? err.message : String(err)}`);
-    log.warn("You can re-index later with: sensei index");
+    log.warn("You can re-index later with: sensei add");
   }
 
   // 6. Install hooks

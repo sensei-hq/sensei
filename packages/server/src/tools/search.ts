@@ -1,5 +1,5 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { RepoSymbol } from "@sensei/shared";
+import { getOrCreateDb, searchSymbols } from "@sensei/graph-indexer";
+import { loadSenseiConfig } from "@sensei/shared";
 
 export interface SearchResult {
   symbols: Array<{
@@ -15,33 +15,28 @@ export interface SearchResult {
 }
 
 export async function search(
-  client: SupabaseClient,
   repoId: string,
+  repoPath: string,
   query: string,
   limit = 20,
 ): Promise<SearchResult> {
-  // Phase 1: substring text search using ilike. Phase 2 upgrades to BM25 via pg_trgm / to_tsvector.
-  const { data, error } = await client
-    .from("symbols")
-    .select("name,kind,file_path,line_start,signature,docstring")
-    .eq("repo_id", repoId)
-    .or(`name.ilike.%${query}%,signature.ilike.%${query}%,docstring.ilike.%${query}%`)
-    .eq("is_exported", true)
-    .order("name")
-    .limit(limit);
+  const config = await loadSenseiConfig(repoPath);
+  const projectName = config?.repo_id ?? repoId;
 
-  if (error) throw new Error(`Search failed: ${error.message}`);
-
-  return {
-    symbols: (data ?? []).map(s => ({
+  const { db, conn } = await getOrCreateDb(repoId);
+  try {
+    const results = await searchSymbols(conn, query, projectName, limit);
+    const symbols = results.map((s) => ({
       name: s.name,
       kind: s.kind,
-      file_path: s.file_path,
-      line_start: s.line_start,
-      signature: s.signature,
-      docstring: s.docstring,
-    })),
-    total: (data ?? []).length,
-    query,
-  };
+      file_path: s.file,
+      line_start: s.line,
+      signature: s.sig ?? null,
+      docstring: s.docstring ?? null,
+    }));
+    return { symbols, total: symbols.length, query };
+  } finally {
+    await conn.close();
+    await db.close();
+  }
 }

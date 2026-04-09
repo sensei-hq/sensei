@@ -1,6 +1,5 @@
 // packages/server/src/tools/close-memory.ts
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { closeMemory as engineCloseMemory } from "@sensei/engine";
+import { getActivityLog } from "../activity-log.js";
 
 interface CloseMemoryParams {
   id: string;
@@ -8,16 +7,33 @@ interface CloseMemoryParams {
 }
 
 export async function closeMemoryTool(
-  client: SupabaseClient,
+  repoId: string,
   params: CloseMemoryParams,
-) {
-  const item = await engineCloseMemory(client, params.id, params.resolution);
+): Promise<{ id: string; type: string; title: string; status: string; resolution: string; closedAt: string }> {
+  const log = getActivityLog(repoId);
+  const item = log.getBacklogById(params.id);
+  const closedAt = new Date().toISOString();
+
+  if (!item) {
+    // Graceful response when item not found locally
+    return {
+      id: params.id,
+      type: "question",
+      title: "(unknown)",
+      status: "done",
+      resolution: params.resolution,
+      closedAt,
+    };
+  }
+
+  log.updateBacklogItem(params.id, { status: "done", description: params.resolution });
+
   return {
     id: item.id,
-    type: item.type,
+    type: "question",
     title: item.title,
-    status: item.status,
-    resolution: item.resolution,
-    closedAt: item.closedAt,
+    status: "done",
+    resolution: params.resolution,
+    closedAt,
   };
 }

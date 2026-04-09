@@ -1,53 +1,55 @@
 // packages/server/src/tools/get-lib-docs.spec.ts
-import { describe, it, expect, vi } from "vitest";
-import { getLibDocsTool } from "./get-lib-docs.js";
-import type { ModelBackend } from "@sensei/shared";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const makeMockBackend = (): ModelBackend => ({
-  name: "mock", init: vi.fn(), isAvailable: vi.fn().mockResolvedValue(true),
-  generate: vi.fn().mockResolvedValue(""), embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
-  extract: vi.fn().mockResolvedValue({}),
+const mockGetLibDocs = vi.fn();
+vi.mock("../activity-log.js", () => ({
+  getActivityLog: vi.fn(() => ({ getLibDocs: mockGetLibDocs })),
+}));
+
+import { getLibDocsTool } from "./get-lib-docs.js";
+
+beforeEach(() => {
+  mockGetLibDocs.mockReset();
 });
 
-const ROW = { title: "Button", url: "https://rokkit.dev/button", local_path: null, description: "A button", content: null, source_type: "llms.txt", component: "Forms" };
-
 describe("getLibDocsTool", () => {
-  it("embeds query and calls match_lib_doc_sections RPC", async () => {
-    const db = {
-      rpc: vi.fn().mockResolvedValue({ data: [ROW], error: null }),
-      from: vi.fn(),
-    };
-    const backend = makeMockBackend();
+  it("returns sections mapped from ActivityLog rows", async () => {
+    mockGetLibDocs.mockReturnValue([
+      { title: "Button", url: "https://rokkit.dev/button", localPath: null, summary: "A button", content: "Docs.", component: "Forms" },
+    ]);
 
-    const result = await getLibDocsTool(db as any, backend, "repo-1", "rokkit", { query: "button" });
+    const result = await getLibDocsTool("repo-1", "rokkit", { query: "button" });
 
-    expect(backend.embed).toHaveBeenCalledWith("button");
-    expect(db.rpc).toHaveBeenCalledWith("match_lib_doc_sections", expect.objectContaining({
-      p_repo_id: "repo-1", p_lib_name: "rokkit",
-    }));
     expect(result.lib).toBe("rokkit");
     expect(result.sections).toHaveLength(1);
     expect(result.sections[0].title).toBe("Button");
+    expect(result.sections[0].content).toBe("Docs.");
+    expect(result.sections[0].document.component).toBe("Forms");
   });
 
-  it("returns all sections sorted by title when no query provided", async () => {
-    const rows = [{ ...ROW, title: "Select" }, { ...ROW, title: "Button" }];
-    const orderMock = vi.fn().mockResolvedValue({ data: rows, error: null });
-    const db = {
-      rpc: vi.fn(),
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ order: orderMock }) }),
-        }),
-      }),
-    };
-    const result = await getLibDocsTool(db as any, makeMockBackend(), "repo-1", "rokkit");
-    expect(result.sections).toHaveLength(2);
+  it("passes opts through to getLibDocs", async () => {
+    mockGetLibDocs.mockReturnValue([]);
+    await getLibDocsTool("repo-1", "rokkit", { component: "Forms", limit: 5 });
+    expect(mockGetLibDocs).toHaveBeenCalledWith("rokkit", { component: "Forms", limit: 5 });
   });
 
-  it("returns empty sections on any error — never throws", async () => {
-    const db = { rpc: vi.fn().mockResolvedValue({ data: null, error: { message: "DB error" } }), from: vi.fn() };
-    const result = await getLibDocsTool(db as any, makeMockBackend(), "repo-1", "rokkit", { query: "test" });
+  it("returns empty sections when getLibDocs returns empty array", async () => {
+    mockGetLibDocs.mockReturnValue([]);
+    const result = await getLibDocsTool("repo-1", "rokkit");
     expect(result.sections).toEqual([]);
+  });
+
+  it("returns empty sections on error — never throws", async () => {
+    mockGetLibDocs.mockImplementation(() => { throw new Error("DB error"); });
+    const result = await getLibDocsTool("repo-1", "rokkit", { query: "test" });
+    expect(result.sections).toEqual([]);
+  });
+
+  it("uses localPath as url fallback when url is null", async () => {
+    mockGetLibDocs.mockReturnValue([
+      { title: "Page", url: null, localPath: "/path/to/doc.md", summary: "s", content: "c", component: null },
+    ]);
+    const result = await getLibDocsTool("repo-1", "mylib");
+    expect(result.sections[0].document.url).toBe("/path/to/doc.md");
   });
 });

@@ -1,8 +1,5 @@
 // packages/cli/src/commands/init.spec.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import * as fs from "fs/promises";
-import * as path from "path";
-import * as os from "os";
 
 // Mock all external deps before importing init
 vi.mock("@clack/prompts", () => ({
@@ -10,21 +7,14 @@ vi.mock("@clack/prompts", () => ({
   outro: vi.fn(),
   spinner: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
   note: vi.fn(),
-  log: { error: vi.fn(), warn: vi.fn() },
+  log: { error: vi.fn(), warn: vi.fn(), success: vi.fn() },
   text: vi.fn(),
+  multiselect: vi.fn().mockResolvedValue([]),
   isCancel: vi.fn(() => false),
-}));
-
-vi.mock("@sensei/engine", () => ({
-  indexRepo: vi.fn(),
 }));
 
 vi.mock("@sensei/collector", () => ({
   installHooks: vi.fn(),
-}));
-
-vi.mock("@supabase/supabase-js", () => ({
-  createClient: vi.fn(),
 }));
 
 vi.mock("fs/promises", () => ({
@@ -32,7 +22,6 @@ vi.mock("fs/promises", () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockRejectedValue(new Error("not found")),
   readFile: vi.fn().mockRejectedValue(new Error("not found")),
-  chmod: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./install-skills.js", () => ({
@@ -42,68 +31,38 @@ vi.mock("./install-skills.js", () => ({
   installSkillsFromCatalog: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("./setup.js", () => ({ setupMcp: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("./update-registry.js", () => ({ runUpdateRegistryCore: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../lib/detect-libs.js", () => ({
+  scanDirectDeps: vi.fn().mockResolvedValue([]),
+  inferSourceType: vi.fn((url: string) => ({ base_url: url, source_type: "http" })),
+}));
+
 import { init } from "./init.js";
-import { indexRepo } from "@sensei/engine";
 import { installHooks } from "@sensei/collector";
-import { createClient } from "@supabase/supabase-js";
-import { text, isCancel } from "@clack/prompts";
-import { writeFile, mkdir, access, readFile } from "fs/promises";
+import { writeFile, readFile } from "fs/promises";
 import { promptAndInstallSkillsFromCatalog, installSkillsFromCatalog } from "./install-skills.js";
 
-const mockIndexRepo = indexRepo as ReturnType<typeof vi.fn>;
 const mockInstallHooks = installHooks as ReturnType<typeof vi.fn>;
-const mockCreateClient = createClient as ReturnType<typeof vi.fn>;
-const mockText = text as ReturnType<typeof vi.fn>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const mockIsCancel = isCancel as unknown as ReturnType<typeof vi.fn>;
 const mockWriteFile = writeFile as ReturnType<typeof vi.fn>;
-const mockMkdir = mkdir as ReturnType<typeof vi.fn>;
-
-function makeSupabaseClient(repoId = "repo-uuid-123") {
-  const mockSelect = vi.fn().mockReturnThis();
-  const mockSingle = vi.fn().mockResolvedValue({ data: { id: repoId }, error: null });
-  const mockUpsert = vi.fn().mockReturnValue({ select: () => ({ single: mockSingle }) });
-  const mockUpdate = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
-  return {
-    from: vi.fn().mockReturnValue({
-      upsert: mockUpsert,
-      update: mockUpdate,
-      select: mockSelect,
-    }),
-  };
-}
 
 describe("init command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsCancel.mockReturnValue(false);
-    mockText
-      .mockResolvedValueOnce("http://localhost:54321")
-      .mockResolvedValueOnce("test-service-key-long-enough");
-
-    const client = makeSupabaseClient();
-    mockCreateClient.mockReturnValue(client);
-
-    mockIndexRepo.mockResolvedValue({
-      filesIndexed: 10,
-      symbolsUpserted: 42,
-      errors: [],
-    });
-
     mockInstallHooks.mockResolvedValue(undefined);
   });
 
-  it("creates .sensei/config.yaml with repo_id and supabase_url", async () => {
+  it("creates .sensei/config.yaml with repo_id", async () => {
     await init("/tmp/test-repo");
 
-    const configCall = (mockWriteFile as ReturnType<typeof vi.fn>).mock.calls.find(
+    const configCall = mockWriteFile.mock.calls.find(
       (c: unknown[]) => String(c[0]).endsWith("config.yaml")
     );
     expect(configCall).toBeDefined();
     const content = String(configCall![1]);
     expect(content).toContain("repo_id:");
-    expect(content).toContain("supabase_url:");
-    expect(content).toContain("http://localhost:54321");
+    // No supabase_url in local-first mode
+    expect(content).not.toContain("supabase_url:");
   });
 
   it("writes CLAUDE.md and AGENTS.md", async () => {
@@ -119,16 +78,6 @@ describe("init command", () => {
     expect(agentsCall).toBeDefined();
   });
 
-  it("calls indexRepo with repoPath, repoId, and client", async () => {
-    await init("/tmp/test-repo");
-
-    expect(mockIndexRepo).toHaveBeenCalledOnce();
-    const opts = mockIndexRepo.mock.calls[0][0];
-    expect(opts.repoPath).toBe("/tmp/test-repo");
-    expect(opts.repoId).toBe("repo-uuid-123");
-    expect(opts.client).toBeDefined();
-  });
-
   it("detects typescript stack when package.json exists", async () => {
     const mockReadFile = readFile as ReturnType<typeof vi.fn>;
     mockReadFile.mockResolvedValueOnce(
@@ -137,9 +86,11 @@ describe("init command", () => {
 
     await init("/tmp/test-repo");
 
-    // Stack is detected but not written to files (stored in Supabase via repo upsert)
-    const upsertCall = makeSupabaseClient().from("repos").upsert;
-    expect(mockIndexRepo).toHaveBeenCalledOnce();
+    // CLAUDE.md should mention the detected stack
+    const claudeCall = mockWriteFile.mock.calls.find(
+      (c: unknown[]) => String(c[0]).endsWith("CLAUDE.md")
+    );
+    expect(claudeCall).toBeDefined();
   });
 
   it("calls installHooks", async () => {
@@ -147,25 +98,8 @@ describe("init command", () => {
     expect(mockInstallHooks).toHaveBeenCalledOnce();
   });
 
-  it("exits early when supabaseUrl prompt is cancelled", async () => {
-    mockIsCancel.mockReturnValueOnce(true);
-
-    await init("/tmp/test-repo");
-
-    expect(mockIndexRepo).not.toHaveBeenCalled();
-    expect(mockWriteFile).not.toHaveBeenCalled();
-  });
-
-  it("continues when indexRepo throws", async () => {
-    mockIndexRepo.mockRejectedValue(new Error("index failed"));
-
+  it("completes without error", async () => {
     await expect(init("/tmp/test-repo")).resolves.toBeUndefined();
-
-    // config.yaml should still be written
-    const configCall = mockWriteFile.mock.calls.find(
-      (c: unknown[]) => String(c[0]).endsWith("config.yaml")
-    );
-    expect(configCall).toBeDefined();
   });
 
   describe("skill installation routing", () => {

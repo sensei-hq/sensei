@@ -3,11 +3,9 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "typeRoots": ["node_modules/@types", "../../node_modules/@types"],
-    "paths": {
-      "@supabase/supabase-js": ["../../node_modules/.bun/@supabase+supabase-js@2.99.1/node_modules/@supabase/supabase-js/dist/index.d.mts"]
-    }
+    "types": ["bun"],
+    "typeRoots": ["node_modules/@types", "../../node_modules/@types"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "src/e2e-*.ts", "src/__stubs__"]
 }

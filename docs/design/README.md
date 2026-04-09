@@ -4,9 +4,11 @@ Architecture, implementation details, and recorded decisions for the sensei proj
 
 > **Convention**: design docs answer *how* and *why*. Feature docs answer *what*. Every significant technical decision should record the reasoning here so future contributors understand the intent, not just the outcome.
 
-> **Direction as of 2026-04-08:** Sensei is shifting to a local-first Tauri desktop app with SQLite
-> replacing Supabase. See [`docs/roadmap/`](../roadmap/) for the current direction before reading
-> design docs here — some Supabase references are being superseded.
+> **Direction as of 2026-04-09:** Sensei is a local-first Tauri desktop app. Supabase/pgvector has
+> been replaced by Kuzu (embedded graph DB) + SQLite-vec for indexing. Regex extraction has been
+> replaced by tree-sitter AST parsing. "Coordinator" terminology has been replaced by "ACP"
+> (Agent-Computer Protocol). See [`ADR-001-indexing-approach.md`](./ADR-001-indexing-approach.md)
+> for the full architectural decision record. See [`docs/roadmap/`](../roadmap/) for current direction.
 
 ## How to Use This Index
 
@@ -20,6 +22,14 @@ Architecture, implementation details, and recorded decisions for the sensei proj
 
 ---
 
+## Architecture Decision Records
+
+| Document | Description | Status |
+|----------|-------------|--------|
+| [ADR-001-indexing-approach](./ADR-001-indexing-approach.md) | Why Kuzu + tree-sitter won; what was tried and abandoned (cocoindex, MemPalace, FalkorDB, regex); L0–L5 depth model | Current |
+
+---
+
 ## Core Design (01–09)
 
 Authoritative design documents. When these conflict with older documents (10–19), these take precedence.
@@ -30,8 +40,8 @@ Authoritative design documents. When these conflict with older documents (10–1
 | [02-skills](./02-skills.md) | Skill file format, naming conventions, testing requirements | Archived — see superpowers plugin system |
 | [03-mcp-server](./03-mcp-server.md) | MCP server tool contracts (Claude-facing) | Superseded by `40-mcp-tool-contracts.md` |
 | [04-llmspec](./04-llmspec.md) | LLMSpec format — superseded by three-layer metadata model | Superseded by `40-metadata-model.md` |
-| [05-indexing](./05-indexing.md) | Indexer design (regex-based, v1) — superseded by pipeline adapter | Superseded by `20-pipeline-adapter.md` + `40-metadata-model.md` |
-| [06-compression](./06-compression.md) | Resolution levels (L0–L3), storage schema, serving logic | Current — L0–L3 still used by load_context |
+| [05-indexing](./05-indexing.md) | Indexer design (regex-based, v1) — historical record | Superseded — see ADR-001 |
+| [06-compression](./06-compression.md) | Resolution levels (L0–L3), storage schema, serving logic | Current — extended to L0–L5 per ADR-001 |
 | [07-drift](./07-drift.md) | Git-diff + traceability-based drift detection, hook integration | Current |
 | [08-benchmarking](./08-benchmarking.md) | Benchmark architecture, task corpus schema, metrics, A/B setup | Current |
 | [09-cli](./09-cli.md) | CLI design, command modules, config schemas | Partially superseded — see 01-architecture for updated package structure |
@@ -44,7 +54,7 @@ Earlier design iterations. Superseded sections are noted. The pipeline adapter (
 
 | Document | Description | Status |
 |----------|-------------|--------|
-| [10-project-memory](./10-project-memory.md) | Cross-session knowledge: checkpoint distillation, decisions, open items | Current — now stored in Supabase |
+| [10-project-memory](./10-project-memory.md) | Cross-session knowledge: checkpoint distillation, decisions, open items | Deferred — Supabase storage superseded by local-first approach |
 | [11-doc-tools](./11-doc-tools.md) | Doc guide skill, find_doc, doc new scaffold, doc-doctor | Current |
 | [12-incremental-indexing](./12-incremental-indexing.md) | Git-diff change detection, incremental update algorithm | Current |
 | [13-traceability-matrix](./13-traceability-matrix.md) | Doc-to-code traceability: schema, population, drift cross-reference | Current — extended by Layer 3 cross-repo traceability |
@@ -70,7 +80,7 @@ Earlier design iterations. Superseded sections are noted. The pipeline adapter (
 
 | Document | Description | Status |
 |----------|-------------|--------|
-| [20-pipeline-adapter](./20-pipeline-adapter.md) | Pipeline stages, LanguageAdapterRegistry, ranking strategy chain, Supabase schema, agent adapter pattern, all resolved design decisions | Current |
+| [20-pipeline-adapter](./20-pipeline-adapter.md) | Pipeline stages, LanguageAdapterRegistry, ranking strategy chain, agent adapter pattern, all resolved design decisions | Current — Supabase schema sections superseded by Kuzu (see ADR-001) |
 | 21-adapter-js-ts | JS/TS adapter: TypeScript signatures, React/hooks detection | Planned |
 | 22-adapter-python | Python adapter: pyproject.toml, FastAPI/Django patterns | Planned |
 | 23-adapter-go | Go adapter: go.mod, exported function conventions | Planned |
@@ -89,7 +99,7 @@ Implementation-specific design docs: data models, API contracts, CLI design, dep
 
 | Document | Description | Status |
 |----------|-------------|--------|
-| [40-metadata-model](./40-metadata-model.md) | Supabase schema, orientation artifacts (llmspec/llms.txt), symbol resolution levels, package discovery | Current |
+| [40-metadata-model](./40-metadata-model.md) | Orientation artifacts (llmspec/llms.txt), symbol resolution levels, package discovery | Partially superseded — Supabase schema sections replaced by Kuzu (see ADR-001) |
 | [40-mcp-tool-contracts](./40-mcp-tool-contracts.md) | MCP tool contracts: get_session_context, search, load_context + Phase 2+ roadmap | Current |
 
 ---
@@ -137,8 +147,7 @@ cc-rlm.md ────────────────── reference analy
 
 ## Traceability
 
-Feature → design → code coverage is tracked in `sensei.traceability` (Supabase — source of truth).
-`docs/traceability.yaml` is a generated export for CI and offline use. To regenerate:
+Feature → design → code coverage is tracked in `docs/traceability.yaml`. To regenerate:
 
 ```
 sensei traceability export

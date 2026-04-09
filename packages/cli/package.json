@@ -16,12 +16,11 @@
     "@sensei/tools": "workspace:*",
     "@sensei/server": "workspace:*",
     "@sensei/shared": "workspace:*",
+    "@sensei/graph-indexer": "workspace:*",
     "@sensei/collector": "workspace:*",
     "@sensei/engine": "workspace:*",
-    "@supabase/supabase-js": "^2.101.1",
     "@anthropic-ai/sdk": "^0.82.0",
-    "@clack/prompts": "^1.2.0",
-    "chokidar": "^5.0.0"
+    "@clack/prompts": "^1.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
