@@ -1,6 +1,7 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { getOrCreateDb } from "@sensei/graph-indexer";
+import { loadSenseiConfig } from "@sensei/shared";
 
 export interface LoadContextResult {
   file_path: string;
@@ -9,15 +10,12 @@ export interface LoadContextResult {
     name: string;
     kind: string;
     line_start: number;
-    line_end: number;
     signature: string | null;
-    is_exported: boolean;
   }>;
   line_count: number;
 }
 
 export async function loadContext(
-  client: SupabaseClient,
   repoId: string,
   repoPath: string,
   filePath: string,
@@ -30,34 +28,40 @@ export async function loadContext(
     throw new Error(`File not found: ${filePath}`);
   }
 
-  const { data: symbols, error: symbolsError } = await client
-    .from("symbols")
-    .select("name,kind,line_start,line_end,signature,is_exported")
-    .eq("repo_id", repoId)
-    .eq("file_path", filePath)
-    .order("line_start");
+  const config = await loadSenseiConfig(repoPath);
+  const project = config?.repo_id ?? repoId;
+  const escapedFile = absPath.replace(/'/g, "\\'");
+  const escapedProject = project.replace(/'/g, "\\'");
 
-  if (symbolsError) {
-    return {
-      file_path: filePath,
-      content,
-      symbols: [],
-      line_count: content.split("\n").length,
-      note: `Symbols unavailable: ${symbolsError.message}`,
-    } as any;
+  const symbols: LoadContextResult["symbols"] = [];
+  const { db, conn } = await getOrCreateDb(repoId);
+  try {
+    const fnResult = await conn.query(
+      `MATCH (n:Function {file: '${escapedFile}', project: '${escapedProject}'}) RETURN n.name AS name, n.line AS line, n.sig AS sig ORDER BY n.line`
+    );
+    const fnRows = Array.isArray(fnResult) ? fnResult[0] : fnResult;
+    for (const row of (await fnRows.getAll()) as Record<string, unknown>[]) {
+      symbols.push({ name: String(row.name), kind: "function", line_start: Number(row.line), signature: (row.sig as string) || null });
+    }
+
+    const typeResult = await conn.query(
+      `MATCH (n:Type {file: '${escapedFile}', project: '${escapedProject}'}) RETURN n.name AS name, n.line AS line ORDER BY n.line`
+    );
+    const typeRows = Array.isArray(typeResult) ? typeResult[0] : typeResult;
+    for (const row of (await typeRows.getAll()) as Record<string, unknown>[]) {
+      symbols.push({ name: String(row.name), kind: "type", line_start: Number(row.line), signature: null });
+    }
+  } finally {
+    await conn.close();
+    await db.close();
   }
+
+  symbols.sort((a, b) => a.line_start - b.line_start);
 
   return {
     file_path: filePath,
     content,
-    symbols: (symbols ?? []).map(s => ({
-      name: s.name,
-      kind: s.kind,
-      line_start: s.line_start,
-      line_end: s.line_end,
-      signature: s.signature,
-      is_exported: s.is_exported,
-    })),
+    symbols,
     line_count: content.split("\n").length,
   };
 }

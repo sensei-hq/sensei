@@ -8,7 +8,7 @@ export async function makeSenseiClient(repoPath: string): Promise<SupabaseClient
     loadSenseiConfig(repoPath),
     loadCredentials(),
   ]);
-  if (!config || !creds) return null;
+  if (!config || !creds || !config.supabase_url) return null;
   // db.schema scopes all queries to sensei.* — no need for .schema() chaining on each call
   return createClient(config.supabase_url, creds.supabase_service_key, {
     db: { schema: "sensei" as const },

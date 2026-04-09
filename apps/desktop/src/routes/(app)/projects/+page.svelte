@@ -387,9 +387,42 @@
     if (s === 'out') return false;
     return dep.usage_pct >= LIB_AUTO_THRESHOLD;
   }
-  function queueIndex(repoPath: string) {
-    indexStates = { ...indexStates, [repoPath]: 'queued' };
+  async function triggerIndex(repoPath: string) {
+    indexStates = { ...indexStates, [repoPath]: 'running' };
     localStorage.setItem('sensei:index_states', JSON.stringify(indexStates));
+    try {
+      const res = await fetch('http://localhost:7744/api/index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath }),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        for (const line of buf.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line) as { status: string; message?: string };
+            if (msg.status === 'done') {
+              indexStates = { ...indexStates, [repoPath]: 'done' };
+              localStorage.setItem('sensei:index_states', JSON.stringify(indexStates));
+            } else if (msg.status === 'error') {
+              indexStates = { ...indexStates, [repoPath]: 'failed' };
+              localStorage.setItem('sensei:index_states', JSON.stringify(indexStates));
+            }
+          } catch { /* skip malformed line */ }
+        }
+        buf = buf.includes('\n') ? buf.split('\n').at(-1) ?? '' : buf;
+      }
+    } catch {
+      indexStates = { ...indexStates, [repoPath]: 'failed' };
+      localStorage.setItem('sensei:index_states', JSON.stringify(indexStates));
+    }
   }
   async function loadDeps(path: string) {
     if (libData.has(path) || libLoading.has(path)) return;
@@ -934,17 +967,25 @@
                   <div class="px-5 pt-4 pb-3 flex items-center justify-between gap-3">
                     <p class="text-xs text-surface-z5">{allDeps.length} packages · {allDeps[0]?.total_files ?? 0} source files</p>
                     {#if idxStatus === 'done'}
-                      <span class="flex items-center gap-1 text-[10px] font-medium text-success-z6 shrink-0">
+                      <button
+                        onclick={() => triggerIndex(project.path)}
+                        class="flex items-center gap-1 text-[10px] font-medium text-success-z6 hover:text-primary-z6 transition-colors shrink-0"
+                        title="Re-index"
+                      >
                         <span class="i-solar-check-circle-bold-duotone text-xs"></span> Indexed
-                      </span>
-                    {:else if idxStatus === 'queued' || idxStatus === 'running'}
+                      </button>
+                    {:else if idxStatus === 'running'}
                       <span class="flex items-center gap-1 text-[10px] text-primary-z6 animate-pulse shrink-0">
-                        <span class="i-solar-restart-bold-duotone text-xs"></span>
-                        {idxStatus === 'queued' ? 'Queued' : 'Indexing…'}
+                        <span class="i-solar-restart-bold-duotone text-xs"></span> Indexing…
                       </span>
+                    {:else if idxStatus === 'failed'}
+                      <button
+                        onclick={() => triggerIndex(project.path)}
+                        class="flex shrink-0 items-center gap-1 rounded-lg bg-danger-z5 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-danger-z6 transition-colors"
+                      ><span class="i-solar-refresh-bold-duotone text-xs"></span> Retry</button>
                     {:else}
                       <button
-                        onclick={() => queueIndex(project.path)}
+                        onclick={() => triggerIndex(project.path)}
                         disabled={optedCount === 0}
                         class="flex shrink-0 items-center gap-1 rounded-lg bg-primary-z6 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-primary-z7 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       ><span class="i-solar-refresh-bold-duotone text-xs"></span> Index {optedCount}</button>

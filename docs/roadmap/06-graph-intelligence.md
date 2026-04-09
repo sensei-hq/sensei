@@ -57,6 +57,22 @@ detect() → extract() → build_graph() → cluster() → analyze() → report(
 
 ---
 
+## Graph Backend: Kuzu
+
+Sensei uses **Kuzu** as its embedded graph database (not SQLite + graphology as originally planned).
+
+Kuzu is SQLite for graphs: a single-file embedded store, no server process, Apache 2.0, TypeScript native bindings, Cypher query language. It bundles as a Tauri sidecar alongside the desktop app.
+
+### FalkorDB — evaluated and rejected for desktop
+
+FalkorDB was evaluated as an alternative. It has excellent Cypher support and good TypeScript bindings. The blocker: FalkorDB's runtime is Redis-based, which requires a server process. That is acceptable for a future team server product but not for a desktop app that must work out of the box with zero configuration. FalkorDB remains a candidate for the server-side product when/if that ships.
+
+### Why not SQLite + graphology
+
+The original plan stored edges in SQLite and loaded them into graphology for in-memory traversal. Kuzu eliminates this two-layer architecture: graph queries run natively in Kuzu via Cypher, with no need to load the full graph into memory for traversal. This matters at scale — a 50K-node graph should not be loaded into memory on every query.
+
+---
+
 ## Sensei vs Graphify — Honest Comparison
 
 These are not competing tools. They have different primary jobs:
@@ -65,12 +81,12 @@ These are not competing tools. They have different primary jobs:
 |---|---|---|
 | **Primary job** | Build the knowledge graph | Navigate the graph to assist AI sessions |
 | **Input** | Any folder — code, docs, PDFs, images, papers | Primarily code + library docs |
-| **Graph structure** | NetworkX, Leiden clustering, hyperedges | Call graph + symbol map in SQLite |
+| **Graph structure** | NetworkX, Leiden clustering, hyperedges | Call graph + symbol map in Kuzu |
 | **LLM use** | LLM compiles the graph (extraction phase) | LLM uses the graph (session phase) |
 | **Session continuity** | None | Core feature (FTR, snapshots, recovery) |
-| **Token budgeting** | Graph compression (71.5x reduction) | L0-L3 resolution + ranked context packs |
+| **Token budgeting** | Graph compression (71.5x reduction) | L0-L5 resolution + ranked context packs |
 | **Phase/workspace model** | None | Core feature (cards, phases, maturity) |
-| **Coordinator integration** | Skill file per coordinator | Full CoordinatorAdapter (MCP + hooks + events) |
+| **ACP integration** | Skill file per coordinator | Full ACPAdapter (MCP + hooks + events) |
 | **Confidence tagging** | EXTRACTED / INFERRED / AMBIGUOUS | Not implemented |
 | **Community detection** | Leiden algorithm | Not implemented |
 | **God node analysis** | Yes (highest-degree nodes) | Not implemented |
@@ -122,9 +138,11 @@ comment that the agent would never find by reading symbol signatures.
 The highest-degree nodes in the graph are the "load-bearing" concepts — everything
 connects through them. Knowing these is the fastest way to orient in an unfamiliar codebase.
 
-Sensei already has the graph in SQLite. Calculating degree is a single query:
-```sql
-SELECT symbol_id, COUNT(*) as degree FROM call_edges GROUP BY symbol_id ORDER BY degree DESC LIMIT 20
+Sensei already has the graph in Kuzu. Calculating degree is a single Cypher query:
+```cypher
+MATCH (f:Function)-[:CALLS]->()
+RETURN f.name, f.file, count(*) AS out_degree
+ORDER BY out_degree DESC LIMIT 20
 ```
 
 Surface these in:
@@ -139,9 +157,10 @@ Surface these in:
 Graphify uses Leiden (a graph topology algorithm) to cluster nodes into communities
 without embeddings. Communities correspond to modules, subsystems, or cross-cutting concerns.
 
-Sensei can do this in TypeScript using the existing SQLite graph. A pure-JS Leiden
-implementation exists (`graphology-communities-leiden`). The communities become a new
-attribute on symbols — useful for:
+Sensei can do this in TypeScript using the existing Kuzu graph. A pure-JS Leiden
+implementation exists (`graphology-communities-leiden`) — load the graph from Kuzu into
+graphology for the clustering pass, write community IDs back as node properties. The
+communities become a new attribute on symbols — useful for:
 - `/phase-summary` grouping
 - Context pack assembly (load whole community vs. individual symbols)
 - The workspace graph visualisation (colour by community)
@@ -173,7 +192,7 @@ Karpathy's three layers map directly:
 |---|---|
 | `/raw` folder (immutable sources) | Indexed code + library docs + attached files |
 | LLM-maintained wiki (compounding artifact) | Cards system — requirements, analysis, decisions |
-| Schema / CLAUDE.md | llmspec.yaml + CoordinatorAdapter context |
+| Schema / CLAUDE.md | llmspec.yaml + ACPAdapter context |
 | Ingest operation | `/analyze-repo` command — generates Analysis cards from the codebase |
 | Query operation | Prompt bar with citations |
 | Lint operation | `/gap-analysis`, `/find-orphans`, `/design-review` |
@@ -192,8 +211,8 @@ Some relationships genuinely involve 3+ nodes simultaneously:
 - All files changed together in a migration
 - All requirements addressed by a single session
 
-Pairwise edges miss the group nature of these relationships. A `hyperedge` table in
-SQLite (many-to-many via a junction table) handles this. Surface in:
+Pairwise edges miss the group nature of these relationships. A hyperedge relationship
+in Kuzu (many-to-many via a junction node) handles this. Surface in:
 - The graph visualisation (dashed boundary around a group)
 - `/trace` output (show the full flow, not just pairwise hops)
 
@@ -214,10 +233,11 @@ sensei imports it and uses it for session assistance.**
 
 ### Replacing embeddings with topology-only clustering
 
-Graphify deliberately avoids a separate vector store. Sensei already has SQLite-vec.
-The semantic similarity edges that come from embeddings are valuable signal — don't
-remove them in favour of topology-only clustering. Use both: embeddings for semantic
-search, Leiden on the full graph (which includes semantic edges) for community detection.
+Graphify deliberately avoids a separate vector store. Sensei already has SQLite-vec for
+L4 semantic search. The semantic similarity edges that come from embeddings are valuable
+signal — don't remove them in favour of topology-only clustering. Use both: embeddings
+for semantic search, Leiden on the full graph (which includes semantic edges) for
+community detection.
 
 ### Python/NetworkX rewrite
 
@@ -239,7 +259,7 @@ Two modes of coexistence:
 ```
 Graphify runs on raw/ (code + papers + images + docs)
      ↓ produces graph.json
-Sensei imports graph.json nodes and edges into SQLite
+Sensei imports graph.json nodes and edges into Kuzu
      ↓ merges with its own symbol graph
 Sensei serves the unified graph via MCP
 ```
@@ -254,10 +274,10 @@ multimodal extraction.
 Sensei's own engine implements:
 - Confidence tagging (Phase 0 — trivial)
 - "Why" extraction from comments (Phase 0 — parser addition)
-- God node detection (Phase 2 — single SQL query)
+- God node detection (Phase 2 — single Cypher query against Kuzu)
 - GRAPH_REPORT.md generation (Phase 4 — `/analyze-repo` output)
-- Leiden community detection (Phase 3 — graphology library)
-- Hyperedges (Phase 3 — new SQLite table)
+- Leiden community detection (Phase 3 — graphology library, results written back to Kuzu)
+- Hyperedges (Phase 3 — Kuzu relationship table)
 
 Both modes can coexist. Mode A adds value when the developer has a mixed corpus.
 Mode B is the always-on foundation.
@@ -275,7 +295,7 @@ Add to Phase 2 (workspace model):
 
 Add to Phase 3 (card system):
 - Leiden community detection on the symbol graph
-- Hyperedge table in SQLite
+- Hyperedge relationships in Kuzu
 - Graph narrative report as `/analyze-repo` output
 - Card system treated as the "compounding wiki" — updates existing cards on re-index
 
@@ -289,12 +309,12 @@ Add to Phase 5 (local inference):
 Graphify validates the graph direction. Its core innovations — confidence tagging,
 god nodes, community detection, the graph narrative report, and the "why" extraction —
 are all things sensei should implement. Several require minimal engineering because the
-underlying graph data already exists in sensei's SQLite store.
+underlying graph data already exists in sensei's Kuzu store.
 
 The Karpathy model — raw materials → compounding wiki → query/lint — maps directly onto
 sensei's phase system. The insight about LLMs being excellent at bookkeeping (cross-references,
 consistency, backlinks) is exactly what the prompt-first card system should leverage.
 
-Graphify also confirms the coordinator-agnostic design: it already ships skill files for
-Claude Code, Codex, OpenCode, OpenClaw, and Factory Droid. The coordinator adapter
+Graphify also confirms the ACP-agnostic design: it already ships skill files for
+Claude Code, Codex, OpenCode, OpenClaw, and Factory Droid. The ACPAdapter
 pattern is validated by a real, widely-used tool.

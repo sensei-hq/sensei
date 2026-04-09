@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { makeSenseiClient } from "@sensei/shared";
 import { getSessionContext } from "./tools/get-session-context.js";
 import { search } from "./tools/search.js";
 import { loadContext } from "./tools/load-context.js";
@@ -15,7 +14,13 @@ import { closeMemoryTool } from "./tools/close-memory.js";
 import { installSkillsTool } from "./tools/install-skills.js";
 import { getLibDocsTool } from "./tools/get-lib-docs.js";
 import { recordPatternUse } from "./tools/record-pattern-use.js";
-import { createSession, updateHeartbeat, createTaskSession, recordTaskTurn, completeTaskSession } from "@sensei/engine";
+import { registerGetSymbolTool } from "./tools/get-symbol-graph.js";
+import { getComplexity } from "./tools/get-complexity.js";
+import { registerSearchCodeTool } from "./tools/search-code-graph.js";
+import { registerGetBearingsTool } from "./tools/get-bearings.js";
+import { registerIndexRepoTool } from "./tools/index-repo.js";
+import { getActivityLog } from "./activity-log.js";
+import { randomUUID } from "node:crypto";
 
 export interface McpServerOptions {
   repoId: string;
@@ -28,13 +33,6 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     version: "0.1.0",
   });
 
-  // Lazy client — created on first use so startup doesn't block on Supabase connection
-  let clientPromise: ReturnType<typeof makeSenseiClient> | null = null;
-  const getClient = () => {
-    if (!clientPromise) clientPromise = makeSenseiClient(opts.repoPath);
-    return clientPromise;
-  };
-
   let backendInstance: TransformersBackend | null = null;
   const getBackend = () => {
     if (!backendInstance) backendInstance = new TransformersBackend();
@@ -42,12 +40,13 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
   };
 
   // Session state — stored per MCP server process
-  let sessionId: string | null = null;
-  let taskSessionId: string | null = null;
+  let localSessionId: string | null = null;
 
-  const beat = (client: any, toolName: string, success: boolean) => {
-    if (sessionId) updateHeartbeat(client, sessionId).catch(() => {});
-    if (taskSessionId) recordTaskTurn(client as any, taskSessionId, opts.repoId, toolName, success).catch(() => {});
+  // Lazy — avoids loading native better-sqlite3 until a tool is actually called
+  let _activityLog: ReturnType<typeof getActivityLog> | null = null;
+  const log = () => {
+    if (!_activityLog) _activityLog = getActivityLog(opts.repoId);
+    return _activityLog;
   };
 
   server.tool(
@@ -58,20 +57,16 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ task_description }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured. Run sensei init first." }] };
-
-        // Create session on first call; reuse on subsequent calls (idempotent)
-        // Assign sessionId and taskSessionId atomically — both or neither
-        if (!sessionId) {
-          const session = await createSession(client as any, opts.repoId);
-          const taskSession = await createTaskSession(client as any, session.id, opts.repoId, task_description);
-          sessionId = session.id;
-          taskSessionId = taskSession.id;
+        // Create local session on first call
+        if (!localSessionId) {
+          localSessionId = log().logSession({
+            repoId: opts.repoId,
+            task: task_description ?? "session",
+            startedAt: new Date().toISOString(),
+          });
         }
 
-        const result = await getSessionContext(client as any, opts.repoId, opts.repoPath, sessionId);
-        beat(client, "get_session_context", true);
+        const result = await getSessionContext(opts.repoId, opts.repoPath, localSessionId);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -88,10 +83,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ query, limit }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await search(client as any, opts.repoId, query, limit);
-        beat(client, "search", true);
+        const result = await search(opts.repoId, opts.repoPath, query, limit);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -107,10 +99,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ file_path }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await loadContext(client as any, opts.repoId, opts.repoPath, file_path);
-        beat(client, "load_context", true);
+        const result = await loadContext(opts.repoId, opts.repoPath, file_path);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -130,15 +119,12 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ task, max_tokens, model_id, session_id, session_context }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured. Run sensei init first." }] };
-        const result = await contextPack(client as any, getBackend(), opts.repoId, opts.repoPath, task, {
+        const result = await contextPack(opts.repoId, opts.repoPath, task, {
           maxTokens: max_tokens,
           modelId: model_id,
           sessionId: session_id,
           sessionContext: session_context,
         });
-        beat(client, "context_pack", true);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -155,10 +141,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ task, model_id }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await recommendNext(client as any, getBackend(), opts.repoId, task, model_id);
-        beat(client, "recommend_next", true);
+        const result = await recommendNext(opts.repoId, opts.repoPath, task, model_id);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -174,10 +157,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ session_id }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await tokenStats(client as any, session_id);
-        beat(client, "token_stats", true);
+        const result = await tokenStats(opts.repoId, session_id);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -198,11 +178,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async (params) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        if (!sessionId) return { content: [{ type: "text", text: "Error: No active session. Call get_session_context first." }], isError: true };
-        const result = await takeSnapshotTool(client as any, sessionId, opts.repoId, params);
-        beat(client, "take_snapshot", true);
+        const result = await takeSnapshotTool(opts.repoId, randomUUID(), localSessionId ?? undefined, params);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -219,16 +195,13 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async (params) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        if (!sessionId) return { content: [{ type: "text", text: "Error: No active session. Call get_session_context first." }], isError: true };
-        const result = await checkpointTool(client as any, sessionId, opts.repoId, params, opts.repoPath);
-        // completeTaskSession runs after checkpointTool so sessions.status is already 'completed'
-        // Throws on DB error — the outer try/catch surfaces it to the agent as isError: true
-        if (taskSessionId) {
-          await completeTaskSession(client as any, taskSessionId, sessionId);
-        }
-        beat(client, "checkpoint", true);
+        const result = await checkpointTool(
+          randomUUID(),
+          opts.repoId,
+          params,
+          opts.repoPath,
+          localSessionId ?? undefined,
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -246,11 +219,12 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async (params) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        if (!sessionId) return { content: [{ type: "text", text: "Error: No active session. Call get_session_context first." }], isError: true };
-        const result = await recordMemoryTool(client as any, opts.repoId, sessionId, params);
-        beat(client, "record_memory", true);
+        const result = await recordMemoryTool(
+          opts.repoId,
+          null,
+          params,
+          localSessionId ?? undefined,
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -267,10 +241,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async (params) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await closeMemoryTool(client as any, params);
-        beat(client, "close_memory", true);
+        const result = await closeMemoryTool(opts.repoId, params);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -284,10 +255,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     {},
     async () => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await installSkillsTool(client as any, opts.repoId, opts.repoPath);
-        beat(client, "install_skills", result.errors.length === 0);
+        const result = await installSkillsTool(opts.repoId, opts.repoPath);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -306,10 +274,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ lib, component, query, limit }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await getLibDocsTool(client as any, getBackend(), opts.repoId, lib, { component, query, limit });
-        beat(client, "get_lib_docs", true);
+        const result = await getLibDocsTool(null, getBackend(), opts.repoId, lib, { component, query, limit });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
@@ -325,11 +290,30 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ pattern_name }) => {
       try {
-        const client = await getClient();
-        if (!client) return { content: [{ type: "text", text: "Error: Supabase client not configured." }] };
-        const result = await recordPatternUse(client as any, opts.repoId, sessionId, pattern_name);
-        beat(client, "record_pattern_use", true);
+        const result = await recordPatternUse(opts.repoId, null, pattern_name);
         return { content: [{ type: "text", text: result }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      }
+    }
+  );
+
+  registerGetSymbolTool(server, opts);
+  registerSearchCodeTool(server, opts);
+  registerGetBearingsTool(server, opts);
+  registerIndexRepoTool(server, opts);
+
+  server.tool(
+    "get_complexity",
+    "Get complexity hotspots — functions and files ranked by cyclomatic complexity. Use before refactor, optimize, or design tasks.",
+    {
+      limit: z.number().int().min(1).max(50).optional().default(20).describe("Max hotspots to return"),
+      min_complexity: z.number().int().min(1).optional().default(1).describe("Minimum complexity threshold"),
+    },
+    async ({ limit, min_complexity }) => {
+      try {
+        const result = await getComplexity(opts.repoId, opts.repoPath, { limit, minComplexity: min_complexity });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
       }

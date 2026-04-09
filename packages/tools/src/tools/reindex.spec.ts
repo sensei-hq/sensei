@@ -95,9 +95,9 @@ describe("reindexRepo", () => {
     expect((parsed as any).shortcuts).toHaveProperty("dev");
   });
 
-  it("does not write doc-index.json (fingerprints go to DB)", async () => {
+  it("writes doc-index.json for incremental fingerprint tracking", async () => {
     await reindexRepo(TMP);
-    expect(existsSync(join(TMP, ".sensei/doc-index.json"))).toBe(false);
+    expect(existsSync(join(TMP, ".sensei/doc-index.json"))).toBe(true);
   });
 
   it("returns IndexSummary with correct counts on first run", async () => {
@@ -109,13 +109,11 @@ describe("reindexRepo", () => {
     expect(summary.total).toBe(summary.added + summary.updated + summary.unchanged + summary.skipped);
   });
 
-  it("incremental: second run is forced=true when no DB (no persistent state)", async () => {
-    // Without DB, there's no persistent state between runs, so each run is forced
+  it("incremental: second run is forced=false when doc-index.json exists", async () => {
     const summary1 = await reindexRepo(TMP);
-    expect(summary1.forced).toBe(true);
+    expect(summary1.forced).toBe(true); // first run: no doc-index.json
     const summary2 = await reindexRepo(TMP);
-    // Without DB, existingDocIndex is always null → force=true
-    expect(summary2.forced).toBe(true);
+    expect(summary2.forced).toBe(false); // second run: doc-index.json exists
   });
 
   it("force: re-extracts all files regardless of fingerprints", async () => {

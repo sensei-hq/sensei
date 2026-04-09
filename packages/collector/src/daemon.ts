@@ -1,14 +1,8 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { appendFileSync } from "fs";
-import { makeSenseiClient } from "@sensei/shared";
-import { writeEventToSupabase } from "./supabase-writer.js";
-import { drainJsonl } from "./drain.js";
+import { loadSenseiConfig } from "@sensei/shared";
+import { getActivityLog } from "@sensei/server";
 
 export interface DaemonOptions {
-  supabaseClient?: SupabaseClient; // injectable for tests
-  jsonlPath?: string;              // path to JSONL fallback file; drained on startup
-  repoPath?: string;               // used to resolve Supabase config
-  otlpSupabaseClient?: any;        // injected in tests; otherwise loaded from repoPath on register
+  repoPath?: string;               // used to resolve config
 }
 
 export interface Daemon {
@@ -106,21 +100,26 @@ function isValidEvent(body: unknown): body is EventPayload {
   );
 }
 
+/** Cache: project_path → repoId (loaded from .sensei/config.yaml) */
+const repoIdCache = new Map<string, string>();
+
+async function resolveRepoId(projectPath: string): Promise<string | null> {
+  if (!projectPath) return null;
+  const cached = repoIdCache.get(projectPath);
+  if (cached) return cached;
+  try {
+    const config = await loadSenseiConfig(projectPath);
+    if (config?.repo_id) {
+      repoIdCache.set(projectPath, config.repo_id);
+      return config.repo_id;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 export async function startDaemon(port: number, opts: DaemonOptions = {}): Promise<Daemon> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let supabaseClient: any = opts.supabaseClient ?? null;
-  if (!supabaseClient) {
-    makeSenseiClient(opts.repoPath ?? process.cwd()).then(c => { supabaseClient = c; });
-  }
-
-  // latest registration: { repoId, repoPath, client }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let activeRepo: { repoId: string; repoPath: string; client: any } | null =
-    opts.otlpSupabaseClient ? { repoId: "", repoPath: "", client: opts.otlpSupabaseClient } : null;
-
-  if (opts.jsonlPath && supabaseClient) {
-    await drainJsonl(supabaseClient, opts.jsonlPath);
-  }
+  // latest registration: { repoId, repoPath }
+  let activeRepo: { repoId: string; repoPath: string } | null = null;
 
   const startedAt = Date.now();
 
@@ -144,35 +143,27 @@ export async function startDaemon(port: number, opts: DaemonOptions = {}): Promi
           return Response.json({ ok: false, error: "invalid payload: ts, tool, and phase are required" }, { status: 400 });
         }
 
-        if (supabaseClient) {
-          await writeEventToSupabase(supabaseClient, {
-            user_uuid:    body.user_uuid ?? "",
-            session_id:   body.session_id ?? null,
-            repo_id:      null,
-            phase:        body.phase,
-            tool:         body.tool,
-            project_path: body.project_path ?? "",
-            input:        body.input ? (() => { try { return JSON.parse(body.input!); } catch { return null; } })() : null,
-            ts:           new Date(body.ts),
-            seq:          body.seq ?? null,
-            duration_ms:  body.duration_ms ?? null,
-            success:      body.success ?? null,
-            error:        body.error ?? null,
-          });
-          return Response.json({ ok: true });
-        }
-
-        if (opts.jsonlPath) {
+        // Primary sink: ActivityLog SQLite
+        const repoId = await resolveRepoId(body.project_path ?? "");
+        if (repoId) {
           try {
-            appendFileSync(opts.jsonlPath, JSON.stringify(body) + "\n");
-            return Response.json({ ok: true });
+            const log = getActivityLog(repoId);
+            log.logToolCall({
+              sessionId: body.session_id ?? null,
+              tool: body.tool,
+              phase: body.phase,
+              success: body.success ?? null,
+              durationMs: body.duration_ms ?? null,
+              input: body.input ?? null,
+              error: body.error ?? null,
+              ts: new Date(body.ts).toISOString(),
+            });
           } catch (err) {
-            console.error("[collector] JSONL write error:", (err as Error).message);
-            return Response.json({ ok: false, error: "write failed" }, { status: 500 });
+            console.error("[collector] ActivityLog write error:", (err as Error).message);
           }
         }
 
-        return Response.json({ ok: false, error: "no storage configured" }, { status: 503 });
+        return Response.json({ ok: true });
       }
 
       if (req.method === "POST" && url.pathname === "/otlp/register") {
@@ -183,13 +174,7 @@ export async function startDaemon(port: number, opts: DaemonOptions = {}): Promi
           return Response.json({ ok: false, error: "invalid JSON" }, { status: 400 });
         }
         const { repoId, repoPath } = body as { repoId: string; repoPath: string };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let client: any = activeRepo?.client ?? null; // preserve injected client as fallback
-        try {
-          const loaded = await makeSenseiClient(repoPath);
-          if (loaded) client = loaded;
-        } catch { /* client unavailable — keep existing */ }
-        activeRepo = { repoId, repoPath, client };
+        activeRepo = { repoId, repoPath };
         return Response.json({ ok: true });
       }
 
@@ -200,25 +185,32 @@ export async function startDaemon(port: number, opts: DaemonOptions = {}): Promi
         } catch {
           return Response.json({ ok: true, received: 0, note: "invalid JSON" });
         }
-        if (!activeRepo || !activeRepo.client) {
-          return Response.json({ ok: true, received: 0, note: "no repo registered" });
-        }
         const events = parseOtlpBody(body);
-        for (const event of events) {
-          await activeRepo.client.from("api_requests").insert({
-            repo_id: activeRepo.repoId,
-            task_session_id: null,
-            prompt_id: event.promptId,
-            input_tokens: event.inputTokens,
-            output_tokens: event.outputTokens,
-            cache_read_tokens: event.cacheReadTokens,
-            cache_creation_tokens: event.cacheCreationTokens,
-            cost_usd: event.costUsd,
-            duration_ms: event.durationMs,
-            model: event.model,
-            recorded_at: event.recordedAt,
-          });
+        if (events.length === 0) return Response.json({ ok: true, received: 0 });
+
+        // Primary sink: ActivityLog SQLite
+        if (activeRepo?.repoId) {
+          try {
+            const log = getActivityLog(activeRepo.repoId);
+            for (const event of events) {
+              log.logApiRequest({
+                sessionId: null,
+                promptId: event.promptId,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                cacheReadTokens: event.cacheReadTokens,
+                cacheCreationTokens: event.cacheCreationTokens,
+                costUsd: event.costUsd,
+                durationMs: event.durationMs,
+                model: event.model,
+                recordedAt: event.recordedAt,
+              });
+            }
+          } catch (err) {
+            console.error("[collector] ActivityLog OTLP write error:", (err as Error).message);
+          }
         }
+
         return Response.json({ ok: true, received: events.length });
       }
 

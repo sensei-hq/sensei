@@ -6,7 +6,45 @@ implements:
     items: [repo-scanner, symbol-map, llms-txt-generation, multi-modal-search, symbol-graph]
 ---
 
-> **SUPERSEDED** by `20-pipeline-adapter.md` and `40-metadata-model.md`. The regex-based extraction approach described here has been replaced by the AST-based pipeline (ts-morph for TypeScript). Extraction targets and output formats are now defined in those docs. The NFRs and framework detection tables remain useful reference.
+> **SUPERSEDED — HISTORICAL RECORD ONLY**
+>
+> This document describes the original regex-based extraction approach. It has been superseded twice:
+> - First by `20-pipeline-adapter.md` + `40-metadata-model.md` (AST-based extraction via ts-morph)
+> - Then by the current graph DB approach documented in **`ADR-001-indexing-approach.md`** (Kuzu + tree-sitter)
+>
+> The current indexing architecture uses Kuzu as an embedded graph DB, tree-sitter for AST parsing,
+> and an L0–L5 depth model for token-efficient context loading. See ADR-001 for the full rationale,
+> including what was tried and abandoned.
+>
+> **NFRs and framework detection tables below remain useful reference.**
+
+---
+
+## Alternatives Considered (Historical)
+
+### Regex-based symbol extraction (this document)
+
+The original approach: pattern-match export declarations per language, write to `.index/symbol-map.json`.
+
+**Why abandoned:** Regex can extract names and signatures but cannot represent relationships. Call graphs, import graphs, and type dependency graphs are invisible to regex. Without structure, agents cannot navigate — they get a flat list with no connections.
+
+### cocoindex (tried, abandoned)
+
+Evaluated as a replacement for the regex extractor. Flat semantic search over code embeddings. Indexing ran; results were poor. Semantic similarity surfaces files that mention similar words, not files that are structurally connected. A query for callers of a function needs graph traversal, not cosine similarity. Tried and dropped — not in the codebase.
+
+### MemPalace (evaluated, rejected)
+
+Graph-augmented memory built on ChromaDB. Good recall numbers. Rejected because ChromaDB requires a server process — incompatible with the desktop app's zero-dependency requirement. The "memory palace" spatial metaphor is also designed for personal knowledge management rather than code graph navigation.
+
+### FalkorDB (evaluated, rejected for desktop)
+
+Strong Cypher support and TypeScript bindings. Rejected because it requires a Redis-based server process. Acceptable for a future team server product; not acceptable for a desktop app that must work out of the box.
+
+### Current approach: Kuzu + tree-sitter
+
+See `ADR-001-indexing-approach.md`.
+
+---
 
 ---
 
