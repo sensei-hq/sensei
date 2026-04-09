@@ -7,6 +7,7 @@
     "apps/*"
   ],
   "scripts": {
+    "reset": "./scripts/reset-sensei.sh",
     "build": "bun run --filter='*' build",
     "test": "bunx vitest run",
     "test:e2e": "bun run --filter='*' test:e2e",
@@ -20,7 +21,9 @@
     "upgrade:packages": "find ./packages -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
     "upgrade:all": "bun upgrade:packages && bun upgrade:apps"
   },
-  "overrides": {},
+  "overrides": {
+    "@supabase/supabase-js": "2.101.1"
+  },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@vitest/coverage-v8": "4.1.2",
@@ -31,6 +34,7 @@
     "vitest": "^4.1.2"
   },
   "dependencies": {
-    "@rokkit/ui": "link:@rokkit/ui"
+    "@rokkit/ui": "link:@rokkit/ui",
+    "@supabase/supabase-js": "2.101.1"
   }
 }

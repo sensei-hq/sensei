@@ -15,7 +15,7 @@ const LibEntrySchema = z.object({
 
 export interface SenseiRepoConfig {
   repo_id: string;
-  supabase_url: string;
+  supabase_url?: string;
   custom_libs?: LibEntry[];
 }
 

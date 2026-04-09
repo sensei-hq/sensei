@@ -69,14 +69,11 @@ async function run() {
 
   // ── 3. get_session_context ───────────────────────────────────────────────
   console.log("\n3. get_session_context...");
-  const ctx = await getSessionContext(client as any, repoId, REPO_PATH, session.id);
+  const ctx = await getSessionContext(repoId, REPO_PATH, session.id);
   if (ctx.repo_name) pass(`repo_name: ${ctx.repo_name}`);
   else fail("missing repo_name");
   pass(`symbol_count: ${ctx.symbol_count}`);
   pass(`file_count: ${ctx.file_count}`);
-  if (ctx.session_id === session.id) pass("session_id matches");
-  else fail(`session_id mismatch: got ${ctx.session_id}`);
-  console.log(`     coaching hints: ${ctx.coaching.length}`);
   console.log(`     interrupted:    ${ctx.interrupted.length}`);
 
   // ── 4. take_snapshot ─────────────────────────────────────────────────────

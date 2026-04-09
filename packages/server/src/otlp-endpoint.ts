@@ -78,7 +78,6 @@ export interface OtlpEndpointOptions {
   port?: number;
   dryRun?: boolean;
   repoId: string;
-  supabaseClient?: any;
   log?: (msg: string) => void;
 }
 
@@ -105,37 +104,6 @@ export function createOtlpEndpoint(opts: OtlpEndpointOptions): { stop: () => voi
             log(`[sensei-otel dry-run] ${JSON.stringify(event)}`);
           }
           return Response.json({ ok: true, received: events.length, mode: "dry-run" });
-        }
-
-        if (opts.supabaseClient && events.length > 0) {
-          for (const event of events) {
-            // Correlate to active task session by time window
-            const { data: sessions } = await (opts.supabaseClient as any)
-              .from("task_sessions")
-              .select("id")
-              .eq("repo_id", opts.repoId)
-              .eq("status", "in_progress")
-              .lte("created_at", event.recordedAt)
-              .limit(1);
-
-            const taskSessionId = sessions?.[0]?.id ?? null;
-
-            await (opts.supabaseClient as any)
-              .from("api_requests")
-              .insert({
-                repo_id: opts.repoId,
-                task_session_id: taskSessionId,
-                prompt_id: event.promptId,
-                input_tokens: event.inputTokens,
-                output_tokens: event.outputTokens,
-                cache_read_tokens: event.cacheReadTokens,
-                cache_creation_tokens: event.cacheCreationTokens,
-                cost_usd: event.costUsd,
-                duration_ms: event.durationMs,
-                model: event.model,
-                recorded_at: event.recordedAt,
-              });
-          }
         }
 
         if (events.length > 0) {

@@ -1,4 +1,6 @@
-# Coordinator Adapters — LLM and Agent Agnosticism
+# ACP Registry — LLM and Agent Agnosticism
+
+> **Terminology:** ACP = Agent-Computer Protocol (Zed's framing for the category of tools that coordinate between a developer and an AI agent). This document uses "ACP" to refer to coding assistant tools in this category: Claude Code, Cursor, Zed, GitHub Copilot, opencode, Kiro CLI, OpenAI Codex, etc.
 
 ---
 
@@ -9,28 +11,28 @@ Sensei works with two distinct external components that are often conflated:
 | Term | What it is | Examples |
 |---|---|---|
 | **Model** | The LLM doing the reasoning | Claude (Anthropic), GPT-4o (OpenAI), Gemma (Google), Llama |
-| **Coordinator** | The coding assistant tool the developer uses | Claude Code, opencode, GitHub Copilot, Kiro CLI, OpenAI Codex |
+| **ACP** | The coding assistant tool the developer uses | Claude Code, opencode, GitHub Copilot, Kiro CLI, OpenAI Codex |
 
 **Models** are already abstracted via `ModelBackend` in `packages/shared`.
 
-**Coordinators** are currently hard-wired to Claude Code throughout the codebase
+**ACPs** are currently hard-wired to Claude Code throughout the codebase
 (config paths, hook scripts, MCP registration, skills location, session start mechanism).
 
-This document defines the `CoordinatorAdapter` abstraction that replaces those
+This document defines the `ACPAdapter` abstraction that replaces those
 hard-wired assumptions and makes Claude Code the **default**, not the **only** option.
 
 ---
 
-## What Is Coordinator-Specific
+## What Is ACP-Specific
 
-When sensei integrates with a coding assistant, five things vary by coordinator:
+When sensei integrates with a coding assistant, five things vary by ACP:
 
 ### 1. Context delivery — how does the agent get sensei's tools?
 
-Most modern coordinators support MCP (Model Context Protocol). For those that do,
+Most modern ACPs support MCP (Model Context Protocol). For those that do,
 the MCP server (`packages/server`) is **unchanged** — only the registration location differs.
 
-| Coordinator | Context delivery | MCP config location |
+| ACP | Context delivery | MCP config location |
 |---|---|---|
 | Claude Code | MCP (stdio) | `~/.claude/mcp.json` or `<repo>/.mcp.json` |
 | opencode | MCP (stdio) | `~/.opencode/mcp.json` |
@@ -38,25 +40,25 @@ the MCP server (`packages/server`) is **unchanged** — only the registration lo
 | Kiro CLI | MCP (likely) | TBD |
 | OpenAI Codex | MCP or REST | TBD |
 
-For coordinators without MCP, a fallback exists: **file-based context injection** —
+For ACPs without MCP, a fallback exists: **file-based context injection** —
 sensei writes a `SENSEI.md` (or equivalent) containing a context snapshot that the
-coordinator includes as a system prompt. Less dynamic, but universally compatible.
+ACP includes as a system prompt. Less dynamic, but universally compatible.
 
 ### 2. Session event capture — how does sensei observe the agent?
 
-| Coordinator | Event mechanism | What sensei gets |
+| ACP | Event mechanism | What sensei gets |
 |---|---|---|
 | Claude Code | Hooks (PreToolUse, PostToolUse) + OTLP | Tool events, token costs, turn boundaries |
 | opencode | Hooks (different schema) | Tool events (format TBD) |
 | GitHub Copilot | VS Code events (extension API) | Limited — no low-level tool hooks |
 | Others | Diff-based polling fallback | What changed on disk (no session events) |
 
-For coordinators with no hook support, sensei falls back to **git diff polling** —
+For ACPs with no hook support, sensei falls back to **git diff polling** —
 less granular but still enables FTR scoring based on commit patterns.
 
 ### 3. Skill delivery — where are project skills installed?
 
-| Coordinator | Skills location | Format |
+| ACP | Skills location | Format |
 |---|---|---|
 | Claude Code | `~/.claude/skills/<repo>-*.md` | Markdown with YAML frontmatter |
 | opencode | `~/.opencode/rules/<repo>-*.md` | Markdown (similar format) |
@@ -65,7 +67,7 @@ less granular but still enables FTR scoring based on commit patterns.
 
 ### 4. Session start protocol — how is the session bootstrapped?
 
-| Coordinator | Mechanism |
+| ACP | Mechanism |
 |---|---|
 | Claude Code | `SessionStart` hook → injects `get_session_context` instruction as system-reminder |
 | opencode | Equivalent hook (if supported) or AGENTS.md instruction |
@@ -73,45 +75,45 @@ less granular but still enables FTR scoring based on commit patterns.
 
 ### 5. Installation — how does sensei register itself?
 
-`sensei init` needs to write the right config for whatever coordinator the developer uses.
+`sensei init` needs to write the right config for whatever ACP the developer uses.
 Each adapter knows its own registration procedure.
 
 ---
 
-## The CoordinatorAdapter Interface
+## The ACPAdapter Interface
 
-The existing `AgentAdapter` (skills-only) is expanded to a full `CoordinatorAdapter`.
+The existing `AgentAdapter` (skills-only) is expanded to a full `ACPAdapter`.
 The existing interface is preserved as a subset.
 
 ```typescript
-// packages/shared/src/coordinator.ts
+// packages/shared/src/acp.ts
 
 export type EventCapture = 'hooks' | 'otlp' | 'polling' | 'extension-api';
 export type ContextDelivery = 'mcp' | 'file-injection';
 
-export interface CoordinatorAdapter {
+export interface ACPAdapter {
   /** Unique identifier, used in config and logging */
   readonly name: string;
 
   /** Human-readable label */
   readonly displayName: string;
 
-  /** How this coordinator receives context from sensei */
+  /** How this ACP receives context from sensei */
   readonly contextDelivery: ContextDelivery;
 
-  /** How sensei captures session events from this coordinator */
+  /** How sensei captures session events from this ACP */
   readonly eventCapture: EventCapture;
 
-  /** Detect if this coordinator is installed on the current machine */
+  /** Detect if this ACP is installed on the current machine */
   isInstalled(): Promise<boolean>;
 
-  /** Register the MCP server (or write context file) for this coordinator */
+  /** Register the MCP server (or write context file) for this ACP */
   installContextDelivery(serverPath: string, repoPaths: string[]): Promise<void>;
 
   /** Install event capture (hooks, OTLP config, extension registration) */
   installEventCapture(daemonUrl: string): Promise<void>;
 
-  /** Write skill files in this coordinator's format and location */
+  /** Write skill files in this ACP's format and location */
   writeSkills(skills: Record<string, string>, repoSlug: string): Promise<AgentSkillFile[]>;
 
   /** List already-installed skill files for this repo */
@@ -120,56 +122,56 @@ export interface CoordinatorAdapter {
   /** Configure the session start protocol */
   installSessionStart(instruction: string): Promise<void>;
 
-  /** Write the coordinator-specific project context file (CLAUDE.md, AGENTS.md, etc.) */
+  /** Write the ACP-specific project context file (CLAUDE.md, AGENTS.md, etc.) */
   writeProjectContext(repoPath: string, context: ProjectContext): Promise<void>;
 
-  /** Uninstall all sensei integrations for this coordinator */
+  /** Uninstall all sensei integrations for this ACP */
   uninstall(repoSlug?: string): Promise<void>;
 }
 ```
 
 The `ClaudeAdapter` (currently in `packages/engine/src/agent/claude-adapter.ts`) becomes
-the reference implementation of `CoordinatorAdapter`.
+the reference implementation of `ACPAdapter`.
 
 ---
 
-## Coordinator Registry
+## ACP Registry
 
-A registry maps coordinator name → adapter instance. `sensei init` uses it to:
-1. Auto-detect which coordinators are installed
+A registry maps ACP name → adapter instance. `sensei init` uses it to:
+1. Auto-detect which ACPs are installed
 2. Let the developer choose which to configure (can configure multiple)
-3. Run the full installation for the selected coordinators
+3. Run the full installation for the selected ACPs
 
 ```typescript
-// packages/shared/src/coordinator-registry.ts
+// packages/shared/src/acp-registry.ts
 
-export class CoordinatorRegistry {
-  private adapters: Map<string, CoordinatorAdapter>;
+export class ACPRegistry {
+  private adapters: Map<string, ACPAdapter>;
 
-  register(adapter: CoordinatorAdapter): void;
+  register(adapter: ACPAdapter): void;
 
-  get(name: string): CoordinatorAdapter | undefined;
+  get(name: string): ACPAdapter | undefined;
 
   /** Returns all adapters where isInstalled() === true */
-  async detectInstalled(): Promise<CoordinatorAdapter[]>;
+  async detectInstalled(): Promise<ACPAdapter[]>;
 
   /** The default adapter (Claude Code) */
-  get default(): CoordinatorAdapter;
+  get default(): ACPAdapter;
 }
 ```
 
-Adding a new coordinator adapter requires:
-1. A new class implementing `CoordinatorAdapter`
+Adding a new ACP adapter requires:
+1. A new class implementing `ACPAdapter`
 2. One `registry.register(new TheirAdapter())` call
 3. No changes anywhere else in the codebase
 
 ---
 
-## MCP Server Is Coordinator-Agnostic
+## MCP Server Is ACP-Agnostic
 
-The MCP server (`packages/server`) does not change per coordinator.
+The MCP server (`packages/server`) does not change per ACP.
 It speaks the standard MCP protocol and the tools it exposes are useful to any
-coordinator that supports MCP.
+ACP that supports MCP.
 
 What changes: **where it is registered**. Each adapter writes the registration to the
 right config file in the right format.
@@ -197,7 +199,7 @@ right config file in the right format.
 
 ## Session Tracking Without Hooks
 
-For coordinators that do not support hooks (or where event capture is not yet
+For ACPs that do not support hooks (or where event capture is not yet
 implemented), sensei falls back to **git-based session inference**:
 
 - A session starts when the developer opens a project in sensei's workspace
@@ -207,7 +209,7 @@ implemented), sensei falls back to **git-based session inference**:
 - Token costs are estimated from session duration and model (no OTLP data)
 
 This is less precise than hook-based tracking but still useful.
-The fallback is the baseline. Adapters can enhance it with coordinator-specific capture.
+The fallback is the baseline. Adapters can enhance it with ACP-specific capture.
 
 ---
 
@@ -215,16 +217,16 @@ The fallback is the baseline. Adapters can enhance it with coordinator-specific 
 
 ### Ships with Phase 0 (foundation)
 
-The `CoordinatorAdapter` interface and registry are defined. Claude Code adapter
+The `ACPAdapter` interface and registry are defined. Claude Code adapter
 is refactored to implement the full interface. The `AgentAdapter` in `packages/engine`
-is replaced by `CoordinatorAdapter` in `packages/shared`.
+is replaced by `ACPAdapter` in `packages/shared`.
 
 This costs minimal extra work now and prevents the hard-wired Claude Code assumptions
 from being baked deeper into the system.
 
 ### Ships when there is user demand
 
-| Coordinator | Blocker before shipping |
+| ACP | Blocker before shipping |
 |---|---|
 | opencode | Verify hook schema and MCP config format |
 | GitHub Copilot | MCP support via Copilot Extensions is in preview — wait for GA |
@@ -252,29 +254,29 @@ full integration will be available in a future version.
 
 ## What This Means for the Desktop App
 
-The Tauri desktop app shows coordinator status in the project settings view:
+The Tauri desktop app shows ACP status in the project settings view:
 
 ```
-Coordinator integrations:
+ACP integrations:
   ✓ Claude Code  — MCP registered, hooks active, OTLP receiving
   ○ opencode     — not detected
   ○ GitHub Copilot — coming soon
 ```
 
 The developer can add, remove, or reconfigure any integration from the app.
-This replaces the current `sensei init` / `sensei doctor` CLI flow for coordinator setup.
+This replaces the current `sensei init` / `sensei doctor` CLI flow for ACP setup.
 
 ---
 
 ## Relationship to the Model Backend
 
-`CoordinatorAdapter` and `ModelBackend` are independent abstractions:
+`ACPAdapter` and `ModelBackend` are independent abstractions:
 
 ```
 Developer workflow
       │
       ▼
-  Coordinator (Claude Code, opencode, Copilot...)
+  ACP (Claude Code, opencode, Copilot...)
       │ uses MCP / extension API
       ▼
   Sensei (context delivery, session tracking)
@@ -283,6 +285,6 @@ Developer workflow
   Model (Claude, GPT-4o, Gemma, Llama...)
 ```
 
-A developer can use Claude Code (coordinator) with GPT-4o (model) if their setup
-supports it. Or opencode (coordinator) with Claude (model). Sensei does not care —
+A developer can use Claude Code (ACP) with GPT-4o (model) if their setup
+supports it. Or opencode (ACP) with Claude (model). Sensei does not care —
 it works with whatever the developer has configured.

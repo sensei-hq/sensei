@@ -1,16 +1,26 @@
 import { intro, outro, spinner, note, confirm, isCancel } from "@clack/prompts";
-import { reindexRepo } from "@sensei/tools";
+import { indexRepo } from "@sensei/graph-indexer";
+import { loadSenseiConfig } from "@sensei/shared";
 import { existsSync } from "fs";
-import { SENSEI_DIR, senseiPath } from "@sensei/shared";
+import { join } from "path";
+import { homedir } from "os";
 
 export async function add(cwd: string): Promise<void> {
   intro("sensei add");
 
-  const alreadyIndexed = existsSync(senseiPath(cwd, "symbol-map.json"));
+  const config = await loadSenseiConfig(cwd);
+  if (!config?.repo_id) {
+    outro("No .sensei/config.yaml found. Run sensei init first.");
+    return;
+  }
+
+  const repoId = config.repo_id;
+  const graphPath = join(homedir(), ".sensei", "projects", repoId, "graph.kuzu");
+  const alreadyIndexed = existsSync(graphPath);
 
   if (alreadyIndexed) {
     const proceed = await confirm({
-      message: `${SENSEI_DIR}/ already exists. Re-index and update artifacts?`,
+      message: `Graph already exists for this repo. Re-index now?`,
     });
     if (isCancel(proceed) || !proceed) {
       outro("Cancelled.");
@@ -19,19 +29,14 @@ export async function add(cwd: string): Promise<void> {
   }
 
   const s = spinner();
-  s.start("Indexing repo...");
-  const summary = await reindexRepo(cwd);
-  if (summary.forced) {
-    const total = summary.added + summary.updated;
-    s.stop(`Full scan: ${total} files indexed (${summary.added} new, ${summary.updated} updated)`);
-  } else {
-    s.stop(`${summary.updated} updated, ${summary.added} added, ${summary.removed} removed, ${summary.unchanged} unchanged`);
-  }
+  s.start("Indexing repo into graph...");
+  const result = await indexRepo({ repoPath: cwd, repoId, project: repoId });
+  s.stop(`Indexed ${result.filesIndexed} files — ${result.functionsIndexed} functions, ${result.typesIndexed} types (${result.durationMs}ms)`);
 
   note(
     [
-      `Edit ${SENSEI_DIR}/llmspec.yaml to declare doc coverage (docs[].covers[])`,
-      `Run: sensei hooks install --drift   to enable pre-commit drift check`,
+      `Run: sensei watch   to keep the graph up-to-date`,
+      `Run: sensei serve   to start the MCP server`,
     ].join("\n"),
     "Next steps"
   );
