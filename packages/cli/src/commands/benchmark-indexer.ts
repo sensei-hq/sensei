@@ -1,5 +1,4 @@
 import {
-  reindexRepo,
   extractGroundTruth,
   loadSenseiIndex,
   connectCocoindex,
@@ -7,14 +6,20 @@ import {
   printReport,
   writeMarkdownReport,
 } from "@sensei/tools";
-import { senseiPath } from "@sensei/shared";
+import { senseiPath, loadSenseiConfig } from "@sensei/shared";
 import { existsSync } from "fs";
+import { indexRepo } from "@sensei/graph-indexer";
 
 export async function benchmarkIndexer(repoPath: string): Promise<void> {
   const symbolMapPath = senseiPath(repoPath, "symbol-map.json");
   if (!existsSync(symbolMapPath)) {
     console.log("sensei: symbol-map.json not found, running indexer...");
-    await reindexRepo(repoPath, { force: false });
+    const config = await loadSenseiConfig(repoPath);
+    if (!config?.repo_id) {
+      console.error("sensei: not initialised. Run sensei init first.");
+      process.exit(1);
+    }
+    await indexRepo({ repoId: config.repo_id, repoPath, project: config.repo_id });
   }
 
   console.log("Extracting ground truth from TypeScript exports...");

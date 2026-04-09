@@ -1,6 +1,5 @@
 // packages/server/src/tools/record-memory.ts
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { recordMemory as engineRecordMemory } from "@sensei/engine";
+import { getActivityLog } from "../activity-log.js";
 
 interface RecordMemoryParams {
   type: "decision" | "pattern" | "question";
@@ -9,17 +8,58 @@ interface RecordMemoryParams {
 }
 
 export async function recordMemoryTool(
-  client: SupabaseClient,
   repoId: string,
-  sessionId: string,
+  sessionId: string | null,
   params: RecordMemoryParams,
+  localSessionId?: string,
 ) {
-  const item = await engineRecordMemory(client, repoId, sessionId, params);
+  const log = getActivityLog(repoId);
+
+  if (params.type === "decision") {
+    log.logDecision({
+      repoId,
+      text: params.title,
+      context: params.content,
+    });
+    return {
+      id: crypto.randomUUID(),
+      type: params.type,
+      title: params.title,
+      status: "active",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (params.type === "pattern") {
+    log.logDecision({
+      repoId,
+      text: params.title,
+      context: params.content,
+      tags: ["pattern"],
+    });
+    return {
+      id: crypto.randomUUID(),
+      type: params.type,
+      title: params.title,
+      status: "active",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  // "question" type → backlog
+  const id = log.addBacklogItem({
+    repoId,
+    title: params.title,
+    description: params.content,
+    status: "open",
+    priority: "medium",
+  });
+
   return {
-    id: item.id,
-    type: item.type,
-    title: item.title,
-    status: item.status,
-    createdAt: item.createdAt,
+    id,
+    type: params.type,
+    title: params.title,
+    status: "open",
+    createdAt: new Date().toISOString(),
   };
 }

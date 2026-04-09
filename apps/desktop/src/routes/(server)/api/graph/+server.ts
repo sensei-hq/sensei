@@ -1,6 +1,5 @@
-export const prerender = true;
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = () =>
-  json({ summary: null, projects: [], communities: [], godNodes: [], rationale: [] });
+  json({ summary: { totalSymbols: 0, totalEdges: 0, communities: 0 }, projects: [], communities: [], godNodes: [], rationale: [] });

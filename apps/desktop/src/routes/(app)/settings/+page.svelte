@@ -71,9 +71,9 @@
         </div>
       </section>
 
-      <!-- AI Editors -->
-      <section id="ai-editors">
-        <h2 class="text-xs font-semibold uppercase tracking-widest text-surface-z4 mb-3">AI Editors</h2>
+      <!-- ACP Registry -->
+      <section id="acp-registry">
+        <h2 class="text-xs font-semibold uppercase tracking-widest text-surface-z4 mb-3">ACP Registry</h2>
         <div class="rounded-2xl border border-surface-z3 bg-surface-z2/50 px-4 py-4">
           <p class="text-sm text-surface-z6 mb-3">Re-run MCP setup to connect or update your AI editors.</p>
           <a href="/setup"

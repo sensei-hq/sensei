@@ -1,6 +1,5 @@
 // packages/server/src/tools/take-snapshot.ts
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { takeSnapshot as engineTakeSnapshot } from "@sensei/engine";
+import { getActivityLog } from "../activity-log.js";
 
 interface TakeSnapshotParams {
   progress_summary: string;
@@ -12,24 +11,26 @@ interface TakeSnapshotParams {
 }
 
 export async function takeSnapshotTool(
-  client: SupabaseClient,
-  sessionId: string,
   repoId: string,
+  sessionId: string,
+  localSessionId: string | undefined,
   params: TakeSnapshotParams,
-) {
-  const snapshot = await engineTakeSnapshot(client, sessionId, repoId, {
-    kind: "manual",
+): Promise<{ id: string; progressSummary: string; createdAt: string }> {
+  const log = getActivityLog(repoId);
+  const effectiveSessionId = localSessionId ?? sessionId;
+  const createdAt = new Date().toISOString();
+  const id = log.logSnapshot({
+    sessionId: effectiveSessionId,
+    repoId,
     progressSummary: params.progress_summary,
     nextStepHint: params.next_step_hint,
-    completedSteps: params.completed_steps,
     inFlightFiles: params.in_flight_files,
-    worktreeRefs: params.worktree_refs,
+    completedSteps: params.completed_steps,
     diffStatSummary: params.diff_stat_summary,
   });
   return {
-    id: snapshot.id,
-    kind: snapshot.kind,
-    progressSummary: snapshot.progressSummary,
-    createdAt: snapshot.createdAt,
+    id,
+    progressSummary: params.progress_summary,
+    createdAt,
   };
 }

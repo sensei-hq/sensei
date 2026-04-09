@@ -15,7 +15,6 @@ export interface PlatformCredentials {
   email: string;
   account_id: string;
   account_slug: string;
-  account_type: string;
   role: string;
 }
 
@@ -24,7 +23,7 @@ export async function loadPlatformCredentials(): Promise<PlatformCredentials | n
     const raw = await readFile(CRED_PATH, "utf-8");
     const parsed = yaml.load(raw) as Record<string, unknown>;
     if (!parsed?.access_token) return null;
-    return parsed as PlatformCredentials;
+    return parsed as unknown as PlatformCredentials;
   } catch {
     return null;
   }
@@ -103,7 +102,7 @@ export async function loginCommand(platformUrl?: string): Promise<void> {
 
   const info = await verifyRes.json() as {
     userId: string; email: string;
-    accountId: string; accountSlug: string; accountType: string; role: string;
+    accountId: string; accountSlug: string; role: string;
     refreshToken?: string;
   };
 
@@ -113,12 +112,11 @@ export async function loginCommand(platformUrl?: string): Promise<void> {
     email: info.email,
     account_id: info.accountId,
     account_slug: info.accountSlug,
-    account_type: info.accountType,
     role: info.role,
   };
 
   await savePlatformCredentials(creds);
-  console.log(`\nLogged in as ${creds.email} | ${creds.account_slug} (${creds.account_type}) | ${creds.role}`);
+  console.log(`\nLogged in as ${creds.email} | ${creds.account_slug} | ${creds.role}`);
 }
 
 export async function logoutCommand(): Promise<void> {
@@ -137,5 +135,5 @@ export async function whoamiCommand(): Promise<void> {
     console.log("Not logged in. Run `sensei login` to authenticate.");
     return;
   }
-  console.log(`${creds.email} | ${creds.account_slug} (${creds.account_type}) | ${creds.role}`);
+  console.log(`${creds.email} | ${creds.account_slug} | ${creds.role}`);
 }

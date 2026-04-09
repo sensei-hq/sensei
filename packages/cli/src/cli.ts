@@ -33,9 +33,9 @@ const { positionals, values } = parseArgs({
     lib: { type: "string" },
     global: { type: "boolean", default: false },
     // init options
-    "supabase-url": { type: "string" },
-    "service-key": { type: "string" },
     "use-recommended": { type: "boolean", default: false },
+    // login options
+    "platform-url": { type: "string" },
   },
 });
 
@@ -89,8 +89,6 @@ Options:
 
 init:
   --global                 Install skills and hooks globally (~/.claude/) instead of repo-local
-  --supabase-url <url>     Supabase URL (default: $SUPABASE_URL or prompts; fallback: http://localhost:54321)
-  --service-key <key>      Supabase service role key (default: $SUPABASE_SERVICE_KEY or prompts)
   --use-recommended        Install recommended skills without prompting
 
 setup:
@@ -163,8 +161,6 @@ async function main() {
       const { init } = await import("./commands/init.js");
       await init(repoRoot, {
         global: values.global,
-        supabaseUrl: values["supabase-url"] ?? process.env.SUPABASE_URL,
-        serviceKey: values["service-key"] ?? process.env.SUPABASE_SERVICE_KEY,
         useRecommended: values["use-recommended"],
       });
       break;
@@ -199,25 +195,15 @@ async function main() {
       break;
     }
     case "index": {
-      const { reindexRepo } = await import("@sensei/tools");
+      const { indexRepo } = await import("@sensei/graph-indexer");
+      const { loadSenseiConfig } = await import("@sensei/shared");
       const { spinner } = await import("@clack/prompts");
+      const config = await loadSenseiConfig(repoRoot);
+      if (!config?.repo_id) { console.error("sensei: not initialised. Run sensei init first."); process.exit(1); }
       const s = spinner();
       s.start("Indexing repo...");
-      const summary = await reindexRepo(repoRoot, { force: values.force });
-      const withSymbols = summary.added + summary.updated;
-      if (summary.forced) {
-        s.stop(
-          `Full scan: ${summary.total} files scanned, ${withSymbols} with symbols` +
-          (summary.skipped ? `, ${summary.skipped} skipped (no symbols)` : "") +
-          ` (${summary.added} new, ${summary.updated} updated)`
-        );
-      } else {
-        s.stop(
-          `${summary.updated} updated, ${summary.added} added, ${summary.removed} removed` +
-          `, ${summary.unchanged} unchanged` +
-          (summary.skipped ? `, ${summary.skipped} skipped` : "")
-        );
-      }
+      const result = await indexRepo({ repoId: config.repo_id, repoPath: repoRoot, project: config.repo_id });
+      s.stop(`Indexed: ${result.filesIndexed} files, ${result.functionsIndexed} functions, ${result.edgesCreated} edges (${result.durationMs}ms)`);
       break;
     }
     case "drift": {
@@ -359,7 +345,7 @@ async function main() {
     }
     case "update-registry": {
       const { updateRegistry } = await import("./commands/update-registry.js");
-      await updateRegistry(repoRoot, values.lib, { global: values.global });
+      await updateRegistry(repoRoot, values.lib);
       break;
     }
     case "install-skills": {
@@ -387,7 +373,7 @@ async function main() {
     }
     case "login": {
       const { loginCommand } = await import("./commands/login.js");
-      await loginCommand(values["supabase-url"]);
+      await loginCommand(values["platform-url"] as string | undefined);
       break;
     }
     case "logout": {

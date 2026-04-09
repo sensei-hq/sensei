@@ -1,80 +1,43 @@
-// packages/cli/src/commands/watch.ts
-import chokidar from "chokidar";
-import { join } from "path";
-import { existsSync } from "fs";
-import { reindexRepo, checkDrift } from "@sensei/tools";
+import { watchRepo } from "@sensei/graph-indexer";
+import { loadSenseiConfig } from "@sensei/shared";
 
 export interface WatchOptions {
   drift?: boolean;
 }
 
-export async function watch(repoPath: string, options: WatchOptions = {}): Promise<void> {
-  const DEBOUNCE_MS = 500;
-
-  const watchTargets = [
-    join(repoPath, "src"),
-    join(repoPath, "docs"),
-    join(repoPath, "package.json"),
-  ].filter(p => existsSync(p));
-
-  if (watchTargets.length === 0) {
-    console.log("Nothing to watch — no src/, docs/, or package.json found.");
+export async function watch(repoPath: string, _options: WatchOptions = {}): Promise<void> {
+  // Load config to get repoId
+  const config = await loadSenseiConfig(repoPath);
+  if (!config?.repo_id) {
+    console.error("No .sensei/config.yaml found. Run sensei init first.");
+    process.exit(1);
     return;
   }
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let reindexPromise: Promise<void> | null = null;
 
-  const watcher = chokidar.watch(watchTargets, {
-    ignored: [
-      /\.sensei\//,
-      /node_modules/,
-      /\.git\//,
-    ],
-    ignoreInitial: true,
-    persistent: true,
+  const repoId = config.repo_id;
+  console.log(`Starting graph watcher for ${repoPath} (repo: ${repoId})...`);
+
+  const handle = await watchRepo({
+    repoPath,
+    repoId,
+    project: repoId,
+    onUpdate: (result) => {
+      const parts: string[] = [];
+      if (result.added > 0) parts.push(`+${result.added} added`);
+      if (result.updated > 0) parts.push(`~${result.updated} updated`);
+      if (result.removed > 0) parts.push(`-${result.removed} removed`);
+      if (parts.length > 0) {
+        console.log(`[${new Date().toLocaleTimeString()}] Graph: ${parts.join(", ")} (${result.durationMs}ms)`);
+      }
+    },
   });
 
-  function triggerReindex() {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(async () => {
-      debounceTimer = null;
-      if (reindexPromise) return; // skip — reindex in flight
-      const start = Date.now();
-      reindexPromise = reindexRepo(repoPath)
-        .then(async summary => {
-          const changed = summary.added + summary.updated + summary.removed;
-          const elapsed = Date.now() - start;
-          console.log(`reindexed ${changed} files (${elapsed}ms)`);
-          if (options.drift) {
-            try {
-              const drift = await checkDrift(repoPath);
-              if (drift.drifted.length > 0) {
-                console.log(drift.summary);
-              }
-            } catch (err) {
-              console.warn("drift check error:", (err as Error).message);
-            }
-          }
-        })
-        .catch(err => console.error("reindex error:", err.message))
-        .finally(() => { reindexPromise = null; });
-      // No await here — setTimeout discards the callback's return value
-    }, DEBOUNCE_MS);
-  }
+  console.log("Watching for changes... (Ctrl+C to stop)");
 
-  watcher.on("change", triggerReindex);
-  watcher.on("add", triggerReindex);
-  watcher.on("unlink", triggerReindex);
-
-  console.log(`Watching ${watchTargets.map(p => p.replace(repoPath + "/", "")).join(", ")}... (Ctrl+C to stop)`);
-
-  await new Promise<void>(resolve => {
+  await new Promise<void>((resolve) => {
     process.once("SIGINT", async () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      const inFlight = reindexPromise;
-      if (inFlight) await inFlight;
-      await watcher.close();
-      console.log("Watch stopped.");
+      console.log("\nStopping watcher...");
+      await handle.stop();
       resolve();
     });
   });

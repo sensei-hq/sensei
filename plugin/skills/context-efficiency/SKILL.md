@@ -15,11 +15,14 @@ LLM context is finite and expensive. Load only the slice needed for the current 
 
 | Tool | When to call | What it does |
 |---|---|---|
-| `get_llmspec()` | Session start | Full orientation in ~500 tokens |
-| `recommend_next(task)` | Before each task | Returns optimal scope + resolution level |
-| `load_context(scope)` | After recommend_next | Loads the prescribed slice |
+| `get_session_context()` | Session start | Orientation — symbol count, stack, interrupted sessions, memory |
+| `recommend_next(task)` | Before each task | Returns optimal files + estimated token counts |
+| `context_pack(task)` | After recommend_next | Loads ranked, token-budgeted context slice for a task |
+| `search(query)` | Finding symbols by name | Searches across all indexed symbols by name/signature/docstring |
+| `search_code_graph(query)` | Full-text code search | Searches raw code text (when symbol search isn't precise enough) |
+| `get_bearings(path)` | Exploring a module | Lists exports, imports, and callers for a file or directory |
+| `get_symbol(name, depth)` | Deep symbol inspection | Loads a symbol with its call graph up to N hops |
 | `checkpoint()` | Before switching tasks | Saves current state, unloads context |
-| `get_file_context(path, level)` | Mid-task | Load one file at the right level |
 
 ---
 
@@ -37,11 +40,11 @@ Code has four resolution levels. Serve the minimal level that lets you complete 
 **Task → level mapping:**
 
 ```
-"list available functions"          → L0
-"what does login() return?"         → L1
-"trace the auth flow"               → L2
+"list available functions"          → L0 (use get_bearings)
+"what does login() return?"         → L1 (use get_symbol with depth=0)
+"trace the auth flow"               → L2 (use get_symbol with depth=2)
 "review this file"                  → L2
-"fix a bug in validateToken()"      → L3
+"fix a bug in validateToken()"      → L3 (read the file directly)
 "load context before making changes" → ask what changes first, then L0–L2
 ```
 
@@ -54,16 +57,17 @@ When the user says "load everything" or "token budget is fine" — resist. Over-
 ## Session Flow
 
 ```
-1. get_llmspec()                        ← orient (once per session)
+1. get_session_context()                ← orient (once per session)
 2. recommend_next("task description")
-   → returns: { scope: "src/auth/", level: "L1", reason: "..." }
-3. load_context("src/auth/")            ← load prescribed slice
+   → returns: { files: [...], estimated_tokens: ... }
+3. context_pack("task description")     ← load ranked context slice
 4. work on task
-5. need details? → get_file_context("src/auth/login.ts", "L3")
-6. task done
-7. checkpoint()                         ← save + unload
-8. recommend_next("next task")
-9. load new slice
+5. need a specific symbol? → get_symbol("functionName", 1)
+6. need to explore a module? → get_bearings("src/auth/")
+7. task done
+8. checkpoint()                         ← save + unload
+9. recommend_next("next task")
+10. load new slice
 ```
 
 ---
@@ -71,7 +75,7 @@ When the user says "load everything" or "token budget is fine" — resist. Over-
 ## Context Loading Rules
 
 - **Start narrow** — use `recommend_next()` before deciding what to load
-- **L0 first** — load signatures before source; only escalate to L3 when editing
+- **Search first** — use `search(query)` to locate symbols before reading files
 - **Scope by feature** — load `src/payments/` not `src/`
 - **Never load test files** unless writing or debugging tests
 
@@ -92,10 +96,11 @@ Checkpoint stores: current task description, files loaded, decisions made, next 
 
 | Anti-pattern | Fix |
 |---|---|
-| Loading entire `src/` at session start | Call `get_llmspec()`, then `recommend_next(task)` |
+| Loading entire `src/` at session start | Call `get_session_context()`, then `recommend_next(task)` |
 | Keeping previous task's files in context | Call `checkpoint()` before switching |
 | Loading L3 for every file in scope | Load L0/L1 first, escalate only where needed |
 | Re-reading the same file multiple times | Load once, keep in context for the task duration |
-| Using Glob + Read to explore a new module | Use `get_llmspec()` → `recommend_next()` → `load_context()` |
-| Loading L3 to understand what a function does | Use L1 instead — 98% token reduction |
+| Using Glob + Read to explore a new module | Use `get_bearings("src/module/")` |
+| Loading L3 to understand what a function does | Use `get_symbol(name, 0)` instead — 98% token reduction |
 | Treating "quick look" as permission to skip protocol | A context switch is a context switch. Still: checkpoint → recommend_next → load targeted slice. |
+| Searching with grep across the repo | Use `search(query)` or `search_code_graph(query)` |

@@ -1,55 +1,60 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ModelBackend } from "@sensei/shared";
-import { DiffFirstBFSStrategy, BM25Strategy, SemanticStrategy, RankingStrategyChain } from "@sensei/engine";
-import type { Candidate } from "@sensei/engine";
-import { createTokenCounter } from "@sensei/shared";
-
-const CHANGED_FILES_WINDOW_MS = 24 * 60 * 60 * 1000;
+import { getOrCreateDb, searchSymbols } from "@sensei/graph-indexer";
+import { loadSenseiConfig, createTokenCounter } from "@sensei/shared";
+import { relative } from "node:path";
 
 export async function recommendNext(
-  client: SupabaseClient,
-  backend: ModelBackend,
   repoId: string,
+  repoPath: string,
   task: string,
   modelId?: string,
-) {
+): Promise<{ recommendations: Array<{ filePath: string; score: number; symbolCount: number; estimatedTokens: number }>; suggestedBudget: number }> {
   const counter = createTokenCounter(modelId);
 
-  const { data: allFiles } = await client.from("scan_state").select("file_path").eq("repo_id", repoId);
-  const candidates: Candidate[] = (allFiles ?? []).map((f: { file_path: string }) => ({
-    filePath: f.file_path,
-    type: (f.file_path.endsWith(".md") || f.file_path.endsWith(".mdx")) ? "doc" : "code",
-  }));
+  const config = await loadSenseiConfig(repoPath);
+  const project = config?.repo_id ?? repoId;
 
-  const since = new Date(Date.now() - CHANGED_FILES_WINDOW_MS).toISOString();
-  const { data: changedData } = await client.from("scan_state").select("file_path").eq("repo_id", repoId).gt("indexed_at", since);
-  const changedFiles = (changedData ?? []).map((f: { file_path: string }) => f.file_path);
+  const { db, conn } = await getOrCreateDb(repoId);
+  try {
+    const symbols = await searchSymbols(conn, task, project, 100);
 
-  const chain = new RankingStrategyChain([new DiffFirstBFSStrategy(), new BM25Strategy(), new SemanticStrategy()]);
-  const ranked = await chain.rank(candidates, { task, repoId, changedFiles, db: client, backend, modelId });
-  const top3 = ranked.slice(0, 3);
+    // Group by file (absolute path), aggregate score using 1/(index+1)
+    const fileMap = new Map<string, { score: number; syms: typeof symbols }>();
+    for (let i = 0; i < symbols.length; i++) {
+      const sym = symbols[i];
+      if (!sym.file) continue;
+      const existing = fileMap.get(sym.file);
+      if (existing) {
+        existing.score += 1 / (i + 1);
+        existing.syms.push(sym);
+      } else {
+        fileMap.set(sym.file, { score: 1 / (i + 1), syms: [sym] });
+      }
+    }
 
-  const recs = await Promise.all(
-    top3.map(async candidate => {
-      const { data: syms } = await client
-        .from("symbols")
-        .select("name,signature")
-        .eq("repo_id", repoId)
-        .eq("file_path", candidate.filePath);
+    // Sort by score, take top 3
+    const top3 = Array.from(fileMap.entries())
+      .sort((a, b) => b[1].score - a[1].score)
+      .slice(0, 3);
 
-      const estimatedTokens = (syms ?? []).reduce(
-        (sum: number, s: { name: string; signature: string | null }) =>
-          sum + counter.count(`${s.name} ${s.signature ?? ""}`.trim()),
+    const recommendations = top3.map(([absPath, { score, syms }]) => {
+      const estimatedTokens = syms.reduce(
+        (sum, s) => sum + counter.count(`${s.name} ${s.sig ?? ""}`.trim()),
         0
       );
+      return {
+        filePath: relative(repoPath, absPath),
+        score,
+        symbolCount: syms.length,
+        estimatedTokens,
+      };
+    });
 
-      return { filePath: candidate.filePath, score: candidate.score, symbolCount: (syms ?? []).length, estimatedTokens };
-    })
-  );
+    const totalEstimated = recommendations.reduce((s, r) => s + r.estimatedTokens, 0);
+    const suggestedBudget = Math.min(Math.ceil(totalEstimated * 1.5), 8000);
 
-  return {
-    recommendations: recs,
-    // Cap at 8000 — the default max_tokens for context_pack; multiply by 1.5 for headroom
-    suggestedBudget: Math.min(Math.ceil(recs.reduce((s, r) => s + r.estimatedTokens, 0) * 1.5), 8000),
-  };
+    return { recommendations, suggestedBudget };
+  } finally {
+    await conn.close();
+    await db.close();
+  }
 }

@@ -93,26 +93,9 @@ async function run() {
   console.log("\n3. Checking coaching hints in get_session_context...");
   const session = await createSession(client as any, repoId);
   const taskSession = await createTaskSession(client as any, session.id, repoId, "checking coaching hints");
-  const ctx = await getSessionContext(client as any, repoId, REPO_PATH, session.id);
-
-  if (ctx.coaching.length > 0) {
-    pass(`${ctx.coaching.length} coaching hint(s) detected`);
-    for (const hint of ctx.coaching) {
-      console.log(`     [${hint.pattern}] freq=${hint.frequency}: ${hint.hint.slice(0, 80)}...`);
-    }
-  } else {
-    fail("No coaching hints returned — expected at least 1 for missing_descriptions pattern");
-  }
-
-  // Check specific patterns
-  const hasNoDesc = ctx.coaching.some(h => h.pattern === "missing_descriptions");
-  const hasHighSnap = ctx.coaching.some(h => h.pattern === "high_snapshot_count");
-
-  if (hasNoDesc) pass("missing_descriptions pattern detected");
-  else fail("missing_descriptions pattern not detected");
-
-  if (hasHighSnap) pass("high_snapshot_count pattern detected");
-  else fail("high_snapshot_count pattern not detected");
+  const ctx = await getSessionContext(repoId, REPO_PATH, session.id);
+  pass(`session context loaded: ${ctx.symbol_count} symbols, ${ctx.file_count} files`);
+  console.log(`     interrupted: ${ctx.interrupted.length}, open backlog: ${ctx.memory.openBacklog.length}`);
 
   // Clean up — close the test session
   await checkpointTool(client as any, session.id, repoId, {

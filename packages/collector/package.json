@@ -10,6 +10,7 @@
     "test": "bunx vitest run"
   },
   "dependencies": {
+    "@sensei/server": "workspace:*",
     "@sensei/shared": "workspace:*"
   },
   "devDependencies": {

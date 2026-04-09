@@ -6,7 +6,7 @@ import { createRequire } from "module";
 import { intro, outro, log, spinner } from "@clack/prompts";
 import { extractProjectProfile, SkillGenerator, SkillValidator, ClaudeAdapter } from "@sensei/engine";
 import { ClaudeBackend } from "@sensei/server";
-import { makeSenseiClient, loadSenseiConfig, type AgentSkillsManifest } from "@sensei/shared";
+import { loadSenseiConfig, type AgentSkillsManifest } from "@sensei/shared";
 
 const MCP_CONFIG = join(homedir(), ".claude", "mcp.json");
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
@@ -76,17 +76,13 @@ export async function setupAgent(repoPath: string, agent: string): Promise<void>
   intro(`sensei setup --agent ${agent}`);
 
   // 1. Load config
-  const [client, config] = await Promise.all([
-    makeSenseiClient(repoPath),
-    loadSenseiConfig(repoPath),
-  ]);
-  if (!client) throw new Error("Supabase client not configured. Run sensei init first.");
+  const config = await loadSenseiConfig(repoPath);
   if (!config?.repo_id) throw new Error("Repo not configured. Run sensei init first.");
 
   // 2. Extract project profile
   const s1 = spinner();
   s1.start("Analysing project...");
-  const profile = await extractProjectProfile(client as any, config.repo_id, repoPath);
+  const profile = await extractProjectProfile(config.repo_id, repoPath);
   s1.stop(`Project analysed: ${profile.dominantLanguage}, ${profile.packageNames.length} packages`);
 
   // 3. Init Claude backend — fails fast if ANTHROPIC_API_KEY missing

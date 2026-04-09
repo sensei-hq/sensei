@@ -59,7 +59,10 @@ function repoToProject(repo: ScannedRepo, i: number) {
   };
 }
 
+const SENSEI_API = 'http://localhost:7744';
+
 export const load: PageLoad = async ({ fetch }) => {
+  // 1. localStorage scan results (from Tauri analyze_folder)
   const raw = localStorage.getItem('sensei:projects_raw');
   if (raw) {
     try {
@@ -67,10 +70,43 @@ export const load: PageLoad = async ({ fetch }) => {
       if (scanned.length > 0) {
         return { projects: scanned.map(repoToProject) };
       }
-    } catch { /* fall through to API */ }
+    } catch { /* fall through */ }
   }
 
-  const res = await fetch('/api/projects');
-  const projects = await res.json();
-  return { projects };
+  // 2. Live registry from sensei serve
+  try {
+    const res = await fetch(`${SENSEI_API}/api/projects`);
+    if (res.ok) {
+      const registry = await res.json() as Array<{ repoId: string; name: string; path: string; indexedAt?: string }>;
+      if (registry.length > 0) {
+        return {
+          projects: registry.map((p, i) => ({
+            id: `registry-${i}-${p.repoId}`,
+            kind: 'repo',
+            name: p.name,
+            path: p.path,
+            description: p.name,
+            language: '',
+            maturity: 2,
+            activePhase: 'Implementation',
+            lastActivity: p.indexedAt ? new Date(p.indexedAt).toLocaleDateString() : 'Unknown',
+            last_commit_days: null,
+            sessionCount: 0, cardCount: 0, symbolCount: 0, ftrScore: 0,
+            phases: [
+              { name: 'Requirements',   done: false, active: false, cardCount: 0 },
+              { name: 'Analysis',       done: false, active: false, cardCount: 0 },
+              { name: 'Design',         done: false, active: false, cardCount: 0 },
+              { name: 'Implementation', done: false, active: false, cardCount: 0 },
+              { name: 'Review',         done: false, active: false, cardCount: 0 },
+            ],
+            cards: [], sessions: [], godNodes: [], communities: [], rationale: [],
+            scanStatus: 'active', tech_stack: [], commit_count: 0,
+            category: 'unknown', categories: [], variant_group: null, client: null, remote: null,
+          })),
+        };
+      }
+    }
+  } catch { /* sensei serve not running */ }
+
+  return { projects: [] };
 };

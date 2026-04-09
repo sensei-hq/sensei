@@ -1,123 +1,57 @@
 // packages/cli/src/commands/watch.spec.ts
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@sensei/tools", () => ({
-  reindexRepo: vi.fn(),
-  checkDrift: vi.fn(),
+vi.mock("@sensei/graph-indexer", () => ({
+  watchRepo: vi.fn(),
 }));
 
-vi.mock("chokidar", () => ({
-  default: {
-    watch: vi.fn(),
-  },
-}));
-
-vi.mock("fs", () => ({
-  existsSync: vi.fn(() => true),
+vi.mock("@sensei/shared", () => ({
+  loadSenseiConfig: vi.fn(),
 }));
 
 import { watch } from "./watch.js";
-import { reindexRepo, checkDrift } from "@sensei/tools";
-import chokidar from "chokidar";
+import { watchRepo } from "@sensei/graph-indexer";
+import { loadSenseiConfig } from "@sensei/shared";
 
-const mockReindex = reindexRepo as ReturnType<typeof vi.fn>;
-const mockCheckDrift = checkDrift as ReturnType<typeof vi.fn>;
-const mockChokidar = chokidar.watch as ReturnType<typeof vi.fn>;
+const mockWatchRepo = watchRepo as ReturnType<typeof vi.fn>;
+const mockLoadConfig = loadSenseiConfig as ReturnType<typeof vi.fn>;
+const mockStop = vi.fn().mockResolvedValue(undefined);
 
-function makeWatcher() {
-  const handlers: Record<string, (() => void)[]> = {};
-  const watcher = {
-    on: vi.fn().mockImplementation((event: string, handler: () => void) => {
-      handlers[event] = handlers[event] ?? [];
-      handlers[event].push(handler);
-      return watcher;
-    }),
-    close: vi.fn().mockResolvedValue(undefined),
-    emit: (event: string) => handlers[event]?.forEach(h => h()),
-  };
-  return watcher;
-}
-
-describe("watch --drift", () => {
-  let watcher: ReturnType<typeof makeWatcher>;
-
+describe("watch command", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.clearAllMocks();
-    watcher = makeWatcher();
-    mockChokidar.mockReturnValue(watcher);
-    mockReindex.mockResolvedValue({ added: 0, updated: 1, removed: 0, unchanged: 5, total: 6, skipped: 0, forced: false });
-    mockCheckDrift.mockResolvedValue({ drifted: [], summary: "No drift detected.", lastIndexedCommit: "abc1234" });
+    mockStop.mockResolvedValue(undefined);
+    mockWatchRepo.mockResolvedValue({ stop: mockStop, rescan: vi.fn() });
+    mockLoadConfig.mockResolvedValue({ repo_id: "test-repo-id" });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  it("exits with error when no config found", async () => {
+    mockLoadConfig.mockResolvedValue(null);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
+    await watch("/repo");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
   });
 
-  async function triggerReindexAndStop() {
-    // Fire a file change event to trigger debounce
-    watcher.emit("change");
-    // Advance past the debounce timeout (500ms) and drain timers + microtask queue
-    vi.runAllTimers();
+  it("calls watchRepo with correct repoPath and repoId", async () => {
+    const watchPromise = watch("/repo");
+    // Drain microtask queue so watch() reaches process.once registration
     await Promise.resolve();
     await Promise.resolve();
+    process.emit("SIGINT");
+    await watchPromise;
+
+    expect(mockWatchRepo).toHaveBeenCalledWith(
+      expect.objectContaining({ repoPath: "/repo", repoId: "test-repo-id" })
+    );
+  });
+
+  it("stops the watcher on SIGINT", async () => {
+    const watchPromise = watch("/repo");
     await Promise.resolve();
-  }
-
-  it("does NOT call checkDrift when drift option is false", async () => {
-    const watchPromise = watch("/repo", { drift: false });
-    await triggerReindexAndStop();
+    await Promise.resolve();
     process.emit("SIGINT");
     await watchPromise;
-    expect(mockCheckDrift).not.toHaveBeenCalled();
-  });
-
-  it("calls checkDrift after reindex when drift option is true", async () => {
-    const watchPromise = watch("/repo", { drift: true });
-    await triggerReindexAndStop();
-    process.emit("SIGINT");
-    await watchPromise;
-    expect(mockCheckDrift).toHaveBeenCalledWith("/repo");
-  });
-
-  it("prints drift summary when drift found", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockCheckDrift.mockResolvedValue({
-      drifted: [{ docPath: "docs/design/03-mcp-server.md", reason: "code-changed", changedFiles: ["packages/mcp/src/index.ts"] }],
-      summary: "1 doc(s) drifted since abc1234:\ndocs/design/03-mcp-server.md: code changed — packages/mcp/src/index.ts",
-    });
-
-    const watchPromise = watch("/repo", { drift: true });
-    await triggerReindexAndStop();
-    process.emit("SIGINT");
-    await watchPromise;
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("1 doc(s) drifted"));
-    consoleSpy.mockRestore();
-  });
-
-  it("is silent when no drift found", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    const watchPromise = watch("/repo", { drift: true });
-    await triggerReindexAndStop();
-    process.emit("SIGINT");
-    await watchPromise;
-
-    const driftLogs = consoleSpy.mock.calls.filter(c => String(c[0]).includes("drift"));
-    expect(driftLogs).toHaveLength(0);
-    consoleSpy.mockRestore();
-  });
-
-  it("continues watching if checkDrift throws", async () => {
-    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    mockCheckDrift.mockRejectedValue(new Error("drift check failed"));
-
-    const watchPromise = watch("/repo", { drift: true });
-    await triggerReindexAndStop();
-    process.emit("SIGINT");
-    await expect(watchPromise).resolves.toBeUndefined();
-    expect(consoleWarnSpy).toHaveBeenCalledWith("drift check error:", "drift check failed");
-    consoleWarnSpy.mockRestore();
+    expect(mockStop).toHaveBeenCalled();
   });
 });

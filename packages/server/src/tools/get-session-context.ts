@@ -1,9 +1,9 @@
-// packages/server/src/tools/get-session-context.ts
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { detectCrashedSessions, type CrashedSession } from "@sensei/engine";
-import { getMemoryItems, type MemoryItem } from "@sensei/engine";
-import { detectFtrCoaching, type FtrCoachingHint } from "@sensei/engine";
-import type { Snapshot } from "@sensei/engine";
+import { access } from "node:fs/promises";
+import { join } from "node:path";
+import { getOrCreateDb } from "@sensei/graph-indexer";
+import { loadSenseiConfig } from "@sensei/shared";
+import { getActivityLog } from "../activity-log.js";
+import type { Decision, BacklogItem } from "../activity-log.js";
 
 export interface SessionContextResult {
   repo_name: string;
@@ -13,72 +13,93 @@ export interface SessionContextResult {
   last_indexed_at: string | null;
   stack: string[];
   session_id: string;
-  interrupted: Array<{
-    sessionId: string;
-    crashedAt: string;
-    snapshot: Snapshot | null;
-  }>;
+  interrupted: Array<{ sessionId: string; startedAt: string; task: string }>;
   memory: {
-    decisions: MemoryItem[];
-    patterns: MemoryItem[];
-    openQuestions: MemoryItem[];
+    decisions: Decision[];
+    openBacklog: BacklogItem[];
   };
-  coaching: FtrCoachingHint[];
   message: string;
 }
 
+async function detectStack(repoPath: string): Promise<string[]> {
+  const stack: string[] = [];
+  const checks: Array<[string, string]> = [
+    ["package.json", "typescript"],
+    ["pyproject.toml", "python"],
+    ["go.mod", "go"],
+  ];
+  await Promise.all(
+    checks.map(async ([file, lang]) => {
+      try {
+        await access(join(repoPath, file));
+        stack.push(lang);
+      } catch {
+        // file not present
+      }
+    }),
+  );
+  return stack;
+}
+
 export async function getSessionContext(
-  client: SupabaseClient,
   repoId: string,
   repoPath: string,
   sessionId: string,
 ): Promise<SessionContextResult> {
-  const { data: repo, error } = await client.from("repos").select("*").eq("id", repoId).single();
-  if (error || !repo) throw new Error(`Repo not found: ${error?.message ?? "no data"}`);
+  const repoName = repoPath.split("/").pop() ?? "repo";
 
-  const { count: symbolCount } = await client
-    .from("symbols")
-    .select("*", { count: "exact", head: true })
-    .eq("repo_id", repoId);
-
-  const { count: fileCount } = await client
-    .from("scan_state")
-    .select("*", { count: "exact", head: true })
-    .eq("repo_id", repoId);
-
-  const [crashed, allMemory, coaching] = await Promise.all([
-    detectCrashedSessions(client, repoId),
-    getMemoryItems(client, repoId),
-    detectFtrCoaching(client, repoId),
+  const [config, stack] = await Promise.all([
+    loadSenseiConfig(repoPath),
+    detectStack(repoPath),
   ]);
 
-  const decisions = allMemory.filter((m: MemoryItem) => m.type === "decision");
-  const patterns = allMemory.filter((m: MemoryItem) => m.type === "pattern");
-  const openQuestions = allMemory.filter((m: MemoryItem) => m.type === "question" && m.status === "open");
+  void config; // loaded for side-effects / future use (custom_libs count)
 
-  const interruptedMsg = crashed.length > 0
-    ? ` ${crashed.length} interrupted session(s) detected — check interrupted[] for recovery context.`
-    : "";
+  let symbolCount = 0;
+  let fileCount = 0;
 
-  const coachingMsg = coaching.length > 0
-    ? ` ${coaching.length} FTR coaching hint(s) — check coaching[] to improve your score.`
-    : "";
+  const { db, conn } = await getOrCreateDb(repoId);
+  try {
+    const fnResult = await conn.query("MATCH (f:Function) RETURN COUNT(*) AS cnt");
+    const fnRows = Array.isArray(fnResult) ? fnResult[0] : fnResult;
+    const fnData = await fnRows.getAll();
+    symbolCount = Number((fnData[0] as Record<string, unknown>)?.["cnt"] ?? 0);
+
+    const fileResult = await conn.query("MATCH (f:File) RETURN COUNT(*) AS cnt");
+    const fileRows = Array.isArray(fileResult) ? fileResult[0] : fileResult;
+    const fileData = await fileRows.getAll();
+    fileCount = Number((fileData[0] as Record<string, unknown>)?.["cnt"] ?? 0);
+  } finally {
+    await conn.close();
+    await db.close();
+  }
+
+  const log = getActivityLog(repoId);
+  const recentSessions = log.getRecentSessions(20);
+  const interrupted = recentSessions
+    .filter((s) => !s.completedAt && s.id !== sessionId)
+    .map((s) => ({ sessionId: s.id, startedAt: s.startedAt, task: s.task }));
+
+  const decisions = log.getRecentDecisions(5);
+  const openBacklog = log.getOpenBacklog().slice(0, 5);
+
+  const interruptedMsg =
+    interrupted.length > 0
+      ? ` ${interrupted.length} interrupted session(s) detected — check interrupted[] for recovery context.`
+      : "";
+
+  const message = `Repo "${repoName}" — ${symbolCount} functions across ${fileCount} files.${interruptedMsg} Use search() to find code, get_symbol(name, depth) for details.`;
 
   return {
-    repo_name: (repo as Record<string, unknown>)?.name as string ?? "unknown",
+    repo_name: repoName,
     repo_path: repoPath,
-    symbol_count: symbolCount ?? 0,
-    file_count: fileCount ?? 0,
-    last_indexed_at: (repo as Record<string, unknown>)?.last_indexed_at as string | null ?? null,
-    stack: (repo as Record<string, unknown>)?.stack as string[] ?? [],
+    symbol_count: symbolCount,
+    file_count: fileCount,
+    last_indexed_at: null,
+    stack,
     session_id: sessionId,
-    interrupted: (crashed as CrashedSession[]).map(c => ({
-      sessionId: c.id,
-      crashedAt: c.lastHeartbeat,
-      snapshot: c.latestSnapshot,
-    })),
-    memory: { decisions, patterns, openQuestions },
-    coaching,
-    message: `Repo "${(repo as Record<string, unknown>)?.name as string ?? "unknown"}" — ${symbolCount ?? 0} symbols across ${fileCount ?? 0} files.${interruptedMsg}${coachingMsg} Call search() to find code.`,
+    interrupted,
+    memory: { decisions, openBacklog },
+    message,
   };
 }
