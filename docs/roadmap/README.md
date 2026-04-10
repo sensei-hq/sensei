@@ -28,6 +28,7 @@ and more effective with AI.
 | [07-gaps](./07-gaps.md) | Open decisions and blockers — must resolve before implementation starts |
 | [08-sqlite-schema](./08-sqlite-schema.md) | SQLite schema design: two databases, type mapping, WAL config, query function migration |
 | [09-benchmark](./09-benchmark.md) | ACP-driven benchmark: measuring token savings and quality improvement with sensei skills |
+| [10-plugin](./10-plugin.md) | Sensei plugin architecture: commands, skills, hooks, installation, and versioning |
 
 ---
 
