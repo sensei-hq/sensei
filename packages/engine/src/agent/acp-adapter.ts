@@ -34,8 +34,8 @@ export interface AcpAdapter {
   /** Write global rules file (.cursorrules, .windsurfrules, etc.) */
   writeRules?(content: string, repoPath: string): Promise<string>;
 
-  /** Install sensei plugin/extension if the ACP supports plugins */
-  installPlugin?(): Promise<void>;
+  /** Install sensei plugin/extension from pluginSrcDir into this ACP's plugin location */
+  installPlugin?(pluginSrcDir: string): Promise<void>;
 
   /** Register sensei slash commands for this ACP */
   registerCommands?(commands: string[]): Promise<void>;

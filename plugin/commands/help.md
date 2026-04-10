@@ -41,7 +41,6 @@ These activate automatically when the described trigger condition is met — you
 | `reformatting-docs` | A doc's structure diverges from the canonical template |
 | `guiding-doc-creation` | Before creating or updating any doc in this repo |
 | `identify-unknown-libs` | get_lib_docs returns empty sections for a library you're about to use |
-| `running-benchmarks` | Evaluating whether a new skill or workflow change actually improves outcomes |
 | `auditing-skill-descriptions` | Adding new skills or reviewing the skill library for quality |
 
 ## Setup
