@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "reset": "./scripts/reset-sensei.sh",
-    "clean": "find packages apps -name 'dist' -maxdepth 5 -type d -exec rm -rf {} + 2>/dev/null; rm -rf apps/desktop/build apps/desktop/.svelte-kit apps/dashboard/.svelte-kit; echo 'clean done'",
+    "clean": "find packages apps -name 'dist' -maxdepth 5 -type d -exec rm -rf {} + 2>/dev/null; rm -rf apps/desktop/build apps/desktop/.svelte-kit apps/static/.svelte-kit; echo 'clean done'",
     "build": "bun run --filter='@sensei/*' build && cd apps/desktop && bun run tauri:build",
     "test": "bunx vitest run",
     "test:unit": "bunx vitest run",
