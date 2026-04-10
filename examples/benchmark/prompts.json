@@ -1,0 +1,27 @@
+[
+  {
+    "id": "duplicate-task",
+    "title": "Duplicate task",
+    "prompt": "Add a `duplicateTask(id: string): Task` method to TaskService that creates a copy of an existing task with a new UUID, resets status to 'todo', preserves all other fields, and throws if the source task doesn't exist."
+  },
+  {
+    "id": "sort-tasks",
+    "title": "Sort tasks",
+    "prompt": "Add a `sortTasks(tasks: Task[], by: 'priority' | 'dueDate' | 'createdAt', dir?: 'asc' | 'desc'): Task[]` utility function to taskService.ts. For dueDate, tasks without a due date should always sort last. Default direction is 'asc'."
+  },
+  {
+    "id": "bulk-status-update",
+    "title": "Bulk status update",
+    "prompt": "Add a `bulkUpdateStatus(ids: string[], status: TaskStatus): { updated: number; notFound: string[] }` method to TaskService. It should update all matching tasks and return counts — do not throw on missing ids, collect them instead."
+  },
+  {
+    "id": "due-soon-filter",
+    "title": "Due-soon filter",
+    "prompt": "Add a `getDueSoonTasks(hours: number): Task[]` method to TaskService that returns active (non-done, non-cancelled) tasks whose dueDate falls within the next N hours, sorted by priority ascending (1 = most urgent)."
+  },
+  {
+    "id": "refactor-getters",
+    "title": "Refactor status/assignee getters",
+    "prompt": "Refactor `getTasksByStatus` and `getTasksByAssignee` in TaskService to delegate to `filterTasks` instead of having their own filter logic. The public API and return types must remain identical."
+  }
+]
