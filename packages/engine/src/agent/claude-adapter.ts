@@ -3,15 +3,21 @@ import { join } from "path";
 import { mkdir, writeFile, readdir, stat } from "fs/promises";
 import { existsSync } from "fs";
 import type { AgentSkillFile, LibSkillFile } from "@sensei/shared";
-import type { AgentAdapter } from "./agent-adapter.js";
+import type { AcpAdapter } from "./acp-adapter.js";
 
-export class ClaudeAdapter implements AgentAdapter {
+export class ClaudeAdapter implements AcpAdapter {
+  readonly id = "claude-code";
+  readonly name = "Claude Code";
   readonly skillsDir: string;
 
   constructor(skillsDir?: string) {
     // Use injected path for testing; default to ~/.claude/skills/
     // Note: os.homedir() is used — never expand '~' manually, fs functions don't handle it
     this.skillsDir = skillsDir ?? join(homedir(), ".claude", "skills");
+  }
+
+  async detect(): Promise<boolean> {
+    return existsSync(join(homedir(), ".claude"));
   }
 
   async writeSkills(skills: Record<string, string>, repoSlug: string): Promise<AgentSkillFile[]> {
