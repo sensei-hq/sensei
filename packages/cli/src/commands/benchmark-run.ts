@@ -1,172 +1,334 @@
 /**
- * sensei benchmark run
+ * sensei benchmark run --acp <id>
  *
- * Measures the token-cost impact of sensei skills by running identical prompts
- * against two contexts:
+ * Measures the real-world impact of sensei skills by running identical feature
+ * implementation tasks through an ACP (e.g. Claude Code) on two git branches:
  *
- *   naive   — prompt + raw source files concatenated (what developers paste manually)
- *   sensei  — prompt + skills markdown only (targeted knowledge)
+ *   <acp>-without-sensei  — base repo, no skills/context
+ *   <acp>-with-sensei     — same repo + sensei skills in .claude/skills/
  *
- * Uses the Anthropic API directly for reproducible, exact token counts.
- * Requires ANTHROPIC_API_KEY in environment.
+ * Token usage and test pass rates are captured per task and compared.
+ * Requires the ACP CLI to be installed (e.g. `claude`).
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import { readFile, readdir, writeFile } from "fs/promises";
+import { mkdir, readdir, copyFile, readFile, writeFile, cp } from "fs/promises";
 import { existsSync } from "fs";
-import { join, dirname, relative } from "path";
+import { join, dirname, basename } from "path";
+import { tmpdir } from "os";
 import { fileURLToPath } from "url";
+import { getRunner, listRunners, type AcpRunner, type AcpSession } from "../lib/acp-runner.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface BenchmarkRunOptions {
-  model?: string;
-  output?: string;   // write JSON results to this path
-  repo?: string;     // custom repo path (default: bundled example)
-  skillsDir?: string;
+  acp?: string;
+  repo?: string;
+  tasks?: string;
+  skills?: string;
+  output?: string;
   verbose?: boolean;
 }
 
-interface Prompt {
+interface TaskFile {
   id: string;
-  title: string;
-  prompt: string;
+  path: string;
 }
 
-interface RoundResult {
-  contextType: "naive" | "sensei";
-  contextChars: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  response: string;
+interface TestResult {
+  passed: number;
+  failed: number;
+  total: number;
 }
 
-interface PromptResult {
-  id: string;
-  title: string;
-  prompt: string;
-  naive: RoundResult;
-  sensei: RoundResult;
-  savings: {
-    inputTokens: number;
-    inputPct: number;
-    totalTokens: number;
-    totalPct: number;
-  };
+interface TaskResult {
+  task: TaskFile;
+  session: AcpSession;
+  tests: TestResult;
+}
+
+interface BranchReport {
+  branch: string;
+  tasks: TaskResult[];
 }
 
 interface BenchmarkReport {
   metadata: {
     timestamp: string;
-    model: string;
+    acp: string;
     repo: string;
-    promptCount: number;
+    tasks: string[];
   };
-  prompts: PromptResult[];
-  summary: {
-    naiveTotalInput: number;
-    senseiTotalInput: number;
-    inputSavings: number;
-    inputSavingsPct: number;
-    naiveTotalTokens: number;
-    senseiTotalTokens: number;
-    totalSavings: number;
-    totalSavingsPct: number;
+  baseline: BranchReport;
+  withSensei: BranchReport;
+  comparison: {
+    perTask: Array<{
+      id: string;
+      inputTokensSaved: number;
+      inputPctSaved: number;
+      toolCallsSaved: number;
+      baselineTests: number;
+      senseiTests: number;
+      testDelta: number;
+    }>;
+    summary: {
+      totalInputSaved: number;
+      totalInputPctSaved: number;
+      totalToolCallsSaved: number;
+      baselinePassTotal: number;
+      senseiPassTotal: number;
+      testDelta: number;
+    };
   };
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Path resolution ───────────────────────────────────────────────────────────
 
-const EXAMPLE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "examples", "benchmark");
+const EXAMPLE_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..", "..", "..", "..", "examples",
+);
 
-async function findExampleDir(): Promise<string> {
-  // production: relative to dist/
+function findExampleSample(): string {
   const candidates = [
-    EXAMPLE_DIR,
-    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "examples", "benchmark"),
+    join(EXAMPLE_DIR, "sample"),
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "examples", "sample"),
   ];
   for (const c of candidates) {
-    if (existsSync(join(c, "prompts.json"))) return c;
+    if (existsSync(join(c, "package.json"))) return c;
   }
-  throw new Error("Cannot locate examples/benchmark/ — run from the sensei monorepo or pass --repo");
+  throw new Error("Cannot locate examples/sample/ — pass --repo to specify a custom repo");
 }
 
-async function collectSourceFiles(repoPath: string): Promise<string> {
-  const parts: string[] = [];
-  const walk = async (dir: string) => {
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const e of entries) {
-      if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "dist") continue;
-      const full = join(dir, e.name);
-      if (e.isDirectory()) {
-        await walk(full);
-      } else if (e.name.endsWith(".ts") || e.name.endsWith(".js")) {
-        const rel = relative(repoPath, full);
-        const content = await readFile(full, "utf-8");
-        parts.push(`// === ${rel} ===\n${content}`);
-      }
-    }
-  };
-  await walk(repoPath);
-  return parts.join("\n\n");
+// ── Git helpers ───────────────────────────────────────────────────────────────
+
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  const proc = Bun.spawn(["git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, GIT_AUTHOR_NAME: "sensei-benchmark", GIT_AUTHOR_EMAIL: "benchmark@sensei.dev", GIT_COMMITTER_NAME: "sensei-benchmark", GIT_COMMITTER_EMAIL: "benchmark@sensei.dev" },
+  });
+  const out = await new Response(proc.stdout).text();
+  await proc.exited;
+  return out.trim();
 }
 
-async function collectSkills(skillsDir: string): Promise<string> {
-  if (!existsSync(skillsDir)) return "";
+// ── Test runner ───────────────────────────────────────────────────────────────
+
+async function runTests(cwd: string): Promise<TestResult> {
+  const proc = Bun.spawn(["bun", "test", "--timeout", "10000"], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  await proc.exited;
+
+  const combined = out + err;
+  const passMatch = combined.match(/(\d+) pass/);
+  const failMatch = combined.match(/(\d+) fail/);
+  const passed = passMatch ? parseInt(passMatch[1]) : 0;
+  const failed = failMatch ? parseInt(failMatch[1]) : 0;
+  return { passed, failed, total: passed + failed };
+}
+
+// ── Sensei skill installation ─────────────────────────────────────────────────
+
+async function installSkills(skillsDir: string, targetRepoDir: string): Promise<void> {
+  const dest = join(targetRepoDir, ".claude", "skills");
+  await mkdir(dest, { recursive: true });
   const entries = await readdir(skillsDir);
-  const parts: string[] = [];
-  for (const e of entries.filter(f => f.endsWith(".md"))) {
-    parts.push(await readFile(join(skillsDir, e), "utf-8"));
+  for (const f of entries.filter((e) => e.endsWith(".md"))) {
+    await copyFile(join(skillsDir, f), join(dest, f));
   }
-  return parts.join("\n\n---\n\n");
 }
 
-function buildNaiveSystem(rawFiles: string): string {
-  return `You are an expert TypeScript developer. Here is the full source of the codebase you are working on:\n\n${rawFiles}\n\nAnswer the developer's request with precise, idiomatic TypeScript. Return only the code changes needed, no commentary.`;
-}
+// ── Hook installation (real-world capture alongside automated run) ─────────────
 
-function buildSenseiSystem(skills: string): string {
-  return `You are an expert TypeScript developer. The following knowledge base describes the codebase architecture, types, and patterns:\n\n${skills}\n\nAnswer the developer's request with precise, idiomatic TypeScript. Return only the code changes needed, no commentary.`;
-}
+async function installCaptureHook(repoDir: string): Promise<void> {
+  const settingsPath = join(repoDir, ".claude", "settings.json");
+  await mkdir(join(repoDir, ".claude"), { recursive: true });
 
-function pct(a: number, b: number): number {
-  if (b === 0) return 0;
-  return Math.round(((b - a) / b) * 1000) / 10;
-}
-
-// ── Hook installer ───────────────────────────────────────────────────────────
-
-async function installCaptureHook(repoPath: string): Promise<void> {
-  const settingsPath = join(repoPath, ".claude", "settings.json");
   let cfg: Record<string, unknown> = {};
   if (existsSync(settingsPath)) {
-    try {
-      cfg = JSON.parse(await readFile(settingsPath, "utf-8"));
-    } catch {}
+    try { cfg = JSON.parse(await readFile(settingsPath, "utf-8")); } catch {}
   }
 
-  // Install a Stop hook that appends session data to .sensei/benchmark/sessions.jsonl
-  const hook = {
-    type: "command",
-    command: "node -e \"const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')); require('fs').mkdirSync('.sensei/benchmark',{recursive:true}); require('fs').appendFileSync('.sensei/benchmark/sessions.jsonl', JSON.stringify({ts:new Date().toISOString(),...d})+'\\n');\""
-  };
-
-  const hooks = (cfg.hooks ?? {}) as Record<string, unknown>;
+  const hooks = (cfg.hooks ?? {}) as Record<string, unknown[]>;
   const stopHooks = (hooks.Stop ?? []) as Array<{ matcher: string; hooks: unknown[] }>;
 
-  const alreadyInstalled = stopHooks.some(
-    h => JSON.stringify(h).includes("benchmark/sessions.jsonl")
+  const alreadyInstalled = stopHooks.some((h) =>
+    JSON.stringify(h).includes("benchmark/sessions.jsonl"),
   );
-
   if (!alreadyInstalled) {
-    stopHooks.push({ matcher: "", hooks: [hook] });
+    stopHooks.push({
+      matcher: "",
+      hooks: [{
+        type: "command",
+        command: [
+          "node", "-e",
+          "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));",
+          "require('fs').mkdirSync('.sensei/benchmark',{recursive:true});",
+          "require('fs').appendFileSync('.sensei/benchmark/sessions.jsonl',",
+          "JSON.stringify({ts:new Date().toISOString(),...d})+'\\n');",
+        ].join(" "),
+      }],
+    });
     hooks.Stop = stopHooks;
     cfg.hooks = hooks;
-    const { mkdir } = await import("fs/promises");
-    await mkdir(join(repoPath, ".claude"), { recursive: true });
     await writeFile(settingsPath, JSON.stringify(cfg, null, 2));
   }
+}
+
+// ── Setup a fresh copy of the repo in a temp dir ──────────────────────────────
+
+async function setupWorkdir(sampleDir: string): Promise<string> {
+  const workDir = join(tmpdir(), `sensei-benchmark-${Date.now()}`);
+  await cp(sampleDir, workDir, { recursive: true });
+  // Remove any existing .git to start clean
+  try {
+    const { $ } = await import("bun");
+    await $`rm -rf ${join(workDir, ".git")}`;
+  } catch {}
+  await git(workDir, "init", "-b", "main");
+  await git(workDir, "add", "-A");
+  await git(workDir, "commit", "-m", "initial state");
+  return workDir;
+}
+
+// ── Branch runner ─────────────────────────────────────────────────────────────
+
+async function runBranch(
+  runner: AcpRunner,
+  workDir: string,
+  branchName: string,
+  taskFiles: TaskFile[],
+  withSensei: boolean,
+  skillsDir: string,
+  verbose: boolean,
+): Promise<BranchReport> {
+  await git(workDir, "checkout", "-b", branchName);
+
+  if (withSensei) {
+    await installSkills(skillsDir, workDir);
+    await git(workDir, "add", "-A");
+    await git(workDir, "commit", "-m", "sensei: install skills");
+  }
+
+  await installCaptureHook(workDir);
+
+  const results: TaskResult[] = [];
+
+  for (const task of taskFiles) {
+    process.stdout.write(`  [${task.id}]`);
+
+    const session = await runner.runTask(task.path, workDir);
+    process.stdout.write(
+      ` ${session.inputTokens}in/${session.outputTokens}out ${session.toolCalls} tools ${session.numTurns} turns`,
+    );
+
+    // Commit whatever the ACP wrote
+    await git(workDir, "add", "-A");
+    await git(workDir, "commit", "-m", `implement ${task.id}`, "--allow-empty");
+
+    const tests = await runTests(workDir);
+    process.stdout.write(` → ${tests.passed}/${tests.total} tests pass\n`);
+
+    if (verbose && session.rawOutput) {
+      const preview = session.rawOutput.slice(0, 300).replace(/\n/g, "\n    ");
+      console.log(`    output preview:\n    ${preview}\n`);
+    }
+
+    results.push({ task, session, tests });
+  }
+
+  return { branch: branchName, tasks: results };
+}
+
+// ── Report generation ─────────────────────────────────────────────────────────
+
+function buildReport(
+  acp: string,
+  repoPath: string,
+  taskFiles: TaskFile[],
+  baseline: BranchReport,
+  withSensei: BranchReport,
+): BenchmarkReport {
+  const perTask = taskFiles.map((task, i) => {
+    const b = baseline.tasks[i];
+    const s = withSensei.tasks[i];
+    const inputSaved = b.session.inputTokens - s.session.inputTokens;
+    const inputPct = b.session.inputTokens
+      ? Math.round((inputSaved / b.session.inputTokens) * 1000) / 10
+      : 0;
+    return {
+      id: task.id,
+      inputTokensSaved: inputSaved,
+      inputPctSaved: inputPct,
+      toolCallsSaved: b.session.toolCalls - s.session.toolCalls,
+      baselineTests: b.tests.passed,
+      senseiTests: s.tests.passed,
+      testDelta: s.tests.passed - b.tests.passed,
+    };
+  });
+
+  const totalBaseInput = baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
+  const totalSenseiInput = withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
+  const totalInputSaved = totalBaseInput - totalSenseiInput;
+
+  return {
+    metadata: {
+      timestamp: new Date().toISOString(),
+      acp,
+      repo: repoPath,
+      tasks: taskFiles.map((t) => t.id),
+    },
+    baseline,
+    withSensei,
+    comparison: {
+      perTask,
+      summary: {
+        totalInputSaved,
+        totalInputPctSaved: totalBaseInput
+          ? Math.round((totalInputSaved / totalBaseInput) * 1000) / 10
+          : 0,
+        totalToolCallsSaved: baseline.tasks.reduce((s, r) => s + r.session.toolCalls, 0)
+          - withSensei.tasks.reduce((s, r) => s + r.session.toolCalls, 0),
+        baselinePassTotal: baseline.tasks.reduce((s, r) => s + r.tests.passed, 0),
+        senseiPassTotal: withSensei.tasks.reduce((s, r) => s + r.tests.passed, 0),
+        testDelta: withSensei.tasks.reduce((s, r) => s + r.tests.passed, 0)
+          - baseline.tasks.reduce((s, r) => s + r.tests.passed, 0),
+      },
+    },
+  };
+}
+
+function printReport(report: BenchmarkReport): void {
+  const { summary } = report.comparison;
+  console.log("\n── Results ────────────────────────────────────────────────────");
+  console.log(`${"Task".padEnd(22)} ${"Base tokens".padStart(12)} ${"Sensei tokens".padStart(14)} ${"Saved".padStart(7)} ${"Tests +/-".padStart(10)}`);
+  console.log("─".repeat(70));
+
+  for (const r of report.comparison.perTask) {
+    const b = report.baseline.tasks.find((t) => t.task.id === r.id)!;
+    const s = report.withSensei.tasks.find((t) => t.task.id === r.id)!;
+    console.log(
+      `${r.id.padEnd(22)} ${b.session.inputTokens.toString().padStart(12)} ${s.session.inputTokens.toString().padStart(14)} ${`${r.inputPctSaved}%`.padStart(7)} ${`${r.testDelta >= 0 ? "+" : ""}${r.testDelta}`.padStart(10)}`,
+    );
+  }
+
+  console.log("─".repeat(70));
+  console.log(
+    `${"TOTAL".padEnd(22)} ${report.baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0).toString().padStart(12)} ${report.withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0).toString().padStart(14)} ${`${summary.totalInputPctSaved}%`.padStart(7)} ${`${summary.testDelta >= 0 ? "+" : ""}${summary.testDelta}`.padStart(10)}`,
+  );
+
+  console.log(`
+  input tokens saved : ${summary.totalInputSaved.toLocaleString()} (${summary.totalInputPctSaved}%)
+  tool calls saved   : ${summary.totalToolCallsSaved}
+  extra tests passing: ${summary.testDelta >= 0 ? "+" : ""}${summary.testDelta} (baseline ${summary.baselinePassTotal} → sensei ${summary.senseiPassTotal})`);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -175,170 +337,81 @@ export async function benchmarkRun(
   _cwd: string,
   opts: BenchmarkRunOptions = {},
 ): Promise<void> {
-  const model = opts.model ?? "claude-haiku-4-5-20251001"; // use Haiku for cost efficiency
+  const acpId = opts.acp ?? "claude";
   const verbose = opts.verbose ?? false;
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.error("sensei benchmark run: ANTHROPIC_API_KEY not set");
+  // Resolve ACP runner
+  let runner: AcpRunner;
+  try {
+    runner = getRunner(acpId);
+  } catch (e) {
+    const available = listRunners().map((r) => `${r.id} (${r.name})`).join(", ");
+    console.error(`${e instanceof Error ? e.message : String(e)}`);
+    console.error(`Available ACPs: ${available}`);
     process.exit(1);
   }
 
-  const client = new Anthropic({ apiKey });
-
-  // ── Locate example repo and skills ────────────────────────────────────────
-  const exampleDir = await findExampleDir();
-  const repoPath = opts.repo ?? join(exampleDir, "repo");
-  const skillsDir = opts.skillsDir ?? join(exampleDir, "skills");
-
-  if (!existsSync(repoPath)) {
-    console.error(`sensei benchmark run: repo not found at ${repoPath}`);
+  if (!await runner.detect()) {
+    console.error(`${runner.name} CLI not found. Install it first.`);
+    console.error(`  Claude Code: npm install -g @anthropic-ai/claude-code`);
     process.exit(1);
   }
 
-  console.log("sensei benchmark run");
-  console.log(`  repo:   ${repoPath}`);
-  console.log(`  model:  ${model}`);
+  // Resolve paths
+  const sampleDir = opts.repo ?? findExampleSample();
+  const tasksDir = opts.tasks ?? join(sampleDir, "tasks");
+  const skillsDir = opts.skills ?? join(sampleDir, "skills");
+
+  if (!existsSync(tasksDir)) {
+    console.error(`Tasks directory not found: ${tasksDir}`);
+    process.exit(1);
+  }
+
+  // Load task files (alphabetical order)
+  const taskEntries = (await readdir(tasksDir))
+    .filter((f) => f.endsWith(".md"))
+    .sort();
+  const taskFiles: TaskFile[] = taskEntries.map((f) => ({
+    id: basename(f, ".md"),
+    path: join(tasksDir, f),
+  }));
+
+  if (taskFiles.length === 0) {
+    console.error(`No .md task files found in ${tasksDir}`);
+    process.exit(1);
+  }
+
+  console.log(`sensei benchmark run`);
+  console.log(`  acp:    ${runner.name}`);
+  console.log(`  repo:   ${sampleDir}`);
+  console.log(`  tasks:  ${taskFiles.map((t) => t.id).join(", ")}`);
   console.log();
 
-  // ── Install capture hook (idempotent) ─────────────────────────────────────
-  await installCaptureHook(repoPath);
-  console.log("  ✓ capture hook installed → .claude/settings.json");
+  // Set up isolated working directory
+  const workDir = await setupWorkdir(sampleDir);
+  console.log(`  workdir: ${workDir}\n`);
 
-  // ── Load contexts ─────────────────────────────────────────────────────────
-  const rawFiles = await collectSourceFiles(repoPath);
-  const skills = await collectSkills(skillsDir);
+  // ── Branch 1: without sensei ──────────────────────────────────────────────
+  console.log(`── Branch: ${acpId}-without-sensei ──────────────────────────`);
+  const baseline = await runBranch(
+    runner, workDir, `${acpId}-without-sensei`, taskFiles, false, skillsDir, verbose,
+  );
 
-  if (!skills) {
-    console.warn("  ⚠ no skills found — run `sensei skills` to generate, or add to examples/benchmark/skills/");
-  }
+  // Return to main for second branch
+  await git(workDir, "checkout", "main");
 
-  const naiveSystem = buildNaiveSystem(rawFiles);
-  const senseiSystem = buildSenseiSystem(skills || rawFiles);
+  // ── Branch 2: with sensei ─────────────────────────────────────────────────
+  console.log(`\n── Branch: ${acpId}-with-sensei ─────────────────────────────`);
+  const withSensei = await runBranch(
+    runner, workDir, `${acpId}-with-sensei`, taskFiles, true, skillsDir, verbose,
+  );
 
-  // ── Load prompts ──────────────────────────────────────────────────────────
-  const promptsPath = opts.repo
-    ? join(opts.repo, "..", "prompts.json")
-    : join(exampleDir, "prompts.json");
-  const prompts: Prompt[] = JSON.parse(await readFile(
-    existsSync(promptsPath) ? promptsPath : join(exampleDir, "prompts.json"),
-    "utf-8",
-  ));
+  // ── Report ────────────────────────────────────────────────────────────────
+  const report = buildReport(acpId, sampleDir, taskFiles, baseline, withSensei);
+  printReport(report);
 
-  console.log(`  Running ${prompts.length} prompts × 2 contexts...\n`);
-
-  // ── Run benchmark ─────────────────────────────────────────────────────────
-  const results: PromptResult[] = [];
-
-  for (const p of prompts) {
-    process.stdout.write(`  [${p.id}] naive... `);
-
-    const naiveResp = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      system: naiveSystem,
-      messages: [{ role: "user", content: p.prompt }],
-    });
-    const naiveText = naiveResp.content.filter(b => b.type === "text").map(b => (b as { type: "text"; text: string }).text).join("");
-
-    process.stdout.write(`${naiveResp.usage.input_tokens}in/${naiveResp.usage.output_tokens}out  sensei... `);
-
-    const senseiResp = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      system: senseiSystem,
-      messages: [{ role: "user", content: p.prompt }],
-    });
-    const senseiText = senseiResp.content.filter(b => b.type === "text").map(b => (b as { type: "text"; text: string }).text).join("");
-
-    process.stdout.write(`${senseiResp.usage.input_tokens}in/${senseiResp.usage.output_tokens}out\n`);
-
-    if (verbose) {
-      console.log(`\n    naive response:\n${naiveText.slice(0, 200)}...\n`);
-      console.log(`    sensei response:\n${senseiText.slice(0, 200)}...\n`);
-    }
-
-    const naive: RoundResult = {
-      contextType: "naive",
-      contextChars: naiveSystem.length,
-      inputTokens: naiveResp.usage.input_tokens,
-      outputTokens: naiveResp.usage.output_tokens,
-      totalTokens: naiveResp.usage.input_tokens + naiveResp.usage.output_tokens,
-      response: naiveText,
-    };
-
-    const sensei: RoundResult = {
-      contextType: "sensei",
-      contextChars: senseiSystem.length,
-      inputTokens: senseiResp.usage.input_tokens,
-      outputTokens: senseiResp.usage.output_tokens,
-      totalTokens: senseiResp.usage.input_tokens + senseiResp.usage.output_tokens,
-      response: senseiText,
-    };
-
-    results.push({
-      id: p.id,
-      title: p.title,
-      prompt: p.prompt,
-      naive,
-      sensei,
-      savings: {
-        inputTokens: naive.inputTokens - sensei.inputTokens,
-        inputPct: pct(sensei.inputTokens, naive.inputTokens),
-        totalTokens: naive.totalTokens - sensei.totalTokens,
-        totalPct: pct(sensei.totalTokens, naive.totalTokens),
-      },
-    });
-  }
-
-  // ── Summary ───────────────────────────────────────────────────────────────
-  const naiveTotalInput = results.reduce((s, r) => s + r.naive.inputTokens, 0);
-  const senseiTotalInput = results.reduce((s, r) => s + r.sensei.inputTokens, 0);
-  const naiveTotalTokens = results.reduce((s, r) => s + r.naive.totalTokens, 0);
-  const senseiTotalTokens = results.reduce((s, r) => s + r.sensei.totalTokens, 0);
-
-  const report: BenchmarkReport = {
-    metadata: {
-      timestamp: new Date().toISOString(),
-      model,
-      repo: repoPath,
-      promptCount: prompts.length,
-    },
-    prompts: results,
-    summary: {
-      naiveTotalInput,
-      senseiTotalInput,
-      inputSavings: naiveTotalInput - senseiTotalInput,
-      inputSavingsPct: pct(senseiTotalInput, naiveTotalInput),
-      naiveTotalTokens,
-      senseiTotalTokens,
-      totalSavings: naiveTotalTokens - senseiTotalTokens,
-      totalSavingsPct: pct(senseiTotalTokens, naiveTotalTokens),
-    },
-  };
-
-  // ── Print summary ─────────────────────────────────────────────────────────
-  console.log("\n── Results ────────────────────────────────────────────");
-  console.log(`${"Prompt".padEnd(26)} ${"Naive".padStart(8)} ${"Sensei".padStart(8)} ${"Saved".padStart(8)}`);
-  console.log("─".repeat(54));
-  for (const r of results) {
-    const label = r.title.slice(0, 25).padEnd(25);
-    const naive = r.naive.inputTokens.toString().padStart(8);
-    const sensei = r.sensei.inputTokens.toString().padStart(8);
-    const saved = `${r.savings.inputPct}%`.padStart(8);
-    console.log(`${label} ${naive} ${sensei} ${saved}`);
-  }
-  console.log("─".repeat(54));
-  const totNaive = naiveTotalInput.toString().padStart(34);
-  const totSensei = senseiTotalInput.toString().padStart(8);
-  const totSaved = `${report.summary.inputSavingsPct}%`.padStart(8);
-  console.log(`${"TOTAL (input tokens)".padEnd(26)} ${totNaive} ${totSensei} ${totSaved}`);
-  console.log();
-  console.log(`  input token savings:  ${report.summary.inputSavings.toLocaleString()} tokens (${report.summary.inputSavingsPct}%)`);
-  console.log(`  total token savings:  ${report.summary.totalSavings.toLocaleString()} tokens (${report.summary.totalSavingsPct}%)`);
-
-  // ── Write JSON ────────────────────────────────────────────────────────────
   const outPath = opts.output ?? "benchmark-results.json";
   await writeFile(outPath, JSON.stringify(report, null, 2));
   console.log(`\n  results written → ${outPath}`);
+  console.log(`  repo branches available at: ${workDir}`);
 }
