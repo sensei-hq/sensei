@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { intro, outro, log, spinner } from "@clack/prompts";
 
 const PLUGIN_NAME = "sensei";
-const PLUGIN_VERSION = "1.0.0";
 const PLUGIN_KEY = `${PLUGIN_NAME}@local`;
 
 /** Find the plugin source directory relative to this CLI script. */
@@ -36,9 +35,14 @@ export async function pluginInstall(): Promise<void> {
     process.exit(1);
   }
 
+  // Read version from plugin.json
+  const pluginJson = JSON.parse(await readFile(join(pluginSrc, ".claude-plugin", "plugin.json"), "utf-8"));
+  const pluginVersion: string = pluginJson.version ?? "1.0.0";
+
   const claudeDir = join(homedir(), ".claude");
   const pluginsDir = join(claudeDir, "plugins");
-  const installPath = join(pluginsDir, "cache", PLUGIN_NAME, "local", PLUGIN_VERSION);
+  // Claude Code reads local plugins from marketplaces/local/plugins/<name>/
+  const installPath = join(pluginsDir, "marketplaces", "local", "plugins", PLUGIN_NAME);
   const installedPluginsPath = join(pluginsDir, "installed_plugins.json");
 
   const s = spinner();
@@ -69,7 +73,7 @@ export async function pluginInstall(): Promise<void> {
     {
       scope: "user",
       installPath,
-      version: PLUGIN_VERSION,
+      version: pluginVersion,
       installedAt: new Date().toISOString(),
       lastUpdated: new Date().toISOString(),
     },
