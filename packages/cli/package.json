@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "sensei": "./dist/cli.js"
+    "sensei": "./dist/cli.js",
+    "senseid": "./dist/daemon.js"
   },
   "scripts": {
     "dev": "bun run --watch src/cli.ts",
-    "build": "bun build src/cli.ts --outdir dist --target bun && sed -i '' '1s|#!/usr/bin/env node|#!/usr/bin/env bun|' dist/cli.js",
+    "build": "bun build src/cli.ts src/daemon.ts --outdir dist --target bun --external=better-sqlite3 && sed -i '' '1s|#!/usr/bin/env node|#!/usr/bin/env bun|' dist/cli.js dist/daemon.js",
     "test": "bunx vitest run",
     "test:e2e": "bunx playwright test",
     "test:watch": "bunx vitest"

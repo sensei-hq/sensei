@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
 import { join } from "path";
 import { homedir } from "os";
@@ -56,7 +56,7 @@ export function getActivityLog(repoId: string): ActivityLog {
 }
 
 export class ActivityLog {
-  private db: Database.Database;
+  private db: Database;
   private repoId: string;
 
   constructor(repoId: string) {
@@ -196,7 +196,7 @@ export class ActivityLog {
         `INSERT INTO sessions (id, repo_id, task, started_at, completed_at, outcome, summary, cost, tokens_in, tokens_out)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id,
         session.repoId,
         session.task,
@@ -206,8 +206,8 @@ export class ActivityLog {
         session.summary ?? null,
         session.cost ?? null,
         session.tokensIn ?? null,
-        session.tokensOut ?? null
-      );
+        session.tokensOut ?? null,
+      ]);
     return id;
   }
 
@@ -225,7 +225,7 @@ export class ActivityLog {
 
     if (fields.length === 0) return;
     values.push(id);
-    this.db.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    this.db.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(values);
   }
 
   logAction(action: Omit<ActivityAction, "id" | "timestamp">): void {
@@ -236,14 +236,14 @@ export class ActivityLog {
         `INSERT INTO actions (id, session_id, type, description, files_affected, timestamp)
          VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id,
         action.sessionId,
         action.type,
         action.description,
         action.filesAffected ? JSON.stringify(action.filesAffected) : null,
-        timestamp
-      );
+        timestamp,
+      ]);
   }
 
   logDecision(decision: Omit<Decision, "id" | "timestamp">): void {
@@ -254,14 +254,14 @@ export class ActivityLog {
         `INSERT INTO decisions (id, repo_id, text, context, timestamp, tags)
          VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id,
         decision.repoId,
         decision.text,
         decision.context,
         timestamp,
-        decision.tags ? JSON.stringify(decision.tags) : null
-      );
+        decision.tags ? JSON.stringify(decision.tags) : null,
+      ]);
   }
 
   addBacklogItem(item: Omit<BacklogItem, "id" | "createdAt" | "updatedAt">): string {
@@ -272,7 +272,7 @@ export class ActivityLog {
         `INSERT INTO backlog (id, repo_id, title, description, status, priority, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id,
         item.repoId,
         item.title,
@@ -280,8 +280,8 @@ export class ActivityLog {
         item.status,
         item.priority,
         now,
-        now
-      );
+        now,
+      ]);
     return id;
   }
 
@@ -295,7 +295,7 @@ export class ActivityLog {
     if (patch.priority !== undefined) { fields.push("priority = ?"); values.push(patch.priority); }
 
     values.push(id);
-    this.db.prepare(`UPDATE backlog SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    this.db.prepare(`UPDATE backlog SET ${fields.join(", ")} WHERE id = ?`).run(values);
   }
 
   getRecentSessions(limit = 10): ActivitySession[] {
@@ -303,7 +303,7 @@ export class ActivityLog {
       .prepare(
         `SELECT * FROM sessions WHERE repo_id = ? ORDER BY started_at DESC LIMIT ?`
       )
-      .all(this.repoId, limit) as Record<string, unknown>[];
+      .all([this.repoId, limit]) as Record<string, unknown>[];
 
     return rows.map((r) => ({
       id: r["id"] as string,
@@ -326,7 +326,7 @@ export class ActivityLog {
           CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
           created_at ASC`
       )
-      .all(this.repoId) as Record<string, unknown>[];
+      .all([this.repoId]) as Record<string, unknown>[];
 
     return rows.map((r) => ({
       id: r["id"] as string,
@@ -345,7 +345,7 @@ export class ActivityLog {
       .prepare(
         `SELECT * FROM decisions WHERE repo_id = ? ORDER BY timestamp DESC LIMIT ?`
       )
-      .all(this.repoId, limit) as Record<string, unknown>[];
+      .all([this.repoId, limit]) as Record<string, unknown>[];
 
     return rows.map((r) => ({
       id: r["id"] as string,
@@ -360,7 +360,7 @@ export class ActivityLog {
   getBacklogById(id: string): BacklogItem | null {
     const r = this.db
       .prepare(`SELECT * FROM backlog WHERE id = ?`)
-      .get(id) as Record<string, unknown> | undefined;
+      .get([id]) as Record<string, unknown> | undefined;
     if (!r) return null;
     return {
       id: r["id"] as string,
@@ -390,7 +390,7 @@ export class ActivityLog {
         `INSERT INTO snapshots (id, session_id, repo_id, progress_summary, next_step_hint, in_flight_files, completed_steps, diff_stat_summary, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id,
         snap.sessionId,
         snap.repoId,
@@ -399,8 +399,8 @@ export class ActivityLog {
         snap.inFlightFiles ? JSON.stringify(snap.inFlightFiles) : null,
         snap.completedSteps ? JSON.stringify(snap.completedSteps) : null,
         snap.diffStatSummary ?? null,
-        createdAt
-      );
+        createdAt,
+      ]);
     return id;
   }
 
@@ -418,22 +418,22 @@ export class ActivityLog {
         `INSERT INTO context_packs (id, session_id, repo_id, task, total_tokens, model_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id,
         pack.sessionId ?? null,
         pack.repoId,
         pack.task,
         pack.totalTokens,
         pack.modelId ?? null,
-        createdAt
-      );
+        createdAt,
+      ]);
     return id;
   }
 
   getContextPacks(sessionId: string): Array<{ id: string; task: string; totalTokens: number; modelId: string | null; createdAt: string }> {
     const rows = this.db
       .prepare(`SELECT * FROM context_packs WHERE session_id = ? ORDER BY created_at DESC`)
-      .all(sessionId) as Record<string, unknown>[];
+      .all([sessionId]) as Record<string, unknown>[];
     return rows.map((r) => ({
       id: r["id"] as string,
       task: r["task"] as string,
@@ -451,7 +451,7 @@ export class ActivityLog {
         `INSERT INTO pattern_usages (id, repo_id, session_id, pattern_name, used_at)
          VALUES (?, ?, ?, ?, ?)`
       )
-      .run(id, repoId, sessionId, patternName, usedAt);
+      .run([id, repoId, sessionId, patternName, usedAt]);
   }
 
   logToolCall(call: {
@@ -470,7 +470,7 @@ export class ActivityLog {
         `INSERT INTO tool_calls (id, repo_id, session_id, tool, phase, success, duration_ms, input, error, ts)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id, this.repoId,
         call.sessionId ?? null,
         call.tool,
@@ -480,7 +480,7 @@ export class ActivityLog {
         call.input ?? null,
         call.error ?? null,
         call.ts,
-      );
+      ]);
   }
 
   logApiRequest(req: {
@@ -501,7 +501,7 @@ export class ActivityLog {
         `INSERT INTO api_requests (id, repo_id, session_id, prompt_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, model, recorded_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
+      .run([
         id, this.repoId,
         req.sessionId ?? null,
         req.promptId ?? null,
@@ -511,13 +511,13 @@ export class ActivityLog {
         req.durationMs ?? null,
         req.model ?? null,
         req.recordedAt,
-      );
+      ]);
   }
 
   getSessionsSince(since: string): Array<{ id: string; status: string; ftr_score: number | null }> {
     const rows = this.db
       .prepare(`SELECT id, outcome FROM sessions WHERE repo_id = ? AND started_at >= ? ORDER BY started_at DESC`)
-      .all(this.repoId, since) as Array<{ id: string; outcome: string | null }>;
+      .all([this.repoId, since]) as Array<{ id: string; outcome: string | null }>;
     return rows.map((r) => {
       const ftr_score =
         r.outcome === "completed" ? 1.0 :
@@ -535,7 +535,7 @@ export class ActivityLog {
   getToolCallsSince(since: string): Array<{ tool: string; success: boolean | null; duration_ms: number | null; task_session_id: string | null }> {
     const rows = this.db
       .prepare(`SELECT tool, success, duration_ms, session_id FROM tool_calls WHERE repo_id = ? AND ts >= ? ORDER BY ts DESC`)
-      .all(this.repoId, since) as Array<{ tool: string; success: number | null; duration_ms: number | null; session_id: string | null }>;
+      .all([this.repoId, since]) as Array<{ tool: string; success: number | null; duration_ms: number | null; session_id: string | null }>;
     return rows.map((r) => ({
       tool: r.tool,
       success: r.success != null ? r.success === 1 : null,
@@ -547,7 +547,7 @@ export class ActivityLog {
   getBashCommandsSince(since: string): string[] {
     const rows = this.db
       .prepare(`SELECT input FROM tool_calls WHERE repo_id = ? AND tool = 'Bash' AND phase = 'pre' AND input IS NOT NULL AND ts >= ?`)
-      .all(this.repoId, since) as Array<{ input: string }>;
+      .all([this.repoId, since]) as Array<{ input: string }>;
     return rows.map((r) => {
       try {
         const parsed = JSON.parse(r.input) as { command?: string };
@@ -577,9 +577,9 @@ export class ActivityLog {
     );
     const now = new Date().toISOString();
     const runAll = this.db.transaction(() => {
-      deleteStmt.run(this.repoId, libName);
+      deleteStmt.run([this.repoId, libName]);
       for (const doc of docs) {
-        insertStmt.run(
+        insertStmt.run([
           randomUUID(),
           this.repoId,
           libName,
@@ -591,7 +591,7 @@ export class ActivityLog {
           doc.sourceType,
           doc.component ?? null,
           now,
-        );
+        ]);
       }
     });
     runAll();
@@ -636,7 +636,7 @@ export class ActivityLog {
          ORDER BY title
          LIMIT ?`
       )
-      .all(...params) as Record<string, unknown>[];
+      .all(params) as Record<string, unknown>[];
 
     return rows.map((r) => ({
       id: r["id"] as string,
@@ -656,7 +656,7 @@ export class ActivityLog {
     const totalSessions = (
       this.db
         .prepare(`SELECT COUNT(*) AS cnt FROM sessions WHERE repo_id = ?`)
-        .get(this.repoId) as Record<string, unknown>
+        .get([this.repoId]) as Record<string, unknown>
     )["cnt"] as number;
 
     const totalActions = (
@@ -664,13 +664,13 @@ export class ActivityLog {
         .prepare(
           `SELECT COUNT(*) AS cnt FROM actions WHERE session_id IN (SELECT id FROM sessions WHERE repo_id = ?)`
         )
-        .get(this.repoId) as Record<string, unknown>
+        .get([this.repoId]) as Record<string, unknown>
     )["cnt"] as number;
 
     const openBacklog = (
       this.db
         .prepare(`SELECT COUNT(*) AS cnt FROM backlog WHERE repo_id = ? AND status != 'done'`)
-        .get(this.repoId) as Record<string, unknown>
+        .get([this.repoId]) as Record<string, unknown>
     )["cnt"] as number;
 
     return { totalSessions, totalActions, openBacklog };
