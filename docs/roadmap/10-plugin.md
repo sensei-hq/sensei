@@ -116,7 +116,6 @@ Skills are always-on: Claude applies them automatically when the described trigg
 | Skill | Trigger |
 |-------|---------|
 | `reverse-engineering` | Invoked by `/product`, `/feature`, `/audit` commands — full OWASP + NFR + DB analysis workflow |
-| `running-benchmarks` | Evaluating whether a new skill or workflow change reduces token usage |
 | `auditing-skill-descriptions` | Adding new skills or reviewing the skill library for trigger quality |
 | `test-gen` | Adding test coverage to untested or under-tested code |
 
@@ -202,6 +201,99 @@ The plugin version lives in `plugin/.claude-plugin/plugin.json`. Bump it when ad
 2. Write the command body — reference skills via `Skill tool` where applicable
 3. Add to `/help` command's slash commands table
 4. Bump plugin version, run `sensei plugin install`
+
+---
+
+## Plugin Install via ACP Adapters
+
+The plugin installer does not duplicate ACP knowledge — it delegates to the `AcpAdapter` interface in `packages/engine`:
+
+```typescript
+// packages/cli/src/commands/plugin.ts
+const adapter = new ClaudeAdapter();
+await adapter.installPlugin(pluginSrcDir);   // adapter knows the install location
+```
+
+`ClaudeAdapter.installPlugin(src)` copies `plugin/` to `~/.claude/plugins/marketplaces/local/plugins/sensei/` and registers in `installed_plugins.json`. When a new ACP gains plugin support, a new adapter implements the same method — the CLI needs no changes.
+
+The adapter interface covers the full integration surface:
+
+| Method | Responsibility |
+|--------|---------------|
+| `installPlugin(srcDir)` | Copy plugin/commands/skills to ACP plugin directory |
+| `writeSkills(skills, slug)` | Write per-repo skill files (context skills from indexer) |
+| `registerMcp(cmd)` | Add MCP server entry to ACP config |
+| `installHooks()` | Register lifecycle hooks (Stop, SessionStart, etc.) |
+| `injectSettings(opts)` | Write OTEL endpoint and other env vars |
+| `writeRules(content, path)` | Write `.cursorrules`, `.windsurfrules`, etc. |
+| `registerCommands(cmds)` | Register slash commands (ACP-specific format) |
+| `detect()` | Check if this ACP is installed |
+
+**Currently implemented:** `ClaudeAdapter` — `writeSkills`, `installedSkills`, `installPlugin`, `detect`.
+**To implement:** `registerMcp`, `installHooks`, `injectSettings` (currently handled by CLI setup commands and Tauri separately — should migrate here).
+
+---
+
+## CLI Command Audit
+
+Given the desktop app (Tauri), CLI, and daemon (`senseid`), the CLI command surface needs trimming. The desktop app now handles first-time ACP detection and MCP configuration; the daemon handles the persistent server; the CLI handles developer-facing operations.
+
+### Keep
+
+| Command | Why |
+|---------|-----|
+| `init` | Central repo setup — index, CLAUDE.md, hooks, skills; invoked by desktop and standalone |
+| `mcp` | Stdio MCP server — invoked by Claude Code, Cursor, etc. per session |
+| `serve` | HTTP daemon — start `senseid` |
+| `index` | Re-index on demand |
+| `drift` | Doc drift check |
+| `doctor` | System check: detect stale plugin, outdated skills, config issues; auto-fix |
+| `status` | Repo health at a glance |
+| `benchmark run` | ACP-driven A/B benchmark |
+| `remove` / `clean` | Uninstall hooks, MCP, skills |
+| `plugin install` | First-time install from repo (dev workflow); upgrade via `doctor` |
+
+### Consolidate or Remove
+
+| Command | Disposition |
+|---------|-------------|
+| `setup --mcp` | Merge into `init`; logic belongs in `ClaudeAdapter.registerMcp()` |
+| `setup --hooks` | Merge into `init`; logic belongs in `ClaudeAdapter.installHooks()` |
+| `setup --agent` | Merge into `init --skills`; use adapter |
+| `install-skills` | Fold into `init`; expose as `sensei doctor --fix-skills` |
+| `add` | Unclear diff from `init`; merge or remove |
+| `watch` | Fold into `serve` or daemon; not a standalone command |
+| `migrate` | One-time migration; done; remove |
+| `update-registry` | Supabase-specific; dead; remove |
+| `login` / `logout` / `whoami` | Supabase auth; dead; remove for now |
+| `benchmark doctor/coverage/populate/inspect/promote/indexer` | Old strategies; remove, keep only `benchmark run` |
+
+### Role Split (Desktop / CLI / Daemon)
+
+```
+Desktop app (Tauri)
+  ├─ ACP detection + selection (setup wizard)
+  ├─ MCP configuration per ACP
+  ├─ Project navigator (analyze_folder)
+  └─ Indexer lifecycle (start_indexer, check_indexer)
+
+CLI (sensei)
+  ├─ sensei init        — repo setup
+  ├─ sensei mcp         — stdio server for ACPs
+  ├─ sensei serve       — start daemon
+  ├─ sensei index       — re-index
+  ├─ sensei drift       — doc drift check
+  ├─ sensei doctor      — check + fix + upgrade plugin
+  ├─ sensei status      — repo health
+  ├─ sensei benchmark run — ACP A/B comparison
+  ├─ sensei remove      — uninstall
+  └─ sensei plugin install — install plugin (dev)
+
+Daemon (senseid)
+  ├─ HTTP MCP server
+  ├─ Indexer / watcher
+  └─ OTLP telemetry receiver
+```
 
 ---
 
