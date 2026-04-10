@@ -79,30 +79,46 @@ export const load: PageLoad = async ({ fetch }) => {
     if (res.ok) {
       const registry = await res.json() as Array<{ repoId: string; name: string; path: string; indexedAt?: string }>;
       if (registry.length > 0) {
+        // Fetch drift status for all projects in parallel (best-effort)
+        const driftResults = await Promise.all(
+          registry.map(async (p) => {
+            try {
+              const dr = await fetch(`${SENSEI_API}/api/drift?repoPath=${encodeURIComponent(p.path)}`);
+              if (dr.ok) return await dr.json() as { drifted: unknown[]; summary: string; lastIndexedCommit?: string };
+            } catch { /* ignore */ }
+            return null;
+          })
+        );
+
         return {
-          projects: registry.map((p, i) => ({
-            id: `registry-${i}-${p.repoId}`,
-            kind: 'repo',
-            name: p.name,
-            path: p.path,
-            description: p.name,
-            language: '',
-            maturity: 2,
-            activePhase: 'Implementation',
-            lastActivity: p.indexedAt ? new Date(p.indexedAt).toLocaleDateString() : 'Unknown',
-            last_commit_days: null,
-            sessionCount: 0, cardCount: 0, symbolCount: 0, ftrScore: 0,
-            phases: [
-              { name: 'Requirements',   done: false, active: false, cardCount: 0 },
-              { name: 'Analysis',       done: false, active: false, cardCount: 0 },
-              { name: 'Design',         done: false, active: false, cardCount: 0 },
-              { name: 'Implementation', done: false, active: false, cardCount: 0 },
-              { name: 'Review',         done: false, active: false, cardCount: 0 },
-            ],
-            cards: [], sessions: [], godNodes: [], communities: [], rationale: [],
-            scanStatus: 'active', tech_stack: [], commit_count: 0,
-            category: 'unknown', categories: [], variant_group: null, client: null, remote: null,
-          })),
+          projects: registry.map((p, i) => {
+            const drift = driftResults[i];
+            return {
+              id: `registry-${i}-${p.repoId}`,
+              kind: 'repo',
+              name: p.name,
+              path: p.path,
+              description: p.name,
+              language: '',
+              maturity: 2,
+              activePhase: 'Implementation',
+              lastActivity: p.indexedAt ? new Date(p.indexedAt).toLocaleDateString() : 'Unknown',
+              last_commit_days: null,
+              sessionCount: 0, cardCount: 0, symbolCount: 0, ftrScore: 0,
+              driftCount: drift ? (drift.drifted?.length ?? 0) : null,
+              driftSummary: drift?.summary ?? null,
+              phases: [
+                { name: 'Requirements',   done: false, active: false, cardCount: 0 },
+                { name: 'Analysis',       done: false, active: false, cardCount: 0 },
+                { name: 'Design',         done: false, active: false, cardCount: 0 },
+                { name: 'Implementation', done: false, active: false, cardCount: 0 },
+                { name: 'Review',         done: false, active: false, cardCount: 0 },
+              ],
+              cards: [], sessions: [], godNodes: [], communities: [], rationale: [],
+              scanStatus: 'active', tech_stack: [], commit_count: 0,
+              category: 'unknown', categories: [], variant_group: null, client: null, remote: null,
+            };
+          }),
         };
       }
     }

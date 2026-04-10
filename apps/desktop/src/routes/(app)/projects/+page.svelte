@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Toggle } from '@rokkit/ui';
+  import { invalidateAll } from '$app/navigation';
+  import RepoList from '$lib/RepoList.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -92,63 +94,13 @@
   };
   const SCAN_STATUS_CLS: Record<string, string> = {
     active: 'bg-success-z2 text-success-z7', recent: 'bg-primary-z2 text-primary-z7',
-    stale: 'bg-warning-z2 text-warning-z7',  archived: 'bg-surface-z3 text-surface-z5',
-    abandoned: 'bg-error-z2 text-error-z7',  unknown: 'bg-surface-z3 text-surface-z5',
-  };
-  const SCAN_CAT_META: Record<string, { label: string; icon: string }> = {
-    app:     { label: 'Apps',               icon: 'i-solar-monitor-smartphone-bold-duotone' },
-    library: { label: 'Libraries',          icon: 'i-solar-box-bold-duotone' },
-    tool:    { label: 'Tools & CLIs',       icon: 'i-solar-settings-bold-duotone' },
-    idea:    { label: 'Ideas & Prototypes', icon: 'i-solar-lightbulb-bolt-bold-duotone' },
+    stale: 'bg-warning-z2 text-warning-z7', archived: 'bg-surface-z3 text-surface-z5',
+    abandoned: 'bg-error-z2 text-error-z7', unknown: 'bg-surface-z3 text-surface-z5',
   };
   let scanRoot = $state('');
   let scanning = $state(false);
   let scanned = $state<ScannedRepo[]>([]);
   let scanSelected = $state<Set<string>>(new Set());
-
-  function scanVariantClusters(repos: ScannedRepo[]): Map<string, ScannedRepo[]> {
-    const map = new Map<string, ScannedRepo[]>();
-    for (const r of repos) {
-      if (r.variant_group) {
-        const g = map.get(r.variant_group) ?? [];
-        g.push(r);
-        map.set(r.variant_group, g);
-      }
-    }
-    for (const [k, v] of map) { if (v.length < 2) map.delete(k); }
-    return map;
-  }
-
-  const scanGroups = $derived.by(() => {
-    const cats: Record<string, ScannedRepo[]> = { app: [], library: [], tool: [], idea: [] };
-    const attn: ScannedRepo[] = [];
-    for (const r of scanned) {
-      if (r.duplicate_of || r.status === 'abandoned') { attn.push(r); }
-      else {
-        const buckets = r.categories?.length ? r.categories.filter(c => c in SCAN_CAT_META) : [];
-        if (buckets.length === 0) { /* skip ungrouped */ }
-        else { for (const cat of buckets) { if (cats[cat]) cats[cat].push(r); } }
-      }
-    }
-    const out = Object.entries(SCAN_CAT_META)
-      .filter(([k]) => (cats[k]?.length ?? 0) > 0)
-      .map(([k, m]) => ({ key: k, ...m, repos: cats[k], variants: scanVariantClusters(cats[k]) }));
-    if (attn.length > 0) out.push({ key: 'attention', label: 'Needs attention', icon: 'i-solar-danger-triangle-bold-duotone', repos: attn, variants: new Map<string, ScannedRepo[]>() });
-    return out;
-  });
-
-  function isScanGroupFull(repos: ScannedRepo[]) { return repos.every(r => scanSelected.has(r.path)); }
-  function toggleScanGroup(repos: ScannedRepo[]) {
-    const s = new Set(scanSelected);
-    if (isScanGroupFull(repos)) { repos.forEach(r => s.delete(r.path)); }
-    else { repos.forEach(r => s.add(r.path)); }
-    scanSelected = s;
-  }
-  function toggleScanRepo(path: string) {
-    const s = new Set(scanSelected);
-    s.has(path) ? s.delete(path) : s.add(path);
-    scanSelected = s;
-  }
 
   async function doScan() {
     if (!scanRoot) return;
@@ -188,14 +140,56 @@
 
   // ── Shared indexing ──
   let addPhase = $state<'idle' | 'done'>('idle');
+  let scanClientTags = $state(new Map<string, string>());
 
-  function startIndexing() {
+  const SENSEI_PORT = () => parseInt(localStorage.getItem('sensei:port') ?? '7744', 10);
+
+  async function startIndexing() {
+    const toImport = scanned.filter(r => scanSelected.has(r.path)).map(r => ({
+      ...r,
+      client: scanClientTags.get(r.path) ?? null,
+    }));
+    if (toImport.length > 0) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const existing = JSON.parse(localStorage.getItem('sensei:projects_raw') ?? '[]');
+        const existingPaths = new Set(existing.map((r: { path: string }) => r.path));
+        const newRepos = toImport.filter(r => !existingPaths.has(r.path));
+
+        // Resolve real repoIds from .sensei/config.yaml, fall back to UUID.
+        const withIds = await Promise.all(newRepos.map(async repo => {
+          const repoId: string = await invoke<string | null>('get_repo_id', { path: repo.path })
+            .catch(() => null) ?? crypto.randomUUID();
+          return { ...repo, repoId };
+        }));
+
+        const merged = [...existing, ...withIds];
+        localStorage.setItem('sensei:projects_raw', JSON.stringify(merged));
+
+        const port = SENSEI_PORT();
+        for (const repo of withIds) {
+          // Register immediately so it shows up in projects.json even if indexing fails.
+          fetch(`http://127.0.0.1:${port}/api/projects`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repoId: repo.repoId, name: repo.name, path: repo.path }),
+          }).catch(() => {});
+          // Trigger indexing (fire-and-forget).
+          fetch(`http://127.0.0.1:${port}/api/index`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repoId: repo.repoId, repoPath: repo.path }),
+          }).catch(() => {});
+        }
+      } catch {}
+    }
     addPhase = 'done';
+    invalidateAll();
   }
 
   function closeAdd() {
     showAdd = false; addMode = 'choose';
-    scanRoot = ''; scanned = []; scanSelected = new Set();
+    scanRoot = ''; scanned = []; scanSelected = new Set(); scanClientTags = new Map();
     newName = ''; newRoot = ''; newType = '';
     addPhase = 'idle';
   }
@@ -515,7 +509,14 @@
       <div class="flex items-center gap-2 pr-5">
         <span class="text-sm shrink-0 {p.kind === 'idea' ? 'i-solar-lightbulb-bold-duotone text-warning-z6' : 'i-solar-code-square-bold-duotone text-primary-z6'}"></span>
         <span class="flex-1 truncate text-sm font-semibold {selected ? 'text-primary-z8' : 'text-surface-z8'}">{ep.name}</span>
-        {#if ep.scanStatus}
+        {#if (ep as { driftCount?: number | null }).driftCount != null}
+          {@const dc = (ep as { driftCount: number }).driftCount}
+          <span
+            title={(ep as { driftSummary?: string }).driftSummary ?? ''}
+            class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium
+                   {dc === 0 ? 'bg-success-z2 text-success-z7' : 'bg-warning-z2 text-warning-z7'}"
+          >{dc === 0 ? 'synced' : `${dc} drift`}</span>
+        {:else if ep.scanStatus}
           <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium capitalize {SCAN_STATUS_CLS[ep.scanStatus] ?? SCAN_STATUS_CLS.unknown}">{ep.scanStatus}</span>
         {/if}
       </div>
@@ -1312,9 +1313,9 @@
       {:else if addMode === 'scan'}
 
         {#if addPhase === 'idle'}
-          <!-- Folder input -->
-          <div class="space-y-4">
-            <div class="flex gap-2">
+          <div class="flex flex-col gap-3 h-full">
+            <!-- Folder input -->
+            <div class="flex gap-2 shrink-0">
               <input
                 value={scanRoot}
                 oninput={(e) => { scanRoot = (e.target as HTMLInputElement).value; scanned = []; }}
@@ -1336,109 +1337,12 @@
                 <span class="i-solar-refresh-bold-duotone animate-spin text-primary-z6"></span>
                 Scanning…
               </div>
-
             {:else if scanned.length > 0}
-              <!-- Summary -->
-              <div class="flex items-center justify-between text-xs text-surface-z5">
-                <span>{scanned.length} repos · {scanSelected.size} selected</span>
-                <div class="flex gap-3">
-                  <button onclick={() => scanSelected = new Set(scanned.filter(r => !r.duplicate_of).map(r => r.path))} class="text-primary-z6 hover:text-primary-z7">Select healthy</button>
-                  <button onclick={() => scanSelected = new Set()} class="text-surface-z4 hover:text-surface-z6">Clear</button>
-                </div>
-              </div>
-
-              <!-- Groups -->
-              <div class="space-y-3 max-h-96 overflow-y-auto pr-1">
-                {#each scanGroups as group}
-                  {@const allSel = isScanGroupFull(group.repos)}
-                  {@const standalones = group.repos.filter(r => !r.variant_group)}
-                  {@const clusterEntries = [...group.variants.entries()]}
-                  <div>
-                    <button onclick={() => toggleScanGroup(group.repos)}
-                      class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface-z2 transition-colors">
-                      <span class="{group.icon} text-sm {group.key === 'attention' ? 'text-warning-z6' : 'text-surface-z5'}"></span>
-                      <span class="flex-1 text-xs font-semibold text-surface-z6 uppercase tracking-wide">{group.label}</span>
-                      <span class="text-[10px] text-surface-z4">{group.repos.length}</span>
-                      <span class="text-[10px] text-primary-z6">{allSel ? 'Deselect' : 'Select'} all</span>
-                    </button>
-                    <div class="ml-2 rounded-xl border border-surface-z2 divide-y divide-surface-z0/20 overflow-hidden">
-                      <!-- Standalone repos -->
-                      {#each standalones as repo}
-                        {@const sel = scanSelected.has(repo.path)}
-                        <button onclick={() => toggleScanRepo(repo.path)}
-                          class="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-z2/60 {sel ? 'bg-primary-z1/40' : 'bg-surface-z1'}">
-                          <div class="mt-0.5 shrink-0 h-4 w-4 rounded border-2 flex items-center justify-center
-                                      {sel ? 'border-primary-z6 bg-primary-z6' : 'border-surface-z4 bg-transparent'}">
-                            {#if sel}<span class="text-[9px] font-bold text-white leading-none">✓</span>{/if}
-                          </div>
-                          <div class="min-w-0 flex-1">
-                            <div class="flex items-center gap-1.5 flex-wrap">
-                              <span class="text-sm font-medium text-surface-z8">{repo.name}</span>
-                              <span class="text-[10px] rounded-full px-1.5 py-0.5 {SCAN_STATUS_CLS[repo.status] ?? SCAN_STATUS_CLS.unknown}">
-                                {repo.status}{repo.last_commit_days ? ` · ${repo.last_commit_days}d` : ''}
-                              </span>
-                              {#each repo.tech_stack.slice(0,2) as t}
-                                <span class="text-[10px] bg-surface-z3 text-surface-z5 px-1.5 py-0.5 rounded">{t}</span>
-                              {/each}
-                            </div>
-                            {#if repo.duplicate_of}
-                              <p class="text-[11px] text-warning-z6 mt-0.5">Likely copy of {repo.duplicate_of.split('/').pop()}</p>
-                            {:else if repo.description}
-                              <p class="text-xs text-surface-z4 mt-0.5 line-clamp-1">{repo.description}</p>
-                            {/if}
-                          </div>
-                        </button>
-                      {/each}
-                      <!-- Variant clusters -->
-                      {#each clusterEntries as [stem, clusterRepos]}
-                        {@const allClusterSel = clusterRepos.every(r => scanSelected.has(r.path))}
-                        <div class="border-l-2 border-info-z4 bg-info-z1/20">
-                          <div class="flex items-center gap-2 px-3 py-1.5 border-b border-info-z2/40">
-                            <span class="i-solar-layers-minimalistic-bold-duotone text-xs text-info-z6 shrink-0"></span>
-                            <span class="flex-1 text-[11px] font-semibold text-info-z7">{clusterRepos.length} variants — "{stem}"</span>
-                            <button onclick={() => {
-                              const s = new Set(scanSelected);
-                              if (allClusterSel) { clusterRepos.forEach(r => s.delete(r.path)); }
-                              else { clusterRepos.forEach(r => s.add(r.path)); }
-                              scanSelected = s;
-                            }} class="text-[10px] text-primary-z6 hover:text-primary-z7">{allClusterSel ? 'Deselect' : 'Select'} all</button>
-                          </div>
-                          {#each clusterRepos as repo}
-                            {@const sel = scanSelected.has(repo.path)}
-                            {@const isNewest = clusterRepos.every(r => r.path === repo.path || (repo.last_commit_days ?? 9999) <= (r.last_commit_days ?? 9999))}
-                            <button onclick={() => toggleScanRepo(repo.path)}
-                              class="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-info-z1/40 {sel ? 'bg-primary-z1/30' : ''}">
-                              <div class="mt-0.5 shrink-0 h-4 w-4 rounded border-2 flex items-center justify-center
-                                          {sel ? 'border-primary-z6 bg-primary-z6' : 'border-surface-z4 bg-transparent'}">
-                                {#if sel}<span class="text-[9px] font-bold text-white leading-none">✓</span>{/if}
-                              </div>
-                              <div class="min-w-0 flex-1">
-                                <div class="flex items-center gap-1.5 flex-wrap">
-                                  <span class="text-sm font-medium text-surface-z8">{repo.name}</span>
-                                  {#if isNewest}<span class="text-[10px] rounded-full bg-success-z2 text-success-z7 px-1.5 py-0.5">most recent</span>{/if}
-                                  <span class="text-[10px] rounded-full px-1.5 py-0.5 {SCAN_STATUS_CLS[repo.status] ?? SCAN_STATUS_CLS.unknown}">
-                                    {repo.status}{repo.last_commit_days ? ` · ${repo.last_commit_days}d` : ''}
-                                  </span>
-                                </div>
-                                {#if repo.description}<p class="text-xs text-surface-z4 mt-0.5 line-clamp-1">{repo.description}</p>{/if}
-                              </div>
-                            </button>
-                          {/each}
-                          <div class="flex items-start gap-2 px-3 py-2 bg-info-z1/30 border-t border-info-z2/30 text-[11px] text-info-z6">
-                            <span class="i-solar-lightbulb-bolt-bold-duotone text-xs shrink-0 mt-0.5"></span>
-                            <span>Different approaches to the same concept. After importing, pick the strongest direction and archive the others.</span>
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
-                {/each}
-              </div>
-
+              <RepoList repos={scanned} bind:selected={scanSelected} bind:clientTags={scanClientTags} />
               <button
                 onclick={startIndexing}
                 disabled={scanSelected.size === 0}
-                class="w-full rounded-xl py-2.5 text-sm font-semibold transition-colors
+                class="shrink-0 w-full rounded-xl py-2.5 text-sm font-semibold transition-colors
                        {scanSelected.size > 0 ? 'bg-primary-z6 text-white hover:bg-primary-z7' : 'bg-surface-z3 text-surface-z4 cursor-not-allowed'}"
               >Import {scanSelected.size} project{scanSelected.size !== 1 ? 's' : ''} →</button>
             {/if}

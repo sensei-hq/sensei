@@ -7,8 +7,9 @@ const repoPath = process.env.SENSEI_REPO_PATH ?? process.cwd();
 const config = await loadSenseiConfig(repoPath);
 
 if (!config) {
-  console.error("[sensei-mcp] No .sensei/config.yaml found. Run sensei init first.");
-  process.exit(1);
+  // Exit cleanly — not inside a sensei-initialized repo.
+  // Claude Code will show the server as unavailable (not as an error).
+  process.exit(0);
 }
 
 // Register with collector daemon so OTLP events are attributed to this repo

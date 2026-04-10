@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./model": "./src/model/ollama-backend.ts",
-    "./tools": "./src/tools/get-lib-docs.ts"
+    "./tools": "./src/tools/get-lib-docs.ts",
+    "./mcp-entry": "./src/mcp-entry.ts"
   },
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun",
@@ -18,6 +19,7 @@
     "@sensei/engine": "workspace:*",
     "@sensei/graph-indexer": "workspace:*",
     "@sensei/shared": "workspace:*",
+    "@sensei/tools": "workspace:*",
     "better-sqlite3": "^9.4.3",
     "zod": "^3.25"
   },
