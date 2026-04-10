@@ -27,6 +27,7 @@ const { positionals, values } = parseArgs({
     session: { type: "string" },
     since: { type: "string" },
     all: { type: "boolean", default: false },
+    local: { type: "boolean", default: false },
     json: { type: "boolean", default: false },
     gaps: { type: "boolean", default: false },
     hooks: { type: "boolean", default: false },
@@ -51,7 +52,7 @@ const _cwd = process.cwd();
 const repoRoot = findRepoRoot(_cwd);
 
 // Global commands don't require a repo root — skip the guard for them.
-const GLOBAL_CMDS = new Set(["serve", "server", "stats", "login", "logout", "mcp", "benchmark"]);
+const GLOBAL_CMDS = new Set(["serve", "server", "stats", "login", "logout", "mcp", "benchmark", "remove", "clean"]);
 if (!GLOBAL_CMDS.has(cmd) && repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(pathJoin(_cwd, "package.json"))) {
   console.error("sensei: could not detect repo root. Run sensei from inside a git repo or a directory with package.json.");
   process.exit(1);
@@ -364,6 +365,16 @@ async function main() {
       }
       console.error(`Unknown server subcommand: ${subCmd}`);
       process.exit(1);
+    }
+    case "remove":
+    case "clean": {
+      const { remove } = await import("./commands/remove.js");
+      await remove(repoRoot, {
+        local: values.local,
+        all: values.all,
+        dryRun: values["dry-run"],
+      });
+      break;
     }
     case "watch": {
       const { watch } = await import("./commands/watch.js");
