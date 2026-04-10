@@ -20,6 +20,9 @@ const { positionals, values } = parseArgs({
     dest: { type: "string" },
     model: { type: "string" },
     output: { type: "string" },
+    acp: { type: "string" },
+    tasks: { type: "string" },
+    skills: { type: "string" },
     verbose: { type: "boolean", default: false },
     repo: { type: "string" },
     // stats command
@@ -318,9 +321,11 @@ async function main() {
       } else if (subCmd === "run") {
         const { benchmarkRun } = await import("./commands/benchmark-run.js");
         await benchmarkRun(repoRoot, {
-          model: values.model,
+          acp: values.acp,
           output: values.output,
           repo: values.repo,
+          tasks: values.tasks,
+          skills: values.skills,
           verbose: values.verbose,
         });
       } else {
