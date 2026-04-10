@@ -15,9 +15,11 @@ const { positionals, values } = parseArgs({
     sample: { type: "string" },   // number parsed manually
     port: { type: "string" },
     db: { type: "string" },
-    // benchmark doctor named params
+    // benchmark named params
     source: { type: "string" },
     dest: { type: "string" },
+    model: { type: "string" },
+    output: { type: "string" },
     verbose: { type: "boolean", default: false },
     repo: { type: "string" },
     // stats command
@@ -49,7 +51,7 @@ const _cwd = process.cwd();
 const repoRoot = findRepoRoot(_cwd);
 
 // Global commands don't require a repo root — skip the guard for them.
-const GLOBAL_CMDS = new Set(["serve", "server", "stats", "login", "logout", "mcp"]);
+const GLOBAL_CMDS = new Set(["serve", "server", "stats", "login", "logout", "mcp", "benchmark"]);
 if (!GLOBAL_CMDS.has(cmd) && repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(pathJoin(_cwd, "package.json"))) {
   console.error("sensei: could not detect repo root. Run sensei from inside a git repo or a directory with package.json.");
   process.exit(1);
@@ -312,6 +314,14 @@ async function main() {
       } else if (subCmd === "indexer") {
         const { benchmarkIndexer } = await import("./commands/benchmark-indexer.js");
         await benchmarkIndexer(repoRoot);
+      } else if (subCmd === "run") {
+        const { benchmarkRun } = await import("./commands/benchmark-run.js");
+        await benchmarkRun(repoRoot, {
+          model: values.model,
+          output: values.output,
+          repo: values.repo,
+          verbose: values.verbose,
+        });
       } else {
         console.error(`Unknown benchmark subcommand: ${subCmd}\n`);
         console.log(HELP);
