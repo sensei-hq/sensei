@@ -1,8 +1,15 @@
 /**
- * Stub for bun:sqlite used in Vitest test runs for @sensei/collector.
+ * Stub for bun:sqlite used in Vitest test runs.
  * Uses better-sqlite3 as the underlying engine so tests run real SQL.
+ * Handles bun:sqlite calling convention: params passed as a single array.
  */
 import BetterSqlite3 from "better-sqlite3";
+
+// bun:sqlite passes params as stmt.run([a, b, c]) — unwrap for better-sqlite3
+function unwrap(args: unknown[]): unknown[] {
+  if (args.length === 1 && Array.isArray(args[0])) return args[0] as unknown[];
+  return args;
+}
 
 export class Database {
   private _db: BetterSqlite3.Database;
@@ -11,17 +18,21 @@ export class Database {
     this._db = new BetterSqlite3(path);
   }
 
-  run(sql: string, params?: unknown[]): void {
-    this._db.prepare(sql).run(...(params ?? []));
+  exec(sql: string): void {
+    this._db.exec(sql);
   }
 
   prepare(sql: string) {
     const stmt = this._db.prepare(sql);
     return {
-      all: (...args: unknown[]) => stmt.all(...args),
-      get: (...args: unknown[]) => stmt.get(...args),
-      run: (...args: unknown[]) => stmt.run(...args),
+      all: (...args: unknown[]) => stmt.all(...unwrap(args)),
+      get: (...args: unknown[]) => stmt.get(...unwrap(args)),
+      run: (...args: unknown[]) => stmt.run(...unwrap(args)),
     };
+  }
+
+  transaction<T>(fn: () => T): () => T {
+    return this._db.transaction(fn) as () => T;
   }
 
   close(): void {

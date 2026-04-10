@@ -7,10 +7,10 @@ fn home() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
 }
 
-// ── Coordinator detection ──────────────────────────────────────────────────
+// ── ACP detection ─────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn detect_coordinators() -> Vec<String> {
+fn detect_acps() -> Vec<String> {
     let Some(h) = home() else { return vec![]; };
     let mut found = vec![];
 
@@ -58,6 +58,14 @@ fn detect_coordinators() -> Vec<String> {
         found.push("kiro".to_string());
     }
 
+    // OpenCode — terminal-based AI coding tool by SST
+    if which_exists("opencode")
+        || h.join(".config/opencode/opencode.json").exists()
+        || h.join(".local/bin/opencode").is_file()
+    {
+        found.push("opencode".to_string());
+    }
+
     found
 }
 
@@ -71,13 +79,45 @@ fn which_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+// ── Shared helper: find the sensei CLI binary ─────────────────────────────
+
+fn find_sensei_binary() -> Option<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let search_dirs = [
+        format!("{home}/.bun/bin"),
+        format!("{home}/.local/bin"),
+        "/opt/homebrew/bin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/bin".to_string(),
+    ];
+    // Prefer senseid (dedicated daemon binary) over sensei serve.
+    // Falls back to sensei if senseid isn't installed yet.
+    for name in &["senseid", "sensei"] {
+        let preferred = std::path::PathBuf::from(&home).join(format!(".bun/bin/{name}"));
+        if preferred.exists() {
+            return Some(preferred.to_string_lossy().into_owned());
+        }
+        if let Some(found) = search_dirs.iter()
+            .map(|dir| std::path::PathBuf::from(dir).join(name))
+            .find(|p| p.exists())
+        {
+            return Some(found.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 // ── MCP configuration ─────────────────────────────────────────────────────
 
 #[tauri::command]
-fn configure_mcp(coordinators: Vec<String>) -> Result<Vec<String>, String> {
+fn configure_mcp(acps: Vec<String>) -> Result<Vec<String>, String> {
     let h = home().ok_or("Cannot determine home directory")?;
-    let mcp_cmd = h.join(".sensei/bin/mcp").to_string_lossy().to_string();
-    let entry = json!({ "command": mcp_cmd, "args": [] });
+    let sensei_cmd = find_sensei_binary()
+        .ok_or_else(|| "sensei binary not found — install sensei globally first (bun install -g sensei)".to_string())?;
+    // Use `sensei mcp` as the MCP server command.
+    // When Claude Code launches the MCP server, it will call `sensei mcp` from
+    // within the user's repo directory, so SENSEI_REPO_PATH falls back to cwd.
+    let entry = json!({ "command": sensei_cmd, "args": ["mcp"] });
 
     let paths: std::collections::HashMap<&str, PathBuf> = [
         ("claude-desktop", h.join("Library/Application Support/Claude/claude_desktop_config.json")),
@@ -85,11 +125,12 @@ fn configure_mcp(coordinators: Vec<String>) -> Result<Vec<String>, String> {
         ("cursor",         h.join(".cursor/mcp.json")),
         ("windsurf",       h.join(".codeium/windsurf/mcp_config.json")),
         ("zed",            h.join(".config/zed/settings.json")),
-        ("kiro",           h.join(".kiro/settings/mcp.json")),
+        ("kiro",      h.join(".kiro/settings/mcp.json")),
+        ("opencode",  h.join(".config/opencode/opencode.json")),
     ].into();
 
     let mut ok = vec![];
-    for id in &coordinators {
+    for id in &acps {
         let Some(path) = paths.get(id.as_str()) else { continue; };
         let mut cfg: Value = if path.exists() {
             let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -100,12 +141,41 @@ fn configure_mcp(coordinators: Vec<String>) -> Result<Vec<String>, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        cfg["mcpServers"]["sensei"] = entry.clone();
+        // OpenCode uses { mcp: { name: { type, command[] } } }; others use mcpServers.
+        if id == "opencode" {
+            cfg["mcp"]["sensei"] = json!({
+                "type": "local",
+                "command": [&sensei_cmd, "mcp"],
+                "enabled": true
+            });
+        } else {
+            cfg["mcpServers"]["sensei"] = entry.clone();
+        }
         let out = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
         std::fs::write(path, out).map_err(|e| e.to_string())?;
         ok.push(id.clone());
     }
     Ok(ok)
+}
+
+// ── Repo ID reader ─────────────────────────────────────────────────────────
+
+/// Read the repo_id from .sensei/config.yaml if it exists.
+/// Returns None if the repo hasn't been initialized with `sensei init`.
+#[tauri::command]
+fn get_repo_id(path: String) -> Option<String> {
+    let config_path = std::path::PathBuf::from(&path).join(".sensei/config.yaml");
+    let content = std::fs::read_to_string(config_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("repo_id:") {
+            let val = trimmed.trim_start_matches("repo_id:").trim().trim_matches('"').trim_matches('\'');
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
 }
 
 // ── Folder analysis ────────────────────────────────────────────────────────
@@ -618,15 +688,142 @@ fn parse_pkg_specifier(s: &str) -> Option<String> {
 // ── Tauri entry point ──────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[derive(serde::Serialize)]
+struct IndexerStatus {
+    online: bool,
+    name: Option<String>,
+    version: Option<String>,
+    indexing: Vec<String>,
+    backend: Option<String>,
+    ollama_running: bool,
+    ollama_model: bool,
+}
+
+#[tauri::command]
+fn check_indexer(port: Option<u16>) -> IndexerStatus {
+    let port = port.unwrap_or(7744);
+    let offline = IndexerStatus { online: false, name: None, version: None, indexing: vec![], backend: None, ollama_running: false, ollama_model: false };
+    if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_err() {
+        return offline;
+    }
+    match ureq::get(&format!("http://127.0.0.1:{port}/health")).call() {
+        Ok(resp) => {
+            match resp.into_json::<serde_json::Value>() {
+                Ok(v) => IndexerStatus {
+                    online: true,
+                    name: v.get("name").and_then(|x| x.as_str()).map(str::to_owned),
+                    version: v.get("version").and_then(|x| x.as_str()).map(str::to_owned),
+                    indexing: v.get("indexing")
+                        .and_then(|x| x.as_array())
+                        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect())
+                        .unwrap_or_default(),
+                    backend: v.get("backend").and_then(|x| x.as_str()).map(str::to_owned),
+                    ollama_running: v.get("ollamaRunning").and_then(|x| x.as_bool()).unwrap_or(false),
+                    ollama_model: v.get("ollamaModel").and_then(|x| x.as_bool()).unwrap_or(false),
+                },
+                Err(_) => offline,
+            }
+        }
+        Err(_) => offline,
+    }
+}
+
+#[tauri::command]
+fn start_indexer(port: Option<u16>) -> Result<(), String> {
+    let port = port.unwrap_or(7744);
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    let extra_paths = [
+        format!("{home}/.bun/bin"),
+        format!("{home}/.local/bin"),
+        "/opt/homebrew/bin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+    ];
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let mut all_paths: Vec<String> = extra_paths.to_vec();
+    for p in current_path.split(':') {
+        if !all_paths.contains(&p.to_string()) {
+            all_paths.push(p.to_string());
+        }
+    }
+    let full_path = all_paths.join(":");
+
+    let sensei_path = find_sensei_binary()
+        .ok_or_else(|| format!(
+            "sensei binary not found. Searched: {}",
+            all_paths.join(", ")
+        ))?;
+
+    // Log file so startup errors are visible.
+    let log_path = "/tmp/sensei-serve.log";
+    let log_file = std::fs::OpenOptions::new()
+        .create(true).write(true).truncate(true)
+        .open(log_path)
+        .map_err(|e| format!("Cannot open log file: {e}"))?;
+    let log_err = log_file.try_clone().map_err(|e| e.to_string())?;
+
+    // If something is already listening on the target port, we're done.
+    if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+        return Ok(());
+    }
+
+    // senseid takes no subcommand; sensei needs "serve" subcommand.
+    let is_daemon_bin = sensei_path.ends_with("senseid");
+    let port_str = port.to_string();
+    let args: Vec<&str> = if is_daemon_bin {
+        vec!["--port", &port_str]
+    } else {
+        vec!["serve", "--port", &port_str]
+    };
+
+    let mut child = std::process::Command::new(&sensei_path)
+        .args(&args)
+        .env("HOME", &home)
+        .env("PATH", &full_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(log_file)
+        .stderr(log_err)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn '{sensei_path}': {e}"))?;
+
+    // Give the server up to 8 seconds to bind on port 7744.
+    for _ in 0..16 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Process exited — read the log for the error message.
+                let log = std::fs::read_to_string(log_path).unwrap_or_default();
+                return Err(format!(
+                    "sensei serve exited ({status}). Log:\n{log}"
+                ));
+            }
+            Ok(None) => {} // still running
+            Err(e) => return Err(format!("Error watching child: {e}")),
+        }
+        // Check if port 7744 is accepting connections.
+        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+            return Ok(());
+        }
+    }
+
+    // Still not up after 8s — leave it running, caller will poll /health.
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            detect_coordinators,
+            detect_acps,
             configure_mcp,
+            get_repo_id,
             analyze_folder,
             detect_dependencies,
+            start_indexer,
+            check_indexer,
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();

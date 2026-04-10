@@ -1,17 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import RepoList from '$lib/RepoList.svelte';
 
-  type Step = 'welcome' | 'coordinators' | 'folders' | 'repos' | 'groups' | 'done';
+  type Step = 'welcome' | 'acps' | 'folders' | 'repos' | 'groups' | 'done';
   let step = $state<Step>('welcome');
 
-  // ── Coordinators ─────────────────────────────────────────────────────────────
-  const coordinators = [
+  // ── ACPs (Agent Coding Platforms) ─────────────────────────────────────────
+  const acps = [
     { id: 'claude-desktop', label: 'Claude Desktop', icon: 'i-solar-cpu-bold-duotone',         desc: 'Anthropic desktop app' },
     { id: 'claude-code',    label: 'Claude Code',    icon: 'i-solar-code-square-bold-duotone', desc: 'CLI + VS Code extension' },
     { id: 'cursor',         label: 'Cursor',         icon: 'i-solar-cursor-bold-duotone',      desc: 'AI-first code editor' },
     { id: 'windsurf',       label: 'Windsurf',       icon: 'i-solar-wind-bold-duotone',        desc: 'Codeium editor' },
     { id: 'zed',            label: 'Zed',            icon: 'i-solar-bolt-bold-duotone',        desc: 'High-performance code editor' },
     { id: 'kiro',           label: 'Kiro',           icon: 'i-solar-programming-bold-duotone', desc: 'AWS AI IDE' },
+    { id: 'opencode',       label: 'OpenCode',       icon: 'i-solar-terminal-bold-duotone',    desc: 'Terminal AI coding by SST' },
   ];
 
   let detected    = $state<string[]>([]);
@@ -23,7 +25,7 @@
   async function loadDetected() {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      detected = await invoke<string[]>('detect_coordinators');
+      detected = await invoke<string[]>('detect_acps');
       selected = new Set(detected);
     } catch { /* browser preview */ }
   }
@@ -39,11 +41,18 @@
     configuring = true; configError = null;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      configured = await invoke<string[]>('configure_mcp', { coordinators: [...selected] });
+      configured = await invoke<string[]>('configure_mcp', { acps: [...selected] });
       await new Promise(r => setTimeout(r, 500));
       step = 'folders';
-    } catch (e) { configError = String(e); }
-    finally     { configuring = false; }
+    } catch (e) {
+      // Tauri not available (browser preview) — skip MCP config and continue
+      if (String(e).includes('invoke') || String(e).includes('__TAURI__')) {
+        step = 'folders';
+      } else {
+        configError = String(e);
+      }
+    }
+    finally { configuring = false; }
   }
 
   // ── Repo model ────────────────────────────────────────────────────────────────
@@ -61,26 +70,6 @@
     variant_group: string | null;
   };
 
-  const STATUS_CLS: Record<string, string> = {
-    active:    'bg-success-z2 text-success-z7',
-    recent:    'bg-primary-z2 text-primary-z7',
-    stale:     'bg-warning-z2 text-warning-z7',
-    archived:  'bg-surface-z3 text-surface-z5',
-    abandoned: 'bg-error-z2 text-error-z7',
-    unknown:   'bg-surface-z3 text-surface-z5',
-  };
-
-  const CAT_CLS: Record<string, string> = {
-    app:     'bg-primary-z2 text-primary-z6',
-    library: 'bg-info-z2 text-info-z6',
-    tool:    'bg-warning-z2 text-warning-z7',
-    idea:    'bg-surface-z3 text-surface-z5',
-    unknown: 'bg-surface-z2 text-surface-z4',
-  };
-
-  const STATUS_PRIORITY: Record<string, number> = {
-    active: 0, recent: 1, stale: 2, archived: 3, unknown: 4, abandoned: 5
-  };
 
   // ── Scan folders ──────────────────────────────────────────────────────────────
   let scanRoots    = $state<string[]>([]);
@@ -88,8 +77,6 @@
   let scanning     = $state(false);
   let discovered   = $state<Repo[]>([]);
   let selectedRepos = $state<Set<string>>(new Set());
-  let searchQuery  = $state('');
-
   function addRoot(path: string) {
     const t = path.trim();
     if (t && !scanRoots.includes(t)) scanRoots = [...scanRoots, t];
@@ -135,47 +122,26 @@
     finally { scanning = false; }
   }
 
-  // Show last 2–3 path components so the user can spot where a repo lives
+  const selectedCount = $derived(selectedRepos.size);
+
+  // Used in groups step rows
+  const STATUS_CLS: Record<string, string> = {
+    active: 'bg-success-z2 text-success-z7', recent: 'bg-primary-z2 text-primary-z7',
+    stale: 'bg-warning-z2 text-warning-z7', archived: 'bg-surface-z3 text-surface-z5',
+    abandoned: 'bg-error-z2 text-error-z7', unknown: 'bg-surface-z3 text-surface-z5',
+  };
+  const CAT_CLS: Record<string, string> = {
+    app: 'bg-primary-z2 text-primary-z6', library: 'bg-info-z2 text-info-z6',
+    tool: 'bg-warning-z2 text-warning-z7', idea: 'bg-surface-z3 text-surface-z5',
+    unknown: 'bg-surface-z2 text-surface-z4',
+  };
   function relPath(fullPath: string): string {
     const parts = fullPath.split('/');
     return parts.length >= 2 ? parts.slice(-2).join('/') : fullPath;
   }
 
-  const filteredRepos = $derived.by(() => {
-    const q = searchQuery.toLowerCase();
-    return [...discovered]
-      .sort((a, b) => {
-        const d = (STATUS_PRIORITY[a.status] ?? 4) - (STATUS_PRIORITY[b.status] ?? 4);
-        return d !== 0 ? d : a.name.localeCompare(b.name);
-      })
-      .filter(r => !q ||
-        r.name.toLowerCase().includes(q) ||
-        r.path.toLowerCase().includes(q) ||
-        (r.description ?? '').toLowerCase().includes(q)
-      );
-  });
-
-  const selectedCount = $derived(selectedRepos.size);
-
-  function toggleRepo(path: string) {
-    const s = new Set(selectedRepos);
-    s.has(path) ? s.delete(path) : s.add(path);
-    selectedRepos = s;
-  }
-
   // ── Variant group management ──────────────────────────────────────────────────
-  // Client tags: repo path → client/org name entered by user
   let clientTags = $state<Map<string, string>>(new Map());
-  let editingClientTag = $state<string | null>(null); // path currently being edited
-  let clientTagInput = $state('');
-
-  function setClientTag(path: string, tag: string) {
-    const m = new Map(clientTags);
-    if (tag.trim()) m.set(path, tag.trim());
-    else m.delete(path);
-    clientTags = m;
-    editingClientTag = null;
-  }
 
   let variantOverrides = $state<Map<string, string | null>>(new Map());
 
@@ -260,7 +226,11 @@
         ...r,
         client: clientTags.get(r.path) ?? null,
       }));
-      localStorage.setItem('sensei:projects_raw', JSON.stringify(selected));
+      // Only write to localStorage if we actually have scanned repos (Tauri context).
+      // In browser preview, leave it empty so the /api/projects fallback kicks in.
+      if (selected.length > 0) {
+        localStorage.setItem('sensei:projects_raw', JSON.stringify(selected));
+      }
     }
     step = 'done';
   }
@@ -288,29 +258,29 @@
         </p>
       </div>
       <div class="flex flex-col gap-2 w-full max-w-xs text-sm text-surface-z5">
-        {#each ['Connect your AI coordinator via MCP', 'Import project folders to index', 'Sessions · symbols · graph · libraries'] as item}
+        {#each ['Connect your ACPs via MCP', 'Import project folders to index', 'Sessions · symbols · graph · libraries'] as item}
           <div class="flex items-center gap-2.5 rounded-lg bg-surface-z2 px-4 py-2.5">
             <span class="h-1.5 w-1.5 rounded-full bg-primary-z5 shrink-0"></span>
             {item}
           </div>
         {/each}
       </div>
-      <button onclick={() => step = 'coordinators'}
+      <button onclick={() => step = 'acps'}
         class="w-full max-w-xs rounded-xl bg-primary-z6 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-primary-z7">
         Get started →
       </button>
     </div>
 
   <!-- ══ COORDINATORS ══════════════════════════════════════════════════════════ -->
-  {:else if step === 'coordinators'}
+  {:else if step === 'acps'}
     <div class="no-drag flex flex-1 flex-col items-center justify-center gap-5 px-8">
       <div class="w-full max-w-md">
         <p class="text-xs text-surface-z4 mb-1">Step 1 of 4</p>
-        <h2 class="text-xl font-bold text-surface-z9">Connect your AI editors</h2>
-        <p class="mt-1.5 text-sm text-surface-z5">Sensei will configure MCP for the tools you select.</p>
+        <h2 class="text-xl font-bold text-surface-z9">Connect your ACPs</h2>
+        <p class="mt-1.5 text-sm text-surface-z5">Sensei will configure MCP for the ACPs you select.</p>
       </div>
       <div class="w-full max-w-md space-y-2">
-        {#each coordinators as c}
+        {#each acps as c}
           {@const isDet = detected.includes(c.id)}
           {@const isSel = selected.has(c.id)}
           <button onclick={() => toggle(c.id)}
@@ -403,12 +373,12 @@
       {#if configured.length > 0}
         <div class="w-full max-w-md flex items-center gap-2 rounded-lg bg-success-z1 border border-success-z3 px-3 py-2 text-xs text-success-z7">
           <span class="i-solar-check-circle-bold-duotone text-sm shrink-0"></span>
-          MCP configured for {configured.map(id => coordinators.find(c => c.id === id)?.label).join(', ')}
+          MCP configured for {configured.map(id => acps.find(c => c.id === id)?.label).join(', ')}
         </div>
       {/if}
 
       <div class="flex gap-2 w-full max-w-md">
-        <button onclick={() => step = 'coordinators'}
+        <button onclick={() => step = 'acps'}
           class="flex-1 rounded-xl border border-surface-z3 py-2.5 text-sm text-surface-z5 transition-colors hover:bg-surface-z2">
           Back
         </button>
@@ -438,109 +408,18 @@
         <div class="flex-1">
           <p class="text-xs text-surface-z4 mb-0.5">Step 3 of 4</p>
           <h2 class="text-base font-bold text-surface-z9">Select projects to import</h2>
-          {#if discovered.length > 0}
-            <p class="text-xs text-surface-z4">{discovered.length} repos found · {selectedCount} selected</p>
-          {/if}
         </div>
-        {#if discovered.length > 0}
-          <div class="flex items-center gap-3 text-xs">
-            <button
-              onclick={() => selectedRepos = new Set(discovered.filter(r => !r.duplicate_of && (r.status === 'active' || r.status === 'recent')).map(r => r.path))}
-              class="text-primary-z6 hover:text-primary-z7">Active & recent</button>
-            <button
-              onclick={() => selectedRepos = new Set(discovered.filter(r => !r.duplicate_of).map(r => r.path))}
-              class="text-surface-z5 hover:text-surface-z7">All healthy</button>
-            <button onclick={() => selectedRepos = new Set()} class="text-surface-z4 hover:text-surface-z6">Clear</button>
-          </div>
-        {/if}
       </div>
 
-      <!-- Search -->
-      {#if discovered.length > 0}
-        <div class="px-5 py-2 border-b border-surface-z2 shrink-0">
-          <input
-            bind:value={searchQuery}
-            placeholder="Filter by name, path, or description…"
-            class="w-full rounded-lg border border-surface-z3 bg-surface-z2 px-3 py-1.5 text-sm text-surface-z7 outline-none placeholder:text-surface-z3 focus:border-primary-z4"
-          />
-        </div>
-      {/if}
-
-      <!-- Flat repo list -->
-      <div class="flex-1 min-h-0 overflow-y-auto">
+      <!-- Repo list -->
+      <div class="flex flex-col flex-1 min-h-0 gap-2 px-5 py-3">
         {#if discovered.length === 0}
           <div class="flex flex-col items-center gap-2 py-16 text-center text-sm text-surface-z4">
             <span class="i-solar-folder-open-bold-duotone text-3xl text-surface-z3"></span>
             <p>No repos found — go back and check your folders</p>
           </div>
         {:else}
-          <div class="divide-y divide-surface-z2">
-            {#each filteredRepos as repo}
-              {@const sel = selectedRepos.has(repo.path)}
-              {@const tag = clientTags.get(repo.path)}
-              {@const editing = editingClientTag === repo.path}
-              <div class="flex w-full items-center group transition-colors hover:bg-surface-z2/50
-                          {repo.duplicate_of ? 'opacity-55' : ''}">
-                <!-- Selectable area -->
-                <button
-                  onclick={() => toggleRepo(repo.path)}
-                  class="flex flex-1 min-w-0 items-start gap-3 px-5 py-3 text-left">
-                  <div class="mt-0.5 shrink-0 h-4 w-4 rounded border-2 flex items-center justify-center
-                              {sel ? 'border-primary-z6 bg-primary-z6' : 'border-surface-z4 bg-transparent'}">
-                    {#if sel}<span class="text-[9px] font-bold text-white leading-none">✓</span>{/if}
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-1.5 flex-wrap">
-                      <span class="text-sm font-medium text-surface-z8">{repo.name}</span>
-                      {#each (repo.categories ?? []).filter(c => c !== 'unknown') as cat}
-                        <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium {CAT_CLS[cat] ?? 'bg-surface-z3 text-surface-z5'}">{cat}</span>
-                      {/each}
-                      <span class="text-[10px] rounded-full px-1.5 py-0.5 {STATUS_CLS[repo.status] ?? STATUS_CLS.unknown}">
-                        {repo.status}{repo.last_commit_days != null ? ` · ${repo.last_commit_days}d` : ''}
-                      </span>
-                      {#each repo.tech_stack.slice(0, 2) as tech}
-                        <span class="text-[10px] bg-surface-z3 text-surface-z5 px-1.5 py-0.5 rounded">{tech}</span>
-                      {/each}
-                    </div>
-                    <p class="text-[10px] font-mono text-surface-z3 mt-0.5">{relPath(repo.path)}</p>
-                    {#if repo.duplicate_of}
-                      <p class="text-[11px] text-warning-z6 mt-0.5">Likely copy of {repo.duplicate_of.split('/').pop()}</p>
-                    {:else if repo.description}
-                      <p class="text-xs text-surface-z4 mt-0.5 line-clamp-1">{repo.description}</p>
-                    {/if}
-                  </div>
-                </button>
-                <!-- Client tag — shown on hover or when set -->
-                <div class="shrink-0 pr-4">
-                  {#if editing}
-                    <input
-                      bind:value={clientTagInput}
-                      onclick={(e) => e.stopPropagation()}
-                      onblur={() => setClientTag(repo.path, clientTagInput)}
-                      onkeydown={(e) => {
-                        if (e.key === 'Enter') setClientTag(repo.path, clientTagInput);
-                        if (e.key === 'Escape') editingClientTag = null;
-                      }}
-                      placeholder="client name"
-                      class="w-24 rounded-lg border border-primary-z4 bg-surface-z1 px-2 py-0.5 text-[11px] text-surface-z7 outline-none font-mono"
-                    />
-                  {:else if tag}
-                    <button
-                      onclick={(e) => { e.stopPropagation(); editingClientTag = repo.path; clientTagInput = tag; }}
-                      class="flex items-center gap-1 rounded-full bg-surface-z3 px-2 py-0.5 text-[10px] text-surface-z6 hover:bg-surface-z4 transition-colors">
-                      <span class="i-solar-tag-bold-duotone text-xs"></span>{tag}
-                    </button>
-                  {:else}
-                    <button
-                      onclick={(e) => { e.stopPropagation(); editingClientTag = repo.path; clientTagInput = ''; }}
-                      class="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 rounded-full border border-surface-z3 px-2 py-0.5 text-[10px] text-surface-z4 hover:border-primary-z4 hover:text-primary-z6">
-                      <span class="i-solar-tag-bold-duotone text-xs"></span>tag client
-                    </button>
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
+          <RepoList repos={discovered} bind:selected={selectedRepos} bind:clientTags />
         {/if}
       </div>
 
@@ -726,9 +605,9 @@
   {/if}
 
   <!-- Step dots (import + groups only) -->
-  {#if step === 'coordinators' || step === 'folders' || step === 'repos' || step === 'groups'}
+  {#if step === 'acps' || step === 'folders' || step === 'repos' || step === 'groups'}
     <div class="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none">
-      {#each ['coordinators', 'folders', 'repos', 'groups'] as s}
+      {#each ['acps', 'folders', 'repos', 'groups'] as s}
         <div class="h-1.5 rounded-full transition-all {step === s ? 'w-4 bg-primary-z6' : 'w-1.5 bg-surface-z3'}"></div>
       {/each}
     </div>

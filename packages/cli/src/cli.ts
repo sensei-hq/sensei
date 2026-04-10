@@ -48,8 +48,9 @@ import { join as pathJoin } from "node:path";
 const _cwd = process.cwd();
 const repoRoot = findRepoRoot(_cwd);
 
-// Guard: bail if we can't find a real repo root
-if (repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(pathJoin(_cwd, "package.json"))) {
+// Global commands don't require a repo root — skip the guard for them.
+const GLOBAL_CMDS = new Set(["serve", "server", "stats", "login", "logout", "mcp"]);
+if (!GLOBAL_CMDS.has(cmd) && repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(pathJoin(_cwd, "package.json"))) {
   console.error("sensei: could not detect repo root. Run sensei from inside a git repo or a directory with package.json.");
   process.exit(1);
 }
@@ -229,11 +230,40 @@ async function main() {
       await migrate(repoRoot);
       break;
     }
+    case "mcp": {
+      // Start the MCP stdio server — used by Claude Code, Cursor, etc.
+      // Falls back to process.cwd() if SENSEI_REPO_PATH is not set.
+      await import("@sensei/server/mcp-entry");
+      break;
+    }
     case "serve": {
-      const { serve } = await import("./commands/serve.js");
-      await serve(repoRoot, {
-        port: values.port ? parseInt(values.port, 10) : undefined,
-      });
+      const subCmd = rest[0];
+      if (subCmd === "stop" || subCmd === "restart") {
+        const port = values.port ? parseInt(values.port, 10) : 7744;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/stop`, { method: "POST" });
+          if (res.ok) {
+            console.log("sensei serve: stopped.");
+          } else {
+            console.error(`sensei serve: server returned ${res.status}`);
+            process.exit(1);
+          }
+        } catch {
+          console.error("sensei serve: server is not running.");
+          process.exit(1);
+        }
+        if (subCmd === "restart") {
+          // Give the old process a moment to exit, then start fresh.
+          await new Promise(r => setTimeout(r, 500));
+          const { serve } = await import("./commands/serve.js");
+          await serve(repoRoot, { port: values.port ? parseInt(values.port, 10) : undefined });
+        }
+      } else {
+        const { serve } = await import("./commands/serve.js");
+        await serve(repoRoot, {
+          port: values.port ? parseInt(values.port, 10) : undefined,
+        });
+      }
       break;
     }
     case "benchmark": {
