@@ -27,6 +27,7 @@ and more effective with AI.
 | [06-graph-intelligence](./06-graph-intelligence.md) | Analysis of Graphify and Karpathy's wiki model; what sensei should adopt and how |
 | [07-gaps](./07-gaps.md) | Open decisions and blockers — must resolve before implementation starts |
 | [08-sqlite-schema](./08-sqlite-schema.md) | SQLite schema design: two databases, type mapping, WAL config, query function migration |
+| [09-benchmark](./09-benchmark.md) | ACP-driven benchmark: measuring token savings and quality improvement with sensei skills |
 
 ---
 
