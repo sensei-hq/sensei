@@ -1,12 +1,9 @@
-import { cp, mkdir, readFile, writeFile, readdir } from "node:fs/promises";
-import { existsSync, readdirSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { intro, outro, log, spinner } from "@clack/prompts";
-
-const PLUGIN_NAME = "sensei";
-const PLUGIN_KEY = `${PLUGIN_NAME}@local`;
+import { ClaudeAdapter } from "@sensei/engine";
 
 /** Find the plugin source directory relative to this CLI script. */
 function findPluginSrc(): string | null {
@@ -35,59 +32,25 @@ export async function pluginInstall(): Promise<void> {
     process.exit(1);
   }
 
-  // Read version from plugin.json
-  const pluginJson = JSON.parse(await readFile(join(pluginSrc, ".claude-plugin", "plugin.json"), "utf-8"));
-  const pluginVersion: string = pluginJson.version ?? "1.0.0";
-
-  const claudeDir = join(homedir(), ".claude");
-  const pluginsDir = join(claudeDir, "plugins");
-  // Claude Code reads local plugins from marketplaces/local/plugins/<name>/
-  const installPath = join(pluginsDir, "marketplaces", "local", "plugins", PLUGIN_NAME);
-  const installedPluginsPath = join(pluginsDir, "installed_plugins.json");
-
-  const s = spinner();
-
-  // 1. Copy plugin directory
-  s.start(`Copying plugin to ${installPath}`);
-  await mkdir(installPath, { recursive: true });
-  await cp(pluginSrc, installPath, { recursive: true, force: true });
-  s.stop(`Copied plugin files`);
-
-  // 2. Read existing installed_plugins.json
-  let registry: { version: number; plugins: Record<string, unknown[]> } = {
-    version: 2,
-    plugins: {},
-  };
-  if (existsSync(installedPluginsPath)) {
-    const raw = await readFile(installedPluginsPath, "utf-8");
-    try {
-      registry = JSON.parse(raw);
-    } catch {
-      log.error("installed_plugins.json is corrupted. Delete it and retry.");
-      process.exit(1);
-    }
+  const adapter = new ClaudeAdapter();
+  if (!await adapter.detect()) {
+    log.warn("Claude Code not detected (~/.claude not found). Plugin not installed.");
+    process.exit(1);
   }
 
-  // 3. Upsert plugin entry
-  registry.plugins[PLUGIN_KEY] = [
-    {
-      scope: "user",
-      installPath,
-      version: pluginVersion,
-      installedAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-    },
-  ];
+  const s = spinner();
+  s.start(`Installing plugin into ${adapter.name}`);
+  await adapter.installPlugin(pluginSrc);
+  s.stop("Plugin files installed");
 
-  // 4. Write back
-  await mkdir(pluginsDir, { recursive: true });
-  await writeFile(installedPluginsPath, JSON.stringify(registry, null, 2));
-  log.success(`Registered ${PLUGIN_KEY} in installed_plugins.json`);
+  log.success(`Registered sensei@local in installed_plugins.json`);
 
-  // 5. Summary
-  const skillsDir = join(installPath, "skills");
-  const commandsDir = join(installPath, "commands");
-  const skills = existsSync(skillsDir) ? readdirSync(skillsDir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name) : [];
+  // Summary from plugin source
+  const skillsDir = join(pluginSrc, "skills");
+  const commandsDir = join(pluginSrc, "commands");
+  const skills = existsSync(skillsDir)
+    ? (await readdir(skillsDir, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name)
+    : [];
   const commands = existsSync(commandsDir)
     ? (await readdir(commandsDir)).filter(f => f.endsWith(".md")).map(f => "/" + f.replace(".md", ""))
     : [];
