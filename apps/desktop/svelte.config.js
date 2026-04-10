@@ -6,6 +6,9 @@ const config = {
     adapter: adapter({
       fallback: 'index.html',   // SPA mode — Tauri serves index.html for all routes
     }),
+    alias: {
+      '$lib': './src/lib',
+    },
   },
   vitePlugin: {
     dynamicCompileOptions: ({ filename }) =>

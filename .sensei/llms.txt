@@ -1,4 +1,4 @@
-# 
+# sensei
 > A CLI and MCP server that indexes a codebase once, exposes exports at four resolution levels (L0-L3), and measures AI skills impact through A/B benchmarks.
 
 ## Entry Points
@@ -27,92 +27,183 @@
 - [+layout.server.ts](apps/dashboard/src/routes/+layout.server.ts): load
 - [+page.server.ts](apps/dashboard/src/routes/+page.server.ts): load
 
-## apps/dashboard/src/routes/account/invitations
-- [+page.server.ts](apps/dashboard/src/routes/account/invitations/+page.server.ts): Invitation, load, actions
+## apps/dashboard/src/routes/(app)
+- [+layout.server.ts](apps/dashboard/src/routes/(app)/+layout.server.ts): load
 
-## apps/dashboard/src/routes/account/members
-- [+page.server.ts](apps/dashboard/src/routes/account/members/+page.server.ts): Member, load
+## apps/dashboard/src/routes/(app)/account/invitations
+- [+page.server.ts](apps/dashboard/src/routes/(app)/account/invitations/+page.server.ts): Invitation, load, actions
 
-## apps/dashboard/src/routes/account/team
-- [+page.server.ts](apps/dashboard/src/routes/account/team/+page.server.ts): MemberFtr, load
+## apps/dashboard/src/routes/(app)/account/members
+- [+page.server.ts](apps/dashboard/src/routes/(app)/account/members/+page.server.ts): Member, load
 
-## apps/dashboard/src/routes/benchmarks
-- [+page.ts](apps/dashboard/src/routes/benchmarks/+page.ts): load
+## apps/dashboard/src/routes/(app)/account/team
+- [+page.server.ts](apps/dashboard/src/routes/(app)/account/team/+page.server.ts): MemberFtr, load
 
-## apps/dashboard/src/routes/data
-- [+server.ts](apps/dashboard/src/routes/data/+server.ts): GET
+## apps/dashboard/src/routes/(app)/benchmarks
+- [+page.ts](apps/dashboard/src/routes/(app)/benchmarks/+page.ts): load
 
-## apps/dashboard/src/routes/libraries
-- [+page.server.ts](apps/dashboard/src/routes/libraries/+page.server.ts): load, actions
+## apps/dashboard/src/routes/(app)/home
+- [+page.server.ts](apps/dashboard/src/routes/(app)/home/+page.server.ts): load
 
-## apps/dashboard/src/routes/libraries/[id]
-- [+page.server.ts](apps/dashboard/src/routes/libraries/[id]/+page.server.ts): load, actions
+## apps/dashboard/src/routes/(app)/libraries
+- [+page.server.ts](apps/dashboard/src/routes/(app)/libraries/+page.server.ts): load, actions
 
-## apps/dashboard/src/routes/mockups
-- [+page.server.ts](apps/dashboard/src/routes/mockups/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/libraries/[id]
+- [+page.server.ts](apps/dashboard/src/routes/(app)/libraries/[id]/+page.server.ts): load, actions
 
-## apps/dashboard/src/routes/mockups/option-a
-- [+page.server.ts](apps/dashboard/src/routes/mockups/option-a/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/old
+- [+page.server.ts](apps/dashboard/src/routes/(app)/old/+page.server.ts): load
 
-## apps/dashboard/src/routes/mockups/option-b
-- [+page.server.ts](apps/dashboard/src/routes/mockups/option-b/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/orgs
+- [+page.server.ts](apps/dashboard/src/routes/(app)/orgs/+page.server.ts): load
 
-## apps/dashboard/src/routes/mockups/platform
-- [+page.server.ts](apps/dashboard/src/routes/mockups/platform/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/orgs/[id]
+- [+page.server.ts](apps/dashboard/src/routes/(app)/orgs/[id]/+page.server.ts): load
 
-## apps/dashboard/src/routes/orgs
-- [+page.server.ts](apps/dashboard/src/routes/orgs/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/orgs/[id]/teams/[tid]
+- [+page.server.ts](apps/dashboard/src/routes/(app)/orgs/[id]/teams/[tid]/+page.server.ts): load
 
-## apps/dashboard/src/routes/orgs/[id]
-- [+page.server.ts](apps/dashboard/src/routes/orgs/[id]/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/platform
+- [+page.ts](apps/dashboard/src/routes/(app)/platform/+page.ts): load
 
-## apps/dashboard/src/routes/orgs/[id]/teams/[tid]
-- [+page.server.ts](apps/dashboard/src/routes/orgs/[id]/teams/[tid]/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/platform/analytics
+- [+page.server.ts](apps/dashboard/src/routes/(app)/platform/analytics/+page.server.ts): FtrBucket, AccountStat, ToolStat, load
 
-## apps/dashboard/src/routes/platform/analytics
-- [+page.server.ts](apps/dashboard/src/routes/platform/analytics/+page.server.ts): FtrBucket, AccountStat, ToolStat, load
+## apps/dashboard/src/routes/(app)/references
+- [+page.ts](apps/dashboard/src/routes/(app)/references/+page.ts): load
 
-## apps/dashboard/src/routes/references
-- [+page.ts](apps/dashboard/src/routes/references/+page.ts): load
+## apps/dashboard/src/routes/(app)/repos
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/+page.server.ts): load
 
-## apps/dashboard/src/routes/repos
-- [+page.server.ts](apps/dashboard/src/routes/repos/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/repos/[id]
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/+page.server.ts): load
 
-## apps/dashboard/src/routes/repos/[id]
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/repos/[id]/agents
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/agents/+page.server.ts): load, actions
 
-## apps/dashboard/src/routes/repos/[id]/agents
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/agents/+page.server.ts): load, actions
+## apps/dashboard/src/routes/(app)/repos/[id]/analytics
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/analytics/+page.server.ts): load
 
-## apps/dashboard/src/routes/repos/[id]/analytics
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/analytics/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/repos/[id]/context-packs
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/context-packs/+page.server.ts): load
 
-## apps/dashboard/src/routes/repos/[id]/context-packs
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/context-packs/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/repos/[id]/drift
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/drift/+page.server.ts): load
 
-## apps/dashboard/src/routes/repos/[id]/drift
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/drift/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/repos/[id]/explore
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/explore/+page.server.ts): load
 
-## apps/dashboard/src/routes/repos/[id]/explore
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/explore/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/repos/[id]/libraries
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/libraries/+page.server.ts): load, actions
 
-## apps/dashboard/src/routes/repos/[id]/libraries
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/libraries/+page.server.ts): load, actions
+## apps/dashboard/src/routes/(app)/repos/[id]/sessions
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/sessions/+page.server.ts): load
 
-## apps/dashboard/src/routes/repos/[id]/sessions
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/sessions/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/repos/[id]/simulate
+- [+page.server.ts](apps/dashboard/src/routes/(app)/repos/[id]/simulate/+page.server.ts): load, actions
 
-## apps/dashboard/src/routes/repos/[id]/simulate
-- [+page.server.ts](apps/dashboard/src/routes/repos/[id]/simulate/+page.server.ts): load, actions
+## apps/dashboard/src/routes/(app)/settings
+- [+page.server.ts](apps/dashboard/src/routes/(app)/settings/+page.server.ts): load
 
-## apps/dashboard/src/routes/settings
-- [+page.server.ts](apps/dashboard/src/routes/settings/+page.server.ts): load
+## apps/dashboard/src/routes/(app)/setup
+- [+page.server.ts](apps/dashboard/src/routes/(app)/setup/+page.server.ts): load
 
-## apps/dashboard/src/routes/stats
-- [+page.ts](apps/dashboard/src/routes/stats/+page.ts): load
+## apps/dashboard/src/routes/(app)/stats
+- [+page.ts](apps/dashboard/src/routes/(app)/stats/+page.ts): load
+
+## apps/dashboard/src/routes/(app)/team/[teamSlug]
+- [+page.ts](apps/dashboard/src/routes/(app)/team/[teamSlug]/+page.ts): load
+
+## apps/dashboard/src/routes/(public)
+- [+page.server.ts](apps/dashboard/src/routes/(public)/+page.server.ts): load
+
+## apps/dashboard/src/routes/(public)/connect/cli
+- [+page.server.ts](apps/dashboard/src/routes/(public)/connect/cli/+page.server.ts): load
+
+## apps/dashboard/src/routes/(public)/mockups
+- [+page.server.ts](apps/dashboard/src/routes/(public)/mockups/+page.server.ts): load
+
+## apps/dashboard/src/routes/(public)/mockups/option-a
+- [+page.server.ts](apps/dashboard/src/routes/(public)/mockups/option-a/+page.server.ts): load
+
+## apps/dashboard/src/routes/(public)/mockups/option-b
+- [+page.server.ts](apps/dashboard/src/routes/(public)/mockups/option-b/+page.server.ts): load
+
+## apps/dashboard/src/routes/(server)/api/connect/verify
+- [+server.ts](apps/dashboard/src/routes/(server)/api/connect/verify/+server.ts): GET
+
+## apps/dashboard/src/routes/(server)/api/mockups/platform
+- [+server.ts](apps/dashboard/src/routes/(server)/api/mockups/platform/+server.ts): GET
+
+## apps/dashboard/src/routes/(server)/api/mockups/team/[teamSlug]
+- [+server.ts](apps/dashboard/src/routes/(server)/api/mockups/team/[teamSlug]/+server.ts): GET
+
+## apps/dashboard/src/routes/(server)/api/mockups/user/[userSlug]
+- [+server.ts](apps/dashboard/src/routes/(server)/api/mockups/user/[userSlug]/+server.ts): GET
+
+## apps/dashboard/src/routes/(server)/api/orgs
+- [+server.ts](apps/dashboard/src/routes/(server)/api/orgs/+server.ts): POST
+
+## apps/dashboard/src/routes/(server)/api/orgs/[id]/invite
+- [+server.ts](apps/dashboard/src/routes/(server)/api/orgs/[id]/invite/+server.ts): POST
 
 ## apps/dashboard/tests
 - [library-detail.test.ts](apps/dashboard/tests/library-detail.test.ts): async
+
+## apps/desktop/build/_app
+- [env.js](apps/desktop/build/_app/env.js): env
+
+## apps/desktop/build/_app/immutable/chunks
+- [DB58ngcj.js](apps/desktop/build/_app/immutable/chunks/DB58ngcj.js): function
+
+## apps/desktop/build/_app/immutable/entry
+- [app.RtaZZPU_.js](apps/desktop/build/_app/immutable/entry/app.RtaZZPU_.js): const
+
+## apps/desktop/src-tauri
+- [build.rs](apps/desktop/src-tauri/build.rs): fn
+
+## apps/desktop/src-tauri/src
+- [lib.rs](apps/desktop/src-tauri/src/lib.rs): fn, fn, fn, fn, fn
+- [main.rs](apps/desktop/src-tauri/src/main.rs): fn
+
+## apps/desktop/src-tauri/target/debug/build/typenum-dc9f748bc1a8b1a0/out
+- [tests.rs](apps/desktop/src-tauri/target/debug/build/typenum-dc9f748bc1a8b1a0/out/tests.rs): fn, fn, fn, fn, fn
+
+## apps/desktop/src-tauri/target/release/build/typenum-4483cfc03d9273ec/out
+- [tests.rs](apps/desktop/src-tauri/target/release/build/typenum-4483cfc03d9273ec/out/tests.rs): fn, fn, fn, fn, fn
+
+## apps/desktop/src/routes
+- [+layout.ts](apps/desktop/src/routes/+layout.ts): ssr, prerender
+
+## apps/desktop/src/routes/(app)/graph
+- [+page.ts](apps/desktop/src/routes/(app)/graph/+page.ts): load
+
+## apps/desktop/src/routes/(app)/ideas
+- [+page.ts](apps/desktop/src/routes/(app)/ideas/+page.ts): load
+
+## apps/desktop/src/routes/(app)/libraries
+- [+page.ts](apps/desktop/src/routes/(app)/libraries/+page.ts): load
+
+## apps/desktop/src/routes/(app)/projects
+- [+page.ts](apps/desktop/src/routes/(app)/projects/+page.ts): load
+
+## apps/desktop/src/routes/(app)/sessions
+- [+page.ts](apps/desktop/src/routes/(app)/sessions/+page.ts): load
+
+## apps/desktop/src/routes/(server)/api/graph
+- [+server.ts](apps/desktop/src/routes/(server)/api/graph/+server.ts): GET
+
+## apps/desktop/src/routes/(server)/api/ideas
+- [+server.ts](apps/desktop/src/routes/(server)/api/ideas/+server.ts): GET
+
+## apps/desktop/src/routes/(server)/api/projects
+- [+server.ts](apps/desktop/src/routes/(server)/api/projects/+server.ts): GET
+
+## apps/desktop/src/routes/(server)/api/sessions
+- [+server.ts](apps/desktop/src/routes/(server)/api/sessions/+server.ts): GET
+
+## apps/desktop/src/routes/setup
+- [+page.ts](apps/desktop/src/routes/setup/+page.ts): prerender
 
 ## docs
 - [reverse-engineer.md](docs/reverse-engineer.md): INVOCATION
@@ -181,6 +272,22 @@
 - [2026-03-07-monorepo-package-split.md](docs/plans/2026-03-07-monorepo-package-split.md): Monorepo
 - [2026-03-07-populate-llmspec-skill.md](docs/plans/2026-03-07-populate-llmspec-skill.md): populate-llmspec
 - [2026-03-07-server-inference-package.md](docs/plans/2026-03-07-server-inference-package.md): Server
+
+## docs/product
+- [README.md](docs/product/README.md): Sensei
+- [saas-model.md](docs/product/saas-model.md): Product
+- [self-hosted-model.md](docs/product/self-hosted-model.md): Product
+
+## docs/roadmap
+- [01-paradigm-shift.md](docs/roadmap/01-paradigm-shift.md): Paradigm
+- [02-local-architecture.md](docs/roadmap/02-local-architecture.md): Local-First
+- [03-workspace-model.md](docs/roadmap/03-workspace-model.md): Workspace
+- [04-implementation-plan.md](docs/roadmap/04-implementation-plan.md): Implementation
+- [05-coordinator-adapters.md](docs/roadmap/05-coordinator-adapters.md): ACP
+- [06-graph-intelligence.md](docs/roadmap/06-graph-intelligence.md): Graph
+- [07-gaps.md](docs/roadmap/07-gaps.md): Gaps
+- [08-sqlite-schema.md](docs/roadmap/08-sqlite-schema.md): Database
+- [README.md](docs/roadmap/README.md): Sensei
 
 ## docs/superpowers
 - [backlog.md](docs/superpowers/backlog.md): Superpowers
@@ -315,11 +422,6 @@
 - [agent-adapter.ts](packages/engine/src/agent/agent-adapter.ts): AgentAdapter
 - [claude-adapter.ts](packages/engine/src/agent/claude-adapter.ts): ClaudeAdapter
 
-## packages/engine/src/analytics
-- [ftr.ts](packages/engine/src/analytics/ftr.ts): FtrSignals, FtrResult, computeFtr, computeAndStoreFtr
-- [task-session.spec.ts](packages/engine/src/analytics/task-session.spec.ts): function
-- [task-session.ts](packages/engine/src/analytics/task-session.ts): TaskType, TaskStatus, TaskSessionInfo, TaskSession, createTaskSession
-
 ## packages/engine/src/assemble
 - [assembler.spec.ts](packages/engine/src/assemble/assembler.spec.ts): function
 - [assembler.ts](packages/engine/src/assemble/assembler.ts): AssembleOptions, Assembler
@@ -339,35 +441,21 @@
 - [source-adapter.ts](packages/engine/src/lib/source-adapter.ts): SourceAdapter
 - [transformers-backend.ts](packages/engine/src/lib/transformers-backend.ts): TransformersBackend
 
-## packages/engine/src/rank
-- [bm25.spec.ts](packages/engine/src/rank/bm25.spec.ts): function
-- [bm25.ts](packages/engine/src/rank/bm25.ts): BM25Strategy
-- [chain.spec.ts](packages/engine/src/rank/chain.spec.ts): function
-- [chain.ts](packages/engine/src/rank/chain.ts): RankingStrategyChain
-- [diff-first-bfs.spec.ts](packages/engine/src/rank/diff-first-bfs.spec.ts): function
-- [diff-first-bfs.ts](packages/engine/src/rank/diff-first-bfs.ts): DiffFirstBFSStrategy
-- [ranking-strategy.ts](packages/engine/src/rank/ranking-strategy.ts): Candidate, RankContext, ScoredCandidate, RankingStrategy
-- [semantic.spec.ts](packages/engine/src/rank/semantic.spec.ts): function
-- [semantic.ts](packages/engine/src/rank/semantic.ts): SemanticStrategy
-
-## packages/engine/src/session
-- [memory.spec.ts](packages/engine/src/session/memory.spec.ts): function
-- [memory.ts](packages/engine/src/session/memory.ts): MemoryItem, recordMemory, closeMemory, getMemoryItems
-- [session-manager.ts](packages/engine/src/session/session-manager.ts): SessionInfo, CrashedSession, createSession, detectCrashedSessions, updateHeartbeat
-- [snapshot.spec.ts](packages/engine/src/session/snapshot.spec.ts): function
-- [snapshot.ts](packages/engine/src/session/snapshot.ts): SnapshotOptions, Snapshot, takeSnapshot, getLatestSnapshot
-
 ## packages/engine/src/skill-gen
 - [skill-generator.spec.ts](packages/engine/src/skill-gen/skill-generator.spec.ts): const, const
 - [skill-generator.ts](packages/engine/src/skill-gen/skill-generator.ts): SkillGenerator
 - [skill-validator.spec.ts](packages/engine/src/skill-gen/skill-validator.spec.ts): const, const
 - [skill-validator.ts](packages/engine/src/skill-gen/skill-validator.ts): SkillValidator
 
-## packages/engine/src/slice
-- [ast-slicer.spec.ts](packages/engine/src/slice/ast-slicer.spec.ts): function
-- [ast-slicer.ts](packages/engine/src/slice/ast-slicer.ts): ASTSlicer
-- [section-slicer.spec.ts](packages/engine/src/slice/section-slicer.spec.ts): function
-- [section-slicer.ts](packages/engine/src/slice/section-slicer.ts): SectionSlicer
+## packages/graph-indexer/src
+- [drift.ts](packages/graph-indexer/src/drift.ts): DriftResult, detectDrift
+- [indexer.spec.ts](packages/graph-indexer/src/indexer.spec.ts): parseToken, processInput, TokenConfig
+- [indexer.ts](packages/graph-indexer/src/indexer.ts): IndexOptions, IndexResult, getOrCreateDb, SingleFileResult, deleteFileFromGraph
+- [layers.ts](packages/graph-indexer/src/layers.ts): Depth, SymbolResult, SymbolRef, CommentResult, getSymbol
+- [parser.ts](packages/graph-indexer/src/parser.ts): ParsedComment, extractTaggedComments
+- [schema.ts](packages/graph-indexer/src/schema.ts): ensureSchema, ensureSchemaWithConn
+- [watcher.spec.ts](packages/graph-indexer/src/watcher.spec.ts): greet, greet, farewell
+- [watcher.ts](packages/graph-indexer/src/watcher.ts): WatcherOptions, IncrementalResult, WatcherHandle, watchRepo
 
 ## packages/server/src
 - [mcp-server.ts](packages/server/src/mcp-server.ts): McpServerOptions, createSenseiMcpServer
@@ -460,6 +548,9 @@
 - [install.ts](plugin/scripts/install.ts): async
 - [uninstall.ts](plugin/scripts/uninstall.ts): async
 
+## plugin/skills/analyze
+- [SKILL.md](plugin/skills/analyze/SKILL.md): Codebase
+
 ## plugin/skills/auditing-skill-descriptions
 - [SKILL.md](plugin/skills/auditing-skill-descriptions/SKILL.md): Auditing
 
@@ -475,11 +566,17 @@
 ## plugin/skills/decomposing-broad-tasks
 - [SKILL.md](plugin/skills/decomposing-broad-tasks/SKILL.md): Decomposing
 
+## plugin/skills/design
+- [SKILL.md](plugin/skills/design/SKILL.md): Design
+
 ## plugin/skills/detecting-doc-drift
 - [SKILL.md](plugin/skills/detecting-doc-drift/SKILL.md): Doc
 - [test-baseline.md](plugin/skills/detecting-doc-drift/test-baseline.md): Baseline
 - [test-pressure-1.md](plugin/skills/detecting-doc-drift/test-pressure-1.md): Pressure
 - [test-pressure-2.md](plugin/skills/detecting-doc-drift/test-pressure-2.md): Pressure
+
+## plugin/skills/extract-docs
+- [SKILL.md](plugin/skills/extract-docs/SKILL.md): Documentation
 
 ## plugin/skills/guiding-doc-creation
 - [SKILL.md](plugin/skills/guiding-doc-creation/SKILL.md): Doc
@@ -493,6 +590,9 @@
 ## plugin/skills/pattern-based-development
 - [SKILL.md](plugin/skills/pattern-based-development/SKILL.md): Pattern-Based
 
+## plugin/skills/refactor
+- [SKILL.md](plugin/skills/refactor/SKILL.md): Refactor
+
 ## plugin/skills/reformatting-docs
 - [SKILL.md](plugin/skills/reformatting-docs/SKILL.md): Doc
 - [test-baseline.md](plugin/skills/reformatting-docs/test-baseline.md): Baseline
@@ -505,6 +605,9 @@
 ## plugin/skills/session-management
 - [SKILL.md](plugin/skills/session-management/SKILL.md): Session
 
+## plugin/skills/test-gen
+- [SKILL.md](plugin/skills/test-gen/SKILL.md): Test
+
 ## plugin/skills/working-smarter
 - [SKILL.md](plugin/skills/working-smarter/SKILL.md): Working
 
@@ -516,6 +619,8 @@
 
 ## tasks
 - [score-coverage.ts](tasks/score-coverage.ts): function
+
+> Generated by sensei
 
 > Generated by sensei
 
