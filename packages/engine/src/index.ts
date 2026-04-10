@@ -5,7 +5,7 @@ export * from "./assemble/assembler.js";
 export * from "./project-profile.js";
 export * from "./skill-gen/skill-validator.js";
 export * from "./skill-gen/skill-generator.js";
-export * from "./agent/agent-adapter.js";
+export * from "./agent/acp-adapter.js";
 export * from "./agent/claude-adapter.js";
 export * from "./lib/source-adapter.js";
 export * from "./lib/llms-txt-adapter.js";
