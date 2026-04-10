@@ -1,14 +1,17 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, join, relative } from "path";
 import { homedir } from "os";
+import { IndexQueue, WorkerPool } from "./index-queue.js";
 import { intro, log } from "@clack/prompts";
 import { loadSenseiConfig } from "@sensei/shared";
 import { watchRepo, getOrCreateDb, indexRepo } from "@sensei/graph-indexer";
 import { checkSystemRequirements, OLLAMA_BASE_URL, OLLAMA_MODEL } from "./model/system-check.js";
 import { OllamaBackend, makeFallbackAnalysis } from "./model/ollama-backend.js";
 import { getActivityLog } from "./activity-log.js";
+import { checkDrift, search, getLlmSpec, listExports, getFileContext } from "@sensei/tools";
 
 const PROJECTS_FILE = join(homedir(), ".sensei", "projects.json");
+const PID_FILE = join(homedir(), ".sensei", "serve.pid");
 
 export interface ProjectEntry {
   repoId: string;
@@ -180,10 +183,29 @@ export interface ServeOptions {
   ollamaBackendFn?: () => OllamaBackend;
 }
 
-export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void; port: number }> {
+export async function createReportServer(opts: ServeOptions = {}): Promise<{ stop: () => void; port: number; queue: IndexQueue }> {
   const port = opts.port ?? 7744;
   const activeRepoId = opts.repoId ?? null;
   const activeRepoPath = opts.repoPath ?? null;
+
+  await mkdir(join(homedir(), ".sensei"), { recursive: true });
+  const queue = new IndexQueue();
+  const pool = new WorkerPool(
+    queue,
+    async (repoId, repoPath) => {
+      await indexRepo({ repoId, repoPath, project: repoId });
+      const projects = await readProjects();
+      const idx = projects.findIndex((p) => p.repoId === repoId);
+      const entry: ProjectEntry = { repoId, name: repoId, path: repoPath, indexedAt: new Date().toISOString() };
+      if (idx >= 0) projects[idx] = entry; else projects.push(entry);
+      await writeProjects(projects);
+    },
+    (job, status, error) => {
+      if (status === "done") log.success(`[${job.repoId}] indexed`);
+      else log.warn(`[${job.repoId}] index failed (attempt ${job.attempts}/${3}): ${error}`);
+    },
+  );
+  pool.start();
 
   const server = Bun.serve({
     port,
@@ -271,8 +293,57 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         }
       }
 
+      if (req.method === "GET" && url.pathname === "/api/drift") {
+        const repoPath = url.searchParams.get("repoPath") ?? activeRepoPath;
+        if (!repoPath) {
+          return jsonResponse({ drifted: [], summary: "repoPath required" });
+        }
+        try {
+          const result = await checkDrift(repoPath);
+          return jsonResponse(result);
+        } catch (err) {
+          return jsonResponse({ ok: false, error: (err as Error).message }, 500);
+        }
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/mcp") {
+        let body: { tool: string; args?: Record<string, unknown> };
+        try {
+          body = await req.json() as typeof body;
+        } catch {
+          return jsonResponse({ ok: false, error: "Invalid JSON" }, 400);
+        }
+        const args = body.args ?? {};
+        const repoPath = (args.repoPath as string | undefined) ?? activeRepoPath ?? "";
+        try {
+          let result: unknown;
+          switch (body.tool) {
+            case "search":
+              result = await search(repoPath, args.query as string, { top: (args.limit as number | undefined) ?? 10 });
+              break;
+            case "get_lib_docs":
+              result = await getLlmSpec(repoPath, args.section as string | undefined);
+              break;
+            case "list_exports":
+              result = await listExports(repoPath, args.module as string | undefined);
+              break;
+            case "get_file_context":
+              result = await getFileContext(repoPath, args.filePath as string, (args.level as string | undefined ?? "L2") as import("@sensei/shared").ResolutionLevel);
+              break;
+            case "check_drift":
+              result = await checkDrift(repoPath);
+              break;
+            default:
+              return jsonResponse({ ok: false, error: `Unknown tool: ${body.tool}` }, 400);
+          }
+          return jsonResponse({ ok: true, result });
+        } catch (err) {
+          return jsonResponse({ ok: false, error: (err as Error).message }, 500);
+        }
+      }
+
       if (req.method === "POST" && url.pathname === "/api/index") {
-        let body: { repoId?: string; repoPath?: string };
+        let body: { repoId?: string; repoPath?: string; force?: boolean };
         try {
           body = await req.json() as typeof body;
         } catch {
@@ -283,28 +354,8 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         if (!repoId || !repoPath) {
           return jsonResponse({ ok: false, error: "repoId and repoPath are required" }, 400);
         }
-        const stream = new ReadableStream({
-          async start(controller) {
-            const send = (obj: unknown) =>
-              controller.enqueue(new TextEncoder().encode(JSON.stringify(obj) + "\n"));
-            try {
-              send({ status: "indexing", repoId });
-              await indexRepo({ repoId, repoPath, project: repoId });
-              // Register project
-              const projects = await readProjects();
-              const idx = projects.findIndex((p) => p.repoId === repoId);
-              const entry: ProjectEntry = { repoId, name: repoId, path: repoPath, indexedAt: new Date().toISOString() };
-              if (idx >= 0) projects[idx] = entry; else projects.push(entry);
-              await writeProjects(projects);
-              send({ status: "done" });
-            } catch (err) {
-              send({ status: "error", message: (err as Error).message });
-            } finally {
-              controller.close();
-            }
-          },
-        });
-        return new Response(stream, { headers: { "Content-Type": "application/x-ndjson", ...corsHeaders() } });
+        queue.enqueue(repoId, repoPath, body.force);
+        return jsonResponse({ ok: true, status: "queued", repoId });
       }
 
       if (req.method === "GET" && url.pathname === "/health") {
@@ -313,7 +364,17 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
           return { ollamaRunning: s.ollamaRunning, ollamaModel: s.ollamaModel };
         });
         const { ollamaRunning, ollamaModel } = await checkFn();
-        return Response.json({ ok: true, backend: ollamaRunning ? "ollama" : "none", ollamaRunning, ollamaModel });
+        const active = queue.active();
+        return Response.json({
+          ok: true,
+          name: "sensei",
+          version: "0.1.0",
+          backend: ollamaRunning ? "ollama" : "none",
+          ollamaRunning,
+          ollamaModel,
+          indexing: active.length > 0 ? active.map(j => j.repoId) : null,
+          queue: active.map(j => ({ repoId: j.repoId, status: j.status, attempts: j.attempts })),
+        }, { headers: corsHeaders() });
       }
 
       if (req.method === "GET" && url.pathname === "/setup/status") {
@@ -389,16 +450,39 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         }
       }
 
+      if (req.method === "POST" && url.pathname === "/stop") {
+        // Respond before killing so the client gets the 200.
+        setTimeout(() => process.exit(0), 100);
+        return Response.json({ ok: true }, { headers: corsHeaders() });
+      }
+
       return Response.json({ ok: false, error: "Not found" }, { status: 404 });
     },
   });
 
+  async function indexOne(repoId: string, repoPath: string): Promise<void> {
+    if (indexingSet.has(repoId)) return;
+    indexingSet.add(repoId);
+    try {
+      await indexRepo({ repoId, repoPath, project: repoId });
   const s = server as { stop: () => void; port: number };
-  return { stop: () => s.stop(), port: s.port };
+  return {
+    stop: () => { pool.stop(); queue.close(); s.stop(); },
+    port: s.port,
+    queue,
+  };
 }
 
-export async function serve(repoPath: string, opts: { port?: number }): Promise<void> {
+export async function serve(repoPath: string, opts: { port?: number; daemon?: boolean }): Promise<void> {
   const port = opts.port ?? parseInt(process.env.SENSEI_PORT ?? "7744", 10);
+  const isDaemon = opts.daemon ?? false;
+
+  // In daemon mode use plain stdout lines; in CLI mode use clack's styled output.
+  const out = {
+    info:    (msg: string) => isDaemon ? console.log(`[sensei] ${msg}`) : log.info(msg),
+    warn:    (msg: string) => isDaemon ? console.error(`[sensei] warn: ${msg}`) : log.warn(msg),
+    success: (msg: string) => isDaemon ? console.log(`[sensei] ${msg}`) : log.success(msg),
+  };
 
   // Load repoId from config
   let repoId: string | undefined;
@@ -407,38 +491,55 @@ export async function serve(repoPath: string, opts: { port?: number }): Promise<
     if (config?.repo_id) repoId = config.repo_id;
   } catch { /* ignore */ }
 
-  intro("sensei serve");
-  log.info(`Listening on :${port}`);
-  if (repoId) log.info(`Serving project: ${repoId}`);
+  // Write PID file so `sensei serve stop` / `senseid stop` can find us.
+  await mkdir(dirname(PID_FILE), { recursive: true });
+  await writeFile(PID_FILE, String(process.pid));
+  const cleanPid = () => import("fs").then(fs => fs.rmSync(PID_FILE, { force: true }));
+  process.once("exit", cleanPid);
+  process.once("SIGINT",  () => { cleanPid(); process.exit(0); });
+  process.once("SIGTERM", () => { cleanPid(); process.exit(0); });
 
-  await createReportServer({ port, repoId, repoPath });
+  if (!isDaemon) intro("sensei serve");
+  out.info(`Listening on :${port}`);
+  if (repoId) out.info(`Serving project: ${repoId}`);
 
-  // Start graph watcher
-  try {
-    const config = await loadSenseiConfig(repoPath).catch(() => null);
-    if (config?.repo_id) {
-      const repoId = config.repo_id;
-      const projectName = repoId;
+  const { queue } = await createReportServer({ port, repoId, repoPath });
+
+  // ── Desired-state reconciliation ────────────────────────────────────────────
+  // On startup, enqueue unindexed projects and start file watchers for all.
+  // Indexing runs in parallel via the WorkerPool — no sequential blocking.
+  async function startWatcher(pid: string, ppath: string) {
+    try {
       const watcher = await watchRepo({
-        repoPath,
-        repoId,
-        project: projectName,
+        repoPath: ppath, repoId: pid, project: pid,
         onUpdate: (r) => {
-          if (r.added + r.updated + r.removed > 0) {
-            log.info(`Graph updated: +${r.added} added, ~${r.updated} updated, -${r.removed} removed (${r.durationMs}ms)`);
-          }
+          if (r.added + r.updated + r.removed > 0)
+            out.info(`[${pid}] graph +${r.added} ~${r.updated} -${r.removed} (${r.durationMs}ms)`);
         },
       });
-      // Clean up watcher on SIGINT/SIGTERM
-      process.once("SIGINT", () => watcher.stop().catch(() => {}));
+      process.once("SIGINT",  () => watcher.stop().catch(() => {}));
       process.once("SIGTERM", () => watcher.stop().catch(() => {}));
-      log.success(`Graph watcher started (repo: ${repoId})`);
-    } else {
-      log.warn("No .sensei/config.yaml found — graph watcher not started. Run sensei init first.");
+    } catch (err) {
+      out.warn(`[${pid}] watcher failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  } catch (err) {
-    log.warn(`Graph watcher failed to start: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  // Kick off asynchronously — server already accepting connections before this resolves.
+  (async () => {
+    const projects = await readProjects();
+    if (projects.length === 0) {
+      out.warn("No projects registered — import repos via the desktop app.");
+      return;
+    }
+    const unindexed = projects.filter(p => !p.indexedAt);
+    if (unindexed.length > 0) {
+      out.info(`Queuing ${unindexed.length} unindexed project(s) for parallel indexing…`);
+      for (const p of unindexed) queue.enqueue(p.repoId, p.path);
+    }
+    out.info(`Starting file watchers for ${projects.length} project(s)…`);
+    await Promise.all(projects.map(p => startWatcher(p.repoId, p.path)));
+    out.success(`Reconciliation complete. ${unindexed.length} queued, ${projects.length - unindexed.length} already indexed.`);
+  })();
 
   // Keep process alive
   await new Promise(() => {});

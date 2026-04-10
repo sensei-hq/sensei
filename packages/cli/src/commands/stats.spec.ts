@@ -73,11 +73,11 @@ describe("buildStatsResult", () => {
 });
 
 describe("stats() integration", () => {
-  it("logs error when Supabase client not configured", async () => {
-    vi.mock("@sensei/shared", () => ({
-      makeSenseiClient: vi.fn().mockResolvedValue(null),
-      loadSenseiConfig: vi.fn().mockResolvedValue(null),
-    }));
+  it("logs error when config is missing", async () => {
+    vi.mock("@sensei/shared", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@sensei/shared")>();
+      return { ...actual, loadSenseiConfig: vi.fn().mockResolvedValue(null) };
+    });
 
     const { stats } = await import("./stats.js");
     const output: string[] = [];
