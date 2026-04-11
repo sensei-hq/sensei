@@ -38,9 +38,21 @@ if (subCmd === "stop") {
   const port = values.port ? parseInt(values.port, 10) : 7744;
   try {
     const res = await fetch(`http://127.0.0.1:${port}/stop`, { method: "POST" });
-    console.log(res.ok ? "senseid: stopped." : `senseid: server returned ${res.status}`);
+    if (res.ok) {
+      console.log("senseid: stopped.");
+      process.exit(0);
+    }
+    // Server responded but endpoint missing (old binary) — fall through to PID fallback
   } catch {
-    console.error("senseid: not running (no response on port " + port + ")");
+    // Not responding on HTTP — fall through to PID fallback
+  }
+  // Fallback: kill via PID file
+  try {
+    const pid = parseInt((await readFile(PID_FILE, "utf-8")).trim(), 10);
+    process.kill(pid, "SIGTERM");
+    console.log(`senseid: sent SIGTERM to pid ${pid}`);
+  } catch {
+    console.error("senseid: not running");
     process.exit(1);
   }
   process.exit(0);

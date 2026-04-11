@@ -4,7 +4,7 @@ import { homedir } from "os";
 import { IndexQueue, WorkerPool } from "./index-queue.js";
 import { intro, log } from "@clack/prompts";
 import { loadSenseiConfig } from "@sensei/shared";
-import { watchRepo, getOrCreateDb, indexRepo } from "@sensei/graph-indexer";
+import { watchRepo, getOrCreateDb, indexRepo, progressPath, type IndexProgress } from "@sensei/graph-indexer";
 import { checkSystemRequirements, OLLAMA_BASE_URL, OLLAMA_MODEL } from "./model/system-check.js";
 import { OllamaBackend, makeFallbackAnalysis } from "./model/ollama-backend.js";
 import { getActivityLog } from "./activity-log.js";
@@ -18,6 +18,7 @@ export interface ProjectEntry {
   name: string;
   path: string;
   indexedAt?: string;
+  lastError?: string;
 }
 
 async function readProjects(): Promise<ProjectEntry[]> {
@@ -200,9 +201,21 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
       if (idx >= 0) projects[idx] = entry; else projects.push(entry);
       await writeProjects(projects);
     },
-    (job, status, error) => {
-      if (status === "done") log.success(`[${job.repoId}] indexed`);
-      else log.warn(`[${job.repoId}] index failed (attempt ${job.attempts}/${3}): ${error}`);
+    async (job, status, error) => {
+      if (status === "done") {
+        log.success(`[${job.repoId}] indexed`);
+      } else {
+        log.warn(`[${job.repoId}] index failed (attempt ${job.attempts}/${3}): ${error}`);
+        // After exhausting retries, persist the error so the UI can surface it
+        if (job.attempts >= 3 && error) {
+          const projects = await readProjects().catch(() => [] as ProjectEntry[]);
+          const idx = projects.findIndex(p => p.repoId === job.repoId);
+          if (idx >= 0) {
+            projects[idx] = { ...projects[idx], lastError: error };
+            await writeProjects(projects).catch(() => {});
+          }
+        }
+      }
     },
   );
   pool.start();
@@ -222,7 +235,15 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
       if (url.pathname === "/api/projects") {
         if (req.method === "GET") {
           const projects = await readProjects();
-          return jsonResponse(projects);
+          // Annotate each project with partiallyIndexed: true if a manifest exists
+          // but the repo hasn't completed a full index yet.
+          const { existsSync: fsExistsSync } = await import("fs");
+          const annotated = projects.map(p => {
+            const manifestFile = join(homedir(), ".sensei", "projects", p.repoId, "manifest.json");
+            const partiallyIndexed = !p.indexedAt && fsExistsSync(manifestFile);
+            return { ...p, partiallyIndexed };
+          });
+          return jsonResponse(annotated);
         }
         if (req.method === "POST") {
           try {
@@ -365,7 +386,17 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         });
         const { ollamaRunning, ollamaModel } = await checkFn();
         const active = queue.active();
-        return Response.json({
+
+        // Attach per-repo progress (current file, counts) for running jobs
+        const progress: Record<string, IndexProgress> = {};
+        await Promise.all(active.filter(j => j.status === "running").map(async j => {
+          try {
+            const raw = await readFile(progressPath(j.repoId), "utf-8");
+            if (raw.trim()) progress[j.repoId] = JSON.parse(raw) as IndexProgress;
+          } catch { /* no progress file yet */ }
+        }));
+
+        return jsonResponse({
           ok: true,
           name: "sensei",
           version: "0.1.0",
@@ -374,15 +405,16 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
           ollamaModel,
           indexing: active.length > 0 ? active.map(j => j.repoId) : null,
           queue: active.map(j => ({ repoId: j.repoId, status: j.status, attempts: j.attempts })),
-        }, { headers: corsHeaders() });
+          progress,
+        });
       }
 
       if (req.method === "GET" && url.pathname === "/setup/status") {
         try {
           const status = await checkSystemRequirements();
-          return Response.json(status);
+          return jsonResponse(status);
         } catch {
-          return Response.json({ ok: false, error: "System check failed" }, { status: 500 });
+          return jsonResponse({ ok: false, error: "System check failed" }, 500);
         }
       }
 
@@ -427,10 +459,10 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         try {
           body = await req.json() as typeof body;
         } catch {
-          return Response.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+          return jsonResponse({ ok: false, error: "Invalid JSON" }, 400);
         }
         if (!body.filePath || typeof body.content !== "string") {
-          return Response.json({ ok: false, error: "filePath and content are required" }, { status: 400 });
+          return jsonResponse({ ok: false, error: "filePath and content are required" }, 400);
         }
         try {
           const backendFn = opts.ollamaBackendFn ?? (() => new OllamaBackend());
@@ -438,33 +470,32 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
           await ollama.init();
           const available = await ollama.isAvailable();
           if (!available) {
-            return Response.json(makeFallbackAnalysis(body.filePath));
+            return jsonResponse(makeFallbackAnalysis(body.filePath));
           }
           const analysis = await ollama.extract(body.content, {
             ...(body.instructions ?? {}),
             filePath: body.filePath,
           });
-          return Response.json(analysis);
+          return jsonResponse(analysis);
         } catch {
-          return Response.json({ ok: false, error: "Extraction failed" }, { status: 500 });
+          return jsonResponse({ ok: false, error: "Extraction failed" }, 500);
         }
       }
 
       if (req.method === "POST" && url.pathname === "/stop") {
         // Respond before killing so the client gets the 200.
-        setTimeout(() => process.exit(0), 100);
-        return Response.json({ ok: true }, { headers: corsHeaders() });
+        setTimeout(() => {
+          pool.stop();
+          queue.close();
+          process.exit(0);
+        }, 100);
+        return jsonResponse({ ok: true });
       }
 
-      return Response.json({ ok: false, error: "Not found" }, { status: 404 });
+      return jsonResponse({ ok: false, error: "Not found" }, 404);
     },
   });
 
-  async function indexOne(repoId: string, repoPath: string): Promise<void> {
-    if (indexingSet.has(repoId)) return;
-    indexingSet.add(repoId);
-    try {
-      await indexRepo({ repoId, repoPath, project: repoId });
   const s = server as { stop: () => void; port: number };
   return {
     stop: () => { pool.stop(); queue.close(); s.stop(); },
@@ -531,11 +562,21 @@ export async function serve(repoPath: string, opts: { port?: number; daemon?: bo
       out.warn("No projects registered — import repos via the desktop app.");
       return;
     }
+
+    // Force-enqueue ALL unindexed repos (no indexedAt). force=true resets the attempt
+    // counter so previously-failed repos (attempts=3, stuck) get 3 fresh tries.
+    // Also clears any stale lastError so old errors don't show after a successful re-index.
     const unindexed = projects.filter(p => !p.indexedAt);
     if (unindexed.length > 0) {
       out.info(`Queuing ${unindexed.length} unindexed project(s) for parallel indexing…`);
-      for (const p of unindexed) queue.enqueue(p.repoId, p.path);
+      const anyHadError = unindexed.some(p => p.lastError);
+      if (anyHadError) {
+        const updated = projects.map(p => p.lastError ? { ...p, lastError: undefined } : p);
+        await writeProjects(updated).catch(() => {});
+      }
+      for (const p of unindexed) queue.enqueue(p.repoId, p.path, /* force */ true);
     }
+
     out.info(`Starting file watchers for ${projects.length} project(s)…`);
     await Promise.all(projects.map(p => startWatcher(p.repoId, p.path)));
     out.success(`Reconciliation complete. ${unindexed.length} queued, ${projects.length - unindexed.length} already indexed.`);

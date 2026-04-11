@@ -5,7 +5,7 @@ import { SkillGenerator, SkillValidator, ClaudeAdapter } from "@sensei/engine";
 import { ClaudeBackend } from "../model/claude-backend.js";
 import type { AgentSkillsManifest, ProjectProfile } from "@sensei/shared";
 import { getOrCreateDb, searchSymbols } from "@sensei/graph-indexer";
-import { loadSenseiConfig } from "@sensei/shared";
+import { resolveProject } from "./resolve-project.js";
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
   ts: "typescript", tsx: "typescript",
@@ -21,8 +21,7 @@ async function extractProjectProfileLocal(repoId: string, repoPath: string): Pro
   let keySymbols: string[] = [];
   let dominantLanguage = "typescript";
   try {
-    const config = await loadSenseiConfig(repoPath);
-    const project = config?.repo_id ?? repoId;
+    const project = await resolveProject(repoPath, repoId);
     // Use a broad query to get any symbols — empty string matches nothing in CONTAINS,
     // so we search for a common short token
     const syms = await searchSymbols(conn, "", project, 20);

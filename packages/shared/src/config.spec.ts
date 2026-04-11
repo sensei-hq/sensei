@@ -18,7 +18,7 @@ describe("loadSenseiConfig", () => {
     await mkdir(join(tmpDir, ".sensei"), { recursive: true });
     await writeFile(
       join(tmpDir, ".sensei", "config.yaml"),
-      `repo_id: test-repo-id\nsupabase_url: https://x.supabase.co\ncustom_libs:\n  - name: rokkit\n    source_type: llms.txt\n    base_url: https://rokkit.dev/llms.txt\n`,
+      `repo_id: test-repo-id\ncustom_libs:\n  - name: rokkit\n    source_type: llms.txt\n    base_url: https://rokkit.dev/llms.txt\n`,
       "utf-8",
     );
 
@@ -42,7 +42,7 @@ describe("loadSenseiConfig", () => {
     await mkdir(join(tmpDir, ".sensei"), { recursive: true });
     await writeFile(
       join(tmpDir, ".sensei", "config.yaml"),
-      `repo_id: x\nsupabase_url: https://x.supabase.co\ncustom_libs:\n  - name: bad\n    source_type: invalid-type\n`,
+      `repo_id: x\ncustom_libs:\n  - name: bad\n    source_type: invalid-type\n`,
       "utf-8",
     );
 
