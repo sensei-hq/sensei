@@ -51,6 +51,7 @@ async function _ensureSchemaWithConn(conn: Connection): Promise<void> {
       sig STRING,
       body STRING,
       docstring STRING,
+      complexity INT64 DEFAULT 1,
       project STRING,
       PRIMARY KEY(id)
     )`
@@ -117,11 +118,6 @@ async function _ensureSchemaWithConn(conn: Connection): Promise<void> {
 
   await runIgnoreExists(
     conn,
-    `CREATE REL TABLE IF NOT EXISTS USES_TYPE(FROM Function TO Type)`
-  );
-
-  await runIgnoreExists(
-    conn,
     `CREATE REL TABLE IF NOT EXISTS ANNOTATES_FN(FROM Comment TO Function)`
   );
 
@@ -130,9 +126,26 @@ async function _ensureSchemaWithConn(conn: Connection): Promise<void> {
     `CREATE REL TABLE IF NOT EXISTS ANNOTATES_TYPE(FROM Comment TO Type)`
   );
 
-  // Add complexity column to Function table (no-op if already exists)
+  // Migration: add complexity column for databases created before it was in CREATE TABLE
   try {
     const r = await conn.query(`ALTER TABLE Function ADD complexity INT64 DEFAULT 1`);
-    if (Array.isArray(r)) { for (const x of r as any[]) x.close(); } else { (r as any).close(); }
+    if (Array.isArray(r)) { for (const x of r as QueryResult[]) x.close(); } else { (r as QueryResult).close(); }
   } catch { /* column already exists — ignore */ }
+
+  // Doc node — represents a documentation file (.md / .mdx)
+  await runIgnoreExists(
+    conn,
+    `CREATE NODE TABLE IF NOT EXISTS Doc(
+      id      STRING,
+      path    STRING,
+      title   STRING,
+      project STRING,
+      PRIMARY KEY(id)
+    )`
+  );
+
+  // Doc relationships
+  await runIgnoreExists(conn, `CREATE REL TABLE IF NOT EXISTS COVERS(FROM Doc TO File)`);
+  await runIgnoreExists(conn, `CREATE REL TABLE IF NOT EXISTS MENTIONS_FN(FROM Doc TO Function)`);
+  await runIgnoreExists(conn, `CREATE REL TABLE IF NOT EXISTS SUPERSEDES(FROM Doc TO Doc)`);
 }
