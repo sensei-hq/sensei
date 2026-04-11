@@ -1,13 +1,30 @@
 import { watch, existsSync } from "node:fs";
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
-import { join, relative, resolve, dirname } from "node:path";
-import { homedir } from "node:os";
-import { createHash } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { join, relative, resolve, dirname, extname } from "node:path";
 import { type Connection } from "kuzu";
 import fg from "fast-glob";
-import { TypeScriptAdapter } from "@sensei/engine";
+import picomatch from "picomatch";
 import { getOrCreateDb, deleteFileFromGraph, indexSingleFile } from "./indexer.js";
 import { ensureSchemaWithConn } from "./schema.js";
+import {
+  indexDocFile,
+  deleteDocFromGraph,
+  loadFnIdMap,
+  loadFileAbsPaths,
+  writeTraceability,
+} from "./doc-indexer.js";
+import {
+  SUPPORTED_EXTENSIONS,
+  DEFAULT_INCLUDE,
+  DEFAULT_EXCLUDE,
+  isDocFile,
+  type Manifest,
+  type AdapterMap,
+  loadManifest,
+  saveManifest,
+  fileHash,
+  buildAdapterMap,
+} from "./shared.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,55 +54,11 @@ export interface WatcherHandle {
   rescan(): Promise<IncrementalResult>;
 }
 
-// ─── Manifest ─────────────────────────────────────────────────────────────────
-
-interface ManifestEntry {
-  mtime: number;
-  hash: string;
-}
-
-type Manifest = Record<string, ManifestEntry>;
-
-function manifestPath(repoId: string): string {
-  return join(homedir(), ".sensei", "projects", repoId, "manifest.json");
-}
-
-async function loadManifest(repoId: string): Promise<Manifest> {
-  try {
-    const raw = await readFile(manifestPath(repoId), "utf-8");
-    return JSON.parse(raw) as Manifest;
-  } catch {
-    return {};
-  }
-}
-
-async function saveManifest(repoId: string, manifest: Manifest): Promise<void> {
-  const p = manifestPath(repoId);
-  await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify(manifest, null, 2));
-}
-
-async function fileHash(absPath: string): Promise<string> {
-  const content = await readFile(absPath);
-  return createHash("sha256").update(content).digest("hex").slice(0, 16);
-}
-
 // ─── Core ─────────────────────────────────────────────────────────────────────
-
-const DEFAULT_INCLUDE = ["**/*.ts", "**/*.tsx"];
-const DEFAULT_EXCLUDE = [
-  "**/node_modules/**",
-  "**/dist/**",
-  "**/*.spec.ts",
-  "**/*.spec.tsx",
-  "**/*.d.ts",
-  "**/*.test.ts",
-  "**/*.test.tsx",
-];
 
 async function doRescan(
   conn: Connection,
-  adapter: TypeScriptAdapter,
+  adapterMap: AdapterMap,
   opts: WatcherOptions,
   manifest: Manifest
 ): Promise<{ result: IncrementalResult; updated: Manifest }> {
@@ -137,10 +110,17 @@ async function doRescan(
     const isNew = !existing;
 
     try {
-      if (!isNew) {
-        await deleteFileFromGraph(conn, absPath, opts.project);
+      if (isDocFile(absPath)) {
+        if (!isNew) await deleteDocFromGraph(conn, absPath);
+        const fnIds = await loadFnIdMap(conn, opts.project);
+        const filePaths = await loadFileAbsPaths(conn, opts.project);
+        await indexDocFile(conn, absPath, opts.repoPath, opts.project, fnIds, filePaths);
+      } else {
+        const fileAdapter = adapterMap.get(extname(absPath).toLowerCase());
+        if (!fileAdapter) continue; // unsupported extension — skip silently
+        if (!isNew) await deleteFileFromGraph(conn, absPath, opts.project);
+        await indexSingleFile(conn, absPath, opts.repoPath, opts.project, fileAdapter);
       }
-      await indexSingleFile(conn, absPath, opts.repoPath, opts.project, adapter);
       manifest[absPath] = { mtime, hash };
       if (isNew) added++; else updated++;
     } catch {
@@ -171,7 +151,7 @@ export async function watchRepo(opts: WatcherOptions): Promise<WatcherHandle> {
   const { db, conn } = await getOrCreateDb(opts.repoId);
   await ensureSchemaWithConn(conn);
 
-  const adapter = new TypeScriptAdapter();
+  const adapterMap = buildAdapterMap();
   const manifest = await loadManifest(opts.repoId);
 
   let stopped = false;
@@ -187,19 +167,17 @@ export async function watchRepo(opts: WatcherOptions): Promise<WatcherHandle> {
 
     // Filter: only handle files matching include/exclude patterns
     const relPath = relative(opts.repoPath, absPath);
-    const matchesInclude = include.some((p) =>
-      new RegExp(p.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*")).test(relPath)
-    );
-    if (!matchesInclude) return;
-    const matchesExclude = exclude.some((p) =>
-      new RegExp(p.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*")).test(relPath)
-    );
-    if (matchesExclude) return;
+    if (!picomatch.isMatch(relPath, include)) return;
+    if (picomatch.isMatch(relPath, exclude)) return;
 
     if (!existsSync(absPath)) {
       // File deleted
       if (manifest[absPath]) {
-        await deleteFileFromGraph(conn, absPath, opts.project);
+        if (isDocFile(absPath)) {
+          await deleteDocFromGraph(conn, absPath);
+        } else {
+          await deleteFileFromGraph(conn, absPath, opts.project);
+        }
         delete manifest[absPath];
         await saveManifest(opts.repoId, manifest);
         opts.onUpdate?.({ added: 0, updated: 0, removed: 1, durationMs: 0 });
@@ -218,6 +196,12 @@ export async function watchRepo(opts: WatcherOptions): Promise<WatcherHandle> {
       const start = Date.now();
       let added = 0;
       let updated = 0;
+      let docsTouched = false;
+
+      // Lazy-load fn/file maps once if any doc files are in the batch
+      const hasDocPaths = paths.some(isDocFile);
+      const fnIds = hasDocPaths ? await loadFnIdMap(conn, opts.project) : new Map<string, string>();
+      const filePaths = hasDocPaths ? await loadFileAbsPaths(conn, opts.project) : new Set<string>();
 
       for (const p of paths) {
         try {
@@ -232,13 +216,26 @@ export async function watchRepo(opts: WatcherOptions): Promise<WatcherHandle> {
           }
 
           const isNew = !existing;
-          if (!isNew) await deleteFileFromGraph(conn, p, opts.project);
-          await indexSingleFile(conn, p, opts.repoPath, opts.project, adapter);
+          if (isDocFile(p)) {
+            if (!isNew) await deleteDocFromGraph(conn, p);
+            await indexDocFile(conn, p, opts.repoPath, opts.project, fnIds, filePaths);
+            docsTouched = true;
+          } else {
+            const fileAdapter = adapterMap.get(extname(p).toLowerCase());
+            if (!fileAdapter) continue;
+            if (!isNew) await deleteFileFromGraph(conn, p, opts.project);
+            await indexSingleFile(conn, p, opts.repoPath, opts.project, fileAdapter);
+          }
           manifest[p] = { mtime, hash };
           if (isNew) added++; else updated++;
         } catch {
           // skip failed files
         }
+      }
+
+      // Refresh traceability.json when docs changed
+      if (docsTouched) {
+        await writeTraceability(conn, opts.project, opts.repoPath);
       }
 
       await saveManifest(opts.repoId, manifest);
@@ -251,7 +248,7 @@ export async function watchRepo(opts: WatcherOptions): Promise<WatcherHandle> {
   // Perform initial rescan to catch anything that changed since last run
   const { result: initialResult, updated: updatedManifest } = await doRescan(
     conn,
-    adapter,
+    adapterMap,
     opts,
     manifest
   );
@@ -285,7 +282,7 @@ export async function watchRepo(opts: WatcherOptions): Promise<WatcherHandle> {
     },
 
     async rescan(): Promise<IncrementalResult> {
-      const { result, updated } = await doRescan(conn, adapter, opts, manifest);
+      const { result, updated } = await doRescan(conn, adapterMap, opts, manifest);
       Object.assign(manifest, updated);
       await saveManifest(opts.repoId, manifest);
       opts.onUpdate?.(result);
