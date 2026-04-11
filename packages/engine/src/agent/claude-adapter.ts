@@ -4,6 +4,7 @@ import { mkdir, writeFile, readFile, readdir, stat, cp } from "fs/promises";
 import { existsSync } from "fs";
 import type { AgentSkillFile, LibSkillFile } from "@sensei/shared";
 import type { AcpAdapter } from "./acp-adapter.js";
+import { readJsonConfig, writeJsonConfig, findSenseiBinary } from "./acp-utils.js";
 
 export class ClaudeAdapter implements AcpAdapter {
   readonly id = "claude-code";
@@ -84,6 +85,34 @@ export class ClaudeAdapter implements AcpAdapter {
 
     await mkdir(pluginsDir, { recursive: true });
     await writeFile(installedPluginsPath, JSON.stringify(registry, null, 2));
+  }
+
+  /**
+   * Register senseid MCP server in ~/.claude/settings.json → mcpServers.
+   * Uses the senseid/sensei binary found on PATH.
+   */
+  async registerMcp(senseiCmd?: string): Promise<void> {
+    const cmd = senseiCmd ?? findSenseiBinary();
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    const settings = await readJsonConfig(settingsPath);
+    const mcpServers = (settings.mcpServers as Record<string, unknown>) ?? {};
+    mcpServers["sensei"] = { command: cmd, args: ["mcp"] };
+    settings.mcpServers = mcpServers;
+    await writeJsonConfig(settingsPath, settings);
+  }
+
+  /**
+   * Inject environment variables into ~/.claude/settings.json → env.
+   */
+  async injectSettings(opts: { otlpEndpoint?: string }): Promise<void> {
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    const settings = await readJsonConfig(settingsPath);
+    const env = (settings.env as Record<string, string>) ?? {};
+    if (opts.otlpEndpoint) {
+      env["OTEL_EXPORTER_OTLP_ENDPOINT"] = opts.otlpEndpoint;
+    }
+    settings.env = env;
+    await writeJsonConfig(settingsPath, settings);
   }
 
   async installedSkills(repoSlug: string): Promise<AgentSkillFile[]> {

@@ -99,7 +99,7 @@ export function registerGetBearingsTool(server: McpServer, opts: McpServerOption
 
         lines.push(`\n## ACP Context`);
         lines.push(
-          `Repo is a TypeScript monorepo. Use get_symbol(name, depth) to look up code. Use search_code_graph(query) to find symbols. Use index_repo() to trigger a fresh index.`
+          `Use get_symbol(name, depth) to look up code. Use search_code_graph(query) to find symbols. Use index_repo() to trigger a fresh index.`
         );
 
         return { content: [{ type: "text", text: lines.join("\n") }] };

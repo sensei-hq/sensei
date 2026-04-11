@@ -70,7 +70,7 @@ export class IndexQueue {
 
   /** Pull the next pending job and atomically mark it running. Returns null if queue is empty. */
   next(): IndexJob | null {
-    const job = this.db.query<IndexJob, []>(`
+    const job = this.db.query<IndexJob, [number]>(`
       SELECT id, repo_id as repoId, repo_path as repoPath, status, attempts, created_at as createdAt, updated_at as updatedAt, error
       FROM index_jobs
       WHERE status = 'pending' AND attempts < ?
