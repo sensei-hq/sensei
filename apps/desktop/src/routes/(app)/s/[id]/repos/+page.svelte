@@ -6,7 +6,7 @@
   import RepoCard from '$lib/RepoCard.svelte';
   import type { ServerProject, RepoRole } from '$lib/types.js';
 
-  let solution = $derived(getSolutionById($page.params.id));
+  let solution = $derived(getSolutionById($page.params.id as string));
   let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
 
   let serverProjects = $state<ServerProject[]>([]);
