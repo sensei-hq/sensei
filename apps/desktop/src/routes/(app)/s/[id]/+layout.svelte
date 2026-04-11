@@ -9,10 +9,11 @@
   let solution = $state<Solution | undefined>(undefined);
 
   const tabs = $derived(solution ? [
-    { label: 'Overview',     href: `/s/${solution.id}`,          active: $page.url.pathname === `/s/${solution.id}` },
-    { label: 'Repos',        href: `/s/${solution.id}/repos`,    active: $page.url.pathname === `/s/${solution.id}/repos` },
-    { label: 'Architecture', href: `/s/${solution.id}/arch`,     active: $page.url.pathname === `/s/${solution.id}/arch` },
-    { label: 'Sessions',     href: `/s/${solution.id}/sessions`, active: $page.url.pathname === `/s/${solution.id}/sessions` },
+    { label: 'Overview',      href: `/s/${solution.id}`,           active: $page.url.pathname === `/s/${solution.id}` },
+    { label: 'Repos',         href: `/s/${solution.id}/repos`,    active: $page.url.pathname === `/s/${solution.id}/repos` },
+    { label: 'Architecture',  href: `/s/${solution.id}/arch`,     active: $page.url.pathname === `/s/${solution.id}/arch` },
+    { label: 'Traceability',  href: `/s/${solution.id}/trace`,    active: $page.url.pathname === `/s/${solution.id}/trace` },
+    { label: 'Sessions',      href: `/s/${solution.id}/sessions`, active: $page.url.pathname === `/s/${solution.id}/sessions` },
   ] : []);
 
   $effect(() => {

@@ -5,6 +5,12 @@ import { loadSenseiConfig } from "@sensei/shared";
 import { getActivityLog } from "../activity-log.js";
 import type { Decision, BacklogItem } from "../activity-log.js";
 
+export interface SolutionContext {
+  solutionName: string;
+  repos: Array<{ repoId: string; role: string; label?: string }>;
+  currentRepoRole: string;
+}
+
 export interface SessionContextResult {
   repo_name: string;
   repo_path: string;
@@ -18,6 +24,7 @@ export interface SessionContextResult {
     decisions: Decision[];
     openBacklog: BacklogItem[];
   };
+  solution?: SolutionContext;
   message: string;
 }
 
@@ -83,12 +90,34 @@ export async function getSessionContext(
   const decisions = log.getRecentDecisions(5);
   const openBacklog = log.getOpenBacklog().slice(0, 5);
 
+  // Fetch solution context from the server (posted by the desktop app)
+  let solution: SolutionContext | undefined;
+  try {
+    const port = parseInt(process.env.SENSEI_PORT ?? "7744", 10);
+    const res = await fetch(`http://127.0.0.1:${port}/api/solution-context?repoId=${encodeURIComponent(repoId)}`);
+    if (res.ok) {
+      const data = await res.json() as { solutionName: string; repos: Array<{ repoId: string; role: string; label?: string }> } | null;
+      if (data) {
+        const currentRepo = data.repos.find(r => r.repoId === repoId);
+        solution = {
+          solutionName: data.solutionName,
+          repos: data.repos.map(r => ({ repoId: r.repoId, role: r.role, label: r.label })),
+          currentRepoRole: currentRepo?.role ?? "unknown",
+        };
+      }
+    }
+  } catch { /* solution context not available */ }
+
   const interruptedMsg =
     interrupted.length > 0
       ? ` ${interrupted.length} interrupted session(s) detected — check interrupted[] for recovery context.`
       : "";
 
-  const message = `Repo "${repoName}" — ${symbolCount} functions across ${fileCount} files.${interruptedMsg} Use search() to find code, get_symbol(name, depth) for details.`;
+  const solutionMsg = solution
+    ? ` Part of "${solution.solutionName}" (${solution.repos.length} repos, this repo is ${solution.currentRepoRole}).`
+    : "";
+
+  const message = `Repo "${repoName}" — ${symbolCount} functions across ${fileCount} files.${solutionMsg}${interruptedMsg} Use search() to find code, get_symbol(name, depth) for details.`;
 
   return {
     repo_name: repoName,
@@ -100,6 +129,7 @@ export async function getSessionContext(
     session_id: sessionId,
     interrupted,
     memory: { decisions, openBacklog },
+    solution,
     message,
   };
 }
