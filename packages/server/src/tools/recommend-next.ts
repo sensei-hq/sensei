@@ -1,5 +1,6 @@
 import { getOrCreateDb, searchSymbols } from "@sensei/graph-indexer";
-import { loadSenseiConfig, createTokenCounter } from "@sensei/shared";
+import { createTokenCounter } from "@sensei/shared";
+import { resolveProject } from "./resolve-project.js";
 import { relative } from "node:path";
 
 export async function recommendNext(
@@ -10,8 +11,7 @@ export async function recommendNext(
 ): Promise<{ recommendations: Array<{ filePath: string; score: number; symbolCount: number; estimatedTokens: number }>; suggestedBudget: number }> {
   const counter = createTokenCounter(modelId);
 
-  const config = await loadSenseiConfig(repoPath);
-  const project = config?.repo_id ?? repoId;
+  const project = await resolveProject(repoPath, repoId);
 
   const { db, conn } = await getOrCreateDb(repoId);
   try {

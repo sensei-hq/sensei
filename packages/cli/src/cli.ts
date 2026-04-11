@@ -55,7 +55,7 @@ const _cwd = process.cwd();
 const repoRoot = findRepoRoot(_cwd);
 
 // Global commands don't require a repo root — skip the guard for them.
-const GLOBAL_CMDS = new Set(["serve", "server", "stats", "login", "logout", "mcp", "benchmark", "remove", "clean"]);
+const GLOBAL_CMDS = new Set(["serve", "server", "stats", "mcp", "benchmark", "remove", "clean", "register", "plugin"]);
 if (!GLOBAL_CMDS.has(cmd) && repoRoot === _cwd && !existsSync(pathJoin(_cwd, ".git")) && !existsSync(pathJoin(_cwd, "package.json"))) {
   console.error("sensei: could not detect repo root. Run sensei from inside a git repo or a directory with package.json.");
   process.exit(1);
@@ -75,7 +75,6 @@ Commands:
   index                    Re-index the current repo
   drift                    Check for doc drift
   doctor <path>            Reformat docs to match canonical templates
-  migrate                  Migrate agents/ folder to .sensei/checkpoints/
   benchmark doctor         Run 3-strategy doc conversion benchmark
   benchmark coverage       Score llmspec.yaml docs[].covers[] with Ollama
   benchmark populate       A/B benchmark: Claude without vs with populate-llmspec skill
@@ -84,9 +83,9 @@ Commands:
   serve                    Start local telemetry report receiver
   server status            Check if server is running and show model setup status
   stats                    Show tool usage analytics (last 7 days)
-  update-registry          Index custom_libs from .sensei/config.yaml into Supabase
+  update-registry          Index custom_libs from .sensei/config.yaml locally
   update-registry --lib <name>   Re-index a single named library
-  update-registry --global --lib <name>   Promote lib to shared pool (all repos can link to it)
+  register [acp]           Register sensei MCP server, hooks, and settings in detected ACPs
   install-skills           Install bundled sensei skills for Claude Code (prompts for repo/global)
   install-skills --global  Install all skills globally (~/.claude/skills/)
   plugin install           Install and register the sensei plugin in Claude Code (~/.claude/plugins/)
@@ -146,7 +145,6 @@ serve:
 
 watch:
   --repo <path>            Repo to watch (default: auto-detected repo root)
-  --drift                  Run drift check after each reindex (silent when clean)
 
 stats:
   --all                    Show all-time data instead of last 7 days
@@ -221,8 +219,7 @@ async function main() {
       if (failOnDrift && result.drifted.length > 0) process.exit(1);
       break;
     }
-    case "doctor":
-    case "reformat": {
+    case "doctor": {
       const { doctor } = await import("./commands/doctor.js");
       const target = rest[0] ?? ".";
       await doctor(target, repoRoot, {
@@ -416,6 +413,11 @@ async function main() {
       }
       break;
     }
+    case "register": {
+      const { register } = await import("./commands/register.js");
+      await register(rest[0]);
+      break;
+    }
     case "plugin": {
       const subCmd = rest[0];
       if (subCmd === "install" || !subCmd) {
@@ -425,21 +427,6 @@ async function main() {
         console.error(`Unknown plugin subcommand: ${subCmd}\nUsage: sensei plugin install`);
         process.exit(1);
       }
-      break;
-    }
-    case "login": {
-      const { loginCommand } = await import("./commands/login.js");
-      await loginCommand(values["platform-url"] as string | undefined);
-      break;
-    }
-    case "logout": {
-      const { logoutCommand } = await import("./commands/login.js");
-      await logoutCommand();
-      break;
-    }
-    case "whoami": {
-      const { whoamiCommand } = await import("./commands/login.js");
-      await whoamiCommand();
       break;
     }
     default:

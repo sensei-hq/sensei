@@ -1,5 +1,5 @@
 import { getOrCreateDb, searchSymbols } from "@sensei/graph-indexer";
-import { loadSenseiConfig } from "@sensei/shared";
+import { resolveProject } from "./resolve-project.js";
 
 export interface SearchResult {
   symbols: Array<{
@@ -20,8 +20,7 @@ export async function search(
   query: string,
   limit = 20,
 ): Promise<SearchResult> {
-  const config = await loadSenseiConfig(repoPath);
-  const projectName = config?.repo_id ?? repoId;
+  const projectName = await resolveProject(repoPath, repoId);
 
   const { db, conn } = await getOrCreateDb(repoId);
   try {

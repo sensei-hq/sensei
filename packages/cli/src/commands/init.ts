@@ -2,11 +2,10 @@ import { intro, outro, spinner, note, log, isCancel, text, multiselect } from "@
 import { writeFile, mkdir, access, readFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { installHooks } from "@sensei/collector";
 import { scanDirectDeps, inferSourceType } from "../lib/detect-libs.js";
 import { installSkills, installSkillsFromCatalog, promptAndInstallSkillsFromCatalog } from "./install-skills.js";
 import { runUpdateRegistryCore } from "./update-registry.js";
-import { setupMcp } from "./setup.js";
+import { register } from "./register.js";
 import type { LibEntry } from "@sensei/shared";
 import { claudeMdTemplate } from "../templates/claude-md.js";
 import { agentsMdTemplate } from "../templates/agents-md.js";
@@ -147,24 +146,11 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
     log.warn("You can re-index later with: sensei add");
   }
 
-  // 6. Install hooks
-  //    --global → hooks in ~/.claude/settings.json + daemon autostart
-  //    default  → hooks in <repo>/.claude/settings.json (no daemon; collector started manually)
-  const hookSpinner = spinner();
-  hookSpinner.start("Installing collector hooks...");
+  // 6 & 7. Register MCP server, hooks, and settings in all detected ACPs
   try {
-    await installHooks();
-    hookSpinner.stop(`Hooks installed${opts.global ? " (global)" : ""}`);
-  } catch (err) {
-    hookSpinner.stop(`Hook install skipped: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  // 7. Register MCP server in ~/.claude/mcp.json (always — same server for all repos via env var)
-  try {
-    await setupMcp(cwd);
-    log.success("MCP server registered — restart Claude Code to activate");
-  } catch (err) {
-    log.warn(`MCP registration skipped: ${err instanceof Error ? err.message : String(err)}`);
+    await register();
+  } catch {
+    // register() exits on no-ACP-found; swallow other errors so init continues
   }
 
   // 8. Write CLAUDE.md and AGENTS.md — always local to the repo
@@ -186,8 +172,8 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
       ``,
       `Next steps:`,
       `  1. Restart Claude Code to activate the MCP server`,
-      `  2. Start the dashboard: cd apps/dashboard && bun run dev`,
-      `  3. Start the collector: sensei serve`,
+      `  2. Start the desktop app: cd apps/desktop && bun run dev`,
+      `  3. Start the daemon: senseid`,
     ].join("\n"),
     "Setup complete"
   );

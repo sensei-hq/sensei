@@ -1,5 +1,6 @@
 import { getOrCreateDb, searchSymbols } from "@sensei/graph-indexer";
-import { loadSenseiConfig, createTokenCounter } from "@sensei/shared";
+import { createTokenCounter } from "@sensei/shared";
+import { resolveProject } from "./resolve-project.js";
 import { getActivityLog } from "../activity-log.js";
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
@@ -31,8 +32,7 @@ export async function contextPack(
   const counter = createTokenCounter(opts.modelId);
 
   // Get project name from config
-  const config = await loadSenseiConfig(repoPath);
-  const project = config?.repo_id ?? repoId;
+  const project = await resolveProject(repoPath, repoId);
 
   const { db, conn } = await getOrCreateDb(repoId);
   try {
