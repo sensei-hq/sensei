@@ -25,6 +25,8 @@ export function loadSolutions() {
     if (raw) _solutions = JSON.parse(raw) as Solution[];
   } catch { _solutions = []; }
   _activeSolutionId = localStorage.getItem(ACTIVE_KEY);
+  // Sync to server so MCP tools get solution context
+  syncSolutionsToServer();
 }
 
 export function saveSolutions() {
@@ -50,6 +52,7 @@ export function createSolution(
   };
   _solutions = [..._solutions, solution];
   saveSolutions();
+  syncSolutionsToServer();
   return solution;
 }
 
@@ -134,6 +137,20 @@ export function inferRepoRole(repo: ScannedRepo): RepoRole {
 
   if (cats.includes('app')) return 'backend';
   return 'unknown';
+}
+
+// ─── Server sync ─────────────────────────────────────────────────────────────
+
+/** Push solution context to the sensei server so MCP tools can include it. */
+export async function syncSolutionsToServer() {
+  const port = parseInt(typeof localStorage !== 'undefined' ? (localStorage.getItem('sensei:port') ?? '7744') : '7744', 10);
+  try {
+    await fetch(`http://127.0.0.1:${port}/api/solution-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ solutions: _solutions.map(s => ({ id: s.id, name: s.name, repos: s.repos })) }),
+    });
+  } catch { /* server may not be running */ }
 }
 
 // ─── Reset ───────────────────────────────────────────────────────────────────
