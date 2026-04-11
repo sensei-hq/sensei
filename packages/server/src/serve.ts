@@ -49,6 +49,19 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
+type DocType = "requirement" | "design" | "api-spec" | "changelog" | "operations" | "overview" | "doc";
+
+function classifyDoc(relPath: string): DocType {
+  const lower = relPath.toLowerCase();
+  if (/\b(requirements?|specs?|prd|user.?stor)/i.test(lower)) return "requirement";
+  if (/\b(design|architecture|adr[-_])/i.test(lower)) return "design";
+  if (/\b(api|openapi|swagger)/i.test(lower)) return "api-spec";
+  if (/\b(changelog|release)/i.test(lower)) return "changelog";
+  if (/\b(runbook|ops|operations|playbook)/i.test(lower)) return "operations";
+  if (/readme/i.test(lower)) return "overview";
+  return "doc";
+}
+
 /** Query Kuzu graph for graph intelligence data (communities, godNodes, rationale). */
 async function buildGraphData(repoId: string, repoPath: string) {
   const { db, conn } = await getOrCreateDb(repoId);
@@ -220,6 +233,14 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
   );
   pool.start();
 
+  // In-memory solution context — posted by the desktop, read by MCP tools
+  type SolutionContext = {
+    solutionId: string;
+    solutionName: string;
+    repos: Array<{ repoId: string; path: string; role: string; label?: string }>;
+  };
+  const solutionContextByRepo = new Map<string, SolutionContext>();
+
   const server = Bun.serve({
     port,
     async fetch(req: Request) {
@@ -312,6 +333,29 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         } catch (err) {
           return jsonResponse({ ok: false, error: (err as Error).message }, 500);
         }
+      }
+
+      // ── Solution context ──────────────────────────────────────────────
+      if (req.method === "POST" && url.pathname === "/api/solution-context") {
+        try {
+          const body = await req.json() as { solutions: Array<{ id: string; name: string; repos: Array<{ repoId: string; path: string; role: string; label?: string }> }> };
+          solutionContextByRepo.clear();
+          for (const sol of body.solutions ?? []) {
+            const ctx: SolutionContext = { solutionId: sol.id, solutionName: sol.name, repos: sol.repos };
+            for (const repo of sol.repos) {
+              solutionContextByRepo.set(repo.repoId, ctx);
+            }
+          }
+          return jsonResponse({ ok: true, count: solutionContextByRepo.size });
+        } catch {
+          return jsonResponse({ ok: false, error: "Invalid JSON" }, 400);
+        }
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/solution-context") {
+        const repoId = url.searchParams.get("repoId") ?? opts.repoId;
+        const ctx = repoId ? solutionContextByRepo.get(repoId) : undefined;
+        return jsonResponse(ctx ?? null);
       }
 
       if (req.method === "GET" && url.pathname === "/api/drift") {
@@ -479,6 +523,72 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
           return jsonResponse(analysis);
         } catch {
           return jsonResponse({ ok: false, error: "Extraction failed" }, 500);
+        }
+      }
+
+      // ── Traceability ────────────────────────────────────────────────────
+      if (req.method === "GET" && url.pathname === "/api/trace") {
+        const repoId = url.searchParams.get("repoId") ?? opts.repoId;
+        const repoPath = url.searchParams.get("repoPath") ?? opts.repoPath;
+        if (!repoId || !repoPath) return jsonResponse({ docs: [], codeFiles: [] });
+
+        try {
+          const { getOrCreateDb } = await import("@sensei/graph-indexer");
+          const { db, conn } = await getOrCreateDb(repoId);
+          try {
+            const { escapeCypherStr } = await import("@sensei/graph-indexer");
+            const eProject = escapeCypherStr(repoId);
+            const { relative } = await import("node:path");
+
+            // Get all docs with their covered files and mentioned functions
+            const docResult = await conn.query(
+              `MATCH (d:Doc {project: '${eProject}'})
+               OPTIONAL MATCH (d)-[:COVERS]->(f:File)
+               OPTIONAL MATCH (d)-[:MENTIONS_FN]->(fn:Function)
+               RETURN d.path AS docPath, d.title AS title,
+                      COLLECT(DISTINCT f.path) AS coveredFiles,
+                      COLLECT(DISTINCT fn.name) AS mentionedFns`
+            );
+            const qr = Array.isArray(docResult) ? (docResult as any[])[0] : docResult;
+            const rows = await qr.getAll();
+            if (Array.isArray(docResult)) { for (const r of docResult as any[]) r.close(); } else { (docResult as any).close(); }
+
+            const docs = (rows as any[]).map((row: any) => {
+              const docAbs = String(row["docPath"] ?? "");
+              const docRel = relative(repoPath, docAbs);
+              const coveredFiles = (row["coveredFiles"] as string[] ?? []).map(f => relative(repoPath, f));
+              const mentionedFns = row["mentionedFns"] as string[] ?? [];
+              return {
+                path: docRel,
+                title: String(row["title"] ?? docRel.split("/").at(-1) ?? ""),
+                type: classifyDoc(docRel),
+                coveredFiles,
+                mentionedFns,
+              };
+            });
+
+            // Get all code files (for test detection)
+            const fileResult = await conn.query(
+              `MATCH (f:File {project: '${eProject}'}) RETURN f.path AS path`
+            );
+            const fqr = Array.isArray(fileResult) ? (fileResult as any[])[0] : fileResult;
+            const fileRows = await fqr.getAll();
+            if (Array.isArray(fileResult)) { for (const r of fileResult as any[]) r.close(); } else { (fileResult as any).close(); }
+
+            const codeFiles = (fileRows as any[]).map((row: any) => {
+              const absPath = String(row["path"] ?? "");
+              const relPath = relative(repoPath, absPath);
+              const isTest = /\.(spec|test)\.(ts|tsx|js|jsx|py|rs)$/.test(relPath) || relPath.includes("__tests__/") || /_test\.(py|go|rs)$/.test(relPath);
+              return { path: relPath, isTest };
+            });
+
+            return jsonResponse({ docs, codeFiles });
+          } finally {
+            await conn.close();
+            await db.close();
+          }
+        } catch (err) {
+          return jsonResponse({ docs: [], codeFiles: [], error: String(err) });
         }
       }
 
