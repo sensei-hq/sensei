@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
-  import { getSolutionById, updateSolution } from '$lib/solutions.js';
+  import { getSolutionById, updateSolution } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import type { Solution, ServerProject, SolutionCategory } from '$lib/types.js';
 

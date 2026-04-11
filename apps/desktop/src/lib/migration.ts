@@ -1,5 +1,5 @@
 import type { ScannedRepo, SolutionRepo } from './types.js';
-import { createSolution, getSolutions, loadSolutions, setActiveSolutionId, inferRepoRole } from './solutions.js';
+import { createSolution, getSolutions, loadSolutions, setActiveSolutionId, inferRepoRole } from './solutions.svelte.js';
 
 const MIGRATION_FLAG = 'sensei:migration_v1';
 

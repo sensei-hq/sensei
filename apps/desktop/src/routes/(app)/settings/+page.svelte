@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getSolutions, clearAllSolutions } from '$lib/solutions.js';
+  import { getSolutions, clearAllSolutions } from '$lib/solutions.svelte.js';
 
   let projectCount = $state(0);
   let solutionCount = $derived(getSolutions().length);

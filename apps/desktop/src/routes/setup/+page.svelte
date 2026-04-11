@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import RepoList from '$lib/RepoList.svelte';
-  import { createSolution, setActiveSolutionId, inferRepoRole, loadSolutions } from '$lib/solutions.js';
+  import { createSolution, setActiveSolutionId, inferRepoRole, loadSolutions } from '$lib/solutions.svelte.js';
   import type { SolutionRepo } from '$lib/types.js';
 
   type Step = 'welcome' | 'acps' | 'folders' | 'repos' | 'groups' | 'done';
