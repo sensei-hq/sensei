@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { getSolutionById } from '$lib/solutions.js';
+  import { getSolutionById } from '$lib/solutions.svelte.js';
   import type { Solution } from '$lib/types.js';
 
   let { children } = $props();

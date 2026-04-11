@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { migrate } from '$lib/migration.js';
-  import { loadSolutions, getSolutions, getSolutionsByCategory, getStandaloneLibraries } from '$lib/solutions.js';
+  import { loadSolutions, getSolutions, getSolutionsByCategory, getStandaloneLibraries } from '$lib/solutions.svelte.js';
   import ServerStatus from '$lib/ServerStatus.svelte';
   import SidebarSolution from '$lib/SidebarSolution.svelte';
 
