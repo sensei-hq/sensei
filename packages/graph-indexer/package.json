@@ -18,10 +18,12 @@
     "@sensei/engine": "workspace:*",
     "@sensei/shared": "workspace:*",
     "fast-glob": "^3.3.3",
-    "kuzu": "^0.11.3"
+    "kuzu": "^0.11.3",
+    "picomatch": "^4.0.2"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
+    "@types/picomatch": "^4.0.0",
     "typescript": "^6.0.2"
   }
 }

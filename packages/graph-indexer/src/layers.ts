@@ -1,4 +1,5 @@
 import { type Connection, type QueryResult, type KuzuValue } from "kuzu";
+import { escapeCypherStr } from "./shared.js";
 
 export type Depth = 0 | 1 | 2 | 3 | 4 | 5;
 
@@ -36,22 +37,40 @@ export interface CommentResult {
   line: number;
 }
 
-async function getAllRows(
-  result: QueryResult | QueryResult[]
-): Promise<Record<string, KuzuValue>[]> {
-  const qr = Array.isArray(result) ? result[0] : result;
+// ─── Query helpers ───────────────────────────────────────────────────────────
+
+type KuzuRow = Record<string, KuzuValue>;
+
+/** Run a Cypher query and return all result rows, properly closing the result handle. */
+async function queryRows(conn: Connection, cypher: string): Promise<KuzuRow[]> {
+  const result = await conn.query(cypher);
+  const qr = Array.isArray(result) ? (result as QueryResult[])[0] : (result as QueryResult);
   const rows = await qr.getAll();
   if (Array.isArray(result)) {
-    for (const r of result) r.close();
+    for (const r of result as QueryResult[]) r.close();
   } else {
-    result.close();
+    (result as QueryResult).close();
   }
   return rows;
 }
 
-function escapeCypher(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+/** Extract a node object from a row, e.g. row["f"] for RETURN f */
+function node(row: KuzuRow, alias: string): KuzuRow {
+  return row[alias] as KuzuRow;
 }
+
+function str(v: KuzuValue): string { return String(v ?? ""); }
+function num(v: KuzuValue): number { return Number(v ?? 0); }
+
+function toSymbolRef(n: KuzuRow): SymbolRef {
+  return { name: str(n["name"]), file: str(n["file"]), line: num(n["line"]) };
+}
+
+function toComment(n: KuzuRow): CommentResult {
+  return { tag: str(n["tag"]), text: str(n["text"]), line: num(n["line"]) };
+}
+
+// ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function getSymbol(
   conn: Connection,
@@ -59,131 +78,78 @@ export async function getSymbol(
   project: string,
   depth: Depth
 ): Promise<SymbolResult | null> {
-  const escapedName = escapeCypher(name);
-  const escapedProject = escapeCypher(project);
+  const eName = escapeCypherStr(name);
+  const eProject = escapeCypherStr(project);
 
   // Try function first
-  let fnRows: Record<string, KuzuValue>[] = [];
+  let fnRows: KuzuRow[] = [];
   try {
-    const result = await conn.query(
-      `MATCH (f:Function {name: '${escapedName}', project: '${escapedProject}'}) RETURN f`
+    fnRows = await queryRows(conn,
+      `MATCH (f:Function {name: '${eName}', project: '${eProject}'}) RETURN f`
     );
-    fnRows = await getAllRows(result as QueryResult | QueryResult[]);
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
 
   if (fnRows.length > 0) {
-    const fn = fnRows[0]["f"] as Record<string, KuzuValue>;
+    const fn = node(fnRows[0], "f");
     const base: SymbolResult = {
-      name: String(fn["name"] ?? ""),
+      name: str(fn["name"]),
       kind: "function",
-      file: String(fn["file"] ?? ""),
-      line: Number(fn["line"] ?? 0),
+      file: str(fn["file"]),
+      line: num(fn["line"]),
     };
 
     if (depth >= 1) {
-      base.sig = String(fn["sig"] ?? "");
-      base.docstring = String(fn["docstring"] ?? "");
+      base.sig = str(fn["sig"]);
+      base.docstring = str(fn["docstring"]);
     }
 
     if (depth >= 2) {
-      // callers: functions that CALL this function
       base.callers = await getCallers(conn, name, project, 1);
 
-      // callees: functions this function calls
       try {
-        const calleeResult = await conn.query(
-          `MATCH (f:Function {name: '${escapedName}', project: '${escapedProject}'})-[:CALLS]->(g:Function) RETURN g`
+        const calleeRows = await queryRows(conn,
+          `MATCH (f:Function {name: '${eName}', project: '${eProject}'})-[:CALLS]->(g:Function) RETURN g`
         );
-        const calleeRows = await getAllRows(
-          calleeResult as QueryResult | QueryResult[]
-        );
-        base.callees = calleeRows.map((r) => {
-          const g = r["g"] as Record<string, KuzuValue>;
-          return {
-            name: String(g["name"] ?? ""),
-            file: String(g["file"] ?? ""),
-            line: Number(g["line"] ?? 0),
-          };
-        });
+        base.callees = calleeRows.map(r => toSymbolRef(node(r, "g")));
       } catch {
         base.callees = [];
       }
 
-      // usedTypes
-      try {
-        const typeResult = await conn.query(
-          `MATCH (f:Function {name: '${escapedName}', project: '${escapedProject}'})-[:USES_TYPE]->(t:Type) RETURN t`
-        );
-        const typeRows = await getAllRows(
-          typeResult as QueryResult | QueryResult[]
-        );
-        base.usedTypes = typeRows.map((r) => {
-          const t = r["t"] as Record<string, KuzuValue>;
-          return {
-            name: String(t["name"] ?? ""),
-            file: String(t["file"] ?? ""),
-            line: Number(t["line"] ?? 0),
-          };
-        });
-      } catch {
-        base.usedTypes = [];
-      }
+      // usedTypes — USES_TYPE edges are not yet populated by the indexer
+      base.usedTypes = [];
     }
 
     if (depth >= 3) {
-      // Find the file this function belongs to
-      const fnFile = String(fn["file"] ?? "");
-      const fileId = `file:${fnFile}`;
-      const escapedFileId = escapeCypher(fileId);
+      const fileId = `file:${str(fn["file"])}`;
+      const eFileId = escapeCypherStr(fileId);
 
-      // imports
       try {
-        const importResult = await conn.query(
-          `MATCH (f:File {id: '${escapedFileId}'})-[:IMPORTS]->(g:File) RETURN g.path AS path`
+        const importRows = await queryRows(conn,
+          `MATCH (f:File {id: '${eFileId}'})-[:IMPORTS]->(g:File) RETURN g.path AS path`
         );
-        const importRows = await getAllRows(
-          importResult as QueryResult | QueryResult[]
-        );
-        base.imports = importRows.map((r) => String(r["path"] ?? ""));
+        base.imports = importRows.map(r => str(r["path"]));
       } catch {
         base.imports = [];
       }
 
-      // importedBy
       try {
-        const importedByResult = await conn.query(
-          `MATCH (g:File)-[:IMPORTS]->(f:File {id: '${escapedFileId}'}) RETURN g.path AS path`
+        const importedByRows = await queryRows(conn,
+          `MATCH (g:File)-[:IMPORTS]->(f:File {id: '${eFileId}'}) RETURN g.path AS path`
         );
-        const importedByRows = await getAllRows(
-          importedByResult as QueryResult | QueryResult[]
-        );
-        base.importedBy = importedByRows.map((r) => String(r["path"] ?? ""));
+        base.importedBy = importedByRows.map(r => str(r["path"]));
       } catch {
         base.importedBy = [];
       }
     }
 
     if (depth >= 5) {
-      base.body = String(fn["body"] ?? "");
+      base.body = str(fn["body"]);
 
-      // comments annotating this function
       try {
-        const commentResult = await conn.query(
-          `MATCH (c:Comment)-[:ANNOTATES_FN]->(f:Function {name: '${escapedName}', project: '${escapedProject}'}) RETURN c`
+        const commentRows = await queryRows(conn,
+          `MATCH (c:Comment)-[:ANNOTATES_FN]->(f:Function {name: '${eName}', project: '${eProject}'}) RETURN c`
         );
-        const commentRows = await getAllRows(
-          commentResult as QueryResult | QueryResult[]
-        );
-        base.comments = commentRows.map((r) => {
-          const c = r["c"] as Record<string, KuzuValue>;
-          return {
-            tag: String(c["tag"] ?? ""),
-            text: String(c["text"] ?? ""),
-            line: Number(c["line"] ?? 0),
-          };
-        });
+        base.comments = commentRows.map(r => toComment(node(r, "c")));
       } catch {
         base.comments = [];
       }
@@ -193,64 +159,46 @@ export async function getSymbol(
   }
 
   // Try type
-  let typeRows: Record<string, KuzuValue>[] = [];
+  let typeRows: KuzuRow[] = [];
   try {
-    const result = await conn.query(
-      `MATCH (t:Type {name: '${escapedName}', project: '${escapedProject}'}) RETURN t`
+    typeRows = await queryRows(conn,
+      `MATCH (t:Type {name: '${eName}', project: '${eProject}'}) RETURN t`
     );
-    typeRows = await getAllRows(result as QueryResult | QueryResult[]);
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
 
   if (typeRows.length > 0) {
-    const t = typeRows[0]["t"] as Record<string, KuzuValue>;
+    const t = node(typeRows[0], "t");
     const base: SymbolResult = {
-      name: String(t["name"] ?? ""),
+      name: str(t["name"]),
       kind: "type",
-      file: String(t["file"] ?? ""),
-      line: Number(t["line"] ?? 0),
+      file: str(t["file"]),
+      line: num(t["line"]),
     };
 
     if (depth >= 1) {
-      base.sig = String(t["kind"] ?? ""); // use kind as sig for types
+      base.sig = str(t["kind"]);
     }
 
     if (depth >= 3) {
-      const typeFile = String(t["file"] ?? "");
-      const fileId = `file:${typeFile}`;
-      const escapedFileId = escapeCypher(fileId);
+      const fileId = `file:${str(t["file"])}`;
+      const eFileId = escapeCypherStr(fileId);
 
       try {
-        const importResult = await conn.query(
-          `MATCH (f:File {id: '${escapedFileId}'})-[:IMPORTS]->(g:File) RETURN g.path AS path`
+        const importRows = await queryRows(conn,
+          `MATCH (f:File {id: '${eFileId}'})-[:IMPORTS]->(g:File) RETURN g.path AS path`
         );
-        const importRows = await getAllRows(
-          importResult as QueryResult | QueryResult[]
-        );
-        base.imports = importRows.map((r) => String(r["path"] ?? ""));
+        base.imports = importRows.map(r => str(r["path"]));
       } catch {
         base.imports = [];
       }
     }
 
     if (depth >= 5) {
-      // comments annotating this type
       try {
-        const commentResult = await conn.query(
-          `MATCH (c:Comment)-[:ANNOTATES_TYPE]->(t:Type {name: '${escapedName}', project: '${escapedProject}'}) RETURN c`
+        const commentRows = await queryRows(conn,
+          `MATCH (c:Comment)-[:ANNOTATES_TYPE]->(t:Type {name: '${eName}', project: '${eProject}'}) RETURN c`
         );
-        const commentRows = await getAllRows(
-          commentResult as QueryResult | QueryResult[]
-        );
-        base.comments = commentRows.map((r) => {
-          const c = r["c"] as Record<string, KuzuValue>;
-          return {
-            tag: String(c["tag"] ?? ""),
-            text: String(c["text"] ?? ""),
-            line: Number(c["line"] ?? 0),
-          };
-        });
+        base.comments = commentRows.map(r => toComment(node(r, "c")));
       } catch {
         base.comments = [];
       }
@@ -268,23 +216,14 @@ export async function getCallers(
   project: string,
   hops: number
 ): Promise<SymbolRef[]> {
-  const escapedName = escapeCypher(name);
-  const escapedProject = escapeCypher(project);
+  const eName = escapeCypherStr(name);
+  const eProject = escapeCypherStr(project);
 
-  // Simple 1-hop for now; variable hops could use Kuzu's recursive patterns
   try {
-    const result = await conn.query(
-      `MATCH (g:Function)-[:CALLS]->(f:Function {name: '${escapedName}', project: '${escapedProject}'}) RETURN g`
+    const rows = await queryRows(conn,
+      `MATCH (g:Function)-[:CALLS]->(f:Function {name: '${eName}', project: '${eProject}'}) RETURN g`
     );
-    const rows = await getAllRows(result as QueryResult | QueryResult[]);
-    return rows.map((r) => {
-      const g = r["g"] as Record<string, KuzuValue>;
-      return {
-        name: String(g["name"] ?? ""),
-        file: String(g["file"] ?? ""),
-        line: Number(g["line"] ?? 0),
-      };
-    });
+    return rows.map(r => toSymbolRef(node(r, "g")));
   } catch {
     return [];
   }
@@ -296,51 +235,44 @@ export async function searchSymbols(
   project: string,
   limit: number
 ): Promise<SymbolResult[]> {
-  const escapedProject = escapeCypher(project);
+  const eProject = escapeCypherStr(project);
+  const eQuery = escapeCypherStr(query);
   const results: SymbolResult[] = [];
 
   // Search functions
   try {
-    const fnResult = await conn.query(
-      `MATCH (f:Function {project: '${escapedProject}'}) WHERE f.name CONTAINS '${escapeCypher(query)}' RETURN f LIMIT ${limit}`
+    const fnRows = await queryRows(conn,
+      `MATCH (f:Function {project: '${eProject}'}) WHERE f.name CONTAINS '${eQuery}' RETURN f LIMIT ${limit}`
     );
-    const fnRows = await getAllRows(fnResult as QueryResult | QueryResult[]);
     for (const row of fnRows) {
-      const f = row["f"] as Record<string, KuzuValue>;
+      const f = node(row, "f");
       results.push({
-        name: String(f["name"] ?? ""),
+        name: str(f["name"]),
         kind: "function",
-        file: String(f["file"] ?? ""),
-        line: Number(f["line"] ?? 0),
-        sig: String(f["sig"] ?? ""),
-        docstring: String(f["docstring"] ?? ""),
+        file: str(f["file"]),
+        line: num(f["line"]),
+        sig: str(f["sig"]),
+        docstring: str(f["docstring"]),
       });
     }
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
 
   // Search types
   if (results.length < limit) {
     try {
-      const typeResult = await conn.query(
-        `MATCH (t:Type {project: '${escapedProject}'}) WHERE t.name CONTAINS '${escapeCypher(query)}' RETURN t LIMIT ${limit - results.length}`
-      );
-      const typeRows = await getAllRows(
-        typeResult as QueryResult | QueryResult[]
+      const typeRows = await queryRows(conn,
+        `MATCH (t:Type {project: '${eProject}'}) WHERE t.name CONTAINS '${eQuery}' RETURN t LIMIT ${limit - results.length}`
       );
       for (const row of typeRows) {
-        const t = row["t"] as Record<string, KuzuValue>;
+        const t = node(row, "t");
         results.push({
-          name: String(t["name"] ?? ""),
+          name: str(t["name"]),
           kind: "type",
-          file: String(t["file"] ?? ""),
-          line: Number(t["line"] ?? 0),
+          file: str(t["file"]),
+          line: num(t["line"]),
         });
       }
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }
 
   return results;

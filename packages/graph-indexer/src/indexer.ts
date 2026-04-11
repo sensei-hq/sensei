@@ -5,14 +5,27 @@ import {
   type KuzuValue,
 } from "kuzu";
 import fg from "fast-glob";
-import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { join, resolve, dirname, relative } from "node:path";
+import { readFile, mkdir, writeFile, unlink } from "node:fs/promises";
+import { join, resolve, dirname, relative, extname } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { TypeScriptAdapter } from "@sensei/engine";
 import { extractTaggedComments } from "./parser.js";
 import { ensureSchemaWithConn } from "./schema.js";
+import { indexDocFile, writeTraceability } from "./doc-indexer.js";
+import {
+  SUPPORTED_EXTENSIONS,
+  DEFAULT_CODE_INCLUDE,
+  DEFAULT_EXCLUDE,
+  type Manifest,
+  type LanguageAdapter,
+  loadManifest,
+  saveManifest,
+  fileHash,
+  buildAdapterMap,
+  escapeCypherStr,
+} from "./shared.js";
 
 const FUNCTION_KINDS = new Set(["function", "method", "component", "hook"]);
 
@@ -20,21 +33,52 @@ function isFunctionLike(kind: string): boolean {
   return FUNCTION_KINDS.has(kind);
 }
 
+// Re-export for downstream consumers
+export { SUPPORTED_EXTENSIONS } from "./shared.js";
+
 export interface IndexOptions {
   repoPath: string;
   repoId: string;
   project: string; // display name
-  include?: string[]; // glob patterns, default ['**/*.ts', '**/*.tsx']
-  exclude?: string[]; // default ['**/node_modules/**', '**/dist/**', '**/*.spec.ts', '**/*.d.ts']
+  include?: string[]; // glob patterns — defaults to all SUPPORTED_EXTENSIONS
+  exclude?: string[]; // default excludes node_modules, dist, test/spec files, type declarations
 }
 
 export interface IndexResult {
   filesIndexed: number;
+  filesSkipped: number;
   functionsIndexed: number;
   typesIndexed: number;
   edgesCreated: number;
   durationMs: number;
+  docsIndexed: number;
 }
+
+
+export interface IndexProgress {
+  repoId: string;
+  currentFile: string;   // relative path of the file being processed right now
+  filesProcessed: number;
+  filesTotal: number;
+  filesUnchanged: number;
+  startedAt: string;
+}
+
+async function writeProgress(repoId: string, progress: IndexProgress): Promise<void> {
+  const dbDir = join(homedir(), ".sensei", "projects", repoId);
+  await writeFile(join(dbDir, "progress.json"), JSON.stringify(progress)).catch(() => {});
+}
+
+export async function clearProgress(repoId: string): Promise<void> {
+  const p = join(homedir(), ".sensei", "projects", repoId, "progress.json");
+  await unlink(p).catch(() => {});
+}
+
+export function progressPath(repoId: string): string {
+  return join(homedir(), ".sensei", "projects", repoId, "progress.json");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function getOrCreateDb(
   repoId: string
@@ -63,15 +107,6 @@ function closeResult(result: QueryResult | QueryResult[]): void {
   } else {
     result.close();
   }
-}
-
-function escapeCypherStr(s: string): string {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
 }
 
 async function mergeNode(
@@ -140,6 +175,8 @@ export interface SingleFileResult {
   edgesCreated: number;
   imports: { targetPath: string; names: string[] }[];
   callEdges: { callerName: string; calleeName: string; callerId: string }[];
+  /** All function-like symbols: name → graph node ID */
+  fnIds: Map<string, string>;
 }
 
 /**
@@ -196,14 +233,14 @@ export async function indexSingleFile(
   absPath: string,
   repoPath: string,
   project: string,
-  adapter: TypeScriptAdapter
+  adapter: LanguageAdapter
 ): Promise<SingleFileResult> {
   const relPath = relative(repoPath, absPath);
   const parsed = await adapter.parse({ path: relPath, absPath, mtime: 0, hash: "", size: 0 });
   const fileContent = await readFile(absPath, "utf-8");
 
   const fileId = `file:${absPath}`;
-  const moduleName = relPath.replace(/\.(ts|tsx)$/, "").replace(/\\/g, "/");
+  const moduleName = relPath.replace(/\.[^./\\]+$/, "").replace(/\\/g, "/");
 
   await mergeNode(conn, "File", {
     id: fileId,
@@ -218,6 +255,7 @@ export async function indexSingleFile(
   let typesIndexed = 0;
   let edgesCreated = 0;
   const callEdges: SingleFileResult["callEdges"] = [];
+  const fnIds = new Map<string, string>();
 
   for (const sym of parsed.symbols) {
     if (isFunctionLike(sym.kind)) {
@@ -236,6 +274,7 @@ export async function indexSingleFile(
         project,
       });
       functionsIndexed++;
+      fnIds.set(sym.name, id);
 
       await mergeEdge(conn, "File", fileId, "Function", id, "EXPORTS_FN");
       edgesCreated++;
@@ -292,25 +331,17 @@ export async function indexSingleFile(
     }
   }
 
-  return { functionsIndexed, typesIndexed, edgesCreated, imports: parsed.imports, callEdges };
+  return { functionsIndexed, typesIndexed, edgesCreated, imports: parsed.imports, callEdges, fnIds };
 }
 
 export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
   const start = Date.now();
 
-  const include = opts.include ?? ["**/*.ts", "**/*.tsx"];
-  const exclude = opts.exclude ?? [
-    "**/node_modules/**",
-    "**/dist/**",
-    "**/*.spec.ts",
-    "**/*.spec.tsx",
-    "**/*.d.ts",
-    "**/*.test.ts",
-    "**/*.test.tsx",
-  ];
+  const include = opts.include ?? DEFAULT_CODE_INCLUDE;
+  const exclude = opts.exclude ?? DEFAULT_EXCLUDE;
 
   const { db, conn } = await getOrCreateDb(opts.repoId);
-  const adapter = new TypeScriptAdapter();
+  const adapterMap = buildAdapterMap();
 
   try {
     await ensureSchemaWithConn(conn);
@@ -321,31 +352,112 @@ export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
       absolute: true,
     });
 
+    // Load manifest to enable incremental indexing and per-file resume.
+    // Each file is written to Kuzu immediately, and the manifest is updated
+    // right after, so an interrupted run resumes from the last checkpoint.
+    const manifest = await loadManifest(opts.repoId);
+    const fileSet = new Set(files);
+
+    // Remove graph nodes for files that no longer exist
+    for (const knownPath of Object.keys(manifest)) {
+      if (!fileSet.has(knownPath)) {
+        await deleteFileFromGraph(conn, knownPath, opts.project).catch(() => {});
+        delete manifest[knownPath];
+      }
+    }
+
     let functionsIndexed = 0;
     let typesIndexed = 0;
     let edgesCreated = 0;
+    let filesSkipped = 0;
+    let filesUnchanged = 0;
+    let filesProcessed = 0;
+    const startedAt = new Date().toISOString();
+    const fileErrors: { path: string; error: string }[] = [];
 
-    // Collect cross-file data for second/third passes
+    // Write an initial progress entry immediately so the UI shows the repo as active
+    // even during the fast unchanged-file scan phase.
+    await writeProgress(opts.repoId, {
+      repoId: opts.repoId,
+      currentFile: '(scanning…)',
+      filesProcessed: 0,
+      filesTotal: files.length,
+      filesUnchanged: 0,
+      startedAt,
+    });
+
+    // Collect cross-file data for second/third passes (only changed/new files)
     const allFileResults = new Map<string, SingleFileResult>();
 
-    // First pass: index all files via indexSingleFile
+    // First pass: incremental index — skip files that haven't changed since last run
     for (const absPath of files) {
+      const ext = extname(absPath).toLowerCase();
+      const adapter = adapterMap.get(ext);
+      if (!adapter) {
+        filesSkipped++;
+        fileErrors.push({ path: absPath, error: `No adapter for extension: ${ext}` });
+        continue;
+      }
+
+      // Check manifest: skip if mtime unchanged, verify with hash for git-checkout safety
+      try {
+        const s = await stat(absPath);
+        const mtime = Math.floor(s.mtimeMs);
+        const existing = manifest[absPath];
+        if (existing) {
+          if (existing.mtime === mtime) {
+            filesUnchanged++;
+            continue; // fast path: mtime exact match
+          }
+          const hash = await fileHash(absPath);
+          if (existing.hash === hash) {
+            manifest[absPath] = { mtime, hash }; // update mtime only
+            filesUnchanged++;
+            continue;
+          }
+          // File changed — delete old graph nodes before re-indexing
+          await deleteFileFromGraph(conn, absPath, opts.project).catch(() => {});
+        }
+      } catch {
+        // Can't stat — try to index anyway
+      }
+
+      // Emit live progress before processing so the UI shows the file being worked on
+      await writeProgress(opts.repoId, {
+        repoId: opts.repoId,
+        currentFile: relative(opts.repoPath, absPath),
+        filesProcessed,
+        filesTotal: files.length,
+        filesUnchanged,
+        startedAt,
+      });
+
       try {
         const result = await indexSingleFile(conn, absPath, opts.repoPath, opts.project, adapter);
         allFileResults.set(absPath, result);
         functionsIndexed += result.functionsIndexed;
         typesIndexed += result.typesIndexed;
         edgesCreated += result.edgesCreated;
-      } catch {
-        continue;
+        filesProcessed++;
+        // Checkpoint: write manifest entry immediately so a restart skips this file
+        const hash = await fileHash(absPath).catch(() => "");
+        const mtime = await stat(absPath).then(s => Math.floor(s.mtimeMs)).catch(() => 0);
+        manifest[absPath] = { mtime, hash };
+        await saveManifest(opts.repoId, manifest).catch(() => {});
+      } catch (err) {
+        filesSkipped++;
+        fileErrors.push({ path: absPath, error: err instanceof Error ? err.message : String(err) });
+        // Continue — one bad file should never abort the whole repo
       }
     }
 
-    // Build name→id map for CALLS resolution (across all files)
+    // Build name→id map for CALLS resolution (across all files).
+    // Uses fnIds from each file result so ALL function nodes are included,
+    // not just those that happen to be callers.
     const fnIdByName = new Map<string, string>();
     for (const [, result] of allFileResults) {
-      for (const e of result.callEdges) {
-        fnIdByName.set(e.callerName, e.callerId);
+      for (const [name, id] of result.fnIds) {
+        fnIdByName.set(name, id);
       }
     }
 
@@ -360,10 +472,11 @@ export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
         const resolved = resolve(fileDir, imp.targetPath);
         const candidates = [
           resolved,
-          `${resolved}.ts`,
-          `${resolved}.tsx`,
-          `${resolved}/index.ts`,
-          `${resolved}/index.tsx`,
+          `${resolved}.ts`, `${resolved}.tsx`,
+          `${resolved}.js`, `${resolved}.jsx`,
+          `${resolved}.svelte`,
+          `${resolved}/index.ts`, `${resolved}/index.tsx`,
+          `${resolved}/index.js`, `${resolved}/index.jsx`,
         ];
 
         for (const c of candidates) {
@@ -387,6 +500,43 @@ export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
       }
     }
 
+    // Pass 4: index doc files (.md / .mdx) — builds Doc nodes + COVERS/MENTIONS_FN/SUPERSEDES edges
+    const docFiles = await fg(["**/*.md", "**/*.mdx"], {
+      cwd: opts.repoPath,
+      ignore: ["**/node_modules/**", "**/dist/**"],
+      absolute: true,
+    });
+
+    const fileAbsPaths = new Set(files);
+    let docsIndexed = 0;
+
+    for (const docPath of docFiles) {
+      try {
+        // Manifest check: skip unchanged doc files
+        const docStat = await stat(docPath);
+        const docMtime = Math.floor(docStat.mtimeMs);
+        const existingDoc = manifest[docPath];
+        if (existingDoc && existingDoc.mtime === docMtime) {
+          const docHash = await fileHash(docPath);
+          if (existingDoc.hash === docHash) {
+            manifest[docPath] = { mtime: docMtime, hash: docHash };
+            continue;
+          }
+        }
+
+        const docHash = existingDoc?.mtime !== docMtime ? await fileHash(docPath) : existingDoc.hash;
+        const result = await indexDocFile(conn, docPath, opts.repoPath, opts.project, fnIdByName, fileAbsPaths);
+        edgesCreated += result.edgesCreated;
+        docsIndexed++;
+        manifest[docPath] = { mtime: docMtime, hash: docHash };
+      } catch {
+        continue;
+      }
+    }
+
+    // Write .sensei/traceability.json for checkDrift() compatibility
+    await writeTraceability(conn, opts.project, opts.repoPath);
+
     // Persist index state for drift detection
     let lastCommit: string | undefined;
     try {
@@ -399,12 +549,28 @@ export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
       JSON.stringify({ lastCommit, indexedAt: new Date().toISOString(), repoPath: opts.repoPath }, null, 2),
     );
 
+    // Write per-file errors so the server can surface them to the UI
+    if (fileErrors.length > 0) {
+      await writeFile(
+        join(dbDir, "index-errors.json"),
+        JSON.stringify(fileErrors, null, 2),
+      ).catch(() => { /* non-fatal */ });
+    }
+
+    // Final manifest save (captures doc files and any mtime-only updates)
+    await saveManifest(opts.repoId, manifest).catch(() => {});
+
+    // Clear progress file — indexing is done
+    await clearProgress(opts.repoId);
+
     return {
-      filesIndexed: files.length,
+      filesIndexed: files.length - filesSkipped - filesUnchanged,
+      filesSkipped,
       functionsIndexed,
       typesIndexed,
       edgesCreated,
       durationMs: Date.now() - start,
+      docsIndexed,
     };
   } finally {
     await conn.close();
