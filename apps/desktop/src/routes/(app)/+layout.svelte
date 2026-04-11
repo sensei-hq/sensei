@@ -10,15 +10,11 @@
 
   const DEFAULT_PORT = 7744;
   let senseiPort = $state(DEFAULT_PORT);
+  const MAX_VISIBLE = 5;
 
-  // Expanded solution IDs in sidebar
-  let expandedIds = $state<Set<string>>(new Set());
-
-  function toggleExpanded(id: string) {
-    const next = new Set(expandedIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    expandedIds = next;
-  }
+  let showAllActive = $state(false);
+  let showAllSide = $state(false);
+  let showAllIdeas = $state(false);
 
   // Derived solution lists
   let activeSolutions = $derived(getSolutionsByCategory('active'));
@@ -26,22 +22,16 @@
   let ideaSolutions = $derived(getSolutionsByCategory('idea'));
   let standaloneLibs = $derived(getStandaloneLibraries());
 
-  // Auto-expand the solution that matches the current route
-  $effect(() => {
-    const match = $page.url.pathname.match(/^\/s\/([^/]+)/);
-    if (match) {
-      const id = match[1];
-      if (!expandedIds.has(id)) {
-        expandedIds = new Set([...expandedIds, id]);
-      }
-    }
-  });
+  let visibleActive = $derived(showAllActive ? activeSolutions : activeSolutions.slice(0, MAX_VISIBLE));
+  let hiddenActiveCount = $derived(Math.max(0, activeSolutions.length - MAX_VISIBLE));
+  let visibleSide = $derived(showAllSide ? sideSolutions : sideSolutions.slice(0, MAX_VISIBLE));
+  let hiddenSideCount = $derived(Math.max(0, sideSolutions.length - MAX_VISIBLE));
+  let visibleIdeas = $derived(showAllIdeas ? ideaSolutions : ideaSolutions.slice(0, MAX_VISIBLE));
+  let hiddenIdeaCount = $derived(Math.max(0, ideaSolutions.length - MAX_VISIBLE));
 
   onMount(() => {
     const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
     if (!isNaN(stored) && stored > 0) senseiPort = stored;
-
-    // Run migration + load solutions
     migrate();
     loadSolutions();
   });
@@ -50,7 +40,7 @@
 <div class="flex h-screen overflow-hidden select-none bg-surface-z1">
 
   <!-- ══ SIDEBAR ════════════════════════════════════════════════════════ -->
-  <aside class="flex w-52 shrink-0 flex-col border-r border-surface-z0/50 sidebar-vibrancy">
+  <aside class="flex w-48 shrink-0 flex-col border-r border-surface-z0/50 sidebar-vibrancy">
 
     <!-- Traffic light area + logo -->
     <div class="drag-region flex items-end px-4 pb-3 pt-9">
@@ -66,13 +56,17 @@
       <!-- Active Solutions -->
       {#if activeSolutions.length > 0}
         <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Active</p>
-        {#each activeSolutions as s (s.id)}
-          <SidebarSolution
-            solution={s}
-            expanded={expandedIds.has(s.id)}
-            onToggle={() => toggleExpanded(s.id)}
-          />
+        {#each visibleActive as s (s.id)}
+          <SidebarSolution solution={s} />
         {/each}
+        {#if !showAllActive && hiddenActiveCount > 0}
+          <button
+            onclick={() => showAllActive = true}
+            class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
+          >
+            +{hiddenActiveCount} more
+          </button>
+        {/if}
       {/if}
 
       <!-- Standalone Libraries -->
@@ -80,16 +74,7 @@
         <div class="pt-3">
           <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Libraries</p>
           {#each standaloneLibs as s (s.id)}
-            <a
-              href="/s/{s.id}"
-              class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm no-drag transition-colors
-                     {$page.url.pathname.startsWith(`/s/${s.id}`)
-                       ? 'bg-info-z2 text-info-z7 font-medium'
-                       : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}"
-            >
-              <span class="text-xs i-solar-box-bold-duotone"></span>
-              <span class="truncate">{s.name}</span>
-            </a>
+            <SidebarSolution solution={s} />
           {/each}
         </div>
       {/if}
@@ -98,13 +83,17 @@
       {#if sideSolutions.length > 0}
         <div class="pt-3">
           <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Side Projects</p>
-          {#each sideSolutions as s (s.id)}
-            <SidebarSolution
-              solution={s}
-              expanded={expandedIds.has(s.id)}
-              onToggle={() => toggleExpanded(s.id)}
-            />
+          {#each visibleSide as s (s.id)}
+            <SidebarSolution solution={s} />
           {/each}
+          {#if !showAllSide && hiddenSideCount > 0}
+            <button
+              onclick={() => showAllSide = true}
+              class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
+            >
+              +{hiddenSideCount} more
+            </button>
+          {/if}
         </div>
       {/if}
 
@@ -112,18 +101,17 @@
       {#if ideaSolutions.length > 0}
         <div class="pt-3">
           <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Ideas</p>
-          {#each ideaSolutions as s (s.id)}
-            <a
-              href="/s/{s.id}"
-              class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm no-drag transition-colors
-                     {$page.url.pathname.startsWith(`/s/${s.id}`)
-                       ? 'bg-surface-z3 text-surface-z7 font-medium'
-                       : 'text-surface-z4 hover:bg-surface-z3/40 hover:text-surface-z6'}"
-            >
-              <span class="text-xs i-solar-lightbulb-bold-duotone"></span>
-              <span class="truncate">{s.name}</span>
-            </a>
+          {#each visibleIdeas as s (s.id)}
+            <SidebarSolution solution={s} />
           {/each}
+          {#if !showAllIdeas && hiddenIdeaCount > 0}
+            <button
+              onclick={() => showAllIdeas = true}
+              class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
+            >
+              +{hiddenIdeaCount} more
+            </button>
+          {/if}
         </div>
       {/if}
 
