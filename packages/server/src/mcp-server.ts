@@ -42,7 +42,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
   // Session state — stored per MCP server process
   let localSessionId: string | null = null;
 
-  // Lazy — avoids loading native better-sqlite3 until a tool is actually called
+  // Lazy — avoids loading bun:sqlite until a tool is actually called
   let _activityLog: ReturnType<typeof getActivityLog> | null = null;
   const log = () => {
     if (!_activityLog) _activityLog = getActivityLog(opts.repoId);
@@ -274,7 +274,7 @@ export function createSenseiMcpServer(opts: McpServerOptions) {
     },
     async ({ lib, component, query, limit }) => {
       try {
-        const result = await getLibDocsTool(null, getBackend(), opts.repoId, lib, { component, query, limit });
+        const result = await getLibDocsTool(opts.repoId, lib, { component, query, limit });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };

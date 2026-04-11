@@ -43,7 +43,7 @@ describe("LibIndexer", () => {
     const indexer = new LibIndexer("repo-123");
     const mixedPages: DocPage[] = [
       { title: "Page1", url: "https://x.com", summary: "s", content: "c", sourceType: "http" },
-      { title: "Page2", url: "https://x.com/2", summary: "s", content: "c" },
+      { title: "Page2", url: "https://x.com/2", summary: "s", content: "c", sourceType: "http" },
     ];
     const httpEntry: LibEntry = { name: "mylib", source_type: "http", base_url: "https://x.com" };
     await indexer.index(httpEntry, mixedPages);

@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
 import { getOrCreateDb } from "@sensei/graph-indexer";
-import { loadSenseiConfig } from "@sensei/shared";
+import { resolveProject } from "./resolve-project.js";
 
 export interface LoadContextResult {
   file_path: string;
@@ -28,8 +28,7 @@ export async function loadContext(
     throw new Error(`File not found: ${filePath}`);
   }
 
-  const config = await loadSenseiConfig(repoPath);
-  const project = config?.repo_id ?? repoId;
+  const project = await resolveProject(repoPath, repoId);
   const escapedFile = absPath.replace(/'/g, "\\'");
   const escapedProject = project.replace(/'/g, "\\'");
 

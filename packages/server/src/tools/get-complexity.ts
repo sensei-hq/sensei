@@ -1,5 +1,5 @@
 import { getOrCreateDb } from "@sensei/graph-indexer";
-import { loadSenseiConfig } from "@sensei/shared";
+import { resolveProject } from "./resolve-project.js";
 
 export interface ComplexityResult {
   hotspots: Array<{
@@ -29,8 +29,7 @@ export async function getComplexity(
   const limit = opts.limit ?? 20;
   const minComplexity = opts.minComplexity ?? 1;
 
-  const config = await loadSenseiConfig(repoPath);
-  const project = config?.repo_id ?? repoId;
+  const project = await resolveProject(repoPath, repoId);
   const escapedProject = project.replace(/'/g, "\\'");
 
   const { db, conn } = await getOrCreateDb(repoId);

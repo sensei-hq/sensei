@@ -29,7 +29,7 @@ export function registerGetSymbolTool(server: McpServer, opts: McpServerOptions)
     },
     async ({ name, depth, project }) => {
       try {
-        const { conn } = await getOrCreateDb(opts.repoId);
+        const { db, conn } = await getOrCreateDb(opts.repoId);
         try {
           const result = await getSymbol(conn, name, project ?? "", depth as 0 | 1 | 2 | 3 | 4 | 5);
 
@@ -93,6 +93,7 @@ export function registerGetSymbolTool(server: McpServer, opts: McpServerOptions)
           return { content: [{ type: "text", text: lines.join("\n") }] };
         } finally {
           await conn.close();
+          await db.close();
         }
       } catch (err) {
         return {

@@ -84,15 +84,6 @@ export interface ModelBackend {
   isAvailable(): Promise<boolean>;
 }
 
-export interface IndexConfig {
-  backend: "ollama" | "regex";
-  ollamaModel?: string;
-  embeddingModel?: string;
-  embeddingReady: boolean;
-  indexedAt?: string;
-  version: number;
-}
-
 export interface SetupStatus {
   ollamaBinary: boolean;
   ollamaRunning: boolean;
@@ -125,7 +116,7 @@ export interface AgentSkillFile {
 }
 
 export interface AgentSkillsManifest {
-  agent: 'claude';
+  agent: string;
   repoSlug: string;
   skills: AgentSkillFile[];
   updatedAt: string;     // ISO timestamp
