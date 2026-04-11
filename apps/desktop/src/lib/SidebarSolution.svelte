@@ -9,9 +9,10 @@
   } = $props();
 
   const subLinks = $derived([
-    { label: 'Overview',  href: `/s/${solution.id}`,          icon: 'i-solar-home-2-bold-duotone' },
-    { label: 'Repos',     href: `/s/${solution.id}/repos`,    icon: 'i-solar-folder-with-files-bold-duotone' },
-    { label: 'Sessions',  href: `/s/${solution.id}/sessions`, icon: 'i-solar-history-bold-duotone' },
+    { label: 'Overview',     href: `/s/${solution.id}`,          icon: 'i-solar-home-2-bold-duotone' },
+    { label: 'Repos',        href: `/s/${solution.id}/repos`,    icon: 'i-solar-folder-with-files-bold-duotone' },
+    { label: 'Architecture', href: `/s/${solution.id}/arch`,     icon: 'i-solar-graph-up-bold-duotone' },
+    { label: 'Sessions',     href: `/s/${solution.id}/sessions`, icon: 'i-solar-history-bold-duotone' },
   ]);
 
   const isActive = $derived($page.url.pathname.startsWith(`/s/${solution.id}`));

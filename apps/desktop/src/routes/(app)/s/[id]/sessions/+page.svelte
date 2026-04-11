@@ -4,7 +4,7 @@
   import { getSolutionById } from '$lib/solutions.js';
   import { senseiApi } from '$lib/api.js';
 
-  let solution = $derived(getSolutionById($page.params.id));
+  let solution = $derived(getSolutionById($page.params.id as string));
   let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
 
   let allSessions = $state<Array<{

@@ -5,7 +5,7 @@
   import { senseiApi } from '$lib/api.js';
   import type { Solution, ServerProject, SolutionCategory } from '$lib/types.js';
 
-  let solution = $derived(getSolutionById($page.params.id));
+  let solution = $derived(getSolutionById($page.params.id as string));
   let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
 
   let serverProjects = $state<ServerProject[]>([]);
@@ -107,6 +107,77 @@
         <p class="mt-1 text-xl font-semibold text-surface-z8">{recentSessions.length}</p>
       </div>
     </div>
+
+    <!-- Connection diagram (multi-repo solutions only) -->
+    {#if solution.repos.length >= 2}
+      {@const nodes = solution.repos.map((r, i) => {
+        const angle = (2 * Math.PI * i) / solution.repos.length - Math.PI / 2;
+        const rx = 120, ry = 60;
+        const cx = 200 + rx * Math.cos(angle);
+        const cy = 90 + ry * Math.sin(angle);
+        return { ...r, cx, cy, name: r.label ?? r.path.split('/').at(-1) ?? r.repoId };
+      })}
+      {@const connections = (() => {
+        const lines: Array<{ from: typeof nodes[0]; to: typeof nodes[0]; label: string }> = [];
+        const libs = nodes.filter(n => n.role === 'library' || n.role === 'shared');
+        const consumers = nodes.filter(n => n.role !== 'library' && n.role !== 'shared');
+        const frontends = nodes.filter(n => n.role === 'frontend' || n.role === 'mobile');
+        const backends = nodes.filter(n => n.role === 'backend' || n.role === 'middleware');
+        // frontend → backend
+        for (const f of frontends) for (const b of backends) lines.push({ from: f, to: b, label: 'API' });
+        // all consumers → libraries
+        for (const c of consumers) for (const l of libs) lines.push({ from: c, to: l, label: 'import' });
+        return lines;
+      })()}
+      <div class="rounded-lg bg-surface-z2/50 border border-surface-z0/30 p-3">
+        <p class="text-[10px] font-semibold text-surface-z4 uppercase tracking-wide mb-2">Connections</p>
+        <svg viewBox="0 0 400 180" class="w-full max-w-lg mx-auto">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <polygon points="0 0, 10 3.5, 0 7" fill="rgb(var(--color-surface-z4))" />
+            </marker>
+          </defs>
+          <!-- Edges -->
+          {#each connections as conn}
+            {@const dx = conn.to.cx - conn.from.cx}
+            {@const dy = conn.to.cy - conn.from.cy}
+            {@const len = Math.sqrt(dx*dx + dy*dy)}
+            {@const nx = dx/len}
+            {@const ny = dy/len}
+            <line
+              x1={conn.from.cx + nx * 28} y1={conn.from.cy + ny * 16}
+              x2={conn.to.cx - nx * 28} y2={conn.to.cy - ny * 16}
+              stroke="rgb(var(--color-surface-z3))" stroke-width="1" marker-end="url(#arrow)"
+            />
+            <text
+              x={(conn.from.cx + conn.to.cx) / 2}
+              y={(conn.from.cy + conn.to.cy) / 2 - 4}
+              text-anchor="middle"
+              class="text-[8px]" fill="rgb(var(--color-surface-z4))"
+            >{conn.label}</text>
+          {/each}
+          <!-- Nodes -->
+          {#each nodes as node}
+            {@const fill = node.role === 'frontend' ? '--color-primary-z3'
+              : node.role === 'backend' ? '--color-info-z3'
+              : node.role === 'library' ? '--color-warning-z3'
+              : node.role === 'mobile' ? '--color-secondary-z3'
+              : '--color-surface-z3'}
+            {@const textFill = node.role === 'frontend' ? '--color-primary-z7'
+              : node.role === 'backend' ? '--color-info-z7'
+              : node.role === 'library' ? '--color-warning-z7'
+              : node.role === 'mobile' ? '--color-secondary-z7'
+              : '--color-surface-z7'}
+            <rect x={node.cx - 36} y={node.cy - 14} width="72" height="28" rx="6"
+              fill="rgb(var({fill}))" />
+            <text x={node.cx} y={node.cy + 1} text-anchor="middle" dominant-baseline="middle"
+              class="text-[9px] font-medium" fill="rgb(var({textFill}))">{node.name.length > 10 ? node.name.slice(0, 9) + '…' : node.name}</text>
+            <text x={node.cx} y={node.cy + 12} text-anchor="middle"
+              class="text-[7px]" fill="rgb(var(--color-surface-z4))">{node.role}</text>
+          {/each}
+        </svg>
+      </div>
+    {/if}
 
     <!-- Repos overview -->
     <div>

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import RepoList from '$lib/RepoList.svelte';
+  import { createSolution, setActiveSolutionId, inferRepoRole, loadSolutions } from '$lib/solutions.js';
+  import type { SolutionRepo } from '$lib/types.js';
 
   type Step = 'welcome' | 'acps' | 'folders' | 'repos' | 'groups' | 'done';
   let step = $state<Step>('welcome');
@@ -220,24 +222,109 @@
     else startIndexing();
   }
 
-  function startIndexing() {
+  async function startIndexing() {
     if (typeof localStorage !== 'undefined') {
-      const selected = discovered.filter(r => selectedRepos.has(r.path)).map(r => ({
+      const toImport = discovered.filter(r => selectedRepos.has(r.path)).map(r => ({
         ...r,
         client: clientTags.get(r.path) ?? null,
       }));
-      // Only write to localStorage if we actually have scanned repos (Tauri context).
-      // In browser preview, leave it empty so the /api/projects fallback kicks in.
-      if (selected.length > 0) {
-        localStorage.setItem('sensei:projects_raw', JSON.stringify(selected));
+
+      if (toImport.length > 0) {
+        // Resolve repoIds so every project has a stable ID before anything else uses it.
+        let withIds: (typeof toImport[0] & { repoId: string })[];
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          withIds = await Promise.all(toImport.map(async repo => {
+            const repoId: string = await invoke<string | null>('get_repo_id', { path: repo.path })
+              .catch(() => null) ?? crypto.randomUUID();
+            return { ...repo, repoId };
+          }));
+        } catch {
+          // Browser preview — assign random UUIDs
+          withIds = toImport.map(repo => ({ ...repo, repoId: crypto.randomUUID() }));
+        }
+
+        localStorage.setItem('sensei:projects_raw', JSON.stringify(withIds));
+
+        // Register with server (fire-and-forget — server may not be up yet; layout will retry on first online).
+        const port = parseInt(localStorage.getItem('sensei:port') ?? '7744', 10);
+        for (const repo of withIds) {
+          fetch(`http://127.0.0.1:${port}/api/projects`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repoId: repo.repoId, name: repo.name, path: repo.path }),
+          }).catch(() => {});
+        }
       }
     }
+    // Create solutions from variant groups
+    createSolutionsFromScan();
+
     step = 'done';
+  }
+
+  function createSolutionsFromScan() {
+    // Read projects_raw which has repoIds assigned by startIndexing()
+    const rawJson = localStorage.getItem('sensei:projects_raw');
+    const withIds: Record<string, string> = {};
+    if (rawJson) {
+      try {
+        const arr = JSON.parse(rawJson) as Array<{ path: string; repoId?: string }>;
+        for (const r of arr) if (r.repoId) withIds[r.path] = r.repoId;
+      } catch { /* ignore */ }
+    }
+
+    function repoId(path: string): string { return withIds[path] ?? path.replace(/^\//, ''); }
+
+    const selected = discovered.filter(r => selectedRepos.has(r.path));
+    const clusters = variantClusters(selected);
+
+    // Group clusters → solutions
+    const grouped = new Set<string>();
+    for (const [groupName, members] of clusters) {
+      if (members.length < 2) continue;
+      const repos: SolutionRepo[] = members.map(r => ({
+        repoId: repoId(r.path),
+        path: r.path,
+        role: inferRepoRole(r as any),
+        label: r.name,
+      }));
+      const allIdeas = members.every(r => r.categories?.includes('idea'));
+      const sol = createSolution(
+        groupName.replace(/^manual:/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        repos,
+        { category: allIdeas ? 'idea' : 'active', client: clientTags.get(members[0].path) },
+      );
+      if (!allIdeas) setActiveSolutionId(sol.id);
+      for (const m of members) grouped.add(m.path);
+    }
+
+    // Ungrouped repos → individual solutions
+    for (const r of selected) {
+      if (grouped.has(r.path)) continue;
+      const isIdea = r.categories?.includes('idea');
+      const sol = createSolution(r.name, [{
+        repoId: repoId(r.path),
+        path: r.path,
+        role: inferRepoRole(r as any),
+        label: r.name,
+      }], {
+        category: isIdea ? 'idea' : 'active',
+        client: clientTags.get(r.path),
+      });
+      if (!isIdea && !getActiveSolutionId()) setActiveSolutionId(sol.id);
+    }
+  }
+
+  function getActiveSolutionId(): string | null {
+    return localStorage.getItem('sensei:active_solution');
   }
 
   function finish() {
     localStorage.setItem('sensei:setup_complete', '1');
-    window.location.replace('/projects');
+    localStorage.setItem('sensei:migration_v1', '1'); // prevent auto-migration from re-running
+    const activeSolution = getActiveSolutionId();
+    window.location.replace(activeSolution ? `/s/${activeSolution}` : '/all');
   }
 
   onMount(() => { loadDetected(); });

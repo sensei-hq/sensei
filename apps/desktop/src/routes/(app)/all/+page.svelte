@@ -13,6 +13,54 @@
 
   let solutions = $derived(getSolutions());
 
+  // Suggest groupings for unassigned repos with shared name prefixes
+  let suggestions = $derived(computeSuggestions());
+
+  function computeSuggestions(): Array<{ name: string; paths: string[] }> {
+    const unassigned = scannedRepos.filter(r => !getSolutionForPath(r.path));
+    if (unassigned.length < 2) return [];
+
+    // Group by name prefix (strip trailing -api, -ui, -web, -backend, -frontend, -shared, -common, -lib, -core, -app, -service, -server, -client)
+    const prefixMap = new Map<string, string[]>();
+    for (const r of unassigned) {
+      const prefix = r.name.toLowerCase()
+        .replace(/[-_](api|ui|web|backend|frontend|shared|common|lib|core|app|service|server|client|mobile|admin|docs)$/, '')
+        .trim();
+      if (prefix.length >= 2 && prefix !== r.name.toLowerCase()) {
+        const list = prefixMap.get(prefix) ?? [];
+        list.push(r.path);
+        prefixMap.set(prefix, list);
+      }
+    }
+
+    return [...prefixMap.entries()]
+      .filter(([, paths]) => paths.length >= 2)
+      .map(([prefix, paths]) => ({
+        name: prefix.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        paths,
+      }));
+  }
+
+  function acceptSuggestion(suggestion: { name: string; paths: string[] }) {
+    const repos: SolutionRepo[] = suggestion.paths.map(path => {
+      const r = scannedRepos.find(s => s.path === path);
+      return {
+        repoId: r?.repoId ?? path.replace(/^\//, ''),
+        path,
+        role: r ? inferRepoRole(r) : 'unknown' as const,
+        label: r?.name ?? path.split('/').at(-1) ?? path,
+      };
+    });
+    createSolution(suggestion.name, repos);
+  }
+
+  function dismissSuggestion(suggestion: { name: string; paths: string[] }) {
+    // Store dismissed suggestions so they don't reappear
+    const dismissed = JSON.parse(localStorage.getItem('sensei:dismissed_suggestions') ?? '[]') as string[];
+    dismissed.push(suggestion.name.toLowerCase());
+    localStorage.setItem('sensei:dismissed_suggestions', JSON.stringify(dismissed));
+  }
+
   let filtered = $derived(
     scannedRepos.filter(r => {
       if (!search) return true;
@@ -121,6 +169,36 @@
         {scanning ? 'Scanning…' : 'Scan'}
       </button>
     </div>
+
+    <!-- Solution suggestions -->
+    {#if suggestions.length > 0}
+      <div class="space-y-1.5">
+        <p class="text-[10px] font-semibold text-surface-z4 uppercase tracking-wide">Suggested solutions</p>
+        {#each suggestions as suggestion}
+          <div class="flex items-center gap-3 rounded-lg bg-primary-z1 border border-primary-z2 px-3 py-2">
+            <span class="text-xs i-solar-lightbulb-bold-duotone text-primary-z5"></span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-medium text-primary-z7">Group as "{suggestion.name}"</p>
+              <p class="text-[10px] text-primary-z4 truncate">
+                {suggestion.paths.map(p => scannedRepos.find(r => r.path === p)?.name ?? p.split('/').at(-1)).join(', ')}
+              </p>
+            </div>
+            <button
+              onclick={() => acceptSuggestion(suggestion)}
+              class="rounded bg-primary-z2 px-2 py-1 text-[10px] font-medium text-primary-z7 hover:bg-primary-z3 transition-colors shrink-0"
+            >
+              Create
+            </button>
+            <button
+              onclick={() => dismissSuggestion(suggestion)}
+              class="text-[10px] text-primary-z3 hover:text-primary-z5 shrink-0"
+            >
+              Dismiss
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
 
     <!-- Create solution from selection -->
     {#if selectedPaths.size > 0}
