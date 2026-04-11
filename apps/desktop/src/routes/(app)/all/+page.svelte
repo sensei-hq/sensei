@@ -1,0 +1,185 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import {
+    getSolutions, createSolution, addRepoToSolution,
+    removeRepoFromSolution, inferRepoRole,
+  } from '$lib/solutions.js';
+  import type { ScannedRepo, Solution, SolutionRepo } from '$lib/types.js';
+
+  let scannedRepos = $state<ScannedRepo[]>([]);
+  let search = $state('');
+  let scanRoot = $state('');
+  let scanning = $state(false);
+
+  let solutions = $derived(getSolutions());
+
+  let filtered = $derived(
+    scannedRepos.filter(r => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q);
+    })
+  );
+
+  function getSolutionForPath(path: string): Solution | undefined {
+    return solutions.find(s => s.repos.some(r => r.path === path));
+  }
+
+  // New solution from selection
+  let selectedPaths = $state<Set<string>>(new Set());
+  let newSolutionName = $state('');
+  let showCreate = $state(false);
+
+  function toggleSelect(path: string) {
+    const next = new Set(selectedPaths);
+    if (next.has(path)) next.delete(path); else next.add(path);
+    selectedPaths = next;
+  }
+
+  function createFromSelected() {
+    if (!newSolutionName.trim() || selectedPaths.size === 0) return;
+    const repos: SolutionRepo[] = [];
+    for (const path of selectedPaths) {
+      const scanned = scannedRepos.find(r => r.path === path);
+      if (!scanned) continue;
+      repos.push({
+        repoId: scanned.repoId ?? path.replace(/^\//, ''),
+        path,
+        role: inferRepoRole(scanned),
+        label: scanned.name,
+      });
+    }
+    createSolution(newSolutionName.trim(), repos);
+    selectedPaths = new Set();
+    newSolutionName = '';
+    showCreate = false;
+  }
+
+  async function scanFolder() {
+    if (!scanRoot.trim()) return;
+    scanning = true;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const found = await invoke<ScannedRepo[]>('analyze_folder', { root: scanRoot });
+      // Merge into projects_raw
+      const existing = new Set(scannedRepos.map(r => r.path));
+      const newRepos = found.filter(r => !existing.has(r.path));
+      if (newRepos.length > 0) {
+        scannedRepos = [...scannedRepos, ...newRepos];
+        localStorage.setItem('sensei:projects_raw', JSON.stringify(scannedRepos));
+      }
+    } catch { /* Tauri not available */ }
+    finally { scanning = false; }
+  }
+
+  const STATUS_CLS: Record<string, string> = {
+    active:    'bg-success-z2 text-success-z7',
+    recent:    'bg-primary-z2 text-primary-z7',
+    stale:     'bg-warning-z2 text-warning-z7',
+    archived:  'bg-surface-z3 text-surface-z5',
+    abandoned: 'bg-error-z2 text-error-z7',
+    unknown:   'bg-surface-z3 text-surface-z5',
+  };
+
+  onMount(() => {
+    try {
+      const raw = localStorage.getItem('sensei:projects_raw');
+      if (raw) scannedRepos = JSON.parse(raw) as ScannedRepo[];
+    } catch { /* empty */ }
+  });
+</script>
+
+<div class="flex h-full flex-col min-h-0">
+  <div class="border-b border-surface-z0/50 px-4 py-2 shrink-0 flex items-center gap-3">
+    <h1 class="text-sm font-semibold text-surface-z8">All Repos</h1>
+    <span class="text-xs text-surface-z4">{scannedRepos.length} total</span>
+    <div class="ml-auto flex items-center gap-2">
+      <input
+        type="text"
+        bind:value={search}
+        placeholder="Search…"
+        class="rounded-md border border-surface-z3 bg-surface-z1 px-2 py-1 text-xs text-surface-z7 outline-none focus:border-primary-z4 w-40"
+      />
+    </div>
+  </div>
+
+  <div class="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+
+    <!-- Scan folder -->
+    <div class="flex items-center gap-2">
+      <input
+        type="text"
+        bind:value={scanRoot}
+        placeholder="~/Developer"
+        class="flex-1 rounded-md border border-surface-z3 bg-surface-z1 px-2 py-1.5 text-xs text-surface-z7 outline-none focus:border-primary-z4"
+      />
+      <button
+        onclick={scanFolder}
+        disabled={scanning}
+        class="rounded-md bg-primary-z2 px-3 py-1.5 text-xs font-medium text-primary-z7 hover:bg-primary-z3 transition-colors disabled:opacity-50"
+      >
+        {scanning ? 'Scanning…' : 'Scan'}
+      </button>
+    </div>
+
+    <!-- Create solution from selection -->
+    {#if selectedPaths.size > 0}
+      <div class="flex items-center gap-2 rounded-lg bg-primary-z1 px-3 py-2">
+        <span class="text-xs text-primary-z6">{selectedPaths.size} selected</span>
+        {#if showCreate}
+          <input
+            type="text"
+            bind:value={newSolutionName}
+            placeholder="Solution name"
+            class="flex-1 rounded border border-primary-z3 bg-white px-2 py-1 text-xs outline-none"
+          />
+          <button onclick={createFromSelected} class="rounded bg-primary-z5 px-2 py-1 text-xs text-white">Create</button>
+          <button onclick={() => { showCreate = false; selectedPaths = new Set(); }} class="text-xs text-primary-z4">Cancel</button>
+        {:else}
+          <button onclick={() => showCreate = true} class="rounded bg-primary-z2 px-2 py-1 text-xs text-primary-z7">Create solution</button>
+          <button onclick={() => selectedPaths = new Set()} class="text-xs text-primary-z4">Clear</button>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Repo list -->
+    {#each filtered as repo (repo.path)}
+      {@const assignedTo = getSolutionForPath(repo.path)}
+      <div class="flex items-center gap-3 rounded-lg bg-surface-z2/50 px-3 py-2 hover:bg-surface-z2 transition-colors">
+        <input
+          type="checkbox"
+          checked={selectedPaths.has(repo.path)}
+          onchange={() => toggleSelect(repo.path)}
+          class="shrink-0"
+        />
+        <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {STATUS_CLS[repo.status] ?? STATUS_CLS.unknown}">
+          {repo.status}
+        </span>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm text-surface-z7 truncate">{repo.name}</p>
+          <p class="text-[10px] text-surface-z3 truncate">{repo.path}</p>
+        </div>
+        {#if repo.tech_stack?.length}
+          <div class="flex gap-1 shrink-0">
+            {#each repo.tech_stack.slice(0, 2) as tech}
+              <span class="rounded bg-surface-z3 px-1 py-0.5 text-[9px] text-surface-z5">{tech}</span>
+            {/each}
+          </div>
+        {/if}
+        {#if assignedTo}
+          <span class="rounded bg-primary-z1 px-1.5 py-0.5 text-[10px] text-primary-z6 shrink-0 truncate max-w-24">{assignedTo.name}</span>
+        {:else}
+          <span class="text-[10px] text-surface-z3">unassigned</span>
+        {/if}
+      </div>
+    {/each}
+
+    {#if filtered.length === 0}
+      <div class="text-center py-12">
+        <p class="text-sm text-surface-z4">No repos found.</p>
+        <p class="text-xs text-surface-z3 mt-1">Scan a folder to discover repositories.</p>
+      </div>
+    {/if}
+
+  </div>
+</div>

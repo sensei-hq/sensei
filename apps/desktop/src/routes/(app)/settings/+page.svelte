@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getSolutions, clearAllSolutions } from '$lib/solutions.js';
 
   let projectCount = $state(0);
-  let dbSize = $state<string | null>(null);
+  let solutionCount = $derived(getSolutions().length);
 
   onMount(() => {
     try {
@@ -12,10 +13,12 @@
   });
 
   function resetSetup() {
-    if (!confirm('This will clear all imported projects and reset setup. Continue?')) return;
+    if (!confirm('This will clear all imported projects, solutions, and reset setup. Continue?')) return;
     localStorage.removeItem('sensei:projects_raw');
     localStorage.removeItem('sensei:setup_complete');
     localStorage.removeItem('sensei:variant_overrides');
+    localStorage.removeItem('sensei:index_states');
+    clearAllSolutions();
     window.location.replace('/');
   }
 
@@ -24,7 +27,7 @@
     window.location.reload();
   }
 
-  const version = '0.1.0';
+  const version = '0.1.0'; // TODO: inject from package.json at build time
 </script>
 
 <div class="flex h-full flex-col min-h-0">
@@ -45,6 +48,13 @@
               <p class="text-xs text-surface-z4 mt-0.5">Repos loaded from your last scan</p>
             </div>
             <span class="text-sm font-semibold text-surface-z7">{projectCount}</span>
+          </div>
+          <div class="flex items-center justify-between px-4 py-3">
+            <div>
+              <p class="text-sm font-medium text-surface-z8">Solutions</p>
+              <p class="text-xs text-surface-z4 mt-0.5">Repos grouped into solutions</p>
+            </div>
+            <span class="text-sm font-semibold text-surface-z7">{solutionCount}</span>
           </div>
           <div class="flex items-center justify-between px-4 py-3">
             <div>
@@ -72,15 +82,17 @@
       </section>
 
       <!-- ACP Registry -->
-      <section id="acp-registry">
+      <section>
         <h2 class="text-xs font-semibold uppercase tracking-widest text-surface-z4 mb-3">ACP Registry</h2>
-        <div class="rounded-2xl border border-surface-z3 bg-surface-z2/50 px-4 py-4">
-          <p class="text-sm text-surface-z6 mb-3">Re-run MCP setup to connect or update your AI editors.</p>
-          <a href="/setup"
-            onclick={(e) => { e.preventDefault(); localStorage.removeItem('sensei:setup_complete'); window.location.replace('/'); }}
-            class="inline-flex items-center gap-1.5 rounded-lg bg-primary-z6 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-z7">
+        <div class="rounded-2xl border border-surface-z3 bg-surface-z2/50 px-4 py-4 flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium text-surface-z8">AI coding platforms</p>
+            <p class="text-xs text-surface-z4 mt-0.5">Configure MCP for each installed editor</p>
+          </div>
+          <a href="/acp"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-surface-z3 px-3 py-1.5 text-xs font-medium text-surface-z6 transition-colors hover:bg-surface-z3/60 shrink-0">
             <span class="i-solar-cpu-bold-duotone text-sm"></span>
-            Re-run MCP setup
+            Open Registry
           </a>
         </div>
       </section>
