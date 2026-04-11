@@ -3,7 +3,7 @@
   import {
     getSolutions, createSolution, addRepoToSolution,
     removeRepoFromSolution, inferRepoRole,
-  } from '$lib/solutions.js';
+  } from '$lib/solutions.svelte.js';
   import type { ScannedRepo, Solution, SolutionRepo } from '$lib/types.js';
 
   let scannedRepos = $state<ScannedRepo[]>([]);
