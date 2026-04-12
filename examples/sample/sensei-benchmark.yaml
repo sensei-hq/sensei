@@ -1,0 +1,47 @@
+# sensei-benchmark.yaml — Benchmark specification for the sample project board API
+#
+# This file defines the expected indexer output so `sensei benchmark indexer`
+# can compare actual results against a gold standard.
+
+name: sample-project-board
+description: TypeScript Hono REST API with bun:sqlite — project/task/comment CRUD
+language: typescript
+category: app
+difficulty: small
+
+# Source files to index
+source: ./src
+
+# ACP benchmark tasks
+tasks: ./tasks
+
+# Skills for the "with skills" branch
+skills: ./skills
+
+# Expected indexer output (gold standard)
+expected:
+  symbols:
+    total: 45
+    functions: 30
+    classes: 0
+    types: 10
+    enums: 0
+    const: 5
+  edges:
+    calls: 25
+    imports: 12
+  communities:
+    count: 4
+    god_nodes:
+      - getDb
+      - errorHandler
+      - validate
+  docs:
+    total: 0
+
+# Known architectural insights the graph should surface
+expected_insights:
+  - "getDb is a god node — called by every route handler"
+  - "errorHandler is the central error boundary"
+  - "validate middleware is used by all POST/PATCH routes"
+  - "4 communities: routes, utils, db, types"

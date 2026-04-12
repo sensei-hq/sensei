@@ -26,6 +26,7 @@ const { positionals, values } = parseArgs({
     verbose: { type: "boolean", default: false },
     resume: { type: "string" },
     workdir: { type: "string" },
+    corpus: { type: "string" },
     repo: { type: "string" },
     // stats command
     tool: { type: "string" },
@@ -316,7 +317,7 @@ async function main() {
         await benchmarkPopulate(repoRoot);
       } else if (subCmd === "indexer") {
         const { benchmarkIndexer } = await import("./commands/benchmark-indexer.js");
-        await benchmarkIndexer(repoRoot);
+        await benchmarkIndexer(repoRoot, { corpus: values.corpus });
       } else if (subCmd === "run") {
         const { benchmarkRun } = await import("./commands/benchmark-run.js");
         await benchmarkRun(repoRoot, {
