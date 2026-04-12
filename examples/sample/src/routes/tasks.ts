@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { randomUUID } from "crypto";
 import { getDb } from "../db.js";
-import type { Task } from "../types.js";
+import type { Task, Comment } from "../types.js";
 import {
   CreateTaskSchema,
   UpdateTaskSchema,
   BulkUpdateTaskSchema,
+  CreateCommentSchema,
   PaginationSchema,
 } from "../types.js";
 import { validate, parseQuery } from "../utils/validate.js";
@@ -119,10 +120,43 @@ tasks.delete("/:id", (c) => {
 
 // ── Comment endpoints (stub — see tasks/feature1.md) ─────────────────────────
 
-tasks.get("/:id/comments", (_c) => {
-  throw new AppError(501, "Task comments not yet implemented — see tasks/feature1.md");
+tasks.get("/:id/comments", (c) => {
+  const db = getDb();
+  const taskId = c.req.param("id");
+  if (!db.query("SELECT id FROM tasks WHERE id = ?").get(taskId)) notFound("Task", taskId);
+
+  const { cursor, limit } = parseQuery(c, PaginationSchema);
+  const since = decodeCursor(cursor);
+
+  const conditions: string[] = ["task_id = ?"];
+  const params: (string | number)[] = [taskId];
+
+  if (since) { conditions.push("created_at < ?"); params.push(since); }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  params.push(limit + 1);
+
+  const rows = db
+    .query<Comment, typeof params>(`SELECT * FROM comments ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+    .all(...params);
+
+  return c.json(toPage(rows, limit));
 });
 
-tasks.post("/:id/comments", (_c) => {
-  throw new AppError(501, "Task comments not yet implemented — see tasks/feature1.md");
+tasks.post("/:id/comments", validate(CreateCommentSchema), (c) => {
+  const db = getDb();
+  const taskId = c.req.param("id");
+  if (!db.query("SELECT id FROM tasks WHERE id = ?").get(taskId)) notFound("Task", taskId);
+
+  const body = c.get("body") as typeof CreateCommentSchema._type;
+  const now = new Date().toISOString();
+  const id = randomUUID();
+
+  db.run(
+    `INSERT INTO comments (id, task_id, author, body, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, taskId, body.author, body.body, now, now],
+  );
+
+  return c.json(db.query<Comment, [string]>("SELECT * FROM comments WHERE id = ?").get(id)!, 201);
 });

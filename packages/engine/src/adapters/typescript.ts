@@ -24,7 +24,7 @@ export class TypeScriptAdapter {
     return { filePath: file.path, language: "typescript", symbols, edges, imports };
   }
 
-  private extractSymbols(sf: SourceFile, filePath: string): ParsedSymbol[] {
+  protected extractSymbols(sf: SourceFile, filePath: string): ParsedSymbol[] {
     const results: ParsedSymbol[] = [];
 
     // Exported functions
@@ -117,7 +117,7 @@ export class TypeScriptAdapter {
     return results;
   }
 
-  private extractImports(sf: SourceFile): ParsedImport[] {
+  protected extractImports(sf: SourceFile): ParsedImport[] {
     return sf.getImportDeclarations().map(decl => ({
       targetPath: decl.getModuleSpecifierValue(),
       names: [
@@ -127,7 +127,7 @@ export class TypeScriptAdapter {
     }));
   }
 
-  private extractEdges(sf: SourceFile, symbols: ParsedSymbol[]): ParsedEdge[] {
+  protected extractEdges(sf: SourceFile, symbols: ParsedSymbol[]): ParsedEdge[] {
     const edges: ParsedEdge[] = [];
     const symbolNames = new Set(symbols.map(s => s.name));
 
@@ -150,7 +150,7 @@ export class TypeScriptAdapter {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private getDocstring(node: any): string | null {
+  protected getDocstring(node: any): string | null {
     try {
       const jsDoc = node.getJsDocs?.();
       if (jsDoc && jsDoc.length > 0) {
