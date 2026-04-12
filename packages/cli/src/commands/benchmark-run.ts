@@ -178,33 +178,31 @@ async function installSkills(skillsDir: string, workDir: string): Promise<void> 
   }
 }
 
-// ── Stop hook installer ──────────────────────────────────────────────────────
+// ── Benchmark workspace setup ────────────────────────────────────────────────
 
-async function installCaptureHook(workDir: string): Promise<void> {
+/**
+ * Write a minimal .claude/settings.json that disables global hooks and plugins
+ * so each benchmark session is lean — no 27 plugins, no session-start hooks,
+ * just the bare ACP + the task prompt.
+ */
+async function setupClaudeSettings(workDir: string): Promise<void> {
   const settingsDir = join(workDir, ".claude");
   await mkdir(settingsDir, { recursive: true });
   const settingsPath = join(settingsDir, "settings.json");
-  let settings: Record<string, unknown> = {};
-  try {
-    const raw = await readFile(settingsPath, "utf-8");
-    settings = JSON.parse(raw) as Record<string, unknown>;
-  } catch { /* no existing settings */ }
 
-  settings.hooks = {
-    Stop: [
-      {
-        matcher: "",
-        hooks: [
-          {
-            type: "command",
-            command: "echo benchmark-session-complete",
-          },
-        ],
-      },
-    ],
+  const settings = {
+    // Empty hooks — prevents global hooks from firing
+    hooks: {},
+    // Permission bypass for non-interactive benchmark
+    permissions: {
+      allow: ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)"],
+    },
   };
 
   await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+
+  // Also write a minimal CLAUDE.md to prevent global CLAUDE.md from loading
+  await writeFile(join(workDir, "CLAUDE.md"), "# Benchmark workspace\nThis is a benchmark run. Implement the requested feature.\n");
 }
 
 // ── Setup a fresh copy of the repo in a temp dir ──────────────────────────────
@@ -322,7 +320,7 @@ async function runBranch(
       await git(workDir, "commit", "-m", "sensei: install skills");
     }
 
-    await installCaptureHook(workDir);
+    await setupClaudeSettings(workDir);
   }
 
   const results: TaskResult[] = [];
