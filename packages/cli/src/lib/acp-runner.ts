@@ -12,13 +12,21 @@ import { readFile } from "fs/promises";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface AcpSession {
-  /** Total input tokens for the session (all turns). */
+  /** Direct input tokens (non-cached). */
   inputTokens: number;
-  /** Total output tokens for the session (all turns). */
+  /** Cache creation tokens (first-time context). */
+  cacheCreationTokens: number;
+  /** Cache read tokens (reused context). */
+  cacheReadTokens: number;
+  /** Total context = input + cacheCreation + cacheRead. */
+  totalContextTokens: number;
+  /** Total output tokens for the session. */
   outputTokens: number;
+  /** Cost in USD. */
+  costUsd: number;
   /** Number of agentic turns taken. */
   numTurns: number;
-  /** Number of tool calls made (read_file, write_file, bash, etc.). */
+  /** Number of tool calls made. */
   toolCalls: number;
   /** Exit code of the ACP process. */
   exitCode: number;
@@ -73,7 +81,10 @@ async function spawnCapture(
  */
 function parseClaudeStreamJson(output: string): Omit<AcpSession, "exitCode" | "rawOutput"> {
   let inputTokens = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
   let outputTokens = 0;
+  let costUsd = 0;
   let numTurns = 0;
   let toolCalls = 0;
 
@@ -85,7 +96,10 @@ function parseClaudeStreamJson(output: string): Omit<AcpSession, "exitCode" | "r
       if (event.type === "result") {
         const usage = event.usage as Record<string, number> | undefined;
         inputTokens = usage?.input_tokens ?? 0;
+        cacheCreationTokens = usage?.cache_creation_input_tokens ?? 0;
+        cacheReadTokens = usage?.cache_read_input_tokens ?? 0;
         outputTokens = usage?.output_tokens ?? 0;
+        costUsd = (event.total_cost_usd as number) ?? 0;
         numTurns = (event.num_turns as number) ?? 0;
       }
       // Count tool_use blocks inside assistant messages
@@ -96,11 +110,12 @@ function parseClaudeStreamJson(output: string): Omit<AcpSession, "exitCode" | "r
         }
       }
     } catch {
-      // Non-JSON lines (e.g. spinner output written to stdout) — skip
+      // Non-JSON lines — skip
     }
   }
 
-  return { inputTokens, outputTokens, numTurns, toolCalls };
+  const totalContextTokens = inputTokens + cacheCreationTokens + cacheReadTokens;
+  return { inputTokens, cacheCreationTokens, cacheReadTokens, totalContextTokens, outputTokens, costUsd, numTurns, toolCalls };
 }
 
 export class ClaudeRunner implements AcpRunner {
