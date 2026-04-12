@@ -67,16 +67,23 @@ interface BenchmarkReport {
   comparison: {
     perTask: Array<{
       id: string;
-      inputTokensSaved: number;
-      inputPctSaved: number;
+      baseContext: number;
+      senseiContext: number;
+      baseCost: number;
+      senseiCost: number;
+      costSaved: number;
       toolCallsSaved: number;
+      baseTurns: number;
+      senseiTurns: number;
       baselineTests: number;
       senseiTests: number;
       testDelta: number;
+      baseTotal: number;
     }>;
     summary: {
-      totalInputSaved: number;
-      totalInputPctSaved: number;
+      totalBaseCost: number;
+      totalSenseiCost: number;
+      costSavedPct: number;
       totalToolCallsSaved: number;
       baselinePassTotal: number;
       senseiPassTotal: number;
@@ -275,8 +282,9 @@ async function runTaskWithRetry(
       continue;
     }
 
+    const ctxK = Math.round(session.totalContextTokens / 1000);
     process.stdout.write(
-      ` ${session.inputTokens}in/${session.outputTokens}out ${session.toolCalls} tools ${session.numTurns} turns`,
+      ` ${ctxK}k ctx ${session.toolCalls} tools ${session.numTurns} turns $${session.costUsd.toFixed(2)}`,
     );
 
     // Commit whatever the ACP wrote
@@ -329,7 +337,8 @@ async function runBranch(
     // Skip if already completed in a previous run
     if (completed[task.id]) {
       const prev = completed[task.id];
-      process.stdout.write(`  [${task.id}] (cached) ${prev.session.inputTokens}in/${prev.session.outputTokens}out → ${prev.tests.passed}/${prev.tests.total} tests pass\n`);
+      const ctxK = Math.round(prev.session.totalContextTokens / 1000);
+      process.stdout.write(`  [${task.id}] (cached) ${ctxK}k ctx $${prev.session.costUsd.toFixed(2)} → ${prev.tests.passed}/${prev.tests.total} tests pass\n`);
       results.push(prev);
       continue;
     }
@@ -357,24 +366,25 @@ function buildReport(
   const perTask = taskFiles.map((task, i) => {
     const b = baseline.tasks[i];
     const s = withSensei.tasks[i];
-    const inputSaved = b.session.inputTokens - s.session.inputTokens;
-    const inputPct = b.session.inputTokens
-      ? Math.round((inputSaved / b.session.inputTokens) * 100)
-      : 0;
     return {
       id: task.id,
-      inputTokensSaved: inputSaved,
-      inputPctSaved: inputPct,
+      baseContext: b.session.totalContextTokens,
+      senseiContext: s.session.totalContextTokens,
+      baseCost: b.session.costUsd,
+      senseiCost: s.session.costUsd,
+      costSaved: b.session.costUsd - s.session.costUsd,
       toolCallsSaved: b.session.toolCalls - s.session.toolCalls,
+      baseTurns: b.session.numTurns,
+      senseiTurns: s.session.numTurns,
       baselineTests: b.tests.passed,
       senseiTests: s.tests.passed,
       testDelta: s.tests.passed - b.tests.passed,
+      baseTotal: b.tests.total,
     };
   });
 
-  const totalBaseTokens = baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
-  const totalSenseiTokens = withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
-  const totalSaved = totalBaseTokens - totalSenseiTokens;
+  const totalBaseCost = baseline.tasks.reduce((s, r) => s + r.session.costUsd, 0);
+  const totalSenseiCost = withSensei.tasks.reduce((s, r) => s + r.session.costUsd, 0);
 
   return {
     metadata: {
@@ -388,10 +398,9 @@ function buildReport(
     comparison: {
       perTask,
       summary: {
-        totalInputSaved: totalSaved,
-        totalInputPctSaved: totalBaseTokens
-          ? Math.round((totalSaved / totalBaseTokens) * 100)
-          : 0,
+        totalBaseCost: totalBaseCost,
+        totalSenseiCost: totalSenseiCost,
+        costSavedPct: totalBaseCost > 0 ? Math.round(((totalBaseCost - totalSenseiCost) / totalBaseCost) * 100) : 0,
         totalToolCallsSaved:
           baseline.tasks.reduce((s, r) => s + r.session.toolCalls, 0)
           - withSensei.tasks.reduce((s, r) => s + r.session.toolCalls, 0),
@@ -407,29 +416,29 @@ function buildReport(
 function printReport(report: BenchmarkReport): void {
   const { perTask, summary } = report.comparison;
 
-  console.log(`\n── Results ────────────────────────────────────────────────────`);
-  console.log(`${"Task".padEnd(24)}${"Base tokens".padStart(12)}${"Sensei tokens".padStart(15)}${"Saved".padStart(8)}${"Tests +/-".padStart(10)}`);
-  console.log("─".repeat(69));
+  console.log(`\n── Results ──────────────────────────────────────────────────────────────────────`);
+  console.log(`${"Task".padEnd(12)} ${"Base cost".padStart(10)} ${"Sensei cost".padStart(12)} ${"Saved".padStart(7)} ${"Base".padStart(6)} ${"Sensei".padStart(7)} ${"Tools".padStart(6)} ${"Tests".padStart(12)}`);
+  console.log("─".repeat(80));
   for (const t of perTask) {
-    const saved = t.inputPctSaved ? `${t.inputPctSaved}%` : "0%";
-    const delta = t.testDelta >= 0 ? `+${t.testDelta}` : `${t.testDelta}`;
+    const costPct = t.baseCost > 0 ? Math.round(((t.baseCost - t.senseiCost) / t.baseCost) * 100) : 0;
+    const costDir = costPct >= 0 ? `${costPct}%` : `${costPct}%`;
+    const toolDelta = t.toolCallsSaved >= 0 ? `-${t.toolCallsSaved}` : `+${-t.toolCallsSaved}`;
+    const testDelta = t.testDelta >= 0 ? `+${t.testDelta}` : `${t.testDelta}`;
     console.log(
-      `${t.id.padEnd(24)}${String(t.inputTokensSaved + (report.baseline.tasks.find(bt => bt.task.id === t.id)?.session.inputTokens ?? 0)).padStart(12)}${String(t.inputTokensSaved + (report.baseline.tasks.find(bt => bt.task.id === t.id)?.session.inputTokens ?? 0) - t.inputTokensSaved).padStart(15)}${saved.padStart(8)}${delta.padStart(10)}`,
+      `${t.id.padEnd(12)} ${"$" + t.baseCost.toFixed(2)}${(" ").padStart(10 - ("$" + t.baseCost.toFixed(2)).length)} ${"$" + t.senseiCost.toFixed(2)}${(" ").padStart(12 - ("$" + t.senseiCost.toFixed(2)).length)} ${costDir.padStart(7)} ${(t.baseTurns + "t").padStart(6)} ${(t.senseiTurns + "t").padStart(7)} ${toolDelta.padStart(6)} ${(t.baselineTests + "→" + t.senseiTests + "/" + t.baseTotal).padStart(12)}`,
     );
   }
-  console.log("─".repeat(69));
+  console.log("─".repeat(80));
 
-  const totalBase = report.baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
-  const totalSensei = report.withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
+  const costDir = summary.costSavedPct >= 0 ? `${summary.costSavedPct}%` : `${summary.costSavedPct}%`;
   console.log(
-    `${"TOTAL".padEnd(24)}${String(totalBase).padStart(12)}${String(totalSensei).padStart(15)}${(summary.totalInputPctSaved + "%").padStart(8)}${(summary.testDelta >= 0 ? "+" : "") + summary.testDelta}`.padStart(10),
+    `${"TOTAL".padEnd(12)} ${"$" + summary.totalBaseCost.toFixed(2)}${(" ").padStart(10 - ("$" + summary.totalBaseCost.toFixed(2)).length)} ${"$" + summary.totalSenseiCost.toFixed(2)}${(" ").padStart(12 - ("$" + summary.totalSenseiCost.toFixed(2)).length)} ${costDir.padStart(7)}                    ${summary.baselinePassTotal}→${summary.senseiPassTotal}`,
   );
 
   console.log(`
-  input tokens saved : ${summary.totalInputSaved.toLocaleString()} (${summary.totalInputPctSaved}%)
-  tool calls saved   : ${summary.totalToolCallsSaved}
-  extra tests passing: ${summary.testDelta >= 0 ? "+" : ""}${summary.testDelta} (baseline ${summary.baselinePassTotal} → sensei ${summary.senseiPassTotal})`)
-;
+  cost saved  : $${(summary.totalBaseCost - summary.totalSenseiCost).toFixed(2)} (${summary.costSavedPct}%)
+  tool calls  : ${summary.totalToolCallsSaved >= 0 ? "-" : "+"}${Math.abs(summary.totalToolCallsSaved)} tool calls
+  test quality: ${summary.testDelta >= 0 ? "+" : ""}${summary.testDelta} tests passing (baseline ${summary.baselinePassTotal} → sensei ${summary.senseiPassTotal})`);
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────
