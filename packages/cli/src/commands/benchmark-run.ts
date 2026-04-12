@@ -532,9 +532,9 @@ export async function benchmarkRun(
   const report = buildReport(acpId, sampleDir, taskFiles, baseline, withSensei);
   printReport(report);
 
-  const outPath = opts.output ?? "benchmark-results.json";
+  const outPath = opts.output ?? join(workDir, "benchmark-results.json");
   await writeFile(outPath, JSON.stringify(report, null, 2));
 
   console.log(`\n  results written → ${outPath}`);
-  console.log(`  repo branches available at: ${workDir}`);
+  console.log(`  workdir: ${workDir}`);
 }
