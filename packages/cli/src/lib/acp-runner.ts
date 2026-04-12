@@ -56,7 +56,6 @@ async function spawnCapture(
     stdin: opts.stdin ? new TextEncoder().encode(opts.stdin) : "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, HOME: process.env.HOME ?? "" },
   });
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -115,11 +114,15 @@ export class ClaudeRunner implements AcpRunner {
   async runTask(taskPath: string, cwd: string): Promise<AcpSession> {
     const prompt = await readFile(taskPath, "utf-8");
 
-    // Use -p (print mode) with the prompt as positional arg.
-    // --verbose is required for stream-json to include usage data.
-    // --no-session-persistence avoids polluting the user's session history.
+    // --verbose: required for stream-json to include usage data.
+    // --no-session-persistence: avoid polluting user's session history.
     const { stdout, exitCode } = await spawnCapture(
-      ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence"],
+      [
+        "claude", "-p", prompt,
+        "--output-format", "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+      ],
       { cwd },
     );
 
