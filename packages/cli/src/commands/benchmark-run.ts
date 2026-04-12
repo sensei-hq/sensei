@@ -235,29 +235,46 @@ async function setupWorkdir(sampleDir: string, targetDir?: string): Promise<stri
   return workDir;
 }
 
-// ── Run a single task (with rate-limit retry) ────────────────────────────────
+// ── Run a single task (with rate-limit wait) ─────────────────────────────────
+
+function parseRateLimitReset(rawOutput: string): number | null {
+  // Look for resetsAt timestamp in rate_limit_event
+  const match = rawOutput.match(/"resetsAt"\s*:\s*(\d+)/);
+  if (match) return parseInt(match[1], 10);
+  return null;
+}
 
 async function runTaskWithRetry(
   runner: AcpRunner,
   task: TaskFile,
   workDir: string,
   verbose: boolean,
-  maxRetries = 3,
 ): Promise<{ session: AcpSession; tests: TestResult }> {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    process.stdout.write(`  [${task.id}]${attempt > 1 ? ` (retry ${attempt})` : ""}`);
+  let attempt = 0;
+
+  while (true) {
+    attempt++;
+    process.stdout.write(`  [${task.id}]${attempt > 1 ? ` (attempt ${attempt})` : ""}`);
 
     const session = await runner.runTask(task.path, workDir);
 
-    // Detect rate limit / credit errors
+    // Detect rate limit / credit errors — wait and retry indefinitely
     if (session.exitCode !== 0 && session.rawOutput.includes("Credit balance is too low")) {
-      if (attempt < maxRetries) {
-        const waitSec = attempt * 60; // 1min, 2min, 3min
-        console.log(` ⏳ rate limited — waiting ${waitSec}s before retry...`);
-        await new Promise(r => setTimeout(r, waitSec * 1000));
-        continue;
+      // Try to find the reset timestamp from the output
+      const resetsAt = parseRateLimitReset(session.rawOutput);
+      let waitSec: number;
+
+      if (resetsAt) {
+        waitSec = Math.max(30, Math.ceil(resetsAt - Date.now() / 1000));
+        const resetTime = new Date(resetsAt * 1000).toLocaleTimeString();
+        console.log(` ⏳ rate limited — resets at ${resetTime} — waiting ${Math.ceil(waitSec / 60)}min...`);
+      } else {
+        waitSec = Math.min(attempt * 120, 600); // 2min, 4min, 6min... max 10min
+        console.log(` ⏳ rate limited — waiting ${Math.ceil(waitSec / 60)}min before retry...`);
       }
-      console.log(` ✗ rate limited after ${maxRetries} attempts — skipping`);
+
+      await new Promise(r => setTimeout(r, waitSec * 1000));
+      continue;
     }
 
     process.stdout.write(
@@ -278,12 +295,6 @@ async function runTaskWithRetry(
 
     return { session, tests };
   }
-
-  // Should not reach here, but return empty result
-  return {
-    session: { inputTokens: 0, outputTokens: 0, numTurns: 0, toolCalls: 0, exitCode: 1, rawOutput: "" },
-    tests: { passed: 0, failed: 0, total: 0 },
-  };
 }
 
 // ── Branch runner (with checkpoint support) ──────────────────────────────────
