@@ -28,6 +28,12 @@ export interface AcpSession {
   numTurns: number;
   /** Number of tool calls made. */
   toolCalls: number;
+  /** Files read via Read/Bash(cat) tool calls. */
+  filesRead: string[];
+  /** Files written/edited via Write/Edit tool calls. */
+  filesWritten: string[];
+  /** MCP tool calls (sensei search, get_symbol, etc.). */
+  mcpCalls: string[];
   /** Exit code of the ACP process. */
   exitCode: number;
   /** Raw stdout (stream-json or text). */
@@ -87,12 +93,16 @@ function parseClaudeStreamJson(output: string): Omit<AcpSession, "exitCode" | "r
   let costUsd = 0;
   let numTurns = 0;
   let toolCalls = 0;
+  const filesRead: string[] = [];
+  const filesWritten: string[] = [];
+  const mcpCalls: string[] = [];
 
   for (const line of output.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const event = JSON.parse(trimmed) as Record<string, unknown>;
+
       if (event.type === "result") {
         const usage = event.usage as Record<string, number> | undefined;
         inputTokens = usage?.input_tokens ?? 0;
@@ -102,11 +112,38 @@ function parseClaudeStreamJson(output: string): Omit<AcpSession, "exitCode" | "r
         costUsd = (event.total_cost_usd as number) ?? 0;
         numTurns = (event.num_turns as number) ?? 0;
       }
-      // Count tool_use blocks inside assistant messages
+
+      // Parse tool_use blocks from assistant messages
       if (event.type === "assistant") {
         const content = (event.message as { content?: unknown[] })?.content ?? [];
         for (const block of content) {
-          if ((block as { type?: string }).type === "tool_use") toolCalls++;
+          const b = block as { type?: string; name?: string; input?: Record<string, unknown> };
+          if (b.type !== "tool_use") continue;
+          toolCalls++;
+
+          const name = b.name ?? "";
+          const input = b.input ?? {};
+
+          // File reads: Read tool, or Bash with cat/head/tail
+          if (name === "Read" && input.file_path) {
+            filesRead.push(String(input.file_path));
+          } else if (name === "Bash" && typeof input.command === "string") {
+            const cmd = input.command;
+            if (/\b(cat|head|tail|less)\s/.test(cmd)) {
+              const pathMatch = cmd.match(/(?:cat|head|tail|less)\s+["']?([^\s"'|>]+)/);
+              if (pathMatch) filesRead.push(pathMatch[1]);
+            }
+          }
+
+          // File writes: Write, Edit tools
+          if ((name === "Write" || name === "Edit") && input.file_path) {
+            filesWritten.push(String(input.file_path));
+          }
+
+          // MCP tool calls (sensei tools start with mcp__sensei__ or are named search, get_symbol, etc.)
+          if (name.startsWith("mcp__") || name === "search" || name === "get_symbol" || name === "context_pack" || name === "get_session_context" || name === "load_context") {
+            mcpCalls.push(name);
+          }
         }
       }
     } catch {
@@ -115,7 +152,13 @@ function parseClaudeStreamJson(output: string): Omit<AcpSession, "exitCode" | "r
   }
 
   const totalContextTokens = inputTokens + cacheCreationTokens + cacheReadTokens;
-  return { inputTokens, cacheCreationTokens, cacheReadTokens, totalContextTokens, outputTokens, costUsd, numTurns, toolCalls };
+  return {
+    inputTokens, cacheCreationTokens, cacheReadTokens, totalContextTokens,
+    outputTokens, costUsd, numTurns, toolCalls,
+    filesRead: [...new Set(filesRead)],
+    filesWritten: [...new Set(filesWritten)],
+    mcpCalls,
+  };
 }
 
 export class ClaudeRunner implements AcpRunner {

@@ -344,6 +344,41 @@ function printReport(report: BenchmarkReport): void {
   Skills vs bare:    ${skillsSaved >= 0 ? "" : "+"}${-skillsSaved}% cost, +${summary.skillsTests - summary.bareTests} tests
   Indexed vs bare:   ${indexedSaved >= 0 ? "" : "+"}${-indexedSaved}% cost, +${summary.indexedTests - summary.bareTests} tests
   Indexed vs skills: ${summary.skillsCost > 0 ? Math.round(((summary.skillsCost - summary.indexedCost) / summary.skillsCost) * 100) : 0}% cost, +${summary.indexedTests - summary.skillsTests} tests`);
+
+  // ── Tool usage breakdown per branch ──────────────────────────────────────
+  console.log(`\n── Tool Usage ──────────────────────────────────────────────────────────────────`);
+  for (const branchKey of ["bare", "skills", "indexed"] as const) {
+    const branch = report.branches[branchKey];
+    if (!branch) continue;
+
+    let totalReads = 0, totalWrites = 0, totalMcp = 0;
+    const allReads = new Set<string>();
+    const allWrites = new Set<string>();
+    const mcpBreakdown = new Map<string, number>();
+
+    for (const t of branch.tasks) {
+      for (const f of t.session.filesRead) { allReads.add(f); totalReads++; }
+      for (const f of t.session.filesWritten) { allWrites.add(f); totalWrites++; }
+      for (const m of t.session.mcpCalls) {
+        totalMcp++;
+        mcpBreakdown.set(m, (mcpBreakdown.get(m) ?? 0) + 1);
+      }
+    }
+
+    const label = branchKey === "bare" ? "Bare" : branchKey === "skills" ? "Skills" : "Indexed";
+    console.log(`\n  ${label}:`);
+    console.log(`    files read:    ${allReads.size} unique (${totalReads} total)`);
+    if (allReads.size > 0 && allReads.size <= 15) {
+      for (const f of [...allReads].sort()) console.log(`      ${f}`);
+    }
+    console.log(`    files written: ${allWrites.size} unique`);
+    if (totalMcp > 0) {
+      console.log(`    MCP calls:     ${totalMcp}`);
+      for (const [name, count] of [...mcpBreakdown.entries()].sort((a, b) => b[1] - a[1])) {
+        console.log(`      ${name}: ${count}`);
+      }
+    }
+  }
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
