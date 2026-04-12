@@ -26,6 +26,7 @@ import {
   buildAdapterMap,
   escapeCypherStr,
 } from "./shared.js";
+import { detectWorkspacePackages, collectExternalLibs } from "./lib-detector.js";
 
 const FUNCTION_KINDS = new Set(["function", "method", "component", "hook"]);
 
@@ -52,6 +53,8 @@ export interface IndexResult {
   edgesCreated: number;
   durationMs: number;
   docsIndexed: number;
+  /** External libraries detected from imports, grouped by org scope. */
+  libs: string[];
 }
 
 
@@ -563,6 +566,12 @@ export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
     // Clear progress file — indexing is done
     await clearProgress(opts.repoId);
 
+    // Detect external library usage from imports
+    const allImports = [...allFileResults.values()].flatMap(r => r.imports);
+    const workspacePackages = await detectWorkspacePackages(opts.repoPath);
+    const externalLibs = collectExternalLibs(allImports, workspacePackages);
+    const libs = [...externalLibs.keys()].sort();
+
     return {
       filesIndexed: files.length - filesSkipped - filesUnchanged,
       filesSkipped,
@@ -571,6 +580,7 @@ export async function indexRepo(opts: IndexOptions): Promise<IndexResult> {
       edgesCreated,
       durationMs: Date.now() - start,
       docsIndexed,
+      libs,
     };
   } finally {
     await conn.close();
