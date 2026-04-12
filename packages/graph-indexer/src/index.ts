@@ -6,3 +6,4 @@ export * from "./layers.js";
 export * from "./drift.js";
 export * from "./watcher.js";
 export * from "./doc-indexer.js";
+export * from "./lib-detector.js";
