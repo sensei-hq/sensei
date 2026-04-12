@@ -19,6 +19,8 @@ export interface ProjectEntry {
   path: string;
   indexedAt?: string;
   lastError?: string;
+  /** External libraries detected from imports (org-scoped: @rokkit/* → "rokkit"). */
+  libs?: string[];
 }
 
 async function readProjects(): Promise<ProjectEntry[]> {
@@ -207,10 +209,14 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
   const pool = new WorkerPool(
     queue,
     async (repoId, repoPath) => {
-      await indexRepo({ repoId, repoPath, project: repoId });
+      const result = await indexRepo({ repoId, repoPath, project: repoId });
       const projects = await readProjects();
       const idx = projects.findIndex((p) => p.repoId === repoId);
-      const entry: ProjectEntry = { repoId, name: repoId, path: repoPath, indexedAt: new Date().toISOString() };
+      const entry: ProjectEntry = {
+        repoId, name: repoId, path: repoPath,
+        indexedAt: new Date().toISOString(),
+        libs: result.libs.length > 0 ? result.libs : undefined,
+      };
       if (idx >= 0) projects[idx] = entry; else projects.push(entry);
       await writeProjects(projects);
     },
