@@ -2,6 +2,7 @@ export * from "./scanner.js";
 export * from "./adapters/typescript.js";
 export * from "./adapters/markdown.js";
 export * from "./adapters/svelte.js";
+export * from "./adapters/tree-sitter-base.js";
 export * from "./adapters/rust.js";
 export * from "./adapters/python.js";
 export * from "./adapters/sql.js";
