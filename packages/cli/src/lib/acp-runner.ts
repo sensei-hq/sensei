@@ -115,7 +115,7 @@ export class ClaudeRunner implements AcpRunner {
     const prompt = await readFile(taskPath, "utf-8");
 
     const { stdout, exitCode } = await spawnCapture(
-      ["claude", "--print", "--output-format", "stream-json"],
+      ["claude", "--print", "--output-format", "stream-json", "--verbose"],
       { cwd, stdin: prompt },
     );
 
