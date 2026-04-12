@@ -114,9 +114,12 @@ export class ClaudeRunner implements AcpRunner {
   async runTask(taskPath: string, cwd: string): Promise<AcpSession> {
     const prompt = await readFile(taskPath, "utf-8");
 
+    // Use -p (print mode) with the prompt as positional arg.
+    // --verbose is required for stream-json to include usage data.
+    // --no-session-persistence avoids polluting the user's session history.
     const { stdout, exitCode } = await spawnCapture(
-      ["claude", "--print", "--output-format", "stream-json", "--verbose"],
-      { cwd, stdin: prompt },
+      ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence"],
+      { cwd },
     );
 
     const metrics = parseClaudeStreamJson(stdout);
