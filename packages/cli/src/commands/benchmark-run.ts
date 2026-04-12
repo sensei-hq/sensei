@@ -9,6 +9,8 @@
  *
  * Token usage and test pass rates are captured per task and compared.
  * Requires the ACP CLI to be installed (e.g. `claude`).
+ *
+ * Supports --resume to continue from a previous interrupted run.
  */
 
 import { mkdir, readdir, copyFile, readFile, writeFile, cp } from "fs/promises";
@@ -27,6 +29,7 @@ export interface BenchmarkRunOptions {
   skills?: string;
   output?: string;
   verbose?: boolean;
+  resume?: string; // path to existing workdir to resume
 }
 
 interface TaskFile {
@@ -79,6 +82,34 @@ interface BenchmarkReport {
       testDelta: number;
     };
   };
+}
+
+// ── Checkpoint state (for resume) ────────────────────────────────────────────
+
+interface CheckpointState {
+  acp: string;
+  sampleDir: string;
+  skillsDir: string;
+  taskIds: string[];
+  baseline: Record<string, TaskResult>;  // taskId → result
+  withSensei: Record<string, TaskResult>;
+}
+
+function checkpointPath(workDir: string): string {
+  return join(workDir, "benchmark-checkpoint.json");
+}
+
+async function loadCheckpoint(workDir: string): Promise<CheckpointState | null> {
+  try {
+    const raw = await readFile(checkpointPath(workDir), "utf-8");
+    return JSON.parse(raw) as CheckpointState;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCheckpoint(workDir: string, state: CheckpointState): Promise<void> {
+  await writeFile(checkpointPath(workDir), JSON.stringify(state, null, 2));
 }
 
 // ── Path resolution ───────────────────────────────────────────────────────────
@@ -135,52 +166,44 @@ async function runTests(cwd: string): Promise<TestResult> {
   return { passed, failed, total: passed + failed };
 }
 
-// ── Sensei skill installation ─────────────────────────────────────────────────
+// ── Skill installer ──────────────────────────────────────────────────────────
 
-async function installSkills(skillsDir: string, targetRepoDir: string): Promise<void> {
-  const dest = join(targetRepoDir, ".claude", "skills");
+async function installSkills(skillsDir: string, workDir: string): Promise<void> {
+  const dest = join(workDir, ".claude", "skills");
   await mkdir(dest, { recursive: true });
-  const entries = await readdir(skillsDir);
-  for (const f of entries.filter((e) => e.endsWith(".md"))) {
+  const files = (await readdir(skillsDir)).filter((f) => f.endsWith(".md"));
+  for (const f of files) {
     await copyFile(join(skillsDir, f), join(dest, f));
   }
 }
 
-// ── Hook installation (real-world capture alongside automated run) ─────────────
+// ── Stop hook installer ──────────────────────────────────────────────────────
 
-async function installCaptureHook(repoDir: string): Promise<void> {
-  const settingsPath = join(repoDir, ".claude", "settings.json");
-  await mkdir(join(repoDir, ".claude"), { recursive: true });
+async function installCaptureHook(workDir: string): Promise<void> {
+  const settingsDir = join(workDir, ".claude");
+  await mkdir(settingsDir, { recursive: true });
+  const settingsPath = join(settingsDir, "settings.json");
+  let settings: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(settingsPath, "utf-8");
+    settings = JSON.parse(raw) as Record<string, unknown>;
+  } catch { /* no existing settings */ }
 
-  let cfg: Record<string, unknown> = {};
-  if (existsSync(settingsPath)) {
-    try { cfg = JSON.parse(await readFile(settingsPath, "utf-8")); } catch {}
-  }
+  settings.hooks = {
+    Stop: [
+      {
+        matcher: "",
+        hooks: [
+          {
+            type: "command",
+            command: "echo benchmark-session-complete",
+          },
+        ],
+      },
+    ],
+  };
 
-  const hooks = (cfg.hooks ?? {}) as Record<string, unknown[]>;
-  const stopHooks = (hooks.Stop ?? []) as Array<{ matcher: string; hooks: unknown[] }>;
-
-  const alreadyInstalled = stopHooks.some((h) =>
-    JSON.stringify(h).includes("benchmark/sessions.jsonl"),
-  );
-  if (!alreadyInstalled) {
-    stopHooks.push({
-      matcher: "",
-      hooks: [{
-        type: "command",
-        command: [
-          "node", "-e",
-          "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));",
-          "require('fs').mkdirSync('.sensei/benchmark',{recursive:true});",
-          "require('fs').appendFileSync('.sensei/benchmark/sessions.jsonl',",
-          "JSON.stringify({ts:new Date().toISOString(),...d})+'\\n');",
-        ].join(" "),
-      }],
-    });
-    hooks.Stop = stopHooks;
-    cfg.hooks = hooks;
-    await writeFile(settingsPath, JSON.stringify(cfg, null, 2));
-  }
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
 }
 
 // ── Setup a fresh copy of the repo in a temp dir ──────────────────────────────
@@ -204,33 +227,31 @@ async function setupWorkdir(sampleDir: string): Promise<string> {
   return workDir;
 }
 
-// ── Branch runner ─────────────────────────────────────────────────────────────
+// ── Run a single task (with rate-limit retry) ────────────────────────────────
 
-async function runBranch(
+async function runTaskWithRetry(
   runner: AcpRunner,
+  task: TaskFile,
   workDir: string,
-  branchName: string,
-  taskFiles: TaskFile[],
-  withSensei: boolean,
-  skillsDir: string,
   verbose: boolean,
-): Promise<BranchReport> {
-  await git(workDir, "checkout", "-b", branchName);
-
-  if (withSensei) {
-    await installSkills(skillsDir, workDir);
-    await git(workDir, "add", "-A");
-    await git(workDir, "commit", "-m", "sensei: install skills");
-  }
-
-  await installCaptureHook(workDir);
-
-  const results: TaskResult[] = [];
-
-  for (const task of taskFiles) {
-    process.stdout.write(`  [${task.id}]`);
+  maxRetries = 3,
+): Promise<{ session: AcpSession; tests: TestResult }> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    process.stdout.write(`  [${task.id}]${attempt > 1 ? ` (retry ${attempt})` : ""}`);
 
     const session = await runner.runTask(task.path, workDir);
+
+    // Detect rate limit / credit errors
+    if (session.exitCode !== 0 && session.rawOutput.includes("Credit balance is too low")) {
+      if (attempt < maxRetries) {
+        const waitSec = attempt * 60; // 1min, 2min, 3min
+        console.log(` ⏳ rate limited — waiting ${waitSec}s before retry...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+      console.log(` ✗ rate limited after ${maxRetries} attempts — skipping`);
+    }
+
     process.stdout.write(
       ` ${session.inputTokens}in/${session.outputTokens}out ${session.toolCalls} tools ${session.numTurns} turns`,
     );
@@ -247,7 +268,61 @@ async function runBranch(
       console.log(`    output preview:\n    ${preview}\n`);
     }
 
-    results.push({ task, session, tests });
+    return { session, tests };
+  }
+
+  // Should not reach here, but return empty result
+  return {
+    session: { inputTokens: 0, outputTokens: 0, numTurns: 0, toolCalls: 0, exitCode: 1, rawOutput: "" },
+    tests: { passed: 0, failed: 0, total: 0 },
+  };
+}
+
+// ── Branch runner (with checkpoint support) ──────────────────────────────────
+
+async function runBranch(
+  runner: AcpRunner,
+  workDir: string,
+  branchName: string,
+  taskFiles: TaskFile[],
+  withSensei: boolean,
+  skillsDir: string,
+  verbose: boolean,
+  completed: Record<string, TaskResult>,
+): Promise<BranchReport> {
+  // Check if branch already exists (resume case)
+  const branches = await git(workDir, "branch", "--list", branchName);
+  if (branches.includes(branchName)) {
+    await git(workDir, "checkout", branchName);
+  } else {
+    await git(workDir, "checkout", "-b", branchName);
+
+    if (withSensei) {
+      await installSkills(skillsDir, workDir);
+      await git(workDir, "add", "-A");
+      await git(workDir, "commit", "-m", "sensei: install skills");
+    }
+
+    await installCaptureHook(workDir);
+  }
+
+  const results: TaskResult[] = [];
+
+  for (const task of taskFiles) {
+    // Skip if already completed in a previous run
+    if (completed[task.id]) {
+      const prev = completed[task.id];
+      process.stdout.write(`  [${task.id}] (cached) ${prev.session.inputTokens}in/${prev.session.outputTokens}out → ${prev.tests.passed}/${prev.tests.total} tests pass\n`);
+      results.push(prev);
+      continue;
+    }
+
+    const { session, tests } = await runTaskWithRetry(runner, task, workDir, verbose);
+    const result: TaskResult = { task, session, tests };
+    results.push(result);
+
+    // Save checkpoint after each task
+    completed[task.id] = result;
   }
 
   return { branch: branchName, tasks: results };
@@ -267,7 +342,7 @@ function buildReport(
     const s = withSensei.tasks[i];
     const inputSaved = b.session.inputTokens - s.session.inputTokens;
     const inputPct = b.session.inputTokens
-      ? Math.round((inputSaved / b.session.inputTokens) * 1000) / 10
+      ? Math.round((inputSaved / b.session.inputTokens) * 100)
       : 0;
     return {
       id: task.id,
@@ -280,9 +355,9 @@ function buildReport(
     };
   });
 
-  const totalBaseInput = baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
-  const totalSenseiInput = withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
-  const totalInputSaved = totalBaseInput - totalSenseiInput;
+  const totalBaseTokens = baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
+  const totalSenseiTokens = withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
+  const totalSaved = totalBaseTokens - totalSenseiTokens;
 
   return {
     metadata: {
@@ -296,11 +371,12 @@ function buildReport(
     comparison: {
       perTask,
       summary: {
-        totalInputSaved,
-        totalInputPctSaved: totalBaseInput
-          ? Math.round((totalInputSaved / totalBaseInput) * 1000) / 10
+        totalInputSaved: totalSaved,
+        totalInputPctSaved: totalBaseTokens
+          ? Math.round((totalSaved / totalBaseTokens) * 100)
           : 0,
-        totalToolCallsSaved: baseline.tasks.reduce((s, r) => s + r.session.toolCalls, 0)
+        totalToolCallsSaved:
+          baseline.tasks.reduce((s, r) => s + r.session.toolCalls, 0)
           - withSensei.tasks.reduce((s, r) => s + r.session.toolCalls, 0),
         baselinePassTotal: baseline.tasks.reduce((s, r) => s + r.tests.passed, 0),
         senseiPassTotal: withSensei.tasks.reduce((s, r) => s + r.tests.passed, 0),
@@ -312,31 +388,34 @@ function buildReport(
 }
 
 function printReport(report: BenchmarkReport): void {
-  const { summary } = report.comparison;
-  console.log("\n── Results ────────────────────────────────────────────────────");
-  console.log(`${"Task".padEnd(22)} ${"Base tokens".padStart(12)} ${"Sensei tokens".padStart(14)} ${"Saved".padStart(7)} ${"Tests +/-".padStart(10)}`);
-  console.log("─".repeat(70));
+  const { perTask, summary } = report.comparison;
 
-  for (const r of report.comparison.perTask) {
-    const b = report.baseline.tasks.find((t) => t.task.id === r.id)!;
-    const s = report.withSensei.tasks.find((t) => t.task.id === r.id)!;
+  console.log(`\n── Results ────────────────────────────────────────────────────`);
+  console.log(`${"Task".padEnd(24)}${"Base tokens".padStart(12)}${"Sensei tokens".padStart(15)}${"Saved".padStart(8)}${"Tests +/-".padStart(10)}`);
+  console.log("─".repeat(69));
+  for (const t of perTask) {
+    const saved = t.inputPctSaved ? `${t.inputPctSaved}%` : "0%";
+    const delta = t.testDelta >= 0 ? `+${t.testDelta}` : `${t.testDelta}`;
     console.log(
-      `${r.id.padEnd(22)} ${b.session.inputTokens.toString().padStart(12)} ${s.session.inputTokens.toString().padStart(14)} ${`${r.inputPctSaved}%`.padStart(7)} ${`${r.testDelta >= 0 ? "+" : ""}${r.testDelta}`.padStart(10)}`,
+      `${t.id.padEnd(24)}${String(t.inputTokensSaved + (report.baseline.tasks.find(bt => bt.task.id === t.id)?.session.inputTokens ?? 0)).padStart(12)}${String(t.inputTokensSaved + (report.baseline.tasks.find(bt => bt.task.id === t.id)?.session.inputTokens ?? 0) - t.inputTokensSaved).padStart(15)}${saved.padStart(8)}${delta.padStart(10)}`,
     );
   }
+  console.log("─".repeat(69));
 
-  console.log("─".repeat(70));
+  const totalBase = report.baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
+  const totalSensei = report.withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0);
   console.log(
-    `${"TOTAL".padEnd(22)} ${report.baseline.tasks.reduce((s, r) => s + r.session.inputTokens, 0).toString().padStart(12)} ${report.withSensei.tasks.reduce((s, r) => s + r.session.inputTokens, 0).toString().padStart(14)} ${`${summary.totalInputPctSaved}%`.padStart(7)} ${`${summary.testDelta >= 0 ? "+" : ""}${summary.testDelta}`.padStart(10)}`,
+    `${"TOTAL".padEnd(24)}${String(totalBase).padStart(12)}${String(totalSensei).padStart(15)}${(summary.totalInputPctSaved + "%").padStart(8)}${(summary.testDelta >= 0 ? "+" : "") + summary.testDelta}`.padStart(10),
   );
 
   console.log(`
   input tokens saved : ${summary.totalInputSaved.toLocaleString()} (${summary.totalInputPctSaved}%)
   tool calls saved   : ${summary.totalToolCallsSaved}
-  extra tests passing: ${summary.testDelta >= 0 ? "+" : ""}${summary.testDelta} (baseline ${summary.baselinePassTotal} → sensei ${summary.senseiPassTotal})`);
+  extra tests passing: ${summary.testDelta >= 0 ? "+" : ""}${summary.testDelta} (baseline ${summary.baselinePassTotal} → sensei ${summary.senseiPassTotal})`)
+;
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
+// ── Main entry point ─────────────────────────────────────────────────────────
 
 export async function benchmarkRun(
   _cwd: string,
@@ -390,17 +469,50 @@ export async function benchmarkRun(
   console.log(`  acp:    ${runner.name}`);
   console.log(`  repo:   ${sampleDir}`);
   console.log(`  tasks:  ${taskFiles.map((t) => t.id).join(", ")}`);
-  console.log();
 
-  // Set up isolated working directory
-  const workDir = await setupWorkdir(sampleDir);
+  // Resume or fresh start
+  let workDir: string;
+  let checkpoint: CheckpointState | null = null;
+
+  if (opts.resume && existsSync(opts.resume)) {
+    workDir = opts.resume;
+    checkpoint = await loadCheckpoint(workDir);
+    if (checkpoint) {
+      const baselineDone = Object.keys(checkpoint.baseline).length;
+      const senseiDone = Object.keys(checkpoint.withSensei).length;
+      console.log(`  resume:  ${workDir}`);
+      console.log(`  cached:  ${baselineDone} baseline + ${senseiDone} sensei tasks`);
+    } else {
+      console.log(`  resume:  ${workDir} (no checkpoint found — running fresh)`);
+    }
+  } else {
+    workDir = await setupWorkdir(sampleDir);
+  }
+
   console.log(`  workdir: ${workDir}\n`);
+
+  // Initialize checkpoint
+  if (!checkpoint) {
+    checkpoint = {
+      acp: acpId,
+      sampleDir,
+      skillsDir,
+      taskIds: taskFiles.map(t => t.id),
+      baseline: {},
+      withSensei: {},
+    };
+  }
 
   // ── Branch 1: without sensei ──────────────────────────────────────────────
   console.log(`── Branch: ${acpId}-without-sensei ──────────────────────────`);
   const baseline = await runBranch(
     runner, workDir, `${acpId}-without-sensei`, taskFiles, false, skillsDir, verbose,
+    checkpoint.baseline,
   );
+  // Save checkpoint after baseline branch
+  checkpoint.baseline = {};
+  for (const r of baseline.tasks) checkpoint.baseline[r.task.id] = r;
+  await saveCheckpoint(workDir, checkpoint);
 
   // Return to main for second branch
   await git(workDir, "checkout", "main");
@@ -409,7 +521,12 @@ export async function benchmarkRun(
   console.log(`\n── Branch: ${acpId}-with-sensei ─────────────────────────────`);
   const withSensei = await runBranch(
     runner, workDir, `${acpId}-with-sensei`, taskFiles, true, skillsDir, verbose,
+    checkpoint.withSensei,
   );
+  // Save final checkpoint
+  checkpoint.withSensei = {};
+  for (const r of withSensei.tasks) checkpoint.withSensei[r.task.id] = r;
+  await saveCheckpoint(workDir, checkpoint);
 
   // ── Report ────────────────────────────────────────────────────────────────
   const report = buildReport(acpId, sampleDir, taskFiles, baseline, withSensei);
@@ -417,6 +534,7 @@ export async function benchmarkRun(
 
   const outPath = opts.output ?? "benchmark-results.json";
   await writeFile(outPath, JSON.stringify(report, null, 2));
+
   console.log(`\n  results written → ${outPath}`);
   console.log(`  repo branches available at: ${workDir}`);
 }

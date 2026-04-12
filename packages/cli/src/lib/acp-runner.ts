@@ -56,6 +56,7 @@ async function spawnCapture(
     stdin: opts.stdin ? new TextEncoder().encode(opts.stdin) : "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, HOME: process.env.HOME ?? "" },
   });
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).text(),
