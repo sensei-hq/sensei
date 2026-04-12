@@ -24,6 +24,7 @@ const { positionals, values } = parseArgs({
     tasks: { type: "string" },
     skills: { type: "string" },
     verbose: { type: "boolean", default: false },
+    resume: { type: "string" },
     repo: { type: "string" },
     // stats command
     tool: { type: "string" },
@@ -324,6 +325,7 @@ async function main() {
           tasks: values.tasks,
           skills: values.skills,
           verbose: values.verbose,
+          resume: values.resume,
         });
       } else {
         console.error(`Unknown benchmark subcommand: ${subCmd}\n`);
