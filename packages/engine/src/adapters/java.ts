@@ -1,236 +1,186 @@
-import { readFile } from "node:fs/promises";
-import type { FileEntry, ParsedFile, ParsedSymbol, ParsedEdge, ParsedImport } from "@sensei/shared";
+import { TreeSitterAdapter, type TSNode } from "./tree-sitter-base.js";
+import type { ParsedSymbol, ParsedImport } from "@sensei/shared";
 
-export class JavaAdapter {
+let _lang: unknown = null;
+
+export class JavaAdapter extends TreeSitterAdapter {
+  readonly language = "java";
   readonly extensions = [".java"];
 
-  async parse(file: FileEntry): Promise<ParsedFile> {
-    let source: string;
-    try {
-      source = await readFile(file.absPath, "utf-8");
-    } catch {
-      return { filePath: file.path, language: "java", symbols: [], edges: [], imports: [] };
-    }
-
-    try {
-      const lines = source.split("\n");
-      const symbols = this.extractSymbols(lines);
-      const imports = this.extractImports(lines);
-      const edges = this.extractEdges(lines, symbols);
-      return { filePath: file.path, language: "java", symbols, edges, imports };
-    } catch {
-      return { filePath: file.path, language: "java", symbols: [], edges: [], imports: [] };
-    }
+  protected getLanguage(): unknown {
+    if (!_lang) _lang = require("tree-sitter-java");
+    return _lang;
   }
 
-  private extractDocstring(lines: string[], lineIndex: number): string | null {
-    // Walk backwards from lineIndex - 1 to find a /** ... */ block immediately before
-    let i = lineIndex - 1;
-    // Skip blank lines
-    while (i >= 0 && lines[i].trim() === "") i--;
-    if (i < 0 || !lines[i].trim().endsWith("*/")) return null;
-
-    const endLine = i;
-    while (i >= 0 && !lines[i].trim().startsWith("/**")) i--;
-    if (i < 0) return null;
-
-    const docLines = lines.slice(i, endLine + 1);
-    // Strip leading * and /** */ markers
-    const cleaned = docLines
-      .map(l => l.trim().replace(/^\/\*\*/, "").replace(/^\*\//, "").replace(/^\*\s?/, "").trim())
-      .filter(l => l.length > 0);
-    return cleaned.length > 0 ? cleaned.join(" ").trim() : null;
-  }
-
-  private extractSymbols(lines: string[]): ParsedSymbol[] {
+  protected extractSymbols(root: TSNode, lines: string[]): ParsedSymbol[] {
     const symbols: ParsedSymbol[] = [];
-
-    const classRe = /^(\s*)(public\s+|protected\s+|private\s+)?(abstract\s+)?(class)\s+(\w+)/;
-    const interfaceRe = /^(\s*)(public\s+|protected\s+|private\s+)?(interface)\s+(\w+)/;
-    const enumRe = /^(\s*)(public\s+|protected\s+|private\s+)?(enum)\s+(\w+)/;
-    const methodRe = /^(\s*)(public\s+|protected\s+|private\s+)?(static\s+)?((?:final\s+|abstract\s+|synchronized\s+|native\s+)*)([\w<>\[\],\s]+?)\s+(\w+)\s*\(/;
-    const constRe = /^(\s*)(public\s+|protected\s+|private\s+)?static\s+final\s+([\w<>\[\],\s]+?)\s+([A-Z_][A-Z0-9_]*)\s*=/;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-
-      // Class
-      const classMatch = line.match(classRe);
-      if (classMatch) {
-        const access = classMatch[2]?.trim() ?? "";
-        const name = classMatch[5];
-        const sig = this.extractSignature(lines, i);
-        const docstring = this.extractDocstring(lines, i);
-        const endLine = this.findBlockEnd(lines, i);
-        symbols.push({
-          name,
-          kind: "class",
-          signature: sig,
-          docstring,
-          lineStart: i + 1,
-          lineEnd: endLine,
-          isExported: access === "public",
-        });
-        continue;
-      }
-
-      // Interface
-      const ifaceMatch = line.match(interfaceRe);
-      if (ifaceMatch) {
-        const access = ifaceMatch[2]?.trim() ?? "";
-        const name = ifaceMatch[4];
-        const sig = this.extractSignature(lines, i);
-        const docstring = this.extractDocstring(lines, i);
-        const endLine = this.findBlockEnd(lines, i);
-        symbols.push({
-          name,
-          kind: "interface",
-          signature: sig,
-          docstring,
-          lineStart: i + 1,
-          lineEnd: endLine,
-          isExported: access === "public",
-        });
-        continue;
-      }
-
-      // Enum
-      const enumMatch = line.match(enumRe);
-      if (enumMatch) {
-        const access = enumMatch[2]?.trim() ?? "";
-        const name = enumMatch[4];
-        const sig = this.extractSignature(lines, i);
-        const docstring = this.extractDocstring(lines, i);
-        const endLine = this.findBlockEnd(lines, i);
-        symbols.push({
-          name,
-          kind: "enum",
-          signature: sig,
-          docstring,
-          lineStart: i + 1,
-          lineEnd: endLine,
-          isExported: access === "public",
-        });
-        continue;
-      }
-
-      // Static final constant
-      const constMatch = line.match(constRe);
-      if (constMatch) {
-        const access = constMatch[2]?.trim() ?? "";
-        const name = constMatch[4];
-        const sig = line.split("=")[0].trim();
-        const docstring = this.extractDocstring(lines, i);
-        symbols.push({
-          name,
-          kind: "const",
-          signature: sig,
-          docstring,
-          lineStart: i + 1,
-          lineEnd: i + 1,
-          isExported: access === "public",
-        });
-        continue;
-      }
-
-      // Method — must be inside a class body (indented)
-      const methodMatch = line.match(methodRe);
-      if (methodMatch) {
-        const indent = methodMatch[1];
-        if (indent.length > 0) {
-          const access = methodMatch[2]?.trim() ?? "";
-          const name = methodMatch[6];
-          // Skip control-flow keywords
-          if (/^(if|for|while|switch|catch|return|throw|new)$/.test(name)) continue;
-          const sig = this.extractSignature(lines, i);
-          const docstring = this.extractDocstring(lines, i);
-          const endLine = this.findBlockEnd(lines, i);
-          symbols.push({
-            name,
-            kind: "method",
-            signature: sig,
-            docstring,
-            lineStart: i + 1,
-            lineEnd: endLine,
-            isExported: access === "public" || access === "protected",
-          });
-        }
-      }
-    }
-
+    this.visitNode(root, lines, symbols);
     return symbols;
   }
 
-  private extractSignature(lines: string[], startLine: number): string {
-    let sig = "";
-    for (let i = startLine; i < lines.length && i < startLine + 10; i++) {
-      const l = lines[i];
-      const braceIdx = l.indexOf("{");
-      const semiIdx = l.indexOf(";");
-      if (braceIdx !== -1 && (semiIdx === -1 || braceIdx < semiIdx)) {
-        sig += " " + l.slice(0, braceIdx);
-        break;
-      }
-      if (semiIdx !== -1) {
-        sig += " " + l.slice(0, semiIdx);
-        break;
-      }
-      sig += " " + l;
-    }
-    return sig.trim().replace(/\s+/g, " ");
-  }
-
-  private findBlockEnd(lines: string[], startLine: number): number {
-    let depth = 0;
-    let found = false;
-    for (let i = startLine; i < lines.length; i++) {
-      for (const ch of lines[i]) {
-        if (ch === "{") { depth++; found = true; }
-        else if (ch === "}") { depth--; }
-      }
-      if (found && depth === 0) return i + 1;
-    }
-    return startLine + 1;
-  }
-
-  private extractImports(lines: string[]): ParsedImport[] {
-    const imports: ParsedImport[] = [];
-    const importRe = /^\s*import\s+(static\s+)?([\w.]+)(\.\*)?;/;
-    for (const line of lines) {
-      const m = line.match(importRe);
-      if (m) {
-        const fullPath = m[2] + (m[3] ?? "");
-        const isWildcard = !!m[3];
-        const name = isWildcard ? "*" : fullPath.split(".").pop() ?? fullPath;
-        imports.push({ targetPath: fullPath, names: [name] });
-      }
-    }
-    return imports;
-  }
-
-  private extractEdges(lines: string[], symbols: ParsedSymbol[]): ParsedEdge[] {
-    const edges: ParsedEdge[] = [];
-    const methodSymbols = symbols.filter(s => s.kind === "method");
-    const callRe = /\b(\w+)\s*\(/g;
-
-    for (const method of methodSymbols) {
-      const bodyLines = lines.slice(method.lineStart - 1, method.lineEnd);
-      const seen = new Set<string>();
-      for (const line of bodyLines) {
-        let m: RegExpExecArray | null;
-        callRe.lastIndex = 0;
-        while ((m = callRe.exec(line)) !== null) {
-          const callee = m[1];
-          if (/^(if|for|while|switch|catch|return|throw|new|super|this)$/.test(callee)) continue;
-          if (callee === method.name) continue;
-          if (!seen.has(callee)) {
-            seen.add(callee);
-            edges.push({ callerName: method.name, calleeName: callee, calleeFile: null });
+  private visitNode(node: TSNode, lines: string[], symbols: ParsedSymbol[]): void {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      switch (child.type) {
+        case "class_declaration": {
+          const nameNode = child.childForFieldName("name");
+          if (!nameNode) break;
+          const isExported = this.hasJavaModifier(child, "public");
+          symbols.push({
+            name: nameNode.text,
+            kind: "class",
+            signature: this.extractSignature(child, lines),
+            docstring: this.extractJavadoc(node, i),
+            lineStart: child.startPosition.row + 1,
+            lineEnd: child.endPosition.row + 1,
+            isExported,
+          });
+          // Recurse into class body
+          const classBody = child.childForFieldName("body");
+          if (classBody) this.visitNode(classBody, lines, symbols);
+          break;
+        }
+        case "interface_declaration": {
+          const nameNode = child.childForFieldName("name");
+          if (!nameNode) break;
+          symbols.push({
+            name: nameNode.text,
+            kind: "interface",
+            signature: this.extractSignature(child, lines),
+            docstring: this.extractJavadoc(node, i),
+            lineStart: child.startPosition.row + 1,
+            lineEnd: child.endPosition.row + 1,
+            isExported: this.hasJavaModifier(child, "public"),
+          });
+          const ifaceBody = child.childForFieldName("body");
+          if (ifaceBody) this.visitNode(ifaceBody, lines, symbols);
+          break;
+        }
+        case "enum_declaration": {
+          const nameNode = child.childForFieldName("name");
+          if (!nameNode) break;
+          symbols.push({
+            name: nameNode.text,
+            kind: "enum",
+            signature: this.extractSignature(child, lines),
+            docstring: this.extractJavadoc(node, i),
+            lineStart: child.startPosition.row + 1,
+            lineEnd: child.endPosition.row + 1,
+            isExported: this.hasJavaModifier(child, "public"),
+          });
+          const enumBody = child.childForFieldName("body");
+          if (enumBody) this.visitNode(enumBody, lines, symbols);
+          break;
+        }
+        case "method_declaration": {
+          const nameNode = child.childForFieldName("name");
+          if (!nameNode) break;
+          const isExported = this.hasJavaModifier(child, "public") || this.hasJavaModifier(child, "protected");
+          symbols.push({
+            name: nameNode.text,
+            kind: "method",
+            signature: this.extractSignature(child, lines),
+            docstring: this.extractJavadoc(node, i),
+            lineStart: child.startPosition.row + 1,
+            lineEnd: child.endPosition.row + 1,
+            isExported,
+          });
+          break;
+        }
+        case "constructor_declaration": {
+          const nameNode = child.childForFieldName("name");
+          if (!nameNode) break;
+          const isExported = this.hasJavaModifier(child, "public") || this.hasJavaModifier(child, "protected");
+          symbols.push({
+            name: nameNode.text,
+            kind: "method",
+            signature: this.extractSignature(child, lines),
+            docstring: this.extractJavadoc(node, i),
+            lineStart: child.startPosition.row + 1,
+            lineEnd: child.endPosition.row + 1,
+            isExported,
+          });
+          break;
+        }
+        case "field_declaration": {
+          // Only capture static final constants (ALL_CAPS convention is a bonus, but we capture all)
+          if (this.hasJavaModifier(child, "static") && this.hasJavaModifier(child, "final")) {
+            // field_declaration may have multiple declarators
+            for (let j = 0; j < child.childCount; j++) {
+              const declarator = child.child(j)!;
+              if (declarator.type === "variable_declarator") {
+                const nameNode = declarator.childForFieldName("name");
+                if (nameNode) {
+                  symbols.push({
+                    name: nameNode.text,
+                    kind: "const",
+                    signature: this.extractSignature(child, lines),
+                    docstring: this.extractJavadoc(node, i),
+                    lineStart: child.startPosition.row + 1,
+                    lineEnd: child.endPosition.row + 1,
+                    isExported: this.hasJavaModifier(child, "public"),
+                  });
+                }
+              }
+            }
           }
+          break;
+        }
+        default:
+          // Recurse for nested blocks (e.g. anonymous classes, lambdas — skip deep nesting)
+          break;
+      }
+    }
+  }
+
+  private hasJavaModifier(node: TSNode, modifier: string): boolean {
+    const modifiers = node.childForFieldName("modifiers");
+    if (!modifiers) return false;
+    for (let i = 0; i < modifiers.childCount; i++) {
+      const m = modifiers.child(i)!;
+      if (m.text === modifier) return true;
+    }
+    return false;
+  }
+
+  private extractJavadoc(parent: TSNode, symbolIndex: number): string | null {
+    // Walk backwards in the parent's children to find a block_comment starting with /**
+    for (let i = symbolIndex - 1; i >= 0; i--) {
+      const sibling = parent.child(i)!;
+      if (sibling.type === "block_comment" && sibling.text.startsWith("/**")) {
+        const raw = sibling.text;
+        const cleaned = raw
+          .replace(/^\/\*\*/, "")
+          .replace(/\*\/$/, "")
+          .split("\n")
+          .map((l) => l.trim().replace(/^\*\s?/, ""))
+          .filter((l) => l.length > 0)
+          .join(" ")
+          .trim();
+        return cleaned || null;
+      }
+      // Skip whitespace-only nodes
+      if (sibling.type !== "line_comment" && sibling.text.trim() !== "") break;
+    }
+    return null;
+  }
+
+  protected extractImports(root: TSNode): ParsedImport[] {
+    const imports: ParsedImport[] = [];
+    for (let i = 0; i < root.childCount; i++) {
+      const node = root.child(i)!;
+      if (node.type === "import_declaration") {
+        const text = node.text;
+        // e.g. "import java.util.List;" or "import static java.util.Collections.*;"
+        const m = text.match(/^import\s+(?:static\s+)?([\w.]+)(\.\*)?;/);
+        if (m) {
+          const fullPath = m[1] + (m[2] ?? "");
+          const isWildcard = !!m[2];
+          const name = isWildcard ? "*" : (m[1].split(".").pop() ?? m[1]);
+          imports.push({ targetPath: fullPath, names: [name] });
         }
       }
     }
-
-    return edges;
+    return imports;
   }
 }
