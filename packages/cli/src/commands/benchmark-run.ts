@@ -29,7 +29,8 @@ export interface BenchmarkRunOptions {
   skills?: string;
   output?: string;
   verbose?: boolean;
-  resume?: string; // path to existing workdir to resume
+  resume?: string;  // path to existing workdir to resume
+  workdir?: string; // custom workdir path (created if missing, reused if exists)
 }
 
 interface TaskFile {
@@ -208,8 +209,15 @@ async function installCaptureHook(workDir: string): Promise<void> {
 
 // ── Setup a fresh copy of the repo in a temp dir ──────────────────────────────
 
-async function setupWorkdir(sampleDir: string): Promise<string> {
-  const workDir = join(tmpdir(), `sensei-benchmark-${Date.now()}`);
+async function setupWorkdir(sampleDir: string, targetDir?: string): Promise<string> {
+  const workDir = targetDir ?? join(tmpdir(), `sensei-benchmark-${Date.now()}`);
+  if (existsSync(workDir)) {
+    // If target exists but has no checkpoint, wipe and start fresh
+    try {
+      const { $ } = await import("bun");
+      await $`rm -rf ${workDir}`;
+    } catch {}
+  }
   await cp(sampleDir, workDir, { recursive: true });
   // Remove any existing .git to start clean
   try {
@@ -474,17 +482,19 @@ export async function benchmarkRun(
   let workDir: string;
   let checkpoint: CheckpointState | null = null;
 
-  if (opts.resume && existsSync(opts.resume)) {
-    workDir = opts.resume;
+  // --resume takes priority (explicit resume of a previous run)
+  // --workdir creates/reuses a named directory (auto-resumes if checkpoint exists)
+  // default: auto-generated temp dir
+  const resumeDir = opts.resume ?? opts.workdir;
+  if (resumeDir && existsSync(resumeDir) && existsSync(checkpointPath(resumeDir))) {
+    workDir = resumeDir;
     checkpoint = await loadCheckpoint(workDir);
-    if (checkpoint) {
-      const baselineDone = Object.keys(checkpoint.baseline).length;
-      const senseiDone = Object.keys(checkpoint.withSensei).length;
-      console.log(`  resume:  ${workDir}`);
-      console.log(`  cached:  ${baselineDone} baseline + ${senseiDone} sensei tasks`);
-    } else {
-      console.log(`  resume:  ${workDir} (no checkpoint found — running fresh)`);
-    }
+    const baselineDone = Object.keys(checkpoint!.baseline).length;
+    const senseiDone = Object.keys(checkpoint!.withSensei).length;
+    console.log(`  resume:  ${workDir}`);
+    console.log(`  cached:  ${baselineDone} baseline + ${senseiDone} sensei tasks`);
+  } else if (opts.workdir) {
+    workDir = await setupWorkdir(sampleDir, opts.workdir);
   } else {
     workDir = await setupWorkdir(sampleDir);
   }
