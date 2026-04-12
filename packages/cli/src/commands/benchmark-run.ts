@@ -193,6 +193,11 @@ async function setupWorkdir(sampleDir: string): Promise<string> {
     const { $ } = await import("bun");
     await $`rm -rf ${join(workDir, ".git")}`;
   } catch {}
+  // Install dependencies if package.json exists
+  if (existsSync(join(workDir, "package.json"))) {
+    const proc = Bun.spawn(["bun", "install"], { cwd: workDir, stdout: "pipe", stderr: "pipe" });
+    await proc.exited;
+  }
   await git(workDir, "init", "-b", "main");
   await git(workDir, "add", "-A");
   await git(workDir, "commit", "-m", "initial state");
