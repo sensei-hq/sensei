@@ -5,6 +5,7 @@ vi.mock("@sensei/graph-indexer", () => ({
 }));
 vi.mock("@sensei/shared", () => ({
   loadSenseiConfig: vi.fn().mockResolvedValue({ repo_id: "proj" }),
+  lookupRepoId: vi.fn().mockResolvedValue("proj"),
 }));
 
 import { getComplexity } from "./get-complexity.js";
