@@ -685,6 +685,62 @@ fn parse_pkg_specifier(s: &str) -> Option<String> {
     None
 }
 
+// ── ACP config status ──────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct AcpStatus {
+    id: String,
+    name: String,
+    installed: bool,
+    mcp_configured: bool,
+    config_path: String,
+}
+
+#[tauri::command]
+fn check_acp_configs() -> Vec<AcpStatus> {
+    let Some(h) = home() else { return vec![]; };
+    let installed_ids = detect_acps();
+
+    let specs: &[(&str, &str, bool)] = &[
+        ("claude-desktop", "Claude Desktop", false),
+        ("claude-code",    "Claude Code",    false),
+        ("cursor",         "Cursor",         false),
+        ("windsurf",       "Windsurf",       false),
+        ("zed",            "Zed",            false),
+        ("kiro",           "Kiro",           false),
+        ("opencode",       "OpenCode",       true),
+    ];
+
+    let paths: std::collections::HashMap<&str, std::path::PathBuf> = [
+        ("claude-desktop", h.join("Library/Application Support/Claude/claude_desktop_config.json")),
+        ("claude-code",    h.join(".claude/settings.json")),
+        ("cursor",         h.join(".cursor/mcp.json")),
+        ("windsurf",       h.join(".codeium/windsurf/mcp_config.json")),
+        ("zed",            h.join(".config/zed/settings.json")),
+        ("kiro",           h.join(".kiro/settings/mcp.json")),
+        ("opencode",       h.join(".config/opencode/opencode.json")),
+    ].into();
+
+    specs.iter().map(|(id, name, is_opencode)| {
+        let config_path = paths.get(id).cloned().unwrap_or_default();
+        let installed = installed_ids.contains(&id.to_string());
+        let mcp_configured = config_path.exists()
+            && std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .map(|v| if *is_opencode { v["mcp"]["sensei"].is_object() } else { v["mcpServers"]["sensei"].is_object() })
+                .unwrap_or(false);
+
+        AcpStatus {
+            id: id.to_string(),
+            name: name.to_string(),
+            installed,
+            mcp_configured,
+            config_path: config_path.to_string_lossy().into_owned(),
+        }
+    }).collect()
+}
+
 // ── Tauri entry point ──────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -819,6 +875,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             detect_acps,
             configure_mcp,
+            check_acp_configs,
             get_repo_id,
             analyze_folder,
             detect_dependencies,
