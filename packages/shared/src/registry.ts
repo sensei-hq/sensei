@@ -11,7 +11,9 @@ import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import { homedir } from "os";
 
-const PROJECTS_FILE = join(homedir(), ".sensei", "projects.json");
+function projectsFilePath(): string {
+  return join(homedir(), ".sensei", "projects.json");
+}
 
 interface RegistryEntry {
   repoId: string;
@@ -29,7 +31,7 @@ export async function readRegistry(): Promise<RegistryEntry[]> {
   const now = Date.now();
   if (_cache && now - _cacheTime < CACHE_TTL) return _cache;
   try {
-    _cache = JSON.parse(await readFile(PROJECTS_FILE, "utf-8")) as RegistryEntry[];
+    _cache = JSON.parse(await readFile(projectsFilePath(), "utf-8")) as RegistryEntry[];
     _cacheTime = now;
     return _cache;
   } catch {
