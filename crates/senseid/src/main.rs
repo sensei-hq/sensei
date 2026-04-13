@@ -3,6 +3,7 @@ mod db;
 mod adapters;
 mod indexer;
 mod config;
+mod watcher;
 mod api;
 
 use clap::{Parser, Subcommand};
