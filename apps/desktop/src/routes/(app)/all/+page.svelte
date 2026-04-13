@@ -15,6 +15,8 @@
   let scanRoot = $state('');
   let scanning = $state(false);
   let queueStatus = $derived(getQueueStatus());
+  let indexedCount = $derived(projects.filter(p => p.indexed_at).length);
+  let totalCount = $derived(projects.length);
 
   let solutions = $derived(getSolutions());
 
@@ -64,11 +66,24 @@
   }
 
   let filtered = $derived(
-    scannedRepos.filter(r => {
-      if (!search) return true;
-      const q = search.toLowerCase();
-      return r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q);
-    })
+    scannedRepos
+      .filter(r => {
+        if (!search) return true;
+        const q = search.toLowerCase();
+        return r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        // Currently indexing first, then queued, then indexed, then not indexed
+        const aId = a.repoId ?? a.name;
+        const bId = b.repoId ?? b.name;
+        const aIndexing = isIndexing(aId) ? 0 : 1;
+        const bIndexing = isIndexing(bId) ? 0 : 1;
+        if (aIndexing !== bIndexing) return aIndexing - bIndexing;
+        const aIndexed = projects.find(p => p.repo_id === aId)?.indexed_at ? 1 : 0;
+        const bIndexed = projects.find(p => p.repo_id === bId)?.indexed_at ? 1 : 0;
+        if (aIndexed !== bIndexed) return aIndexed - bIndexed; // not-indexed first (to show what needs attention)
+        return a.name.localeCompare(b.name);
+      })
   );
 
   function getSolutionForPath(path: string): Solution | undefined {
@@ -154,12 +169,8 @@
     unknown:   'bg-surface-z3 text-surface-z5',
   };
 
-  onMount(async () => {
-    const port = getPort();
-    connectSSE(port);
-
-    // Fetch all projects from daemon
-    const api = senseiApi(port);
+  async function loadProjects() {
+    const api = senseiApi(getPort());
     projects = await api.getProjects();
     scannedRepos = projects.map(p => ({
       name: p.name,
@@ -170,20 +181,42 @@
       tech_stack: p.stack ?? [],
       commit_count: 0,
     }));
+  }
 
+  let refreshInterval: ReturnType<typeof setInterval>;
+
+  onMount(async () => {
+    connectSSE(getPort());
+    await loadProjects();
     refreshStatus();
+
+    // Refresh project list every 5s while indexing is active
+    refreshInterval = setInterval(async () => {
+      const status = getQueueStatus();
+      if (status.current || status.queued.length > 0) {
+        await loadProjects();
+        refreshStatus();
+      }
+    }, 5000);
   });
 </script>
 
 <div class="flex h-full flex-col min-h-0">
   <div class="border-b border-surface-z0/50 px-4 py-2 shrink-0 flex items-center gap-3">
     <h1 class="text-sm font-semibold text-surface-z8">Projects</h1>
-    <span class="text-xs text-surface-z4">{scannedRepos.length} total</span>
+    <span class="text-xs text-surface-z4">{indexedCount}/{totalCount} indexed</span>
     {#if queueStatus.current}
-      <span class="text-[10px] text-info-z6">indexing: {queueStatus.current.repo_id}</span>
+      <span class="rounded px-1.5 py-0.5 text-[10px] bg-info-z2 text-info-z6">
+        indexing: {queueStatus.current.repo_id}
+      </span>
     {/if}
     {#if queueStatus.queued.length > 0}
       <span class="text-[10px] text-surface-z4">{queueStatus.queued.length} queued</span>
+    {/if}
+    {#if indexedCount > 0 && indexedCount < totalCount}
+      <div class="w-20 h-1.5 rounded-full bg-surface-z3 overflow-hidden">
+        <div class="h-full rounded-full bg-primary-z5 transition-all" style="width: {(indexedCount / totalCount * 100).toFixed(0)}%"></div>
+      </div>
     {/if}
     <div class="ml-auto flex items-center gap-2">
       <button

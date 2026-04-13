@@ -224,35 +224,15 @@
   }
 
   async function startIndexing() {
-    const toImport = discovered.filter(r => selectedRepos.has(r.path)).map(r => ({
-      ...r,
-      client: clientTags.get(r.path) ?? null,
-    }));
+    // Projects already registered by scanAll() via daemon auto-register
+    // Queue all discovered repos for indexing
+    const api = senseiApi(getPort());
+    _importedRepos = discovered.map(r => ({ path: r.path, repoId: r.name, name: r.name }));
 
-    if (toImport.length > 0) {
-      // Resolve repoIds
-      let withIds: (typeof toImport[0] & { repoId: string })[];
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        withIds = await Promise.all(toImport.map(async repo => {
-          const repoId: string = await invoke<string | null>('get_repo_id', { path: repo.path })
-            .catch(() => null) ?? repo.name;
-          return { ...repo, repoId };
-        }));
-      } catch {
-        withIds = toImport.map(repo => ({ ...repo, repoId: repo.name }));
-      }
-
-      const api = senseiApi(getPort());
-      for (const repo of withIds) {
-        await api.registerProject(repo.repoId, repo.name, repo.path);
-      }
-
-      // Store withIds for createSolutionsFromScan
-      _importedRepos = withIds;
+    for (const r of _importedRepos) {
+      await api.indexRepo(r.repoId, r.path);
     }
 
-    createSolutionsFromScan();
     step = 'done';
   }
 
