@@ -141,16 +141,75 @@ export function inferRepoRole(repo: ScannedRepo): RepoRole {
 
 // ─── Server sync ─────────────────────────────────────────────────────────────
 
-/** Push solution context to the sensei server so MCP tools can include it. */
+/** Sync solutions to the Rust daemon (source of truth). */
 export async function syncSolutionsToServer() {
-  const port = parseInt(typeof localStorage !== 'undefined' ? (localStorage.getItem('sensei:port') ?? '7744') : '7744', 10);
+  const port = getPort();
+  const { senseiApi } = await import('./api.js');
+  const api = senseiApi(port);
+
+  try {
+    // Push each local solution to daemon
+    for (const s of _solutions) {
+      await api.createSolution({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        client: s.client,
+        category: s.category,
+        repos: s.repos.map(r => ({ repo_id: r.repoId, role: r.role, label: r.label })),
+        tags: [],
+      });
+    }
+  } catch { /* server may not be running */ }
+
+  // Also push to old endpoint for MCP compatibility
   try {
     await fetch(`http://127.0.0.1:${port}/api/solution-context`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ solutions: _solutions.map(s => ({ id: s.id, name: s.name, repos: s.repos })) }),
     });
+  } catch { /* non-fatal */ }
+}
+
+/** Fetch solutions from daemon and merge with local state. */
+export async function syncFromServer() {
+  const port = getPort();
+  const { senseiApi } = await import('./api.js');
+  const api = senseiApi(port);
+
+  try {
+    const serverSolutions = await api.listSolutions();
+    if (serverSolutions.length > 0) {
+      // Merge: daemon wins for solutions that exist on both sides
+      const serverIds = new Set(serverSolutions.map((s: any) => s.id));
+      const localOnly = _solutions.filter(s => !serverIds.has(s.id));
+      _solutions = [...serverSolutions.map(mapServerSolution), ...localOnly];
+      saveSolutions();
+    }
   } catch { /* server may not be running */ }
+}
+
+function mapServerSolution(s: any): Solution {
+  return {
+    id: s.id,
+    name: s.name,
+    description: s.description,
+    client: s.client,
+    category: s.category ?? 'active',
+    repos: (s.repos ?? []).map((r: any) => ({
+      repoId: r.repo_id ?? r.repoId,
+      path: r.path ?? '',
+      role: r.role ?? 'unknown',
+      label: r.label,
+    })),
+    createdAt: s.created_at ?? s.createdAt ?? new Date().toISOString(),
+    updatedAt: s.updated_at ?? s.updatedAt ?? new Date().toISOString(),
+  };
+}
+
+function getPort(): number {
+  return parseInt(typeof localStorage !== 'undefined' ? (localStorage.getItem('sensei:port') ?? '7744') : '7744', 10);
 }
 
 // ─── Reset ───────────────────────────────────────────────────────────────────

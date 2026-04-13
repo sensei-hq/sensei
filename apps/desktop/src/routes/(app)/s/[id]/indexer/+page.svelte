@@ -70,28 +70,10 @@
       const name = solution?.repos.find(r => r.repoId === repoId)?.label ?? path.split('/').at(-1) ?? repoId;
       await api.registerProject(repoId, name, path);
       const res = await api.indexRepo(repoId, path, force);
-
-      if (res.body) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const msg = JSON.parse(line) as { status?: string; message?: string; error?: string };
-              if (msg.status === 'error') {
-                errors = { ...errors, [repoId]: msg.message ?? msg.error ?? 'Failed' };
-              }
-            } catch { /* ignore */ }
-          }
-        }
+      if (!res.ok) {
+        errors = { ...errors, [repoId]: 'Failed to queue index' };
       }
+      // Indexing is async — progress comes via SSE, not streaming response
     } catch (e) {
       errors = { ...errors, [repoId]: String(e) };
     } finally {
