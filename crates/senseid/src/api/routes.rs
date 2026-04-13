@@ -1295,7 +1295,7 @@ struct ScannedRepo {
 async fn scan_folder(
     State(state): State<AppState>,
     Json(body): Json<ScanBody>,
-) -> Result<Json<Vec<ScannedRepo>>, StatusCode> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     // Expand ~ to home directory
     let expanded = if body.root.starts_with("~/") {
         dirs::home_dir()
@@ -1304,45 +1304,53 @@ async fn scan_folder(
     } else {
         body.root.clone()
     };
-    let root = std::path::Path::new(&expanded);
+    let root_path = expanded.clone();
+    let root = std::path::Path::new(&root_path);
     if !root.exists() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let mut repos = Vec::new();
-    scan_dir(root, 0, body.max_depth, &mut repos);
+    let max_depth = body.max_depth;
 
-    // Auto-register each scanned repo as a project
-    {
-        let store = state.store.lock().await;
+    // Return immediately — scan runs in background
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        let mut repos = Vec::new();
+        scan_dir(std::path::Path::new(&root_path), 0, max_depth, &mut repos);
+
+        // Register and queue each repo one at a time
         for repo in &repos {
-            let project = crate::types::Project {
-                repo_id: repo.name.clone(),
-                name: repo.name.clone(),
-                path: repo.path.clone(),
-                remote_url: None,
-                indexed_at: None,
-                last_error: None,
-                duplicate_of: None,
-                stack: repo.stack.clone(),
-                libs: vec![],
-                tags: vec![],
-                status: "active".into(),
-            };
-            store.upsert_project(&project).ok();
+            // Register as project
+            {
+                let store = state_clone.store.lock().await;
+                let project = crate::types::Project {
+                    repo_id: repo.name.clone(),
+                    name: repo.name.clone(),
+                    path: repo.path.clone(),
+                    remote_url: None,
+                    indexed_at: None,
+                    last_error: None,
+                    duplicate_of: None,
+                    stack: repo.stack.clone(),
+                    libs: vec![],
+                    tags: vec![],
+                    status: "active".into(),
+                };
+                store.upsert_project(&project).ok();
+            }
+
+            // Queue for indexing
+            state_clone.index_queue.enqueue(
+                repo.name.clone(),
+                repo.path.clone(),
+                false,
+            ).await;
         }
-    }
 
-    // Auto-queue all for indexing
-    for repo in &repos {
-        state.index_queue.enqueue(
-            repo.name.clone(),
-            repo.path.clone(),
-            false,
-        ).await;
-    }
+        tracing::info!("Scan complete: {} repos from {}", repos.len(), root_path);
+    });
 
-    Ok(Json(repos))
+    Ok(Json(serde_json::json!({"ok": true, "scanning": true})))
 }
 
 fn scan_dir(dir: &std::path::Path, depth: u32, max_depth: u32, repos: &mut Vec<ScannedRepo>) {

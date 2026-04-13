@@ -105,20 +105,22 @@
     selectedRepos = new Set();
     variantOverrides = new Map();
 
-    // Scan via daemon — auto-registers all found repos as projects
+    // Submit scan to daemon (async — returns immediately, scans in background)
     const api = senseiApi(getPort());
     for (const root of scanRoots) {
-      try {
-        const scanned = await api.scanFolder(root);
-        for (const r of scanned) {
-          discovered.push({
-            name: r.name, path: r.path, remote: null, description: null,
-            categories: [], status: 'active' as any, last_commit_days: null,
-            tech_stack: r.stack ?? [], commit_count: 0,
-            duplicate_of: null, variant_group: null,
-          });
-        }
-      } catch { /* ignore failed roots */ }
+      await api.scanFolder(root);
+    }
+
+    // Wait briefly for scan to discover repos, then load from daemon
+    await new Promise(r => setTimeout(r, 2000));
+    const projects = await api.getProjects();
+    for (const p of projects) {
+      discovered.push({
+        name: p.name, path: p.path, remote: null, description: null,
+        categories: [], status: 'active' as any, last_commit_days: null,
+        tech_stack: p.stack ?? [], commit_count: 0,
+        duplicate_of: null, variant_group: null,
+      });
     }
 
     selectedRepos = new Set(discovered.map(r => r.path));
