@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "bun run --watch src/cli.ts",
-    "build": "bun build src/cli.ts src/daemon.ts --outdir dist --target bun --external=better-sqlite3 && sed -i '' '1s|#!/usr/bin/env node|#!/usr/bin/env bun|' dist/cli.js dist/daemon.js",
+    "build": "bun build src/cli.ts src/daemon.ts --outdir dist --target bun --external=better-sqlite3 --external=kuzu --external=tree-sitter --external=tree-sitter-python --external=tree-sitter-rust --external=tree-sitter-java --external=tree-sitter-kotlin --external=tree-sitter-swift --external=tree-sitter-typescript && sed -i '' '1s|#!/usr/bin/env node|#!/usr/bin/env bun|' dist/cli.js dist/daemon.js",
     "test": "bunx vitest run",
     "test:e2e": "bunx playwright test",
     "test:watch": "bunx vitest"
