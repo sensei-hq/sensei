@@ -100,31 +100,11 @@
 
   async function scanAll() {
     if (scanRoots.length === 0) return;
-    scanning = true;
-    discovered = [];
-    selectedRepos = new Set();
-    variantOverrides = new Map();
-
-    // Submit scan to daemon (async — returns immediately, scans in background)
+    // Submit all scans to daemon (returns instantly, scans in background)
     const api = senseiApi(getPort());
     for (const root of scanRoots) {
-      await api.scanFolder(root);
+      api.scanFolder(root); // fire-and-forget
     }
-
-    // Wait briefly for scan to discover repos, then load from daemon
-    await new Promise(r => setTimeout(r, 2000));
-    const projects = await api.getProjects();
-    for (const p of projects) {
-      discovered.push({
-        name: p.name, path: p.path, remote: null, description: null,
-        categories: [], status: 'active' as any, last_commit_days: null,
-        tech_stack: p.stack ?? [], commit_count: 0,
-        duplicate_of: null, variant_group: null,
-      });
-    }
-
-    selectedRepos = new Set(discovered.map(r => r.path));
-    scanning = false;
   }
 
   const selectedCount = $derived(selectedRepos.size);
@@ -429,7 +409,12 @@
           Back
         </button>
         <button
-          onclick={async () => { await scanAll(); await startIndexing(); step = 'done'; }}
+          onclick={async () => {
+            await scanAll();
+            const { setSetupComplete } = await import('$lib/appstate.svelte.js');
+            await setSetupComplete();
+            window.location.replace('/all');
+          }}
           disabled={scanRoots.length === 0 || scanning}
           class="flex-1 rounded-xl py-2.5 text-sm font-semibold transition-colors
                  {scanRoots.length > 0 && !scanning ? 'bg-primary-z6 text-white hover:bg-primary-z7' : 'bg-surface-z3 text-surface-z4 cursor-not-allowed'}">
