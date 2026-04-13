@@ -47,6 +47,7 @@
   }
 
   function nodeRadius(node: GraphNode): number {
+    if (isLargeGraph) return 2; // Small dots for large graphs
     const degree = edges.filter(e => {
       const src = typeof e.source === 'string' ? e.source : e.source.id;
       const tgt = typeof e.target === 'string' ? e.target : e.target.id;
@@ -54,6 +55,9 @@
     }).length;
     return Math.max(3, Math.min(12, 3 + degree * 0.8));
   }
+
+  // Large graph mode: >200 nodes → smaller dots, no labels, tighter simulation
+  let isLargeGraph = $derived(nodes.length > 200);
 
   function setupSimulation() {
     if (!canvas || nodes.length === 0) return;
@@ -63,13 +67,26 @@
 
     // Clone data for d3 (it mutates)
     const simNodes = nodes.map(n => ({ ...n }));
-    const simEdges = edges.map(e => ({ ...e }));
+    // Filter edges: only keep edges where both source and target exist in nodes
+    const nodeIds = new Set(simNodes.map(n => n.id));
+    const simEdges = edges
+      .map(e => ({ ...e }))
+      .filter(e => {
+        const srcId = typeof e.source === 'string' ? e.source : e.source.id;
+        const tgtId = typeof e.target === 'string' ? e.target : e.target.id;
+        return nodeIds.has(srcId) && nodeIds.has(tgtId);
+      });
+
+    const large = simNodes.length > 200;
+    const charge = large ? -20 : -80;
+    const linkDist = large ? 30 : 60;
+    const linkStr = large ? 0.1 : 0.3;
 
     simulation = d3Force.forceSimulation(simNodes)
-      .force('link', d3Force.forceLink<GraphNode, GraphEdge>(simEdges).id((d: GraphNode) => d.id).distance(60).strength(0.3))
-      .force('charge', d3Force.forceManyBody().strength(-80))
+      .force('link', d3Force.forceLink<GraphNode, GraphEdge>(simEdges).id((d: GraphNode) => d.id).distance(linkDist).strength(linkStr))
+      .force('charge', d3Force.forceManyBody().strength(charge))
       .force('center', d3Force.forceCenter(width / 2, height / 2))
-      .force('collision', d3Force.forceCollide().radius(8))
+      .force('collision', d3Force.forceCollide().radius(large ? 3 : 8))
       .on('tick', () => draw(ctx, simNodes, simEdges));
 
     // Zoom
@@ -151,8 +168,8 @@
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Label for selected/hovered or large nodes
-      if (isSelected || isHovered || r >= 6) {
+      // Label: only show for selected/hovered, or for small graphs with large nodes
+      if (isSelected || isHovered || (!isLargeGraph && r >= 6)) {
         ctx.fillStyle = isSelected ? '#2d5bff' : 'rgba(100, 100, 120, 0.8)';
         ctx.font = `${isSelected || isHovered ? 'bold ' : ''}${Math.max(8, 10 / transform.k)}px -apple-system, sans-serif`;
         ctx.textAlign = 'center';
