@@ -3,6 +3,8 @@
   import { onMount } from 'svelte';
   import { loadSolutions, getSolutions, getSolutionsByCategory, getStandaloneLibraries, markLoaded, isSolutionsLoaded } from '$lib/solutions.svelte.js';
   import { loadAppState, getPort, getSidebarMaxItems, isAppLoaded } from '$lib/appstate.svelte.js';
+  import { senseiApi } from '$lib/api.js';
+  import type { ServerProject } from '$lib/types.js';
   import ServerStatus from '$lib/ServerStatus.svelte';
   import SidebarSolution from '$lib/SidebarSolution.svelte';
 
@@ -10,6 +12,9 @@
 
   let senseiPort = $derived(getPort());
   let MAX_VISIBLE = $derived(getSidebarMaxItems());
+
+  // Recent projects (individual repos not in any solution)
+  let recentProjects = $state<ServerProject[]>([]);
 
   let showAllActive = $state(false);
   let showAllSide = $state(false);
@@ -32,6 +37,18 @@
     await loadAppState();
     await loadSolutions();
     markLoaded();
+
+    // Load recent indexed projects for sidebar
+    const api = senseiApi(getPort());
+    const projects = await api.getProjects();
+    // Show recently indexed projects not already in a solution
+    const solutionRepoIds = new Set(
+      getSolutions().flatMap(s => s.repos.map(r => r.repoId))
+    );
+    recentProjects = projects
+      .filter(p => p.indexed_at && !solutionRepoIds.has(p.repo_id))
+      .sort((a, b) => (b.indexed_at ?? '').localeCompare(a.indexed_at ?? ''))
+      .slice(0, MAX_VISIBLE);
   });
 </script>
 
@@ -124,6 +141,25 @@
               +{hiddenIdeaCount} more
             </button>
           {/if}
+        </div>
+      {/if}
+
+      <!-- Recent Projects (not in any solution) -->
+      {#if recentProjects.length > 0}
+        <div class="pt-3">
+          <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Recent</p>
+          {#each recentProjects as project}
+            <a
+              href="/p/{project.repo_id}"
+              class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm no-drag transition-colors
+                     {$page.url.pathname === `/p/${project.repo_id}` ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}"
+            >
+              <span class="flex h-5 w-5 items-center justify-center rounded-md bg-surface-z3 text-[10px] font-bold text-surface-z6">
+                {project.name.charAt(0).toUpperCase()}
+              </span>
+              <span class="truncate flex-1">{project.name}</span>
+            </a>
+          {/each}
         </div>
       {/if}
 
