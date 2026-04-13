@@ -3,14 +3,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DocPage, LibEntry } from "@sensei/shared";
 
 const mockReplaceLibDocs = vi.fn();
-vi.mock("./activity-log.js", () => ({
-  getActivityLog: vi.fn(() => ({ replaceLibDocs: mockReplaceLibDocs })),
+const mockWriteLibMeta = vi.fn().mockResolvedValue(undefined);
+const mockAddLibUser = vi.fn().mockResolvedValue(undefined);
+vi.mock("./lib-store.js", () => ({
+  replaceLibDocs: (...args: unknown[]) => mockReplaceLibDocs(...args),
+  writeLibMeta: (...args: unknown[]) => mockWriteLibMeta(...args),
+  addLibUser: (...args: unknown[]) => mockAddLibUser(...args),
 }));
 
 import { LibIndexer } from "./lib-indexer.js";
 
 beforeEach(() => {
   mockReplaceLibDocs.mockClear();
+  mockWriteLibMeta.mockClear();
+  mockAddLibUser.mockClear();
 });
 
 describe("LibIndexer", () => {
@@ -39,6 +45,17 @@ describe("LibIndexer", () => {
     expect(result.sectionsIndexed).toBe(2);
   });
 
+  it("writes lib meta with source info and repoId", async () => {
+    const indexer = new LibIndexer("repo-123");
+    await indexer.index(entry, pages);
+
+    expect(mockWriteLibMeta).toHaveBeenCalledTimes(1);
+    const [name, meta] = mockWriteLibMeta.mock.calls[0];
+    expect(name).toBe("rokkit");
+    expect(meta.sourceType).toBe("llms.txt");
+    expect(meta.usedBy).toContain("repo-123");
+  });
+
   it("maps sourceType from page, falling back to entry source_type", async () => {
     const indexer = new LibIndexer("repo-123");
     const mixedPages: DocPage[] = [
@@ -50,6 +67,6 @@ describe("LibIndexer", () => {
 
     const [, docs] = mockReplaceLibDocs.mock.calls[0];
     expect(docs[0].sourceType).toBe("http");
-    expect(docs[1].sourceType).toBe("http"); // fallback to entry.source_type
+    expect(docs[1].sourceType).toBe("http");
   });
 });

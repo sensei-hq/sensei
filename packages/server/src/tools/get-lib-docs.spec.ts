@@ -2,8 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockGetLibDocs = vi.fn();
-vi.mock("../activity-log.js", () => ({
-  getActivityLog: vi.fn(() => ({ getLibDocs: mockGetLibDocs })),
+vi.mock("../lib-store.js", () => ({
+  getLibDocs: (...args: unknown[]) => mockGetLibDocs(...args),
 }));
 
 import { getLibDocsTool } from "./get-lib-docs.js";
@@ -13,9 +13,9 @@ beforeEach(() => {
 });
 
 describe("getLibDocsTool", () => {
-  it("returns sections mapped from ActivityLog rows", async () => {
+  it("returns sections mapped from shared lib store", async () => {
     mockGetLibDocs.mockReturnValue([
-      { title: "Button", url: "https://rokkit.dev/button", localPath: null, summary: "A button", content: "Docs.", component: "Forms" },
+      { id: "1", title: "Button", url: "https://rokkit.dev/button", localPath: null, summary: "A button", content: "Docs.", sourceType: "llms.txt", component: "Forms" },
     ]);
 
     const result = await getLibDocsTool("repo-1", "rokkit", { query: "button" });
@@ -33,7 +33,7 @@ describe("getLibDocsTool", () => {
     expect(mockGetLibDocs).toHaveBeenCalledWith("rokkit", { component: "Forms", limit: 5 });
   });
 
-  it("returns empty sections when getLibDocs returns empty array", async () => {
+  it("returns empty sections when no docs exist", async () => {
     mockGetLibDocs.mockReturnValue([]);
     const result = await getLibDocsTool("repo-1", "rokkit");
     expect(result.sections).toEqual([]);
@@ -47,7 +47,7 @@ describe("getLibDocsTool", () => {
 
   it("uses localPath as url fallback when url is null", async () => {
     mockGetLibDocs.mockReturnValue([
-      { title: "Page", url: null, localPath: "/path/to/doc.md", summary: "s", content: "c", component: null },
+      { id: "1", title: "Page", url: null, localPath: "/path/to/doc.md", summary: "s", content: "c", sourceType: "http", component: null },
     ]);
     const result = await getLibDocsTool("repo-1", "mylib");
     expect(result.sections[0].document.url).toBe("/path/to/doc.md");
