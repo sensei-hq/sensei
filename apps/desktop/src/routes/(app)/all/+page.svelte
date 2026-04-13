@@ -128,17 +128,19 @@
       // Daemon scan auto-registers all found repos
       const scanned = await api.scanFolder(scanRoot);
 
-      // Queue all new repos for indexing
-      for (const r of scanned) {
-        await api.indexRepo(r.name, r.path);
-      }
-
-      // Reload project list
+      // Reload project list immediately so repos appear
       await loadProjects();
+      scanning = false;
+
+      // Queue all for indexing in parallel (fire-and-forget, don't block UI)
+      Promise.all(scanned.map(r => api.indexRepo(r.name, r.path).catch(() => {})))
+        .then(() => refreshStatus());
+
       refreshStatus();
     } catch (e) {
       console.error('Scan failed:', e);
-    } finally { scanning = false; }
+      scanning = false;
+    }
   }
 
   const STATUS_CLS: Record<string, string> = {

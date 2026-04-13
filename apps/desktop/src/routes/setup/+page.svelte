@@ -225,13 +225,12 @@
 
   async function startIndexing() {
     // Projects already registered by scanAll() via daemon auto-register
-    // Queue all discovered repos for indexing
+    // Queue all discovered repos for indexing (fire-and-forget, don't block)
     const api = senseiApi(getPort());
     _importedRepos = discovered.map(r => ({ path: r.path, repoId: r.name, name: r.name }));
 
-    for (const r of _importedRepos) {
-      await api.indexRepo(r.repoId, r.path);
-    }
+    // Fire all in parallel — don't await each one
+    Promise.all(_importedRepos.map(r => api.indexRepo(r.repoId, r.path).catch(() => {})));
 
     step = 'done';
   }
