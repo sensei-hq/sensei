@@ -199,6 +199,16 @@ export function senseiApi(port: number) {
         '/api/scan', { root, max_depth: maxDepth }, [],
       ),
 
+    // ── MCP Tool Proxy ────────────────────────────────────────────────
+    mcpListTools: () => get<{ tools: Array<{ name: string; description: string; params: string[] }> }>('/api/mcp/tools', { tools: [] }),
+
+    mcpCallTool: (tool: string, params: Record<string, string>) =>
+      post<Record<string, unknown>>('/api/mcp/call', { tool, params }, {}),
+
+    // ── Marketplace ──────────────────────────────────────────────────
+    marketplaceInstall: (target: string, marketplacePath: string, item?: string, scope?: string) =>
+      post('/api/marketplace/install', { target, marketplacePath, item, scope }, { ok: false }),
+
     // ── Config (user preferences) ──────────────────────────────────────
     getConfig: () => get<Record<string, string>>('/api/config', {}),
 
