@@ -307,7 +307,27 @@
 
         <!-- Dependencies tab -->
         {:else if activeTab === 'deps'}
-          <p class="text-xs text-surface-z4">Dependency detection coming in a future update.</p>
+          {#await senseiApi(port).getDepVersions(repo.repoId)}
+            <p class="text-xs text-surface-z4">Loading dependencies...</p>
+          {:then deps}
+            {#if deps.length === 0}
+              <p class="text-xs text-surface-z4">No dependency manifest found.</p>
+            {:else}
+              <div class="space-y-0.5 max-h-48 overflow-y-auto">
+                {#each deps as dep}
+                  <div class="flex items-center gap-2 text-xs px-1 py-0.5 rounded hover:bg-surface-z3/50">
+                    <span class="flex-1 text-surface-z7 font-mono truncate">{dep.lib_name}</span>
+                    <span class="text-surface-z5 font-mono">{dep.version}</span>
+                    <span class="text-[10px] text-surface-z4">{dep.source}</span>
+                    {#if dep.dev}
+                      <span class="text-[10px] text-surface-z3">dev</span>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+              <p class="text-[10px] text-surface-z3 mt-1">{deps.length} dependencies</p>
+            {/if}
+          {/await}
         {/if}
       </div>
     </div>
