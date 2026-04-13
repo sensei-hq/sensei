@@ -18,8 +18,10 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
     match ext {
         ".py" => Some(Box::new(python::PythonAdapter)),
         ".rs" => Some(Box::new(rust_lang::RustAdapter)),
-        ".ts" | ".tsx" => Some(Box::new(typescript::TypeScriptAdapter)),
-        ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
+        // TS/JS disabled — tree-sitter-typescript 0.23 has ABI incompatibility with tree-sitter 0.24
+        // Will re-enable when grammar publishes a compatible version
+        // ".ts" | ".tsx" => Some(Box::new(typescript::TypeScriptAdapter)),
+        // ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
         ".java" => Some(Box::new(java::JavaAdapter)),
         ".sql" => Some(Box::new(sql::SqlAdapter)),
         _ => None,
@@ -28,7 +30,8 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
 
 /// List all supported extensions.
 pub fn supported_extensions() -> &'static [&'static str] {
-    &[".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".java", ".sql"]
+    &[".py", ".rs", ".java", ".sql"]
+    // TS/JS temporarily disabled due to tree-sitter grammar ABI issue
 }
 
 #[cfg(test)]
