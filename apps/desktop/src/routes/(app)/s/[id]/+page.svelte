@@ -118,6 +118,9 @@
     return inferredRoles.find(r => r.repo_id === repoId);
   }
 
+  // Repos panel
+  let showReposPanel = $state(false);
+
   onMount(() => { load(); });
 </script>
 
@@ -150,10 +153,10 @@
 
     <!-- Stats grid -->
     <div class="grid grid-cols-5 gap-3">
-      <div class="rounded-lg bg-surface-z2 p-3">
+      <button onclick={() => showReposPanel = true} class="rounded-lg bg-surface-z2 p-3 text-left hover:bg-surface-z3/80 transition-colors cursor-pointer">
         <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Repos</p>
-        <p class="mt-1 text-xl font-semibold text-surface-z8">{repoCount}</p>
-      </div>
+        <p class="mt-1 text-xl font-semibold text-primary-z6">{repoCount}</p>
+      </button>
       <div class="rounded-lg bg-surface-z2 p-3">
         <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Indexed</p>
         <p class="mt-1 text-xl font-semibold {indexedCount === repoCount ? 'text-success-z6' : 'text-warning-z6'}">{indexedCount}/{repoCount}</p>
@@ -207,74 +210,52 @@
       </div>
     {/if}
 
-    <!-- Connection diagram (multi-repo solutions only) -->
-    {#if solution.repos.length >= 2}
-      {@const nodes = solution.repos.map((r, i) => {
-        const angle = (2 * Math.PI * i) / solution.repos.length - Math.PI / 2;
-        const rx = 120, ry = 60;
-        const cx = 200 + rx * Math.cos(angle);
-        const cy = 90 + ry * Math.sin(angle);
-        const inferred = getInferredRole(r.repoId);
-        const displayRole = inferred && inferred.confidence > 0.5 ? inferred.role : r.role;
-        return { ...r, cx, cy, name: r.label ?? r.path.split('/').at(-1) ?? r.repoId, displayRole };
-      })}
-      {@const connections = (() => {
-        const lines: Array<{ from: typeof nodes[0]; to: typeof nodes[0]; label: string }> = [];
-        const libs = nodes.filter(n => ['library', 'shared', 'shared-lib'].includes(n.displayRole));
-        const consumers = nodes.filter(n => !['library', 'shared', 'shared-lib'].includes(n.displayRole));
-        const frontends = nodes.filter(n => ['frontend', 'mobile', 'ui'].includes(n.displayRole));
-        const backends = nodes.filter(n => ['backend', 'middleware', 'api'].includes(n.displayRole));
-        for (const f of frontends) for (const b of backends) lines.push({ from: f, to: b, label: 'API' });
-        for (const c of consumers) for (const l of libs) lines.push({ from: c, to: l, label: 'import' });
-        return lines;
-      })()}
-      <div class="rounded-lg bg-surface-z2/50 border border-surface-z0/30 p-3">
-        <p class="text-[10px] font-semibold text-surface-z4 uppercase tracking-wide mb-2">Connections</p>
-        <svg viewBox="0 0 400 180" class="w-full max-w-lg mx-auto">
-          <defs>
-            <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <polygon points="0 0, 10 3.5, 0 7" fill="rgb(var(--color-surface-z4))" />
-            </marker>
-          </defs>
-          {#each connections as conn}
-            {@const dx = conn.to.cx - conn.from.cx}
-            {@const dy = conn.to.cy - conn.from.cy}
-            {@const len = Math.sqrt(dx*dx + dy*dy)}
-            {@const nx = dx/len}
-            {@const ny = dy/len}
-            <line
-              x1={conn.from.cx + nx * 28} y1={conn.from.cy + ny * 16}
-              x2={conn.to.cx - nx * 28} y2={conn.to.cy - ny * 16}
-              stroke="rgb(var(--color-surface-z3))" stroke-width="1" marker-end="url(#arrow)"
-            />
-            <text
-              x={(conn.from.cx + conn.to.cx) / 2}
-              y={(conn.from.cy + conn.to.cy) / 2 - 4}
-              text-anchor="middle"
-              class="text-[8px]" fill="rgb(var(--color-surface-z4))"
-            >{conn.label}</text>
-          {/each}
-          {#each nodes as node}
-            {@const fill = ['frontend', 'ui'].includes(node.displayRole) ? '--color-primary-z3'
-              : ['backend', 'api'].includes(node.displayRole) ? '--color-info-z3'
-              : ['library', 'shared-lib'].includes(node.displayRole) ? '--color-warning-z3'
-              : node.displayRole === 'mobile' ? '--color-secondary-z3'
-              : '--color-surface-z3'}
-            {@const textFill = ['frontend', 'ui'].includes(node.displayRole) ? '--color-primary-z7'
-              : ['backend', 'api'].includes(node.displayRole) ? '--color-info-z7'
-              : ['library', 'shared-lib'].includes(node.displayRole) ? '--color-warning-z7'
-              : node.displayRole === 'mobile' ? '--color-secondary-z7'
-              : '--color-surface-z7'}
-            <rect x={node.cx - 36} y={node.cy - 14} width="72" height="28" rx="6"
-              fill="rgb(var({fill}))" />
-            <text x={node.cx} y={node.cy + 1} text-anchor="middle" dominant-baseline="middle"
-              class="text-[9px] font-medium" fill="rgb(var({textFill}))">{node.name.length > 10 ? node.name.slice(0, 9) + '…' : node.name}</text>
-            <text x={node.cx} y={node.cy + 12} text-anchor="middle"
-              class="text-[7px]" fill="rgb(var(--color-surface-z4))">{node.displayRole}</text>
-          {/each}
-        </svg>
+    <!-- Repos overview (replaces separate Repos tab) -->
+    <div>
+      <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide mb-2">Repos in Solution</h3>
+      <div class="grid grid-cols-1 gap-2 {solution.repos.length > 1 ? 'md:grid-cols-2 xl:grid-cols-3' : ''}">
+        {#each solution.repos as repo}
+          {@const repoName = repo.label || repo.path?.split('/').at(-1) || repo.repoId}
+          {@const repoPath = repo.path || ''}
+          {@const summary = repoSummaries.get(repo.repoId)}
+          {@const serverInfo = serverProjects.find(p => p.repoId === repo.repoId)}
+          {@const inferred = getInferredRole(repo.repoId)}
+          {@const displayRole = inferred && inferred.confidence > 0.5 ? inferred.role : repo.role}
+          <a href="/p/{repo.repoId}" class="rounded-lg bg-surface-z2 px-4 py-3 space-y-1.5 hover:bg-surface-z3/60 transition-colors block">
+            <div class="flex items-center gap-2">
+              <span class="flex h-6 w-6 items-center justify-center rounded-md bg-surface-z3 text-[10px] font-bold text-surface-z6">
+                {repoName.charAt(0).toUpperCase()}
+              </span>
+              <span class="text-sm font-medium text-surface-z8 flex-1 truncate">{repoName}</span>
+              <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {ROLE_CLS[displayRole] ?? ROLE_CLS.unknown}">{displayRole}</span>
+            </div>
+            {#if repoPath}
+              <p class="text-[10px] text-surface-z3 font-mono truncate">{repoPath}</p>
+            {/if}
+            <div class="flex items-center gap-3 text-[10px]">
+              {#if summary}
+                <span class="text-surface-z5 font-mono">{summary.functions} fn · {summary.types} ty</span>
+              {/if}
+              {#if serverInfo?.indexedAt}
+                <span class="text-success-z5">indexed</span>
+              {:else}
+                <span class="text-surface-z4">not indexed</span>
+              {/if}
+            </div>
+            {#if summary?.libs && summary.libs.length > 0}
+              <div class="flex flex-wrap gap-1">
+                {#each summary.libs.slice(0, 5) as lib}
+                  <span class="rounded px-1 py-0.5 text-[9px] bg-surface-z3 text-surface-z5">{lib}</span>
+                {/each}
+                {#if summary.libs.length > 5}
+                  <span class="text-[9px] text-surface-z4">+{summary.libs.length - 5}</span>
+                {/if}
+              </div>
+            {/if}
+          </a>
+        {/each}
       </div>
-    {/if}
+    </div>
 
     <!-- Code graph preview -->
     {#if graphNodes.length > 0}
@@ -363,4 +344,35 @@
     {/if}
 
   </div>
+
+  <!-- Repos slide-out panel -->
+  {#if showReposPanel}
+    <div class="fixed inset-0 z-50 flex justify-end" onclick={() => showReposPanel = false}>
+      <div class="w-80 h-full bg-surface-z1 border-l border-surface-z0/50 shadow-xl overflow-y-auto" onclick={(e) => e.stopPropagation()}>
+        <div class="px-4 py-3 border-b border-surface-z0/50 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-surface-z8">Repos in {solution.name}</h3>
+          <button onclick={() => showReposPanel = false} class="text-surface-z4 hover:text-surface-z6 text-sm">✕</button>
+        </div>
+        <div class="p-3 space-y-2">
+          {#each solution.repos as repo}
+            {@const repoName = repo.label || repo.path?.split('/').at(-1) || repo.repoId}
+            {@const summary = repoSummaries.get(repo.repoId)}
+            <div class="rounded-lg bg-surface-z2 px-3 py-2.5 space-y-1">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-surface-z7">{repoName}</span>
+                <span class="rounded px-1 py-0.5 text-[9px] bg-surface-z3 text-surface-z5">{repo.role}</span>
+              </div>
+              {#if repo.path}
+                <p class="text-[10px] text-surface-z3 font-mono truncate">{repo.path}</p>
+              {/if}
+              {#if summary}
+                <p class="text-[10px] text-surface-z4">{summary.functions} functions · {summary.types} types</p>
+              {/if}
+            </div>
+          {/each}
+          <p class="text-[10px] text-surface-z3 pt-2">Add or remove repos from the Projects page.</p>
+        </div>
+      </div>
+    </div>
+  {/if}
 {/if}
