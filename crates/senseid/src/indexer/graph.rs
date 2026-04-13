@@ -32,6 +32,22 @@ impl GraphDb {
     }
 
     /// Get the path to the graph.db file.
+    pub fn clear_all(&self) -> Result<(), String> {
+        self.conn.execute_batch("
+            DELETE FROM functions;
+            DELETE FROM files;
+            DELETE FROM types;
+            DELETE FROM comments;
+            DELETE FROM docs;
+            DELETE FROM edges;
+        ").map_err(|e| e.to_string())?;
+        // Also clear community/drift tables if they exist
+        self.conn.execute_batch("
+            DELETE FROM doc_drift;
+        ").ok();
+        Ok(())
+    }
+
     pub fn db_path(&self) -> Option<&std::path::Path> {
         self.db_file.as_deref()
     }
