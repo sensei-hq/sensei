@@ -223,6 +223,26 @@ pub fn index_repo(
     // Save manifest
     manifest.save().map_err(|e| format!("Failed to save manifest: {}", e))?;
 
+    // Detect external libraries from imports
+    let mut lib_set = std::collections::HashSet::new();
+    for result in all_results.values() {
+        for imp in &result.imports {
+            if imp.target_path.starts_with('.') || imp.target_path.starts_with('/') { continue; }
+            if imp.target_path.starts_with("node:") { continue; }
+            // Group by org scope: @scope/pkg → "scope"
+            let lib_name = if imp.target_path.starts_with('@') {
+                imp.target_path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
+            } else {
+                imp.target_path.split('/').next().unwrap_or("").to_string()
+            };
+            if !lib_name.is_empty() {
+                lib_set.insert(lib_name);
+            }
+        }
+    }
+    let mut libs: Vec<String> = lib_set.into_iter().collect();
+    libs.sort();
+
     Ok(IndexResult {
         files_indexed,
         files_skipped,
@@ -231,7 +251,7 @@ pub fn index_repo(
         types_indexed,
         edges_created,
         docs_indexed: 0,
-        libs: vec![],
+        libs,
         duration_ms: start.elapsed().as_millis() as u64,
     })
 }
