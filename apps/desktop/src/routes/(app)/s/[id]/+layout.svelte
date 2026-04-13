@@ -15,6 +15,7 @@
     { label: 'Architecture',  href: `/s/${solution.id}/arch`,     active: $page.url.pathname === `/s/${solution.id}/arch` },
     { label: 'Traceability',  href: `/s/${solution.id}/trace`,    active: $page.url.pathname === `/s/${solution.id}/trace` },
     { label: 'Sessions',      href: `/s/${solution.id}/sessions`, active: $page.url.pathname === `/s/${solution.id}/sessions` },
+    { label: 'Skills',        href: `/s/${solution.id}/skills`,   active: $page.url.pathname === `/s/${solution.id}/skills` },
   ] : []);
 
   $effect(() => {
