@@ -155,6 +155,9 @@ async function setupClaudeSettings(workDir: string, mode: BranchMode): Promise<v
 
   await writeFile(join(settingsDir, "settings.json"), JSON.stringify(settings, null, 2));
 
+  // Empty plugin dir — --plugin-dir points here to prevent global plugins from loading
+  await mkdir(join(settingsDir, "no-plugins"), { recursive: true });
+
   const claudeMd = mode === "indexed"
     ? "# Benchmark workspace\nImplement the requested feature.\nUse sensei MCP tools (search, get_symbol, context_pack) to understand the codebase before coding.\n"
     : "# Benchmark workspace\nImplement the requested feature.\n";
