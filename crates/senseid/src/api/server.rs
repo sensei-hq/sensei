@@ -19,7 +19,7 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
     });
 
     // Spawn background index worker
-    crate::indexer::worker::spawn_worker(index_queue.clone(), state.clone());
+    crate::indexer::worker::spawn_worker(index_queue.clone(), state.clone()).await;
 
     // Spawn file watchers for all registered projects
     spawn_watchers(state.clone()).await;

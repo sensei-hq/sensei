@@ -1,193 +1,175 @@
 use std::sync::Arc;
+use std::path::PathBuf;
 use crate::api::routes::AppState;
+use crate::indexer::graph::GraphDb;
 use crate::indexer::queue::{IndexQueue, IndexEvent, BroadcastProgress};
 use crate::indexer::pipeline::{index_repo_with_progress, index_dirty_files};
 
-/// Spawn the background index worker. Processes jobs one at a time from the queue.
-pub fn spawn_worker(queue: Arc<IndexQueue>, state: AppState) {
-    tokio::spawn(async move {
-        loop {
-            let job = queue.next_job().await;
-            let repo_id = job.repo_id.clone();
-            let repo_path = job.repo_path.clone();
+const DEFAULT_WORKERS: usize = 3;
 
-            // Check for dirty files — if present, do incremental re-index
-            let dirty = state.dirty_tracker.drain(&repo_id).await;
-            let has_dirty = !dirty.code_files.is_empty() || !dirty.doc_files.is_empty();
+/// Spawn N parallel index workers.
+/// Each worker opens its own SQLite connection for the graph DB.
+pub async fn spawn_workers(queue: Arc<IndexQueue>, state: AppState, num_workers: Option<usize>) {
+    // Get the graph DB path from the shared graph (for workers to open their own connections)
+    let graph_path = {
+        let graph = state.graph.lock().await;
+        graph.db_path().map(|p| p.parent().unwrap().to_path_buf())
+    };
 
-            if has_dirty && !job.force && dirty.code_files.len() < 50 {
-                // Incremental only when not forced and dirty set is small
-                tracing::info!(
-                    "Incremental re-index {} — {} code files, {} doc files",
-                    repo_id, dirty.code_files.len(), dirty.doc_files.len()
-                );
+    let n = num_workers.unwrap_or(DEFAULT_WORKERS);
+    for worker_id in 0..n {
+        let queue = queue.clone();
+        let state = state.clone();
+        let graph_path = graph_path.clone();
 
-                let _ = queue.sender().send(IndexEvent::Started {
-                    repo_id: repo_id.clone(),
-                    files_total: dirty.code_files.len() as u32 + dirty.doc_files.len() as u32,
-                });
+        tokio::spawn(async move {
+            tracing::info!("Index worker {} started", worker_id);
 
-                let progress = BroadcastProgress::new(queue.sender().clone());
-                let state_clone = state.clone();
-                let repo_id_clone = repo_id.clone();
+            loop {
+                let job = queue.next_job().await;
+                let repo_id = job.repo_id.clone();
+                let repo_path = job.repo_path.clone();
+
+                let dirty = state.dirty_tracker.drain(&repo_id).await;
+                let has_dirty = !dirty.code_files.is_empty() || !dirty.doc_files.is_empty();
+
+                let is_incremental = has_dirty && !job.force && dirty.code_files.len() < 50;
                 let dirty_code = dirty.code_files.clone();
+                let dirty_docs = dirty.doc_files.clone();
+                let progress = BroadcastProgress::new(queue.sender().clone());
+                let gp = graph_path.clone();
 
-                let result = tokio::task::spawn_blocking(move || {
-                    let graph = state_clone.graph.blocking_lock();
+                if is_incremental {
+                    tracing::info!(
+                        "[w{}] Incremental {} — {} code, {} docs",
+                        worker_id, repo_id, dirty_code.len(), dirty_docs.len()
+                    );
+                    let _ = queue.sender().send(IndexEvent::Started {
+                        repo_id: repo_id.clone(),
+                        files_total: dirty_code.len() as u32 + dirty_docs.len() as u32,
+                    });
 
-                    // 1. Re-index dirty code files
-                    let (index_result, changed_fn_ids) = index_dirty_files(
-                        &graph, &repo_path, &repo_id_clone, &dirty_code, &progress
-                    )?;
+                    let rid = repo_id.clone();
+                    let rp = repo_path.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        let graph = open_worker_graph(&gp)?;
 
-                    // 2. Doc drift detection — find docs linked to changed files/functions
-                    let changed_file_ids: Vec<String> = dirty_code.iter()
-                        .map(|p| format!("file:{}", p.to_string_lossy()))
-                        .collect();
-                    let drifts = graph.find_drifted_docs(&changed_file_ids, &changed_fn_ids)?;
+                        let (index_result, changed_fn_ids) = index_dirty_files(
+                            &graph, &rp, &rid, &dirty_code, &progress
+                        )?;
 
-                    if !drifts.is_empty() {
-                        tracing::info!("{} docs may have drifted for {}", drifts.len(), repo_id_clone);
-                        graph.record_doc_drift(&drifts, &repo_id_clone)?;
-                    }
+                        // Doc drift
+                        let changed_file_ids: Vec<String> = dirty_code.iter()
+                            .map(|p| format!("file:{}", p.to_string_lossy()))
+                            .collect();
+                        let drifts = graph.find_drifted_docs(&changed_file_ids, &changed_fn_ids)?;
+                        if !drifts.is_empty() {
+                            graph.record_doc_drift(&drifts, &rid)?;
+                        }
 
-                    // 3. Re-index dirty doc files (if any)
-                    if !dirty.doc_files.is_empty() {
-                        for doc_path in &dirty.doc_files {
-                            // Re-run doc indexer for individual files
+                        // Re-index dirty docs
+                        for doc_path in &dirty_docs {
                             let abs = doc_path.to_string_lossy().to_string();
                             let content = std::fs::read_to_string(doc_path).unwrap_or_default();
                             if !content.is_empty() {
-                                let rel = doc_path.strip_prefix(&repo_path)
-                                    .unwrap_or(doc_path)
-                                    .to_string_lossy().to_string();
                                 let doc_id = format!("doc:{}", abs);
                                 let title = content.lines()
                                     .find(|l| l.starts_with("# "))
                                     .map(|l| l[2..].trim().to_string())
-                                    .unwrap_or(rel.clone());
-                                graph.merge_doc(&doc_id, &abs, &title, "doc", &repo_id_clone).ok();
+                                    .unwrap_or_default();
+                                graph.merge_doc(&doc_id, &abs, &title, "doc", &rid).ok();
                             }
                         }
-                    }
 
-                    Ok::<_, String>(index_result)
-                }).await;
+                        Ok::<_, String>(index_result)
+                    }).await;
 
-                match result {
-                    Ok(Ok(r)) => {
-                        // Incremental doesn't detect libs — just update timestamp
-                        { let s = state.store.lock().await; s.mark_indexed_timestamp(&repo_id).ok(); }
-                        let _ = queue.sender().send(IndexEvent::Completed {
-                            repo_id: repo_id.clone(),
-                            files_indexed: r.files_indexed,
-                            functions_indexed: r.functions_indexed,
-                            types_indexed: r.types_indexed,
-                            edges_created: r.edges_created,
-                            duration_ms: r.duration_ms,
-                        });
-                        queue.mark_done(&repo_id).await;
-                        tracing::info!("Incremental done {} — {} files, {}ms", repo_id, r.files_indexed, r.duration_ms);
-                    }
-                    Ok(Err(e)) => {
+                    let index_err = match result {
+                        Ok(Ok(r)) => {
+                            { let s = state.store.lock().await; s.mark_indexed_timestamp(&repo_id).ok(); }
+                            let _ = queue.sender().send(IndexEvent::Completed {
+                                repo_id: repo_id.clone(),
+                                files_indexed: r.files_indexed, functions_indexed: r.functions_indexed,
+                                types_indexed: r.types_indexed, edges_created: r.edges_created,
+                                duration_ms: r.duration_ms,
+                            });
+                            queue.mark_done(&repo_id).await;
+                            tracing::info!("[w{}] Incremental done {} — {}ms", worker_id, repo_id, r.duration_ms);
+                            None
+                        }
+                        Ok(Err(e)) => Some(e),
+                        Err(e) => Some(format!("panic: {}", e)),
+                    };
+                    if let Some(e) = index_err {
                         { let s = state.store.lock().await; s.mark_index_failed(&repo_id, &e).ok(); }
                         let _ = queue.sender().send(IndexEvent::Failed { repo_id: repo_id.clone(), error: e.clone() });
                         queue.mark_failed(&repo_id).await;
-                        tracing::error!("Incremental index failed for {}: {}", repo_id, e);
+                        tracing::error!("[w{}] Incremental failed {}: {}", worker_id, repo_id, e);
                     }
-                    Err(e) => {
-                        let err = format!("Worker panic: {}", e);
-                        { let s = state.store.lock().await; s.mark_index_failed(&repo_id, &err).ok(); }
-                        let _ = queue.sender().send(IndexEvent::Failed { repo_id: repo_id.clone(), error: err });
-                        queue.mark_failed(&repo_id).await;
-                    }
-                }
-            } else {
-                // Full re-index
-                tracing::info!("Full index {} at {}", repo_id, repo_path);
-                let _ = queue.sender().send(IndexEvent::Started {
-                    repo_id: repo_id.clone(), files_total: 0,
-                });
+                } else {
+                    // Full re-index
+                    tracing::info!("[w{}] Full index {}", worker_id, repo_id);
+                    let _ = queue.sender().send(IndexEvent::Started {
+                        repo_id: repo_id.clone(), files_total: 0,
+                    });
 
-                let progress = BroadcastProgress::new(queue.sender().clone());
-                let state_clone = state.clone();
-                let repo_id_clone = repo_id.clone();
+                    let rid = repo_id.clone();
+                    let rp = repo_path.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        let graph = open_worker_graph(&gp)?;
+                        index_repo_with_progress(&graph, &rp, &rid, &progress)
+                    }).await;
 
-                let result = tokio::task::spawn_blocking(move || {
-                    let graph = state_clone.graph.blocking_lock();
-                    index_repo_with_progress(&graph, &repo_path, &repo_id_clone, &progress)
-                }).await;
-
-                match result {
-                    Ok(Ok(r)) => {
-                        let lib_count = r.libs.len();
-                        {
-                            let s = state.store.lock().await;
-                            // Only update libs if we actually parsed files (avoid overwriting with empty on no-op index)
-                            if r.files_indexed > 0 || r.libs.len() > 0 {
-                                if let Err(e) = s.mark_indexed(&repo_id, &r.libs) {
-                                    tracing::error!("mark_indexed failed for {}: {}", repo_id, e);
+                    match result {
+                        Ok(Ok(r)) => {
+                            {
+                                let s = state.store.lock().await;
+                                if r.files_indexed > 0 || !r.libs.is_empty() {
+                                    s.mark_indexed(&repo_id, &r.libs).ok();
+                                } else {
+                                    s.mark_indexed_timestamp(&repo_id).ok();
                                 }
-                            } else {
-                                // Just update indexed_at timestamp without clearing libs
-                                s.mark_indexed_timestamp(&repo_id).ok();
                             }
+                            let _ = queue.sender().send(IndexEvent::Completed {
+                                repo_id: repo_id.clone(),
+                                files_indexed: r.files_indexed, functions_indexed: r.functions_indexed,
+                                types_indexed: r.types_indexed, edges_created: r.edges_created,
+                                duration_ms: r.duration_ms,
+                            });
+                            queue.mark_done(&repo_id).await;
+                            tracing::info!(
+                                "[w{}] Indexed {} — {} files, {} fns, {} libs, {}ms",
+                                worker_id, repo_id, r.files_indexed, r.functions_indexed, r.libs.len(), r.duration_ms
+                            );
                         }
-                        let _ = queue.sender().send(IndexEvent::Completed {
-                            repo_id: repo_id.clone(),
-                            files_indexed: r.files_indexed,
-                            functions_indexed: r.functions_indexed,
-                            types_indexed: r.types_indexed,
-                            edges_created: r.edges_created,
-                            duration_ms: r.duration_ms,
-                        });
-                        queue.mark_done(&repo_id).await;
-                        tracing::info!(
-                            "Indexed {} — {} files, {} fns, {} libs, {}ms",
-                            repo_id, r.files_indexed, r.functions_indexed, lib_count, r.duration_ms
-                        );
-                    }
-                    Ok(Err(e)) => {
-                        { let s = state.store.lock().await; s.mark_index_failed(&repo_id, &e).ok(); }
-                        let _ = queue.sender().send(IndexEvent::Failed { repo_id: repo_id.clone(), error: e.clone() });
-                        queue.mark_failed(&repo_id).await;
-                        tracing::error!("Index failed for {}: {}", repo_id, e);
-                    }
-                    Err(e) => {
-                        let err = format!("Worker panic: {}", e);
-                        { let s = state.store.lock().await; s.mark_index_failed(&repo_id, &err).ok(); }
-                        let _ = queue.sender().send(IndexEvent::Failed { repo_id: repo_id.clone(), error: err });
-                        queue.mark_failed(&repo_id).await;
+                        Ok(Err(e)) => {
+                            { let s = state.store.lock().await; s.mark_index_failed(&repo_id, &e).ok(); }
+                            let _ = queue.sender().send(IndexEvent::Failed { repo_id: repo_id.clone(), error: e.clone() });
+                            queue.mark_failed(&repo_id).await;
+                            tracing::error!("[w{}] Index failed {}: {}", worker_id, repo_id, e);
+                        }
+                        Err(e) => {
+                            let err = format!("panic: {}", e);
+                            { let s = state.store.lock().await; s.mark_index_failed(&repo_id, &err).ok(); }
+                            let _ = queue.sender().send(IndexEvent::Failed { repo_id: repo_id.clone(), error: err });
+                            queue.mark_failed(&repo_id).await;
+                        }
                     }
                 }
             }
-        }
-    });
+        });
+    }
 }
 
-/// After indexing a repo, check if it's part of any solution and run cross-repo analysis.
-async fn run_cross_repo_analysis(state: &AppState, repo_id: &str) {
-    let store = state.store.lock().await;
-    let solutions = match store.list_solutions() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
+/// Backward compat.
+pub async fn spawn_worker(queue: Arc<IndexQueue>, state: AppState) {
+    spawn_workers(queue, state, Some(DEFAULT_WORKERS)).await;
+}
 
-    for solution in &solutions {
-        let in_solution = solution.repos.iter().any(|r| r.repo_id == repo_id);
-        if !in_solution || solution.repos.len() < 2 { continue; }
-
-        let graph = state.graph.lock().await;
-        match crate::indexer::cross_repo::analyze_solution(&store, &graph, solution) {
-            Ok(analysis) => {
-                if !analysis.links.is_empty() {
-                    tracing::info!(
-                        "Cross-repo: solution {} has {} links, {} inferred roles",
-                        solution.name, analysis.links.len(), analysis.inferred_roles.len()
-                    );
-                }
-            }
-            Err(e) => tracing::warn!("Cross-repo analysis failed for {}: {}", solution.name, e),
-        }
+/// Open a worker-local graph DB connection.
+fn open_worker_graph(path: &Option<PathBuf>) -> Result<GraphDb, String> {
+    match path {
+        Some(p) => GraphDb::open(p),
+        None => GraphDb::open_memory(),
     }
 }

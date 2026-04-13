@@ -342,6 +342,72 @@ impl Store {
         Ok(())
     }
 
+    // ── Library Docs & Meta ────────────────────────────────────────────────
+
+    pub fn upsert_lib_doc(
+        &self, id: &str, lib_name: &str, title: &str, url: Option<&str>,
+        summary: &str, content: Option<&str>, source_type: &str,
+        component: Option<&str>, indexed_at: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO lib_docs(id, lib_name, title, url, summary, content, source_type, component, indexed_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            params![id, lib_name, title, url.unwrap_or(""), summary, content.unwrap_or(""), source_type, component.unwrap_or(""), indexed_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_lib_meta(
+        &self, name: &str, source_type: &str, base_url: Option<&str>,
+        version: Option<&str>, indexed_at: &str,
+    ) -> rusqlite::Result<()> {
+        // Merge: keep existing used_by, update other fields
+        self.conn.execute(
+            "INSERT INTO lib_meta(name, source_type, base_url, indexed_at) VALUES(?1,?2,?3,?4)
+             ON CONFLICT(name) DO UPDATE SET source_type=?2, base_url=COALESCE(?3, base_url), indexed_at=?4",
+            params![name, source_type, base_url.unwrap_or(""), indexed_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_lib_docs(&self, lib_name: &str) -> rusqlite::Result<Vec<crate::indexer::lib_indexer::LibDoc>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, url, summary, content, source_type, component, indexed_at FROM lib_docs WHERE lib_name = ?1"
+        )?;
+        let rows = stmt.query_map(params![lib_name], |row| {
+            Ok(crate::indexer::lib_indexer::LibDoc {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                url: row.get(2)?,
+                summary: row.get(3)?,
+                content: row.get::<_, Option<String>>(4)?,
+                source_type: row.get(5)?,
+                component: row.get(6)?,
+                indexed_at: row.get(7)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn search_lib_docs(&self, query: &str) -> rusqlite::Result<Vec<crate::indexer::lib_indexer::LibDoc>> {
+        let pattern = format!("%{}%", query);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, url, summary, content, source_type, component, indexed_at FROM lib_docs WHERE title LIKE ?1 OR summary LIKE ?1 OR content LIKE ?1 LIMIT 20"
+        )?;
+        let rows = stmt.query_map(params![pattern], |row| {
+            Ok(crate::indexer::lib_indexer::LibDoc {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                url: row.get(2)?,
+                summary: row.get(3)?,
+                content: row.get::<_, Option<String>>(4)?,
+                source_type: row.get(5)?,
+                component: row.get(6)?,
+                indexed_at: row.get(7)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     // ── Index Errors ─────────────────────────────────────────────────────────
 
     pub fn log_index_error(&self, err: &IndexError) -> rusqlite::Result<()> {
