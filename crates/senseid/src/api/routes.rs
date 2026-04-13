@@ -71,6 +71,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/libs/versions", get(get_dep_versions))
         // Unified query (desktop/MCP)
         .route("/api/query", post(unified_query))
+        // Config (user preferences)
+        .route("/api/config", get(get_config).put(set_config_handler))
+        .route("/api/config/{key}", get(get_config_key).delete(delete_config_key))
         // Scan
         .route("/api/scan", post(scan_folder))
         // Stop
@@ -1024,6 +1027,48 @@ fn extract_search_term(q: &str) -> String {
         .max_by_key(|w| w.len())
         .unwrap_or("")
         .to_string()
+}
+
+// ── Config ───────────────────────────────────────────────────────────────────
+
+async fn get_config(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    let config = store.get_all_config().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!(config)))
+}
+
+async fn get_config_key(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    let val = store.get_config(&key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"key": key, "value": val})))
+}
+
+async fn set_config_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    if let Some(obj) = body.as_object() {
+        for (key, val) in obj {
+            let v = match val { serde_json::Value::String(s) => s.clone(), other => other.to_string() };
+            store.set_config(key, &v).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+    }
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+async fn delete_config_key(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    store.delete_config(&key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 // ── Scan ─────────────────────────────────────────────────────────────────────

@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { getPort } from '$lib/appstate.svelte.js';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { getSolutionById } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
   let solution = $derived(getSolutionById($page.params.id as string));
-  let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
+  let port = $derived(getPort());
   let loading = $state(true);
   let showGapsOnly = $state(false);
 

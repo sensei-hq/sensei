@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getPort, getDismissedSuggestions, dismissSuggestion as dismissSuggestionState } from '$lib/appstate.svelte.js';
   import {
     getSolutions, createSolution, addRepoToSolution,
     removeRepoFromSolution, inferRepoRole,
@@ -55,11 +56,8 @@
     createSolution(suggestion.name, repos);
   }
 
-  function dismissSuggestion(suggestion: { name: string; paths: string[] }) {
-    // Store dismissed suggestions so they don't reappear
-    const dismissed = JSON.parse(localStorage.getItem('sensei:dismissed_suggestions') ?? '[]') as string[];
-    dismissed.push(suggestion.name.toLowerCase());
-    localStorage.setItem('sensei:dismissed_suggestions', JSON.stringify(dismissed));
+  function dismissSuggestionHandler(suggestion: { name: string; paths: string[] }) {
+    dismissSuggestionState(suggestion.name.toLowerCase());
   }
 
   let filtered = $derived(
@@ -107,7 +105,7 @@
   async function scanFolder() {
     if (!scanRoot.trim()) return;
     scanning = true;
-    const port = parseInt(localStorage.getItem('sensei:port') ?? '7744', 10);
+    const port = getPort();
     const api = senseiApi(port);
     try {
       // Try Tauri first (native), fall back to daemon API
@@ -128,12 +126,11 @@
         }));
       }
 
-      // Merge into projects_raw
+      // Merge into visible list
       const existing = new Set(scannedRepos.map(r => r.path));
       const newRepos = found.filter(r => !existing.has(r.path));
       if (newRepos.length > 0) {
         scannedRepos = [...scannedRepos, ...newRepos];
-        localStorage.setItem('sensei:projects_raw', JSON.stringify(scannedRepos));
       }
 
       // Also register each repo with the daemon
@@ -155,34 +152,19 @@
   };
 
   onMount(async () => {
-    // Load from localStorage as fast cache
-    try {
-      const raw = localStorage.getItem('sensei:projects_raw');
-      if (raw) scannedRepos = JSON.parse(raw) as ScannedRepo[];
-    } catch { /* empty */ }
-
-    // Also fetch from daemon API (source of truth) and merge
-    const port = parseInt(localStorage.getItem('sensei:port') ?? '7744', 10);
+    // Fetch all projects from daemon (sole source of truth)
+    const port = getPort();
     const api = senseiApi(port);
     const projects = await api.getProjects();
-    if (projects.length > 0) {
-      const existing = new Set(scannedRepos.map(r => r.path));
-      const fromDaemon: ScannedRepo[] = projects
-        .filter(p => !existing.has(p.path))
-        .map(p => ({
-          name: p.name,
-          path: p.path,
-          repoId: p.repo_id,
-          categories: [],
-          status: (p.indexed_at ? 'active' : 'unknown') as any,
-          tech_stack: p.stack ?? [],
-          commit_count: 0,
-        }));
-      if (fromDaemon.length > 0) {
-        scannedRepos = [...scannedRepos, ...fromDaemon];
-        localStorage.setItem('sensei:projects_raw', JSON.stringify(scannedRepos));
-      }
-    }
+    scannedRepos = projects.map(p => ({
+      name: p.name,
+      path: p.path,
+      repoId: p.repo_id,
+      categories: [],
+      status: (p.indexed_at ? 'active' : 'unknown') as any,
+      tech_stack: p.stack ?? [],
+      commit_count: 0,
+    }));
   });
 </script>
 
@@ -239,7 +221,7 @@
               Create
             </button>
             <button
-              onclick={() => dismissSuggestion(suggestion)}
+              onclick={() => dismissSuggestionHandler(suggestion)}
               class="text-[10px] text-primary-z3 hover:text-primary-z5 shrink-0"
             >
               Dismiss

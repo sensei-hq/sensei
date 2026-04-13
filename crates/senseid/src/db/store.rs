@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, OptionalExtension};
 use std::path::Path;
 use crate::types::{Project, Solution, SolutionRepo, IndexError};
 
@@ -132,6 +132,11 @@ impl Store {
                 parsed_data TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY(repo_id, file_path)
+            );
+
+            CREATE TABLE IF NOT EXISTS config(
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
             "
         )
@@ -341,6 +346,39 @@ impl Store {
             params![solution_id, repo_id],
         )?;
         Ok(())
+    }
+
+    // ── Config (key-value preferences) ─────────────────────────────────────
+
+    pub fn get_config(&self, key: &str) -> rusqlite::Result<Option<String>> {
+        self.conn.query_row(
+            "SELECT value FROM config WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        ).optional()
+    }
+
+    pub fn set_config(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO config(key, value) VALUES(?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_config(&self, key: &str) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM config WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
+    pub fn get_all_config(&self) -> rusqlite::Result<std::collections::HashMap<String, String>> {
+        let mut stmt = self.conn.prepare("SELECT key, value FROM config")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows { if let Ok((k, v)) = r { map.insert(k, v); } }
+        Ok(map)
     }
 
     // ── Library Docs & Meta ────────────────────────────────────────────────

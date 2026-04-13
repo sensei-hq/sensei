@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getPort } from '$lib/appstate.svelte.js';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { getSolutionById } from '$lib/solutions.svelte.js';
@@ -6,7 +7,7 @@
   import type { ServerProject, IndexProgress } from '$lib/types.js';
 
   let solution = $derived(getSolutionById($page.params.id as string));
-  let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
+  let port = $derived(getPort());
 
   let serverProjects = $state<ServerProject[]>([]);
   let progressMap = $state<Record<string, IndexProgress>>({});
