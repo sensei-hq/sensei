@@ -1,5 +1,6 @@
 mod types;
 mod db;
+mod adapters;
 
 fn main() {
     println!("senseid — Sensei indexer daemon");
