@@ -10,10 +10,7 @@ axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
 
-# Graph database
-kuzu = "0.11"
-
-# SQLite
+# SQLite (store + graph — Kuzu migration planned when linking is stable)
 rusqlite = { version = "0.34", features = ["bundled"] }
 
 # Tree-sitter
@@ -42,6 +39,7 @@ clap = { version = "4", features = ["derive"] }
 
 # Utilities
 sha2 = "0.10"
+hex = "0.4"
 globset = "0.4"
 walkdir = "2"
 tracing = "0.1"
