@@ -297,15 +297,20 @@ MAX_RETRIES = 3
     fn incremental_skip() {
         let (repo, db_dir) = setup_test_repo();
         let graph = GraphDb::open(db_dir.path()).unwrap();
+        let repo_id = format!("test-incr-{}", std::process::id());
 
         // First index
-        let r1 = index_repo(&graph, &repo.path().to_string_lossy(), "test-repo").unwrap();
+        let r1 = index_repo(&graph, &repo.path().to_string_lossy(), &repo_id).unwrap();
         assert!(r1.files_indexed >= 2);
 
         // Second index — should skip all (unchanged)
-        let r2 = index_repo(&graph, &repo.path().to_string_lossy(), "test-repo").unwrap();
+        let r2 = index_repo(&graph, &repo.path().to_string_lossy(), &repo_id).unwrap();
         assert_eq!(r2.files_indexed, 0, "expected 0 files on re-index, got {}", r2.files_indexed);
         assert!(r2.files_skipped >= 2);
+
+        // Clean up manifest
+        let manifest_dir = dirs::home_dir().unwrap().join(".sensei").join("projects").join(&repo_id);
+        std::fs::remove_dir_all(&manifest_dir).ok();
     }
 
     #[test]

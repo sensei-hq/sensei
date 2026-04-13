@@ -71,6 +71,10 @@ async fn main() {
     }
 }
 
+fn graph_path() -> PathBuf {
+    sensei_dir().join("graph")
+}
+
 async fn run_foreground(port: u16) {
     let db_dir = sensei_dir();
     std::fs::create_dir_all(&db_dir).ok();
@@ -78,10 +82,11 @@ async fn run_foreground(port: u16) {
     let pid_path = db_dir.join("serve.pid");
     std::fs::write(&pid_path, std::process::id().to_string()).ok();
 
-    let store = db::Store::open(&db_path()).expect("Failed to open database");
+    let store = db::Store::open(&db_path()).expect("Failed to open SQLite");
+    let graph = indexer::graph::GraphDb::open(&graph_path()).expect("Failed to open graph DB");
     println!("[senseid] Listening on :{}", port);
 
-    if let Err(e) = api::start_server(store, port).await {
+    if let Err(e) = api::start_server(store, graph, port).await {
         eprintln!("[senseid] Server error: {}", e);
     }
     std::fs::remove_file(&pid_path).ok();

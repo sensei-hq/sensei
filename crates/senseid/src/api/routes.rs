@@ -9,9 +9,15 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::db::Store;
-use crate::types::{Project, Solution, SolutionRepo, IndexError};
+use crate::indexer::graph::GraphDb;
+use crate::types::{Project, Solution, SolutionRepo, IndexError, IndexResult};
 
-pub type AppState = Arc<Mutex<Store>>;
+pub struct SharedState {
+    pub store: Mutex<Store>,
+    pub graph: Mutex<GraphDb>,
+}
+
+pub type AppState = Arc<SharedState>;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -30,8 +36,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/solutions/{id}/tags", post(add_solution_tag))
         .route("/api/solutions/{id}/tags/{tag}", delete(remove_solution_tag))
         // Indexing
+        .route("/api/index", post(index_project))
         .route("/api/index/errors", get(list_index_errors))
         .route("/api/index/errors/{repo_id}", get(list_repo_index_errors))
+        // Graph
+        .route("/api/graph/nodes", get(graph_nodes))
         // Stop
         .route("/stop", post(stop))
         .with_state(state)
@@ -56,8 +65,8 @@ async fn health() -> Json<HealthResponse> {
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
-async fn list_projects(State(store): State<AppState>) -> Result<Json<Vec<Project>>, StatusCode> {
-    let s = store.lock().await;
+async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<Project>>, StatusCode> {
+    let s = state.store.lock().await;
     s.list_projects()
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -72,10 +81,10 @@ struct CreateProjectBody {
 }
 
 async fn create_project(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Json(body): Json<CreateProjectBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     let project = Project {
         repo_id: body.repo_id,
         name: body.name.unwrap_or_else(|| body.path.split('/').last().unwrap_or("unknown").to_string()),
@@ -95,11 +104,11 @@ async fn create_project(
 }
 
 async fn update_project(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(repo_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     let mut project = s.get_project(&repo_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -117,10 +126,10 @@ async fn update_project(
 }
 
 async fn delete_project(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.delete_project(&repo_id)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -134,21 +143,21 @@ struct TagBody {
 }
 
 async fn add_project_tag(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(repo_id): Path<String>,
     Json(body): Json<TagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.add_tag("project", &repo_id, &body.tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn remove_project_tag(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path((repo_id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.remove_tag("project", &repo_id, &tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -156,8 +165,8 @@ async fn remove_project_tag(
 
 // ── Solutions ────────────────────────────────────────────────────────────────
 
-async fn list_solutions(State(store): State<AppState>) -> Result<Json<Vec<Solution>>, StatusCode> {
-    let s = store.lock().await;
+async fn list_solutions(State(state): State<AppState>) -> Result<Json<Vec<Solution>>, StatusCode> {
+    let s = state.store.lock().await;
     s.list_solutions()
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -179,10 +188,10 @@ struct CreateSolutionBody {
 fn default_category() -> String { "active".to_string() }
 
 async fn create_solution(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Json(body): Json<CreateSolutionBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     let id = uuid::Uuid::new_v4().to_string();
     let solution = Solution {
         id: id.clone(),
@@ -210,52 +219,52 @@ async fn update_solution(
 }
 
 async fn delete_solution(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.delete_solution(&id)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn add_solution_repo(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<SolutionRepo>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.add_repo_to_solution(&id, &body)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn remove_solution_repo(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path((id, repo_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.remove_repo_from_solution(&id, &repo_id)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn add_solution_tag(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<TagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.add_tag("solution", &id, &body.tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn remove_solution_tag(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path((id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.remove_tag("solution", &id, &tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -263,21 +272,86 @@ async fn remove_solution_tag(
 
 // ── Index Errors ─────────────────────────────────────────────────────────────
 
-async fn list_index_errors(State(store): State<AppState>) -> Result<Json<Vec<IndexError>>, StatusCode> {
-    let s = store.lock().await;
+async fn list_index_errors(State(state): State<AppState>) -> Result<Json<Vec<IndexError>>, StatusCode> {
+    let s = state.store.lock().await;
     s.get_index_errors(None)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn list_repo_index_errors(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<Vec<IndexError>>, StatusCode> {
-    let s = store.lock().await;
+    let s = state.store.lock().await;
     s.get_index_errors(Some(&repo_id))
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// ── Indexing ─────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct IndexBody {
+    #[serde(rename = "repoId")]
+    repo_id: String,
+    #[serde(rename = "repoPath")]
+    repo_path: String,
+    #[serde(default)]
+    force: bool,
+}
+
+async fn index_project(
+    State(state): State<AppState>,
+    Json(body): Json<IndexBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Clear errors for this project
+    { let s = state.store.lock().await; s.clear_index_errors(&body.repo_id).ok(); }
+
+    let graph = state.graph.lock().await;
+    match crate::indexer::index_repo(&graph, &body.repo_path, &body.repo_id) {
+        Ok(result) => {
+            // Update project as indexed
+            let s = state.store.lock().await;
+            s.mark_indexed(&body.repo_id, &result.libs).ok();
+            Ok(Json(serde_json::json!({
+                "ok": true,
+                "filesIndexed": result.files_indexed,
+                "functionsIndexed": result.functions_indexed,
+                "typesIndexed": result.types_indexed,
+                "edgesCreated": result.edges_created,
+                "durationMs": result.duration_ms,
+                "libs": result.libs,
+            })))
+        }
+        Err(e) => {
+            let s = state.store.lock().await;
+            s.mark_index_failed(&body.repo_id, &e).ok();
+            Ok(Json(serde_json::json!({"ok": false, "error": e})))
+        }
+    }
+}
+
+// ── Graph ────────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GraphQuery {
+    #[serde(rename = "repoId")]
+    repo_id: Option<String>,
+}
+
+async fn graph_nodes(
+    State(state): State<AppState>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let repo_id = q.repo_id.unwrap_or_default();
+    if repo_id.is_empty() {
+        return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
+    }
+    let graph = state.graph.lock().await;
+    let nodes = graph.get_nodes(&repo_id).unwrap_or_default();
+    let edges = graph.get_edges(&repo_id).unwrap_or_default();
+    Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
 
 // ── Stop ─────────────────────────────────────────────────────────────────────
@@ -299,7 +373,11 @@ mod tests {
 
     fn test_app() -> (Router, AppState) {
         let store = Store::open_memory().unwrap();
-        let state = Arc::new(Mutex::new(store));
+        let graph = GraphDb::open_memory().unwrap();
+        let state = Arc::new(SharedState {
+            store: Mutex::new(store),
+            graph: Mutex::new(graph),
+        });
         let router = create_router(state.clone());
         (router, state)
     }
@@ -346,7 +424,7 @@ mod tests {
     async fn delete_project_returns_ok() {
         let (app, state) = test_app();
         {
-            let s = state.lock().await;
+            let s = state.store.lock().await;
             s.upsert_project(&Project {
                 repo_id: "x".into(), name: "x".into(), path: "/x".into(),
                 remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
@@ -389,7 +467,7 @@ mod tests {
     async fn project_tags_via_api() {
         let (app, state) = test_app();
         {
-            let s = state.lock().await;
+            let s = state.store.lock().await;
             s.upsert_project(&Project {
                 repo_id: "r".into(), name: "r".into(), path: "/r".into(),
                 remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
@@ -435,7 +513,7 @@ mod tests {
     async fn index_errors_via_api() {
         let (app, state) = test_app();
         {
-            let s = state.lock().await;
+            let s = state.store.lock().await;
             s.log_index_error(&IndexError {
                 repo_id: "foo".into(), file_path: "bad.py".into(),
                 error: "SyntaxError".into(), adapter: Some("python".into()),
@@ -457,5 +535,44 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let errors: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert_eq!(errors.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn index_project_via_api() {
+        let (app, _) = test_app();
+
+        // Create a temp repo with a Python file
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("hello.py"), "def greet(name):\n    return f'hi {name}'\n").unwrap();
+
+        let body = serde_json::json!({
+            "repoId": "test-repo",
+            "repoPath": dir.path().to_string_lossy(),
+        });
+
+        let resp = app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/index")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json["functionsIndexed"].as_u64().unwrap() >= 1);
+
+        // Graph should have data now
+        let resp = app.oneshot(
+            Request::builder()
+                .uri("/api/graph/nodes?repoId=test-repo")
+                .body(Body::empty())
+                .unwrap()
+        ).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["nodes"].as_array().unwrap().len() >= 1);
     }
 }
