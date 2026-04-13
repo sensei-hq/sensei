@@ -219,7 +219,10 @@ function mapServerSolution(s: any): Solution {
 }
 
 function getPort(): number {
-  return parseInt(typeof localStorage !== 'undefined' ? (localStorage.getItem('sensei:port') ?? '7744') : '7744', 10);
+  // Import dynamically to avoid circular dependency
+  try {
+    return parseInt(typeof localStorage !== 'undefined' ? (localStorage.getItem('sensei:port') ?? '7744') : '7744', 10);
+  } catch { return 7744; }
 }
 
 // ─── Reset ───────────────────────────────────────────────────────────────────
