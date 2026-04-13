@@ -804,18 +804,10 @@ export async function serve(repoPath: string, opts: { port?: number; daemon?: bo
       for (const p of unindexed) queue.enqueue(p.repoId, p.path, /* force */ true);
     }
 
-    out.info(`Starting file watchers for ${projects.length} project(s)…`);
-    // Start watchers sequentially to avoid overwhelming Kuzu with 72 concurrent DB opens
-    let watcherCount = 0;
-    for (const p of projects) {
-      try {
-        await startWatcher(p.repoId, p.path);
-        watcherCount++;
-      } catch (err) {
-        out.warn(`[${p.repoId}] watcher skipped: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    out.success(`Reconciliation complete. ${unindexed.length} queued, ${watcherCount}/${projects.length} watchers started.`);
+    // File watchers disabled — 72 concurrent Kuzu DB connections overwhelms the system.
+    // Repos are re-indexed on demand via /api/index. File watching will be re-enabled
+    // when the daemon moves to a single shared DB or lazy connection pool.
+    out.success(`Reconciliation complete. ${unindexed.length} queued, ${projects.length} indexed.`);
   })();
 
   // Keep process alive
