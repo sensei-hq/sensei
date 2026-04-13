@@ -4,6 +4,10 @@ dist/
 *.json.bak
 bun.lockb
 
+# Benchmark workdirs
+sensei-bench/
+sensei-bench-*/
+
 # Benchmark raw results (summaries are committed manually)
 results/**/*.json
 results/**/a/
