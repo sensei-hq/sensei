@@ -82,6 +82,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/config/{key}", get(get_config_key).delete(delete_config_key))
         // Sessions (stub — real sessions come from TS daemon's activity.db)
         .route("/api/sessions", get(get_sessions_stub))
+        // Reset (clears all data)
+        .route("/api/reset", post(reset_all))
         // Scan
         .route("/api/scan", post(scan_folder))
         // Stop
@@ -1236,6 +1238,39 @@ async fn get_sessions_stub() -> Json<serde_json::Value> {
         "toolUsage": [],
         "benchmarkPairs": []
     }))
+}
+
+// ── Reset ────────────────────────────────────────────────────────────────────
+
+async fn reset_all(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    // Clear store: projects, solutions, config, errors
+    {
+        let store = state.store.lock().await;
+        store.execute_raw("DELETE FROM projects").ok();
+        store.execute_raw("DELETE FROM solutions").ok();
+        store.execute_raw("DELETE FROM solution_repos").ok();
+        store.execute_raw("DELETE FROM config").ok();
+        store.execute_raw("DELETE FROM index_errors").ok();
+        store.execute_raw("DELETE FROM lib_docs").ok();
+        store.execute_raw("DELETE FROM lib_meta").ok();
+    }
+
+    // Clear graph DB
+    {
+        let graph = state.graph.lock().await;
+        graph.clear_all().ok();
+    }
+
+    // Clear manifest files
+    if let Some(home) = dirs::home_dir() {
+        let projects_dir = home.join(".sensei").join("projects");
+        std::fs::remove_dir_all(&projects_dir).ok();
+        std::fs::create_dir_all(&projects_dir).ok();
+    }
+
+    Json(serde_json::json!({"ok": true}))
 }
 
 // ── Scan ─────────────────────────────────────────────────────────────────────
