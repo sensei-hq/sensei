@@ -123,38 +123,19 @@
   async function scanFolder() {
     if (!scanRoot.trim()) return;
     scanning = true;
-    const port = getPort();
-    const api = senseiApi(port);
+    const api = senseiApi(getPort());
     try {
-      // Try Tauri first (native), fall back to daemon API
-      let found: ScannedRepo[] = [];
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        found = await invoke<ScannedRepo[]>('analyze_folder', { root: scanRoot });
-      } catch {
-        // Tauri not available — use daemon API
-        const scanned = await api.scanFolder(scanRoot);
-        found = scanned.map(r => ({
-          name: r.name,
-          path: r.path,
-          categories: [],
-          status: 'unknown' as const,
-          tech_stack: r.stack ?? [],
-          commit_count: 0,
-        }));
+      // Daemon scan auto-registers all found repos
+      const scanned = await api.scanFolder(scanRoot);
+
+      // Queue all new repos for indexing
+      for (const r of scanned) {
+        await api.indexRepo(r.name, r.path);
       }
 
-      // Merge into visible list
-      const existing = new Set(scannedRepos.map(r => r.path));
-      const newRepos = found.filter(r => !existing.has(r.path));
-      if (newRepos.length > 0) {
-        scannedRepos = [...scannedRepos, ...newRepos];
-      }
-
-      // Also register each repo with the daemon
-      for (const r of found) {
-        await api.registerProject(r.name, r.name, r.path);
-      }
+      // Reload project list
+      await loadProjects();
+      refreshStatus();
     } catch (e) {
       console.error('Scan failed:', e);
     } finally { scanning = false; }
