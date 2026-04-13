@@ -71,6 +71,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/libs/versions", get(get_dep_versions))
         // Unified query (desktop/MCP)
         .route("/api/query", post(unified_query))
+        // MCP tool proxy
+        .route("/api/mcp/tools", get(mcp_list_tools))
+        .route("/api/mcp/call", post(mcp_call_tool))
+        // Marketplace install
+        .route("/api/marketplace/install", post(marketplace_install))
         // Config (user preferences)
         .route("/api/config", get(get_config).put(set_config_handler))
         .route("/api/config/{key}", get(get_config_key).delete(delete_config_key))
@@ -1027,6 +1032,143 @@ fn extract_search_term(q: &str) -> String {
         .max_by_key(|w| w.len())
         .unwrap_or("")
         .to_string()
+}
+
+// ── MCP Tool Proxy ───────────────────────────────────────────────────────────
+
+async fn mcp_list_tools() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "tools": [
+            {"name": "search", "description": "Search functions and types by name", "params": ["query", "repoId"]},
+            {"name": "get_symbol", "description": "Get function details by name", "params": ["name", "repoId"]},
+            {"name": "get_callers", "description": "Get callers of a function", "params": ["name", "repoId"]},
+            {"name": "get_callees", "description": "Get callees of a function", "params": ["name", "repoId"]},
+            {"name": "get_file_tags", "description": "Get files by framework tag", "params": ["tag", "repoId"]},
+            {"name": "get_communities", "description": "Get code communities for a project", "params": ["repoId"]},
+            {"name": "get_doc_drift", "description": "Get docs that may be stale", "params": ["repoId"]},
+            {"name": "search_lib_docs", "description": "Search indexed library documentation", "params": ["query"]},
+            {"name": "query", "description": "Natural language query across graph", "params": ["q", "repoId"]},
+            {"name": "get_project_summary", "description": "Get project stats and metadata", "params": ["repoId"]},
+        ]
+    }))
+}
+
+async fn mcp_call_tool(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let tool = body["tool"].as_str().unwrap_or("");
+    let params = &body["params"];
+    let repo_id = params["repoId"].as_str().unwrap_or("");
+    let query = params["query"].as_str().or(params["q"].as_str()).or(params["name"].as_str()).unwrap_or("");
+
+    let result = match tool {
+        "search" => {
+            let graph = state.graph.lock().await;
+            let fns = graph.search_functions(query, repo_id).unwrap_or_default();
+            let types = graph.search_types(query, repo_id).unwrap_or_default();
+            serde_json::json!({"functions": fns, "types": types})
+        }
+        "get_symbol" => {
+            let graph = state.graph.lock().await;
+            let fns = graph.search_functions(query, repo_id).unwrap_or_default();
+            serde_json::json!({"results": fns})
+        }
+        "get_callers" => {
+            let graph = state.graph.lock().await;
+            let results = graph.callers_of(query, repo_id).unwrap_or_default();
+            serde_json::json!({"callers": results})
+        }
+        "get_callees" => {
+            let graph = state.graph.lock().await;
+            let results = graph.callees_of(query, repo_id).unwrap_or_default();
+            serde_json::json!({"callees": results})
+        }
+        "get_file_tags" => {
+            let tag = params["tag"].as_str().unwrap_or(query);
+            let graph = state.graph.lock().await;
+            let files = graph.files_by_tag(tag, repo_id).unwrap_or_default();
+            let results: Vec<serde_json::Value> = files.into_iter()
+                .map(|(_, path, tags)| serde_json::json!({"path": path, "tags": tags}))
+                .collect();
+            serde_json::json!({"files": results})
+        }
+        "get_communities" => {
+            let graph = state.graph.lock().await;
+            let communities = graph.get_communities(repo_id).unwrap_or_default();
+            serde_json::json!({"communities": communities})
+        }
+        "get_doc_drift" => {
+            let graph = state.graph.lock().await;
+            let drift = graph.get_doc_drift(repo_id).unwrap_or_default();
+            serde_json::json!({"drift": drift})
+        }
+        "search_lib_docs" => {
+            let store = state.store.lock().await;
+            let docs = store.search_lib_docs(query).unwrap_or_default();
+            serde_json::json!({"docs": docs})
+        }
+        "query" => {
+            // Reuse unified query logic — delegate to POST /api/query handler
+            serde_json::json!({"hint": "Use POST /api/query directly"})
+        }
+        "get_project_summary" => {
+            let store = state.store.lock().await;
+            let project = store.get_project(repo_id).ok().flatten();
+            let graph = state.graph.lock().await;
+            let (fns, types) = graph.count_symbols(repo_id).unwrap_or((0, 0));
+            serde_json::json!({
+                "project": project,
+                "functions": fns,
+                "types": types,
+            })
+        }
+        _ => serde_json::json!({"error": format!("Unknown tool: {}", tool)}),
+    };
+
+    Ok(Json(result))
+}
+
+// ── Marketplace Install ──────────────────────────────────────────────────────
+
+async fn marketplace_install(
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let target = body["target"].as_str().unwrap_or("");
+    let item_name = body["item"].as_str().unwrap_or("");
+    let scope = body["scope"].as_str().unwrap_or("global");
+    let marketplace_path = body["marketplacePath"].as_str().unwrap_or("");
+
+    if target.is_empty() || marketplace_path.is_empty() {
+        return Json(serde_json::json!({"ok": false, "error": "target and marketplacePath required"}));
+    }
+
+    // Shell out to marketplace installer
+    let mut args = vec!["run".to_string(), "install.ts".to_string(), "--target".to_string(), target.to_string()];
+    if !item_name.is_empty() {
+        args.push("--item".to_string());
+        args.push(item_name.to_string());
+    } else {
+        args.push("--scope".to_string());
+        args.push(scope.to_string());
+    }
+
+    match std::process::Command::new("bun")
+        .args(&args)
+        .current_dir(marketplace_path)
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Json(serde_json::json!({
+                "ok": output.status.success(),
+                "output": stdout,
+                "error": if stderr.is_empty() { None } else { Some(stderr) },
+            }))
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "error": format!("Failed to run installer: {}", e)})),
+    }
 }
 
 // ── Config ───────────────────────────────────────────────────────────────────
