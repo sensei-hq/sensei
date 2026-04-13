@@ -175,19 +175,20 @@ export class ClaudeRunner implements AcpRunner {
 
     // --verbose: required for stream-json to include usage data.
     // --no-session-persistence: avoid polluting user's session history.
-    const { stdout, exitCode } = await spawnCapture(
+    const { stdout, stderr, exitCode } = await spawnCapture(
       [
         "claude", "-p", prompt,
         "--output-format", "stream-json",
         "--verbose",
         "--no-session-persistence",
-        "--plugin-dir", join(cwd, ".claude", "no-plugins"),
       ],
       { cwd },
     );
 
-    const metrics = parseClaudeStreamJson(stdout);
-    return { ...metrics, exitCode, rawOutput: stdout };
+    // Combine stdout + stderr for error detection (credit errors may be on stderr)
+    const combined = stdout + (stderr ? "\n" + stderr : "");
+    const metrics = parseClaudeStreamJson(combined);
+    return { ...metrics, exitCode, rawOutput: combined };
   }
 }
 
