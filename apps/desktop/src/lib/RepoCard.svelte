@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SolutionRepo, ServerProject, GraphData, RepoRole, IndexProgress } from './types.js';
   import { senseiApi } from './api.js';
+  import GraphCanvas from './GraphCanvas.svelte';
 
   let {
     repo,
@@ -29,7 +30,10 @@
 
   // Graph state (lazy loaded)
   let graphData = $state<GraphData | null>(null);
+  let graphNodes = $state<Array<{ id: string; name: string; kind: string; file: string; line: number; complexity?: number }>>([]);
+  let graphEdges = $state<Array<{ source: string; target: string; type: string }>>([]);
   let graphLoading = $state(false);
+  let selectedGraphNode = $state<any>(null);
 
   const ROLE_CLS: Record<string, string> = {
     backend: 'bg-info-z2 text-info-z7',
@@ -130,7 +134,15 @@
     if (graphData || graphLoading) return;
     graphLoading = true;
     try {
-      graphData = await senseiApi(port).getGraph(repo.repoId, repo.path);
+      const [data, nodesData] = await Promise.all([
+        senseiApi(port).getGraph(repo.repoId, repo.path),
+        fetch(`http://127.0.0.1:${port}/api/graph/nodes?repoId=${encodeURIComponent(repo.repoId)}`)
+          .then(r => r.ok ? r.json() as Promise<{ nodes: typeof graphNodes; edges: typeof graphEdges }> : { nodes: [], edges: [] })
+          .catch(() => ({ nodes: [] as typeof graphNodes, edges: [] as typeof graphEdges })),
+      ]);
+      graphData = data;
+      graphNodes = nodesData.nodes;
+      graphEdges = nodesData.edges;
     } catch { graphData = null; }
     finally { graphLoading = false; }
   }
@@ -267,42 +279,54 @@
         {:else if activeTab === 'graph'}
           <div class="space-y-2">
             {#if graphLoading}
-              <p class="text-xs text-surface-z4">Loading graph data…</p>
-            {:else if graphData}
-              <div class="flex gap-4 text-xs">
-                <span class="text-surface-z4">{graphData.summary.totalSymbols} symbols</span>
-                <span class="text-surface-z4">{graphData.summary.totalEdges} edges</span>
-                <span class="text-surface-z4">{graphData.summary.communities} communities</span>
+              <p class="text-xs text-surface-z4">Loading graph…</p>
+            {:else if graphNodes.length > 0}
+              <!-- Interactive D3 graph -->
+              <div class="h-64 rounded-lg border border-surface-z0/30">
+                <GraphCanvas
+                  nodes={graphNodes}
+                  edges={graphEdges}
+                  onSelectNode={(n) => { selectedGraphNode = n; }}
+                />
               </div>
 
-              {#if graphData.godNodes.length > 0}
-                <div>
-                  <p class="text-[10px] font-semibold text-surface-z5 uppercase tracking-wide mb-1">God Nodes</p>
-                  <div class="space-y-1">
-                    {#each graphData.godNodes.slice(0, 5) as node}
-                      <div class="flex items-center gap-2 text-xs">
-                        <span class="h-2 w-2 rounded-full bg-error-z5 shrink-0"></span>
-                        <span class="font-mono text-surface-z7 truncate">{node.name}</span>
+              <!-- Stats bar -->
+              <div class="flex gap-4 text-xs text-surface-z4">
+                <span>{graphNodes.length} nodes</span>
+                <span>{graphEdges.length} edges</span>
+                {#if graphData}
+                  <span>{graphData.summary.communities} communities</span>
+                {/if}
+                {#if selectedGraphNode}
+                  <span class="text-primary-z6">
+                    {selectedGraphNode.name} ({selectedGraphNode.kind}) — {selectedGraphNode.file}:{selectedGraphNode.line}
+                  </span>
+                {/if}
+              </div>
+
+              <!-- God nodes + communities (collapsed) -->
+              {#if graphData?.godNodes?.length}
+                <details class="text-xs">
+                  <summary class="text-[10px] font-semibold text-surface-z5 uppercase tracking-wide cursor-pointer">
+                    God Nodes ({graphData.godNodes.length})
+                  </summary>
+                  <div class="mt-1 space-y-0.5 pl-2">
+                    {#each graphData.godNodes.slice(0, 8) as node}
+                      <div class="flex items-center gap-2">
+                        <span class="h-1.5 w-1.5 rounded-full bg-error-z5 shrink-0"></span>
+                        <span class="font-mono text-surface-z7">{node.name}</span>
                         <span class="text-surface-z4 ml-auto">degree {node.degree}</span>
                       </div>
                     {/each}
                   </div>
-                </div>
+                </details>
               {/if}
-
-              {#if graphData.communities.length > 0}
-                <div>
-                  <p class="text-[10px] font-semibold text-surface-z5 uppercase tracking-wide mb-1">Communities</p>
-                  <div class="space-y-1">
-                    {#each graphData.communities.slice(0, 6) as community}
-                      <div class="flex items-center gap-2 text-xs">
-                        <span class="rounded px-1.5 py-0.5 text-[10px] {community.color}">{community.symbolCount}</span>
-                        <span class="text-surface-z6 truncate">{community.label}</span>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
+            {:else if graphData}
+              <!-- Fallback: text only (no node data) -->
+              <div class="flex gap-4 text-xs text-surface-z4">
+                <span>{graphData.summary.totalSymbols} symbols</span>
+                <span>{graphData.summary.totalEdges} edges</span>
+              </div>
             {:else}
               <p class="text-xs text-surface-z4">No graph data. Index this repo first.</p>
             {/if}
