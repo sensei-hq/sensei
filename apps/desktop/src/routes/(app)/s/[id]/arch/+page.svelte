@@ -4,7 +4,7 @@
   import { onMount } from 'svelte';
   import { getSolutionById } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import type { GraphData } from '$lib/types.js';
+  import type { GraphData, CommunityInfo, FunctionDetail, DocDrift } from '$lib/types.js';
   import GraphCanvas from '$lib/GraphCanvas.svelte';
 
   let solution = $derived(getSolutionById($page.params.id as string));
@@ -22,10 +22,15 @@
   let repoGraphs = $state<Map<string, GraphData>>(new Map());
   let loading = $state(true);
 
+  // Community and structural data from daemon
+  let communities = $state<Array<CommunityInfo & { repoId: string }>>([]);
+  let highComplexityFns = $state<Array<FunctionDetail & { repoId: string }>>([]);
+  let docDrift = $state<DocDrift[]>([]);
+
   // Aggregated stats
-  let totalSymbols = $derived([...repoGraphs.values()].reduce((sum, g) => sum + g.summary.totalSymbols, 0));
-  let totalEdges = $derived([...repoGraphs.values()].reduce((sum, g) => sum + g.summary.totalEdges, 0));
-  let totalCommunities = $derived([...repoGraphs.values()].reduce((sum, g) => sum + g.summary.communities, 0));
+  let totalSymbols = $derived(graphNodes.length);
+  let totalEdges = $derived(graphEdges.length);
+  let totalCommunities = $derived(communities.length);
 
   let allGodNodes = $derived(
     [...repoGraphs.entries()].flatMap(([repoId, g]) =>
@@ -85,6 +90,26 @@
       graphEdges = allEdges;
     }
 
+    // Load communities and high-complexity functions per repo
+    const allCommunities: typeof communities = [];
+    const allHighFns: typeof highComplexityFns = [];
+    const allDrift: DocDrift[] = [];
+    await Promise.all((solution?.repos ?? []).map(async (repo) => {
+      const comms = await api.getCommunities(repo.repoId);
+      allCommunities.push(...comms.map(c => ({ ...c, repoId: repo.repoId })));
+
+      // Get high complexity functions (search all, sort by complexity)
+      const fns = await api.searchFunctions(repo.repoId, '');
+      const high = fns.filter(f => f.complexity > 10).sort((a, b) => b.complexity - a.complexity).slice(0, 10);
+      allHighFns.push(...high.map(f => ({ ...f, repoId: repo.repoId })));
+
+      const drift = await api.getDocDrift(repo.repoId);
+      allDrift.push(...drift);
+    }));
+    communities = allCommunities.sort((a, b) => b.size - a.size);
+    highComplexityFns = allHighFns.sort((a, b) => b.complexity - a.complexity).slice(0, 20);
+    docDrift = allDrift;
+
     loading = false;
   }
 
@@ -141,7 +166,7 @@
         <div class="text-center py-12">
           <p class="text-sm text-surface-z4">Loading graph data across {solution.repos.length} repos…</p>
         </div>
-      {:else if repoGraphs.size === 0}
+      {:else if graphNodes.length === 0}
         <div class="text-center py-12">
           <p class="text-sm text-surface-z4">No indexed repos yet.</p>
           <p class="text-xs text-surface-z3 mt-1">Index repos first to see the structural view.</p>
@@ -163,27 +188,26 @@
             <p class="mt-1 text-xl font-semibold text-surface-z8">{totalCommunities}</p>
           </div>
           <div class="rounded-lg bg-surface-z2 p-3">
-            <p class="text-[10px] text-surface-z4 uppercase tracking-wide">God Nodes</p>
-            <p class="mt-1 text-xl font-semibold {allGodNodes.length > 0 ? 'text-warning-z6' : 'text-success-z6'}">{allGodNodes.length}</p>
+            <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Complex Functions</p>
+            <p class="mt-1 text-xl font-semibold {highComplexityFns.length > 0 ? 'text-warning-z6' : 'text-success-z6'}">{highComplexityFns.length}</p>
           </div>
         </div>
 
-        <!-- God Nodes (pain points) -->
-        {#if allGodNodes.length > 0}
+        <!-- High Complexity Functions (pain points) -->
+        {#if highComplexityFns.length > 0}
           <div>
             <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide mb-2">
-              God Nodes
-              <span class="font-normal normal-case text-surface-z4 ml-1">— high coupling, wide blast radius</span>
+              High Complexity
+              <span class="font-normal normal-case text-surface-z4 ml-1">— functions with cyclomatic complexity > 10</span>
             </h3>
             <div class="rounded-lg border border-surface-z0/50 divide-y divide-surface-z0/30">
-              {#each allGodNodes.slice(0, 15) as node}
+              {#each highComplexityFns as fn}
                 <div class="flex items-center gap-3 px-3 py-2 text-xs">
                   <span class="h-2.5 w-2.5 rounded-full shrink-0
-                    {node.degree >= 20 ? 'bg-error-z5' : node.degree >= 10 ? 'bg-warning-z5' : 'bg-info-z5'}"></span>
-                  <span class="font-mono text-surface-z7 font-medium truncate flex-1">{node.name}</span>
-                  <span class="text-surface-z4 shrink-0">degree {node.degree}</span>
-                  <span class="rounded bg-surface-z3 px-1.5 py-0.5 text-[10px] text-surface-z5 shrink-0">{node.repoLabel}</span>
-                  <span class="text-surface-z3 truncate max-w-40">{node.file}</span>
+                    {fn.complexity >= 30 ? 'bg-error-z5' : fn.complexity >= 15 ? 'bg-warning-z5' : 'bg-info-z5'}"></span>
+                  <span class="font-mono text-surface-z7 font-medium truncate flex-1">{fn.name}</span>
+                  <span class="text-surface-z4 shrink-0">cx:{fn.complexity}</span>
+                  <span class="text-surface-z3 truncate max-w-48">{fn.file.split('/').slice(-2).join('/')}</span>
                 </div>
               {/each}
             </div>
@@ -191,44 +215,40 @@
         {/if}
 
         <!-- Communities -->
-        {#if allCommunities.length > 0}
+        {#if communities.length > 0}
           <div>
             <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide mb-2">
               Code Communities
-              <span class="font-normal normal-case text-surface-z4 ml-1">— clusters of related symbols</span>
+              <span class="font-normal normal-case text-surface-z4 ml-1">— Leiden-detected clusters of related symbols</span>
             </h3>
             <div class="grid grid-cols-2 xl:grid-cols-3 gap-2">
-              {#each allCommunities.slice(0, 12) as community}
+              {#each communities.slice(0, 15) as community}
                 <div class="rounded-lg bg-surface-z2 px-3 py-2">
                   <div class="flex items-center gap-2">
-                    <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {community.color}">{community.symbolCount}</span>
-                    <span class="text-xs text-surface-z6 truncate flex-1">{community.label}</span>
+                    <span class="rounded px-1.5 py-0.5 text-[10px] font-medium bg-primary-z2 text-primary-z7">{community.size}</span>
+                    <span class="text-[10px] text-surface-z4">#{community.id}</span>
                   </div>
-                  <p class="text-[10px] text-surface-z3 mt-1">{community.repoLabel}</p>
-                  {#if community.godNodes.length > 0}
-                    <p class="text-[10px] text-warning-z5 mt-0.5">
-                      Hot: {community.godNodes.slice(0, 3).join(', ')}
-                    </p>
-                  {/if}
+                  <p class="text-xs text-surface-z6 mt-1 truncate">{community.sample_members.join(', ')}</p>
+                  <p class="text-[10px] text-surface-z3 mt-0.5">{community.repoId}</p>
                 </div>
               {/each}
             </div>
           </div>
         {/if}
 
-        <!-- Rationale -->
-        {#if allRationale.length > 0}
+        <!-- Doc Drift -->
+        {#if docDrift.length > 0}
           <div>
             <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide mb-2">
-              Rationale Comments
-              <span class="font-normal normal-case text-surface-z4 ml-1">— WHY/DECISION/HACK annotations</span>
+              Doc Drift
+              <span class="font-normal normal-case text-surface-z4 ml-1">— documentation that may be stale</span>
             </h3>
             <div class="space-y-1">
-              {#each allRationale.slice(0, 20) as r}
-                <div class="flex items-start gap-2 rounded-lg bg-surface-z2/50 px-3 py-2 text-xs">
-                  <span class="rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0 {TAG_CLS[r.tag] ?? TAG_CLS.NOTE}">{r.tag}</span>
-                  <span class="text-surface-z6 flex-1">{r.text}</span>
-                  <span class="text-surface-z3 shrink-0 truncate max-w-32">{r.file}</span>
+              {#each docDrift.slice(0, 10) as d}
+                <div class="flex items-center gap-2 rounded-lg bg-warning-z1 px-3 py-2 text-xs">
+                  <span class="text-warning-z6 shrink-0">{d.edge_type}</span>
+                  <span class="text-surface-z6 flex-1 truncate">{d.doc_path.split('/').slice(-2).join('/')}</span>
+                  <span class="text-surface-z4 shrink-0">→ {d.changed_target.split(':').slice(-1)[0]}</span>
                 </div>
               {/each}
             </div>

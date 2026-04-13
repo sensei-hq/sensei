@@ -118,20 +118,62 @@
     loading = true;
     const api = senseiApi(port);
 
-    // Load trace data from each repo in the solution
+    // Build trace data from graph: nodes → filter docs and code files
     const docs: TracedDoc[] = [];
     const files: CodeFile[] = [];
 
     await Promise.all(solution.repos.map(async (repo) => {
+      const repoLabel = repo.label ?? repo.path.split('/').at(-1) ?? repo.repoId;
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/trace?repoId=${encodeURIComponent(repo.repoId)}&repoPath=${encodeURIComponent(repo.path)}`);
-        if (!res.ok) return;
-        const data = await res.json() as { docs: any[]; codeFiles: any[] };
-        for (const d of data.docs) {
-          docs.push({ ...d, repoLabel: repo.label ?? repo.path.split('/').at(-1), repoId: repo.repoId });
+        const { nodes, edges } = await api.getGraphNodes(repo.repoId);
+
+        // Docs are nodes with kind containing 'doc' or file ending in .md
+        const docNodes = nodes.filter(n => n.id.startsWith('doc:') || n.file.endsWith('.md'));
+        const fileNodes = nodes.filter(n => n.kind === 'file');
+        const fnNodes = nodes.filter(n => n.kind === 'function');
+
+        // Build edge maps
+        const coveredBy = new Map<string, string[]>(); // doc_id → [file_ids]
+        const mentionedFns = new Map<string, string[]>(); // doc_id → [fn_names]
+        for (const e of edges) {
+          if (e.type === 'COVERS') {
+            const list = coveredBy.get(e.source) ?? [];
+            list.push(e.target);
+            coveredBy.set(e.source, list);
+          }
+          if (e.type === 'MENTIONS_FN') {
+            const fn = fnNodes.find(n => n.id === e.target);
+            if (fn) {
+              const list = mentionedFns.get(e.source) ?? [];
+              list.push(fn.name);
+              mentionedFns.set(e.source, list);
+            }
+          }
         }
-        for (const f of data.codeFiles) {
-          files.push({ ...f, repoLabel: repo.label ?? repo.path.split('/').at(-1) });
+
+        for (const doc of docNodes) {
+          const docType = doc.file.includes('requirement') || doc.file.includes('spec/') ? 'requirement'
+            : doc.file.includes('design') || doc.file.includes('architecture') ? 'design'
+            : doc.file.includes('api') ? 'api-spec'
+            : doc.file.includes('readme') ? 'overview'
+            : 'doc';
+          docs.push({
+            path: doc.file,
+            title: doc.name || doc.file.split('/').at(-1) || 'Unknown',
+            type: docType as DocType,
+            coveredFiles: (coveredBy.get(doc.id) ?? []).map(fid => {
+              const f = fileNodes.find(n => n.id === fid);
+              return f?.file ?? fid;
+            }),
+            mentionedFns: mentionedFns.get(doc.id) ?? [],
+            repoLabel,
+            repoId: repo.repoId,
+          });
+        }
+
+        for (const f of fileNodes) {
+          const isTest = f.file.includes('.spec.') || f.file.includes('.test.') || f.file.includes('_test.');
+          files.push({ path: f.file, isTest, repoLabel });
         }
       } catch { /* ignore */ }
     }));
