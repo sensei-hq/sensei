@@ -1261,7 +1261,15 @@ async fn scan_folder(
     State(state): State<AppState>,
     Json(body): Json<ScanBody>,
 ) -> Result<Json<Vec<ScannedRepo>>, StatusCode> {
-    let root = std::path::Path::new(&body.root);
+    // Expand ~ to home directory
+    let expanded = if body.root.starts_with("~/") {
+        dirs::home_dir()
+            .map(|h| h.join(&body.root[2..]).to_string_lossy().to_string())
+            .unwrap_or(body.root.clone())
+    } else {
+        body.root.clone()
+    };
+    let root = std::path::Path::new(&expanded);
     if !root.exists() {
         return Err(StatusCode::BAD_REQUEST);
     }
