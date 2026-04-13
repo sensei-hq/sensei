@@ -299,8 +299,8 @@
           {@const summary = repoSummaries.get(repo.repoId)}
           {@const inferred = getInferredRole(repo.repoId)}
           {@const displayRole = inferred && inferred.confidence > 0.5 ? inferred.role : repo.role}
-          {@const repoName = repo.label || summary?.name || repo.repoId || repo.path?.split('/').at(-1) || 'unknown'}
-          {@const repoPath = summary?.path || repo.path || ''}
+          {@const repoName = repo.label || repo.path?.split('/').at(-1) || summary?.name || repo.repoId || 'unknown'}
+          {@const repoPath = repo.path || summary?.path || ''}
           <div class="rounded-lg bg-surface-z2 px-4 py-3 space-y-1">
             <div class="flex items-center gap-2">
               <span class="text-sm font-medium text-surface-z8">{repoName}</span>

@@ -320,13 +320,17 @@ impl Store {
 
     fn get_solution_repos(&self, solution_id: &str) -> rusqlite::Result<Vec<SolutionRepo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT repo_id, role, label FROM solution_repos WHERE solution_id = ?1"
+            "SELECT sr.repo_id, sr.role, sr.label, p.path
+             FROM solution_repos sr
+             LEFT JOIN projects p ON p.repo_id = sr.repo_id
+             WHERE sr.solution_id = ?1"
         )?;
         let rows = stmt.query_map(params![solution_id], |row| {
             Ok(SolutionRepo {
                 repo_id: row.get(0)?,
                 role: row.get(1)?,
                 label: row.get(2)?,
+                path: row.get(3)?,
             })
         })?;
         rows.collect()
