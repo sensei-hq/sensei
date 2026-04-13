@@ -4,7 +4,7 @@ import { homedir } from "os";
 import { IndexQueue, WorkerPool } from "./index-queue.js";
 import { intro, log } from "@clack/prompts";
 import { loadSenseiConfig } from "@sensei/shared";
-import { watchRepo, getOrCreateDb, indexRepo, progressPath, type IndexProgress } from "@sensei/graph-indexer";
+import { watchRepo, getOrCreateDb, indexRepo, progressPath, escapeCypherStr, type IndexProgress } from "@sensei/graph-indexer";
 import { checkSystemRequirements, OLLAMA_BASE_URL, OLLAMA_MODEL } from "./model/system-check.js";
 import { OllamaBackend, makeFallbackAnalysis } from "./model/ollama-backend.js";
 import { getActivityLog } from "./activity-log.js";
@@ -306,6 +306,67 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
           return jsonResponse(data);
         } catch (err) {
           return jsonResponse({ ok: false, error: (err as Error).message }, 500);
+        }
+      }
+
+      // Raw node+edge data for D3 force-directed graph
+      if (req.method === "GET" && url.pathname === "/api/graph/nodes") {
+        const repoId = url.searchParams.get("repoId") ?? activeRepoId;
+        if (!repoId) return jsonResponse({ nodes: [], edges: [] });
+        try {
+          const { db, conn } = await getOrCreateDb(repoId);
+          try {
+            const eId = escapeCypherStr(repoId);
+            const nodes: Array<{ id: string; name: string; kind: string; file: string; line: number; complexity?: number; community?: string }> = [];
+            const edges: Array<{ source: string; target: string; type: string }> = [];
+
+            // Functions
+            const fnResult = await conn.query(`MATCH (f:Function {project: '${eId}'}) RETURN f.id AS id, f.name AS name, f.file AS file, f.line AS line, f.complexity AS complexity`);
+            const fnQr = Array.isArray(fnResult) ? fnResult[0] : fnResult;
+            for (const row of await fnQr.getAll()) {
+              const r = row as Record<string, unknown>;
+              nodes.push({ id: String(r.id), name: String(r.name), kind: "function", file: String(r.file), line: Number(r.line ?? 0), complexity: Number(r.complexity ?? 1) });
+            }
+            if (Array.isArray(fnResult)) fnResult.forEach((r: any) => r.close()); else (fnResult as any).close();
+
+            // Types
+            const typeResult = await conn.query(`MATCH (t:Type {project: '${eId}'}) RETURN t.id AS id, t.name AS name, t.file AS file, t.line AS line, t.kind AS tkind`);
+            const typeQr = Array.isArray(typeResult) ? typeResult[0] : typeResult;
+            for (const row of await typeQr.getAll()) {
+              const r = row as Record<string, unknown>;
+              nodes.push({ id: String(r.id), name: String(r.name), kind: String(r.tkind ?? "type"), file: String(r.file), line: Number(r.line ?? 0) });
+            }
+            if (Array.isArray(typeResult)) typeResult.forEach((r: any) => r.close()); else (typeResult as any).close();
+
+            // CALLS edges
+            try {
+              const callResult = await conn.query(`MATCH (a:Function {project: '${eId}'})-[:CALLS]->(b:Function) RETURN a.id AS source, b.id AS target`);
+              const callQr = Array.isArray(callResult) ? callResult[0] : callResult;
+              for (const row of await callQr.getAll()) {
+                const r = row as Record<string, unknown>;
+                edges.push({ source: String(r.source), target: String(r.target), type: "CALLS" });
+              }
+              if (Array.isArray(callResult)) callResult.forEach((r: any) => r.close()); else (callResult as any).close();
+            } catch { /* edge table may not exist */ }
+
+            // IMPORTS edges
+            try {
+              const impResult = await conn.query(`MATCH (a:File {project: '${eId}'})-[:IMPORTS]->(b:File) RETURN a.id AS source, b.id AS target`);
+              const impQr = Array.isArray(impResult) ? impResult[0] : impResult;
+              for (const row of await impQr.getAll()) {
+                const r = row as Record<string, unknown>;
+                edges.push({ source: String(r.source), target: String(r.target), type: "IMPORTS" });
+              }
+              if (Array.isArray(impResult)) impResult.forEach((r: any) => r.close()); else (impResult as any).close();
+            } catch { /* edge table may not exist */ }
+
+            return jsonResponse({ nodes, edges });
+          } finally {
+            await conn.close();
+            await db.close();
+          }
+        } catch (err) {
+          return jsonResponse({ nodes: [], edges: [], error: (err as Error).message });
         }
       }
 
