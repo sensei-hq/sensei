@@ -38,12 +38,24 @@
   let width = $state(800);
   let height = $state(500);
 
-  // Color by file directory (community approximation)
+  // Color by node kind (semantic)
+  const KIND_COLORS: Record<string, string> = {
+    'function': '#6366f1', // indigo — functions
+    'method':   '#6366f1',
+    'class':    '#f59e0b', // amber — classes/types
+    'struct':   '#f59e0b',
+    'interface':'#f59e0b',
+    'type':     '#f59e0b',
+    'enum':     '#f59e0b',
+    'file':     '#10b981', // emerald — files
+    'doc':      '#06b6d4', // cyan — docs
+    'component':'#ec4899', // pink — components
+    'hook':     '#ec4899',
+    'const':    '#94a3b8', // slate — constants
+  };
+
   function nodeColor(node: GraphNode): string {
-    const dir = node.file.split('/').slice(0, -1).join('/');
-    const hash = [...dir].reduce((h, c) => (h * 31 + c.charCodeAt(0)) & 0xffffff, 0);
-    const hue = hash % 360;
-    return `hsl(${hue}, 60%, 55%)`;
+    return KIND_COLORS[node.kind] ?? '#94a3b8';
   }
 
   function nodeRadius(node: GraphNode): number {
@@ -210,6 +222,15 @@
 
 <div bind:this={container} class="relative w-full h-full min-h-60 bg-surface-z1 rounded-lg overflow-hidden">
   <canvas bind:this={canvas} {width} {height} class="w-full h-full"></canvas>
+
+  <!-- Legend -->
+  <div class="absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-surface-z5 pointer-events-none">
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#6366f1"></span> functions</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f59e0b"></span> types</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#10b981"></span> files</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#06b6d4"></span> docs</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#ec4899"></span> components</span>
+  </div>
 
   {#if hoveredNode && !selectedNode}
     <div class="absolute top-2 left-2 rounded-md bg-surface-z2 border border-surface-z3 px-2.5 py-1.5 text-xs shadow-sm pointer-events-none">
