@@ -220,6 +220,9 @@ pub fn index_repo(
         }
     }
 
+    // Pass 4: Index documentation files
+    let docs_indexed = super::doc_indexer::index_docs(graph_db, repo_path, repo_id).unwrap_or(0);
+
     // Save manifest
     manifest.save().map_err(|e| format!("Failed to save manifest: {}", e))?;
 
@@ -250,7 +253,7 @@ pub fn index_repo(
         functions_indexed,
         types_indexed,
         edges_created,
-        docs_indexed: 0,
+        docs_indexed,
         libs,
         duration_ms: start.elapsed().as_millis() as u64,
     })
