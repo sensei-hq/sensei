@@ -188,7 +188,7 @@
 
 <div class="flex h-full flex-col min-h-0">
   <div class="border-b border-surface-z0/50 px-4 py-2 shrink-0 flex items-center gap-3">
-    <h1 class="text-sm font-semibold text-surface-z8">All Repos</h1>
+    <h1 class="text-sm font-semibold text-surface-z8">Projects</h1>
     <span class="text-xs text-surface-z4">{scannedRepos.length} total</span>
     <div class="ml-auto flex items-center gap-2">
       <input

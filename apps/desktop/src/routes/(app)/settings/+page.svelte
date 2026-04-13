@@ -9,20 +9,6 @@
   let sidebarMax = $state(parseInt(localStorage.getItem('sensei:sidebar_max_items') ?? '5', 10));
   let daemonHealth = $state<Record<string, unknown>>({});
 
-  // Skills catalog (embedded — matches CLI skill-catalog.ts)
-  const SKILL_CATALOG = [
-    { name: 'zero-errors-policy', description: 'Zero lint/test errors at all times', recommended: true },
-    { name: 'managing-project-sessions', description: 'Structured session protocol with snapshots', recommended: true },
-    { name: 'pattern-based-development', description: 'Follow established patterns from PATTERNS.md', recommended: true },
-    { name: 'detecting-doc-drift', description: 'Flag design docs drifted from code', recommended: true },
-    { name: 'identifying-patterns', description: 'Discover and document recurring patterns', recommended: true },
-    { name: 'decomposing-broad-tasks', description: 'Break large tasks into focused subtasks', recommended: false },
-    { name: 'managing-context', description: 'Trim and refocus context when switching', recommended: false },
-    { name: 'running-agentic-sessions', description: 'Protocols for long autonomous sessions', recommended: false },
-    { name: 'compressing-content', description: 'Reduce token usage via compression', recommended: false },
-    { name: 'indexing-codebase', description: 'Index an unfamiliar codebase', recommended: false },
-  ];
-
   onMount(async () => {
     try {
       const raw = localStorage.getItem('sensei:projects_raw');
@@ -123,27 +109,6 @@
             </div>
             <span class="text-sm font-mono text-surface-z6">{port}</span>
           </div>
-        </div>
-      </section>
-
-      <!-- Skills -->
-      <section>
-        <h2 class="text-xs font-semibold uppercase tracking-widest text-surface-z4 mb-3">Skills Catalog</h2>
-        <p class="text-xs text-surface-z4 mb-3">Skills are prompts that enhance AI coding assistants. Install them per-repo in <code class="bg-surface-z3 px-1 rounded">.claude/skills/</code>.</p>
-        <div class="rounded-2xl border border-surface-z3 bg-surface-z2/50 divide-y divide-surface-z2">
-          {#each SKILL_CATALOG as skill}
-            <div class="flex items-center justify-between px-4 py-3">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <p class="text-sm font-medium text-surface-z7">{skill.name}</p>
-                  {#if skill.recommended}
-                    <span class="rounded px-1 py-0.5 text-[9px] bg-success-z2 text-success-z7">recommended</span>
-                  {/if}
-                </div>
-                <p class="text-xs text-surface-z4 mt-0.5 truncate">{skill.description}</p>
-              </div>
-            </div>
-          {/each}
         </div>
       </section>
 
