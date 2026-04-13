@@ -6,20 +6,39 @@ use crate::types::SymbolKind;
 /// Uses adjacency list tables for nodes and edges.
 pub struct GraphDb {
     conn: Connection,
+    /// Path to the graph.db file (for opening additional connections).
+    db_file: Option<std::path::PathBuf>,
 }
 
 impl GraphDb {
     pub fn open(path: &Path) -> Result<Self, String> {
         let db_path = path.join("graph.db");
         let conn = Connection::open(&db_path).map_err(|e| format!("Failed to open graph DB: {}", e))?;
-        let db = Self { conn };
+        // Enable WAL mode for concurrent reader/writer access
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;").ok();
+        let db = Self { conn, db_file: Some(db_path) };
         db.ensure_schema()?;
         Ok(db)
     }
 
+    /// Open a new connection to the same database file (for parallel workers).
+    pub fn clone_connection(&self) -> Result<Self, String> {
+        let db_path = self.db_file.as_ref().ok_or("Cannot clone in-memory DB")?;
+        let conn = Connection::open(db_path).map_err(|e| format!("Failed to clone graph DB: {}", e))?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;").ok();
+        let db = Self { conn, db_file: self.db_file.clone() };
+        db.ensure_schema()?;
+        Ok(db)
+    }
+
+    /// Get the path to the graph.db file.
+    pub fn db_path(&self) -> Option<&std::path::Path> {
+        self.db_file.as_deref()
+    }
+
     pub fn open_memory() -> Result<Self, String> {
         let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
-        let db = Self { conn };
+        let db = Self { conn, db_file: None };
         db.ensure_schema()?;
         Ok(db)
     }
