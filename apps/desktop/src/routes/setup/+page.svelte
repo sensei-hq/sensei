@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import RepoList from '$lib/RepoList.svelte';
-  import { createSolution, setActiveSolutionId, inferRepoRole, loadSolutions } from '$lib/solutions.svelte.js';
+  import { createSolution, setActiveSolutionId, getActiveSolutionId, inferRepoRole, loadSolutions } from '$lib/solutions.svelte.js';
   import type { SolutionRepo } from '$lib/types.js';
 
   type Step = 'welcome' | 'acps' | 'folders' | 'repos' | 'groups' | 'done';
@@ -223,58 +223,48 @@
   }
 
   async function startIndexing() {
-    if (typeof localStorage !== 'undefined') {
-      const toImport = discovered.filter(r => selectedRepos.has(r.path)).map(r => ({
-        ...r,
-        client: clientTags.get(r.path) ?? null,
-      }));
+    const toImport = discovered.filter(r => selectedRepos.has(r.path)).map(r => ({
+      ...r,
+      client: clientTags.get(r.path) ?? null,
+    }));
 
-      if (toImport.length > 0) {
-        // Resolve repoIds so every project has a stable ID before anything else uses it.
-        let withIds: (typeof toImport[0] & { repoId: string })[];
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          withIds = await Promise.all(toImport.map(async repo => {
-            const repoId: string = await invoke<string | null>('get_repo_id', { path: repo.path })
-              .catch(() => null) ?? crypto.randomUUID();
-            return { ...repo, repoId };
-          }));
-        } catch {
-          // Browser preview — assign random UUIDs
-          withIds = toImport.map(repo => ({ ...repo, repoId: crypto.randomUUID() }));
-        }
-
-        localStorage.setItem('sensei:projects_raw', JSON.stringify(withIds));
-
-        // Register with server (fire-and-forget — server may not be up yet; layout will retry on first online).
-        const port = parseInt(localStorage.getItem('sensei:port') ?? '7744', 10);
-        for (const repo of withIds) {
-          fetch(`http://127.0.0.1:${port}/api/projects`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ repoId: repo.repoId, name: repo.name, path: repo.path }),
-          }).catch(() => {});
-        }
+    if (toImport.length > 0) {
+      // Resolve repoIds
+      let withIds: (typeof toImport[0] & { repoId: string })[];
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        withIds = await Promise.all(toImport.map(async repo => {
+          const repoId: string = await invoke<string | null>('get_repo_id', { path: repo.path })
+            .catch(() => null) ?? repo.name;
+          return { ...repo, repoId };
+        }));
+      } catch {
+        withIds = toImport.map(repo => ({ ...repo, repoId: repo.name }));
       }
-    }
-    // Create solutions from variant groups
-    createSolutionsFromScan();
 
+      // Register with daemon API
+      const { senseiApi } = await import('$lib/api.js');
+      const { getPort } = await import('$lib/appstate.svelte.js');
+      const api = senseiApi(getPort());
+      for (const repo of withIds) {
+        await api.registerProject(repo.repoId, repo.name, repo.path);
+      }
+
+      // Store withIds for createSolutionsFromScan
+      _importedRepos = withIds;
+    }
+
+    createSolutionsFromScan();
     step = 'done';
   }
 
-  function createSolutionsFromScan() {
-    // Read projects_raw which has repoIds assigned by startIndexing()
-    const rawJson = localStorage.getItem('sensei:projects_raw');
-    const withIds: Record<string, string> = {};
-    if (rawJson) {
-      try {
-        const arr = JSON.parse(rawJson) as Array<{ path: string; repoId?: string }>;
-        for (const r of arr) if (r.repoId) withIds[r.path] = r.repoId;
-      } catch { /* ignore */ }
-    }
+  let _importedRepos: Array<{ path: string; repoId: string; name: string }> = [];
 
-    function repoId(path: string): string { return withIds[path] ?? path.replace(/^\//, ''); }
+  function createSolutionsFromScan() {
+    const idMap: Record<string, string> = {};
+    for (const r of _importedRepos) idMap[r.path] = r.repoId;
+
+    function repoId(path: string): string { return idMap[path] ?? path.split('/').at(-1) ?? path; }
 
     const selected = discovered.filter(r => selectedRepos.has(r.path));
     const clusters = variantClusters(selected);
@@ -316,14 +306,10 @@
     }
   }
 
-  function getActiveSolutionId(): string | null {
-    return localStorage.getItem('sensei:active_solution');
-  }
-
-  function finish() {
-    localStorage.setItem('sensei:setup_complete', '1');
-    localStorage.setItem('sensei:migration_v1', '1'); // prevent auto-migration from re-running
-    const activeSolution = getActiveSolutionId();
+  async function finish() {
+    const { setSetupComplete, getActiveSolutionId: getActive } = await import('$lib/appstate.svelte.js');
+    await setSetupComplete();
+    const activeSolution = getActive();
     window.location.replace(activeSolution ? `/s/${activeSolution}` : '/all');
   }
 
