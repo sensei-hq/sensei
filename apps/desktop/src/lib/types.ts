@@ -27,6 +27,8 @@ export interface IndexProgress {
   filesProcessed: number;
   filesTotal: number;
   filesUnchanged: number;
+  filesSkipped: number;
+  filesFailed: number;
   startedAt: string;
 }
 
@@ -38,6 +40,34 @@ export interface RepoEntry {
   status: IndexStatus;
   error?: string;
   progress?: IndexProgress;
+}
+
+export interface IndexQueueStatus {
+  current: { repo_id: string; repo_path: string; status: string } | null;
+  queued: Array<{ repo_id: string; repo_path: string; status: string }>;
+  recent: Array<{ repo_id: string; repo_path: string; status: string }>;
+}
+
+export interface IndexProgressEvent {
+  type: 'queued' | 'started' | 'progress' | 'completed' | 'failed';
+  repo_id?: string;
+  position?: number;
+  files_total?: number;
+  current_file?: string;
+  files_processed?: number;
+  files_indexed?: number;
+  functions_indexed?: number;
+  types_indexed?: number;
+  edges_created?: number;
+  duration_ms?: number;
+  error?: string;
+}
+
+export interface DirtyStatus {
+  repoId: string;
+  codeFiles: number;
+  docFiles: number;
+  total: number;
 }
 
 // ─── Solution Model ──────────────────────────────────────────────────────────
@@ -69,12 +99,53 @@ export interface Solution {
 // ─── Server API response shapes ──────────────────────────────────────────────
 
 export interface ServerProject {
-  repoId: string;
+  repo_id: string;
   name: string;
   path: string;
+  stack: string[];
+  libs: string[];
+  tags: string[];
+  status: string;
+  indexed_at?: string;
+  last_error?: string;
+  // Aliases for existing UI code (populated by API client)
+  repoId: string;
   indexedAt?: string;
   lastError?: string;
   partiallyIndexed?: boolean;
+}
+
+export interface ProjectSummary {
+  repoId: string;
+  name: string;
+  path: string;
+  stack: string[];
+  libs: string[];
+  tags: string[];
+  status: string;
+  indexedAt?: string;
+  functions: number;
+  types: number;
+  edges: number;
+  solutions: Array<{ solutionId: string; solutionName: string; role: string }>;
+}
+
+export interface GraphNode {
+  id: string;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  complexity?: number;
+  repoId?: string;
+  role?: string;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: string;
+  repoId?: string;
 }
 
 export interface GraphData {
@@ -91,6 +162,95 @@ export interface GraphData {
   }>;
 }
 
+export interface SolutionGraphResponse {
+  solutionId: string;
+  name: string;
+  nodes: number;
+  edges: number;
+  repos: number;
+  graph: { nodes: GraphNode[]; edges: GraphEdge[] };
+}
+
+export interface SolutionAnalysis {
+  solution_id: string;
+  links: Array<{
+    from_repo: string; to_repo: string; link_type: string;
+    details: string[]; strength: number;
+  }>;
+  inferred_roles: InferredRole[];
+  shared_libs: Array<{ name: string; repos: string[] }>;
+}
+
+export interface InferredRole {
+  repo_id: string;
+  role: string;
+  confidence: number;
+  reasons: string[];
+}
+
+// ─── Graph Queries ───────────────────────────────────────────────────────────
+
+export interface FunctionDetail {
+  id: string;
+  name: string;
+  file: string;
+  line: number;
+  signature?: string;
+  docstring?: string;
+  complexity: number;
+  tags?: string;
+}
+
+export interface TypeDetail {
+  id: string;
+  name: string;
+  file: string;
+  line: number;
+  kind: string;
+}
+
+export interface CommunityInfo {
+  id: number;
+  size: number;
+  sample_members: string[];
+}
+
+export interface DocDrift {
+  doc_id: string;
+  doc_path: string;
+  edge_type: string;
+  changed_target: string;
+}
+
+// ─── Libraries ───────────────────────────────────────────────────────────────
+
+export interface LibEntry {
+  name: string;
+  repos: string[];
+  repoCount: number;
+}
+
+export interface LibDoc {
+  id: string;
+  title: string;
+  url: string;
+  summary: string;
+  content?: string;
+  source_type: string;
+  component: string;
+  indexed_at: string;
+}
+
+export interface DepVersion {
+  lib_name: string;
+  version: string;
+  raw_version: string;
+  source: string;
+  dev: boolean;
+}
+
+// ─── Sessions ────────────────────────────────────────────────────────────────
+
 export interface SessionData {
   stats: Record<string, unknown> | null;
   sessions: Array<{
@@ -100,4 +260,12 @@ export interface SessionData {
   }>;
   toolUsage: unknown[];
   benchmarkPairs: unknown[];
+}
+
+export interface IndexError {
+  repo_id: string;
+  file_path: string;
+  error: string;
+  adapter?: string;
+  timestamp: string;
 }

@@ -64,43 +64,16 @@
       const api = senseiApi(port);
       await api.registerProject(repo.repoId, repoName, repo.path);
 
-      // Start indexing — the response may stream NDJSON progress
+      // Queue indexing — progress comes via SSE, not streaming
       const res = await api.indexRepo(repo.repoId, repo.path, force);
 
       if (!res.ok) {
-        indexError = `Server returned ${res.status}`;
+        indexError = 'Failed to queue index';
         indexing = false;
         return;
       }
 
-      // Try to read NDJSON stream for progress updates
-      if (res.body) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const msg = JSON.parse(line) as { status?: string; message?: string; error?: string };
-              if (msg.status === 'error') {
-                indexError = msg.message ?? msg.error ?? 'Indexing failed';
-              } else if (msg.message) {
-                indexLog = [...indexLog.slice(-19), msg.message];
-              }
-            } catch { /* not JSON */ }
-          }
-        }
-      }
-
-      // Poll for final progress
-      await pollProgress();
+      indexLog = [...indexLog, `Queued at position ${res.position}`];
     } catch (e) {
       indexError = String(e);
     } finally {
