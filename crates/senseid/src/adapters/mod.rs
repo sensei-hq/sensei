@@ -1,6 +1,7 @@
 pub mod python;
 pub mod rust_lang;
 pub mod typescript;
+pub mod java;
 
 use crate::types::ParsedFile;
 
@@ -18,13 +19,14 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
         ".rs" => Some(Box::new(rust_lang::RustAdapter)),
         ".ts" | ".tsx" => Some(Box::new(typescript::TypeScriptAdapter)),
         ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
+        ".java" => Some(Box::new(java::JavaAdapter)),
         _ => None,
     }
 }
 
 /// List all supported extensions.
 pub fn supported_extensions() -> &'static [&'static str] {
-    &[".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]
+    &[".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".java"]
 }
 
 #[cfg(test)]
