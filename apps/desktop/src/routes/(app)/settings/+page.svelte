@@ -9,14 +9,29 @@
   let sidebarMax = $state(parseInt(localStorage.getItem('sensei:sidebar_max_items') ?? '5', 10));
   let daemonHealth = $state<Record<string, unknown>>({});
 
-  onMount(async () => {
-    try {
-      const raw = localStorage.getItem('sensei:projects_raw');
-      projectCount = raw ? JSON.parse(raw).length : 0;
-    } catch { /* ignore */ }
+  // Global skills — installed across all repos
+  const ALL_SKILLS = [
+    'zero-errors-policy', 'managing-project-sessions', 'pattern-based-development',
+    'detecting-doc-drift', 'identifying-patterns', 'decomposing-broad-tasks',
+    'managing-context', 'running-agentic-sessions', 'compressing-content', 'indexing-codebase',
+  ];
+  let globalSkills = $state<string[]>(JSON.parse(localStorage.getItem('sensei:global_skills') ?? '["zero-errors-policy","managing-project-sessions","pattern-based-development"]'));
 
+  function toggleGlobalSkill(name: string) {
+    if (globalSkills.includes(name)) {
+      globalSkills = globalSkills.filter(s => s !== name);
+    } else {
+      globalSkills = [...globalSkills, name];
+    }
+    localStorage.setItem('sensei:global_skills', JSON.stringify(globalSkills));
+  }
+
+  onMount(async () => {
     const api = senseiApi(port);
     daemonHealth = await api.getHealth();
+    // Get project count from daemon (source of truth)
+    const projects = await api.getProjects();
+    projectCount = projects.length;
   });
 
   async function resetSetup() {
@@ -78,6 +93,25 @@
               <button onclick={() => updateSidebarMax(sidebarMax + 1)} class="w-7 h-7 rounded-lg bg-surface-z3 text-surface-z6 text-sm hover:bg-surface-z4">+</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Global Skills -->
+      <section>
+        <h2 class="text-xs font-semibold uppercase tracking-widest text-surface-z4 mb-3">Global Skills</h2>
+        <p class="text-xs text-surface-z4 mb-3">Skills enabled globally are installed across all repos. Per-solution skills pages only show skills not already enabled here.</p>
+        <div class="rounded-2xl border border-surface-z3 bg-surface-z2/50 divide-y divide-surface-z2">
+          {#each ALL_SKILLS as skill}
+            <div class="flex items-center justify-between px-4 py-2.5">
+              <span class="text-sm text-surface-z7">{skill}</span>
+              <button
+                onclick={() => toggleGlobalSkill(skill)}
+                class="rounded-md px-2 py-1 text-[10px] font-medium transition-colors {globalSkills.includes(skill) ? 'bg-success-z2 text-success-z7' : 'bg-surface-z3 text-surface-z5 hover:bg-surface-z4'}"
+              >
+                {globalSkills.includes(skill) ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+          {/each}
         </div>
       </section>
 

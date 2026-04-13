@@ -282,10 +282,17 @@
         <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {STATUS_CLS[repo.status] ?? STATUS_CLS.unknown}">
           {repo.status}
         </span>
-        <div class="flex-1 min-w-0">
-          <p class="text-sm text-surface-z7 truncate">{repo.name}</p>
-          <p class="text-[10px] text-surface-z3 truncate">{repo.path}</p>
-        </div>
+        {#if assignedTo}
+          <a href="/s/{assignedTo.id}" class="flex-1 min-w-0 cursor-pointer">
+            <p class="text-sm text-surface-z7 truncate hover:text-primary-z6">{repo.name}</p>
+            <p class="text-[10px] text-surface-z3 truncate">{repo.path}</p>
+          </a>
+        {:else}
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-surface-z7 truncate">{repo.name}</p>
+            <p class="text-[10px] text-surface-z3 truncate">{repo.path}</p>
+          </div>
+        {/if}
         {#if repo.tech_stack?.length}
           <div class="flex gap-1 shrink-0">
             {#each repo.tech_stack.slice(0, 2) as tech}
@@ -294,7 +301,7 @@
           </div>
         {/if}
         {#if assignedTo}
-          <span class="rounded bg-primary-z1 px-1.5 py-0.5 text-[10px] text-primary-z6 shrink-0 truncate max-w-24">{assignedTo.name}</span>
+          <a href="/s/{assignedTo.id}" class="rounded bg-primary-z1 px-1.5 py-0.5 text-[10px] text-primary-z6 shrink-0 truncate max-w-24 hover:bg-primary-z2">{assignedTo.name}</a>
         {:else}
           <span class="text-[10px] text-surface-z3">unassigned</span>
         {/if}
