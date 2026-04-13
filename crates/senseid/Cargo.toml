@@ -13,11 +13,11 @@ tokio = { version = "1", features = ["full"] }
 # SQLite (store + graph — Kuzu migration planned when linking is stable)
 rusqlite = { version = "0.34", features = ["bundled"] }
 
-# Tree-sitter
-tree-sitter = "0.25"
-tree-sitter-python = "0.25"
+# Tree-sitter (all grammars must use compatible tree-sitter version)
+tree-sitter = "0.24"
+tree-sitter-python = "0.23"
 tree-sitter-typescript = "0.23"
-tree-sitter-rust = "0.24"
+tree-sitter-rust = "0.23"
 tree-sitter-java = "0.23"
 tree-sitter-javascript = "0.23"
 
