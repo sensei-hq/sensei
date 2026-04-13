@@ -2,28 +2,25 @@
   import { onMount } from 'svelte';
   import { getSolutions, clearAllSolutions } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
+  import { getPort, getSidebarMaxItems, getGlobalSkills, setSidebarMaxItems, setGlobalSkills, resetAppState } from '$lib/appstate.svelte.js';
 
   let projectCount = $state(0);
   let solutionCount = $derived(getSolutions().length);
-  let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
-  let sidebarMax = $state(parseInt(localStorage.getItem('sensei:sidebar_max_items') ?? '5', 10));
+  let port = $derived(getPort());
+  let sidebarMax = $derived(getSidebarMaxItems());
   let daemonHealth = $state<Record<string, unknown>>({});
 
-  // Global skills — installed across all repos
   const ALL_SKILLS = [
     'zero-errors-policy', 'managing-project-sessions', 'pattern-based-development',
     'detecting-doc-drift', 'identifying-patterns', 'decomposing-broad-tasks',
     'managing-context', 'running-agentic-sessions', 'compressing-content', 'indexing-codebase',
   ];
-  let globalSkills = $state<string[]>(JSON.parse(localStorage.getItem('sensei:global_skills') ?? '["zero-errors-policy","managing-project-sessions","pattern-based-development"]'));
+  let globalSkills = $derived(getGlobalSkills());
 
   function toggleGlobalSkill(name: string) {
-    if (globalSkills.includes(name)) {
-      globalSkills = globalSkills.filter(s => s !== name);
-    } else {
-      globalSkills = [...globalSkills, name];
-    }
-    localStorage.setItem('sensei:global_skills', JSON.stringify(globalSkills));
+    const current = getGlobalSkills();
+    const updated = current.includes(name) ? current.filter(s => s !== name) : [...current, name];
+    setGlobalSkills(updated);
   }
 
   onMount(async () => {
@@ -36,30 +33,13 @@
 
   async function resetSetup() {
     if (!confirm('This will clear all imported projects, solutions, and reset setup. Continue?')) return;
-    // Clear daemon solutions
-    const api = senseiApi(port);
-    try {
-      const sols = await api.listSolutions();
-      for (const s of sols) { await api.deleteSolution(s.id); }
-    } catch { /* non-fatal */ }
-    // Clear localStorage
-    localStorage.removeItem('sensei:projects_raw');
-    localStorage.removeItem('sensei:setup_complete');
-    localStorage.removeItem('sensei:variant_overrides');
-    localStorage.removeItem('sensei:index_states');
-    localStorage.removeItem('sensei:sidebar_max_items');
+    await resetAppState();
     clearAllSolutions();
     window.location.replace('/');
   }
 
-  function clearVariantOverrides() {
-    localStorage.removeItem('sensei:variant_overrides');
-    window.location.reload();
-  }
-
   function updateSidebarMax(val: number) {
-    sidebarMax = Math.max(1, Math.min(20, val));
-    localStorage.setItem('sensei:sidebar_max_items', String(sidebarMax));
+    setSidebarMaxItems(val);
   }
 
   async function checkDaemon() {
@@ -173,17 +153,6 @@
               onclick={resetSetup}
               class="rounded-lg border border-error-z3 px-3 py-1.5 text-xs font-medium text-error-z6 transition-colors hover:bg-error-z1">
               Reset
-            </button>
-          </div>
-          <div class="flex items-center justify-between px-4 py-3">
-            <div>
-              <p class="text-sm font-medium text-surface-z8">Clear variant overrides</p>
-              <p class="text-xs text-surface-z4 mt-0.5">Reset all manual group/ungroup changes</p>
-            </div>
-            <button
-              onclick={clearVariantOverrides}
-              class="rounded-lg border border-surface-z3 px-3 py-1.5 text-xs font-medium text-surface-z6 transition-colors hover:bg-surface-z3">
-              Clear
             </button>
           </div>
         </div>

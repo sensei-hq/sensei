@@ -1,16 +1,15 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
-  import { migrate } from '$lib/migration.js';
   import { loadSolutions, getSolutions, getSolutionsByCategory, getStandaloneLibraries, markLoaded, isSolutionsLoaded } from '$lib/solutions.svelte.js';
+  import { loadAppState, getPort, getSidebarMaxItems, isAppLoaded } from '$lib/appstate.svelte.js';
   import ServerStatus from '$lib/ServerStatus.svelte';
   import SidebarSolution from '$lib/SidebarSolution.svelte';
 
   let { children } = $props();
 
-  const DEFAULT_PORT = 7744;
-  let senseiPort = $state(DEFAULT_PORT);
-  let MAX_VISIBLE = $state(parseInt(localStorage.getItem('sensei:sidebar_max_items') ?? '5', 10));
+  let senseiPort = $derived(getPort());
+  let MAX_VISIBLE = $derived(getSidebarMaxItems());
 
   let showAllActive = $state(false);
   let showAllSide = $state(false);
@@ -30,9 +29,7 @@
   let hiddenIdeaCount = $derived(Math.max(0, ideaSolutions.length - MAX_VISIBLE));
 
   onMount(async () => {
-    const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
-    if (!isNaN(stored) && stored > 0) senseiPort = stored;
-    migrate();
+    await loadAppState();
     await loadSolutions();
     markLoaded();
   });

@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { getPort } from '$lib/appstate.svelte.js';
   import { onMount } from 'svelte';
   import { senseiApi } from '$lib/api.js';
   import type { LibEntry, LibDoc, DepVersion } from '$lib/types.js';
 
-  let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
+  let port = $derived(getPort());
   let loading = $state(true);
 
   // Library data

@@ -199,6 +199,17 @@ export function senseiApi(port: number) {
         '/api/scan', { root, max_depth: maxDepth }, [],
       ),
 
+    // ── Config (user preferences) ──────────────────────────────────────
+    getConfig: () => get<Record<string, string>>('/api/config', {}),
+
+    getConfigKey: (key: string) =>
+      get<{ key: string; value: string | null }>(`/api/config/${enc(key)}`, { key, value: null }),
+
+    setConfig: (config: Record<string, string>) =>
+      put('/api/config', config),
+
+    deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
+
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
   };

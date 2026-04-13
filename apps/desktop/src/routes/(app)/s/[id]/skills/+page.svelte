@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { getPort } from '$lib/appstate.svelte.js';
   import { page } from '$app/stores';
   import { getSolutionById } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import type { InferredRole } from '$lib/types.js';
 
   let solution = $derived(getSolutionById($page.params.id as string));
-  let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
+  let port = $derived(getPort());
   let inferredRoles = $state<InferredRole[]>([]);
 
   // Skills + plugins + commands catalog with project-type recommendations
@@ -31,9 +32,9 @@
     { name: '/benchmark', description: 'Run benchmark on current repo', types: ['all'], kind: 'command' },
   ];
 
-  // Read global skills from settings — exclude from per-repo recommendations
-  const DEFAULT_GLOBAL = '["zero-errors-policy","managing-project-sessions","pattern-based-development"]';
-  let globalSkills = $state<string[]>(JSON.parse(localStorage.getItem('sensei:global_skills') ?? DEFAULT_GLOBAL));
+  // Read global skills from appstate — exclude from per-repo recommendations
+  import { getGlobalSkills } from '$lib/appstate.svelte.js';
+  let globalSkills = $derived(getGlobalSkills());
 
   function getRecommended(repoRole: string) {
     const all = [...SKILL_CATALOG, ...PLUGIN_CATALOG, ...COMMAND_CATALOG];

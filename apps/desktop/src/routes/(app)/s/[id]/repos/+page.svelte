@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getPort } from '$lib/appstate.svelte.js';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { getSolutionById, updateSolution } from '$lib/solutions.svelte.js';
@@ -7,7 +8,7 @@
   import type { ServerProject, RepoRole } from '$lib/types.js';
 
   let solution = $derived(getSolutionById($page.params.id as string));
-  let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
+  let port = $derived(getPort());
 
   let serverProjects = $state<ServerProject[]>([]);
   let expandedPath = $state<string | null>(null);
