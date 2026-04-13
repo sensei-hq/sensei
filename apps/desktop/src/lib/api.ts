@@ -161,6 +161,11 @@ export function senseiApi(port: number) {
     detectCommunities: (repoId: string) =>
       post<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }, { ok: false, communities: 0 }),
 
+    getCallFlow: (repoId: string) =>
+      get<{ modules: any[]; calls: any[]; moduleCount: number; exportCount: number; callCount: number }>(
+        `/api/graph/call-flow?repoId=${enc(repoId)}`, { modules: [], calls: [], moduleCount: 0, exportCount: 0, callCount: 0 },
+      ),
+
     getDocDrift: (repoId: string) =>
       get<DocDrift[]>(`/api/graph/doc-drift?repoId=${enc(repoId)}`, []),
 

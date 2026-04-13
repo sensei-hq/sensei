@@ -222,6 +222,69 @@ impl GraphDb {
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
+    /// Get call-flow: exported functions as roots, their callees as children.
+    /// Returns a layered structure for hierarchical graph visualization.
+    pub fn get_call_flow(&self, project: &str) -> Result<serde_json::Value, String> {
+        // Layer 0: Files (packages/modules)
+        let files: Vec<(String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, module FROM files WHERE project = ?1"
+            ).map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![project], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }).map_err(|e| e.to_string())?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        // Layer 1: Exported functions (EXPORTS_FN edges from files)
+        let mut exports: Vec<serde_json::Value> = Vec::new();
+        for (file_id, module) in &files {
+            let mut stmt = self.conn.prepare(
+                "SELECT f.id, f.name, f.file, f.line, f.complexity FROM functions f
+                 JOIN edges e ON e.to_id = f.id
+                 WHERE e.from_id = ?1 AND e.edge_type = 'EXPORTS_FN'"
+            ).map_err(|e| e.to_string())?;
+            let fns: Vec<serde_json::Value> = stmt.query_map(params![file_id], |row| {
+                Ok(serde_json::json!({
+                    "id": row.get::<_, String>(0)?,
+                    "name": row.get::<_, String>(1)?,
+                    "file": row.get::<_, String>(2)?,
+                    "line": row.get::<_, u32>(3)?,
+                    "complexity": row.get::<_, u32>(4)?,
+                }))
+            }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+            if !fns.is_empty() {
+                exports.push(serde_json::json!({
+                    "module": module,
+                    "fileId": file_id,
+                    "functions": fns,
+                }));
+            }
+        }
+
+        // Layer 2: Call edges between functions
+        let calls: Vec<(String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT e.from_id, e.to_id FROM edges e
+                 WHERE e.edge_type = 'CALLS'
+                 AND e.from_id IN (SELECT id FROM functions WHERE project = ?1)"
+            ).map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![project], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }).map_err(|e| e.to_string())?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        Ok(serde_json::json!({
+            "modules": exports,
+            "calls": calls.iter().map(|(from, to)| serde_json::json!({"from": from, "to": to})).collect::<Vec<_>>(),
+            "moduleCount": files.len(),
+            "exportCount": exports.iter().map(|m| m["functions"].as_array().map_or(0, |a| a.len())).sum::<usize>(),
+            "callCount": calls.len(),
+        }))
+    }
+
     /// Tag a file with framework/pattern tags (comma-separated).
     pub fn tag_file(&self, file_id: &str, tags: &str) -> Result<(), String> {
         self.conn.execute(
