@@ -113,32 +113,35 @@ export async function loadAppState() {
   _loaded = true;
 }
 
-/** Reset all config (for workspace reset). */
+/** Reset all config (for workspace reset). Clears everything on daemon + local. */
 export async function resetAppState() {
   const api = senseiApi(_port);
+
   // Delete all solutions on daemon
   try {
     const sols = await api.listSolutions();
     for (const s of sols) { await api.deleteSolution(s.id); }
   } catch { /* non-fatal */ }
-  // Clear config
+
+  // Delete all projects on daemon
+  try {
+    const projects = await api.getProjects();
+    for (const p of projects) { await api.deleteProject(p.repo_id); }
+  } catch { /* non-fatal */ }
+
+  // Clear all config on daemon
   const keys = Object.keys(_config);
   for (const key of keys) {
     await api.deleteConfig(key).catch(() => {});
   }
+
   _config = {};
   _loaded = false;
-  // Clear localStorage remnants
+
+  // Clear all localStorage
   if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('sensei:projects_raw');
-    localStorage.removeItem('sensei:setup_complete');
-    localStorage.removeItem('sensei:variant_overrides');
-    localStorage.removeItem('sensei:index_states');
-    localStorage.removeItem('sensei:solutions');
-    localStorage.removeItem('sensei:active_solution');
-    localStorage.removeItem('sensei:migration_v1');
-    localStorage.removeItem('sensei:sidebar_max_items');
-    localStorage.removeItem('sensei:global_skills');
-    localStorage.removeItem('sensei:dismissed_suggestions');
+    const port = localStorage.getItem('sensei:port'); // preserve port
+    localStorage.clear();
+    if (port) localStorage.setItem('sensei:port', port);
   }
 }
