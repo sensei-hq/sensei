@@ -33,8 +33,15 @@
     daemonHealth = await api.getHealth();
   });
 
-  function resetSetup() {
+  async function resetSetup() {
     if (!confirm('This will clear all imported projects, solutions, and reset setup. Continue?')) return;
+    // Clear daemon solutions
+    const api = senseiApi(port);
+    try {
+      const sols = await api.listSolutions();
+      for (const s of sols) { await api.deleteSolution(s.id); }
+    } catch { /* non-fatal */ }
+    // Clear localStorage
     localStorage.removeItem('sensei:projects_raw');
     localStorage.removeItem('sensei:setup_complete');
     localStorage.removeItem('sensei:variant_overrides');

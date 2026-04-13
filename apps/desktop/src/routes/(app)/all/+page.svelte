@@ -4,6 +4,7 @@
     getSolutions, createSolution, addRepoToSolution,
     removeRepoFromSolution, inferRepoRole,
   } from '$lib/solutions.svelte.js';
+  import { senseiApi } from '$lib/api.js';
   import type { ScannedRepo, Solution, SolutionRepo } from '$lib/types.js';
 
   let scannedRepos = $state<ScannedRepo[]>([]);
@@ -106,9 +107,27 @@
   async function scanFolder() {
     if (!scanRoot.trim()) return;
     scanning = true;
+    const port = parseInt(localStorage.getItem('sensei:port') ?? '7744', 10);
+    const api = senseiApi(port);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const found = await invoke<ScannedRepo[]>('analyze_folder', { root: scanRoot });
+      // Try Tauri first (native), fall back to daemon API
+      let found: ScannedRepo[] = [];
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        found = await invoke<ScannedRepo[]>('analyze_folder', { root: scanRoot });
+      } catch {
+        // Tauri not available — use daemon API
+        const scanned = await api.scanFolder(scanRoot);
+        found = scanned.map(r => ({
+          name: r.name,
+          path: r.path,
+          categories: [],
+          status: 'unknown' as const,
+          tech_stack: r.stack ?? [],
+          commit_count: 0,
+        }));
+      }
+
       // Merge into projects_raw
       const existing = new Set(scannedRepos.map(r => r.path));
       const newRepos = found.filter(r => !existing.has(r.path));
@@ -116,8 +135,14 @@
         scannedRepos = [...scannedRepos, ...newRepos];
         localStorage.setItem('sensei:projects_raw', JSON.stringify(scannedRepos));
       }
-    } catch { /* Tauri not available */ }
-    finally { scanning = false; }
+
+      // Also register each repo with the daemon
+      for (const r of found) {
+        await api.registerProject(r.name, r.name, r.path);
+      }
+    } catch (e) {
+      console.error('Scan failed:', e);
+    } finally { scanning = false; }
   }
 
   const STATUS_CLS: Record<string, string> = {
@@ -129,11 +154,35 @@
     unknown:   'bg-surface-z3 text-surface-z5',
   };
 
-  onMount(() => {
+  onMount(async () => {
+    // Load from localStorage as fast cache
     try {
       const raw = localStorage.getItem('sensei:projects_raw');
       if (raw) scannedRepos = JSON.parse(raw) as ScannedRepo[];
     } catch { /* empty */ }
+
+    // Also fetch from daemon API (source of truth) and merge
+    const port = parseInt(localStorage.getItem('sensei:port') ?? '7744', 10);
+    const api = senseiApi(port);
+    const projects = await api.getProjects();
+    if (projects.length > 0) {
+      const existing = new Set(scannedRepos.map(r => r.path));
+      const fromDaemon: ScannedRepo[] = projects
+        .filter(p => !existing.has(p.path))
+        .map(p => ({
+          name: p.name,
+          path: p.path,
+          repoId: p.repo_id,
+          categories: [],
+          status: (p.indexed_at ? 'active' : 'unknown') as any,
+          tech_stack: p.stack ?? [],
+          commit_count: 0,
+        }));
+      if (fromDaemon.length > 0) {
+        scannedRepos = [...scannedRepos, ...fromDaemon];
+        localStorage.setItem('sensei:projects_raw', JSON.stringify(scannedRepos));
+      }
+    }
   });
 </script>
 
