@@ -36,8 +36,8 @@
 
   async function loadLibs() {
     const api = senseiApi(port);
-    const shared = filter === 'shared';
-    const result = await api.getLibs({ shared: shared || undefined });
+    // Always fetch all libs — filter client-side
+    const result = await api.getLibs();
     allLibs = result.libs;
     loading = false;
   }
