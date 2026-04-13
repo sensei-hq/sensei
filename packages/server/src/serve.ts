@@ -805,8 +805,17 @@ export async function serve(repoPath: string, opts: { port?: number; daemon?: bo
     }
 
     out.info(`Starting file watchers for ${projects.length} project(s)…`);
-    await Promise.all(projects.map(p => startWatcher(p.repoId, p.path)));
-    out.success(`Reconciliation complete. ${unindexed.length} queued, ${projects.length - unindexed.length} already indexed.`);
+    // Start watchers sequentially to avoid overwhelming Kuzu with 72 concurrent DB opens
+    let watcherCount = 0;
+    for (const p of projects) {
+      try {
+        await startWatcher(p.repoId, p.path);
+        watcherCount++;
+      } catch (err) {
+        out.warn(`[${p.repoId}] watcher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    out.success(`Reconciliation complete. ${unindexed.length} queued, ${watcherCount}/${projects.length} watchers started.`);
   })();
 
   // Keep process alive
