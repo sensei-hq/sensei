@@ -197,11 +197,35 @@ impl Store {
         Ok(())
     }
 
-    pub fn mark_indexed(&self, repo_id: &str, libs: &[String]) -> rusqlite::Result<()> {
+    pub fn mark_indexed(&self, repo_id: &str, new_libs: &[String]) -> rusqlite::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
+
+        // Merge new libs with existing (don't overwrite with smaller set from partial re-index)
+        let existing_libs: Vec<String> = self.conn.query_row(
+            "SELECT libs FROM projects WHERE repo_id = ?1",
+            params![repo_id],
+            |row| {
+                let json: String = row.get(0)?;
+                Ok(serde_json::from_str::<Vec<String>>(&json).unwrap_or_default())
+            },
+        ).unwrap_or_default();
+
+        let mut merged: std::collections::BTreeSet<String> = existing_libs.into_iter().collect();
+        merged.extend(new_libs.iter().cloned());
+        let merged_vec: Vec<String> = merged.into_iter().collect();
+
         self.conn.execute(
             "UPDATE projects SET indexed_at = ?1, last_error = NULL, libs = ?2 WHERE repo_id = ?3",
-            params![now, serde_json::to_string(libs).unwrap(), repo_id],
+            params![now, serde_json::to_string(&merged_vec).unwrap(), repo_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_indexed_timestamp(&self, repo_id: &str) -> rusqlite::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE projects SET indexed_at = ?1, last_error = NULL WHERE repo_id = ?2",
+            params![now, repo_id],
         )?;
         Ok(())
     }
@@ -424,7 +448,7 @@ mod tests {
         s.mark_indexed("foo", &["zod".into(), "hono".into()]).unwrap();
         let p = s.get_project("foo").unwrap().unwrap();
         assert!(p.indexed_at.is_some());
-        assert_eq!(p.libs, vec!["zod", "hono"]);
+        assert_eq!(p.libs, vec!["hono", "zod"]); // sorted (BTreeSet merge)
         assert!(p.last_error.is_none());
     }
 

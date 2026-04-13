@@ -9,17 +9,25 @@ description = "Sensei indexer daemon — graph-based code intelligence"
 axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 # SQLite (store + graph — Kuzu migration planned when linking is stable)
 rusqlite = { version = "0.34", features = ["bundled"] }
 
-# Tree-sitter (all grammars must use compatible tree-sitter version)
+# Tree-sitter (for Python, Rust, Java)
 tree-sitter = "0.24"
 tree-sitter-python = "0.23"
-tree-sitter-typescript = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-java = "0.23"
-tree-sitter-javascript = "0.23"
+
+# Regex
+regex = "1"
+
+# OXC for TypeScript/JavaScript (native Rust parser, no tree-sitter ABI issues)
+oxc_parser = "0.124"
+oxc_ast = "0.124"
+oxc_span = "0.124"
+oxc_allocator = "0.124"
 
 # SQL parsing
 sqlparser = { version = "0.57", features = ["visitor"] }
@@ -42,12 +50,16 @@ sha2 = "0.10"
 hex = "0.4"
 globset = "0.4"
 walkdir = "2"
+ignore = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", features = ["json"] }
+
+[build-dependencies]
+cc = "1"
 
 [dev-dependencies]
 tempfile = "3"
