@@ -31,9 +31,15 @@
     { name: '/benchmark', description: 'Run benchmark on current repo', types: ['all'], kind: 'command' },
   ];
 
+  // Read global skills from settings — exclude from per-repo recommendations
+  const DEFAULT_GLOBAL = '["zero-errors-policy","managing-project-sessions","pattern-based-development"]';
+  let globalSkills = $state<string[]>(JSON.parse(localStorage.getItem('sensei:global_skills') ?? DEFAULT_GLOBAL));
+
   function getRecommended(repoRole: string) {
     const all = [...SKILL_CATALOG, ...PLUGIN_CATALOG, ...COMMAND_CATALOG];
-    return all.filter(s => s.types.includes('all') || s.types.includes(repoRole));
+    return all
+      .filter(s => s.types.includes('all') || s.types.includes(repoRole))
+      .filter(s => !globalSkills.includes(s.name)); // exclude globally installed
   }
 
   function getRoleForRepo(repoId: string): string {
