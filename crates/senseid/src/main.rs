@@ -95,7 +95,9 @@ async fn run_foreground(port: u16) {
         Err(_) => {}
     }
 
-    let graph = indexer::graph::GraphDb::open(&graph_path()).expect("Failed to open graph DB");
+    let gp = graph_path();
+    std::fs::create_dir_all(&gp).ok();
+    let graph = indexer::graph::GraphDb::open(&gp).expect("Failed to open graph DB");
     println!("[senseid] Listening on :{}", port);
 
     if let Err(e) = api::start_server(store, graph, port).await {
