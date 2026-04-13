@@ -375,6 +375,11 @@ impl Store {
         Ok(())
     }
 
+    pub fn execute_raw(&self, sql: &str) -> rusqlite::Result<()> {
+        self.conn.execute_batch(sql)?;
+        Ok(())
+    }
+
     pub fn get_all_config(&self) -> rusqlite::Result<std::collections::HashMap<String, String>> {
         let mut stmt = self.conn.prepare("SELECT key, value FROM config")?;
         let rows = stmt.query_map([], |row| {

@@ -117,30 +117,17 @@ export async function loadAppState() {
 export async function resetAppState() {
   const api = senseiApi(_port);
 
-  // Delete all solutions on daemon
+  // Single daemon call clears everything: projects, solutions, config, graph, manifests
   try {
-    const sols = await api.listSolutions();
-    for (const s of sols) { await api.deleteSolution(s.id); }
+    await fetch(`http://127.0.0.1:${_port}/api/reset`, { method: 'POST' });
   } catch { /* non-fatal */ }
-
-  // Delete all projects on daemon
-  try {
-    const projects = await api.getProjects();
-    for (const p of projects) { await api.deleteProject(p.repo_id); }
-  } catch { /* non-fatal */ }
-
-  // Clear all config on daemon
-  const keys = Object.keys(_config);
-  for (const key of keys) {
-    await api.deleteConfig(key).catch(() => {});
-  }
 
   _config = {};
   _loaded = false;
 
-  // Clear all localStorage
+  // Clear all localStorage (preserve port)
   if (typeof localStorage !== 'undefined') {
-    const port = localStorage.getItem('sensei:port'); // preserve port
+    const port = localStorage.getItem('sensei:port');
     localStorage.clear();
     if (port) localStorage.setItem('sensei:port', port);
   }
