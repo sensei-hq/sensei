@@ -53,30 +53,36 @@
     if (!solution) return;
     loading = true;
     const api = senseiApi(port);
+
+    // Load per-repo graph data for structural analysis
     const results = new Map<string, GraphData>();
     await Promise.all(solution.repos.map(async (repo) => {
-      const data = await api.getGraph(repo.repoId, repo.path);
+      const data = await api.getGraph(repo.repoId);
       if (data.summary.totalSymbols > 0) {
         results.set(repo.repoId, data);
       }
     }));
     repoGraphs = results;
 
-    // Also load raw node/edge data for D3
-    const allNodes: typeof graphNodes = [];
-    const allEdges: typeof graphEdges = [];
-    await Promise.all(solution.repos.map(async (repo) => {
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/graph/nodes?repoId=${encodeURIComponent(repo.repoId)}`);
-        if (res.ok) {
-          const data = await res.json() as { nodes: typeof graphNodes; edges: typeof graphEdges };
-          allNodes.push(...data.nodes);
-          allEdges.push(...data.edges);
-        }
-      } catch { /* ignore */ }
-    }));
-    graphNodes = allNodes;
-    graphEdges = allEdges;
+    // Load merged graph for D3 visualization
+    try {
+      const sg = await api.getSolutionGraph(solution.id);
+      if (sg?.graph) {
+        graphNodes = sg.graph.nodes;
+        graphEdges = sg.graph.edges;
+      }
+    } catch {
+      // Fallback: per-repo node/edge fetch
+      const allNodes: typeof graphNodes = [];
+      const allEdges: typeof graphEdges = [];
+      for (const repo of solution.repos) {
+        const data = await api.getGraphNodes(repo.repoId);
+        allNodes.push(...data.nodes);
+        allEdges.push(...data.edges);
+      }
+      graphNodes = allNodes;
+      graphEdges = allEdges;
+    }
 
     loading = false;
   }
