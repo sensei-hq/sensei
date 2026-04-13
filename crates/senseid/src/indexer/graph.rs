@@ -183,7 +183,9 @@ impl GraphDb {
              UNION ALL
              SELECT id, name, kind, file, line, 0 FROM types WHERE project = ?1
              UNION ALL
-             SELECT id, module as name, 'file' as kind, path as file, 0, 0 FROM files WHERE project = ?1"
+             SELECT id, module as name, 'file' as kind, path as file, 0, 0 FROM files WHERE project = ?1
+             UNION ALL
+             SELECT id, title as name, 'doc' as kind, path as file, 0, 0 FROM docs WHERE project = ?1"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(params![project], |row| {
             Ok(crate::types::GraphNode {
