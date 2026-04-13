@@ -2,6 +2,7 @@ mod types;
 mod db;
 mod adapters;
 mod indexer;
+mod config;
 mod api;
 
 use clap::{Parser, Subcommand};
