@@ -2,6 +2,7 @@ pub mod python;
 pub mod rust_lang;
 pub mod typescript;
 pub mod java;
+pub mod sql;
 
 use crate::types::ParsedFile;
 
@@ -20,13 +21,14 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
         ".ts" | ".tsx" => Some(Box::new(typescript::TypeScriptAdapter)),
         ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
         ".java" => Some(Box::new(java::JavaAdapter)),
+        ".sql" => Some(Box::new(sql::SqlAdapter)),
         _ => None,
     }
 }
 
 /// List all supported extensions.
 pub fn supported_extensions() -> &'static [&'static str] {
-    &[".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".java"]
+    &[".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".java", ".sql"]
 }
 
 #[cfg(test)]
