@@ -200,18 +200,38 @@ async function runTaskWithRetry(
 
     const session = await runner.runTask(task.path, workDir);
 
-    if (session.exitCode !== 0 && session.rawOutput.includes("Credit balance is too low")) {
-      const resetsAt = parseRateLimitReset(session.rawOutput);
-      let waitSec: number;
-      if (resetsAt) {
-        waitSec = Math.max(30, Math.ceil(resetsAt - Date.now() / 1000));
-        console.log(` ⏳ rate limited — resets at ${new Date(resetsAt * 1000).toLocaleTimeString()} — waiting ${Math.ceil(waitSec / 60)}min...`);
-      } else {
-        waitSec = Math.min(attempt * 120, 600);
-        console.log(` ⏳ rate limited — waiting ${Math.ceil(waitSec / 60)}min...`);
+    // Detect any error (rate limit or otherwise)
+    if (session.exitCode !== 0) {
+      // Extract the result message
+      let errorMsg = "unknown error";
+      for (const line of session.rawOutput.split("\n")) {
+        if (line.includes('"type":"result"')) {
+          try { errorMsg = (JSON.parse(line) as { result?: string }).result ?? errorMsg; } catch {}
+          break;
+        }
       }
-      await new Promise(r => setTimeout(r, waitSec * 1000));
-      continue;
+
+      const isRateLimit = session.rawOutput.includes("Credit balance is too low");
+      const resetsAt = parseRateLimitReset(session.rawOutput);
+      const resetTime = resetsAt ? new Date(resetsAt * 1000).toLocaleTimeString() : null;
+
+      if (isRateLimit) {
+        const waitSec = resetsAt
+          ? Math.max(30, Math.ceil(resetsAt - Date.now() / 1000))
+          : Math.min(attempt * 120, 600);
+        console.log(` ⏳ rate limited — ${resetTime ? `resets at ${resetTime}` : "no reset time"} — waiting ${Math.ceil(waitSec / 60)}min...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      } else {
+        // Non-rate-limit error — show it and retry
+        console.log(` ✗ error (exit ${session.exitCode}): ${errorMsg.slice(0, 100)}`);
+        if (attempt < 3) {
+          console.log(`    retrying in 10s...`);
+          await new Promise(r => setTimeout(r, 10_000));
+          continue;
+        }
+        console.log(`    giving up after ${attempt} attempts`);
+      }
     }
 
     const ctxK = Math.round(session.totalContextTokens / 1000);
