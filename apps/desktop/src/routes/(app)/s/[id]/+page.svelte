@@ -299,9 +299,11 @@
           {@const summary = repoSummaries.get(repo.repoId)}
           {@const inferred = getInferredRole(repo.repoId)}
           {@const displayRole = inferred && inferred.confidence > 0.5 ? inferred.role : repo.role}
+          {@const repoName = repo.label || summary?.name || repo.repoId || repo.path?.split('/').at(-1) || 'unknown'}
+          {@const repoPath = summary?.path || repo.path || ''}
           <div class="rounded-lg bg-surface-z2 px-4 py-3 space-y-1">
             <div class="flex items-center gap-2">
-              <span class="text-sm font-medium text-surface-z8">{repo.label ?? repo.path.split('/').at(-1)}</span>
+              <span class="text-sm font-medium text-surface-z8">{repoName}</span>
               <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {ROLE_CLS[displayRole] ?? ROLE_CLS.unknown}">{displayRole}</span>
               {#if serverInfo?.indexedAt}
                 <span class="text-[10px] text-success-z5">indexed</span>
@@ -314,7 +316,9 @@
                 <span class="text-[10px] text-surface-z4 font-mono ml-auto">{summary.functions} fn · {summary.types} ty</span>
               {/if}
             </div>
-            <p class="text-[10px] text-surface-z3 font-mono truncate">{repo.path}</p>
+            {#if repoPath}
+              <p class="text-[10px] text-surface-z3 font-mono truncate">{repoPath}</p>
+            {/if}
             {#if summary?.libs && summary.libs.length > 0}
               <div class="flex flex-wrap gap-1 mt-1">
                 {#each summary.libs.slice(0, 8) as lib}
