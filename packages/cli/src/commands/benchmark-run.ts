@@ -216,11 +216,30 @@ async function runTaskWithRetry(
       const resetTime = resetsAt ? new Date(resetsAt * 1000).toLocaleTimeString() : null;
 
       if (isRateLimit) {
-        const waitSec = resetsAt
-          ? Math.max(30, Math.ceil(resetsAt - Date.now() / 1000))
-          : Math.min(attempt * 120, 600);
-        console.log(` ⏳ rate limited — ${resetTime ? `resets at ${resetTime}` : "no reset time"} — waiting ${Math.ceil(waitSec / 60)}min...`);
-        await new Promise(r => setTimeout(r, waitSec * 1000));
+        // Show the rate limit event for debugging
+        for (const line of session.rawOutput.split("\n")) {
+          if (line.includes("rate_limit")) {
+            try {
+              const ev = JSON.parse(line);
+              const info = ev.rate_limit_info;
+              if (info) {
+                const reset = new Date((info.resetsAt ?? 0) * 1000);
+                console.log(` ⏳ rate limited — resets at ${reset.toLocaleTimeString()} (${info.rateLimitType}, overage: ${info.overageStatus})`);
+                const waitSec = Math.max(30, Math.ceil((info.resetsAt ?? (Date.now()/1000 + 120)) - Date.now() / 1000));
+                console.log(`    waiting ${Math.ceil(waitSec / 60)}min...`);
+                await new Promise(r => setTimeout(r, waitSec * 1000));
+                break;
+              }
+            } catch { /* skip */ }
+          }
+        }
+        if (!resetsAt) {
+          // Fallback: no rate_limit_event found
+          const waitSec = Math.min(attempt * 120, 600);
+          console.log(` ⏳ rate limited — no rate_limit_event in output — waiting ${Math.ceil(waitSec / 60)}min...`);
+          console.log(`    error: ${errorMsg.slice(0, 120)}`);
+          await new Promise(r => setTimeout(r, waitSec * 1000));
+        }
         continue;
       } else {
         // Non-rate-limit error — show it and retry
