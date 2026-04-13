@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, OptionalExtension};
 use std::path::Path;
 use crate::types::SymbolKind;
 
@@ -105,6 +105,24 @@ impl GraphDb {
         self.conn.execute("DELETE FROM comments WHERE file = ?1 AND project = ?2", params![abs_path, project]).ok();
         self.conn.execute("DELETE FROM files WHERE path = ?1 AND project = ?2", params![abs_path, project]).ok();
         Ok(())
+    }
+
+    pub fn merge_doc(
+        &self, id: &str, path: &str, title: &str, doc_type: &str, project: &str,
+    ) -> Result<(), String> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO docs(id, path, title, doc_type, project) VALUES(?1,?2,?3,?4,?5)",
+            params![id, path, title, doc_type, project],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn find_function_by_name(&self, name: &str, project: &str) -> Result<Option<String>, String> {
+        self.conn.query_row(
+            "SELECT id FROM functions WHERE name = ?1 AND project = ?2 LIMIT 1",
+            params![name, project],
+            |row| row.get(0),
+        ).optional().map_err(|e| e.to_string())
     }
 
     pub fn count_symbols(&self, project: &str) -> Result<(u32, u32), String> {
