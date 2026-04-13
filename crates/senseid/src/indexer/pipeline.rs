@@ -230,15 +230,29 @@ pub fn index_repo(
     let mut lib_set = std::collections::HashSet::new();
     for result in all_results.values() {
         for imp in &result.imports {
-            if imp.target_path.starts_with('.') || imp.target_path.starts_with('/') { continue; }
-            if imp.target_path.starts_with("node:") { continue; }
+            let path = &imp.target_path;
+            // Skip relative, absolute, node builtins
+            if path.starts_with('.') || path.starts_with('/') { continue; }
+            if path.starts_with("node:") { continue; }
+            // Skip Rust internal paths
+            if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
+            if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
+            // Skip Python import placeholders from the parser
+            if path.starts_with("import_") || path.starts_with("from_") { continue; }
+            // Skip Rust pub use re-exports
+            if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
+            // Skip Java stdlib
+            if path.starts_with("java.") || path.starts_with("javax.") { continue; }
             // Group by org scope: @scope/pkg → "scope"
-            let lib_name = if imp.target_path.starts_with('@') {
-                imp.target_path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
+            let lib_name = if path.starts_with('@') {
+                path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
+            } else if path.contains("::") {
+                // Rust crate: tokio::sync → "tokio"
+                path.split("::").next().unwrap_or("").to_string()
             } else {
-                imp.target_path.split('/').next().unwrap_or("").to_string()
+                path.split('/').next().unwrap_or("").to_string()
             };
-            if !lib_name.is_empty() {
+            if !lib_name.is_empty() && lib_name.len() > 1 {
                 lib_set.insert(lib_name);
             }
         }

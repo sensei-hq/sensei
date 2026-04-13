@@ -2,17 +2,33 @@
 /**
  * senseid — Sensei background daemon.
  *
+ * DEPRECATED: This TypeScript daemon is being replaced by the Rust daemon
+ * at crates/senseid/. When the Rust binary is available, this script
+ * delegates to it. Otherwise falls back to the TypeScript implementation.
+ *
  * Usage:
  *   senseid start [--port <n>]  Start as background daemon
  *   senseid stop                Stop the running daemon
  *   senseid status              Check if daemon is running
  *   senseid logs                Tail the daemon log
+ *   senseid clear-logs          Clear the log file
  *   senseid [--port <n>]        Start in foreground (for dev)
  */
 import { parseArgs } from "node:util";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
+
+// Check for Rust binary — delegate if available
+const RUST_BINARY = join(homedir(), "Developer", "sensei", "crates", "senseid", "target", "release", "senseid");
+if (existsSync(RUST_BINARY)) {
+  const { spawn } = await import("node:child_process");
+  const result = spawn(RUST_BINARY, process.argv.slice(2), { stdio: "inherit" });
+  result.on("exit", (code) => process.exit(code ?? 0));
+  // Block until Rust process exits
+  await new Promise(() => {});
+}
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 
