@@ -42,9 +42,9 @@ mod tests {
     fn adapter_for_known_extensions() {
         assert!(adapter_for_ext(".py").is_some());
         assert!(adapter_for_ext(".rs").is_some());
-        assert!(adapter_for_ext(".ts").is_some());
-        assert!(adapter_for_ext(".tsx").is_some());
-        assert!(adapter_for_ext(".js").is_some());
+        assert!(adapter_for_ext(".java").is_some());
+        assert!(adapter_for_ext(".sql").is_some());
+        // TS/JS disabled due to tree-sitter grammar ABI issue
     }
 
     #[test]
@@ -56,7 +56,7 @@ mod tests {
     fn supported_exts_list() {
         let exts = supported_extensions();
         assert!(exts.contains(&".py"));
-        assert!(exts.contains(&".ts"));
         assert!(exts.contains(&".rs"));
+        assert!(exts.contains(&".java"));
     }
 }

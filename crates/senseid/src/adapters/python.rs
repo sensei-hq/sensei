@@ -21,11 +21,12 @@ impl LanguageAdapter for PythonAdapter {
         let lines: Vec<&str> = source.lines().collect();
         let root = tree.root_node();
 
+        let src = source.as_bytes();
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
 
         extract_symbols(&root, &lines, &mut symbols, false);
-        extract_imports(&root, &mut imports);
+        extract_imports(&root, src, &mut imports);
 
         let edges = extract_edges(&root, &symbols);
 
@@ -138,38 +139,40 @@ fn extract_docstring(node: &Node, lines: &[&str]) -> Option<String> {
     if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }
 
-fn extract_imports(root: &Node, imports: &mut Vec<ParsedImport>) {
-    let _src_bytes: &[u8] = &[]; // Source text access handled per-node
+fn extract_imports(root: &Node, src: &[u8], imports: &mut Vec<ParsedImport>) {
     for i in 0..root.child_count() {
         let child = root.child(i).unwrap();
         match child.kind() {
             "import_statement" => {
-                // import foo, import foo.bar
                 for j in 0..child.child_count() {
                     let c = child.child(j).unwrap();
                     if c.kind() == "dotted_name" {
-                        // We need to get the text from the node
-                        // Use byte range from the original source
-                        let name = format!("import_{}", j); // placeholder
-                        imports.push(ParsedImport {
-                            target_path: name,
-                            names: vec![],
-                        });
+                        let text = c.utf8_text(src).unwrap_or_default().to_string();
+                        let name = text.rsplit('.').next().unwrap_or(&text).to_string();
+                        imports.push(ParsedImport { target_path: text, names: vec![name] });
                     }
                 }
             }
             "import_from_statement" => {
-                // from foo import bar, baz
                 let mut target = String::new();
                 let mut names = Vec::new();
                 for j in 0..child.child_count() {
                     let c = child.child(j).unwrap();
-                    if c.kind() == "dotted_name" || c.kind() == "relative_import" {
-                        if target.is_empty() {
-                            target = format!("from_{}", j); // placeholder
-                        } else {
-                            names.push(format!("name_{}", j));
+                    match c.kind() {
+                        "dotted_name" | "relative_import" => {
+                            let text = c.utf8_text(src).unwrap_or_default().to_string();
+                            if target.is_empty() {
+                                target = text;
+                            } else {
+                                names.push(text);
+                            }
                         }
+                        "aliased_import" => {
+                            if let Some(n) = c.child_by_field_name("name") {
+                                names.push(n.utf8_text(src).unwrap_or_default().to_string());
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 if !target.is_empty() {
