@@ -1,8 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { onMount } from 'svelte';
-  import { getSolutionById } from '$lib/solutions.svelte.js';
+  import { getSolutionById, isSolutionsLoaded } from '$lib/solutions.svelte.js';
   import type { Solution } from '$lib/types.js';
 
   let { children } = $props();
@@ -21,7 +20,10 @@
   $effect(() => {
     const id = $page.params.id as string;
     solution = getSolutionById(id);
-    if (!solution) goto('/all', { replaceState: true });
+    // Only redirect if solutions are fully loaded and this ID doesn't exist
+    if (!solution && isSolutionsLoaded()) {
+      goto('/all', { replaceState: true });
+    }
   });
 </script>
 
@@ -45,5 +47,9 @@
     <div class="flex-1 overflow-hidden min-h-0">
       {@render children()}
     </div>
+  </div>
+{:else if !isSolutionsLoaded()}
+  <div class="flex items-center justify-center h-full">
+    <p class="text-sm text-surface-z4">Loading...</p>
   </div>
 {/if}
