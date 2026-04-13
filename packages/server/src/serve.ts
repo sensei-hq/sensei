@@ -338,6 +338,30 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
             }
             if (Array.isArray(typeResult)) typeResult.forEach((r: any) => r.close()); else (typeResult as any).close();
 
+            // Files (for import graph)
+            try {
+              const fileResult = await conn.query(`MATCH (f:File {project: '${eId}'}) RETURN f.id AS id, f.path AS path, f.module AS module`);
+              const fileQr = Array.isArray(fileResult) ? fileResult[0] : fileResult;
+              for (const row of await fileQr.getAll()) {
+                const r = row as Record<string, unknown>;
+                const path = String(r.path ?? "");
+                const name = String(r.module ?? path.split("/").at(-1) ?? "");
+                nodes.push({ id: String(r.id), name, kind: "file", file: path, line: 0 });
+              }
+              if (Array.isArray(fileResult)) fileResult.forEach((r: any) => r.close()); else (fileResult as any).close();
+            } catch { /* ignore */ }
+
+            // EXPORTS_FN edges (file → function)
+            try {
+              const expResult = await conn.query(`MATCH (f:File {project: '${eId}'})-[:EXPORTS_FN]->(fn:Function) RETURN f.id AS source, fn.id AS target`);
+              const expQr = Array.isArray(expResult) ? expResult[0] : expResult;
+              for (const row of await expQr.getAll()) {
+                const r = row as Record<string, unknown>;
+                edges.push({ source: String(r.source), target: String(r.target), type: "EXPORTS_FN" });
+              }
+              if (Array.isArray(expResult)) expResult.forEach((r: any) => r.close()); else (expResult as any).close();
+            } catch { /* ignore */ }
+
             // CALLS edges
             try {
               const callResult = await conn.query(`MATCH (a:Function {project: '${eId}'})-[:CALLS]->(b:Function) RETURN a.id AS source, b.id AS target`);

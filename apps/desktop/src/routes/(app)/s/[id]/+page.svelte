@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { getSolutionById, updateSolution } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
+  import GraphCanvas from '$lib/GraphCanvas.svelte';
   import type { Solution, ServerProject, SolutionCategory } from '$lib/types.js';
 
   let solution = $derived(getSolutionById($page.params.id as string));
@@ -11,6 +12,10 @@
   let serverProjects = $state<ServerProject[]>([]);
   let sessions = $state<Array<{ id: string; task: string; project: string; ftr?: number | null; startedAt: string; outcome?: string }>>([]);
   let loading = $state(true);
+
+  // Graph data for mini preview
+  let graphNodes = $state<Array<{ id: string; name: string; kind: string; file: string; line: number; complexity?: number }>>([]);
+  let graphEdges = $state<Array<{ source: string; target: string; type: string }>>([]);
 
   // Derived stats
   let repoCount = $derived(solution?.repos.length ?? 0);
@@ -48,6 +53,24 @@
     ]);
     serverProjects = projects;
     sessions = sessionData.sessions;
+    // Load graph nodes for mini preview
+    if (solution) {
+      const allNodes: typeof graphNodes = [];
+      const allEdges: typeof graphEdges = [];
+      await Promise.all(solution.repos.map(async (repo) => {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/graph/nodes?repoId=${encodeURIComponent(repo.repoId)}`);
+          if (res.ok) {
+            const data = await res.json() as { nodes: typeof graphNodes; edges: typeof graphEdges };
+            allNodes.push(...data.nodes);
+            allEdges.push(...data.edges);
+          }
+        } catch { /* ignore */ }
+      }));
+      graphNodes = allNodes;
+      graphEdges = allEdges;
+    }
+
     loading = false;
   }
 
@@ -176,6 +199,20 @@
               class="text-[7px]" fill="rgb(var(--color-surface-z4))">{node.role}</text>
           {/each}
         </svg>
+      </div>
+    {/if}
+
+    <!-- Code graph preview -->
+    {#if graphNodes.length > 0}
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide">Code Graph</h3>
+          <a href="/s/{solution.id}/arch" class="text-xs text-primary-z6 hover:text-primary-z7">Full view</a>
+        </div>
+        <div class="h-48 rounded-lg border border-surface-z0/30">
+          <GraphCanvas nodes={graphNodes} edges={graphEdges} />
+        </div>
+        <p class="text-[10px] text-surface-z3 mt-1">{graphNodes.length} nodes · {graphEdges.length} edges</p>
       </div>
     {/if}
 
