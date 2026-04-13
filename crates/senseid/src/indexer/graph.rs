@@ -28,10 +28,12 @@ impl GraphDb {
         self.conn.execute_batch("
             CREATE TABLE IF NOT EXISTS functions(
                 id TEXT PRIMARY KEY, name TEXT, file TEXT, line INTEGER,
-                sig TEXT, body TEXT, docstring TEXT, complexity INTEGER DEFAULT 1, project TEXT
+                sig TEXT, body TEXT, docstring TEXT, complexity INTEGER DEFAULT 1,
+                tags TEXT DEFAULT '', project TEXT
             );
             CREATE TABLE IF NOT EXISTS files(
-                id TEXT PRIMARY KEY, path TEXT, module TEXT, lang TEXT, project TEXT
+                id TEXT PRIMARY KEY, path TEXT, module TEXT, lang TEXT,
+                tags TEXT DEFAULT '', project TEXT
             );
             CREATE TABLE IF NOT EXISTS types(
                 id TEXT PRIMARY KEY, name TEXT, file TEXT, line INTEGER, kind TEXT, project TEXT
@@ -49,10 +51,20 @@ impl GraphDb {
             );
             CREATE INDEX IF NOT EXISTS idx_fn_project ON functions(project);
             CREATE INDEX IF NOT EXISTS idx_fn_file ON functions(file);
+            CREATE INDEX IF NOT EXISTS idx_fn_name ON functions(name);
             CREATE INDEX IF NOT EXISTS idx_type_project ON types(project);
+            CREATE INDEX IF NOT EXISTS idx_type_name ON types(name);
             CREATE INDEX IF NOT EXISTS idx_edge_from ON edges(from_id);
             CREATE INDEX IF NOT EXISTS idx_edge_to ON edges(to_id);
-        ").map_err(|e| e.to_string())
+        ").map_err(|e| e.to_string())?;
+
+        // Migration: add tags column if missing (for existing DBs)
+        self.conn.execute_batch("
+            ALTER TABLE files ADD COLUMN tags TEXT DEFAULT '';
+            ALTER TABLE functions ADD COLUMN tags TEXT DEFAULT '';
+        ").ok(); // Ignore errors (column already exists)
+
+        Ok(())
     }
 
     pub fn merge_function(
@@ -188,6 +200,269 @@ impl GraphDb {
         }).map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
+
+    /// Tag a file with framework/pattern tags (comma-separated).
+    pub fn tag_file(&self, file_id: &str, tags: &str) -> Result<(), String> {
+        self.conn.execute(
+            "UPDATE files SET tags = ?2 WHERE id = ?1",
+            params![file_id, tags],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Tag a function with pattern tags.
+    pub fn tag_function(&self, fn_id: &str, tags: &str) -> Result<(), String> {
+        self.conn.execute(
+            "UPDATE functions SET tags = ?2 WHERE id = ?1",
+            params![fn_id, tags],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Search functions by name pattern (LIKE).
+    pub fn search_functions(&self, query: &str, project: &str) -> Result<Vec<crate::types::FunctionDetail>, String> {
+        let pattern = format!("%{}%", query);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, file, line, sig, docstring, complexity, tags FROM functions WHERE project = ?1 AND name LIKE ?2 LIMIT 50"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![project, pattern], |row| {
+            Ok(crate::types::FunctionDetail {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file: row.get(2)?,
+                line: row.get(3)?,
+                signature: row.get::<_, Option<String>>(4)?,
+                docstring: row.get::<_, Option<String>>(5)?,
+                complexity: row.get(6)?,
+                tags: row.get::<_, String>(7).unwrap_or_default(),
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Search types by name pattern.
+    pub fn search_types(&self, query: &str, project: &str) -> Result<Vec<crate::types::TypeDetail>, String> {
+        let pattern = format!("%{}%", query);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, file, line, kind FROM types WHERE project = ?1 AND name LIKE ?2 LIMIT 50"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![project, pattern], |row| {
+            Ok(crate::types::TypeDetail {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file: row.get(2)?,
+                line: row.get(3)?,
+                kind: row.get(4)?,
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Get files by tag pattern.
+    pub fn files_by_tag(&self, tag: &str, project: &str) -> Result<Vec<(String, String, String)>, String> {
+        let pattern = format!("%{}%", tag);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, path, tags FROM files WHERE project = ?1 AND tags LIKE ?2 LIMIT 100"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![project, pattern], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Get callers of a function.
+    pub fn callers_of(&self, fn_name: &str, project: &str) -> Result<Vec<crate::types::FunctionDetail>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.id, f.name, f.file, f.line, f.sig, f.docstring, f.complexity, f.tags
+             FROM functions f
+             JOIN edges e ON e.from_id = f.id
+             WHERE e.edge_type = 'CALLS'
+               AND e.to_id IN (SELECT id FROM functions WHERE name = ?1 AND project = ?2)
+               AND f.project = ?2
+             LIMIT 50"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![fn_name, project], |row| {
+            Ok(crate::types::FunctionDetail {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file: row.get(2)?,
+                line: row.get(3)?,
+                signature: row.get::<_, Option<String>>(4)?,
+                docstring: row.get::<_, Option<String>>(5)?,
+                complexity: row.get(6)?,
+                tags: row.get::<_, String>(7).unwrap_or_default(),
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Get callees of a function.
+    pub fn callees_of(&self, fn_name: &str, project: &str) -> Result<Vec<crate::types::FunctionDetail>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.id, f.name, f.file, f.line, f.sig, f.docstring, f.complexity, f.tags
+             FROM functions f
+             JOIN edges e ON e.to_id = f.id
+             WHERE e.edge_type = 'CALLS'
+               AND e.from_id IN (SELECT id FROM functions WHERE name = ?1 AND project = ?2)
+               AND f.project = ?2
+             LIMIT 50"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![fn_name, project], |row| {
+            Ok(crate::types::FunctionDetail {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file: row.get(2)?,
+                line: row.get(3)?,
+                signature: row.get::<_, Option<String>>(4)?,
+                docstring: row.get::<_, Option<String>>(5)?,
+                complexity: row.get(6)?,
+                tags: row.get::<_, String>(7).unwrap_or_default(),
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Store community assignments for nodes.
+    pub fn store_communities(&self, communities: &std::collections::HashMap<String, u32>) -> Result<(), String> {
+        self.conn.execute_batch(
+            "ALTER TABLE functions ADD COLUMN community INTEGER DEFAULT -1;
+             ALTER TABLE files ADD COLUMN community INTEGER DEFAULT -1;
+             ALTER TABLE types ADD COLUMN community INTEGER DEFAULT -1;"
+        ).ok();
+
+        for (node_id, comm) in communities {
+            self.conn.execute("UPDATE functions SET community = ?2 WHERE id = ?1", params![node_id, comm]).ok();
+            self.conn.execute("UPDATE files SET community = ?2 WHERE id = ?1", params![node_id, comm]).ok();
+            self.conn.execute("UPDATE types SET community = ?2 WHERE id = ?1", params![node_id, comm]).ok();
+        }
+        Ok(())
+    }
+
+    /// Get community summary for a project.
+    pub fn get_communities(&self, project: &str) -> Result<Vec<super::community::CommunityInfo>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT community, COUNT(*) as cnt, GROUP_CONCAT(name, ', ') as members
+             FROM (
+                 SELECT community, name FROM functions WHERE project = ?1 AND community >= 0
+                 UNION ALL
+                 SELECT community, module as name FROM files WHERE project = ?1 AND community >= 0
+             )
+             GROUP BY community
+             ORDER BY cnt DESC"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map(params![project], |row| {
+            Ok(super::community::CommunityInfo {
+                id: row.get(0)?,
+                size: row.get(1)?,
+                sample_members: row.get::<_, String>(2)
+                    .unwrap_or_default()
+                    .split(", ")
+                    .take(5)
+                    .map(|s| s.to_string())
+                    .collect(),
+            })
+        }).map_err(|e| e.to_string())?;
+
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Find docs that may have drifted because their linked code changed.
+    /// Returns (doc_id, doc_path, edge_type, changed_target_id).
+    pub fn find_drifted_docs(
+        &self, changed_file_ids: &[String], changed_fn_ids: &[String],
+    ) -> Result<Vec<DocDrift>, String> {
+        let mut drifts = Vec::new();
+
+        // Docs that COVERS a changed file
+        for file_id in changed_file_ids {
+            let mut stmt = self.conn.prepare(
+                "SELECT d.id, d.path, e.edge_type FROM docs d
+                 JOIN edges e ON e.from_id = d.id
+                 WHERE e.to_id = ?1 AND e.edge_type = 'COVERS'"
+            ).map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![file_id], |row| {
+                Ok(DocDrift {
+                    doc_id: row.get(0)?,
+                    doc_path: row.get(1)?,
+                    edge_type: row.get(2)?,
+                    changed_target: file_id.clone(),
+                })
+            }).map_err(|e| e.to_string())?;
+            for r in rows { if let Ok(d) = r { drifts.push(d); } }
+        }
+
+        // Docs that MENTIONS_FN a changed function
+        for fn_id in changed_fn_ids {
+            let mut stmt = self.conn.prepare(
+                "SELECT d.id, d.path, e.edge_type FROM docs d
+                 JOIN edges e ON e.from_id = d.id
+                 WHERE e.to_id = ?1 AND e.edge_type = 'MENTIONS_FN'"
+            ).map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(params![fn_id], |row| {
+                Ok(DocDrift {
+                    doc_id: row.get(0)?,
+                    doc_path: row.get(1)?,
+                    edge_type: row.get(2)?,
+                    changed_target: fn_id.clone(),
+                })
+            }).map_err(|e| e.to_string())?;
+            for r in rows { if let Ok(d) = r { drifts.push(d); } }
+        }
+
+        Ok(drifts)
+    }
+
+    /// Store doc drift entries.
+    pub fn record_doc_drift(&self, drifts: &[DocDrift], project: &str) -> Result<(), String> {
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS doc_drift(
+                doc_id TEXT NOT NULL, doc_path TEXT, edge_type TEXT,
+                changed_target TEXT, detected_at TEXT, project TEXT
+            )"
+        ).map_err(|e| e.to_string())?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        for drift in drifts {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO doc_drift(doc_id, doc_path, edge_type, changed_target, detected_at, project) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![drift.doc_id, drift.doc_path, drift.edge_type, drift.changed_target, now, project],
+            ).ok();
+        }
+        Ok(())
+    }
+
+    /// Get all doc drift entries for a project.
+    pub fn get_doc_drift(&self, project: &str) -> Result<Vec<DocDrift>, String> {
+        // Table may not exist yet
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS doc_drift(
+                doc_id TEXT NOT NULL, doc_path TEXT, edge_type TEXT,
+                changed_target TEXT, detected_at TEXT, project TEXT
+            )"
+        ).ok();
+
+        let mut stmt = self.conn.prepare(
+            "SELECT doc_id, doc_path, edge_type, changed_target FROM doc_drift WHERE project = ?1"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![project], |row| {
+            Ok(DocDrift {
+                doc_id: row.get(0)?,
+                doc_path: row.get(1)?,
+                edge_type: row.get(2)?,
+                changed_target: row.get(3)?,
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DocDrift {
+    pub doc_id: String,
+    pub doc_path: String,
+    pub edge_type: String,
+    pub changed_target: String,
 }
 
 pub fn is_function_like(kind: &SymbolKind) -> bool {
