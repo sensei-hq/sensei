@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "sensei": "./dist/cli.js",
-    "senseid": "./dist/daemon.js"
+    "sensei": "./src/cli.ts",
+    "senseid": "./src/daemon.ts"
   },
   "scripts": {
     "dev": "bun run --watch src/cli.ts",
