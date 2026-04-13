@@ -42,6 +42,7 @@ Commands:
   senseid stop                Stop the running daemon
   senseid status              Show daemon status
   senseid logs                Tail the daemon log file
+  senseid clear-logs          Clear the daemon log file
   senseid [--port <n>]        Start in foreground (for development)`);
   process.exit(0);
 }
@@ -139,10 +140,20 @@ if (subCmd === "logs") {
   // Tail the log file
   const proc = spawn("tail", ["-f", "-n", "50", LOG_FILE], { stdio: "inherit" });
   proc.on("exit", (code) => process.exit(code ?? 0));
-  // Forward Ctrl+C
   process.on("SIGINT", () => { proc.kill("SIGINT"); process.exit(0); });
-  // Block exit
   await new Promise(() => {});
+}
+
+// ── CLEAR-LOGS ────────────────────────────────────────────────────────────────
+
+if (subCmd === "clear-logs") {
+  try {
+    await writeFile(LOG_FILE, "");
+    console.log("senseid: logs cleared");
+  } catch {
+    console.error("senseid: no log file to clear");
+  }
+  process.exit(0);
 }
 
 // ── START (background) ────────────────────────────────────────────────────────
