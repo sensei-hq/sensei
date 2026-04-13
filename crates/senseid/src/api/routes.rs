@@ -65,6 +65,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/solutions/{id}/roles", get(solution_roles))
         // Libraries
         .route("/api/libs", get(list_libs))
+        .route("/api/libs/index", post(index_lib))
+        .route("/api/libs/docs", get(search_lib_docs))
+        .route("/api/libs/{name}/docs", get(get_lib_docs))
+        .route("/api/libs/versions", get(get_dep_versions))
+        // Unified query (desktop/MCP)
+        .route("/api/query", post(unified_query))
         // Scan
         .route("/api/scan", post(scan_folder))
         // Stop
@@ -486,6 +492,83 @@ async fn list_libs(
     })))
 }
 
+#[derive(Deserialize)]
+struct IndexLibBody {
+    #[serde(rename = "libName")]
+    lib_name: String,
+    url: String,
+    version: Option<String>,
+}
+
+async fn index_lib(
+    State(state): State<AppState>,
+    Json(body): Json<IndexLibBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Fetch content first (async), then store (sync with lock)
+    let content = crate::indexer::lib_indexer::fetch_lib_url(&body.url).await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    let store = state.store.lock().await;
+    match crate::indexer::lib_indexer::index_lib_content(
+        &store, &body.lib_name, &body.url, &content, body.version.as_deref()
+    ) {
+        Ok(result) => Ok(Json(serde_json::json!({
+            "ok": true,
+            "libName": result.lib_name,
+            "docsIndexed": result.docs_indexed,
+            "sourceType": result.source_type,
+            "version": result.version,
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({"ok": false, "error": e}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct LibDocsQuery {
+    q: Option<String>,
+}
+
+async fn search_lib_docs(
+    State(state): State<AppState>,
+    Query(q): Query<LibDocsQuery>,
+) -> Result<Json<Vec<crate::indexer::lib_indexer::LibDoc>>, StatusCode> {
+    let query = q.q.unwrap_or_default();
+    let store = state.store.lock().await;
+    store.search_lib_docs(&query)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn get_lib_docs(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<crate::indexer::lib_indexer::LibDoc>>, StatusCode> {
+    let store = state.store.lock().await;
+    store.get_lib_docs(&name)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Deserialize)]
+struct DepVersionsQuery {
+    #[serde(rename = "repoId")]
+    repo_id: String,
+}
+
+async fn get_dep_versions(
+    State(state): State<AppState>,
+    Query(q): Query<DepVersionsQuery>,
+) -> Result<Json<Vec<crate::indexer::lib_indexer::DepVersion>>, StatusCode> {
+    let store = state.store.lock().await;
+    let project = store.get_project(&q.repo_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    crate::indexer::lib_indexer::extract_dep_versions(&store, &q.repo_id, &project.path)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 // ── Index Errors ─────────────────────────────────────────────────────────────
 
 async fn list_index_errors(State(state): State<AppState>) -> Result<Json<Vec<IndexError>>, StatusCode> {
@@ -718,6 +801,229 @@ async fn community_info(
     graph.get_communities(&repo_id)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// ── Unified Query (desktop/MCP) ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct QueryBody {
+    /// The query string, e.g. "find auth functions in kavach"
+    #[serde(rename = "q")]
+    query: String,
+    /// Optional repo scope
+    #[serde(rename = "repoId")]
+    repo_id: Option<String>,
+    /// Optional solution scope
+    #[serde(rename = "solutionId")]
+    solution_id: Option<String>,
+}
+
+/// POST /api/query — unified query endpoint for desktop and MCP.
+/// Routes queries to appropriate backends based on keywords.
+async fn unified_query(
+    State(state): State<AppState>,
+    Json(body): Json<QueryBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let q = body.query.to_lowercase();
+    let repo_id = body.repo_id.clone().unwrap_or_default();
+
+    // Determine query type from keywords
+    let result = if q.contains("lib") || q.contains("dependenc") || q.contains("package") {
+        // Library query
+        query_libs(&state, &q, &repo_id, &body.solution_id).await
+    } else if q.contains("function") || q.contains("method") || q.contains("fn ") || q.contains("def ") {
+        // Function search
+        query_functions(&state, &q, &repo_id).await
+    } else if q.contains("type") || q.contains("interface") || q.contains("class") || q.contains("struct") {
+        // Type search
+        query_types(&state, &q, &repo_id).await
+    } else if q.contains("who calls") || q.contains("callers") || q.contains("called by") {
+        // Caller traceability
+        query_callers(&state, &q, &repo_id).await
+    } else if q.contains("calls") || q.contains("callees") || q.contains("depends on") {
+        // Callee traceability
+        query_callees(&state, &q, &repo_id).await
+    } else if q.contains("file") || q.contains("component") || q.contains("tagged") || q.contains("framework") {
+        // File/tag search
+        query_files(&state, &q, &repo_id).await
+    } else if q.contains("pattern") || q.contains("hook") || q.contains("middleware") || q.contains("route") {
+        // Pattern search (via tags)
+        query_patterns(&state, &q, &repo_id).await
+    } else if q.contains("doc") || q.contains("readme") || q.contains("drift") {
+        // Doc query
+        query_docs(&state, &q, &repo_id).await
+    } else if q.contains("communit") || q.contains("cluster") || q.contains("module") {
+        // Community/architecture query
+        query_communities(&state, &repo_id).await
+    } else {
+        // Default: search functions then types then lib docs
+        query_general(&state, &q, &repo_id).await
+    };
+
+    Ok(Json(result))
+}
+
+async fn query_libs(state: &AppState, q: &str, repo_id: &str, solution_id: &Option<String>) -> serde_json::Value {
+    let store = state.store.lock().await;
+    let projects = store.list_projects().unwrap_or_default();
+
+    let filtered: Vec<_> = if !repo_id.is_empty() {
+        projects.into_iter().filter(|p| p.repo_id == repo_id).collect()
+    } else {
+        projects
+    };
+
+    let mut all_libs: Vec<serde_json::Value> = Vec::new();
+    for p in &filtered {
+        for lib in &p.libs {
+            all_libs.push(serde_json::json!({"name": lib, "repoId": p.repo_id}));
+        }
+    }
+
+    // Also search lib docs
+    let lib_docs = store.search_lib_docs(&extract_search_term(q)).unwrap_or_default();
+
+    serde_json::json!({
+        "type": "libs",
+        "query": q,
+        "libs": all_libs,
+        "libDocs": lib_docs.iter().take(5).map(|d| serde_json::json!({
+            "title": d.title, "summary": d.summary, "url": d.url,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+async fn query_functions(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let term = extract_search_term(q);
+    let graph = state.graph.lock().await;
+    let results = graph.search_functions(&term, repo_id).unwrap_or_default();
+    serde_json::json!({
+        "type": "functions",
+        "query": q,
+        "results": results,
+    })
+}
+
+async fn query_types(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let term = extract_search_term(q);
+    let graph = state.graph.lock().await;
+    let results = graph.search_types(&term, repo_id).unwrap_or_default();
+    serde_json::json!({
+        "type": "types",
+        "query": q,
+        "results": results,
+    })
+}
+
+async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let term = extract_search_term(q);
+    let graph = state.graph.lock().await;
+    let results = graph.callers_of(&term, repo_id).unwrap_or_default();
+    serde_json::json!({
+        "type": "callers",
+        "query": q,
+        "function": term,
+        "results": results,
+    })
+}
+
+async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let term = extract_search_term(q);
+    let graph = state.graph.lock().await;
+    let results = graph.callees_of(&term, repo_id).unwrap_or_default();
+    serde_json::json!({
+        "type": "callees",
+        "query": q,
+        "function": term,
+        "results": results,
+    })
+}
+
+async fn query_files(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let term = extract_search_term(q);
+    let graph = state.graph.lock().await;
+    let results = graph.files_by_tag(&term, repo_id).unwrap_or_default();
+    let files: Vec<serde_json::Value> = results.into_iter()
+        .map(|(id, path, tags)| serde_json::json!({"id": id, "path": path, "tags": tags}))
+        .collect();
+    serde_json::json!({ "type": "files", "query": q, "results": files })
+}
+
+async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    // Extract pattern keyword and search functions by tag
+    let tag = if q.contains("hook") { "hook" }
+        else if q.contains("middleware") { "middleware" }
+        else if q.contains("route") { "route" }
+        else if q.contains("handler") { "handler" }
+        else if q.contains("component") { "component" }
+        else { &extract_search_term(q) };
+
+    let graph = state.graph.lock().await;
+    let files = graph.files_by_tag(tag, repo_id).unwrap_or_default();
+    let file_results: Vec<serde_json::Value> = files.into_iter()
+        .map(|(id, path, tags)| serde_json::json!({"path": path, "tags": tags}))
+        .collect();
+    serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": file_results })
+}
+
+async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let graph = state.graph.lock().await;
+    let drift = graph.get_doc_drift(repo_id).unwrap_or_default();
+    serde_json::json!({
+        "type": "docs",
+        "query": q,
+        "driftedDocs": drift,
+    })
+}
+
+async fn query_communities(state: &AppState, repo_id: &str) -> serde_json::Value {
+    let graph = state.graph.lock().await;
+    let communities = graph.get_communities(repo_id).unwrap_or_default();
+    serde_json::json!({
+        "type": "communities",
+        "results": communities,
+    })
+}
+
+async fn query_general(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
+    let term = extract_search_term(q);
+    let graph = state.graph.lock().await;
+    let functions = graph.search_functions(&term, repo_id).unwrap_or_default();
+    let types = graph.search_types(&term, repo_id).unwrap_or_default();
+    drop(graph);
+
+    let store = state.store.lock().await;
+    let lib_docs = store.search_lib_docs(&term).unwrap_or_default();
+
+    serde_json::json!({
+        "type": "general",
+        "query": q,
+        "functions": functions,
+        "types": types,
+        "libDocs": lib_docs.iter().take(5).map(|d| serde_json::json!({
+            "title": d.title, "summary": d.summary,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Extract the most meaningful search term from a natural language query.
+fn extract_search_term(q: &str) -> String {
+    let stop_words = ["find", "search", "show", "get", "list", "what", "which", "where",
+        "how", "the", "in", "for", "from", "all", "me", "that", "are", "is",
+        "function", "functions", "method", "methods", "type", "types", "class",
+        "interface", "lib", "libs", "library", "libraries", "file", "files",
+        "who", "calls", "called", "by", "does", "do", "callers", "callees",
+        "pattern", "patterns", "doc", "docs", "a", "an", "of", "with"];
+
+    let words: Vec<&str> = q.split_whitespace()
+        .filter(|w| !stop_words.contains(&w.to_lowercase().as_str()))
+        .collect();
+
+    // Return the longest non-stop word (likely the most specific)
+    words.into_iter()
+        .max_by_key(|w| w.len())
+        .unwrap_or("")
+        .to_string()
 }
 
 // ── Scan ─────────────────────────────────────────────────────────────────────
