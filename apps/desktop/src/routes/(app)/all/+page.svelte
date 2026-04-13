@@ -122,15 +122,9 @@
 
   async function scanFolder() {
     if (!scanRoot.trim()) return;
-    scanning = true;
-    try {
-      // Single API call: scans, registers projects, queues indexing
-      await senseiApi(getPort()).scanFolder(scanRoot);
-      await loadProjects();
-      refreshStatus();
-    } catch (e) {
-      console.error('Scan failed:', e);
-    } finally { scanning = false; }
+    // Fire and forget — daemon scans, registers, queues in background
+    senseiApi(getPort()).scanFolder(scanRoot);
+    scanRoot = '';
   }
 
   const STATUS_CLS: Record<string, string> = {
