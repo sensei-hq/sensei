@@ -85,6 +85,16 @@ async fn run_foreground(port: u16) {
     std::fs::write(&pid_path, std::process::id().to_string()).ok();
 
     let store = db::Store::open(&db_path()).expect("Failed to open SQLite");
+
+    // Print project stats
+    match store.list_projects() {
+        Ok(projects) => {
+            let indexed = projects.iter().filter(|p| p.indexed_at.is_some()).count();
+            println!("[senseid] {} projects registered ({} indexed)", projects.len(), indexed);
+        }
+        Err(_) => {}
+    }
+
     let graph = indexer::graph::GraphDb::open(&graph_path()).expect("Failed to open graph DB");
     println!("[senseid] Listening on :{}", port);
 
