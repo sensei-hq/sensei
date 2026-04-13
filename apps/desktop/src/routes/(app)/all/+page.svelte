@@ -125,6 +125,21 @@
     // Fire and forget — daemon scans, registers, queues in background
     senseiApi(getPort()).scanFolder(scanRoot);
     scanRoot = '';
+    // Immediately start fast polling to pick up new repos
+    startFastPoll();
+  }
+
+  let fastPollTimer: ReturnType<typeof setInterval> | null = null;
+  function startFastPoll() {
+    if (fastPollTimer) clearInterval(fastPollTimer);
+    // Poll every 1s for 30s to catch new repos quickly
+    let ticks = 0;
+    fastPollTimer = setInterval(async () => {
+      await loadProjects();
+      refreshStatus();
+      ticks++;
+      if (ticks > 30) { clearInterval(fastPollTimer!); fastPollTimer = null; }
+    }, 1000);
   }
 
   const STATUS_CLS: Record<string, string> = {
