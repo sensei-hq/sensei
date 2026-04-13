@@ -15,21 +15,32 @@
   let communities = $state<CommunityInfo[]>([]);
   let highComplexityFns = $state<FunctionDetail[]>([]);
   let docDrift = $state<DocDrift[]>([]);
+  let sessions = $state<Array<{ id: string; task: string; project: string; ftr?: number | null; startedAt: string; outcome?: string; cost?: number }>>([]);
   let loading = $state(true);
+
+  function ftrClass(ftr: number | null | undefined): string {
+    if (ftr == null) return 'text-surface-z4';
+    if (ftr >= 0.8) return 'text-success-z6';
+    if (ftr >= 0.5) return 'text-warning-z6';
+    return 'text-error-z6';
+  }
 
   async function load() {
     const api = senseiApi(port);
-    const [s, graph, comms, drift] = await Promise.all([
+    const [s, graph, comms, drift, sessionData] = await Promise.all([
       api.getProjectSummary(repoId),
       api.getGraphNodes(repoId),
       api.getCommunities(repoId),
       api.getDocDrift(repoId),
+      api.getSessions(),
     ]);
     summary = s;
     graphNodes = graph.nodes;
     graphEdges = graph.edges;
     communities = comms;
     docDrift = drift;
+    // Filter sessions to this project
+    sessions = sessionData.sessions.filter(s => s.project === repoId);
 
     // High complexity functions
     const fns = await api.searchFunctions(repoId, '');
@@ -63,7 +74,7 @@
     </div>
 
     <!-- Stats -->
-    <div class="grid grid-cols-4 gap-3">
+    <div class="grid grid-cols-5 gap-3">
       <div class="rounded-lg bg-surface-z2 p-3">
         <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Functions</p>
         <p class="mt-1 text-xl font-semibold text-surface-z8">{summary.functions.toLocaleString()}</p>
@@ -79,6 +90,10 @@
       <div class="rounded-lg bg-surface-z2 p-3">
         <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Communities</p>
         <p class="mt-1 text-xl font-semibold text-surface-z8">{communities.length}</p>
+      </div>
+      <div class="rounded-lg bg-surface-z2 p-3">
+        <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Sessions</p>
+        <p class="mt-1 text-xl font-semibold text-surface-z8">{sessions.length}</p>
       </div>
     </div>
 
@@ -166,6 +181,32 @@
         </div>
       </div>
     {/if}
+
+    <!-- Sessions -->
+    <div>
+      <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide mb-2">Sessions</h3>
+      {#if sessions.length > 0}
+        {@const totalCost = sessions.reduce((sum, s) => sum + (s.cost ?? 0), 0)}
+        {#if totalCost > 0}
+          <p class="text-[10px] text-surface-z4 mb-2">{sessions.length} sessions · ${totalCost.toFixed(2)} total cost</p>
+        {/if}
+        <div class="space-y-1">
+          {#each sessions.slice(0, 10) as s}
+            <div class="flex items-center gap-3 rounded-lg bg-surface-z2 px-3 py-2 text-sm">
+              <span class="flex-1 truncate text-surface-z7">{s.task}</span>
+              {#if s.cost}
+                <span class="text-[10px] text-surface-z4">${s.cost.toFixed(2)}</span>
+              {/if}
+              <span class="text-[10px] {ftrClass(s.ftr)}">
+                {s.ftr != null ? `${Math.round(s.ftr * 100)}%` : s.outcome ?? '…'}
+              </span>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="text-xs text-surface-z4 py-3 text-center">No sessions yet. Sessions appear when you use sensei MCP tools in your editor.</p>
+      {/if}
+    </div>
 
     <!-- Doc Drift -->
     {#if docDrift.length > 0}
