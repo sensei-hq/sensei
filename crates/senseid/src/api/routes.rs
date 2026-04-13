@@ -41,6 +41,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/index/errors/{repo_id}", get(list_repo_index_errors))
         // Graph
         .route("/api/graph/nodes", get(graph_nodes))
+        // Scan
+        .route("/api/scan", post(scan_folder))
         // Stop
         .route("/stop", post(stop))
         .with_state(state)
@@ -354,6 +356,70 @@ async fn graph_nodes(
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
 
+// ── Scan ─────────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ScanBody {
+    root: String,
+    #[serde(default = "default_depth")]
+    max_depth: u32,
+}
+
+fn default_depth() -> u32 { 4 }
+
+#[derive(Serialize)]
+struct ScannedRepo {
+    name: String,
+    path: String,
+    stack: Vec<String>,
+    has_git: bool,
+}
+
+async fn scan_folder(
+    Json(body): Json<ScanBody>,
+) -> Result<Json<Vec<ScannedRepo>>, StatusCode> {
+    let root = std::path::Path::new(&body.root);
+    if !root.exists() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let mut repos = Vec::new();
+    scan_dir(root, 0, body.max_depth, &mut repos);
+    Ok(Json(repos))
+}
+
+fn scan_dir(dir: &std::path::Path, depth: u32, max_depth: u32, repos: &mut Vec<ScannedRepo>) {
+    if depth > max_depth { return; }
+
+    if dir.join(".git").exists() {
+        let name = dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let stack = crate::config::detect_stack(dir);
+        repos.push(ScannedRepo {
+            name,
+            path: dir.to_string_lossy().to_string(),
+            stack,
+            has_git: true,
+        });
+        return; // Don't recurse into git repos
+    }
+
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" {
+                    continue;
+                }
+                scan_dir(&path, depth + 1, max_depth, repos);
+            }
+        }
+    }
+}
+
 // ── Stop ─────────────────────────────────────────────────────────────────────
 
 async fn stop() -> Json<serde_json::Value> {
@@ -574,5 +640,32 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(json["nodes"].as_array().unwrap().len() >= 1);
+    }
+
+    #[tokio::test]
+    async fn scan_folder_finds_repos() {
+        let (app, _) = test_app();
+
+        // Create a temp dir with a "repo" (has .git)
+        let root = tempfile::TempDir::new().unwrap();
+        let repo = root.path().join("my-project");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("package.json"), r#"{"name":"test","dependencies":{"express":"4"}}"#).unwrap();
+
+        let resp = app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/scan")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"root": root.path().to_string_lossy()}).to_string()))
+                .unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0]["name"], "my-project");
+        assert_eq!(repos[0]["has_git"], true);
+        assert!(repos[0]["stack"].as_array().unwrap().len() >= 1);
     }
 }
