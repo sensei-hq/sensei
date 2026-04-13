@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { senseiApi } from '$lib/api.js';
 
   let { port = $bindable(7744) } = $props();
 
@@ -28,11 +29,9 @@
 
   async function triggerAllUnindexed() {
     try {
-      let scanned: { name: string; path: string; repoId?: string }[] = [];
-      try {
-        const raw = localStorage.getItem('sensei:projects_raw');
-        if (raw) scanned = JSON.parse(raw) as typeof scanned;
-      } catch { /* ignore */ }
+      const api = senseiApi(port);
+      const projects = await api.getProjects();
+      const scanned = projects.map(p => ({ name: p.name, path: p.path, repoId: p.repo_id }));
 
       if (scanned.length === 0) return;
 
