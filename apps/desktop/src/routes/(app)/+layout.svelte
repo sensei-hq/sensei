@@ -10,7 +10,7 @@
 
   const DEFAULT_PORT = 7744;
   let senseiPort = $state(DEFAULT_PORT);
-  const MAX_VISIBLE = 5;
+  let MAX_VISIBLE = $state(parseInt(localStorage.getItem('sensei:sidebar_max_items') ?? '5', 10));
 
   let showAllActive = $state(false);
   let showAllSide = $state(false);
@@ -128,6 +128,18 @@
                  {($page.url.pathname as string).includes('/indexer') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
           <span class="text-base i-solar-database-bold-duotone"></span>
           Indexer
+        </a>
+        <a href="/libraries"
+          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
+                 {$page.url.pathname.startsWith('/libraries') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
+          <span class="text-base i-solar-book-2-bold-duotone"></span>
+          Libraries
+        </a>
+        <a href="/benchmarks"
+          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
+                 {$page.url.pathname.startsWith('/benchmarks') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
+          <span class="text-base i-solar-chart-2-bold-duotone"></span>
+          Benchmarks
         </a>
         <a href="/acp"
           class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
