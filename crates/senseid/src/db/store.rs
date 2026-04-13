@@ -293,13 +293,14 @@ impl Store {
 
     pub fn create_solution(&self, s: &Solution) -> rusqlite::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
+        // Use OR IGNORE to prevent duplicate creation
         self.conn.execute(
-            "INSERT INTO solutions(id, name, description, client, category, created_at, updated_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR IGNORE INTO solutions(id, name, description, client, category, created_at, updated_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![s.id, s.name, s.description, s.client, s.category, now, now],
         )?;
         for r in &s.repos {
             self.conn.execute(
-                "INSERT INTO solution_repos(solution_id, repo_id, role, label) VALUES(?1, ?2, ?3, ?4)",
+                "INSERT OR REPLACE INTO solution_repos(solution_id, repo_id, role, label) VALUES(?1, ?2, ?3, ?4)",
                 params![s.id, r.repo_id, r.role, r.label],
             )?;
         }

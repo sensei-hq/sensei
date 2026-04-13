@@ -19,15 +19,20 @@ export function setActiveSolutionId(id: string | null) {
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
-export function loadSolutions() {
+export async function loadSolutions() {
   try {
     const raw = localStorage.getItem(SOLUTIONS_KEY);
     if (raw) _solutions = JSON.parse(raw) as Solution[];
   } catch { _solutions = []; }
   _activeSolutionId = localStorage.getItem(ACTIVE_KEY);
-  // Sync to server so MCP tools get solution context
-  syncSolutionsToServer();
+  // Pull latest from daemon (source of truth)
+  await syncFromServer();
 }
+
+/** Flag to track if solutions have been loaded (for race condition prevention). */
+let _loaded = $state(false);
+export function isSolutionsLoaded(): boolean { return _loaded; }
+export function markLoaded() { _loaded = true; }
 
 export function saveSolutions() {
   localStorage.setItem(SOLUTIONS_KEY, JSON.stringify(_solutions));
@@ -52,7 +57,8 @@ export function createSolution(
   };
   _solutions = [..._solutions, solution];
   saveSolutions();
-  syncSolutionsToServer();
+  pushSolutionToServer(solution);
+  pushSolutionContext();
   return solution;
 }
 
@@ -141,28 +147,27 @@ export function inferRepoRole(repo: ScannedRepo): RepoRole {
 
 // ─── Server sync ─────────────────────────────────────────────────────────────
 
-/** Sync solutions to the Rust daemon (source of truth). */
-export async function syncSolutionsToServer() {
+/** Push a single solution to the daemon (used on create/update). */
+export async function pushSolutionToServer(solution: Solution) {
   const port = getPort();
   const { senseiApi } = await import('./api.js');
   const api = senseiApi(port);
-
   try {
-    // Push each local solution to daemon
-    for (const s of _solutions) {
-      await api.createSolution({
-        id: s.id,
-        name: s.name,
-        description: s.description,
-        client: s.client,
-        category: s.category,
-        repos: s.repos.map(r => ({ repo_id: r.repoId, role: r.role, label: r.label })),
-        tags: [],
-      });
-    }
-  } catch { /* server may not be running */ }
+    await api.createSolution({
+      id: solution.id,
+      name: solution.name,
+      description: solution.description,
+      client: solution.client,
+      category: solution.category,
+      repos: solution.repos.map(r => ({ repo_id: r.repoId, role: r.role, label: r.label })),
+      tags: [],
+    });
+  } catch { /* non-fatal */ }
+}
 
-  // Also push to old endpoint for MCP compatibility
+/** Push solution context to MCP server (old endpoint, for TS daemon compatibility). */
+async function pushSolutionContext() {
+  const port = getPort();
   try {
     await fetch(`http://127.0.0.1:${port}/api/solution-context`, {
       method: 'POST',
@@ -172,7 +177,7 @@ export async function syncSolutionsToServer() {
   } catch { /* non-fatal */ }
 }
 
-/** Fetch solutions from daemon and merge with local state. */
+/** Fetch solutions from daemon and merge with local state. Daemon is source of truth. */
 export async function syncFromServer() {
   const port = getPort();
   const { senseiApi } = await import('./api.js');
@@ -181,13 +186,27 @@ export async function syncFromServer() {
   try {
     const serverSolutions = await api.listSolutions();
     if (serverSolutions.length > 0) {
-      // Merge: daemon wins for solutions that exist on both sides
-      const serverIds = new Set(serverSolutions.map((s: any) => s.id));
-      const localOnly = _solutions.filter(s => !serverIds.has(s.id));
-      _solutions = [...serverSolutions.map(mapServerSolution), ...localOnly];
+      // Daemon wins — deduplicate by ID
+      const seen = new Set<string>();
+      const merged: Solution[] = [];
+      for (const s of serverSolutions) {
+        const mapped = mapServerSolution(s);
+        if (!seen.has(mapped.id)) {
+          seen.add(mapped.id);
+          merged.push(mapped);
+        }
+      }
+      // Add local-only solutions (not on daemon)
+      for (const s of _solutions) {
+        if (!seen.has(s.id)) {
+          seen.add(s.id);
+          merged.push(s);
+        }
+      }
+      _solutions = merged;
       saveSolutions();
     }
-  } catch { /* server may not be running */ }
+  } catch { /* server may not be running — keep local state */ }
 }
 
 function mapServerSolution(s: any): Solution {

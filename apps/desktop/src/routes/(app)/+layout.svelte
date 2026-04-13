@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { migrate } from '$lib/migration.js';
-  import { loadSolutions, getSolutions, getSolutionsByCategory, getStandaloneLibraries } from '$lib/solutions.svelte.js';
+  import { loadSolutions, getSolutions, getSolutionsByCategory, getStandaloneLibraries, markLoaded, isSolutionsLoaded } from '$lib/solutions.svelte.js';
   import ServerStatus from '$lib/ServerStatus.svelte';
   import SidebarSolution from '$lib/SidebarSolution.svelte';
 
@@ -29,11 +29,12 @@
   let visibleIdeas = $derived(showAllIdeas ? ideaSolutions : ideaSolutions.slice(0, MAX_VISIBLE));
   let hiddenIdeaCount = $derived(Math.max(0, ideaSolutions.length - MAX_VISIBLE));
 
-  onMount(() => {
+  onMount(async () => {
     const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
     if (!isNaN(stored) && stored > 0) senseiPort = stored;
     migrate();
-    loadSolutions();
+    await loadSolutions();
+    markLoaded();
   });
 </script>
 
@@ -66,6 +67,13 @@
           >
             +{hiddenActiveCount} more
           </button>
+        {:else if showAllActive && hiddenActiveCount > 0}
+          <button
+            onclick={() => showAllActive = false}
+            class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
+          >
+            show less
+          </button>
         {/if}
       {/if}
 
@@ -92,6 +100,13 @@
               class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
             >
               +{hiddenSideCount} more
+            </button>
+          {:else if showAllSide && hiddenSideCount > 0}
+            <button
+              onclick={() => showAllSide = false}
+              class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
+            >
+              show less
             </button>
           {/if}
         </div>
