@@ -6,7 +6,8 @@
     removeRepoFromSolution, inferRepoRole,
   } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { connectSSE, getQueueStatus, getProgressForRepo, isIndexing, startIndex, refreshStatus } from '$lib/indexer.svelte.js';
+  import { connectSSE, getQueueStatus, getProgressForRepo, isIndexing, startIndex, refreshStatus, onIndexChange, offIndexChange } from '$lib/indexer.svelte.js';
+  import { onDestroy } from 'svelte';
   import type { ScannedRepo, Solution, SolutionRepo, ServerProject, IndexQueueStatus } from '$lib/types.js';
 
   let scannedRepos = $state<ScannedRepo[]>([]);
@@ -125,21 +126,9 @@
     // Fire and forget — daemon scans, registers, queues in background
     senseiApi(getPort()).scanFolder(scanRoot);
     scanRoot = '';
-    // Immediately start fast polling to pick up new repos
-    startFastPoll();
-  }
-
-  let fastPollTimer: ReturnType<typeof setInterval> | null = null;
-  function startFastPoll() {
-    if (fastPollTimer) clearInterval(fastPollTimer);
-    // Poll every 1s for 30s to catch new repos quickly
-    let ticks = 0;
-    fastPollTimer = setInterval(async () => {
-      await loadProjects();
-      refreshStatus();
-      ticks++;
-      if (ticks > 30) { clearInterval(fastPollTimer!); fastPollTimer = null; }
-    }, 1000);
+    // Reload after a brief delay to catch newly registered repos
+    setTimeout(() => loadProjects(), 1500);
+    setTimeout(() => loadProjects(), 4000);
   }
 
   const STATUS_CLS: Record<string, string> = {
@@ -165,20 +154,16 @@
     }));
   }
 
-  let refreshInterval: ReturnType<typeof setInterval>;
-
   onMount(async () => {
     connectSSE(getPort());
     await loadProjects();
     refreshStatus();
 
-    // Refresh project list every 3s — always poll while page is open
-    // (queue status can briefly show null between jobs)
-    refreshInterval = setInterval(async () => {
-      await loadProjects();
-      refreshStatus();
-    }, 3000);
+    // Refresh project list when SSE reports indexing changes
+    onIndexChange(() => { loadProjects(); });
   });
+
+  onDestroy(() => { offIndexChange(); });
 </script>
 
 <div class="flex h-full flex-col min-h-0">
