@@ -8,6 +8,8 @@ let _progress = $state<Map<string, IndexProgressEvent>>(new Map());
 let _dirty = $state<DirtyStatus[]>([]);
 let _eventSource: EventSource | null = null;
 let _port = 7744;
+let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let _statusPollTimer: ReturnType<typeof setInterval> | null = null;
 
 // ── Accessors ────────────────────────────────────────────────────────────────
 
@@ -17,9 +19,12 @@ export function getDirtyFiles(): DirtyStatus[] { return _dirty; }
 export function isConnected(): boolean { return _eventSource?.readyState === EventSource.OPEN; }
 
 export function isIndexing(repoId: string): boolean {
+  // Check queue status
   if (_queueStatus.current?.repo_id === repoId) return true;
+  if (_queueStatus.queued.some(j => j.repo_id === repoId)) return true;
+  // Check SSE progress
   const p = _progress.get(repoId);
-  return p?.type === 'progress' || p?.type === 'started';
+  return p?.type === 'progress' || p?.type === 'started' || p?.type === 'queued';
 }
 
 export function getQueuePosition(repoId: string): number {
@@ -44,30 +49,39 @@ export function connectSSE(port: number) {
         _progress = new Map(_progress).set(repoId, data);
       }
 
-      // On completed/failed, refresh queue status
-      if (data.type === 'completed' || data.type === 'failed') {
+      // Refresh queue status on lifecycle events
+      if (data.type === 'completed' || data.type === 'failed' || data.type === 'started' || data.type === 'queued') {
         refreshStatus();
       }
     } catch { /* ignore parse errors */ }
   };
 
   _eventSource.onerror = () => {
-    // Auto-reconnect after 3s
-    setTimeout(() => {
-      if (_eventSource?.readyState === EventSource.CLOSED) {
+    // Auto-reconnect after 2s (handles both CLOSED and CONNECTING states)
+    if (_reconnectTimer) clearTimeout(_reconnectTimer);
+    _reconnectTimer = setTimeout(() => {
+      _reconnectTimer = null;
+      if (!_eventSource || _eventSource.readyState !== EventSource.OPEN) {
         connectSSE(_port);
       }
-    }, 3000);
+    }, 2000);
   };
+
+  // Poll queue status every 2s as backup (SSE can miss events between repos)
+  if (_statusPollTimer) clearInterval(_statusPollTimer);
+  _statusPollTimer = setInterval(() => {
+    refreshStatus();
+  }, 2000);
 
   // Initial load
   refreshStatus();
-  refreshDirty();
 }
 
 export function disconnectSSE() {
   _eventSource?.close();
   _eventSource = null;
+  if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+  if (_statusPollTimer) { clearInterval(_statusPollTimer); _statusPollTimer = null; }
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────────
