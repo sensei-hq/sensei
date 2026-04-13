@@ -34,20 +34,20 @@
 
     const items: SidebarItem[] = [];
 
-    // Add solutions
+    // Solutions always first (they're curated groupings)
     for (const s of solutions) {
-      items.push({ kind: 'solution', id: s.id, name: s.name, count: s.repos.length, updatedAt: s.updatedAt ?? '' });
+      items.push({ kind: 'solution', id: s.id, name: s.name, count: s.repos.length, updatedAt: s.updatedAt ?? new Date().toISOString() });
     }
 
-    // Add projects not in any solution (recently indexed)
-    for (const p of projects) {
-      if (p.indexed_at && !solutionRepoIds.has(p.repo_id)) {
-        items.push({ kind: 'project', id: p.repo_id, name: p.name, updatedAt: p.indexed_at ?? '' });
-      }
+    // Then recent indexed projects not in any solution
+    const recentProjects = projects
+      .filter(p => p.indexed_at && !solutionRepoIds.has(p.repo_id))
+      .sort((a, b) => (b.indexed_at ?? '').localeCompare(a.indexed_at ?? ''));
+
+    for (const p of recentProjects) {
+      items.push({ kind: 'project', id: p.repo_id, name: p.name, updatedAt: p.indexed_at ?? '' });
     }
 
-    // Sort by most recent
-    items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     recentItems = items;
   });
 </script>
