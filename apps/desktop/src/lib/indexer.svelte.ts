@@ -10,6 +10,7 @@ let _eventSource: EventSource | null = null;
 let _port = 7744;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _statusPollTimer: ReturnType<typeof setInterval> | null = null;
+let _onChange: (() => void) | null = null;
 
 // ── Accessors ────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,10 @@ export function getQueueStatus(): IndexQueueStatus { return _queueStatus; }
 export function getProgressForRepo(repoId: string): IndexProgressEvent | undefined { return _progress.get(repoId); }
 export function getDirtyFiles(): DirtyStatus[] { return _dirty; }
 export function isConnected(): boolean { return _eventSource?.readyState === EventSource.OPEN; }
+
+/** Register a callback for when indexing state changes (started, completed, failed, queued). */
+export function onIndexChange(cb: () => void) { _onChange = cb; }
+export function offIndexChange() { _onChange = null; }
 
 export function isIndexing(repoId: string): boolean {
   // Check queue status
@@ -49,9 +54,10 @@ export function connectSSE(port: number) {
         _progress = new Map(_progress).set(repoId, data);
       }
 
-      // Refresh queue status on lifecycle events
+      // Refresh queue status and notify listeners on lifecycle events
       if (data.type === 'completed' || data.type === 'failed' || data.type === 'started' || data.type === 'queued') {
         refreshStatus();
+        _onChange?.();
       }
     } catch { /* ignore parse errors */ }
   };
