@@ -1258,6 +1258,7 @@ struct ScannedRepo {
 }
 
 async fn scan_folder(
+    State(state): State<AppState>,
     Json(body): Json<ScanBody>,
 ) -> Result<Json<Vec<ScannedRepo>>, StatusCode> {
     let root = std::path::Path::new(&body.root);
@@ -1267,6 +1268,26 @@ async fn scan_folder(
 
     let mut repos = Vec::new();
     scan_dir(root, 0, body.max_depth, &mut repos);
+
+    // Auto-register each scanned repo as a project
+    let store = state.store.lock().await;
+    for repo in &repos {
+        let project = crate::types::Project {
+            repo_id: repo.name.clone(),
+            name: repo.name.clone(),
+            path: repo.path.clone(),
+            remote_url: None,
+            indexed_at: None,
+            last_error: None,
+            duplicate_of: None,
+            stack: repo.stack.clone(),
+            libs: vec![],
+            tags: vec![],
+            status: "active".into(),
+        };
+        store.upsert_project(&project).ok();
+    }
+
     Ok(Json(repos))
 }
 

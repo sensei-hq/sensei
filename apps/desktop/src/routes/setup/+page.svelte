@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import RepoList from '$lib/RepoList.svelte';
+  import { senseiApi } from '$lib/api.js';
+  import { getPort } from '$lib/appstate.svelte.js';
   import { createSolution, setActiveSolutionId, getActiveSolutionId, inferRepoRole, loadSolutions } from '$lib/solutions.svelte.js';
   import type { SolutionRepo } from '$lib/types.js';
 
@@ -103,24 +105,10 @@
     selectedRepos = new Set();
     variantOverrides = new Map();
 
-    try {
-      // Try Tauri first (native desktop)
-      const { invoke } = await import('@tauri-apps/api/core');
-      const results = await Promise.all(
-        scanRoots.map(root => invoke<Repo[]>('analyze_folder', { root }))
-      );
-      const seen = new Set<string>();
-      for (const repos of results) {
-        for (const r of repos) {
-          if (!seen.has(r.path)) { seen.add(r.path); discovered.push(r); }
-        }
-      }
-    } catch {
-      // Browser fallback — use daemon API
-      const { senseiApi } = await import('$lib/api.js');
-      const { getPort } = await import('$lib/appstate.svelte.js');
-      const api = senseiApi(getPort());
-      for (const root of scanRoots) {
+    // Scan via daemon — auto-registers all found repos as projects
+    const api = senseiApi(getPort());
+    for (const root of scanRoots) {
+      try {
         const scanned = await api.scanFolder(root);
         for (const r of scanned) {
           discovered.push({
@@ -130,24 +118,10 @@
             duplicate_of: null, variant_group: null,
           });
         }
-      }
+      } catch { /* ignore failed roots */ }
     }
 
-    // Auto-select active/recent repos
-    selectedRepos = new Set(
-      discovered
-        .filter(r => !r.duplicate_of)
-        .map(r => r.path)
-    );
-
-    // Register all with daemon
-    const { senseiApi } = await import('$lib/api.js');
-    const { getPort } = await import('$lib/appstate.svelte.js');
-    const api = senseiApi(getPort());
-    for (const r of discovered) {
-      await api.registerProject(r.name, r.name, r.path);
-    }
-
+    selectedRepos = new Set(discovered.map(r => r.path));
     scanning = false;
   }
 
@@ -269,9 +243,6 @@
         withIds = toImport.map(repo => ({ ...repo, repoId: repo.name }));
       }
 
-      // Register with daemon API
-      const { senseiApi } = await import('$lib/api.js');
-      const { getPort } = await import('$lib/appstate.svelte.js');
       const api = senseiApi(getPort());
       for (const repo of withIds) {
         await api.registerProject(repo.repoId, repo.name, repo.path);
