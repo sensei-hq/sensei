@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { getPort } from '$lib/appstate.svelte.js';
   import { onMount } from 'svelte';
   import { getSolutions } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import type { ServerProject, IndexProgress, SolutionRepo } from '$lib/types.js';
 
-  let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
+  let port = $derived(getPort());
 
   let serverProjects = $state<ServerProject[]>([]);
   let progressMap = $state<Record<string, IndexProgress>>({});
