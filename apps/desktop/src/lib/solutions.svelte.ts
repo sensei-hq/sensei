@@ -177,7 +177,7 @@ async function pushSolutionContext() {
   } catch { /* non-fatal */ }
 }
 
-/** Fetch solutions from daemon and merge with local state. Daemon is source of truth. */
+/** Fetch solutions from daemon and replace local state. Daemon is sole source of truth. */
 export async function syncFromServer() {
   const port = getPort();
   const { senseiApi } = await import('./api.js');
@@ -185,27 +185,18 @@ export async function syncFromServer() {
 
   try {
     const serverSolutions = await api.listSolutions();
-    if (serverSolutions.length > 0) {
-      // Daemon wins — deduplicate by ID
-      const seen = new Set<string>();
-      const merged: Solution[] = [];
-      for (const s of serverSolutions) {
-        const mapped = mapServerSolution(s);
-        if (!seen.has(mapped.id)) {
-          seen.add(mapped.id);
-          merged.push(mapped);
-        }
+    // Daemon is truth — replace local state entirely, deduplicate by ID
+    const seen = new Set<string>();
+    const clean: Solution[] = [];
+    for (const s of serverSolutions) {
+      const mapped = mapServerSolution(s);
+      if (!seen.has(mapped.id)) {
+        seen.add(mapped.id);
+        clean.push(mapped);
       }
-      // Add local-only solutions (not on daemon)
-      for (const s of _solutions) {
-        if (!seen.has(s.id)) {
-          seen.add(s.id);
-          merged.push(s);
-        }
-      }
-      _solutions = merged;
-      saveSolutions();
     }
+    _solutions = clean;
+    saveSolutions();
   } catch { /* server may not be running — keep local state */ }
 }
 
