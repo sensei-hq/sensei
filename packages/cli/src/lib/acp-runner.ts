@@ -181,6 +181,7 @@ export class ClaudeRunner implements AcpRunner {
         "--output-format", "stream-json",
         "--verbose",
         "--no-session-persistence",
+        "--dangerously-skip-permissions",
       ],
       { cwd },
     );

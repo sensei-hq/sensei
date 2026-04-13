@@ -13,7 +13,7 @@
 
 import { mkdir, readdir, copyFile, readFile, writeFile, cp } from "fs/promises";
 import { existsSync } from "fs";
-import { join, dirname, basename } from "path";
+import { join, dirname, basename, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 import { getRunner, listRunners, type AcpRunner, type AcpSession } from "../lib/acp-runner.js";
@@ -167,7 +167,7 @@ async function setupClaudeSettings(workDir: string, mode: BranchMode): Promise<v
 // ── Workdir setup ────────────────────────────────────────────────────────────
 
 async function setupWorkdir(sampleDir: string, targetDir?: string): Promise<string> {
-  const workDir = targetDir ?? join(tmpdir(), `sensei-benchmark-${Date.now()}`);
+  const workDir = targetDir ? resolve(targetDir) : join(tmpdir(), `sensei-benchmark-${Date.now()}`);
   if (existsSync(workDir)) {
     try { const { $ } = await import("bun"); await $`rm -rf ${workDir}`; } catch {}
   }
@@ -297,9 +297,10 @@ async function runBranch(
       await git(workDir, "add", "-A");
       await git(workDir, "commit", "-m", "sensei: install skills");
     }
-
-    await setupClaudeSettings(workDir, mode);
   }
+
+  // Always write settings (ensures they exist on resume and for standalone workdirs)
+  await setupClaudeSettings(workDir, mode);
 
   // Index the repo for indexed mode (populates Kuzu DB before MCP server starts)
   if (mode === "indexed") {
