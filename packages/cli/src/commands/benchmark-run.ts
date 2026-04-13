@@ -234,10 +234,13 @@ async function runTaskWithRetry(
           }
         }
         if (!resetsAt) {
-          // Fallback: no rate_limit_event found
+          // Fallback: no rate_limit_event found — dump raw output for debugging
           const waitSec = Math.min(attempt * 120, 600);
           console.log(` ⏳ rate limited — no rate_limit_event in output — waiting ${Math.ceil(waitSec / 60)}min...`);
           console.log(`    error: ${errorMsg.slice(0, 120)}`);
+          // Show first few lines to help diagnose
+          const lines = session.rawOutput.split("\n").filter(l => l.trim()).slice(0, 5);
+          for (const l of lines) console.log(`    > ${l.slice(0, 150)}`);
           await new Promise(r => setTimeout(r, waitSec * 1000));
         }
         continue;
