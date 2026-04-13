@@ -329,18 +329,7 @@ impl Store {
     }
 
     pub fn get_index_errors(&self, repo_id: Option<&str>) -> rusqlite::Result<Vec<IndexError>> {
-        let (sql, param): (&str, Vec<&dyn rusqlite::ToSql>) = match repo_id {
-            Some(id) => (
-                "SELECT repo_id, file_path, error, adapter, timestamp FROM index_errors WHERE repo_id = ?1 ORDER BY timestamp DESC",
-                vec![&id as &dyn rusqlite::ToSql],
-            ),
-            None => (
-                "SELECT repo_id, file_path, error, adapter, timestamp FROM index_errors ORDER BY timestamp DESC LIMIT 200",
-                vec![],
-            ),
-        };
-        let mut stmt = self.conn.prepare(sql)?;
-        let rows = stmt.query_map(param.as_slice(), |row| {
+        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<IndexError> {
             Ok(IndexError {
                 repo_id: row.get(0)?,
                 file_path: row.get(1)?,
@@ -348,8 +337,22 @@ impl Store {
                 adapter: row.get(3)?,
                 timestamp: row.get(4)?,
             })
-        })?;
-        rows.collect()
+        };
+
+        match repo_id {
+            Some(id) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT repo_id, file_path, error, adapter, timestamp FROM index_errors WHERE repo_id = ?1 ORDER BY timestamp DESC"
+                )?;
+                stmt.query_map(params![id], map_row)?.collect()
+            }
+            None => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT repo_id, file_path, error, adapter, timestamp FROM index_errors ORDER BY timestamp DESC LIMIT 200"
+                )?;
+                stmt.query_map([], map_row)?.collect()
+            }
+        }
     }
 
     pub fn clear_index_errors(&self, repo_id: &str) -> rusqlite::Result<()> {
