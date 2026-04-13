@@ -59,6 +59,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/communities", post(detect_communities))
         .route("/api/graph/communities/info", get(community_info))
         .route("/api/graph/doc-drift", get(doc_drift))
+        .route("/api/graph/call-flow", get(call_flow))
         // Solution analysis
         .route("/api/solutions/{id}/analyze", post(analyze_solution))
         .route("/api/solutions/{id}/graph", get(solution_graph))
@@ -776,6 +777,17 @@ async fn doc_drift(
     let repo_id = q.repo_id.unwrap_or_default();
     let graph = state.graph.lock().await;
     graph.get_doc_drift(&repo_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn call_flow(
+    State(state): State<AppState>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let repo_id = q.repo_id.unwrap_or_default();
+    let graph = state.graph.lock().await;
+    graph.get_call_flow(&repo_id)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
