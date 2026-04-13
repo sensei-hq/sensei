@@ -1,20 +1,26 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::Json,
+    response::{Json, Sse, sse::Event},
     routing::{get, post, put, delete},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use crate::db::Store;
 use crate::indexer::graph::GraphDb;
+use crate::indexer::queue::{IndexQueue, IndexEvent, BroadcastProgress};
+use crate::watcher::DirtyTracker;
 use crate::types::{Project, Solution, SolutionRepo, IndexError, IndexResult};
 
 pub struct SharedState {
     pub store: Mutex<Store>,
     pub graph: Mutex<GraphDb>,
+    pub index_queue: Arc<IndexQueue>,
+    pub dirty_tracker: DirtyTracker,
 }
 
 pub type AppState = Arc<SharedState>;
@@ -28,6 +34,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{repo_id}", put(update_project).delete(delete_project))
         .route("/api/projects/{repo_id}/tags", post(add_project_tag))
         .route("/api/projects/{repo_id}/tags/{tag}", delete(remove_project_tag))
+        .route("/api/projects/{repo_id}/summary", get(project_summary))
         // Solutions
         .route("/api/solutions", get(list_solutions).post(create_solution))
         .route("/api/solutions/{id}", put(update_solution).delete(delete_solution))
@@ -37,10 +44,27 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/solutions/{id}/tags/{tag}", delete(remove_solution_tag))
         // Indexing
         .route("/api/index", post(index_project))
+        .route("/api/index/status", get(index_queue_status))
+        .route("/api/index/progress", get(index_progress_sse))
+        .route("/api/index/dirty", get(dirty_status))
         .route("/api/index/errors", get(list_index_errors))
         .route("/api/index/errors/{repo_id}", get(list_repo_index_errors))
         // Graph
         .route("/api/graph/nodes", get(graph_nodes))
+        .route("/api/graph/functions", get(search_functions))
+        .route("/api/graph/types", get(search_types))
+        .route("/api/graph/callers", get(fn_callers))
+        .route("/api/graph/callees", get(fn_callees))
+        .route("/api/graph/files", get(files_by_tag))
+        .route("/api/graph/communities", post(detect_communities))
+        .route("/api/graph/communities/info", get(community_info))
+        .route("/api/graph/doc-drift", get(doc_drift))
+        // Solution analysis
+        .route("/api/solutions/{id}/analyze", post(analyze_solution))
+        .route("/api/solutions/{id}/graph", get(solution_graph))
+        .route("/api/solutions/{id}/roles", get(solution_roles))
+        // Libraries
+        .route("/api/libs", get(list_libs))
         // Scan
         .route("/api/scan", post(scan_folder))
         // Stop
@@ -272,6 +296,196 @@ async fn remove_solution_tag(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+// ── Solution Analysis ────────────────────────────────────────────────────────
+
+async fn analyze_solution(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::indexer::cross_repo::SolutionAnalysis>, StatusCode> {
+    let store = state.store.lock().await;
+    let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let solution = solutions.into_iter().find(|s| s.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let graph = state.graph.lock().await;
+    crate::indexer::cross_repo::analyze_solution(&store, &graph, &solution)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// ── Per-Repo Summary ─────────────────────────────────────────────────────────
+
+async fn project_summary(
+    State(state): State<AppState>,
+    Path(repo_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    let project = store.get_project(&repo_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let graph = state.graph.lock().await;
+    let (fn_count, type_count) = graph.count_symbols(&repo_id).unwrap_or((0, 0));
+    let edge_count = graph.count_edges(&repo_id).unwrap_or(0);
+
+    // Find which solutions contain this repo
+    let solutions = store.list_solutions().unwrap_or_default();
+    let memberships: Vec<serde_json::Value> = solutions.iter()
+        .filter(|s| s.repos.iter().any(|r| r.repo_id == repo_id))
+        .map(|s| {
+            let role = s.repos.iter().find(|r| r.repo_id == repo_id)
+                .map(|r| r.role.as_str()).unwrap_or("unknown");
+            serde_json::json!({"solutionId": s.id, "solutionName": s.name, "role": role})
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "repoId": project.repo_id,
+        "name": project.name,
+        "path": project.path,
+        "stack": project.stack,
+        "libs": project.libs,
+        "tags": project.tags,
+        "status": project.status,
+        "indexedAt": project.indexed_at,
+        "functions": fn_count,
+        "types": type_count,
+        "edges": edge_count,
+        "solutions": memberships,
+    })))
+}
+
+// ── Solution Graph & Roles ───────────────────────────────────────────────────
+
+async fn solution_graph(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let solution = solutions.into_iter().find(|s| s.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let graph = state.graph.lock().await;
+
+    // Merge nodes and edges from all repos in the solution
+    let mut all_nodes = Vec::new();
+    let mut all_edges = Vec::new();
+
+    for sr in &solution.repos {
+        let nodes = graph.get_nodes(&sr.repo_id).unwrap_or_default();
+        let edges = graph.get_edges(&sr.repo_id).unwrap_or_default();
+        // Tag each node with its repo
+        for mut node in nodes {
+            all_nodes.push(serde_json::json!({
+                "id": node.id, "name": node.name, "kind": node.kind,
+                "file": node.file, "line": node.line, "complexity": node.complexity,
+                "repoId": sr.repo_id, "role": sr.role,
+            }));
+        }
+        for edge in edges {
+            all_edges.push(serde_json::json!({
+                "source": edge.source, "target": edge.target,
+                "type": edge.edge_type, "repoId": sr.repo_id,
+            }));
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "solutionId": solution.id,
+        "name": solution.name,
+        "nodes": all_nodes.len(),
+        "edges": all_edges.len(),
+        "repos": solution.repos.len(),
+        "graph": {"nodes": all_nodes, "edges": all_edges},
+    })))
+}
+
+async fn solution_roles(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::indexer::cross_repo::InferredRole>>, StatusCode> {
+    let store = state.store.lock().await;
+    let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let solution = solutions.into_iter().find(|s| s.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut projects = std::collections::HashMap::new();
+    for sr in &solution.repos {
+        if let Ok(Some(p)) = store.get_project(&sr.repo_id) {
+            projects.insert(sr.repo_id.clone(), p);
+        }
+    }
+
+    Ok(Json(crate::indexer::cross_repo::infer_roles_pub(&projects)))
+}
+
+// ── Libraries ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct LibsQuery {
+    /// Scope to a single repo
+    #[serde(rename = "repoId")]
+    repo_id: Option<String>,
+    /// Scope to repos in this solution
+    #[serde(rename = "solutionId")]
+    solution_id: Option<String>,
+    /// Only return libs used by 2+ repos
+    #[serde(default)]
+    shared: Option<bool>,
+}
+
+/// GET /api/libs — query detected libraries.
+///   ?repoId=X      — libs for a single repo (monorepo use case)
+///   ?solutionId=X  — scope to repos in a solution
+///   ?shared=true   — only libs used by 2+ repos
+async fn list_libs(
+    State(state): State<AppState>,
+    Query(q): Query<LibsQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    let all_projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Scope: repoId > solutionId > all
+    let projects: Vec<_> = if let Some(rid) = &q.repo_id {
+        all_projects.into_iter().filter(|p| p.repo_id == *rid).collect()
+    } else if let Some(sid) = &q.solution_id {
+        let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let repo_ids: std::collections::HashSet<String> = solutions.into_iter()
+            .find(|s| s.id == *sid)
+            .map(|s| s.repos.iter().map(|r| r.repo_id.clone()).collect())
+            .unwrap_or_default();
+        all_projects.into_iter().filter(|p| repo_ids.contains(&p.repo_id)).collect()
+    } else {
+        all_projects
+    };
+
+    // lib_name → [repo_ids]
+    let mut lib_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for p in &projects {
+        for lib in &p.libs {
+            lib_map.entry(lib.clone()).or_default().push(p.repo_id.clone());
+        }
+    }
+
+    // Filter shared if requested
+    let min_repos = if q.shared.unwrap_or(false) { 2 } else { 1 };
+
+    let mut libs: Vec<serde_json::Value> = lib_map.into_iter()
+        .filter(|(_, repos)| repos.len() >= min_repos)
+        .map(|(name, repos)| serde_json::json!({
+            "name": name,
+            "repos": repos,
+            "repoCount": repos.len(),
+        }))
+        .collect();
+    libs.sort_by(|a, b| b["repoCount"].as_u64().cmp(&a["repoCount"].as_u64()));
+
+    Ok(Json(serde_json::json!({
+        "total": libs.len(),
+        "libs": libs,
+    })))
+}
+
 // ── Index Errors ─────────────────────────────────────────────────────────────
 
 async fn list_index_errors(State(state): State<AppState>) -> Result<Json<Vec<IndexError>>, StatusCode> {
@@ -310,28 +524,56 @@ async fn index_project(
     // Clear errors for this project
     { let s = state.store.lock().await; s.clear_index_errors(&body.repo_id).ok(); }
 
-    let graph = state.graph.lock().await;
-    match crate::indexer::index_repo(&graph, &body.repo_path, &body.repo_id) {
-        Ok(result) => {
-            // Update project as indexed
-            let s = state.store.lock().await;
-            s.mark_indexed(&body.repo_id, &result.libs).ok();
-            Ok(Json(serde_json::json!({
-                "ok": true,
-                "filesIndexed": result.files_indexed,
-                "functionsIndexed": result.functions_indexed,
-                "typesIndexed": result.types_indexed,
-                "edgesCreated": result.edges_created,
-                "durationMs": result.duration_ms,
-                "libs": result.libs,
-            })))
-        }
-        Err(e) => {
-            let s = state.store.lock().await;
-            s.mark_index_failed(&body.repo_id, &e).ok();
-            Ok(Json(serde_json::json!({"ok": false, "error": e})))
-        }
-    }
+    let pos = state.index_queue.enqueue(
+        body.repo_id.clone(),
+        body.repo_path.clone(),
+        body.force,
+    ).await;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "queued": true,
+        "position": pos,
+        "repoId": body.repo_id,
+    })))
+}
+
+async fn dirty_status(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let snapshots = state.dirty_tracker.status().await;
+    let result: Vec<serde_json::Value> = snapshots.iter().map(|s| {
+        serde_json::json!({
+            "repoId": s.repo_id,
+            "codeFiles": s.code_files.len(),
+            "docFiles": s.doc_files.len(),
+            "total": s.code_files.len() + s.doc_files.len(),
+        })
+    }).collect();
+    Json(serde_json::json!(result))
+}
+
+async fn index_queue_status(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    Json(state.index_queue.status().await)
+}
+
+async fn index_progress_sse(
+    State(state): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let rx = state.index_queue.subscribe();
+    let stream = BroadcastStream::new(rx)
+        .filter_map(|result| {
+            match result {
+                Ok(event) => {
+                    let data = serde_json::to_string(&event).unwrap_or_default();
+                    Some(Ok(Event::default().data(data)))
+                }
+                Err(_) => None, // lagged — skip
+            }
+        });
+    Sse::new(stream)
 }
 
 // ── Graph ────────────────────────────────────────────────────────────────────
@@ -354,6 +596,128 @@ async fn graph_nodes(
     let nodes = graph.get_nodes(&repo_id).unwrap_or_default();
     let edges = graph.get_edges(&repo_id).unwrap_or_default();
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
+}
+
+#[derive(Deserialize)]
+struct SymbolQuery {
+    #[serde(rename = "repoId")]
+    repo_id: String,
+    #[serde(rename = "q")]
+    query: String,
+}
+
+async fn search_functions(
+    State(state): State<AppState>,
+    Query(q): Query<SymbolQuery>,
+) -> Result<Json<Vec<crate::types::FunctionDetail>>, StatusCode> {
+    let graph = state.graph.lock().await;
+    graph.search_functions(&q.query, &q.repo_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn search_types(
+    State(state): State<AppState>,
+    Query(q): Query<SymbolQuery>,
+) -> Result<Json<Vec<crate::types::TypeDetail>>, StatusCode> {
+    let graph = state.graph.lock().await;
+    graph.search_types(&q.query, &q.repo_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Deserialize)]
+struct TraceQuery {
+    #[serde(rename = "repoId")]
+    repo_id: String,
+    name: String,
+}
+
+async fn fn_callers(
+    State(state): State<AppState>,
+    Query(q): Query<TraceQuery>,
+) -> Result<Json<Vec<crate::types::FunctionDetail>>, StatusCode> {
+    let graph = state.graph.lock().await;
+    graph.callers_of(&q.name, &q.repo_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn fn_callees(
+    State(state): State<AppState>,
+    Query(q): Query<TraceQuery>,
+) -> Result<Json<Vec<crate::types::FunctionDetail>>, StatusCode> {
+    let graph = state.graph.lock().await;
+    graph.callees_of(&q.name, &q.repo_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Deserialize)]
+struct TagQuery {
+    #[serde(rename = "repoId")]
+    repo_id: String,
+    tag: String,
+}
+
+async fn files_by_tag(
+    State(state): State<AppState>,
+    Query(q): Query<TagQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let graph = state.graph.lock().await;
+    match graph.files_by_tag(&q.tag, &q.repo_id) {
+        Ok(files) => {
+            let result: Vec<serde_json::Value> = files.into_iter().map(|(id, path, tags)| {
+                serde_json::json!({"id": id, "path": path, "tags": tags})
+            }).collect();
+            Ok(Json(serde_json::json!(result)))
+        }
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn doc_drift(
+    State(state): State<AppState>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<Vec<crate::indexer::graph::DocDrift>>, StatusCode> {
+    let repo_id = q.repo_id.unwrap_or_default();
+    let graph = state.graph.lock().await;
+    graph.get_doc_drift(&repo_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn detect_communities(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let repo_id = body["repoId"].as_str().unwrap_or_default().to_string();
+    if repo_id.is_empty() {
+        return Ok(Json(serde_json::json!({"error": "repoId required"})));
+    }
+    let graph = state.graph.lock().await;
+    match crate::indexer::community::detect_communities(&graph, &repo_id) {
+        Ok(communities) => {
+            let num = communities.values().collect::<std::collections::HashSet<_>>().len();
+            Ok(Json(serde_json::json!({
+                "ok": true,
+                "communities": num,
+                "assignments": communities.len(),
+            })))
+        }
+        Err(e) => Ok(Json(serde_json::json!({"ok": false, "error": e}))),
+    }
+}
+
+async fn community_info(
+    State(state): State<AppState>,
+    Query(q): Query<GraphQuery>,
+) -> Result<Json<Vec<crate::indexer::community::CommunityInfo>>, StatusCode> {
+    let repo_id = q.repo_id.unwrap_or_default();
+    let graph = state.graph.lock().await;
+    graph.get_communities(&repo_id)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 // ── Scan ─────────────────────────────────────────────────────────────────────
@@ -440,9 +804,12 @@ mod tests {
     fn test_app() -> (Router, AppState) {
         let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
+        let (index_queue, _rx) = crate::indexer::queue::IndexQueue::new();
         let state = Arc::new(SharedState {
             store: Mutex::new(store),
             graph: Mutex::new(graph),
+            index_queue,
+            dirty_tracker: DirtyTracker::new(),
         });
         let router = create_router(state.clone());
         (router, state)
@@ -628,18 +995,22 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ok"], true);
-        assert!(json["functionsIndexed"].as_u64().unwrap() >= 1);
+        assert_eq!(json["queued"], true);
 
-        // Graph should have data now
+        // Note: indexing happens async via worker — graph won't have data in unit test
+        // (no worker spawned in test_app). The e2e_server test covers the full flow.
+
+        // Verify queue status endpoint works
         let resp = app.oneshot(
             Request::builder()
-                .uri("/api/graph/nodes?repoId=test-repo")
+                .uri("/api/index/status")
                 .body(Body::empty())
                 .unwrap()
         ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(json["nodes"].as_array().unwrap().len() >= 1);
+        assert!(json["queued"].is_array());
     }
 
     #[tokio::test]
