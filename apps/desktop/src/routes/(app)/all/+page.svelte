@@ -123,24 +123,14 @@
   async function scanFolder() {
     if (!scanRoot.trim()) return;
     scanning = true;
-    const api = senseiApi(getPort());
     try {
-      // Daemon scan auto-registers all found repos
-      const scanned = await api.scanFolder(scanRoot);
-
-      // Reload project list immediately so repos appear
+      // Single API call: scans, registers projects, queues indexing
+      await senseiApi(getPort()).scanFolder(scanRoot);
       await loadProjects();
-      scanning = false;
-
-      // Queue all for indexing in parallel (fire-and-forget, don't block UI)
-      Promise.all(scanned.map(r => api.indexRepo(r.name, r.path).catch(() => {})))
-        .then(() => refreshStatus());
-
       refreshStatus();
     } catch (e) {
       console.error('Scan failed:', e);
-      scanning = false;
-    }
+    } finally { scanning = false; }
   }
 
   const STATUS_CLS: Record<string, string> = {

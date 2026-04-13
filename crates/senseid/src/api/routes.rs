@@ -1313,22 +1313,33 @@ async fn scan_folder(
     scan_dir(root, 0, body.max_depth, &mut repos);
 
     // Auto-register each scanned repo as a project
-    let store = state.store.lock().await;
+    {
+        let store = state.store.lock().await;
+        for repo in &repos {
+            let project = crate::types::Project {
+                repo_id: repo.name.clone(),
+                name: repo.name.clone(),
+                path: repo.path.clone(),
+                remote_url: None,
+                indexed_at: None,
+                last_error: None,
+                duplicate_of: None,
+                stack: repo.stack.clone(),
+                libs: vec![],
+                tags: vec![],
+                status: "active".into(),
+            };
+            store.upsert_project(&project).ok();
+        }
+    }
+
+    // Auto-queue all for indexing
     for repo in &repos {
-        let project = crate::types::Project {
-            repo_id: repo.name.clone(),
-            name: repo.name.clone(),
-            path: repo.path.clone(),
-            remote_url: None,
-            indexed_at: None,
-            last_error: None,
-            duplicate_of: None,
-            stack: repo.stack.clone(),
-            libs: vec![],
-            tags: vec![],
-            status: "active".into(),
-        };
-        store.upsert_project(&project).ok();
+        state.index_queue.enqueue(
+            repo.name.clone(),
+            repo.path.clone(),
+            false,
+        ).await;
     }
 
     Ok(Json(repos))
