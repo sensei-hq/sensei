@@ -279,6 +279,14 @@ pub fn index_repo_with_progress(
             // Skip relative, absolute, node builtins
             if path.starts_with('.') || path.starts_with('/') { continue; }
             if path.starts_with("node:") { continue; }
+            // Skip SvelteKit/framework internal aliases
+            if path.starts_with('$') { continue; } // $app, $env, $lib, $service-worker
+            // Skip Node.js builtins
+            if ["fs", "path", "os", "url", "http", "https", "module", "child_process",
+                "crypto", "util", "events", "stream", "buffer", "net", "dns", "tls",
+                "cluster", "worker_threads", "perf_hooks", "process", "assert",
+                "readline", "querystring", "string_decoder", "zlib", "globals",
+            ].contains(&path.as_str()) { continue; }
             // Skip Rust internal paths
             if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
             if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
