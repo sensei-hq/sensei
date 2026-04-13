@@ -148,18 +148,20 @@ impl GraphDb {
     /// Get all nodes for a project (for D3 visualization).
     pub fn get_nodes(&self, project: &str) -> Result<Vec<crate::types::GraphNode>, String> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, file, line, complexity FROM functions WHERE project = ?1
+            "SELECT id, name, 'function' as kind, file, line, complexity FROM functions WHERE project = ?1
              UNION ALL
-             SELECT id, name, file, line, 0 FROM types WHERE project = ?1"
+             SELECT id, name, kind, file, line, 0 FROM types WHERE project = ?1
+             UNION ALL
+             SELECT id, module as name, 'file' as kind, path as file, 0, 0 FROM files WHERE project = ?1"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(params![project], |row| {
             Ok(crate::types::GraphNode {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                kind: "function".to_string(), // simplified
-                file: row.get(2)?,
-                line: row.get(3)?,
-                complexity: row.get(4).ok(),
+                kind: row.get(2)?,
+                file: row.get(3)?,
+                line: row.get(4)?,
+                complexity: row.get(5).ok(),
             })
         }).map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
@@ -167,9 +169,15 @@ impl GraphDb {
 
     /// Get all edges for a project.
     pub fn get_edges(&self, project: &str) -> Result<Vec<crate::types::GraphEdge>, String> {
+        // Join edges with any node type (functions, files, types, docs) that belongs to this project
         let mut stmt = self.conn.prepare(
             "SELECT e.from_id, e.to_id, e.edge_type FROM edges e
-             JOIN functions f ON e.from_id = f.id WHERE f.project = ?1"
+             WHERE e.from_id IN (
+                 SELECT id FROM functions WHERE project = ?1
+                 UNION SELECT id FROM files WHERE project = ?1
+                 UNION SELECT id FROM types WHERE project = ?1
+                 UNION SELECT id FROM docs WHERE project = ?1
+             )"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(params![project], |row| {
             Ok(crate::types::GraphEdge {
