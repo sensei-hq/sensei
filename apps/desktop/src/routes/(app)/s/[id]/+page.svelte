@@ -283,38 +283,47 @@
           <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide">Code Graph</h3>
           <a href="/s/{solution.id}/arch" class="text-xs text-primary-z6 hover:text-primary-z7">Full view</a>
         </div>
-        <div class="h-48 rounded-lg border border-surface-z0/30">
+        <div class="h-52 rounded-lg border border-surface-z0/30 overflow-hidden">
           <GraphCanvas nodes={graphNodes} edges={graphEdges} />
         </div>
         <p class="text-[10px] text-surface-z3 mt-1">{graphNodes.length} nodes · {graphEdges.length} edges</p>
       </div>
     {/if}
 
-    <!-- Repos overview with stats -->
+    <!-- Repos -->
     <div>
-      <div class="flex items-center justify-between mb-2">
-        <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide">Repos</h3>
-        <a href="/s/{solution.id}/repos" class="text-xs text-primary-z6 hover:text-primary-z7">Manage</a>
-      </div>
-      <div class="space-y-1.5">
+      <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide mb-2">Repos</h3>
+      <div class="space-y-2">
         {#each solution.repos as repo}
           {@const serverInfo = serverProjects.find(p => p.repoId === repo.repoId)}
           {@const summary = repoSummaries.get(repo.repoId)}
           {@const inferred = getInferredRole(repo.repoId)}
-          <div class="flex items-center gap-3 rounded-lg bg-surface-z2 px-3 py-2">
-            <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {ROLE_CLS[inferred?.role ?? repo.role] ?? ROLE_CLS.unknown}">
-              {inferred && inferred.confidence > 0.5 ? inferred.role : repo.role}
-            </span>
-            <span class="text-sm text-surface-z7 flex-1 truncate">{repo.label ?? repo.path.split('/').at(-1)}</span>
-            {#if summary}
-              <span class="text-[10px] text-surface-z4 font-mono">{summary.functions}fn {summary.types}ty</span>
-            {/if}
-            {#if serverInfo?.indexedAt}
-              <span class="text-[10px] text-success-z5">indexed</span>
-            {:else if serverInfo?.lastError}
-              <span class="text-[10px] text-error-z5">error</span>
-            {:else}
-              <span class="text-[10px] text-surface-z4">not indexed</span>
+          {@const displayRole = inferred && inferred.confidence > 0.5 ? inferred.role : repo.role}
+          <div class="rounded-lg bg-surface-z2 px-4 py-3 space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium text-surface-z8">{repo.label ?? repo.path.split('/').at(-1)}</span>
+              <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {ROLE_CLS[displayRole] ?? ROLE_CLS.unknown}">{displayRole}</span>
+              {#if serverInfo?.indexedAt}
+                <span class="text-[10px] text-success-z5">indexed</span>
+              {:else if serverInfo?.lastError}
+                <span class="text-[10px] text-error-z5">error</span>
+              {:else}
+                <span class="text-[10px] text-surface-z4">not indexed</span>
+              {/if}
+              {#if summary}
+                <span class="text-[10px] text-surface-z4 font-mono ml-auto">{summary.functions} fn · {summary.types} ty</span>
+              {/if}
+            </div>
+            <p class="text-[10px] text-surface-z3 font-mono truncate">{repo.path}</p>
+            {#if summary?.libs && summary.libs.length > 0}
+              <div class="flex flex-wrap gap-1 mt-1">
+                {#each summary.libs.slice(0, 8) as lib}
+                  <span class="rounded px-1 py-0.5 text-[9px] bg-surface-z3 text-surface-z5">{lib}</span>
+                {/each}
+                {#if summary.libs.length > 8}
+                  <span class="text-[9px] text-surface-z4">+{summary.libs.length - 8}</span>
+                {/if}
+              </div>
             {/if}
           </div>
         {/each}
