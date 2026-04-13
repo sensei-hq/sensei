@@ -136,19 +136,19 @@
           class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
                  {($page.url.pathname as string) === '/all' ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
           <span class="text-base i-solar-layers-bold-duotone"></span>
-          All Repos
-        </a>
-        <a href="/indexer"
-          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
-                 {($page.url.pathname as string).includes('/indexer') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
-          <span class="text-base i-solar-database-bold-duotone"></span>
-          Indexer
+          Projects
         </a>
         <a href="/libraries"
           class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
                  {$page.url.pathname.startsWith('/libraries') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
           <span class="text-base i-solar-book-2-bold-duotone"></span>
           Libraries
+        </a>
+        <a href="/catalog"
+          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
+                 {$page.url.pathname.startsWith('/catalog') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
+          <span class="text-base i-solar-widget-5-bold-duotone"></span>
+          Catalog
         </a>
         <a href="/benchmarks"
           class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
