@@ -4,12 +4,18 @@
   import { getSolutionById } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import type { GraphData } from '$lib/types.js';
+  import GraphCanvas from '$lib/GraphCanvas.svelte';
 
   let solution = $derived(getSolutionById($page.params.id as string));
   let port = $state(parseInt(localStorage.getItem('sensei:port') ?? '7744', 10));
 
-  type ViewTab = 'structural' | 'deployment';
-  let activeView = $state<ViewTab>('structural');
+  type ViewTab = 'graph' | 'structural' | 'deployment';
+  let activeView = $state<ViewTab>('graph');
+
+  // Raw node/edge data for D3
+  let graphNodes = $state<Array<{ id: string; name: string; kind: string; file: string; line: number; complexity?: number }>>([]);
+  let graphEdges = $state<Array<{ source: string; target: string; type: string }>>([]);
+  let selectedGraphNode = $state<any>(null);
 
   // Aggregated graph data across all repos in the solution
   let repoGraphs = $state<Map<string, GraphData>>(new Map());
@@ -55,6 +61,23 @@
       }
     }));
     repoGraphs = results;
+
+    // Also load raw node/edge data for D3
+    const allNodes: typeof graphNodes = [];
+    const allEdges: typeof graphEdges = [];
+    await Promise.all(solution.repos.map(async (repo) => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/graph/nodes?repoId=${encodeURIComponent(repo.repoId)}`);
+        if (res.ok) {
+          const data = await res.json() as { nodes: typeof graphNodes; edges: typeof graphEdges };
+          allNodes.push(...data.nodes);
+          allEdges.push(...data.edges);
+        }
+      } catch { /* ignore */ }
+    }));
+    graphNodes = allNodes;
+    graphEdges = allEdges;
+
     loading = false;
   }
 
@@ -66,7 +89,7 @@
 
     <!-- View toggle -->
     <div class="flex items-center gap-2">
-      {#each [['structural', 'Structural'], ['deployment', 'Deployment']] as [id, label]}
+      {#each [['graph', 'Graph'], ['structural', 'Structural'], ['deployment', 'Deployment']] as [id, label]}
         <button
           onclick={() => activeView = id as ViewTab}
           class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors
@@ -77,7 +100,34 @@
       {/each}
     </div>
 
-    {#if activeView === 'structural'}
+    {#if activeView === 'graph'}
+      <!-- ═══ FORCE-DIRECTED GRAPH ═══ -->
+      {#if loading}
+        <div class="text-center py-12">
+          <p class="text-sm text-surface-z4">Loading graph…</p>
+        </div>
+      {:else if graphNodes.length === 0}
+        <div class="text-center py-12">
+          <p class="text-sm text-surface-z4">No graph data. Index repos first.</p>
+        </div>
+      {:else}
+        <div class="h-96 rounded-lg border border-surface-z0/50">
+          <GraphCanvas
+            nodes={graphNodes}
+            edges={graphEdges}
+            onSelectNode={(n) => { selectedGraphNode = n; }}
+          />
+        </div>
+        <div class="flex gap-3 text-xs text-surface-z4">
+          <span>{graphNodes.length} nodes</span>
+          <span>{graphEdges.length} edges</span>
+          {#if selectedGraphNode}
+            <span class="text-primary-z6">Selected: {selectedGraphNode.name} ({selectedGraphNode.kind})</span>
+          {/if}
+        </div>
+      {/if}
+
+    {:else if activeView === 'structural'}
       <!-- ═══ STRUCTURAL VIEW ═══ -->
 
       {#if loading}
