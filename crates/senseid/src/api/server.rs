@@ -2,10 +2,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{CorsLayer, Any};
 use crate::db::Store;
-use super::routes::{create_router, AppState};
+use crate::indexer::graph::GraphDb;
+use super::routes::{create_router, SharedState, AppState};
 
-pub async fn start_server(store: Store, port: u16) -> std::io::Result<()> {
-    let state: AppState = Arc::new(Mutex::new(store));
+pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::Result<()> {
+    let state: AppState = Arc::new(SharedState {
+        store: Mutex::new(store),
+        graph: Mutex::new(graph),
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
