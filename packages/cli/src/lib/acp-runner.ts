@@ -8,6 +8,7 @@
  */
 
 import { readFile } from "fs/promises";
+import { join } from "path";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -180,6 +181,7 @@ export class ClaudeRunner implements AcpRunner {
         "--output-format", "stream-json",
         "--verbose",
         "--no-session-persistence",
+        "--plugin-dir", join(cwd, ".claude", "no-plugins"),
       ],
       { cwd },
     );
