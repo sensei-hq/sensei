@@ -131,6 +131,8 @@ pub struct SolutionRepo {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 fn default_role() -> String {
