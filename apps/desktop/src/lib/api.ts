@@ -200,8 +200,8 @@ export function senseiApi(port: number) {
 
     // ── Scan ─────────────────────────────────────────────────────────────
     scanFolder: (root: string, maxDepth = 3) =>
-      post<Array<{ name: string; path: string; stack: string[]; has_git: boolean }>>(
-        '/api/scan', { root, max_depth: maxDepth }, [],
+      post<{ ok: boolean; scanning: boolean }>(
+        '/api/scan', { root, max_depth: maxDepth }, { ok: false, scanning: false },
       ),
 
     // ── MCP Tool Proxy ────────────────────────────────────────────────
