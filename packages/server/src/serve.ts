@@ -593,6 +593,32 @@ export async function createReportServer(opts: ServeOptions = {}): Promise<{ sto
         }
       }
 
+      // ── Library docs (shared) ──────────────────────────────────────────
+      if (req.method === "GET" && url.pathname === "/api/lib-docs") {
+        const lib = url.searchParams.get("lib");
+        if (!lib) return jsonResponse({ lib: null, sections: [] });
+        try {
+          const { getLibDocs } = await import("./lib-store.js");
+          const component = url.searchParams.get("component") ?? undefined;
+          const query = url.searchParams.get("query") ?? undefined;
+          const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+          const rows = getLibDocs(lib, { component, query, limit });
+          return jsonResponse({ lib, sections: rows });
+        } catch (err) {
+          return jsonResponse({ lib, sections: [], error: (err as Error).message });
+        }
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/libraries") {
+        try {
+          const { listLibraries } = await import("./lib-store.js");
+          const libs = await listLibraries();
+          return jsonResponse(libs);
+        } catch {
+          return jsonResponse([]);
+        }
+      }
+
       // ── Traceability ────────────────────────────────────────────────────
       if (req.method === "GET" && url.pathname === "/api/trace") {
         const repoId = url.searchParams.get("repoId") ?? opts.repoId;

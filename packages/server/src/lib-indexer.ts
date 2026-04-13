@@ -1,5 +1,4 @@
-// packages/server/src/lib-indexer.ts
-import { getActivityLog } from "./activity-log.js";
+import { replaceLibDocs, writeLibMeta, addLibUser } from "./lib-store.js";
 import type { LibEntry, DocPage } from "@sensei/shared";
 
 export class LibIndexer {
@@ -19,7 +18,20 @@ export class LibIndexer {
       component: page.component,
     }));
 
-    getActivityLog(this.repoId).replaceLibDocs(entry.name, docs);
+    // Write to shared ~/.sensei/libraries/{name}/docs.db
+    replaceLibDocs(entry.name, docs);
+
+    // Update meta
+    await writeLibMeta(entry.name, {
+      name: entry.name,
+      sourceType: entry.source_type,
+      baseUrl: entry.base_url,
+      usedBy: [this.repoId],
+      indexedAt: new Date().toISOString(),
+    });
+
+    // Register this repo as a user
+    await addLibUser(entry.name, this.repoId);
 
     return { sectionsIndexed: docs.length };
   }

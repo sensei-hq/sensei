@@ -23,3 +23,4 @@ export { getActivityLog, ActivityLog } from "./activity-log.js";
 export type { ActivitySession, ActivityAction, Decision, BacklogItem } from "./activity-log.js";
 
 export { LibIndexer } from "./lib-indexer.js";
+export { getLibDocs, replaceLibDocs, listLibraries, getLibMeta, writeLibMeta, addLibUser } from "./lib-store.js";

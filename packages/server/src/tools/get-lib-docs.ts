@@ -1,9 +1,8 @@
-// packages/server/src/tools/get-lib-docs.ts
-import { getActivityLog } from "../activity-log.js";
+import { getLibDocs } from "../lib-store.js";
 
 export interface LibSection {
-  title: string;        // section title (H2 heading)
-  content: string;      // section markdown
+  title: string;
+  content: string;
   document: {
     title: string;
     url: string | null;
@@ -19,7 +18,8 @@ export async function getLibDocsTool(
   opts?: { component?: string; query?: string; limit?: number },
 ): Promise<{ lib: string; sections: LibSection[] }> {
   try {
-    const rows = getActivityLog(repoId).getLibDocs(lib, opts);
+    // Read from shared ~/.sensei/libraries/{lib}/docs.db
+    const rows = getLibDocs(lib, opts);
 
     const sections: LibSection[] = rows.map((r) => ({
       title: r.title,
