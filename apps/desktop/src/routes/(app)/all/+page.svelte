@@ -6,12 +6,15 @@
     removeRepoFromSolution, inferRepoRole,
   } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import type { ScannedRepo, Solution, SolutionRepo } from '$lib/types.js';
+  import { connectSSE, getQueueStatus, getProgressForRepo, isIndexing, startIndex, refreshStatus } from '$lib/indexer.svelte.js';
+  import type { ScannedRepo, Solution, SolutionRepo, ServerProject, IndexQueueStatus } from '$lib/types.js';
 
   let scannedRepos = $state<ScannedRepo[]>([]);
+  let projects = $state<ServerProject[]>([]);
   let search = $state('');
   let scanRoot = $state('');
   let scanning = $state(false);
+  let queueStatus = $derived(getQueueStatus());
 
   let solutions = $derived(getSolutions());
 
@@ -152,10 +155,12 @@
   };
 
   onMount(async () => {
-    // Fetch all projects from daemon (sole source of truth)
     const port = getPort();
+    connectSSE(port);
+
+    // Fetch all projects from daemon
     const api = senseiApi(port);
-    const projects = await api.getProjects();
+    projects = await api.getProjects();
     scannedRepos = projects.map(p => ({
       name: p.name,
       path: p.path,
@@ -165,6 +170,8 @@
       tech_stack: p.stack ?? [],
       commit_count: 0,
     }));
+
+    refreshStatus();
   });
 </script>
 
@@ -172,7 +179,25 @@
   <div class="border-b border-surface-z0/50 px-4 py-2 shrink-0 flex items-center gap-3">
     <h1 class="text-sm font-semibold text-surface-z8">Projects</h1>
     <span class="text-xs text-surface-z4">{scannedRepos.length} total</span>
+    {#if queueStatus.current}
+      <span class="text-[10px] text-info-z6">indexing: {queueStatus.current.repo_id}</span>
+    {/if}
+    {#if queueStatus.queued.length > 0}
+      <span class="text-[10px] text-surface-z4">{queueStatus.queued.length} queued</span>
+    {/if}
     <div class="ml-auto flex items-center gap-2">
+      <button
+        onclick={async () => {
+          const api = senseiApi(getPort());
+          for (const p of projects.filter(p => !p.indexed_at)) {
+            await api.indexRepo(p.repo_id, p.path);
+          }
+          refreshStatus();
+        }}
+        class="rounded-md bg-primary-z2 px-2 py-1 text-[10px] font-medium text-primary-z7 hover:bg-primary-z3"
+      >
+        Index All
+      </button>
       <input
         type="text"
         bind:value={search}
@@ -251,9 +276,13 @@
       </div>
     {/if}
 
-    <!-- Repo list -->
+    <!-- Repo list with live indexing status -->
     {#each filtered as repo (repo.path)}
       {@const assignedTo = getSolutionForPath(repo.path)}
+      {@const proj = projects.find(p => p.path === repo.path)}
+      {@const repoId = proj?.repo_id ?? repo.repoId ?? repo.name}
+      {@const indexingNow = isIndexing(repoId)}
+      {@const progress = getProgressForRepo(repoId)}
       <div class="flex items-center gap-3 rounded-lg bg-surface-z2/50 px-3 py-2 hover:bg-surface-z2 transition-colors">
         <input
           type="checkbox"
@@ -261,31 +290,46 @@
           onchange={() => toggleSelect(repo.path)}
           class="shrink-0"
         />
-        <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {STATUS_CLS[repo.status] ?? STATUS_CLS.unknown}">
-          {repo.status}
-        </span>
+
+        <!-- Name + path (clickable) -->
         {#if assignedTo}
-          <a href="/s/{assignedTo.id}" class="flex-1 min-w-0 cursor-pointer">
+          <a href="/s/{assignedTo.id}" class="flex-1 min-w-0">
             <p class="text-sm text-surface-z7 truncate hover:text-primary-z6">{repo.name}</p>
             <p class="text-[10px] text-surface-z3 truncate">{repo.path}</p>
           </a>
         {:else}
-          <div class="flex-1 min-w-0">
-            <p class="text-sm text-surface-z7 truncate">{repo.name}</p>
+          <a href="/p/{repoId}" class="flex-1 min-w-0">
+            <p class="text-sm text-surface-z7 truncate hover:text-primary-z6">{repo.name}</p>
             <p class="text-[10px] text-surface-z3 truncate">{repo.path}</p>
-          </div>
+          </a>
         {/if}
-        {#if repo.tech_stack?.length}
-          <div class="flex gap-1 shrink-0">
-            {#each repo.tech_stack.slice(0, 2) as tech}
-              <span class="rounded bg-surface-z3 px-1 py-0.5 text-[9px] text-surface-z5">{tech}</span>
-            {/each}
-          </div>
+
+        <!-- Index status -->
+        {#if indexingNow}
+          <span class="text-[10px] text-info-z6 shrink-0">
+            indexing{progress?.current_file ? `: ${progress.current_file.split('/').at(-1)}` : '...'}
+          </span>
+        {:else if proj?.indexed_at}
+          <span class="text-[10px] text-success-z5 shrink-0">indexed</span>
+        {:else if proj?.last_error}
+          <button
+            onclick={() => startIndex(repoId, repo.path, true)}
+            class="text-[10px] text-error-z5 shrink-0 hover:text-error-z6"
+          >
+            failed — retry
+          </button>
+        {:else}
+          <button
+            onclick={() => startIndex(repoId, repo.path)}
+            class="text-[10px] text-primary-z5 shrink-0 hover:text-primary-z6"
+          >
+            index
+          </button>
         {/if}
+
+        <!-- Solution badge -->
         {#if assignedTo}
           <a href="/s/{assignedTo.id}" class="rounded bg-primary-z1 px-1.5 py-0.5 text-[10px] text-primary-z6 shrink-0 truncate max-w-24 hover:bg-primary-z2">{assignedTo.name}</a>
-        {:else}
-          <span class="text-[10px] text-surface-z3">unassigned</span>
         {/if}
       </div>
     {/each}
