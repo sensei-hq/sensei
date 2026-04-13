@@ -190,14 +190,12 @@
     await loadProjects();
     refreshStatus();
 
-    // Refresh project list every 5s while indexing is active
+    // Refresh project list every 3s — always poll while page is open
+    // (queue status can briefly show null between jobs)
     refreshInterval = setInterval(async () => {
-      const status = getQueueStatus();
-      if (status.current || status.queued.length > 0) {
-        await loadProjects();
-        refreshStatus();
-      }
-    }, 5000);
+      await loadProjects();
+      refreshStatus();
+    }, 3000);
   });
 </script>
 
@@ -338,10 +336,15 @@
         {/if}
 
         <!-- Index status -->
-        {#if indexingNow}
-          <span class="text-[10px] text-info-z6 shrink-0">
-            indexing{progress?.current_file ? `: ${progress.current_file.split('/').at(-1)}` : '...'}
+        {#if indexingNow && progress}
+          <span class="text-[10px] text-info-z6 shrink-0 max-w-48 truncate">
+            {#if progress.files_processed != null && progress.files_total}
+              {progress.files_processed}/{progress.files_total}
+            {/if}
+            {progress.current_file ? progress.current_file.split('/').at(-1) : 'starting...'}
           </span>
+        {:else if indexingNow}
+          <span class="text-[10px] text-info-z6 shrink-0">queued...</span>
         {:else if proj?.indexed_at}
           <span class="text-[10px] text-success-z5 shrink-0">indexed</span>
         {:else if proj?.last_error}
