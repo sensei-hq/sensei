@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum SymbolKind {
     Function,
     Class,
+    Struct,
     Type,
     Interface,
     Enum,
@@ -22,6 +23,7 @@ impl std::fmt::Display for SymbolKind {
         match self {
             SymbolKind::Function => write!(f, "function"),
             SymbolKind::Class => write!(f, "class"),
+            SymbolKind::Struct => write!(f, "struct"),
             SymbolKind::Type => write!(f, "type"),
             SymbolKind::Interface => write!(f, "interface"),
             SymbolKind::Enum => write!(f, "enum"),
@@ -199,6 +201,30 @@ pub struct GraphEdge {
     pub target: String,
     #[serde(rename = "type")]
     pub edge_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionDetail {
+    pub id: String,
+    pub name: String,
+    pub file: String,
+    pub line: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docstring: Option<String>,
+    pub complexity: u32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub tags: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeDetail {
+    pub id: String,
+    pub name: String,
+    pub file: String,
+    pub line: u32,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

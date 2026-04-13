@@ -3,10 +3,14 @@ pub mod rust_lang;
 pub mod typescript;
 pub mod java;
 pub mod sql;
+pub mod swift;
+pub mod kotlin;
+pub mod svelte;
+pub mod vue;
 
 use crate::types::ParsedFile;
 
-/// Trait for language-specific tree-sitter adapters.
+/// Trait for language-specific adapters.
 pub trait LanguageAdapter: Send + Sync {
     fn language(&self) -> &str;
     fn extensions(&self) -> &[&str];
@@ -18,20 +22,26 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
     match ext {
         ".py" => Some(Box::new(python::PythonAdapter)),
         ".rs" => Some(Box::new(rust_lang::RustAdapter)),
-        // TS/JS disabled — tree-sitter-typescript 0.23 has ABI incompatibility with tree-sitter 0.24
-        // Will re-enable when grammar publishes a compatible version
-        // ".ts" | ".tsx" => Some(Box::new(typescript::TypeScriptAdapter)),
-        // ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
+        ".ts" | ".tsx" => Some(Box::new(typescript::TypeScriptAdapter)),
+        ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
         ".java" => Some(Box::new(java::JavaAdapter)),
         ".sql" => Some(Box::new(sql::SqlAdapter)),
+        ".swift" => Some(Box::new(swift::SwiftAdapter)),
+        ".kt" | ".kts" => Some(Box::new(kotlin::KotlinAdapter)),
+        ".svelte" => Some(Box::new(svelte::SvelteAdapter)),
+        ".vue" => Some(Box::new(vue::VueAdapter)),
         _ => None,
     }
 }
 
 /// List all supported extensions.
 pub fn supported_extensions() -> &'static [&'static str] {
-    &[".py", ".rs", ".java", ".sql"]
-    // TS/JS temporarily disabled due to tree-sitter grammar ABI issue
+    &[
+        ".py", ".rs", ".java", ".sql",
+        ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+        ".swift", ".kt", ".kts",
+        ".svelte", ".vue",
+    ]
 }
 
 #[cfg(test)]
@@ -40,11 +50,9 @@ mod tests {
 
     #[test]
     fn adapter_for_known_extensions() {
-        assert!(adapter_for_ext(".py").is_some());
-        assert!(adapter_for_ext(".rs").is_some());
-        assert!(adapter_for_ext(".java").is_some());
-        assert!(adapter_for_ext(".sql").is_some());
-        // TS/JS disabled due to tree-sitter grammar ABI issue
+        for ext in &[".py", ".rs", ".java", ".sql", ".ts", ".tsx", ".js", ".jsx", ".swift", ".kt", ".kts", ".svelte", ".vue"] {
+            assert!(adapter_for_ext(ext).is_some(), "Missing adapter for {}", ext);
+        }
     }
 
     #[test]
@@ -57,6 +65,9 @@ mod tests {
         let exts = supported_extensions();
         assert!(exts.contains(&".py"));
         assert!(exts.contains(&".rs"));
-        assert!(exts.contains(&".java"));
+        assert!(exts.contains(&".swift"));
+        assert!(exts.contains(&".kt"));
+        assert!(exts.contains(&".svelte"));
+        assert!(exts.contains(&".vue"));
     }
 }
