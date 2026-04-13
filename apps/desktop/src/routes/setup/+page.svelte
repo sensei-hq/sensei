@@ -102,26 +102,53 @@
     discovered = [];
     selectedRepos = new Set();
     variantOverrides = new Map();
+
     try {
+      // Try Tauri first (native desktop)
       const { invoke } = await import('@tauri-apps/api/core');
       const results = await Promise.all(
         scanRoots.map(root => invoke<Repo[]>('analyze_folder', { root }))
       );
       const seen = new Set<string>();
-      const merged: Repo[] = [];
       for (const repos of results) {
         for (const r of repos) {
-          if (!seen.has(r.path)) { seen.add(r.path); merged.push(r); }
+          if (!seen.has(r.path)) { seen.add(r.path); discovered.push(r); }
         }
       }
-      discovered = merged;
-      selectedRepos = new Set(
-        merged
-          .filter(r => (r.status === 'active' || r.status === 'recent') && !r.duplicate_of)
-          .map(r => r.path)
-      );
-    } catch { /* Tauri unavailable */ }
-    finally { scanning = false; }
+    } catch {
+      // Browser fallback — use daemon API
+      const { senseiApi } = await import('$lib/api.js');
+      const { getPort } = await import('$lib/appstate.svelte.js');
+      const api = senseiApi(getPort());
+      for (const root of scanRoots) {
+        const scanned = await api.scanFolder(root);
+        for (const r of scanned) {
+          discovered.push({
+            name: r.name, path: r.path, remote: null, description: null,
+            categories: [], status: 'active' as any, last_commit_days: null,
+            tech_stack: r.stack ?? [], commit_count: 0,
+            duplicate_of: null, variant_group: null,
+          });
+        }
+      }
+    }
+
+    // Auto-select active/recent repos
+    selectedRepos = new Set(
+      discovered
+        .filter(r => !r.duplicate_of)
+        .map(r => r.path)
+    );
+
+    // Register all with daemon
+    const { senseiApi } = await import('$lib/api.js');
+    const { getPort } = await import('$lib/appstate.svelte.js');
+    const api = senseiApi(getPort());
+    for (const r of discovered) {
+      await api.registerProject(r.name, r.name, r.path);
+    }
+
+    scanning = false;
   }
 
   const selectedCount = $derived(selectedRepos.size);
@@ -456,7 +483,7 @@
           Back
         </button>
         <button
-          onclick={async () => { await scanAll(); step = 'repos'; }}
+          onclick={async () => { await scanAll(); await startIndexing(); step = 'done'; }}
           disabled={scanRoots.length === 0 || scanning}
           class="flex-1 rounded-xl py-2.5 text-sm font-semibold transition-colors
                  {scanRoots.length > 0 && !scanning ? 'bg-primary-z6 text-white hover:bg-primary-z7' : 'bg-surface-z3 text-surface-z4 cursor-not-allowed'}">
