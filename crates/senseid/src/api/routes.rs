@@ -79,6 +79,8 @@ pub fn create_router(state: AppState) -> Router {
         // Config (user preferences)
         .route("/api/config", get(get_config).put(set_config_handler))
         .route("/api/config/{key}", get(get_config_key).delete(delete_config_key))
+        // Sessions (stub — real sessions come from TS daemon's activity.db)
+        .route("/api/sessions", get(get_sessions_stub))
         // Scan
         .route("/api/scan", post(scan_folder))
         // Stop
@@ -1211,6 +1213,17 @@ async fn delete_config_key(
     let store = state.store.lock().await;
     store.delete_config(&key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+// ── Sessions (stub) ──────────────────────────────────────────────────────────
+
+async fn get_sessions_stub() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "stats": null,
+        "sessions": [],
+        "toolUsage": [],
+        "benchmarkPairs": []
+    }))
 }
 
 // ── Scan ─────────────────────────────────────────────────────────────────────
