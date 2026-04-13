@@ -74,32 +74,59 @@ function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
+async function discoverCorpora(repoPath: string): Promise<Array<{ name: string; path: string }>> {
+  const results: Array<{ name: string; path: string }> = [];
+  // Check examples/benchmarks/*
+  const benchDir = join(repoPath, "examples", "benchmarks");
+  if (existsSync(benchDir)) {
+    for (const d of await readdir(benchDir)) {
+      if (findBenchmarkYaml(join(benchDir, d))) results.push({ name: d, path: join(benchDir, d) });
+    }
+  }
+  // Check examples/sample
+  const sampleDir = join(repoPath, "examples", "sample");
+  if (findBenchmarkYaml(sampleDir)) results.push({ name: "sample", path: sampleDir });
+  return results;
+}
+
 export async function benchmarkIndexer(
   repoPath: string,
-  opts: { corpus?: string } = {},
+  opts: { corpus?: string; all?: boolean } = {},
 ): Promise<void> {
+  // --all: run all discovered corpora
+  if (opts.all) {
+    const corpora = await discoverCorpora(repoPath);
+    if (corpora.length === 0) { console.error("No benchmark corpora found."); process.exit(1); }
+    console.log(`Running ${corpora.length} benchmark corpora:\n`);
+    for (const c of corpora) {
+      await runSingleBenchmark(c.path);
+      console.log();
+    }
+    return;
+  }
+
   // Find benchmark spec
   const targetPath = opts.corpus ? resolve(opts.corpus) : repoPath;
   const yamlPath = findBenchmarkYaml(targetPath);
 
   if (!yamlPath) {
-    // Try examples/benchmarks/ and examples/sample/
-    const examples = join(repoPath, "examples");
-    const dirs = existsSync(examples) ? await readdir(examples) : [];
-    const available: string[] = [];
-    for (const d of dirs) {
-      if (findBenchmarkYaml(join(examples, d))) available.push(d);
-    }
-    if (available.length > 0) {
+    const corpora = await discoverCorpora(repoPath);
+    if (corpora.length > 0) {
       console.log("No sensei-benchmark.yaml found in current directory.\n");
       console.log("Available corpora:");
-      for (const a of available) console.log(`  sensei benchmark indexer --corpus examples/${a}`);
+      for (const c of corpora) console.log(`  sensei benchmark indexer --corpus ${c.path}`);
+      console.log(`\n  sensei benchmark indexer --all     # run all`);
     } else {
       console.error("No sensei-benchmark.yaml found. Create one with the benchmark spec.");
     }
     process.exit(1);
   }
 
+  await runSingleBenchmark(targetPath);
+}
+
+async function runSingleBenchmark(targetPath: string): Promise<void> {
+  const yamlPath = findBenchmarkYaml(targetPath)!;
   const spec = await loadSpec(yamlPath);
   const sourceDir = resolve(join(targetPath, spec.source));
 

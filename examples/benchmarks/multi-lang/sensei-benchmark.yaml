@@ -1,0 +1,36 @@
+# sensei-benchmark.yaml — Multi-language adapter validation corpus
+# Tests that each tree-sitter adapter extracts correct symbols
+
+name: multi-lang
+description: Small files in 6 languages to validate each adapter
+language: mixed
+category: validation
+difficulty: small
+
+source: ./src
+
+expected:
+  symbols:
+    total: 48
+    # Rust: Calculator struct + 4 methods + format_result fn + MAX_HISTORY const = 7
+    # Java: UserService class + 3 methods + User class + 3 methods + UserRepository interface + 3 methods = 13
+    # Kotlin: Priority enum + Task class + TaskManager class + 5 methods = 8
+    # Swift: TemperatureUnit enum + WeatherReading struct + converted method + WeatherProvider protocol + 2 methods + WeatherService class + 2 methods = 10
+    # Python: Event class + EventStore class + 4 methods + MAX_EVENTS const = 7
+    # SQL: 2 tables + 1 view + 2 indexes = 3 (tables/views only as classes/types)
+    functions: 5
+    classes: 14
+    methods: 20
+    enums: 2
+    const: 2
+  edges:
+    calls: 5
+    imports: 3
+
+expected_insights:
+  - "Each language produces correct symbol kinds (function, class, method, enum)"
+  - "Docstrings/Javadoc/KDoc/triple-slash extracted for each language"
+  - "Rust impl blocks produce methods, not top-level functions"
+  - "Kotlin data class detected as class"
+  - "Swift protocol detected as interface"
+  - "SQL tables detected as class-like entities"
