@@ -12,43 +12,43 @@
 
   let senseiPort = $derived(getPort());
   let MAX_VISIBLE = $derived(getSidebarMaxItems());
+  let showAll = $state(false);
 
-  // Recent projects (individual repos not in any solution)
-  let recentProjects = $state<ServerProject[]>([]);
-
-  let showAllActive = $state(false);
-  let showAllSide = $state(false);
-  let showAllIdeas = $state(false);
-
-  // Derived solution lists
-  let activeSolutions = $derived(getSolutionsByCategory('active'));
-  let sideSolutions = $derived(getSolutionsByCategory('side'));
-  let ideaSolutions = $derived(getSolutionsByCategory('idea'));
-  let standaloneLibs = $derived(getStandaloneLibraries());
-
-  let visibleActive = $derived(showAllActive ? activeSolutions : activeSolutions.slice(0, MAX_VISIBLE));
-  let hiddenActiveCount = $derived(Math.max(0, activeSolutions.length - MAX_VISIBLE));
-  let visibleSide = $derived(showAllSide ? sideSolutions : sideSolutions.slice(0, MAX_VISIBLE));
-  let hiddenSideCount = $derived(Math.max(0, sideSolutions.length - MAX_VISIBLE));
-  let visibleIdeas = $derived(showAllIdeas ? ideaSolutions : ideaSolutions.slice(0, MAX_VISIBLE));
-  let hiddenIdeaCount = $derived(Math.max(0, ideaSolutions.length - MAX_VISIBLE));
+  // Unified recent items: solutions + projects mixed, sorted by recency
+  type SidebarItem = { kind: 'solution'; id: string; name: string; count: number; updatedAt: string }
+                   | { kind: 'project'; id: string; name: string; updatedAt: string };
+  let recentItems = $state<SidebarItem[]>([]);
+  let visibleItems = $derived(showAll ? recentItems : recentItems.slice(0, MAX_VISIBLE));
+  let hiddenCount = $derived(Math.max(0, recentItems.length - MAX_VISIBLE));
 
   onMount(async () => {
     await loadAppState();
     await loadSolutions();
     markLoaded();
 
-    // Load recent indexed projects for sidebar
+    // Build unified recent list: solutions + standalone projects
     const api = senseiApi(getPort());
     const projects = await api.getProjects();
-    // Show recently indexed projects not already in a solution
-    const solutionRepoIds = new Set(
-      getSolutions().flatMap(s => s.repos.map(r => r.repoId))
-    );
-    recentProjects = projects
-      .filter(p => p.indexed_at && !solutionRepoIds.has(p.repo_id))
-      .sort((a, b) => (b.indexed_at ?? '').localeCompare(a.indexed_at ?? ''))
-      .slice(0, MAX_VISIBLE);
+    const solutions = getSolutions();
+    const solutionRepoIds = new Set(solutions.flatMap(s => s.repos.map(r => r.repoId)));
+
+    const items: SidebarItem[] = [];
+
+    // Add solutions
+    for (const s of solutions) {
+      items.push({ kind: 'solution', id: s.id, name: s.name, count: s.repos.length, updatedAt: s.updatedAt ?? '' });
+    }
+
+    // Add projects not in any solution (recently indexed)
+    for (const p of projects) {
+      if (p.indexed_at && !solutionRepoIds.has(p.repo_id)) {
+        items.push({ kind: 'project', id: p.repo_id, name: p.name, updatedAt: p.indexed_at ?? '' });
+      }
+    }
+
+    // Sort by most recent
+    items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    recentItems = items;
   });
 </script>
 
@@ -68,99 +68,50 @@
     <!-- Nav -->
     <nav class="flex-1 space-y-0.5 px-2 py-2 overflow-y-auto">
 
-      <!-- Active Solutions -->
-      {#if activeSolutions.length > 0}
-        <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Active</p>
-        {#each visibleActive as s (s.id)}
-          <SidebarSolution solution={s} />
+      <!-- Recent (solutions + projects, mixed by recency) -->
+      {#if recentItems.length > 0}
+        <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Recent</p>
+        {#each visibleItems as item (item.id)}
+          {#if item.kind === 'solution'}
+            <a
+              href="/s/{item.id}"
+              class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm no-drag transition-colors
+                     {$page.url.pathname.startsWith(`/s/${item.id}`) ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}"
+            >
+              <span class="flex h-5 w-5 items-center justify-center rounded-md bg-primary-z3 text-[10px] font-bold text-primary-z7">
+                {item.name.charAt(0).toUpperCase()}
+              </span>
+              <span class="truncate flex-1">{item.name}</span>
+              <span class="text-[10px] text-surface-z3">{item.count}</span>
+            </a>
+          {:else}
+            <a
+              href="/p/{item.id}"
+              class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm no-drag transition-colors
+                     {$page.url.pathname === `/p/${item.id}` ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}"
+            >
+              <span class="flex h-5 w-5 items-center justify-center rounded-md bg-surface-z3 text-[10px] font-bold text-surface-z6">
+                {item.name.charAt(0).toUpperCase()}
+              </span>
+              <span class="truncate flex-1">{item.name}</span>
+            </a>
+          {/if}
         {/each}
-        {#if !showAllActive && hiddenActiveCount > 0}
+        {#if !showAll && hiddenCount > 0}
           <button
-            onclick={() => showAllActive = true}
+            onclick={() => showAll = true}
             class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
           >
-            +{hiddenActiveCount} more
+            +{hiddenCount} more
           </button>
-        {:else if showAllActive && hiddenActiveCount > 0}
+        {:else if showAll && hiddenCount > 0}
           <button
-            onclick={() => showAllActive = false}
+            onclick={() => showAll = false}
             class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
           >
             show less
           </button>
         {/if}
-      {/if}
-
-      <!-- Standalone Libraries -->
-      {#if standaloneLibs.length > 0}
-        <div class="pt-3">
-          <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Libraries</p>
-          {#each standaloneLibs as s (s.id)}
-            <SidebarSolution solution={s} />
-          {/each}
-        </div>
-      {/if}
-
-      <!-- Side Projects -->
-      {#if sideSolutions.length > 0}
-        <div class="pt-3">
-          <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Side Projects</p>
-          {#each visibleSide as s (s.id)}
-            <SidebarSolution solution={s} />
-          {/each}
-          {#if !showAllSide && hiddenSideCount > 0}
-            <button
-              onclick={() => showAllSide = true}
-              class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
-            >
-              +{hiddenSideCount} more
-            </button>
-          {:else if showAllSide && hiddenSideCount > 0}
-            <button
-              onclick={() => showAllSide = false}
-              class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
-            >
-              show less
-            </button>
-          {/if}
-        </div>
-      {/if}
-
-      <!-- Ideas -->
-      {#if ideaSolutions.length > 0}
-        <div class="pt-3">
-          <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Ideas</p>
-          {#each visibleIdeas as s (s.id)}
-            <SidebarSolution solution={s} />
-          {/each}
-          {#if !showAllIdeas && hiddenIdeaCount > 0}
-            <button
-              onclick={() => showAllIdeas = true}
-              class="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10px] text-surface-z4 hover:text-surface-z6 no-drag transition-colors"
-            >
-              +{hiddenIdeaCount} more
-            </button>
-          {/if}
-        </div>
-      {/if}
-
-      <!-- Recent Projects (not in any solution) -->
-      {#if recentProjects.length > 0}
-        <div class="pt-3">
-          <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Recent</p>
-          {#each recentProjects as project}
-            <a
-              href="/p/{project.repo_id}"
-              class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm no-drag transition-colors
-                     {$page.url.pathname === `/p/${project.repo_id}` ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}"
-            >
-              <span class="flex h-5 w-5 items-center justify-center rounded-md bg-surface-z3 text-[10px] font-bold text-surface-z6">
-                {project.name.charAt(0).toUpperCase()}
-              </span>
-              <span class="truncate flex-1">{project.name}</span>
-            </a>
-          {/each}
-        </div>
       {/if}
 
       <!-- Separator + global links -->
