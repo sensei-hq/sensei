@@ -1150,27 +1150,63 @@ async fn mcp_call_tool(
         }
         "add_library" => {
             let name = params["name"].as_str().unwrap_or("");
-            let url = params["url"].as_str().unwrap_or("");
+            let explicit_url = params["url"].as_str().unwrap_or("");
             let version = params["version"].as_str();
-            if name.is_empty() || url.is_empty() {
-                serde_json::json!({"error": "name and url required"})
+            if name.is_empty() {
+                serde_json::json!({"error": "name required"})
             } else {
-                // Fetch content
-                match crate::indexer::lib_indexer::fetch_lib_url(url).await {
-                    Ok(content) => {
-                        let store = state.store.lock().await;
-                        match crate::indexer::lib_indexer::index_lib_content(&store, name, url, &content, version) {
-                            Ok(result) => serde_json::json!({
-                                "ok": true,
-                                "libName": result.lib_name,
-                                "docsIndexed": result.docs_indexed,
-                                "sourceType": result.source_type,
-                            }),
-                            Err(e) => serde_json::json!({"error": e}),
+                // Try explicit URL first, then auto-discover
+                let urls_to_try: Vec<String> = if !explicit_url.is_empty() {
+                    vec![explicit_url.to_string()]
+                } else {
+                    // Common llms.txt URL patterns
+                    let clean = name.trim_start_matches('@').replace('/', "-");
+                    vec![
+                        format!("https://{}.com/llms.txt", clean),
+                        format!("https://{}.dev/llms.txt", clean),
+                        format!("https://{}.com/llms-full.txt", clean),
+                        format!("https://{}.io/llms.txt", clean),
+                        format!("https://www.{}.com/llms.txt", clean),
+                        format!("https://raw.githubusercontent.com/{name}/main/llms.txt"),
+                        format!("https://raw.githubusercontent.com/{name}/master/README.md"),
+                    ]
+                };
+
+                let mut result_json = serde_json::json!({"error": "Could not find docs. Provide a url parameter."});
+                let mut tried = Vec::new();
+
+                for url in &urls_to_try {
+                    tried.push(url.clone());
+                    // Short timeout for auto-discovery probing
+                    let timeout = if explicit_url.is_empty() { 5 } else { 15 };
+                    match crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, timeout).await {
+                        Ok(content) if content.len() > 50 => {
+                            let store = state.store.lock().await;
+                            match crate::indexer::lib_indexer::index_lib_content(&store, name, url, &content, version) {
+                                Ok(result) => {
+                                    result_json = serde_json::json!({
+                                        "ok": true,
+                                        "libName": result.lib_name,
+                                        "docsIndexed": result.docs_indexed,
+                                        "sourceType": result.source_type,
+                                        "url": url,
+                                    });
+                                    break;
+                                }
+                                Err(_) => continue,
+                            }
                         }
+                        _ => continue,
                     }
-                    Err(e) => serde_json::json!({"error": format!("Failed to fetch: {}", e)}),
                 }
+
+                if !result_json["ok"].as_bool().unwrap_or(false) {
+                    result_json = serde_json::json!({
+                        "error": format!("Could not find docs for '{}'. Tried: {}. Provide an explicit url.", name, tried.join(", ")),
+                    });
+                }
+
+                result_json
             }
         }
         "query" => {
