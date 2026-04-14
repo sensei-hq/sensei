@@ -120,6 +120,26 @@ pub async fn spawn_workers(queue: Arc<IndexQueue>, state: AppState, num_workers:
                         index_repo_with_progress(&graph, &rp, &rid, &progress)
                     }).await;
 
+                    // After indexing: discover llms.txt or generate docs from graph
+                    if let Ok(Ok(_)) = &result {
+                        let rp2 = repo_path.clone();
+                        let rid2 = repo_id.clone();
+                        let gp2 = graph_path.clone();
+                        let state2 = state.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let graph = open_worker_graph(&gp2).ok();
+                            let store = state2.store.blocking_lock();
+                            if let Some(g) = graph.as_ref() {
+                                let llms_count = crate::indexer::llms_indexer::index_llms(&store, g, &rp2, &rid2).unwrap_or(0);
+                                if llms_count > 0 {
+                                    tracing::info!("{} llms docs for {}", llms_count, rid2);
+                                }
+                            }
+                        }).await.ok();
+                    }
+
+                    let result = result;
+
                     match result {
                         Ok(Ok(r)) => {
                             {
