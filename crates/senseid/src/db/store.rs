@@ -1,10 +1,31 @@
-use rusqlite::{Connection, params, OptionalExtension};
+use rusqlite::{Connection, params, OptionalExtension, Row};
 use std::path::Path;
 use crate::types::{Project, Solution, SolutionRepo, IndexError};
 
 /// Central SQLite store — single database for all sensei state.
 pub struct Store {
     conn: Connection,
+}
+
+fn row_to_session(row: &Row) -> rusqlite::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "id": row.get::<_, String>(0)?,
+        "project": row.get::<_, String>(1)?,
+        "task": row.get::<_, String>(2)?,
+        "startedAt": row.get::<_, String>(3)?,
+        "completedAt": row.get::<_, Option<String>>(4)?,
+        "outcome": row.get::<_, Option<String>>(5)?,
+        "summary": row.get::<_, Option<String>>(6)?,
+        "cost": row.get::<_, Option<f64>>(7)?,
+        "tokensIn": row.get::<_, Option<i64>>(8)?,
+        "tokensOut": row.get::<_, Option<i64>>(9)?,
+        "ftr": match row.get::<_, Option<String>>(5)? {
+            Some(ref o) if o == "completed" => Some(1.0),
+            Some(ref o) if o == "partial" => Some(0.5),
+            Some(ref o) if o == "blocked" => Some(0.0),
+            _ => None::<f64>,
+        },
+    }))
 }
 
 impl Store {
@@ -388,6 +409,43 @@ impl Store {
         let mut map = std::collections::HashMap::new();
         for r in rows { if let Ok((k, v)) = r { map.insert(k, v); } }
         Ok(map)
+    }
+
+    // ── Sessions ─────────────────────────────────────────────────────────
+
+
+
+    pub fn create_session(&self, id: &str, repo_id: &str, task: &str) -> rusqlite::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sessions(id, repo_id, task, started_at) VALUES(?1,?2,?3,?4)",
+            params![id, repo_id, task, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_session(&self, id: &str, outcome: Option<&str>, summary: Option<&str>, cost: Option<f64>, tokens_in: Option<i64>, tokens_out: Option<i64>) -> rusqlite::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE sessions SET completed_at=?2, outcome=COALESCE(?3,outcome), summary=COALESCE(?4,summary), cost=COALESCE(?5,cost), tokens_in=COALESCE(?6,tokens_in), tokens_out=COALESCE(?7,tokens_out) WHERE id=?1",
+            params![id, now, outcome, summary, cost, tokens_in, tokens_out],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_sessions(&self, repo_id: Option<&str>) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let query = if repo_id.is_some() {
+            "SELECT id, repo_id, task, started_at, completed_at, outcome, summary, cost, tokens_in, tokens_out FROM sessions WHERE repo_id=?1 ORDER BY started_at DESC LIMIT 50"
+        } else {
+            "SELECT id, repo_id, task, started_at, completed_at, outcome, summary, cost, tokens_in, tokens_out FROM sessions ORDER BY started_at DESC LIMIT 50"
+        };
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = if let Some(rid) = repo_id {
+            stmt.query_map(params![rid], row_to_session)?
+        } else {
+            stmt.query_map([], row_to_session)?
+        };
+        rows.collect()
     }
 
     // ── Library Docs & Meta ────────────────────────────────────────────────

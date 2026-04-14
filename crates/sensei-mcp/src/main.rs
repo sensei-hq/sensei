@@ -103,6 +103,18 @@ fn handle_list_tools() -> Value {
                 ("project", "string", "Project name. Defaults to current project."),
             ]),
             tool("list_projects", "List all known projects and their index status.", &[], &[]),
+            tool("create_session", "Start tracking a new coding session. Call at the beginning of a task.", &[
+                ("task", "string", "Description of what you're working on"),
+            ], &[]),
+            tool("update_session", "Update a session with outcome and summary. Call when task is complete or blocked.", &[
+                ("sessionId", "string", "Session ID returned by create_session"),
+                ("outcome", "string", "completed, partial, or blocked"),
+            ], &[
+                ("summary", "string", "What was accomplished"),
+                ("cost", "string", "Cost in USD"),
+                ("tokensIn", "string", "Input tokens used"),
+                ("tokensOut", "string", "Output tokens used"),
+            ]),
             tool("add_library", "Index an external library's documentation. Tries to auto-discover llms.txt from common URLs. Provide url only if auto-discovery fails.", &[
                 ("name", "string", "Library name (e.g. 'bits-ui', 'hono', 'drizzle-orm')"),
             ], &[
