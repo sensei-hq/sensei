@@ -63,15 +63,20 @@ export function connectSSE(port: number) {
         if (!_flushTimer) {
           _flushTimer = setTimeout(() => {
             _flushTimer = null;
-            // Flush all pending to reactive state in one batch
             const next = new Map(_progress);
-            for (const [k, v] of _pendingProgress) next.set(k, v);
+            for (const [k, v] of _pendingProgress) {
+              // Don't overwrite completed/failed with stale progress
+              const existing = next.get(k);
+              if (existing?.type === 'completed' || existing?.type === 'failed') continue;
+              next.set(k, v);
+            }
             _pendingProgress.clear();
             _progress = next;
-          }, 300); // 300ms throttle — ~3 updates per second
+          }, 300);
         }
       } else {
-        // Lifecycle events: update immediately
+        // Lifecycle events: update immediately and clear pending for this repo
+        _pendingProgress.delete(repoId);
         _progress = new Map(_progress).set(repoId, data);
         refreshStatus();
         _onChange?.();
