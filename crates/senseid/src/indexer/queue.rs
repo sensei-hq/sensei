@@ -24,6 +24,8 @@ pub enum JobStatus {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type")]
 pub enum IndexEvent {
+    #[serde(rename = "discovered")]
+    Discovered { repo_id: String, path: String },
     #[serde(rename = "queued")]
     Queued { repo_id: String, position: usize },
     #[serde(rename = "started")]
