@@ -11,13 +11,18 @@ let _port = 7744;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _statusPollTimer: ReturnType<typeof setInterval> | null = null;
 let _onChange: (() => void) | null = null;
+let _progressTick = $state(0); // increments on every SSE event to trigger reactivity
 
 // ── Accessors ────────────────────────────────────────────────────────────────
 
 export function getQueueStatus(): IndexQueueStatus { return _queueStatus; }
 export function getProgressForRepo(repoId: string): IndexProgressEvent | undefined { return _progress.get(repoId); }
+export function getProgressMap(): Map<string, IndexProgressEvent> { return _progress; }
 export function getDirtyFiles(): DirtyStatus[] { return _dirty; }
 export function isConnected(): boolean { return _eventSource?.readyState === EventSource.OPEN; }
+
+/** Reactive tick — changes on every SSE event. Use in $derived to trigger re-renders. */
+export function getProgressTick(): number { return _progressTick; }
 
 /** Register a callback for when indexing state changes (started, completed, failed, queued). */
 export function onIndexChange(cb: () => void) { _onChange = cb; }
@@ -52,6 +57,7 @@ export function connectSSE(port: number) {
       const repoId = data.repo_id;
       if (repoId) {
         _progress = new Map(_progress).set(repoId, data);
+        _progressTick++;
       }
 
       // Refresh queue status and notify listeners on lifecycle events
