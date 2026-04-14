@@ -17,7 +17,7 @@
   let scanning = $state(false);
   let queueStatus = $derived(getQueueStatus());
   let progressMap = $derived(getProgressMap());
-  let indexedCount = $derived(projects.filter(p => p.indexed_at).length);
+  let indexedCount = $derived(projects.filter(p => p.indexed_at || progressMap.get(p.repo_id)?.type === 'completed').length);
   let totalCount = $derived(projects.length);
 
   let solutions = $derived(getSolutions());
@@ -321,7 +321,7 @@
           </span>
         {:else if indexingNow}
           <span class="text-[10px] text-info-z6 shrink-0">queued...</span>
-        {:else if proj?.indexed_at}
+        {:else if progress?.type === 'completed' || proj?.indexed_at}
           <span class="text-[10px] text-success-z5 shrink-0">indexed</span>
         {:else if proj?.last_error}
           <button
