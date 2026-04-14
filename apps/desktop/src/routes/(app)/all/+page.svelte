@@ -154,16 +154,26 @@
     }));
   }
 
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function debouncedLoadProjects() {
+    if (debounceTimer) return; // already scheduled
+    debounceTimer = setTimeout(async () => {
+      debounceTimer = null;
+      await loadProjects();
+    }, 2000);
+  }
+
   onMount(async () => {
     connectSSE(getPort());
     await loadProjects();
     refreshStatus();
 
-    // Refresh project list when SSE reports indexing changes
-    onIndexChange(() => { loadProjects(); });
+    // Refresh project list when SSE reports lifecycle changes (debounced)
+    onIndexChange(debouncedLoadProjects);
   });
 
-  onDestroy(() => { offIndexChange(); });
+  onDestroy(() => { offIndexChange(); if (debounceTimer) clearTimeout(debounceTimer); });
 </script>
 
 <div class="flex h-full flex-col min-h-0">
