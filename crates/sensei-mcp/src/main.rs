@@ -86,9 +86,11 @@ fn handle_list_tools() -> Value {
             tool("get_project_summary", "Get overview of a project — function count, types, libraries used, tech stack.", &[], &[
                 ("project", "string", "Project name. Defaults to current project."),
             ]),
-            tool("get_lib_docs", "Get indexed documentation for a library (from llms.txt, README, etc). Use this instead of web search when docs are available.", &[
+            tool("get_lib_docs", "Get indexed documentation for a library. Without component param returns the index/overview. With component returns that specific component's docs (e.g. 'list', 'select', 'button').", &[
                 ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono')"),
-            ], &[]),
+            ], &[
+                ("component", "string", "Specific component name to get docs for (e.g. 'list', 'select', 'button'). Omit for the library index."),
+            ]),
             tool("search_lib_docs", "Search across all indexed library documentation. Use when looking for how to use a feature.", &[
                 ("query", "string", "What to search for in library docs"),
             ], &[]),
@@ -117,19 +119,21 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         resolve_project_from_cwd(cwd, client)
     };
 
-    // Build daemon call params
+    // Build daemon call params — forward all args + add resolved repoId
     let query = args["query"].as_str()
         .or(args["name"].as_str())
         .or(args["pattern"].as_str())
         .unwrap_or("");
 
-    let daemon_params = json!({
-        "repoId": repo_id,
-        "query": query,
-        "name": args.get("name").unwrap_or(&json!("")),
-        "tag": args.get("pattern").unwrap_or(&json!("")),
-        "q": query,
-    });
+    let mut daemon_params = args.clone();
+    if let Some(obj) = daemon_params.as_object_mut() {
+        obj.insert("repoId".into(), json!(repo_id));
+        obj.insert("query".into(), json!(query));
+        if let Some(pattern) = obj.remove("pattern") {
+            obj.insert("tag".into(), pattern);
+        }
+        obj.insert("q".into(), json!(query));
+    }
 
     // Map tool names
     let daemon_tool = match tool_name {
