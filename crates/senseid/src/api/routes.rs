@@ -80,8 +80,9 @@ pub fn create_router(state: AppState) -> Router {
         // Config (user preferences)
         .route("/api/config", get(get_config).put(set_config_handler))
         .route("/api/config/{key}", get(get_config_key).delete(delete_config_key))
-        // Sessions (stub — real sessions come from TS daemon's activity.db)
-        .route("/api/sessions", get(get_sessions_stub))
+        // Sessions
+        .route("/api/sessions", get(get_sessions_stub).post(create_session))
+        .route("/api/sessions/{id}", put(update_session_handler))
         // Reset (clears all data)
         .route("/api/reset", post(reset_all))
         // Scan
@@ -1149,6 +1150,27 @@ async fn mcp_call_tool(
             let projects = store.list_projects().unwrap_or_default();
             serde_json::json!({"projects": projects})
         }
+        "create_session" => {
+            let repo_id = params["repoId"].as_str().unwrap_or(query);
+            let task = params["task"].as_str().unwrap_or("untitled");
+            let id = uuid::Uuid::new_v4().to_string();
+            let store = state.store.lock().await;
+            store.create_session(&id, repo_id, task).ok();
+            serde_json::json!({"ok": true, "sessionId": id})
+        }
+        "update_session" => {
+            let session_id = params["sessionId"].as_str().unwrap_or("");
+            let store = state.store.lock().await;
+            store.update_session(
+                session_id,
+                params["outcome"].as_str(),
+                params["summary"].as_str(),
+                params["cost"].as_f64(),
+                params["tokensIn"].as_i64(),
+                params["tokensOut"].as_i64(),
+            ).ok();
+            serde_json::json!({"ok": true})
+        }
         "add_library" => {
             let name = params["name"].as_str().unwrap_or("");
             let explicit_url = params["url"].as_str().unwrap_or("");
@@ -1317,13 +1339,50 @@ async fn delete_config_key(
 
 // ── Sessions (stub) ──────────────────────────────────────────────────────────
 
-async fn get_sessions_stub() -> Json<serde_json::Value> {
+async fn get_sessions_stub(
+    State(state): State<AppState>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    let repo_id = q.get("repoId").map(|s| s.as_str());
+    let sessions = store.get_sessions(repo_id).unwrap_or_default();
+    let total = sessions.len();
+    let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
     Json(serde_json::json!({
-        "stats": null,
-        "sessions": [],
+        "stats": { "totalSessions": total, "completed": completed },
+        "sessions": sessions,
         "toolUsage": [],
         "benchmarkPairs": []
     }))
+}
+
+async fn create_session(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let id = body["id"].as_str().unwrap_or(&uuid::Uuid::new_v4().to_string()).to_string();
+    let repo_id = body["repoId"].as_str().unwrap_or("");
+    let task = body["task"].as_str().unwrap_or("untitled");
+    let store = state.store.lock().await;
+    store.create_session(&id, repo_id, task).ok();
+    Json(serde_json::json!({"ok": true, "id": id}))
+}
+
+async fn update_session_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    store.update_session(
+        &id,
+        body["outcome"].as_str(),
+        body["summary"].as_str(),
+        body["cost"].as_f64(),
+        body["tokensIn"].as_i64(),
+        body["tokensOut"].as_i64(),
+    ).ok();
+    Json(serde_json::json!({"ok": true}))
 }
 
 // ── Reset ────────────────────────────────────────────────────────────────────
