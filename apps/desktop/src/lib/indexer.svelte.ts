@@ -11,7 +11,8 @@ let _port = 7744;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _statusPollTimer: ReturnType<typeof setInterval> | null = null;
 let _onChange: (() => void) | null = null;
-let _progressTick = $state(0); // increments on every SSE event to trigger reactivity
+let _pendingProgress = new Map<string, IndexProgressEvent>(); // buffer before flushing to reactive state
+let _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Accessors ────────────────────────────────────────────────────────────────
 
@@ -20,9 +21,6 @@ export function getProgressForRepo(repoId: string): IndexProgressEvent | undefin
 export function getProgressMap(): Map<string, IndexProgressEvent> { return _progress; }
 export function getDirtyFiles(): DirtyStatus[] { return _dirty; }
 export function isConnected(): boolean { return _eventSource?.readyState === EventSource.OPEN; }
-
-/** Reactive tick — changes on every SSE event. Use in $derived to trigger re-renders. */
-export function getProgressTick(): number { return _progressTick; }
 
 /** Register a callback for when indexing state changes (started, completed, failed, queued). */
 export function onIndexChange(cb: () => void) { _onChange = cb; }
@@ -55,13 +53,24 @@ export function connectSSE(port: number) {
     try {
       const data = JSON.parse(event.data) as IndexProgressEvent;
       const repoId = data.repo_id;
-      if (repoId) {
-        _progress = new Map(_progress).set(repoId, data);
-        _progressTick++;
-      }
+      if (!repoId) return;
 
-      // Refresh queue status and notify listeners on lifecycle events
-      if (data.type === 'completed' || data.type === 'failed' || data.type === 'started' || data.type === 'queued') {
+      if (data.type === 'progress') {
+        // Buffer progress events — flush to reactive state periodically
+        _pendingProgress.set(repoId, data);
+        if (!_flushTimer) {
+          _flushTimer = setTimeout(() => {
+            _flushTimer = null;
+            // Flush all pending to reactive state in one batch
+            const next = new Map(_progress);
+            for (const [k, v] of _pendingProgress) next.set(k, v);
+            _pendingProgress.clear();
+            _progress = next;
+          }, 300); // 300ms throttle — ~3 updates per second
+        }
+      } else {
+        // Lifecycle events: update immediately
+        _progress = new Map(_progress).set(repoId, data);
         refreshStatus();
         _onChange?.();
       }
