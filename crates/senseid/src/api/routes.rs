@@ -1126,9 +1126,22 @@ async fn mcp_call_tool(
         }
         "get_lib_docs" => {
             let name = params["name"].as_str().unwrap_or(query);
+            let component = params["component"].as_str().unwrap_or("");
             let store = state.store.lock().await;
-            let docs = store.get_lib_docs(name).unwrap_or_default();
-            serde_json::json!({"docs": docs})
+            if !component.is_empty() {
+                // Return specific component doc
+                let doc = store.get_lib_doc_component(name, component).unwrap_or(None);
+                serde_json::json!({"doc": doc})
+            } else {
+                // Return index doc if it exists, otherwise all docs (summaries only)
+                let index = store.get_lib_doc_component(name, "index").unwrap_or(None);
+                if let Some(idx) = index {
+                    serde_json::json!({"index": idx})
+                } else {
+                    let docs = store.get_lib_docs(name).unwrap_or_default();
+                    serde_json::json!({"docs": docs})
+                }
+            }
         }
         "list_projects" => {
             let store = state.store.lock().await;
