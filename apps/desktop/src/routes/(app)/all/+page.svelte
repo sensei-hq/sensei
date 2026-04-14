@@ -6,7 +6,7 @@
     removeRepoFromSolution, inferRepoRole,
   } from '$lib/solutions.svelte.js';
   import { senseiApi } from '$lib/api.js';
-  import { connectSSE, getQueueStatus, getProgressForRepo, isIndexing, startIndex, refreshStatus, onIndexChange, offIndexChange } from '$lib/indexer.svelte.js';
+  import { connectSSE, getQueueStatus, getProgressMap, isIndexing, startIndex, refreshStatus, onIndexChange, offIndexChange } from '$lib/indexer.svelte.js';
   import { onDestroy } from 'svelte';
   import type { ScannedRepo, Solution, SolutionRepo, ServerProject, IndexQueueStatus } from '$lib/types.js';
 
@@ -16,6 +16,7 @@
   let scanRoot = $state('');
   let scanning = $state(false);
   let queueStatus = $derived(getQueueStatus());
+  let progressMap = $derived(getProgressMap());
   let indexedCount = $derived(projects.filter(p => p.indexed_at).length);
   let totalCount = $derived(projects.length);
 
@@ -288,7 +289,7 @@
       {@const proj = projects.find(p => p.path === repo.path)}
       {@const repoId = proj?.repo_id ?? repo.repoId ?? repo.name}
       {@const indexingNow = isIndexing(repoId)}
-      {@const progress = getProgressForRepo(repoId)}
+      {@const progress = progressMap.get(repoId)}
       <div class="flex items-center gap-3 rounded-lg bg-surface-z2/50 px-3 py-2 hover:bg-surface-z2 transition-colors">
         <input
           type="checkbox"
