@@ -103,6 +103,12 @@ fn handle_list_tools() -> Value {
                 ("project", "string", "Project name. Defaults to current project."),
             ]),
             tool("list_projects", "List all known projects and their index status.", &[], &[]),
+            tool("add_library", "Index an external library's documentation from a URL (llms.txt, README, docs page). Use when a library isn't indexed yet.", &[
+                ("name", "string", "Library name (e.g. 'bits-ui', 'hono', 'drizzle-orm')"),
+                ("url", "string", "URL to the library's llms.txt or documentation page"),
+            ], &[
+                ("version", "string", "Library version"),
+            ]),
         ]
     })
 }
