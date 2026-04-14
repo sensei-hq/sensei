@@ -154,14 +154,12 @@
     }));
   }
 
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadingProjects = false;
 
-  function debouncedLoadProjects() {
-    if (debounceTimer) return; // already scheduled
-    debounceTimer = setTimeout(async () => {
-      debounceTimer = null;
-      await loadProjects();
-    }, 2000);
+  async function refreshProjects() {
+    if (loadingProjects) return; // skip if already fetching
+    loadingProjects = true;
+    try { await loadProjects(); } finally { loadingProjects = false; }
   }
 
   onMount(async () => {
@@ -169,11 +167,11 @@
     await loadProjects();
     refreshStatus();
 
-    // Refresh project list when SSE reports lifecycle changes (debounced)
-    onIndexChange(debouncedLoadProjects);
+    // SSE lifecycle events trigger project list refresh (guarded against concurrent fetches)
+    onIndexChange(refreshProjects);
   });
 
-  onDestroy(() => { offIndexChange(); if (debounceTimer) clearTimeout(debounceTimer); });
+  onDestroy(() => { offIndexChange(); });
 </script>
 
 <div class="flex h-full flex-col min-h-0">
