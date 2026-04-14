@@ -27,11 +27,13 @@ export function onIndexChange(cb: () => void) { _onChange = cb; }
 export function offIndexChange() { _onChange = null; }
 
 export function isIndexing(repoId: string): boolean {
+  // If SSE says completed/failed, it's done — regardless of stale queue status
+  const p = _progress.get(repoId);
+  if (p?.type === 'completed' || p?.type === 'failed') return false;
   // Check queue status
   if (_queueStatus.current?.repo_id === repoId) return true;
   if (_queueStatus.queued.some(j => j.repo_id === repoId)) return true;
   // Check SSE progress
-  const p = _progress.get(repoId);
   return p?.type === 'progress' || p?.type === 'started' || p?.type === 'queued';
 }
 
