@@ -165,9 +165,23 @@ struct ParsedDoc {
     component: Option<String>,
 }
 
+/// Fetch a URL. Public so MCP handler can use it.
+pub async fn fetch_lib_url_with_timeout(url: &str, timeout_secs: u64) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client.get(url).send().await.map_err(|e| format!("Fetch failed: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.text().await.map_err(|e| format!("Read body: {}", e))
+}
+
 async fn fetch_url(url: &str) -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
