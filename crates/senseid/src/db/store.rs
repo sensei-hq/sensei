@@ -417,6 +417,23 @@ impl Store {
         Ok(())
     }
 
+    pub fn get_lib_doc_component(&self, lib_name: &str, component: &str) -> rusqlite::Result<Option<crate::indexer::lib_indexer::LibDoc>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, url, summary, content, source_type, component, indexed_at FROM lib_docs WHERE lib_name = ?1 AND component = ?2"
+        )?;
+        let mut rows = stmt.query_map(params![lib_name, component], |row| {
+            Ok(crate::indexer::lib_indexer::LibDoc {
+                id: row.get(0)?, title: row.get(1)?, url: row.get(2)?, summary: row.get(3)?,
+                content: row.get::<_, Option<String>>(4)?, source_type: row.get(5)?,
+                component: row.get(6)?, indexed_at: row.get(7)?,
+            })
+        })?;
+        match rows.next() {
+            Some(Ok(doc)) => Ok(Some(doc)),
+            _ => Ok(None),
+        }
+    }
+
     pub fn get_lib_docs(&self, lib_name: &str) -> rusqlite::Result<Vec<crate::indexer::lib_indexer::LibDoc>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, url, summary, content, source_type, component, indexed_at FROM lib_docs WHERE lib_name = ?1"
