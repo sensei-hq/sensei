@@ -1148,6 +1148,31 @@ async fn mcp_call_tool(
             let projects = store.list_projects().unwrap_or_default();
             serde_json::json!({"projects": projects})
         }
+        "add_library" => {
+            let name = params["name"].as_str().unwrap_or("");
+            let url = params["url"].as_str().unwrap_or("");
+            let version = params["version"].as_str();
+            if name.is_empty() || url.is_empty() {
+                serde_json::json!({"error": "name and url required"})
+            } else {
+                // Fetch content
+                match crate::indexer::lib_indexer::fetch_lib_url(url).await {
+                    Ok(content) => {
+                        let store = state.store.lock().await;
+                        match crate::indexer::lib_indexer::index_lib_content(&store, name, url, &content, version) {
+                            Ok(result) => serde_json::json!({
+                                "ok": true,
+                                "libName": result.lib_name,
+                                "docsIndexed": result.docs_indexed,
+                                "sourceType": result.source_type,
+                            }),
+                            Err(e) => serde_json::json!({"error": e}),
+                        }
+                    }
+                    Err(e) => serde_json::json!({"error": format!("Failed to fetch: {}", e)}),
+                }
+            }
+        }
         "query" => {
             // Reuse unified query logic — delegate to POST /api/query handler
             serde_json::json!({"hint": "Use POST /api/query directly"})
