@@ -418,8 +418,9 @@ impl Store {
     }
 
     pub fn get_lib_doc_component(&self, lib_name: &str, component: &str) -> rusqlite::Result<Option<crate::indexer::lib_indexer::LibDoc>> {
+        // Try exact match first, then suffix match (e.g. "list" matches "components-list")
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, url, summary, content, source_type, component, indexed_at FROM lib_docs WHERE lib_name = ?1 AND component = ?2"
+            "SELECT id, title, url, summary, content, source_type, component, indexed_at FROM lib_docs WHERE lib_name = ?1 AND (component = ?2 OR component LIKE '%' || ?2) ORDER BY length(component) ASC LIMIT 1"
         )?;
         let mut rows = stmt.query_map(params![lib_name, component], |row| {
             Ok(crate::indexer::lib_indexer::LibDoc {
