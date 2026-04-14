@@ -610,8 +610,8 @@ mod tests {
             client: Some("Acme Corp".into()),
             category: "active".into(),
             repos: vec![
-                SolutionRepo { repo_id: "api".into(), role: "backend".into(), label: Some("API".into()) },
-                SolutionRepo { repo_id: "ui".into(), role: "frontend".into(), label: None },
+                SolutionRepo { path: None, repo_id: "api".into(), role: "backend".into(), label: Some("API".into()) },
+                SolutionRepo { path: None, repo_id: "ui".into(), role: "frontend".into(), label: None },
             ],
             tags: vec![],
             created_at: None,
@@ -638,7 +638,7 @@ mod tests {
         };
         s.create_solution(&sol).unwrap();
         s.add_repo_to_solution("sol-1", &SolutionRepo {
-            repo_id: "api".into(), role: "backend".into(), label: None,
+            repo_id: "api".into(), role: "backend".into(), label: None, path: None,
         }).unwrap();
         let solutions = s.list_solutions().unwrap();
         assert_eq!(solutions[0].repos.len(), 1);
@@ -668,7 +668,7 @@ mod tests {
         let sol = Solution {
             id: "sol-1".into(), name: "Test".into(), description: None,
             client: None, category: "active".into(),
-            repos: vec![SolutionRepo { repo_id: "api".into(), role: "backend".into(), label: None }],
+            repos: vec![SolutionRepo { path: None, repo_id: "api".into(), role: "backend".into(), label: None }],
             tags: vec![], created_at: None, updated_at: None,
         };
         s.create_solution(&sol).unwrap();
