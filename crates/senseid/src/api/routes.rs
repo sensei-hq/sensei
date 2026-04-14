@@ -1133,8 +1133,9 @@ async fn mcp_call_tool(
                 let doc = store.get_lib_doc_component(name, component).unwrap_or(None);
                 serde_json::json!({"doc": doc})
             } else {
-                // Return index doc if it exists, otherwise all docs (summaries only)
-                let index = store.get_lib_doc_component(name, "index").unwrap_or(None);
+                // Return index doc if it exists (try "index" then "README"), otherwise all docs
+                let index = store.get_lib_doc_component(name, "index").unwrap_or(None)
+                    .or_else(|| store.get_lib_doc_component(name, "README").unwrap_or(None));
                 if let Some(idx) = index {
                     serde_json::json!({"index": idx})
                 } else {
