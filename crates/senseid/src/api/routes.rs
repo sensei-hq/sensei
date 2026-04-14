@@ -1124,6 +1124,17 @@ async fn mcp_call_tool(
             let docs = store.search_lib_docs(query).unwrap_or_default();
             serde_json::json!({"docs": docs})
         }
+        "get_lib_docs" => {
+            let name = params["name"].as_str().unwrap_or(query);
+            let store = state.store.lock().await;
+            let docs = store.get_lib_docs(name).unwrap_or_default();
+            serde_json::json!({"docs": docs})
+        }
+        "list_projects" => {
+            let store = state.store.lock().await;
+            let projects = store.list_projects().unwrap_or_default();
+            serde_json::json!({"projects": projects})
+        }
         "query" => {
             // Reuse unified query logic — delegate to POST /api/query handler
             serde_json::json!({"hint": "Use POST /api/query directly"})

@@ -18,6 +18,7 @@ struct Cli {
     /// Port to listen on
     #[arg(long, default_value = "7744")]
     port: u16,
+
 }
 
 #[derive(Subcommand)]
