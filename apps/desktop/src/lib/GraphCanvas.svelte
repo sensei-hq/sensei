@@ -96,7 +96,7 @@
       const childIds = childMap.get(id) ?? [];
       const children: any[] = [];
       for (const cid of childIds) { const c = build(cid, depth + 1); if (c) children.push(c); }
-      children.sort((a: any, b: any) => a.text.localeCompare(b.text));
+      children.sort((a: any, b: any) => (a.label ?? '').localeCompare(b.label ?? ''));
       const cnt = countDesc(id);
       return { value: id, label: node.name, icon: KIND_ICONS[node.kind] ?? '', badge: cnt > 0 ? String(cnt) : '', children, expanded: depth < 2 };
     }
