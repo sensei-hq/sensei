@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-
-# Derive project slug from project root path
+DAEMON_URL="http://127.0.0.1:7744"
 PROJECT_ROOT="${CLAUDE_PROJECT_ROOT:-${PWD}}"
-# Replace / with - to match ~/.claude/projects/ slug format
-SLUG="${PROJECT_ROOT//\//-}"
-CONFIG_FILE="${HOME}/.claude/projects/${SLUG}/sensei.config.json"
+PROJECT_NAME="$(basename "$PROJECT_ROOT")"
 
 escape_for_json() {
   local s="$1"
@@ -19,8 +15,17 @@ escape_for_json() {
   printf '%s' "$s"
 }
 
+# ── Create session on daemon ─────────────────────────────────────────────────
+# Fire-and-forget — don't block session start if daemon is down
+SESSION_ID=$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || echo "")
+if [ -n "$SESSION_ID" ]; then
+  curl -s -X POST "${DAEMON_URL}/api/sessions" \
+    -H "Content-Type: application/json" \
+    -d "{\"id\":\"${SESSION_ID}\",\"repoId\":\"${PROJECT_NAME}\",\"task\":\"session\"}" \
+    --connect-timeout 2 --max-time 3 >/dev/null 2>&1 &
+fi
+
 # ── Always-on rules ──────────────────────────────────────────────────────────
-# These inject into every session regardless of project config.
 
 CONTEXT="<package-manager-rule>
 Before running any shell command in a JavaScript or TypeScript project, determine the package manager by reading the root package.json:
@@ -34,34 +39,15 @@ Rules (no exceptions):
 2. Always run root scripts: <pm> run <script>
 3. For workspace targeting: <pm> run <script> --filter=<package-name>
 4. Inner package scripts are a fallback only — use when no root script exists
+</package-manager-rule>
 
-Common mistakes to avoid:
-- bunx vitest        → bun run test
-- bunx tsc           → bun run typecheck  (or check root package.json first)
-- npx eslint .       → bun run lint
-- cd packages/foo && bun run test  → bun run test  (root runs all)
-</package-manager-rule>"
-
-# ── Opt-in skills (project-specific) ────────────────────────────────────────
-
-if [ -f "$CONFIG_FILE" ]; then
-  SKILLS_JSON=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{"skills":[]}')
-  SKILLS=$(echo "$SKILLS_JSON" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-skills = d.get('skills', [])
-print(', '.join(skills))
-" 2>/dev/null || echo "")
-
-  if [ -n "$SKILLS" ]; then
-    CONTEXT="${CONTEXT}
-
-<sensei-opt-in-skills>
-The following opt-in skills are active for this project: ${SKILLS}
-Use the Skill tool to invoke them when their trigger conditions are met.
-</sensei-opt-in-skills>"
-  fi
-fi
+<sensei-session>
+Session ID: ${SESSION_ID}
+Project: ${PROJECT_NAME}
+Path: ${PROJECT_ROOT}
+Use sensei MCP tools (search, get_lib_docs, get_callers, etc.) for code intelligence.
+Call update_session with this session ID when the task is complete.
+</sensei-session>"
 
 ESCAPED=$(escape_for_json "$CONTEXT")
 
