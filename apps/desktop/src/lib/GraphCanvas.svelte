@@ -79,23 +79,42 @@
   // L1 options: code-group and doc-group nodes
   let l1Options = $derived(nodes.filter(n => n.kind === 'code-group' || n.kind === 'doc-group'));
 
+  // Is L1 the docs group?
+  let isDocsGroup = $derived(nodes.find(n => n.id === filterL1)?.kind === 'doc-group');
+
   // L2 options: depends on L1 selection
-  let l2Options = $derived.by(() => {
-    if (filterL1 === 'all') return nodes.filter(n => n.kind === 'package' || n.kind === 'module');
-    const l1Node = nodes.find(n => n.id === filterL1);
-    if (!l1Node) return [];
+  // For code-group: show packages
+  // For doc-group: show unique doc_type categories as virtual options
+  let l2Options = $derived.by((): Array<{ id: string; name: string; kind: string }> => {
+    if (filterL1 === 'all') return nodes.filter(n => n.kind === 'package');
+    if (isDocsGroup) {
+      // Collect unique doc_type values from doc/extension nodes
+      const docTypes = new Set<string>();
+      for (const n of nodes) {
+        if ((n.kind === 'doc' || n.kind === 'extension') && n.doc_type) {
+          docTypes.add(n.doc_type);
+        }
+      }
+      return [...docTypes].sort().map(dt => ({
+        id: `doctype:${dt}`,
+        name: dt.charAt(0).toUpperCase() + dt.slice(1),
+        kind: 'doc-category',
+      }));
+    }
+    // Code group: show packages
     const children = containsMap.get(filterL1);
     if (!children) return [];
-    return nodes.filter(n => children.has(n.id));
+    return nodes.filter(n => children.has(n.id) && n.kind === 'package');
   });
 
   // L3 options: depends on L2 selection
-  let l3Options = $derived.by(() => {
-    if (filterL2 === 'all') return [] as typeof nodes;
+  // For code: modules under the selected package
+  // For docs: not applicable (doc categories are leaf-level filters)
+  let l3Options = $derived.by((): typeof nodes => {
+    if (filterL2 === 'all' || filterL2.startsWith('doctype:')) return [];
     const children = containsMap.get(filterL2);
-    if (!children) return [] as typeof nodes;
-    // Only show sub-containers (modules under packages)
-    return nodes.filter(n => children.has(n.id) && (n.kind === 'module'));
+    if (!children) return [];
+    return nodes.filter(n => children.has(n.id) && n.kind === 'module');
   });
 
   // Reset cascading filters when parent changes
@@ -106,13 +125,22 @@
 
   // Filtered nodes
   let filteredNodes = $derived.by(() => {
-    // Find the deepest active filter and collect its descendants
+    // Find the deepest active filter
     let rootId: string | null = null;
     if (filterL3 !== 'all') rootId = filterL3;
     else if (filterL2 !== 'all') rootId = filterL2;
     else if (filterL1 !== 'all') rootId = filterL1;
 
     if (!rootId) return nodes;
+
+    // Special case: doc_type virtual filter (e.g. "doctype:design")
+    if (rootId.startsWith('doctype:')) {
+      const dt = rootId.slice(8); // strip "doctype:"
+      return nodes.filter(n =>
+        (n.kind === 'doc' || n.kind === 'extension') && n.doc_type === dt
+      );
+    }
+
     const ids = collectDescendants(rootId);
     return nodes.filter(n => ids.has(n.id));
   });
@@ -395,7 +423,7 @@
     {/if}
     {#if l2Options.length > 0}
       <select bind:value={filterL2} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
-        <option value="all">{filterL1 !== 'all' ? 'All in group' : 'All packages'}</option>
+        <option value="all">{isDocsGroup ? 'All categories' : filterL1 !== 'all' ? 'All packages' : 'All'}</option>
         {#each l2Options as o}
           <option value={o.id}>{o.name}</option>
         {/each}
