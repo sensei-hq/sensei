@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::fs;
 
-const MARKETPLACE_REPO: &str = "https://raw.githubusercontent.com/jerrythomas/sensei-marketplace/main";
+const MARKETPLACE_REPO: &str = "https://raw.githubusercontent.com/mizukisu/sensei-marketplace/main";
 const MARKETPLACE_CATALOG: &str = "catalog.json";
 
 #[derive(Parser)]
