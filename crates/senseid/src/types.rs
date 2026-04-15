@@ -398,6 +398,12 @@ pub struct GraphNode {
     pub line: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub complexity: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
