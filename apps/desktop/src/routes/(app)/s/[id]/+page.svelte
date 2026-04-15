@@ -237,7 +237,7 @@
           <h3 class="text-xs font-semibold text-surface-z6 uppercase tracking-wide">Code Graph</h3>
           <a href="/s/{solution.id}/arch" class="text-xs text-primary-z6 hover:text-primary-z7">Full view →</a>
         </div>
-        <div class="h-[360px] rounded-lg border border-surface-z0/30 overflow-hidden">
+        <div class="h-[calc(100vh-20rem)] min-h-72 rounded-lg border border-surface-z0/30 overflow-hidden">
           <GraphCanvas nodes={graphNodes} edges={graphEdges} />
         </div>
         <p class="text-[10px] text-surface-z4 mt-1">{graphNodes.length} nodes · {graphEdges.length} edges</p>
