@@ -47,12 +47,13 @@
   let currentSimEdges: GraphEdge[] = [];
   let zoomBehavior: d3Zoom.ZoomBehavior<HTMLCanvasElement, unknown> | null = null;
 
-  // ── Level-based cascading filters ───────────────────────────────────
-  let filterL1 = $state<string>('all'); // code-group | doc-group
-  let filterL2 = $state<string>('all'); // package (code) | doc_type (docs)
-  let filterL3 = $state<string>('all'); // module (code) | kind (leaf)
+  // ── Hierarchy-driven cascading filters ──────────────────────────────
+  // L1: Repo    L2: Code/Docs    L3: Package or DocCategory
+  let filterL1 = $state<string>('all');
+  let filterL2 = $state<string>('all');
+  let filterL3 = $state<string>('all');
 
-  // Build containment maps from edges
+  // Build parent→children map from containment edges
   let containsMap = $derived.by(() => {
     const map = new Map<string, Set<string>>();
     for (const e of edges) {
@@ -80,19 +81,37 @@
     return ids;
   }
 
-  // L1 options: code-group and doc-group nodes
-  let l1Options = $derived(nodes.filter(n => n.kind === 'code-group' || n.kind === 'doc-group'));
+  // L1: repos (or solution if present)
+  let l1Options = $derived(nodes.filter(n => n.kind === 'repo' || n.kind === 'solution'));
 
-  // Is L1 the docs group?
-  let isDocsGroup = $derived(nodes.find(n => n.id === filterL1)?.kind === 'doc-group');
+  // L2: children of selected L1 (code-group, doc-group)
+  let l2Options = $derived.by((): typeof nodes => {
+    if (filterL1 === 'all') {
+      // Show all code-group and doc-group nodes
+      return nodes.filter(n => n.kind === 'code-group' || n.kind === 'doc-group');
+    }
+    const children = containsMap.get(filterL1);
+    if (!children) return [];
+    // For repo: children are code-group and doc-group
+    // For solution: children are repos — show those
+    const l1Node = nodes.find(n => n.id === filterL1);
+    if (l1Node?.kind === 'solution') {
+      return nodes.filter(n => children.has(n.id) && n.kind === 'repo');
+    }
+    return nodes.filter(n => children.has(n.id));
+  });
 
-  // L2 options: depends on L1 selection
-  // For code-group: show packages
-  // For doc-group: show unique doc_type categories as virtual options
-  let l2Options = $derived.by((): Array<{ id: string; name: string; kind: string }> => {
-    if (filterL1 === 'all') return nodes.filter(n => n.kind === 'package');
-    if (isDocsGroup) {
-      // Collect unique doc_type values from doc/extension nodes
+  // Is L2 a docs group?
+  let l2IsDocsGroup = $derived(nodes.find(n => n.id === filterL2)?.kind === 'doc-group');
+
+  // L3: children of selected L2
+  // For code-group → packages
+  // For doc-group → doc_type categories (virtual)
+  // For repo (when L1 is solution) → code-group/doc-group
+  let l3Options = $derived.by((): Array<{ id: string; name: string; kind: string }> => {
+    if (filterL2 === 'all') return [];
+    if (l2IsDocsGroup) {
+      // Doc categories from doc_type field
       const docTypes = new Set<string>();
       for (const n of nodes) {
         if ((n.kind === 'doc' || n.kind === 'extension') && n.doc_type) {
@@ -105,21 +124,21 @@
         kind: 'doc-category',
       }));
     }
-    // Code group: show packages
-    const children = containsMap.get(filterL1);
-    if (!children) return [];
-    return nodes.filter(n => children.has(n.id) && n.kind === 'package');
-  });
-
-  // L3 options: depends on L2 selection
-  // For code: modules under the selected package
-  // For docs: not applicable (doc categories are leaf-level filters)
-  let l3Options = $derived.by((): typeof nodes => {
-    if (filterL2 === 'all' || filterL2.startsWith('doctype:')) return [];
+    // Code-group → packages, or repo → code/docs groups
     const children = containsMap.get(filterL2);
     if (!children) return [];
-    return nodes.filter(n => children.has(n.id) && n.kind === 'module');
+    return nodes.filter(n => children.has(n.id));
   });
+
+  let l2Label = $derived(
+    l1Options.some(n => n.kind === 'solution') ? 'All repos'
+    : filterL1 !== 'all' ? 'All' : 'Code / Docs'
+  );
+
+  let l3Label = $derived(
+    l2IsDocsGroup ? 'All categories'
+    : filterL2 !== 'all' ? 'All packages' : 'All'
+  );
 
   function setL1(val: string) { filterL1 = val; filterL2 = 'all'; filterL3 = 'all'; }
   function setL2(val: string) { filterL2 = val; filterL3 = 'all'; }
@@ -128,7 +147,6 @@
 
   // Filtered nodes
   let filteredNodes = $derived.by(() => {
-    // Find the deepest active filter
     let rootId: string | null = null;
     if (filterL3 !== 'all') rootId = filterL3;
     else if (filterL2 !== 'all') rootId = filterL2;
@@ -136,16 +154,13 @@
 
     if (!rootId) return nodes;
 
-    // Special case: doc_type virtual filter (e.g. "doctype:design")
+    // Virtual doc_type filter
     if (rootId.startsWith('doctype:')) {
-      const dt = rootId.slice(8); // strip "doctype:"
-      return nodes.filter(n =>
-        (n.kind === 'doc' || n.kind === 'extension') && n.doc_type === dt
-      );
+      const dt = rootId.slice(8);
+      return nodes.filter(n => (n.kind === 'doc' || n.kind === 'extension') && n.doc_type === dt);
     }
 
-    const ids = collectDescendants(rootId);
-    return nodes.filter(n => ids.has(n.id));
+    return nodes.filter(n => collectDescendants(rootId!).has(n.id));
   });
 
   let filteredEdges = $derived.by(() => {
@@ -420,21 +435,21 @@
       <select value={filterL1} onchange={(e) => setL1((e.target as HTMLSelectElement).value)} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
         <option value="all">All</option>
         {#each l1Options as o}
-          <option value={o.id}>{o.name === 'code' ? 'Code' : o.name === 'docs' ? 'Docs' : o.name}</option>
+          <option value={o.id}>{o.name}</option>
         {/each}
       </select>
     {/if}
     {#if l2Options.length > 0}
       <select value={filterL2} onchange={(e) => setL2((e.target as HTMLSelectElement).value)} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
-        <option value="all">{isDocsGroup ? 'All categories' : filterL1 !== 'all' ? 'All packages' : 'All'}</option>
+        <option value="all">{l2Label}</option>
         {#each l2Options as o}
-          <option value={o.id}>{o.name}</option>
+          <option value={o.id}>{o.kind === 'code-group' ? 'Code' : o.kind === 'doc-group' ? 'Docs' : o.name}</option>
         {/each}
       </select>
     {/if}
     {#if l3Options.length > 0}
       <select value={filterL3} onchange={(e) => filterL3 = (e.target as HTMLSelectElement).value} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
-        <option value="all">All modules</option>
+        <option value="all">{l3Label}</option>
         {#each l3Options as o}
           <option value={o.id}>{o.name}</option>
         {/each}
