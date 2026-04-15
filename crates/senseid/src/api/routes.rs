@@ -466,15 +466,20 @@ async fn solution_graph(
             "source": &soln_node_id, "target": &repo_node_id, "type": "CONTAINS_REPO",
         }));
 
-        // For subtree repos, link to modules/docs that match their directory path
+        // For subtree repos, link to nodes whose file path is under the subtree directory
         if sr.role == "subtree" {
-            if let Some(ref subtree_path) = sr.path {
-                let subtree_dir = subtree_path.rsplit('/').next().unwrap_or(subtree_path);
+            // Subtree dir name from label or repo_id suffix
+            let subtree_dir = sr.label.as_deref()
+                .or_else(|| sr.repo_id.split(':').last())
+                .unwrap_or("");
+            if !subtree_dir.is_empty() {
+                let dir_pattern = format!("/{}/", subtree_dir);
                 for node in &all_nodes {
                     if let (Some(id), Some(kind)) = (node.get("id").and_then(|v| v.as_str()), node.get("kind").and_then(|v| v.as_str())) {
-                        if (kind == "module" || kind == "doc" || kind == "extension") {
+                        if kind == "module" || kind == "doc" || kind == "extension" || kind == "file" {
+                            let file = node.get("file").and_then(|v| v.as_str()).unwrap_or("");
                             let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            if name.starts_with(subtree_dir) || name.contains(&format!("/{}/", subtree_dir)) {
+                            if file.contains(&dir_pattern) || name.starts_with(subtree_dir) {
                                 all_edges.push(serde_json::json!({
                                     "source": &repo_node_id, "target": id, "type": "CONTAINS_MOD",
                                 }));
