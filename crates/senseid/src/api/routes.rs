@@ -451,10 +451,15 @@ async fn solution_graph(
         // Only add if not already present from graph data
         if !all_nodes.iter().any(|n| n.get("id").and_then(|v| v.as_str()) == Some(&repo_node_id)) {
             let label = sr.label.as_deref().unwrap_or(&sr.repo_id);
+            // Look up remote_url from the project store
+            let project = store.get_project(&sr.repo_id).ok().flatten();
+            let remote_url = project.as_ref().and_then(|p| p.remote_url.as_deref());
+            let local_path = sr.path.as_deref()
+                .or(project.as_ref().map(|p| p.path.as_str()));
             all_nodes.push(serde_json::json!({
                 "id": &repo_node_id, "name": label, "kind": "repo",
-                "file": sr.path.as_deref().unwrap_or(""), "line": 0, "complexity": null,
-                "role": sr.role,
+                "file": local_path.unwrap_or(""), "line": 0, "complexity": null,
+                "role": sr.role, "remoteUrl": remote_url,
             }));
         }
         all_edges.push(serde_json::json!({
