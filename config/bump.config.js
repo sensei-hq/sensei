@@ -13,6 +13,9 @@ export default defineConfig({
 		// Homebrew (subtree at homebrew/)
 		'homebrew/Formula/sensei.rb',
 		'homebrew/Casks/sensei-app.rb',
+		// Marketplace (subtree at marketplace/)
+		'marketplace/package.json',
+		'marketplace/catalog.json',
 	],
 	recursive: true,
 })
