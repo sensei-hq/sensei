@@ -95,6 +95,8 @@ pub fn index_repo_with_progress(
     let started_at = chrono::Utc::now().to_rfc3339();
 
     // Pass 0: Detect and create Package nodes (workspace members)
+    // Clear stale hierarchy first — packages/modules are recreated each run
+    graph_db.clear_hierarchy(repo_id).ok();
     let workspace_members = crate::config::detector::detect_workspace_members(repo);
     let _file_to_package: HashMap<String, String> = HashMap::new(); // reserved for future file→package mapping
     for pkg in &workspace_members {
@@ -366,6 +368,25 @@ pub fn index_repo_with_progress(
                     edges_created += 1;
                 }
             }
+        }
+    }
+
+    // Prune stale files: delete graph nodes for files in manifest but no longer on disk
+    {
+        let current_files: std::collections::HashSet<String> = files.iter()
+            .map(|f| f.to_string_lossy().to_string())
+            .collect();
+        let stale: Vec<String> = manifest.tracked_paths()
+            .into_iter()
+            .filter(|p| !current_files.contains(*p))
+            .map(|s| s.to_string())
+            .collect();
+        for stale_path in &stale {
+            graph_db.delete_file(stale_path, repo_id).ok();
+            manifest.remove(stale_path);
+        }
+        if !stale.is_empty() {
+            tracing::info!("Pruned {} deleted files from graph", stale.len());
         }
     }
 

@@ -154,6 +154,27 @@ impl GraphDb {
         Ok(())
     }
 
+    /// Delete all packages and modules for a project (for clean re-creation).
+    pub fn clear_hierarchy(&self, project: &str) -> Result<(), String> {
+        // Delete edges from/to packages and modules
+        self.conn.execute(
+            "DELETE FROM edges WHERE from_id IN (SELECT id FROM packages WHERE project = ?1) OR to_id IN (SELECT id FROM packages WHERE project = ?1)",
+            params![project],
+        ).ok();
+        self.conn.execute(
+            "DELETE FROM edges WHERE from_id IN (SELECT id FROM modules WHERE project = ?1) OR to_id IN (SELECT id FROM modules WHERE project = ?1)",
+            params![project],
+        ).ok();
+        // Also delete HAS_METHOD edges (type→function) for this project
+        self.conn.execute(
+            "DELETE FROM edges WHERE edge_type = 'HAS_METHOD' AND from_id IN (SELECT id FROM types WHERE project = ?1)",
+            params![project],
+        ).ok();
+        self.conn.execute("DELETE FROM packages WHERE project = ?1", params![project]).ok();
+        self.conn.execute("DELETE FROM modules WHERE project = ?1", params![project]).ok();
+        Ok(())
+    }
+
     pub fn merge_package(
         &self, id: &str, name: &str, version: Option<&str>,
         path: &str, pkg_type: &str, project: &str,
