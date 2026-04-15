@@ -16,7 +16,6 @@ escape_for_json() {
 }
 
 # ── Create session on daemon ─────────────────────────────────────────────────
-# Fire-and-forget — don't block session start if daemon is down
 SESSION_ID=$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || echo "")
 if [ -n "$SESSION_ID" ]; then
   curl -s -X POST "${DAEMON_URL}/api/sessions" \
@@ -25,9 +24,41 @@ if [ -n "$SESSION_ID" ]; then
     --connect-timeout 2 --max-time 3 >/dev/null 2>&1 &
 fi
 
-# ── Always-on rules ──────────────────────────────────────────────────────────
+# ── Context injection ────────────────────────────────────────────────────────
 
-CONTEXT="<package-manager-rule>
+CONTEXT="<sensei-session>
+Session ID: ${SESSION_ID}
+Project: ${PROJECT_NAME}
+Path: ${PROJECT_ROOT}
+
+## Sensei MCP Tools Available
+
+Use these tools instead of web searches when possible:
+
+**Code Intelligence:**
+- \`search(query, project?)\` — Find functions and types. Defaults to current project. Use \`project=\"rokkit\"\` to search other repos.
+- \`get_callers(name)\` — Who calls this function?
+- \`get_callees(name)\` — What does this function call?
+- \`get_patterns(pattern)\` — Find files by pattern: hook, middleware, route, component
+- \`get_communities()\` — Code architecture clusters
+- \`get_project_summary()\` — Stats, libs, stack for current project
+
+**Library Documentation:**
+- \`get_lib_docs(name)\` — Get library index/overview (e.g. rokkit, dbd, kavach, bits-ui)
+- \`get_lib_docs(name, component)\` — Get specific component docs (e.g. name=\"rokkit\", component=\"list\")
+- \`search_lib_docs(query)\` — Search across all indexed library docs
+- \`add_library(name)\` — Index a new library's docs (auto-discovers llms.txt from common URLs)
+
+**Session Tracking:**
+- \`update_session(sessionId=\"${SESSION_ID}\", outcome=\"completed\", summary=\"...\")\` — Call when task is done
+
+## Guidelines
+- Check indexed lib docs before searching the web
+- Use \`add_library\` to index docs for any library not yet available
+- Call \`update_session\` with outcome when you finish the task
+</sensei-session>
+
+<package-manager-rule>
 Before running any shell command in a JavaScript or TypeScript project, determine the package manager by reading the root package.json:
 - \"packageManager\": \"bun@...\"  → use bun
 - \"packageManager\": \"pnpm@...\" → use pnpm
@@ -39,15 +70,7 @@ Rules (no exceptions):
 2. Always run root scripts: <pm> run <script>
 3. For workspace targeting: <pm> run <script> --filter=<package-name>
 4. Inner package scripts are a fallback only — use when no root script exists
-</package-manager-rule>
-
-<sensei-session>
-Session ID: ${SESSION_ID}
-Project: ${PROJECT_NAME}
-Path: ${PROJECT_ROOT}
-Use sensei MCP tools (search, get_lib_docs, get_callers, etc.) for code intelligence.
-Call update_session with this session ID when the task is complete.
-</sensei-session>"
+</package-manager-rule>"
 
 ESCAPED=$(escape_for_json "$CONTEXT")
 
