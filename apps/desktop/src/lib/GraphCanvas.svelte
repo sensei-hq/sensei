@@ -81,20 +81,10 @@
     return ids;
   }
 
-  // L1: top-level roots — nodes with no parent in containment edges
-  let l1Options = $derived.by(() => {
-    const hasParent = new Set<string>();
-    for (const e of edges) {
-      const t = typeof e.type === 'string' ? e.type : '';
-      if (t.startsWith('CONTAINS_')) {
-        const tgt = typeof e.target === 'string' ? e.target : e.target.id;
-        hasParent.add(tgt);
-      }
-    }
-    return nodes.filter(n =>
-      (n.kind === 'solution' || n.kind === 'repo') && !hasParent.has(n.id)
-    );
-  });
+  // L1: repos — the primary navigation level
+  // On solution pages: multiple repos (sensei, homebrew, marketplace)
+  // On project pages: single repo
+  let l1Options = $derived(nodes.filter(n => n.kind === 'repo'));
 
   // L2: children of selected L1 (code-group, doc-group)
   let l2Options = $derived.by((): typeof nodes => {
