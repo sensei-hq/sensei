@@ -11,6 +11,10 @@
     file: string;
     line: number;
     complexity?: number;
+    doc_type?: string;
+    level?: string;
+    parent_id?: string;
+    // d3 simulation adds these
     x?: number;
     y?: number;
     vx?: number;
