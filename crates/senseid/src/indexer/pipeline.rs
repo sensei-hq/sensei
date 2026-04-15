@@ -77,18 +77,38 @@ pub fn index_repo_with_progress(
     let mut files_failed = 0u32;
     let mut functions_indexed = 0u32;
     let mut types_indexed = 0u32;
+    let mut packages_indexed = 0u32;
+    let mut modules_indexed = 0u32;
     let mut edges_created = 0u32;
 
     // Collect all parsed results for cross-file edge resolution
     struct FileResult {
         abs_path: String,
         fn_ids: HashMap<String, String>, // name -> id
+        type_ids: HashMap<String, String>, // name -> id (classes/structs/enums/interfaces)
+        method_parents: Vec<(String, String)>, // (method_id, parent_class_name)
         imports: Vec<crate::types::ParsedImport>,
         call_edges: Vec<(String, String, String)>, // caller_name, callee_name, caller_id
     }
     let mut all_results: HashMap<String, FileResult> = HashMap::new();
 
     let started_at = chrono::Utc::now().to_rfc3339();
+
+    // Pass 0: Detect and create Package nodes (workspace members)
+    let workspace_members = crate::config::detector::detect_workspace_members(repo);
+    let _file_to_package: HashMap<String, String> = HashMap::new(); // reserved for future file→package mapping
+    for pkg in &workspace_members {
+        let pkg_id = format!("pkg:{}:{}", repo_id, pkg.name);
+        graph_db.merge_package(
+            &pkg_id, &pkg.name, pkg.version.as_deref(),
+            &pkg.path, &pkg.pkg_type, repo_id,
+        ).ok();
+        // Create CONTAINS_PKG edge: project → package
+        let project_node = format!("project:{}", repo_id);
+        graph_db.merge_edge(&project_node, &pkg_id, "CONTAINS_PKG").ok();
+        edges_created += 1;
+        packages_indexed += 1;
+    }
 
     // Pass 1: Parse files and create nodes
     for file_path in &files {
@@ -158,6 +178,8 @@ pub fn index_repo_with_progress(
             .ok();
 
         let mut fn_ids: HashMap<String, String> = HashMap::new();
+        let mut type_ids: HashMap<String, String> = HashMap::new();
+        let mut method_parents: Vec<(String, String)> = Vec::new();
         let mut call_edges = Vec::new();
 
         for sym in &parsed.symbols {
@@ -182,6 +204,11 @@ pub fn index_repo_with_progress(
                 graph_db.merge_edge(&file_id, &id, "EXPORTS_FN").ok();
                 edges_created += 1;
 
+                // Track parent for HAS_METHOD edges
+                if let Some(ref parent_name) = sym.parent {
+                    method_parents.push((id.clone(), parent_name.clone()));
+                }
+
                 // Collect call edges for later resolution
                 for edge in &parsed.edges {
                     if edge.caller_name == sym.name {
@@ -196,6 +223,7 @@ pub fn index_repo_with_progress(
                 ).map_err(|e| { if !e.is_empty() { tracing::warn!("merge_type: {}", e); } }).ok();
 
                 types_indexed += 1;
+                type_ids.insert(sym.name.clone(), id.clone());
                 graph_db.merge_edge(&file_id, &id, "EXPORTS_TYPE").ok();
                 edges_created += 1;
             }
@@ -206,7 +234,7 @@ pub fn index_repo_with_progress(
             manifest.record(&abs_path, mtime, hash);
         }
 
-        all_results.insert(abs_path, FileResult { abs_path: file_path.to_string_lossy().to_string(), fn_ids, imports: parsed.imports, call_edges });
+        all_results.insert(abs_path, FileResult { abs_path: file_path.to_string_lossy().to_string(), fn_ids, type_ids, method_parents, imports: parsed.imports, call_edges });
         files_indexed += 1;
     }
 
@@ -268,6 +296,79 @@ pub fn index_repo_with_progress(
         super::framework_tagger::tag_functions_by_pattern(graph_db, &fns);
     }
 
+    // Pass 6: Create Module nodes and containment edges
+    {
+        // Group files by directory → module
+        let mut dir_files: HashMap<String, Vec<String>> = HashMap::new(); // dir_path → [abs_paths]
+        for abs_path in all_results.keys() {
+            if let Some(parent) = Path::new(abs_path).parent() {
+                let dir = parent.to_string_lossy().to_string();
+                dir_files.entry(dir).or_default().push(abs_path.clone());
+            }
+        }
+
+        for (dir_path, file_paths) in &dir_files {
+            let rel_dir = Path::new(dir_path).strip_prefix(repo)
+                .unwrap_or(Path::new(dir_path))
+                .to_string_lossy()
+                .to_string();
+            let mod_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
+            let mod_id = format!("mod:{}:{}", repo_id, mod_name);
+
+            // Find which package this module belongs to
+            let pkg_id = workspace_members.iter().find(|pkg| {
+                rel_dir.starts_with(&pkg.path)
+            }).map(|pkg| format!("pkg:{}:{}", repo_id, pkg.name));
+
+            graph_db.merge_module(&mod_id, &mod_name, &rel_dir, pkg_id.as_deref(), repo_id).ok();
+            modules_indexed += 1;
+
+            // CONTAINS_MOD edge: package → module (or project → module if no package)
+            if let Some(ref pid) = pkg_id {
+                graph_db.merge_edge(pid, &mod_id, "CONTAINS_MOD").ok();
+            } else {
+                let project_node = format!("project:{}", repo_id);
+                graph_db.merge_edge(&project_node, &mod_id, "CONTAINS_MOD").ok();
+            }
+            edges_created += 1;
+
+            // CONTAINS_FN / CONTAINS_TYPE edges: module → symbols
+            for abs_path in file_paths {
+                if let Some(result) = all_results.get(abs_path) {
+                    for (_, fn_id) in &result.fn_ids {
+                        graph_db.merge_edge(&mod_id, fn_id, "CONTAINS_FN").ok();
+                        edges_created += 1;
+                    }
+                }
+                // Type edges via file_id → types (already linked via EXPORTS_TYPE)
+                let file_id = format!("file:{}", abs_path);
+                graph_db.merge_edge(&mod_id, &file_id, "CONTAINS_FILE").ok();
+                edges_created += 1;
+            }
+        }
+    }
+
+    // Pass 7: HAS_METHOD edges (class → method) using parent tracking from adapters
+    {
+        // Build global type_id map: name → id (within same file first, then cross-file)
+        let all_type_ids: HashMap<String, String> = all_results.values()
+            .flat_map(|r| r.type_ids.iter())
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        for result in all_results.values() {
+            for (method_id, parent_name) in &result.method_parents {
+                // Try same-file first, then global
+                let type_id = result.type_ids.get(parent_name)
+                    .or_else(|| all_type_ids.get(parent_name));
+                if let Some(tid) = type_id {
+                    graph_db.merge_edge(tid, method_id, "HAS_METHOD").ok();
+                    edges_created += 1;
+                }
+            }
+        }
+    }
+
     // Save manifest
     manifest.save().map_err(|e| format!("Failed to save manifest: {}", e))?;
 
@@ -319,6 +420,8 @@ pub fn index_repo_with_progress(
         files_failed,
         functions_indexed,
         types_indexed,
+        packages_indexed,
+        modules_indexed,
         edges_created,
         docs_indexed,
         libs,
@@ -436,6 +539,8 @@ pub fn index_dirty_files(
         files_failed,
         functions_indexed,
         types_indexed,
+        packages_indexed: 0,
+        modules_indexed: 0,
         edges_created,
         docs_indexed: 0,
         libs: vec![],
@@ -526,5 +631,93 @@ MAX_RETRIES = 3
         let graph = GraphDb::open(db_dir.path()).unwrap();
         let result = index_repo(&graph, "/nonexistent/path", "test");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn has_method_edges_created() {
+        let repo = TempDir::new().unwrap();
+        let db_dir = TempDir::new().unwrap();
+        // Python file with a class and methods
+        std::fs::write(repo.path().join("service.py"), r#"
+class UserService:
+    def get_user(self, uid):
+        return uid
+    def delete_user(self, uid):
+        pass
+"#).unwrap();
+
+        let graph = GraphDb::open(db_dir.path()).unwrap();
+        let repo_id = format!("test-has-method-{}", std::process::id());
+        let result = index_repo(&graph, &repo.path().to_string_lossy(), &repo_id).unwrap();
+        assert!(result.functions_indexed >= 2, "expected 2+ functions");
+        assert!(result.types_indexed >= 1, "expected 1+ types (UserService class)");
+
+        // Check HAS_METHOD edges exist
+        let edges = graph.get_edges(&repo_id).unwrap();
+        let has_method_edges: Vec<_> = edges.iter().filter(|e| e.edge_type == "HAS_METHOD").collect();
+        assert!(has_method_edges.len() >= 2, "expected 2+ HAS_METHOD edges, got {}", has_method_edges.len());
+
+        // Clean up
+        let manifest_dir = dirs::home_dir().unwrap().join(".sensei").join("projects").join(&repo_id);
+        std::fs::remove_dir_all(&manifest_dir).ok();
+    }
+
+    #[test]
+    fn module_nodes_created() {
+        let repo = TempDir::new().unwrap();
+        let db_dir = TempDir::new().unwrap();
+        // Create files in subdirectories
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        std::fs::write(repo.path().join("src/main.py"), "def hello():\n    pass\n").unwrap();
+        std::fs::write(repo.path().join("src/utils.py"), "def helper():\n    pass\n").unwrap();
+
+        let graph = GraphDb::open(db_dir.path()).unwrap();
+        let repo_id = format!("test-modules-{}", std::process::id());
+        let result = index_repo(&graph, &repo.path().to_string_lossy(), &repo_id).unwrap();
+        assert!(result.modules_indexed >= 1, "expected 1+ modules, got {}", result.modules_indexed);
+
+        // Module nodes should appear in get_nodes
+        let nodes = graph.get_nodes(&repo_id).unwrap();
+        let module_nodes: Vec<_> = nodes.iter().filter(|n| n.kind == "module").collect();
+        assert!(!module_nodes.is_empty(), "expected module nodes in graph");
+
+        // CONTAINS_FN edges should exist
+        let edges = graph.get_edges(&repo_id).unwrap();
+        let contains_fn: Vec<_> = edges.iter().filter(|e| e.edge_type == "CONTAINS_FN").collect();
+        assert!(!contains_fn.is_empty(), "expected CONTAINS_FN edges");
+
+        // Clean up
+        let manifest_dir = dirs::home_dir().unwrap().join(".sensei").join("projects").join(&repo_id);
+        std::fs::remove_dir_all(&manifest_dir).ok();
+    }
+
+    #[test]
+    fn package_nodes_for_workspace() {
+        let repo = TempDir::new().unwrap();
+        let db_dir = TempDir::new().unwrap();
+        // Create a monorepo with package.json workspaces
+        std::fs::write(repo.path().join("package.json"), r#"{"name":"monorepo","workspaces":["packages/*"]}"#).unwrap();
+        std::fs::create_dir_all(repo.path().join("packages/ui")).unwrap();
+        std::fs::write(repo.path().join("packages/ui/package.json"), r#"{"name":"@test/ui"}"#).unwrap();
+        std::fs::create_dir_all(repo.path().join("packages/ui/src")).unwrap();
+        std::fs::write(repo.path().join("packages/ui/src/index.ts"), "export function render() {}").unwrap();
+
+        let graph = GraphDb::open(db_dir.path()).unwrap();
+        let repo_id = format!("test-pkgs-{}", std::process::id());
+        let result = index_repo(&graph, &repo.path().to_string_lossy(), &repo_id).unwrap();
+        assert!(result.packages_indexed >= 1, "expected 1+ packages, got {}", result.packages_indexed);
+
+        let nodes = graph.get_nodes(&repo_id).unwrap();
+        let pkg_nodes: Vec<_> = nodes.iter().filter(|n| n.kind == "package").collect();
+        assert!(!pkg_nodes.is_empty(), "expected package nodes in graph");
+
+        // CONTAINS_MOD edges from packages should exist (package → module)
+        let edges = graph.get_edges(&repo_id).unwrap();
+        let contains_mod: Vec<_> = edges.iter().filter(|e| e.edge_type == "CONTAINS_MOD").collect();
+        assert!(!contains_mod.is_empty(), "expected CONTAINS_MOD edges from packages");
+
+        // Clean up
+        let manifest_dir = dirs::home_dir().unwrap().join(".sensei").join("projects").join(&repo_id);
+        std::fs::remove_dir_all(&manifest_dir).ok();
     }
 }

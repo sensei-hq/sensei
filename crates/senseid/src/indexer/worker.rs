@@ -149,6 +149,14 @@ pub async fn spawn_workers(queue: Arc<IndexQueue>, state: AppState, num_workers:
                                 } else {
                                     s.mark_indexed_timestamp(&repo_id).ok();
                                 }
+                                // Auto-create solution for monorepos with subtree repos
+                                if let Ok(Some(project)) = s.get_project(&repo_id) {
+                                    match crate::indexer::cross_repo::auto_solution_for_monorepo(&s, &project) {
+                                        Ok(Some(sid)) => tracing::info!("[w{}] Auto-created solution {} for {}", worker_id, sid, repo_id),
+                                        Ok(None) => {}
+                                        Err(e) => tracing::warn!("[w{}] auto_solution failed for {}: {}", worker_id, repo_id, e),
+                                    }
+                                }
                             }
                             let _ = queue.sender().send(IndexEvent::Completed {
                                 repo_id: repo_id.clone(),

@@ -56,6 +56,9 @@ pub struct ParsedSymbol {
     pub line_start: u32,
     pub line_end: u32,
     pub is_exported: bool,
+    /// Parent class/struct name for methods (e.g. "Foo" for Foo.bar).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +142,19 @@ fn default_role() -> String {
     "unknown".to_string()
 }
 
+// ── Package / Module info ────────────────────────────────────────────────────
+
+/// A workspace member / crate / sub-package discovered inside a project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageInfo {
+    pub name: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// npm_workspace, cargo_crate, pip_package, go_module, etc.
+    pub pkg_type: String,
+}
+
 // ── Indexing ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +176,8 @@ pub struct IndexResult {
     pub files_failed: u32,
     pub functions_indexed: u32,
     pub types_indexed: u32,
+    pub packages_indexed: u32,
+    pub modules_indexed: u32,
     pub edges_created: u32,
     pub docs_indexed: u32,
     pub libs: Vec<String>,
@@ -290,6 +308,7 @@ mod tests {
                 line_start: 1,
                 line_end: 3,
                 is_exported: true,
+                parent: None,
             }],
             edges: vec![],
             imports: vec![ParsedImport {

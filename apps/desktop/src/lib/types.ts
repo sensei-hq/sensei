@@ -182,6 +182,8 @@ export interface ProjectSummary {
   indexedAt?: string;
   functions: number;
   types: number;
+  packages: number;
+  modules: number;
   edges: number;
   solutions: Array<{ solutionId: string; solutionName: string; role: string }>;
 }

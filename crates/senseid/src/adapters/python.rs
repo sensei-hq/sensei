@@ -25,7 +25,7 @@ impl LanguageAdapter for PythonAdapter {
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
 
-        extract_symbols(&root, &lines, &mut symbols, false);
+        extract_symbols(&root, &lines, &mut symbols, None);
         extract_imports(&root, src, &mut imports);
 
         let edges = extract_edges(&root, &symbols);
@@ -50,7 +50,7 @@ fn empty_file(path: &str) -> ParsedFile {
     }
 }
 
-fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>, inside_class: bool) {
+fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>, class_name: Option<&str>) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
@@ -58,7 +58,7 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
                 let name = child.child_by_field_name("name")
                     .map(|n| n.utf8_text(lines.join("\n").as_bytes()).unwrap_or_default().to_string())
                     .unwrap_or_default();
-                let kind = if inside_class { SymbolKind::Method } else { SymbolKind::Function };
+                let kind = if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
                 let sig = lines.get(child.start_position().row)
                     .map(|l| l.trim().to_string());
                 let docstring = extract_docstring(&child, lines);
@@ -70,6 +70,7 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
                     line_start: child.start_position().row as u32 + 1,
                     line_end: child.end_position().row as u32 + 1,
                     is_exported: !name.starts_with('_'),
+                    parent: class_name.map(|s| s.to_string()),
                 });
             }
             "class_definition" => {
@@ -87,13 +88,14 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
                     line_start: child.start_position().row as u32 + 1,
                     line_end: child.end_position().row as u32 + 1,
                     is_exported: !name.starts_with('_'),
+                    parent: None,
                 });
                 // Recurse into class body for methods
                 if let Some(body) = child.child_by_field_name("body") {
-                    extract_symbols(&body, lines, symbols, true);
+                    extract_symbols(&body, lines, symbols, Some(&name));
                 }
             }
-            "expression_statement" if !inside_class => {
+            "expression_statement" if class_name.is_none() => {
                 // Top-level constant: FOO = ...
                 if let Some(expr) = child.child(0) {
                     if expr.kind() == "assignment" {
@@ -109,6 +111,7 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
                                     line_start: child.start_position().row as u32 + 1,
                                     line_end: child.end_position().row as u32 + 1,
                                     is_exported: true,
+                                    parent: None,
                                 });
                             }
                         }
@@ -294,5 +297,40 @@ mod tests {
         let pf = parse("x = 1\n");
         assert_eq!(pf.language, "python");
         assert_eq!(pf.file_path, "test.py");
+    }
+
+    #[test]
+    fn method_parent_set_on_class() {
+        let pf = parse("class Dog:\n    def bark(self):\n        pass\n    def sit(self):\n        pass\n");
+        let dog = pf.symbols.iter().find(|s| s.name == "Dog").unwrap();
+        assert!(dog.parent.is_none(), "class should have no parent");
+        let bark = pf.symbols.iter().find(|s| s.name == "bark").unwrap();
+        assert_eq!(bark.parent.as_deref(), Some("Dog"));
+        assert_eq!(bark.kind, SymbolKind::Method);
+        let sit = pf.symbols.iter().find(|s| s.name == "sit").unwrap();
+        assert_eq!(sit.parent.as_deref(), Some("Dog"));
+    }
+
+    #[test]
+    fn method_parent_on_complex_class() {
+        let pf = parse(
+            "class UserService:\n    def __init__(self, db):\n        self.db = db\n    def get_user(self, uid):\n        return self.db.query(uid)\n"
+        );
+        let init = pf.symbols.iter().find(|s| s.name == "__init__").unwrap();
+        assert_eq!(init.parent.as_deref(), Some("UserService"));
+        let get_user = pf.symbols.iter().find(|s| s.name == "get_user").unwrap();
+        assert_eq!(get_user.parent.as_deref(), Some("UserService"));
+    }
+
+    #[test]
+    fn standalone_function_no_parent() {
+        let pf = parse("def hello():\n    pass\n");
+        assert!(pf.symbols[0].parent.is_none());
+    }
+
+    #[test]
+    fn constant_no_parent() {
+        let pf = parse("TIMEOUT = 30\n");
+        assert!(pf.symbols[0].parent.is_none());
     }
 }

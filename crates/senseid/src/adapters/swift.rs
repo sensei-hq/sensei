@@ -45,6 +45,10 @@ fn empty(path: &str) -> ParsedFile {
 }
 
 fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>) {
+    walk_with_parent(node, src, lines, symbols, imports, None);
+}
+
+fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>, class_name: Option<&str>) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
@@ -52,8 +56,10 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 let name = field_text(&child, "name", src);
                 if name.is_empty() { continue; }
                 let is_pub = has_access_modifier(&child, src, "public") || has_access_modifier(&child, src, "open");
-                let kind = if is_inside_body(node) { SymbolKind::Method } else { SymbolKind::Function };
-                symbols.push(make_sym(name, kind, &child, lines, src, is_pub));
+                let kind = if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
+                let mut sym = make_sym(name, kind, &child, lines, src, is_pub);
+                sym.parent = class_name.map(|s| s.to_string());
+                symbols.push(sym);
             }
             "class_declaration" => {
                 let name = find_type_name(&child, src);
@@ -62,12 +68,11 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 let kind = if has_keyword(&child, "struct") { SymbolKind::Struct }
                     else if has_keyword(&child, "enum") { SymbolKind::Enum }
                     else { SymbolKind::Class };
-                symbols.push(make_sym(name, kind, &child, lines, src, is_pub));
-                // Recurse into body
+                symbols.push(make_sym(name.clone(), kind, &child, lines, src, is_pub));
                 for j in 0..child.child_count() {
                     let cc = child.child(j).unwrap();
                     if cc.kind() == "class_body" || cc.kind() == "enum_class_body" {
-                        walk(&cc, src, lines, symbols, imports);
+                        walk_with_parent(&cc, src, lines, symbols, imports, Some(&name));
                     }
                 }
             }
@@ -77,7 +82,6 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                     symbols.push(make_sym(name, SymbolKind::Interface, &child, lines, src, has_access_modifier(&child, src, "public")));
                 }
             }
-            // enums come through class_declaration with "enum" keyword
             "typealias_declaration" => {
                 let name = field_text(&child, "name", src);
                 if !name.is_empty() {
@@ -85,7 +89,6 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 }
             }
             "import_declaration" => {
-                // import Foundation
                 let text = child.utf8_text(src).unwrap_or_default();
                 let module = text.strip_prefix("import")
                     .map(|s| s.trim().to_string())
@@ -95,7 +98,7 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 }
             }
             "property_declaration" => {
-                if !is_inside_body(node) {
+                if class_name.is_none() {
                     let name = find_pattern_name(&child, src);
                     if !name.is_empty() {
                         symbols.push(make_sym(name, SymbolKind::Const, &child, lines, src, has_access_modifier(&child, src, "public")));
@@ -103,17 +106,23 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 }
             }
             "init_declaration" => {
-                symbols.push(make_sym("init".into(), SymbolKind::Method, &child, lines, src, true));
+                let mut sym = make_sym("init".into(), SymbolKind::Method, &child, lines, src, true);
+                sym.parent = class_name.map(|s| s.to_string());
+                symbols.push(sym);
             }
             "deinit_declaration" => {
-                symbols.push(make_sym("deinit".into(), SymbolKind::Method, &child, lines, src, true));
+                let mut sym = make_sym("deinit".into(), SymbolKind::Method, &child, lines, src, true);
+                sym.parent = class_name.map(|s| s.to_string());
+                symbols.push(sym);
             }
             "extension_declaration" => {
-                // Recurse into extension body
+                // Extract extended type name
+                let ext_name = find_type_name(&child, src);
+                let parent = if ext_name.is_empty() { class_name } else { Some(ext_name.as_str()) };
                 for j in 0..child.child_count() {
                     let cc = child.child(j).unwrap();
                     if cc.kind().contains("body") || cc.kind() == "class_body" {
-                        walk(&cc, src, lines, symbols, imports);
+                        walk_with_parent(&cc, src, lines, symbols, imports, parent);
                     }
                 }
             }
@@ -187,6 +196,7 @@ fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[
         line_start: node.start_position().row as u32 + 1,
         line_end: node.end_position().row as u32 + 1,
         is_exported,
+        parent: None,
     }
 }
 
@@ -277,5 +287,44 @@ mod tests {
     fn swift_public_function() {
         let pf = parse("public func serve() {}");
         assert!(pf.symbols[0].is_exported);
+    }
+
+    #[test]
+    fn method_parent_set_on_class() {
+        let pf = parse("class Dog {\n    func bark() {}\n    func sit() {}\n}");
+        let dog = pf.symbols.iter().find(|s| s.name == "Dog").unwrap();
+        assert!(dog.parent.is_none(), "class should have no parent");
+        let bark = pf.symbols.iter().find(|s| s.name == "bark").unwrap();
+        assert_eq!(bark.parent.as_deref(), Some("Dog"));
+        assert_eq!(bark.kind, SymbolKind::Method);
+        let sit = pf.symbols.iter().find(|s| s.name == "sit").unwrap();
+        assert_eq!(sit.parent.as_deref(), Some("Dog"));
+    }
+
+    #[test]
+    fn method_parent_on_struct() {
+        let pf = parse("struct Point {\n    var x: Int\n    var y: Int\n    func distance() -> Double { return 0.0 }\n}");
+        let dist = pf.symbols.iter().find(|s| s.name == "distance").unwrap();
+        assert_eq!(dist.parent.as_deref(), Some("Point"));
+    }
+
+    #[test]
+    fn init_has_parent() {
+        let pf = parse("class Foo {\n    init() {}\n}");
+        let init = pf.symbols.iter().find(|s| s.name == "init").unwrap();
+        assert_eq!(init.parent.as_deref(), Some("Foo"));
+    }
+
+    #[test]
+    fn free_function_no_parent() {
+        let pf = parse("func greet() {}");
+        assert!(pf.symbols[0].parent.is_none());
+    }
+
+    #[test]
+    fn protocol_no_parent() {
+        let pf = parse("protocol Drawable {\n    func draw()\n}");
+        let drawable = pf.symbols.iter().find(|s| s.name == "Drawable").unwrap();
+        assert!(drawable.parent.is_none());
     }
 }
