@@ -37,6 +37,19 @@ pub fn index_docs(
         })
         .collect();
 
+    // Prune stale docs: delete doc nodes whose files no longer exist on disk
+    {
+        let current_doc_paths: HashSet<String> = doc_files.iter()
+            .map(|e| format!("doc:{}", e.path().to_string_lossy()))
+            .collect();
+        let existing_docs = graph_db.get_nodes(repo_id).unwrap_or_default();
+        for node in &existing_docs {
+            if node.kind == "doc" && !current_doc_paths.contains(&node.id) {
+                graph_db.delete_doc(&node.id).ok();
+            }
+        }
+    }
+
     for entry in &doc_files {
         let abs_path = entry.path().to_string_lossy().to_string();
         let rel_path = entry.path().strip_prefix(repo)
