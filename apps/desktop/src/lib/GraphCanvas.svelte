@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { Tree } from '@rokkit/ui';
   import * as d3Force from 'd3-force';
   import * as d3Selection from 'd3-selection';
   import * as d3Zoom from 'd3-zoom';
@@ -43,99 +44,98 @@
   let currentSimEdges: GraphEdge[] = [];
   let zoomBehavior: d3Zoom.ZoomBehavior<HTMLCanvasElement, unknown> | null = null;
 
-  // ── Filters ────────────────────────────────────────────────────────
-  let filterPackage = $state<string>('all');
-  let filterModule = $state<string>('all');
-  let filterKind = $state<string>('all');
+  // ── Tree filter ─────────────────────────────────────────────────────
+  let treeFilterIds = $state<Set<string> | null>(null);
+  let treeSelectedValue = $state<string | null>(null);
+  let showTree = $state(true);
 
-  let packages = $derived(nodes.filter(n => n.kind === 'package').map(n => n.name).sort());
-  let kindOptions = $derived([...new Set(nodes.map(n => n.kind))].sort());
+  const CONTAINER_EDGES = new Set(['CONTAINS_REPO', 'CONTAINS_GROUP', 'CONTAINS_PKG', 'CONTAINS_MOD']);
+  const TREE_KINDS = new Set(['solution', 'repo', 'code-group', 'doc-group', 'package', 'module']);
+  const KIND_ICONS: Record<string, string> = {
+    'solution': 'i-lucide:layers', 'repo': 'i-lucide:git-branch',
+    'code-group': 'i-lucide:code', 'doc-group': 'i-lucide:book-open',
+    'package': 'i-lucide:package', 'module': 'i-lucide:puzzle',
+  };
 
-  // Modules: filtered by selected package
-  let modules = $derived.by(() => {
-    const allMods = nodes.filter(n => n.kind === 'module');
-    if (filterPackage === 'all') return allMods.map(n => n.name).sort();
-    const pkgNode = nodes.find(n => n.kind === 'package' && n.name === filterPackage);
-    if (!pkgNode) return allMods.map(n => n.name).sort();
-    const modIds = pkgContainsMods.get(pkgNode.id) ?? new Set();
-    return allMods.filter(n => modIds.has(n.id)).map(n => n.name).sort();
-  });
-
-  $effect(() => {
-    if (filterModule !== 'all' && !modules.includes(filterModule)) {
-      filterModule = 'all';
-    }
-  });
-
-  // Build containment maps
-  let modContains = $derived.by(() => {
-    const map = new Map<string, Set<string>>();
+  // Build tree items for Rokkit Tree
+  let treeItems = $derived.by(() => {
+    const childMap = new Map<string, string[]>();
     for (const e of edges) {
       const t = typeof e.type === 'string' ? e.type : '';
-      if (t === 'CONTAINS_FN' || t === 'CONTAINS_FILE') {
+      if (CONTAINER_EDGES.has(t)) {
         const src = typeof e.source === 'string' ? e.source : e.source.id;
         const tgt = typeof e.target === 'string' ? e.target : e.target.id;
-        if (!map.has(src)) map.set(src, new Set());
-        map.get(src)!.add(tgt);
+        if (!childMap.has(src)) childMap.set(src, []);
+        childMap.get(src)!.push(tgt);
       }
     }
-    return map;
-  });
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-  let pkgContainsMods = $derived.by(() => {
-    const map = new Map<string, Set<string>>();
+    // Count descendants via all containment edges
+    const allContains = new Map<string, Set<string>>();
     for (const e of edges) {
       const t = typeof e.type === 'string' ? e.type : '';
-      if (t === 'CONTAINS_MOD') {
+      if (t.startsWith('CONTAINS_') || t === 'EXPORTS_FN' || t === 'EXPORTS_TYPE' || t === 'HAS_METHOD') {
         const src = typeof e.source === 'string' ? e.source : e.source.id;
         const tgt = typeof e.target === 'string' ? e.target : e.target.id;
-        if (!map.has(src)) map.set(src, new Set());
-        map.get(src)!.add(tgt);
+        if (!allContains.has(src)) allContains.set(src, new Set());
+        allContains.get(src)!.add(tgt);
       }
     }
-    return map;
+    function countDesc(id: string, visited = new Set<string>()): number {
+      if (visited.has(id)) return 0; visited.add(id);
+      const ch = allContains.get(id); if (!ch) return 0;
+      let c = 0;
+      for (const cid of ch) { const cn = nodeMap.get(cid); if (cn && !TREE_KINDS.has(cn.kind)) c++; c += countDesc(cid, visited); }
+      return c;
+    }
+
+    function build(id: string, depth: number): any {
+      const node = nodeMap.get(id);
+      if (!node || !TREE_KINDS.has(node.kind) || depth > 3) return null;
+      const childIds = childMap.get(id) ?? [];
+      const children: any[] = [];
+      for (const cid of childIds) { const c = build(cid, depth + 1); if (c) children.push(c); }
+      children.sort((a: any, b: any) => a.text.localeCompare(b.text));
+      const cnt = countDesc(id);
+      return { value: id, text: node.name, icon: KIND_ICONS[node.kind] ?? '', badge: cnt > 0 ? String(cnt) : '', children, expanded: depth < 2 };
+    }
+
+    const hasParent = new Set<string>();
+    for (const e of edges) { const t = typeof e.type === 'string' ? e.type : ''; if (CONTAINER_EDGES.has(t)) { const tgt = typeof e.target === 'string' ? e.target : e.target.id; hasParent.add(tgt); } }
+    const roots: any[] = [];
+    for (const n of nodes) { if (TREE_KINDS.has(n.kind) && !hasParent.has(n.id)) { const t = build(n.id, 0); if (t) roots.push(t); } }
+    return roots;
   });
 
-  // Filtered nodes
+  function collectSubtreeIds(nodeId: string): Set<string> {
+    const ids = new Set<string>();
+    const queue = [nodeId];
+    while (queue.length > 0) {
+      const cur = queue.pop()!;
+      if (ids.has(cur)) continue; ids.add(cur);
+      for (const e of edges) {
+        const src = typeof e.source === 'string' ? e.source : e.source.id;
+        const tgt = typeof e.target === 'string' ? e.target : e.target.id;
+        const t = typeof e.type === 'string' ? e.type : '';
+        if (src === cur && (t.startsWith('CONTAINS_') || t === 'EXPORTS_FN' || t === 'EXPORTS_TYPE' || t === 'HAS_METHOD')) {
+          queue.push(tgt);
+        }
+      }
+    }
+    return ids;
+  }
+
+  function handleTreeSelect(value: unknown) {
+    const id = value as string;
+    if (treeSelectedValue === id) { treeSelectedValue = null; treeFilterIds = null; }
+    else { treeSelectedValue = id; treeFilterIds = collectSubtreeIds(id); }
+  }
+
+  // Filtered nodes — simple: if tree filter active, use it; otherwise show all
   let filteredNodes = $derived.by(() => {
-    let result = nodes;
-    if (filterKind !== 'all') {
-      result = result.filter(n => n.kind === filterKind);
-    }
-    if (filterPackage !== 'all') {
-      const pkgNode = nodes.find(n => n.kind === 'package' && n.name === filterPackage);
-      if (pkgNode) {
-        const modIds = pkgContainsMods.get(pkgNode.id) ?? new Set();
-        const nodeIds = new Set<string>();
-        nodeIds.add(pkgNode.id);
-        for (const modId of modIds) {
-          nodeIds.add(modId);
-          const contained = modContains.get(modId);
-          if (contained) for (const id of contained) nodeIds.add(id);
-        }
-        result = result.filter(n => nodeIds.has(n.id));
-      }
-    }
-    if (filterModule !== 'all') {
-      const modNode = nodes.find(n => n.kind === 'module' && n.name === filterModule);
-      if (modNode) {
-        const nodeIds = new Set<string>();
-        nodeIds.add(modNode.id);
-        const contained = modContains.get(modNode.id);
-        if (contained) for (const id of contained) nodeIds.add(id);
-        for (const e of edges) {
-          const t = typeof e.type === 'string' ? e.type : '';
-          if (t === 'HAS_METHOD' || t === 'EXPORTS_TYPE' || t === 'EXPORTS_FN') {
-            const src = typeof e.source === 'string' ? e.source : e.source.id;
-            const tgt = typeof e.target === 'string' ? e.target : e.target.id;
-            if (nodeIds.has(tgt)) nodeIds.add(src);
-            if (nodeIds.has(src)) nodeIds.add(tgt);
-          }
-        }
-        result = result.filter(n => nodeIds.has(n.id));
-      }
-    }
-    return result;
+    if (!treeFilterIds) return nodes;
+    return nodes.filter(n => treeFilterIds!.has(n.id));
   });
 
   let filteredEdges = $derived.by(() => {
@@ -146,12 +146,6 @@
       return ids.has(src) && ids.has(tgt);
     });
   });
-
-  let activeFilters = $derived(
-    (filterPackage !== 'all' ? 1 : 0) +
-    (filterModule !== 'all' ? 1 : 0) +
-    (filterKind !== 'all' ? 1 : 0)
-  );
 
   // ── Colors ─────────────────────────────────────────────────────────
   const KIND_COLORS: Record<string, string> = {
@@ -386,9 +380,8 @@
   }
 
   function clearFilters() {
-    filterPackage = 'all';
-    filterModule = 'all';
-    filterKind = 'all';
+    treeSelectedValue = null;
+    treeFilterIds = null;
   }
 
   $effect(() => {
@@ -409,55 +402,45 @@
   });
 </script>
 
-<div bind:this={container} class="relative w-full h-full min-h-60 bg-surface-z1 rounded-lg overflow-hidden flex flex-col">
-  <!-- Filter bar -->
-  {#if packages.length > 0 || modules.length > 0}
-    <div class="flex items-center gap-2 px-2 py-1.5 border-b border-surface-z0/30 bg-surface-z2/50 shrink-0 text-[10px]">
-      <span class="text-surface-z5 font-medium uppercase tracking-wide">Filter</span>
-      {#if packages.length > 0}
-        <select bind:value={filterPackage} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
-          <option value="all">All packages</option>
-          {#each packages as p}
-            <option value={p}>{p}</option>
-          {/each}
-        </select>
+<div bind:this={container} class="relative w-full h-full min-h-60 bg-surface-z1 rounded-lg overflow-hidden flex">
+  <!-- Canvas (main area) -->
+  <div class="flex-1 relative min-h-0 flex flex-col">
+    <!-- Top bar -->
+    <div class="flex items-center gap-2 px-2 py-1 border-b border-surface-z0/30 bg-surface-z2/50 shrink-0 text-[10px]">
+      <button onclick={() => showTree = !showTree} class="text-surface-z5 hover:text-surface-z7" title="Toggle tree">{showTree ? '◂' : '▸'} Tree</button>
+      {#if treeFilterIds}
+        <button onclick={clearFilters} class="text-primary-z6 hover:text-primary-z7 font-medium">Clear filter</button>
       {/if}
-      {#if modules.length > 0}
-        <select bind:value={filterModule} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
-          <option value="all">{filterPackage !== 'all' ? 'All modules in package' : 'All modules'}</option>
-          {#each modules as m}
-            <option value={m}>{m}</option>
-          {/each}
-        </select>
-      {/if}
-      <select bind:value={filterKind} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
-        <option value="all">All kinds</option>
-        {#each kindOptions as k}
-          <option value={k}>{k}</option>
-        {/each}
-      </select>
-      {#if activeFilters > 0}
-        <button onclick={clearFilters} class="text-primary-z6 hover:text-primary-z7 font-medium">Clear</button>
-      {/if}
-      <button onclick={() => zoomToFit()} class="text-surface-z5 hover:text-surface-z7 font-medium ml-1" title="Zoom to fit">Fit</button>
+      <button onclick={() => zoomToFit()} class="text-surface-z5 hover:text-surface-z7 font-medium" title="Zoom to fit">Fit</button>
       <span class="text-surface-z4 ml-auto">{filteredNodes.length} nodes · {filteredEdges.length} edges</span>
     </div>
+    <div class="flex-1 relative min-h-0">
+      <canvas bind:this={canvas} {width} {height} class="w-full h-full"></canvas>
+    </div>
+    <!-- Legend -->
+    <div class="absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-surface-z5 pointer-events-none">
+      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#8b5cf6"></span> packages</span>
+      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#14b8a6"></span> modules</span>
+      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#6366f1"></span> functions</span>
+      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f59e0b"></span> types</span>
+      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f97316"></span> extensions</span>
+      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#06b6d4"></span> docs</span>
+    </div>
+  </div>
+
+  <!-- Tree panel (right side) -->
+  {#if showTree && treeItems.length > 0}
+    <div class="w-56 shrink-0 border-l border-surface-z0/30 bg-surface-z2/30 overflow-y-auto">
+      <Tree
+        items={treeItems}
+        value={treeSelectedValue}
+        size="sm"
+        lineStyle="dashed"
+        icons={{ opened: 'i-lucide:chevron-down', closed: 'i-lucide:chevron-right' }}
+        onselect={handleTreeSelect}
+      />
+    </div>
   {/if}
-
-  <!-- Canvas -->
-  <div class="flex-1 relative min-h-0">
-    <canvas bind:this={canvas} {width} {height} class="w-full h-full"></canvas>
-  </div>
-
-  <!-- Legend -->
-  <div class="absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-surface-z5 pointer-events-none">
-    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#8b5cf6"></span> packages</span>
-    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#14b8a6"></span> modules</span>
-    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#6366f1"></span> functions</span>
-    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f59e0b"></span> types</span>
-    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#10b981"></span> files</span>
-    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#06b6d4"></span> docs</span>
-  </div>
 
   {#if hoveredNode && !selectedNode}
     <div class="absolute bottom-8 right-2 rounded-md bg-surface-z2 border border-surface-z3 px-2.5 py-1.5 text-xs shadow-sm pointer-events-none z-10">
