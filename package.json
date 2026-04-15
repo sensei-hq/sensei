@@ -23,7 +23,9 @@
     "upgrade:packages": "find ./packages -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
     "upgrade:all": "bun upgrade:packages && bun upgrade:apps",
     "homebrew:push": "git subtree push --prefix=homebrew homebrew main",
-    "homebrew:pull": "git subtree pull --prefix=homebrew homebrew main --squash"
+    "homebrew:pull": "git subtree pull --prefix=homebrew homebrew main --squash",
+    "marketplace:push": "git subtree push --prefix=marketplace marketplace main",
+    "marketplace:pull": "git subtree pull --prefix=marketplace marketplace main --squash"
   },
   "overrides": {
     "@supabase/supabase-js": "2.101.1"
