@@ -3,44 +3,26 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "packages/*",
     "apps/*"
   ],
   "scripts": {
     "reset": "./scripts/reset-sensei.sh",
     "clean": "find packages apps -name 'dist' -maxdepth 5 -type d -exec rm -rf {} + 2>/dev/null; rm -rf apps/desktop/build apps/desktop/.svelte-kit apps/static/.svelte-kit; echo 'clean done'",
-    "build": "bun run --filter='@sensei/*' build && cd apps/desktop && bun run tauri:build",
-    "test": "bunx vitest run",
-    "test:unit": "bunx vitest run",
-    "test:e2e": "bun run --filter='*' test:e2e",
-    "dev": "bun run --filter='@sensei/cli' dev",
-    "coverage": "bunx vitest run --coverage",
+    "build": "cd apps/desktop && bun run tauri:build",
+    "test": "cargo test --manifest-path crates/senseid/Cargo.toml",
+    "test:e2e": "cd apps/desktop && npx playwright test",
+    "dev": "cd apps/desktop && bun run dev",
+    "coverage": "cargo tarpaulin --manifest-path crates/senseid/Cargo.toml --out html --output-dir crates/senseid/coverage",
     "bump": "bumpp --configFilePath config/bump.config.js",
     "bump:next": "bumpp --configFilePath config/bump.config.js --preid=next",
-    "plugin:install": "bun run plugin/scripts/install.ts",
-    "plugin:uninstall": "bun run plugin/scripts/uninstall.ts",
     "upgrade:apps": "find ./apps -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
-    "upgrade:packages": "find ./packages -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
-    "upgrade:all": "bun upgrade:packages && bun upgrade:apps",
     "homebrew:push": "git subtree push --prefix=homebrew homebrew main",
     "homebrew:pull": "git subtree pull --prefix=homebrew homebrew main --squash",
     "marketplace:push": "git subtree push --prefix=marketplace marketplace main",
     "marketplace:pull": "git subtree pull --prefix=marketplace marketplace main --squash"
   },
-  "overrides": {
-    "@supabase/supabase-js": "2.101.1"
-  },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
-    "@vitest/coverage-v8": "4.1.2",
     "bumpp": "^11.0.1",
-    "coverage-v8": "^0.0.1-security",
-    "js-yaml": "^4.1.1",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
-  },
-  "dependencies": {
-    "@rokkit/ui": "link:@rokkit/ui",
-    "@supabase/supabase-js": "2.101.1"
+    "typescript": "^6.0.2"
   }
 }
