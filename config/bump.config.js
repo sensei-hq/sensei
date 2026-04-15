@@ -10,12 +10,9 @@ export default defineConfig({
 		'crates/senseid/Cargo.toml',
 		'crates/sensei-mcp/Cargo.toml',
 		'crates/sensei-cli/Cargo.toml',
-		// Homebrew (sibling repo)
-		'../sensei-homebrew/Formula/sensei.rb',
-		'../sensei-homebrew/Casks/sensei-app.rb',
-		// Marketplace (sibling repo)
-		'../sensei-marketplace/package.json',
-		'../sensei-marketplace/catalog.json',
+		// Homebrew (subtree at homebrew/)
+		'homebrew/Formula/sensei.rb',
+		'homebrew/Casks/sensei-app.rb',
 	],
 	recursive: true,
 })
