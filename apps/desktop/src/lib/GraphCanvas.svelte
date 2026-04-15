@@ -441,20 +441,91 @@
     </div>
   {/if}
 
+  <!-- Node detail sidebar -->
   {#if selectedNode}
-    <div class="absolute top-2 right-2 w-56 rounded-lg bg-surface-z2 border border-surface-z3 px-3 py-2.5 text-xs shadow-md z-10">
-      <div class="flex items-center justify-between mb-1.5">
-        <span class="font-semibold text-surface-z8">{selectedNode.name}</span>
-        <button onclick={() => { selectedNode = null; onSelectNode?.(null); }} class="text-surface-z4 hover:text-surface-z6">x</button>
+    {@const nodeEdges = edges.filter(e => {
+      const src = typeof e.source === 'string' ? e.source : e.source.id;
+      const tgt = typeof e.target === 'string' ? e.target : e.target.id;
+      return src === selectedNode.id || tgt === selectedNode.id;
+    })}
+    {@const outgoing = nodeEdges.filter(e => (typeof e.source === 'string' ? e.source : e.source.id) === selectedNode.id)}
+    {@const incoming = nodeEdges.filter(e => (typeof e.target === 'string' ? e.target : e.target.id) === selectedNode.id)}
+    {@const nodeMap = new Map(nodes.map(n => [n.id, n]))}
+    <div class="absolute top-0 right-0 bottom-0 w-72 bg-surface-z1 border-l border-surface-z0/40 shadow-lg z-20 overflow-y-auto">
+      <div class="px-3 py-2.5 border-b border-surface-z0/30 flex items-center justify-between sticky top-0 bg-surface-z1">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background: {KIND_COLORS[selectedNode.kind] ?? '#94a3b8'}"></span>
+          <span class="font-semibold text-sm text-surface-z8 truncate">{selectedNode.name}</span>
+        </div>
+        <button onclick={() => { selectedNode = null; onSelectNode?.(null); }} class="text-surface-z4 hover:text-surface-z6 shrink-0 text-sm ml-2">✕</button>
       </div>
-      <div class="space-y-1 text-surface-z5">
-        <div>Kind: <span class="text-surface-z7">{selectedNode.kind}</span></div>
-        {#if selectedNode.file}
-          <div>File: <span class="text-surface-z7 break-all">{selectedNode.file.split('/').slice(-2).join('/')}</span></div>
+      <div class="px-3 py-2 space-y-3 text-[11px]">
+        <!-- Kind & metadata -->
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="text-surface-z4 w-16 shrink-0">Kind</span>
+            <span class="rounded px-1.5 py-0.5 text-[10px] font-medium" style="background: color-mix(in srgb, {KIND_COLORS[selectedNode.kind] ?? '#94a3b8'} 15%, transparent); color: {KIND_COLORS[selectedNode.kind] ?? '#94a3b8'}">{selectedNode.kind}</span>
+          </div>
+          {#if selectedNode.file}
+            <div class="flex gap-2">
+              <span class="text-surface-z4 w-16 shrink-0">File</span>
+              <span class="text-surface-z7 font-mono break-all text-[10px]">{selectedNode.file.split('/').slice(-3).join('/')}{selectedNode.line ? `:${selectedNode.line}` : ''}</span>
+            </div>
+          {/if}
+          {#if selectedNode.complexity && selectedNode.complexity > 1}
+            <div class="flex items-center gap-2">
+              <span class="text-surface-z4 w-16 shrink-0">Complexity</span>
+              <span class="font-mono {selectedNode.complexity >= 30 ? 'text-error-z5' : selectedNode.complexity >= 15 ? 'text-warning-z5' : 'text-surface-z7'}">{selectedNode.complexity}</span>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Outgoing edges -->
+        {#if outgoing.length > 0}
+          <div>
+            <p class="text-[10px] text-surface-z5 uppercase tracking-wide font-medium mb-1">Outgoing ({outgoing.length})</p>
+            <div class="space-y-0.5 max-h-32 overflow-y-auto">
+              {#each outgoing.slice(0, 20) as e}
+                {@const targetId = typeof e.target === 'string' ? e.target : e.target.id}
+                {@const targetNode = nodeMap.get(targetId)}
+                <div class="flex items-center gap-1.5 text-[10px] py-0.5">
+                  <span class="text-surface-z4 font-mono shrink-0 w-20 truncate">{typeof e.type === 'string' ? e.type : ''}</span>
+                  <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background: {KIND_COLORS[targetNode?.kind ?? ''] ?? '#94a3b8'}"></span>
+                  <span class="text-surface-z7 truncate">{targetNode?.name ?? targetId.split(':').pop()}</span>
+                </div>
+              {/each}
+              {#if outgoing.length > 20}
+                <p class="text-[10px] text-surface-z4">+{outgoing.length - 20} more</p>
+              {/if}
+            </div>
+          </div>
         {/if}
-        {#if selectedNode.complexity && selectedNode.complexity > 1}
-          <div>Complexity: <span class="text-surface-z7">{selectedNode.complexity}</span></div>
+
+        <!-- Incoming edges -->
+        {#if incoming.length > 0}
+          <div>
+            <p class="text-[10px] text-surface-z5 uppercase tracking-wide font-medium mb-1">Incoming ({incoming.length})</p>
+            <div class="space-y-0.5 max-h-32 overflow-y-auto">
+              {#each incoming.slice(0, 20) as e}
+                {@const sourceId = typeof e.source === 'string' ? e.source : e.source.id}
+                {@const sourceNode = nodeMap.get(sourceId)}
+                <div class="flex items-center gap-1.5 text-[10px] py-0.5">
+                  <span class="text-surface-z4 font-mono shrink-0 w-20 truncate">{typeof e.type === 'string' ? e.type : ''}</span>
+                  <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background: {KIND_COLORS[sourceNode?.kind ?? ''] ?? '#94a3b8'}"></span>
+                  <span class="text-surface-z7 truncate">{sourceNode?.name ?? sourceId.split(':').pop()}</span>
+                </div>
+              {/each}
+              {#if incoming.length > 20}
+                <p class="text-[10px] text-surface-z4">+{incoming.length - 20} more</p>
+              {/if}
+            </div>
+          </div>
         {/if}
+
+        <!-- Node ID (for debugging) -->
+        <div class="pt-1 border-t border-surface-z0/30">
+          <p class="text-[9px] text-surface-z3 font-mono break-all">{selectedNode.id}</p>
+        </div>
       </div>
     </div>
   {/if}
