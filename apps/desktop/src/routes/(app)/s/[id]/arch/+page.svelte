@@ -117,7 +117,7 @@
 </script>
 
 {#if solution}
-  <div class="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+  <div class="h-full overflow-y-auto px-6 py-5 space-y-6">
 
     <!-- View toggle -->
     <div class="flex items-center gap-2">
@@ -143,7 +143,7 @@
           <p class="text-sm text-surface-z4">No graph data. Index repos first.</p>
         </div>
       {:else}
-        <div class="h-96 rounded-lg border border-surface-z0/50">
+        <div class="h-[calc(100vh-14rem)] min-h-96 rounded-lg border border-surface-z0/50">
           <GraphCanvas
             nodes={graphNodes}
             edges={graphEdges}

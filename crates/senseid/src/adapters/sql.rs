@@ -69,6 +69,7 @@ fn make_sym(name: String, kind: SymbolKind, lines: &[&str], line: u32) -> Parsed
         line_start: line,
         line_end: line,
         is_exported: true,
+        parent: None,
     }
 }
 
