@@ -1,3 +1,59 @@
+// ─── ACP (AI Coding Platforms) ─────────────────────────────────────────────────
+
+export interface AcpStatus {
+  id: string;
+  name: string;
+  installed: boolean;
+  mcp_configured: boolean;
+  config_path: string;
+}
+
+export interface AcpConfigureResult {
+  configured: string[];
+  skipped: string[];
+  errors: string[];
+}
+
+// ─── Installer ────────────────────────────────────────────────────────────────
+
+export interface InstallResult {
+  hooks_installed: number;
+  skills_installed: number;
+  commands_installed: number;
+  acps_configured: string[];
+  errors: string[];
+  marketplace_version: string;
+}
+
+export interface UninstallResult {
+  acps_removed: string[];
+  hooks_removed: boolean;
+  skills_removed: number;
+  plugin_removed: boolean;
+  cache_cleared: boolean;
+}
+
+export interface InstalledItem {
+  name: string;
+  kind: string;
+  path: string;
+}
+
+export interface MarketplaceCatalogItem {
+  name: string;
+  kind: string;
+  description: string;
+  scope: string;
+  path: string;
+  recommended_for: string[];
+  stage: string[];
+}
+
+export interface MarketplaceCatalog {
+  version: string | null;
+  items: MarketplaceCatalogItem[];
+}
+
 // ─── Scanned Repo (from Tauri analyze_folder) ─────────────────────────────────
 
 export type RepoStatus = 'active' | 'recent' | 'stale' | 'archived' | 'abandoned' | 'unknown';

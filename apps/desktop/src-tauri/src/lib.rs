@@ -1,82 +1,23 @@
-use std::path::PathBuf;
 use std::time::SystemTime;
 use serde_json::{json, Value};
 use tauri::Manager;
 
-fn home() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(PathBuf::from)
-}
+// ── ACP detection (delegates to daemon API) ──────────────────────────────
 
-// ── ACP detection ─────────────────────────────────────────────────────────
+const DAEMON_URL: &str = "http://127.0.0.1:7744";
 
 #[tauri::command]
 fn detect_acps() -> Vec<String> {
-    let Some(h) = home() else { return vec![]; };
-    let mut found = vec![];
-
-    // Claude Desktop — look for the app bundle, not just the config dir
-    if std::path::Path::new("/Applications/Claude.app").exists()
-        || h.join("Applications/Claude.app").exists()
-    {
-        found.push("claude-desktop".to_string());
+    match ureq::get(&format!("{}/api/acp/detect", DAEMON_URL)).call() {
+        Ok(resp) => {
+            let acps: Vec<serde_json::Value> = resp.into_json().unwrap_or_default();
+            acps.iter()
+                .filter(|a| a["installed"].as_bool() == Some(true))
+                .filter_map(|a| a["id"].as_str().map(String::from))
+                .collect()
+        }
+        Err(_) => vec![],
     }
-
-    // Claude Code — ~/.claude/settings.json is the reliable marker
-    if h.join(".claude/settings.json").exists() || h.join(".claude/CLAUDE.md").exists() {
-        found.push("claude-code".to_string());
-    }
-
-    // Cursor — check the app bundle, not just ~/.cursor (that dir can exist spuriously)
-    if std::path::Path::new("/Applications/Cursor.app").exists()
-        || h.join("Applications/Cursor.app").exists()
-        || which_exists("cursor")
-    {
-        found.push("cursor".to_string());
-    }
-
-    // Windsurf
-    if std::path::Path::new("/Applications/Windsurf.app").exists()
-        || h.join("Applications/Windsurf.app").exists()
-        || which_exists("windsurf")
-    {
-        found.push("windsurf".to_string());
-    }
-
-    // Zed
-    if std::path::Path::new("/Applications/Zed.app").exists()
-        || h.join("Applications/Zed.app").exists()
-        || h.join(".config/zed/settings.json").exists()
-    {
-        found.push("zed".to_string());
-    }
-
-    // Kiro (AWS AI IDE)
-    if std::path::Path::new("/Applications/Kiro.app").exists()
-        || h.join("Applications/Kiro.app").exists()
-        || which_exists("kiro")
-    {
-        found.push("kiro".to_string());
-    }
-
-    // OpenCode — terminal-based AI coding tool by SST
-    if which_exists("opencode")
-        || h.join(".config/opencode/opencode.json").exists()
-        || h.join(".local/bin/opencode").is_file()
-    {
-        found.push("opencode".to_string());
-    }
-
-    found
-}
-
-/// Check if a binary is on PATH without shelling out (avoids injection risks).
-fn which_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path)
-                .any(|dir| dir.join(name).is_file())
-        })
-        .unwrap_or(false)
 }
 
 // ── Shared helper: find the sensei CLI binary ─────────────────────────────
@@ -107,55 +48,32 @@ fn find_sensei_binary() -> Option<String> {
     None
 }
 
-// ── MCP configuration ─────────────────────────────────────────────────────
+// ── MCP configuration (delegates to daemon API) ──────────────────────────
 
 #[tauri::command]
 fn configure_mcp(acps: Vec<String>) -> Result<Vec<String>, String> {
-    let h = home().ok_or("Cannot determine home directory")?;
-    let sensei_cmd = find_sensei_binary()
-        .ok_or_else(|| "sensei binary not found — install sensei globally first (bun install -g sensei)".to_string())?;
-    // Use `sensei mcp` as the MCP server command.
-    // When Claude Code launches the MCP server, it will call `sensei mcp` from
-    // within the user's repo directory, so SENSEI_REPO_PATH falls back to cwd.
-    let entry = json!({ "command": sensei_cmd, "args": ["mcp"] });
-
-    let paths: std::collections::HashMap<&str, PathBuf> = [
-        ("claude-desktop", h.join("Library/Application Support/Claude/claude_desktop_config.json")),
-        ("claude-code",    h.join(".claude/settings.json")),
-        ("cursor",         h.join(".cursor/mcp.json")),
-        ("windsurf",       h.join(".codeium/windsurf/mcp_config.json")),
-        ("zed",            h.join(".config/zed/settings.json")),
-        ("kiro",      h.join(".kiro/settings/mcp.json")),
-        ("opencode",  h.join(".config/opencode/opencode.json")),
-    ].into();
-
-    let mut ok = vec![];
-    for id in &acps {
-        let Some(path) = paths.get(id.as_str()) else { continue; };
-        let mut cfg: Value = if path.exists() {
-            let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-            serde_json::from_str(&raw).unwrap_or(json!({}))
-        } else {
-            json!({})
-        };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let body = json!({"acps": acps});
+    match ureq::post(&format!("{}/api/acp/configure", DAEMON_URL))
+        .send_json(&body)
+    {
+        Ok(resp) => {
+            let result: Value = resp.into_json().unwrap_or(json!({}));
+            let configured: Vec<String> = result["configured"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            if let Some(errors) = result["errors"].as_array() {
+                if !errors.is_empty() {
+                    let err_msgs: Vec<&str> = errors.iter().filter_map(|e| e.as_str()).collect();
+                    if configured.is_empty() {
+                        return Err(err_msgs.join(", "));
+                    }
+                }
+            }
+            Ok(configured)
         }
-        // OpenCode uses { mcp: { name: { type, command[] } } }; others use mcpServers.
-        if id == "opencode" {
-            cfg["mcp"]["sensei"] = json!({
-                "type": "local",
-                "command": [&sensei_cmd, "mcp"],
-                "enabled": true
-            });
-        } else {
-            cfg["mcpServers"]["sensei"] = entry.clone();
-        }
-        let out = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-        std::fs::write(path, out).map_err(|e| e.to_string())?;
-        ok.push(id.clone());
+        Err(e) => Err(format!("Daemon not available: {}", e)),
     }
-    Ok(ok)
 }
 
 // ── Repo ID reader ─────────────────────────────────────────────────────────
@@ -687,7 +605,7 @@ fn parse_pkg_specifier(s: &str) -> Option<String> {
 
 // ── ACP config status ──────────────────────────────────────────────────────
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct AcpStatus {
     id: String,
     name: String,
@@ -698,47 +616,10 @@ struct AcpStatus {
 
 #[tauri::command]
 fn check_acp_configs() -> Vec<AcpStatus> {
-    let Some(h) = home() else { return vec![]; };
-    let installed_ids = detect_acps();
-
-    let specs: &[(&str, &str, bool)] = &[
-        ("claude-desktop", "Claude Desktop", false),
-        ("claude-code",    "Claude Code",    false),
-        ("cursor",         "Cursor",         false),
-        ("windsurf",       "Windsurf",       false),
-        ("zed",            "Zed",            false),
-        ("kiro",           "Kiro",           false),
-        ("opencode",       "OpenCode",       true),
-    ];
-
-    let paths: std::collections::HashMap<&str, std::path::PathBuf> = [
-        ("claude-desktop", h.join("Library/Application Support/Claude/claude_desktop_config.json")),
-        ("claude-code",    h.join(".claude/settings.json")),
-        ("cursor",         h.join(".cursor/mcp.json")),
-        ("windsurf",       h.join(".codeium/windsurf/mcp_config.json")),
-        ("zed",            h.join(".config/zed/settings.json")),
-        ("kiro",           h.join(".kiro/settings/mcp.json")),
-        ("opencode",       h.join(".config/opencode/opencode.json")),
-    ].into();
-
-    specs.iter().map(|(id, name, is_opencode)| {
-        let config_path = paths.get(id).cloned().unwrap_or_default();
-        let installed = installed_ids.contains(&id.to_string());
-        let mcp_configured = config_path.exists()
-            && std::fs::read_to_string(&config_path)
-                .ok()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .map(|v| if *is_opencode { v["mcp"]["sensei"].is_object() } else { v["mcpServers"]["sensei"].is_object() })
-                .unwrap_or(false);
-
-        AcpStatus {
-            id: id.to_string(),
-            name: name.to_string(),
-            installed,
-            mcp_configured,
-            config_path: config_path.to_string_lossy().into_owned(),
-        }
-    }).collect()
+    match ureq::get(&format!("{}/api/acp/detect", DAEMON_URL)).call() {
+        Ok(resp) => resp.into_json().unwrap_or_default(),
+        Err(_) => vec![],
+    }
 }
 
 // ── Tauri entry point ──────────────────────────────────────────────────────
