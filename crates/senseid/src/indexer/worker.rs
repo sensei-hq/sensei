@@ -67,17 +67,20 @@ pub async fn spawn_workers(queue: Arc<IndexQueue>, state: AppState, num_workers:
                             graph.record_doc_drift(&drifts, &rid)?;
                         }
 
-                        // Re-index dirty docs
+                        // Re-index dirty docs (or delete if file was removed)
                         for doc_path in &dirty_docs {
                             let abs = doc_path.to_string_lossy().to_string();
-                            let content = std::fs::read_to_string(doc_path).unwrap_or_default();
-                            if !content.is_empty() {
-                                let doc_id = format!("doc:{}", abs);
-                                let title = content.lines()
-                                    .find(|l| l.starts_with("# "))
-                                    .map(|l| l[2..].trim().to_string())
-                                    .unwrap_or_default();
-                                graph.merge_doc(&doc_id, &abs, &title, "doc", &rid).ok();
+                            let doc_id = format!("doc:{}", abs);
+                            if !doc_path.exists() {
+                                graph.delete_node(&doc_id).ok();
+                            } else if let Ok(content) = std::fs::read_to_string(doc_path) {
+                                if !content.is_empty() {
+                                    let title = content.lines()
+                                        .find(|l| l.starts_with("# "))
+                                        .map(|l| l[2..].trim().to_string())
+                                        .unwrap_or_default();
+                                    graph.merge_doc(&doc_id, &abs, &title, "doc", &rid).ok();
+                                }
                             }
                         }
 
