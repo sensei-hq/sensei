@@ -21,8 +21,7 @@
     "plugin:uninstall": "bun run plugin/scripts/uninstall.ts",
     "upgrade:apps": "find ./apps -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
     "upgrade:packages": "find ./packages -type d -depth 1 -exec sh -c 'cd \"{}\" && bun update --latest' \\;",
-    "upgrade:all": "bun upgrade:packages && bun upgrade:apps",
-    "bump:all": "./scripts/bump-all.sh"
+    "upgrade:all": "bun upgrade:packages && bun upgrade:apps"
   },
   "overrides": {
     "@supabase/supabase-js": "2.101.1"
