@@ -7,6 +7,15 @@
   </head>
   <body data-sveltekit-preload-data="hover" data-style="frosted" data-density="comfortable">
     <script>
+      (function () {
+        try {
+          var t = JSON.parse(localStorage.getItem('rokkit-theme') || '{}')
+          var b = document.body
+          b.dataset.mode = t.mode || 'dark'
+        } catch (e) {}
+      })()
+    </script>
+    <script>
       // Set dark/light from system preference immediately (before first paint)
       (function () {
         var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
