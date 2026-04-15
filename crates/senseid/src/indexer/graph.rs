@@ -39,6 +39,8 @@ impl GraphDb {
             DELETE FROM types;
             DELETE FROM comments;
             DELETE FROM docs;
+            DELETE FROM packages;
+            DELETE FROM modules;
             DELETE FROM edges;
         ").map_err(|e| e.to_string())?;
         // Also clear community/drift tables if they exist
@@ -79,6 +81,14 @@ impl GraphDb {
             CREATE TABLE IF NOT EXISTS docs(
                 id TEXT PRIMARY KEY, path TEXT, title TEXT, doc_type TEXT, project TEXT
             );
+            CREATE TABLE IF NOT EXISTS packages(
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT,
+                path TEXT, pkg_type TEXT, project TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS modules(
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
+                package_id TEXT, project TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS edges(
                 from_id TEXT NOT NULL, to_id TEXT NOT NULL, edge_type TEXT NOT NULL,
                 weight REAL,
@@ -91,6 +101,9 @@ impl GraphDb {
             CREATE INDEX IF NOT EXISTS idx_type_name ON types(name);
             CREATE INDEX IF NOT EXISTS idx_edge_from ON edges(from_id);
             CREATE INDEX IF NOT EXISTS idx_edge_to ON edges(to_id);
+            CREATE INDEX IF NOT EXISTS idx_pkg_project ON packages(project);
+            CREATE INDEX IF NOT EXISTS idx_mod_project ON modules(project);
+            CREATE INDEX IF NOT EXISTS idx_mod_package ON modules(package_id);
         ").map_err(|e| e.to_string())?;
 
         // Migration: add tags column if missing (for existing DBs)
@@ -141,6 +154,42 @@ impl GraphDb {
         Ok(())
     }
 
+    pub fn merge_package(
+        &self, id: &str, name: &str, version: Option<&str>,
+        path: &str, pkg_type: &str, project: &str,
+    ) -> Result<(), String> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO packages(id, name, version, path, pkg_type, project) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![id, name, version, path, pkg_type, project],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn merge_module(
+        &self, id: &str, name: &str, path: &str,
+        package_id: Option<&str>, project: &str,
+    ) -> Result<(), String> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO modules(id, name, path, package_id, project) VALUES(?1,?2,?3,?4,?5)",
+            params![id, name, path, package_id, project],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn count_packages(&self, project: &str) -> Result<u32, String> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM packages WHERE project = ?1", params![project],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())
+    }
+
+    pub fn count_modules(&self, project: &str) -> Result<u32, String> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM modules WHERE project = ?1", params![project],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())
+    }
+
     pub fn delete_file(&self, abs_path: &str, project: &str) -> Result<(), String> {
         // Delete edges involving functions from this file
         self.conn.execute(
@@ -186,7 +235,14 @@ impl GraphDb {
 
     pub fn count_edges(&self, project: &str) -> Result<u32, String> {
         let count: u32 = self.conn.query_row(
-            "SELECT COUNT(*) FROM edges e JOIN functions f ON e.from_id = f.id WHERE f.project = ?1",
+            "SELECT COUNT(*) FROM edges e WHERE e.from_id IN (
+                SELECT id FROM functions WHERE project = ?1
+                UNION SELECT id FROM files WHERE project = ?1
+                UNION SELECT id FROM types WHERE project = ?1
+                UNION SELECT id FROM docs WHERE project = ?1
+                UNION SELECT id FROM packages WHERE project = ?1
+                UNION SELECT id FROM modules WHERE project = ?1
+            )",
             params![project], |row| row.get(0),
         ).unwrap_or(0);
         Ok(count)
@@ -201,7 +257,11 @@ impl GraphDb {
              UNION ALL
              SELECT id, module as name, 'file' as kind, path as file, 0, 0 FROM files WHERE project = ?1
              UNION ALL
-             SELECT id, title as name, 'doc' as kind, path as file, 0, 0 FROM docs WHERE project = ?1"
+             SELECT id, title as name, 'doc' as kind, path as file, 0, 0 FROM docs WHERE project = ?1
+             UNION ALL
+             SELECT id, name, 'package' as kind, path as file, 0, 0 FROM packages WHERE project = ?1
+             UNION ALL
+             SELECT id, name, 'module' as kind, path as file, 0, 0 FROM modules WHERE project = ?1"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(params![project], |row| {
             Ok(crate::types::GraphNode {
@@ -226,6 +286,8 @@ impl GraphDb {
                  UNION SELECT id FROM files WHERE project = ?1
                  UNION SELECT id FROM types WHERE project = ?1
                  UNION SELECT id FROM docs WHERE project = ?1
+                 UNION SELECT id FROM packages WHERE project = ?1
+                 UNION SELECT id FROM modules WHERE project = ?1
              )"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(params![project], |row| {
@@ -641,5 +703,209 @@ mod tests {
         assert!(is_function_like(&SymbolKind::Function));
         assert!(is_function_like(&SymbolKind::Method));
         assert!(!is_function_like(&SymbolKind::Class));
+    }
+
+    #[test]
+    fn merge_and_count_packages() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_package("pkg:proj:ui", "ui", Some("1.0.0"), "packages/ui", "npm_workspace", "proj").unwrap();
+        db.merge_package("pkg:proj:api", "api", None, "packages/api", "npm_workspace", "proj").unwrap();
+        assert_eq!(db.count_packages("proj").unwrap(), 2);
+        assert_eq!(db.count_packages("other").unwrap(), 0);
+    }
+
+    #[test]
+    fn merge_and_count_modules() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_module("mod:proj:src/utils", "src/utils", "src/utils", None, "proj").unwrap();
+        db.merge_module("mod:proj:src/api", "src/api", "src/api", Some("pkg:proj:api"), "proj").unwrap();
+        assert_eq!(db.count_modules("proj").unwrap(), 2);
+    }
+
+    #[test]
+    fn get_nodes_includes_packages_and_modules() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_function("fn:a:1", "foo", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        db.merge_package("pkg:proj:core", "core", None, "core", "cargo_crate", "proj").unwrap();
+        db.merge_module("mod:proj:core/src", "core/src", "core/src", Some("pkg:proj:core"), "proj").unwrap();
+        let nodes = db.get_nodes("proj").unwrap();
+        let kinds: Vec<&str> = nodes.iter().map(|n| n.kind.as_str()).collect();
+        assert!(kinds.contains(&"function"), "should contain function nodes");
+        assert!(kinds.contains(&"package"), "should contain package nodes");
+        assert!(kinds.contains(&"module"), "should contain module nodes");
+    }
+
+    #[test]
+    fn containment_edges_queryable() {
+        let db = GraphDb::open_memory().unwrap();
+        let pkg_id = "pkg:proj:ui";
+        let mod_id = "mod:proj:ui/src";
+        let fn_id = "fn:a:foo:1";
+        let type_id = "type:a:Foo:1";
+        db.merge_package(pkg_id, "ui", None, "ui", "npm_workspace", "proj").unwrap();
+        db.merge_module(mod_id, "ui/src", "ui/src", Some(pkg_id), "proj").unwrap();
+        db.merge_function(fn_id, "foo", "a.ts", 1, "", "", "", 1, "proj").unwrap();
+        db.merge_type(type_id, "Foo", "a.ts", 1, "class", "proj").unwrap();
+        db.merge_edge("project:proj", pkg_id, "CONTAINS_PKG").unwrap();
+        db.merge_edge(pkg_id, mod_id, "CONTAINS_MOD").unwrap();
+        db.merge_edge(mod_id, fn_id, "CONTAINS_FN").unwrap();
+        db.merge_edge(type_id, fn_id, "HAS_METHOD").unwrap();
+
+        let edges = db.get_edges("proj").unwrap();
+        let edge_types: Vec<&str> = edges.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(edge_types.contains(&"CONTAINS_MOD"), "should have CONTAINS_MOD");
+        assert!(edge_types.contains(&"CONTAINS_FN"), "should have CONTAINS_FN");
+        assert!(edge_types.contains(&"HAS_METHOD"), "should have HAS_METHOD");
+    }
+
+    #[test]
+    fn clear_all_clears_packages_and_modules() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_package("pkg:proj:a", "a", None, "a", "npm_workspace", "proj").unwrap();
+        db.merge_module("mod:proj:b", "b", "b", None, "proj").unwrap();
+        assert_eq!(db.count_packages("proj").unwrap(), 1);
+        assert_eq!(db.count_modules("proj").unwrap(), 1);
+        db.clear_all().unwrap();
+        assert_eq!(db.count_packages("proj").unwrap(), 0);
+        assert_eq!(db.count_modules("proj").unwrap(), 0);
+    }
+
+    #[test]
+    fn search_functions_by_name() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_function("fn:a:hello:1", "hello", "a.py", 1, "def hello()", "", "", 1, "proj").unwrap();
+        db.merge_function("fn:a:help:5", "help", "a.py", 5, "def help()", "", "", 1, "proj").unwrap();
+        db.merge_function("fn:a:world:10", "world", "a.py", 10, "def world()", "", "", 1, "proj").unwrap();
+        let results = db.search_functions("hel", "proj").unwrap();
+        assert_eq!(results.len(), 2); // hello + help
+        let names: Vec<&str> = results.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"hello"));
+        assert!(names.contains(&"help"));
+    }
+
+    #[test]
+    fn search_types_by_name() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_type("type:a:UserService:1", "UserService", "a.ts", 1, "class", "proj").unwrap();
+        db.merge_type("type:a:UserRole:5", "UserRole", "a.ts", 5, "enum", "proj").unwrap();
+        db.merge_type("type:a:Config:10", "Config", "a.ts", 10, "interface", "proj").unwrap();
+        let results = db.search_types("User", "proj").unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn callers_and_callees() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_function("fn:a:main:1", "main", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        db.merge_function("fn:a:helper:5", "helper", "a.py", 5, "", "", "", 1, "proj").unwrap();
+        db.merge_function("fn:a:util:10", "util", "a.py", 10, "", "", "", 1, "proj").unwrap();
+        db.merge_edge("fn:a:main:1", "fn:a:helper:5", "CALLS").unwrap();
+        db.merge_edge("fn:a:helper:5", "fn:a:util:10", "CALLS").unwrap();
+        // callers of helper = [main]
+        let callers = db.callers_of("helper", "proj").unwrap();
+        assert_eq!(callers.len(), 1);
+        assert_eq!(callers[0].name, "main");
+        // callees of helper = [util]
+        let callees = db.callees_of("helper", "proj").unwrap();
+        assert_eq!(callees.len(), 1);
+        assert_eq!(callees[0].name, "util");
+    }
+
+    #[test]
+    fn tag_file_and_function() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_file("file:a.ts", "a.ts", "a", "typescript", "proj").unwrap();
+        db.merge_function("fn:a:foo:1", "foo", "a.ts", 1, "", "", "", 1, "proj").unwrap();
+        db.tag_file("file:a.ts", "react,hooks").unwrap();
+        db.tag_function("fn:a:foo:1", "hook").unwrap();
+        let files = db.files_by_tag("react", "proj").unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].2.contains("react"));
+    }
+
+    #[test]
+    fn find_function_by_name() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_function("fn:a:hello:1", "hello", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        let found = db.find_function_by_name("hello", "proj").unwrap();
+        assert_eq!(found, Some("fn:a:hello:1".to_string()));
+        let not_found = db.find_function_by_name("missing", "proj").unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn count_edges_includes_all_node_types() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_function("fn:a:1", "foo", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        db.merge_type("type:a:Foo:1", "Foo", "a.py", 1, "class", "proj").unwrap();
+        db.merge_module("mod:proj:src", "src", "src", None, "proj").unwrap();
+        db.merge_edge("fn:a:1", "fn:a:1", "CALLS").unwrap(); // self-call
+        db.merge_edge("type:a:Foo:1", "fn:a:1", "HAS_METHOD").unwrap();
+        db.merge_edge("mod:proj:src", "fn:a:1", "CONTAINS_FN").unwrap();
+        assert_eq!(db.count_edges("proj").unwrap(), 3);
+    }
+
+    #[test]
+    fn get_call_flow_structure() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_file("file:a.py", "a.py", "a", "python", "proj").unwrap();
+        db.merge_function("fn:a:hello:1", "hello", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        db.merge_function("fn:a:helper:5", "helper", "a.py", 5, "", "", "", 1, "proj").unwrap();
+        db.merge_edge("file:a.py", "fn:a:hello:1", "EXPORTS_FN").unwrap();
+        db.merge_edge("fn:a:hello:1", "fn:a:helper:5", "CALLS").unwrap();
+        let flow = db.get_call_flow("proj").unwrap();
+        assert!(flow["moduleCount"].as_u64().unwrap() >= 1);
+        assert!(flow["exportCount"].as_u64().unwrap() >= 1);
+    }
+
+    #[test]
+    fn doc_drift_workflow() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_file("file:a.py", "a.py", "a", "python", "proj").unwrap();
+        db.merge_function("fn:a:foo:1", "foo", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        db.merge_doc("doc:readme", "README.md", "README", "readme", "proj").unwrap();
+        db.merge_edge("doc:readme", "file:a.py", "COVERS").unwrap();
+        db.merge_edge("doc:readme", "fn:a:foo:1", "MENTIONS_FN").unwrap();
+        // Find drifted docs when file/fn changed
+        let drifts = db.find_drifted_docs(&["file:a.py".into()], &["fn:a:foo:1".into()]).unwrap();
+        assert_eq!(drifts.len(), 2); // one COVERS + one MENTIONS_FN
+        // Record and retrieve
+        db.record_doc_drift(&drifts, "proj").unwrap();
+        let stored = db.get_doc_drift("proj").unwrap();
+        assert_eq!(stored.len(), 2);
+    }
+
+    #[test]
+    fn store_and_get_communities() {
+        let db = GraphDb::open_memory().unwrap();
+        db.merge_function("fn:a:1", "foo", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        db.merge_function("fn:a:2", "bar", "a.py", 5, "", "", "", 1, "proj").unwrap();
+        db.merge_file("file:a.py", "a.py", "a", "python", "proj").unwrap();
+        let mut communities = std::collections::HashMap::new();
+        communities.insert("fn:a:1".to_string(), 0u32);
+        communities.insert("fn:a:2".to_string(), 0u32);
+        communities.insert("file:a.py".to_string(), 1u32);
+        db.store_communities(&communities).unwrap();
+        let result = db.get_communities("proj").unwrap();
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn db_path_returns_some_for_file_db() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = GraphDb::open(dir.path()).unwrap();
+        assert!(db.db_path().is_some());
+        let mem = GraphDb::open_memory().unwrap();
+        assert!(mem.db_path().is_none());
+    }
+
+    #[test]
+    fn clone_connection_works() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = GraphDb::open(dir.path()).unwrap();
+        db.merge_function("fn:a:1", "foo", "a.py", 1, "", "", "", 1, "proj").unwrap();
+        let db2 = db.clone_connection().unwrap();
+        let (fns, _) = db2.count_symbols("proj").unwrap();
+        assert_eq!(fns, 1);
     }
 }

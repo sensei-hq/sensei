@@ -27,6 +27,8 @@
 
   async function load() {
     const api = senseiApi(port);
+    // Detect communities first (needs POST), then fetch all data in parallel
+    await api.detectCommunities(repoId);
     const [s, graph, comms, drift, sessionData] = await Promise.all([
       api.getProjectSummary(repoId),
       api.getGraphNodes(repoId),
@@ -52,7 +54,7 @@
   onMount(() => { load(); });
 </script>
 
-<div class="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+<div class="h-full overflow-y-auto px-6 py-5 space-y-6">
 
   {#if loading}
     <p class="text-sm text-surface-z4 py-8 text-center">Loading...</p>
@@ -74,25 +76,33 @@
     </div>
 
     <!-- Stats -->
-    <div class="grid grid-cols-5 gap-3">
+    <div class="grid grid-cols-4 xl:grid-cols-7 gap-3">
       <div class="rounded-lg bg-surface-z2 p-3">
-        <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Functions</p>
-        <p class="mt-1 text-xl font-semibold text-surface-z8">{summary.functions.toLocaleString()}</p>
+        <p class="text-[10px] text-surface-z6 uppercase tracking-wide font-medium">Packages</p>
+        <p class="mt-1 text-xl font-semibold text-violet-500">{(summary.packages ?? 0).toLocaleString()}</p>
       </div>
       <div class="rounded-lg bg-surface-z2 p-3">
-        <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Types</p>
-        <p class="mt-1 text-xl font-semibold text-surface-z8">{summary.types.toLocaleString()}</p>
+        <p class="text-[10px] text-surface-z6 uppercase tracking-wide font-medium">Modules</p>
+        <p class="mt-1 text-xl font-semibold text-teal-500">{(summary.modules ?? 0).toLocaleString()}</p>
       </div>
       <div class="rounded-lg bg-surface-z2 p-3">
-        <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Edges</p>
+        <p class="text-[10px] text-surface-z6 uppercase tracking-wide font-medium">Functions</p>
+        <p class="mt-1 text-xl font-semibold text-indigo-400">{summary.functions.toLocaleString()}</p>
+      </div>
+      <div class="rounded-lg bg-surface-z2 p-3">
+        <p class="text-[10px] text-surface-z6 uppercase tracking-wide font-medium">Types</p>
+        <p class="mt-1 text-xl font-semibold text-amber-400">{summary.types.toLocaleString()}</p>
+      </div>
+      <div class="rounded-lg bg-surface-z2 p-3">
+        <p class="text-[10px] text-surface-z6 uppercase tracking-wide font-medium">Edges</p>
         <p class="mt-1 text-xl font-semibold text-surface-z8">{graphEdges.length.toLocaleString()}</p>
       </div>
       <div class="rounded-lg bg-surface-z2 p-3">
-        <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Communities</p>
+        <p class="text-[10px] text-surface-z6 uppercase tracking-wide font-medium">Communities</p>
         <p class="mt-1 text-xl font-semibold text-surface-z8">{communities.length}</p>
       </div>
       <div class="rounded-lg bg-surface-z2 p-3">
-        <p class="text-[10px] text-surface-z4 uppercase tracking-wide">Sessions</p>
+        <p class="text-[10px] text-surface-z6 uppercase tracking-wide font-medium">Sessions</p>
         <p class="mt-1 text-xl font-semibold text-surface-z8">{sessions.length}</p>
       </div>
     </div>
@@ -140,7 +150,7 @@
     {#if graphNodes.length > 0}
       <div>
         <h3 class="text-xs font-semibold text-surface-z5 uppercase tracking-wide mb-2">Code Graph</h3>
-        <div class="h-64 rounded-lg border border-surface-z0/30 overflow-hidden">
+        <div class="h-[480px] rounded-lg border border-surface-z0/30 overflow-hidden">
           <GraphCanvas nodes={graphNodes} edges={graphEdges} />
         </div>
         <p class="text-[10px] text-surface-z3 mt-1">{graphNodes.length} nodes · {graphEdges.length} edges</p>

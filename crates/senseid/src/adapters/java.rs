@@ -47,16 +47,16 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
             "class_declaration" => {
                 let name = field_text(&child, "name", src);
                 let is_pub = has_modifier(&child, src, "public");
-                symbols.push(make_sym(name, SymbolKind::Class, &child, lines, src, is_pub));
+                symbols.push(make_sym(name.clone(), SymbolKind::Class, &child, lines, src, is_pub));
                 if let Some(body) = child.child_by_field_name("body") {
-                    extract_members(&body, src, lines, symbols);
+                    extract_members(&body, src, lines, symbols, &name);
                 }
             }
             "interface_declaration" => {
                 let name = field_text(&child, "name", src);
-                symbols.push(make_sym(name, SymbolKind::Interface, &child, lines, src, has_modifier(&child, src, "public")));
+                symbols.push(make_sym(name.clone(), SymbolKind::Interface, &child, lines, src, has_modifier(&child, src, "public")));
                 if let Some(body) = child.child_by_field_name("body") {
-                    extract_members(&body, src, lines, symbols);
+                    extract_members(&body, src, lines, symbols, &name);
                 }
             }
             "enum_declaration" => {
@@ -76,18 +76,19 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
     }
 }
 
-fn extract_members(body: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>) {
+fn extract_members(body: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, class_name: &str) {
     for i in 0..body.child_count() {
         let child = body.child(i).unwrap();
         match child.kind() {
             "method_declaration" | "constructor_declaration" => {
                 let name = field_text(&child, "name", src);
                 if !name.is_empty() {
-                    symbols.push(make_sym(name, SymbolKind::Method, &child, lines, src, has_modifier(&child, src, "public")));
+                    let mut sym = make_sym(name, SymbolKind::Method, &child, lines, src, has_modifier(&child, src, "public"));
+                    sym.parent = Some(class_name.to_string());
+                    symbols.push(sym);
                 }
             }
             "field_declaration" => {
-                // static final fields → constants
                 if has_modifier(&child, src, "static") && has_modifier(&child, src, "final") {
                     if let Some(declarator) = find_child_kind(&child, "variable_declarator") {
                         let name = field_text(&declarator, "name", src);
@@ -111,6 +112,7 @@ fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[
         line_start: node.start_position().row as u32 + 1,
         line_end: node.end_position().row as u32 + 1,
         is_exported,
+        parent: None,
     }
 }
 
@@ -210,5 +212,32 @@ mod tests {
         let consts: Vec<_> = pf.symbols.iter().filter(|s| s.kind == SymbolKind::Const).collect();
         assert_eq!(consts.len(), 1);
         assert_eq!(consts[0].name, "MAX");
+    }
+
+    #[test]
+    fn method_parent_set_on_class() {
+        let pf = parse("public class Svc {\n  public void run() {}\n  private int calc() { return 0; }\n}");
+        let svc = pf.symbols.iter().find(|s| s.name == "Svc").unwrap();
+        assert!(svc.parent.is_none(), "class should have no parent");
+        let run = pf.symbols.iter().find(|s| s.name == "run").unwrap();
+        assert_eq!(run.parent.as_deref(), Some("Svc"));
+        assert_eq!(run.kind, SymbolKind::Method);
+        let calc = pf.symbols.iter().find(|s| s.name == "calc").unwrap();
+        assert_eq!(calc.parent.as_deref(), Some("Svc"));
+    }
+
+    #[test]
+    fn method_parent_set_on_interface() {
+        let pf = parse("public interface Handler {\n  void handle();\n}");
+        let methods: Vec<_> = pf.symbols.iter().filter(|s| s.kind == SymbolKind::Method).collect();
+        if !methods.is_empty() {
+            assert_eq!(methods[0].parent.as_deref(), Some("Handler"));
+        }
+    }
+
+    #[test]
+    fn enum_has_no_parent() {
+        let pf = parse("public enum Color { RED, GREEN }");
+        assert!(pf.symbols[0].parent.is_none());
     }
 }

@@ -26,6 +26,7 @@ impl LanguageAdapter for VueAdapter {
             line_start: 1,
             line_end: source.lines().count() as u32,
             is_exported: true,
+            parent: None,
         });
 
         for (script_src, offset, is_ts) in extract_script_blocks(source) {

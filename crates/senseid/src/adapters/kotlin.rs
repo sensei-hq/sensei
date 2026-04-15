@@ -45,6 +45,10 @@ fn empty(path: &str) -> ParsedFile {
 }
 
 fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>) {
+    walk_with_parent(node, src, lines, symbols, imports, None);
+}
+
+fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>, class_name: Option<&str>) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
@@ -52,8 +56,10 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 let name = find_name(&child, src);
                 if name.is_empty() { continue; }
                 let is_pub = !has_modifier(&child, src, "private") && !has_modifier(&child, src, "internal");
-                let kind = if is_inside_class(node) { SymbolKind::Method } else { SymbolKind::Function };
-                symbols.push(make_sym(name, kind, &child, lines, src, is_pub));
+                let kind = if class_name.is_some() { SymbolKind::Method } else { SymbolKind::Function };
+                let mut sym = make_sym(name, kind, &child, lines, src, is_pub);
+                sym.parent = class_name.map(|s| s.to_string());
+                symbols.push(sym);
             }
             "class_declaration" => {
                 let name = find_name(&child, src);
@@ -63,23 +69,22 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                     else if has_modifier(&child, src, "enum") { SymbolKind::Enum }
                     else { SymbolKind::Class };
                 let is_pub = !has_modifier(&child, src, "private") && !has_modifier(&child, src, "internal");
-                symbols.push(make_sym(name, kind, &child, lines, src, is_pub));
-                // Recurse into class body for methods
+                symbols.push(make_sym(name.clone(), kind, &child, lines, src, is_pub));
                 for j in 0..child.child_count() {
                     let cc = child.child(j).unwrap();
                     if cc.kind() == "class_body" {
-                        walk(&cc, src, lines, symbols, imports);
+                        walk_with_parent(&cc, src, lines, symbols, imports, Some(&name));
                     }
                 }
             }
             "object_declaration" => {
                 let name = find_name(&child, src);
                 if !name.is_empty() {
-                    symbols.push(make_sym(name, SymbolKind::Class, &child, lines, src, true));
+                    symbols.push(make_sym(name.clone(), SymbolKind::Class, &child, lines, src, true));
                     for j in 0..child.child_count() {
                         let cc = child.child(j).unwrap();
                         if cc.kind() == "class_body" {
-                            walk(&cc, src, lines, symbols, imports);
+                            walk_with_parent(&cc, src, lines, symbols, imports, Some(&name));
                         }
                     }
                 }
@@ -91,9 +96,8 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 }
             }
             "property_declaration" => {
-                // Top-level val/var
                 let name = find_property_name(&child, src);
-                if !name.is_empty() && !is_inside_class(node) {
+                if !name.is_empty() && class_name.is_none() {
                     symbols.push(make_sym(name, SymbolKind::Const, &child, lines, src, !has_modifier(&child, src, "private")));
                 }
             }
@@ -109,7 +113,7 @@ fn walk(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedSymbol>
                 }
             }
             "import_list" | "source_file" => {
-                walk(&child, src, lines, symbols, imports);
+                walk_with_parent(&child, src, lines, symbols, imports, class_name);
             }
             _ => {}
         }
@@ -169,6 +173,7 @@ fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[
         line_start: node.start_position().row as u32 + 1,
         line_end: node.end_position().row as u32 + 1,
         is_exported,
+        parent: None,
     }
 }
 
@@ -259,5 +264,36 @@ mod tests {
     fn kotlin_language() {
         let pf = parse("fun x() {}");
         assert_eq!(pf.language, "kotlin");
+    }
+
+    #[test]
+    fn method_parent_set_on_class() {
+        let pf = parse("class Dog {\n    fun bark() {}\n    fun sit() {}\n}");
+        let dog = pf.symbols.iter().find(|s| s.name == "Dog").unwrap();
+        assert!(dog.parent.is_none(), "class should have no parent");
+        let bark = pf.symbols.iter().find(|s| s.name == "bark").unwrap();
+        assert_eq!(bark.parent.as_deref(), Some("Dog"));
+        assert_eq!(bark.kind, SymbolKind::Method);
+        let sit = pf.symbols.iter().find(|s| s.name == "sit").unwrap();
+        assert_eq!(sit.parent.as_deref(), Some("Dog"));
+    }
+
+    #[test]
+    fn method_parent_set_on_object() {
+        let pf = parse("object Singleton {\n    fun instance() {}\n}");
+        let inst = pf.symbols.iter().find(|s| s.name == "instance").unwrap();
+        assert_eq!(inst.parent.as_deref(), Some("Singleton"));
+    }
+
+    #[test]
+    fn top_level_function_no_parent() {
+        let pf = parse("fun greet(name: String): String {\n    return \"hello $name\"\n}");
+        assert!(pf.symbols[0].parent.is_none());
+    }
+
+    #[test]
+    fn data_class_no_parent() {
+        let pf = parse("data class Point(val x: Int, val y: Int)");
+        assert!(pf.symbols[0].parent.is_none());
     }
 }

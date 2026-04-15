@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::db::Store;
-use crate::types::{Project, Solution};
+use crate::types::{Project, Solution, SolutionRepo};
 use super::graph::GraphDb;
 
 /// Cross-repo relationship detected within a solution.
@@ -364,6 +364,143 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
     roles
 }
 
+/// Auto-create a Solution for a monorepo.
+/// Only registers actual git repos (parent + subtrees) — NOT workspace packages.
+/// Workspace packages are already tracked in the graph's `packages` table.
+/// Returns Some(solution_id) if a solution was created/updated, None otherwise.
+pub fn auto_solution_for_monorepo(
+    store: &Store,
+    project: &Project,
+) -> Result<Option<String>, String> {
+    let repo_path = std::path::Path::new(&project.path);
+
+    // Detect git subtrees by looking for directories with their own git history
+    // (merged via `git subtree add`). These show up as dirs that were squash-merged.
+    let subtrees = detect_git_subtrees(repo_path);
+
+    // Check if solution already exists for this project
+    let solutions = store.list_solutions().map_err(|e| e.to_string())?;
+    for sol in &solutions {
+        if sol.repos.iter().any(|r| r.repo_id == project.repo_id) {
+            // Already in a solution — add any missing subtree repos
+            for (name, path) in &subtrees {
+                let sub_id = format!("{}:{}", project.repo_id, name);
+                if !sol.repos.iter().any(|r| r.repo_id == sub_id) {
+                    store.add_repo_to_solution(&sol.id, &SolutionRepo {
+                        repo_id: sub_id,
+                        role: "subtree".to_string(),
+                        label: Some(name.clone()),
+                        path: Some(path.clone()),
+                    }).ok();
+                }
+            }
+            return Ok(Some(sol.id.clone()));
+        }
+    }
+
+    // Nothing to create a solution for if no subtrees found
+    // (a monorepo with only workspaces doesn't need a solution — workspaces are packages)
+    if subtrees.is_empty() {
+        return Ok(None);
+    }
+
+    // Create new solution
+    let solution_id = format!("auto:{}", project.repo_id);
+    let solution = Solution {
+        id: solution_id.clone(),
+        name: project.name.clone(),
+        description: Some(format!(
+            "Monorepo with {} subtree repo(s)",
+            subtrees.len()
+        )),
+        client: None,
+        category: "active".to_string(),
+        repos: Vec::new(),
+        tags: vec!["monorepo".to_string(), "auto-detected".to_string()],
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    store.create_solution(&solution).map_err(|e| e.to_string())?;
+
+    // Add parent repo
+    store.add_repo_to_solution(&solution_id, &SolutionRepo {
+        repo_id: project.repo_id.clone(),
+        role: "parent".to_string(),
+        label: Some(project.name.clone()),
+        path: Some(project.path.clone()),
+    }).ok();
+
+    // Add subtree repos only (NOT workspace packages)
+    for (name, path) in &subtrees {
+        let sub_id = format!("{}:{}", project.repo_id, name);
+        store.add_repo_to_solution(&solution_id, &SolutionRepo {
+            repo_id: sub_id,
+            role: "subtree".to_string(),
+            label: Some(name.clone()),
+            path: Some(path.clone()),
+        }).ok();
+    }
+
+    Ok(Some(solution_id))
+}
+
+/// Detect git subtrees by finding directories that were merged via `git subtree add`.
+/// Looks for squash merge commits in git log that mention subtree paths.
+fn detect_git_subtrees(repo_path: &std::path::Path) -> Vec<(String, String)> {
+    let mut subtrees = Vec::new();
+
+    // Method 1: Check git log for subtree merge patterns
+    let output = std::process::Command::new("git")
+        .args(["log", "--oneline", "--all", "--grep=git-subtree-dir:"])
+        .current_dir(repo_path)
+        .output();
+
+    if let Ok(out) = output {
+        let log = String::from_utf8_lossy(&out.stdout);
+        for line in log.lines() {
+            // Extract dir from "Squashed 'dirname/' content from commit"
+            if let Some(start) = line.find("Squashed '") {
+                let rest = &line[start + 10..];
+                if let Some(end) = rest.find("/'") {
+                    let dir = &rest[..end];
+                    let full_path = repo_path.join(dir);
+                    if full_path.is_dir() {
+                        subtrees.push((dir.to_string(), full_path.to_string_lossy().to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Method 2: Fallback — check .gitsubtrees or known patterns
+    // Also look for git-subtree-dir in recent merge commits
+    if subtrees.is_empty() {
+        let output = std::process::Command::new("git")
+            .args(["log", "--oneline", "--merges", "-20"])
+            .current_dir(repo_path)
+            .output();
+
+        if let Ok(out) = output {
+            let log = String::from_utf8_lossy(&out.stdout);
+            for line in log.lines() {
+                // Pattern: "Merge commit 'xxx' as 'dirname'"
+                if let Some(start) = line.find("as '") {
+                    let rest = &line[start + 4..];
+                    if let Some(end) = rest.find('\'') {
+                        let dir = &rest[..end];
+                        let full_path = repo_path.join(dir);
+                        if full_path.is_dir() && !subtrees.iter().any(|(n, _)| n == dir) {
+                            subtrees.push((dir.to_string(), full_path.to_string_lossy().to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    subtrees
+}
+
 fn store_cross_repo_edges(
     graph_db: &GraphDb,
     solution_id: &str,
@@ -443,5 +580,72 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].link_type, "SHARED_DEPS");
         assert!(links[0].details.contains(&"axios".to_string()));
+    }
+
+    #[test]
+    fn infer_roles_pub_wrapper() {
+        let mut projects = HashMap::new();
+        projects.insert("lib".into(), Project {
+            repo_id: "lib".into(), name: "shared-utils".into(), path: "/lib".into(),
+            remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
+            stack: vec!["typescript".into()], libs: vec![],
+            tags: vec![], status: "active".into(),
+        });
+        let roles = infer_roles_pub(&projects);
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].role, "shared-lib");
+    }
+
+    #[test]
+    fn infer_role_mobile() {
+        let mut projects = HashMap::new();
+        projects.insert("app".into(), Project {
+            repo_id: "app".into(), name: "myapp".into(), path: "/app".into(),
+            remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
+            stack: vec!["swift".into()], libs: vec!["swiftui".into()],
+            tags: vec![], status: "active".into(),
+        });
+        let roles = infer_roles(&projects);
+        assert_eq!(roles[0].role, "mobile");
+    }
+
+    #[test]
+    fn infer_role_infra() {
+        let mut projects = HashMap::new();
+        projects.insert("infra".into(), Project {
+            repo_id: "infra".into(), name: "deploy-infra".into(), path: "/infra".into(),
+            remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
+            stack: vec![], libs: vec![],
+            tags: vec![], status: "active".into(),
+        });
+        let roles = infer_roles(&projects);
+        assert_eq!(roles[0].role, "infra");
+    }
+
+    #[test]
+    fn infer_role_docs() {
+        let mut projects = HashMap::new();
+        projects.insert("docs".into(), Project {
+            repo_id: "docs".into(), name: "project-docs".into(), path: "/docs".into(),
+            remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
+            stack: vec![], libs: vec![],
+            tags: vec![], status: "active".into(),
+        });
+        let roles = infer_roles(&projects);
+        assert_eq!(roles[0].role, "docs");
+    }
+
+    #[test]
+    fn infer_role_fallback_service() {
+        let mut projects = HashMap::new();
+        projects.insert("x".into(), Project {
+            repo_id: "x".into(), name: "unknown-thing".into(), path: "/x".into(),
+            remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
+            stack: vec!["rust".into()], libs: vec![],
+            tags: vec![], status: "active".into(),
+        });
+        let roles = infer_roles(&projects);
+        assert_eq!(roles[0].role, "service");
+        assert!(roles[0].confidence < 0.5);
     }
 }
