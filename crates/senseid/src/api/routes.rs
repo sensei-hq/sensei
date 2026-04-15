@@ -1344,36 +1344,23 @@ async fn marketplace_install(
     let scope = body["scope"].as_str().unwrap_or("global");
     let marketplace_path = body["marketplacePath"].as_str().unwrap_or("");
 
-    if target.is_empty() || marketplace_path.is_empty() {
-        return Json(serde_json::json!({"ok": false, "error": "target and marketplacePath required"}));
+    if target.is_empty() {
+        return Json(serde_json::json!({"ok": false, "error": "target required"}));
     }
 
-    // Shell out to marketplace installer
-    let mut args = vec!["run".to_string(), "install.ts".to_string(), "--target".to_string(), target.to_string()];
-    if !item_name.is_empty() {
-        args.push("--item".to_string());
-        args.push(item_name.to_string());
-    } else {
-        args.push("--scope".to_string());
-        args.push(scope.to_string());
-    }
-
-    match std::process::Command::new("bun")
-        .args(&args)
-        .current_dir(marketplace_path)
-        .output()
-    {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Json(serde_json::json!({
-                "ok": output.status.success(),
-                "output": stdout,
-                "error": if stderr.is_empty() { None } else { Some(stderr) },
-            }))
-        }
-        Err(e) => Json(serde_json::json!({"ok": false, "error": format!("Failed to run installer: {}", e)})),
-    }
+    // Use native Rust installer (replaces shelling out to marketplace/install.ts)
+    let acps: Vec<String> = body["acps"].as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let result = crate::installer::install(&acps, scope);
+    Json(serde_json::json!({
+        "ok": true,
+        "hooks_installed": result.hooks_installed,
+        "skills_installed": result.skills_installed,
+        "commands_installed": result.commands_installed,
+        "acps_configured": result.acps_configured,
+        "errors": result.errors,
+    }))
 }
 
 // ── ACP (AI Coding Platform) ─────────────────────────────────────────────────
