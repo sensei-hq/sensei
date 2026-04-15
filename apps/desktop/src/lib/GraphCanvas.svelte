@@ -81,8 +81,20 @@
     return ids;
   }
 
-  // L1: repos (or solution if present)
-  let l1Options = $derived(nodes.filter(n => n.kind === 'repo' || n.kind === 'solution'));
+  // L1: top-level roots — nodes with no parent in containment edges
+  let l1Options = $derived.by(() => {
+    const hasParent = new Set<string>();
+    for (const e of edges) {
+      const t = typeof e.type === 'string' ? e.type : '';
+      if (t.startsWith('CONTAINS_')) {
+        const tgt = typeof e.target === 'string' ? e.target : e.target.id;
+        hasParent.add(tgt);
+      }
+    }
+    return nodes.filter(n =>
+      (n.kind === 'solution' || n.kind === 'repo') && !hasParent.has(n.id)
+    );
+  });
 
   // L2: children of selected L1 (code-group, doc-group)
   let l2Options = $derived.by((): typeof nodes => {
