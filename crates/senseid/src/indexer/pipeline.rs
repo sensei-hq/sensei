@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use ignore::WalkBuilder;
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use crate::types::{IndexResult, SymbolKind};
+use crate::types::{IndexResult, SymbolKind, NodeKind, HierarchyNode};
 use crate::adapters;
 use super::manifest::{Manifest, file_hash, file_mtime};
-use super::graph::{GraphDb, is_function_like, compute_complexity};
+use super::graph::{GraphDb, compute_complexity};
 
 /// Additional excludes beyond .gitignore (build artifacts, test files, etc.)
 const DEFAULT_EXCLUDE: &[&str] = &[
@@ -101,11 +101,10 @@ pub fn index_repo_with_progress(
     let _file_to_package: HashMap<String, String> = HashMap::new(); // reserved for future file→package mapping
     for pkg in &workspace_members {
         let pkg_id = format!("pkg:{}:{}", repo_id, pkg.name);
-        graph_db.merge_package(
-            &pkg_id, &pkg.name, pkg.version.as_deref(),
-            &pkg.path, &pkg.pkg_type, repo_id,
-        ).ok();
-        // Create CONTAINS_PKG edge: project → package
+        let mut node = HierarchyNode::group(pkg_id.clone(), pkg.name.clone(), NodeKind::Package, repo_id.into());
+        node.level = Some(pkg.pkg_type.clone());
+        node.file = Some(pkg.path.clone());
+        graph_db.merge_node(&node).ok();
         let project_node = format!("project:{}", repo_id);
         graph_db.merge_edge(&project_node, &pkg_id, "CONTAINS_PKG").ok();
         edges_created += 1;
@@ -175,9 +174,12 @@ pub fn index_repo_with_progress(
         let file_id = format!("file:{}", abs_path);
         let module_name = rel_path.rsplit_once('.').map(|(n, _)| n).unwrap_or(&rel_path)
             .replace('\\', "/");
-        graph_db.merge_file(&file_id, &abs_path, &module_name, &parsed.language, repo_id)
-            .map_err(|e| { if !e.is_empty() { tracing::warn!("merge_file: {}", e); } })
-            .ok();
+        {
+            let mut file_node = HierarchyNode::group(file_id.clone(), module_name.clone(), NodeKind::File, repo_id.into());
+            file_node.file = Some(abs_path.clone());
+            file_node.level = Some(parsed.language.clone());
+            graph_db.merge_node(&file_node).ok();
+        }
 
         let mut fn_ids: HashMap<String, String> = HashMap::new();
         let mut type_ids: HashMap<String, String> = HashMap::new();
@@ -185,7 +187,8 @@ pub fn index_repo_with_progress(
         let mut call_edges = Vec::new();
 
         for sym in &parsed.symbols {
-            if is_function_like(&sym.kind) {
+            let node_kind = NodeKind::from_symbol_kind(&sym.kind);
+            if node_kind.is_function_like() {
                 let id = format!("fn:{}:{}:{}", abs_path, sym.name, sym.line_start);
                 let body = file_lines
                     .get((sym.line_start as usize).saturating_sub(1)..sym.line_end as usize)
@@ -193,12 +196,13 @@ pub fn index_repo_with_progress(
                     .unwrap_or_default();
                 let complexity = compute_complexity(&body);
 
-                graph_db.merge_function(
-                    &id, &sym.name, &abs_path, sym.line_start,
-                    sym.signature.as_deref().unwrap_or(""),
-                    &body, sym.docstring.as_deref().unwrap_or(""),
-                    complexity, repo_id,
-                ).map_err(|e| { if !e.is_empty() { tracing::warn!("merge_fn: {}", e); } }).ok();
+                let node = HierarchyNode::function(
+                    id.clone(), sym.name.clone(), node_kind,
+                    abs_path.clone(), sym.line_start,
+                    sym.signature.clone(), Some(body), sym.docstring.clone(),
+                    complexity, repo_id.into(),
+                );
+                graph_db.merge_node(&node).ok();
 
                 functions_indexed += 1;
                 fn_ids.insert(sym.name.clone(), id.clone());
@@ -219,10 +223,10 @@ pub fn index_repo_with_progress(
                 }
             } else {
                 let id = format!("type:{}:{}:{}", abs_path, sym.name, sym.line_start);
-                graph_db.merge_type(
-                    &id, &sym.name, &abs_path, sym.line_start,
-                    &sym.kind.to_string(), repo_id,
-                ).map_err(|e| { if !e.is_empty() { tracing::warn!("merge_type: {}", e); } }).ok();
+                let mut type_node = HierarchyNode::group(id.clone(), sym.name.clone(), node_kind, repo_id.into());
+                type_node.file = Some(abs_path.clone());
+                type_node.line = sym.line_start;
+                graph_db.merge_node(&type_node).ok();
 
                 types_indexed += 1;
                 type_ids.insert(sym.name.clone(), id.clone());
@@ -342,7 +346,12 @@ pub fn index_repo_with_progress(
                 rel_dir.starts_with(&pkg.path)
             }).map(|pkg| format!("pkg:{}:{}", repo_id, pkg.name));
 
-            graph_db.merge_module(&mod_id, &mod_name, &rel_dir, pkg_id.as_deref().or(Some(&root_pkg_id)), repo_id).ok();
+            {
+                let mut mod_node = HierarchyNode::group(mod_id.clone(), mod_name.clone(), NodeKind::Module, repo_id.into());
+                mod_node.file = Some(rel_dir.clone());
+                mod_node.parent_id = pkg_id.clone().or(Some(root_pkg_id.clone()));
+                graph_db.merge_node(&mod_node).ok();
+            }
             modules_indexed += 1;
 
             // CONTAINS_MOD edge: package → module
@@ -380,7 +389,11 @@ pub fn index_repo_with_progress(
 
         // Create virtual (root) package if any files are outside workspace members
         if has_root_files {
-            graph_db.merge_package(&root_pkg_id, "(root)", None, "", "root", repo_id).ok();
+            {
+                let mut root_pkg = HierarchyNode::group(root_pkg_id.clone(), "(root)".into(), NodeKind::Package, repo_id.into());
+                root_pkg.level = Some("root".into());
+                graph_db.merge_node(&root_pkg).ok();
+            }
             let project_node = format!("project:{}", repo_id);
             graph_db.merge_edge(&project_node, &root_pkg_id, "CONTAINS_PKG").ok();
             packages_indexed += 1;
@@ -447,7 +460,7 @@ pub fn index_repo_with_progress(
             .map(|s| s.to_string())
             .collect();
         for stale_path in &stale {
-            graph_db.delete_file(stale_path, repo_id).ok();
+            graph_db.delete_by_file(stale_path, repo_id).ok();
             manifest.remove(stale_path);
         }
         if !stale.is_empty() {
@@ -574,7 +587,7 @@ pub fn index_dirty_files(
         };
 
         // Delete old symbols for this file before re-inserting
-        graph_db.delete_file(&abs_path, repo_id)?;
+        graph_db.delete_by_file(&abs_path, repo_id)?;
 
         let parsed = adapter.parse(&source, &rel_path);
         let file_lines: Vec<&str> = source.lines().collect();
@@ -582,10 +595,16 @@ pub fn index_dirty_files(
         let module_name = rel_path.rsplit_once('.').map(|(n, _)| n).unwrap_or(&rel_path)
             .replace('\\', "/");
 
-        graph_db.merge_file(&file_id, &abs_path, &module_name, &parsed.language, repo_id).ok();
+        {
+            let mut file_node = HierarchyNode::group(file_id.clone(), module_name.clone(), NodeKind::File, repo_id.into());
+            file_node.file = Some(abs_path.clone());
+            file_node.level = Some(parsed.language.clone());
+            graph_db.merge_node(&file_node).ok();
+        }
 
         for sym in &parsed.symbols {
-            if is_function_like(&sym.kind) {
+            let node_kind = NodeKind::from_symbol_kind(&sym.kind);
+            if node_kind.is_function_like() {
                 let id = format!("fn:{}:{}:{}", abs_path, sym.name, sym.line_start);
                 let body = file_lines
                     .get((sym.line_start as usize).saturating_sub(1)..sym.line_end as usize)
@@ -593,12 +612,13 @@ pub fn index_dirty_files(
                     .unwrap_or_default();
                 let complexity = compute_complexity(&body);
 
-                graph_db.merge_function(
-                    &id, &sym.name, &abs_path, sym.line_start,
-                    sym.signature.as_deref().unwrap_or(""),
-                    &body, sym.docstring.as_deref().unwrap_or(""),
-                    complexity, repo_id,
-                ).ok();
+                let node = HierarchyNode::function(
+                    id.clone(), sym.name.clone(), node_kind,
+                    abs_path.clone(), sym.line_start,
+                    sym.signature.clone(), Some(body), sym.docstring.clone(),
+                    complexity, repo_id.into(),
+                );
+                graph_db.merge_node(&node).ok();
 
                 functions_indexed += 1;
                 changed_fn_ids.push(id.clone());
@@ -606,10 +626,10 @@ pub fn index_dirty_files(
                 edges_created += 1;
             } else {
                 let id = format!("type:{}:{}:{}", abs_path, sym.name, sym.line_start);
-                graph_db.merge_type(
-                    &id, &sym.name, &abs_path, sym.line_start,
-                    &sym.kind.to_string(), repo_id,
-                ).ok();
+                let mut type_node = HierarchyNode::group(id.clone(), sym.name.clone(), node_kind, repo_id.into());
+                type_node.file = Some(abs_path.clone());
+                type_node.line = sym.line_start;
+                graph_db.merge_node(&type_node).ok();
                 types_indexed += 1;
                 graph_db.merge_edge(&file_id, &id, "EXPORTS_TYPE").ok();
                 edges_created += 1;
