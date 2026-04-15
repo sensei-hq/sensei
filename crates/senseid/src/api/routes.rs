@@ -75,8 +75,20 @@ pub fn create_router(state: AppState) -> Router {
         // MCP tool proxy
         .route("/api/mcp/tools", get(mcp_list_tools))
         .route("/api/mcp/call", post(mcp_call_tool))
-        // Marketplace install
+        // Marketplace install (legacy — prefer /api/install endpoints)
         .route("/api/marketplace/install", post(marketplace_install))
+        // ACP (AI Coding Platform) detection & configuration
+        .route("/api/acp/detect", get(acp_detect))
+        .route("/api/acp/configure", post(acp_configure))
+        .route("/api/acp/unconfigure", post(acp_unconfigure))
+        // Installer — hooks, skills, commands, full install/uninstall
+        .route("/api/install", post(install_all))
+        .route("/api/install/hooks", post(install_hooks))
+        .route("/api/install/item", post(install_single_item))
+        .route("/api/install/item/remove", post(uninstall_single_item))
+        .route("/api/install/catalog", get(get_catalog))
+        .route("/api/install/installed", get(list_installed_items))
+        .route("/api/uninstall", post(uninstall_all))
         // Config (user preferences)
         .route("/api/config", get(get_config).put(set_config_handler))
         .route("/api/config/{key}", get(get_config_key).delete(delete_config_key))
@@ -1292,6 +1304,131 @@ async fn marketplace_install(
             }))
         }
         Err(e) => Json(serde_json::json!({"ok": false, "error": format!("Failed to run installer: {}", e)})),
+    }
+}
+
+// ── ACP (AI Coding Platform) ─────────────────────────────────────────────────
+
+async fn acp_detect() -> Json<Vec<crate::acp::AcpStatus>> {
+    Json(crate::acp::detect())
+}
+
+#[derive(Deserialize)]
+struct AcpConfigureBody {
+    #[serde(default)]
+    acps: Vec<String>,
+}
+
+async fn acp_configure(
+    Json(body): Json<AcpConfigureBody>,
+) -> Json<crate::acp::ConfigureResult> {
+    Json(crate::acp::configure(&body.acps))
+}
+
+async fn acp_unconfigure() -> Json<serde_json::Value> {
+    let removed = crate::acp::unconfigure();
+    serde_json::json!({"ok": true, "removed": removed}).into()
+}
+
+// ── Installer ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct InstallBody {
+    #[serde(default)]
+    acps: Vec<String>,
+    #[serde(default = "default_scope")]
+    scope: String,
+}
+
+fn default_scope() -> String {
+    "global".into()
+}
+
+async fn install_all(
+    Json(body): Json<InstallBody>,
+) -> Json<crate::installer::InstallResult> {
+    // Run in blocking thread — marketplace download is synchronous
+    let result = tokio::task::spawn_blocking(move || {
+        crate::installer::install(&body.acps, &body.scope)
+    })
+    .await
+    .unwrap_or_default();
+    Json(result)
+}
+
+async fn install_hooks() -> Json<serde_json::Value> {
+    match tokio::task::spawn_blocking(|| crate::installer::install_hooks_only()).await {
+        Ok(Ok(n)) => serde_json::json!({"ok": true, "count": n}).into(),
+        Ok(Err(e)) => serde_json::json!({"ok": false, "error": e}).into(),
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}).into(),
+    }
+}
+
+#[derive(Deserialize)]
+struct InstallItemBody {
+    name: String,
+    kind: String,
+}
+
+async fn install_single_item(
+    Json(body): Json<InstallItemBody>,
+) -> Json<serde_json::Value> {
+    let name = body.name;
+    let kind = body.kind;
+    match tokio::task::spawn_blocking(move || crate::installer::install_item(&name, &kind)).await {
+        Ok(Ok(path)) => serde_json::json!({"ok": true, "path": path}).into(),
+        Ok(Err(e)) => serde_json::json!({"ok": false, "error": e}).into(),
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}).into(),
+    }
+}
+
+async fn uninstall_single_item(
+    Json(body): Json<InstallItemBody>,
+) -> Json<serde_json::Value> {
+    let name = body.name;
+    let kind = body.kind;
+    match tokio::task::spawn_blocking(move || crate::installer::uninstall_item(&name, &kind)).await {
+        Ok(Ok(())) => serde_json::json!({"ok": true}).into(),
+        Ok(Err(e)) => serde_json::json!({"ok": false, "error": e}).into(),
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}).into(),
+    }
+}
+
+async fn get_catalog() -> Json<serde_json::Value> {
+    match tokio::task::spawn_blocking(crate::installer::fetch_catalog).await {
+        Ok(Ok(catalog)) => {
+            let items: Vec<serde_json::Value> = catalog
+                .items
+                .iter()
+                .map(|i| serde_json::json!({
+                    "name": i.name,
+                    "kind": i.kind,
+                    "description": i.description,
+                    "scope": i.scope,
+                    "path": i.path,
+                    "recommended_for": i.recommended_for,
+                    "stage": i.stage,
+                }))
+                .collect();
+            serde_json::json!({
+                "version": catalog.version,
+                "items": items,
+            })
+            .into()
+        }
+        Ok(Err(e)) => serde_json::json!({"error": e}).into(),
+        Err(e) => serde_json::json!({"error": e.to_string()}).into(),
+    }
+}
+
+async fn list_installed_items() -> Json<Vec<crate::installer::InstalledItem>> {
+    Json(crate::installer::list_installed())
+}
+
+async fn uninstall_all() -> Json<crate::installer::UninstallResult> {
+    match tokio::task::spawn_blocking(crate::installer::uninstall).await {
+        Ok(result) => Json(result),
+        Err(_) => Json(crate::installer::UninstallResult::default()),
     }
 }
 
