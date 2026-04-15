@@ -94,9 +94,26 @@ pub fn index_repo_with_progress(
 
     let started_at = chrono::Utc::now().to_rfc3339();
 
-    // Pass 0: Detect and create Package nodes (workspace members)
-    // Clear stale hierarchy first — packages/modules are recreated each run
+    // Pass 0: Create virtual grouping nodes and packages
     graph_db.clear_hierarchy(repo_id).ok();
+
+    // Virtual grouping nodes
+    let repo_node_id = format!("repo:{}", repo_id);
+    let code_group_id = format!("code:{}", repo_id);
+    let docs_group_id = format!("docs:{}", repo_id);
+    graph_db.merge_node(&HierarchyNode::group(repo_node_id.clone(), repo_id.into(), NodeKind::Repo, repo_id.into())).ok();
+    graph_db.merge_node(&{
+        let mut n = HierarchyNode::group(code_group_id.clone(), "code".into(), NodeKind::CodeGroup, repo_id.into());
+        n.parent_id = Some(repo_node_id.clone());
+        n
+    }).ok();
+    graph_db.merge_node(&{
+        let mut n = HierarchyNode::group(docs_group_id.clone(), "docs".into(), NodeKind::DocGroup, repo_id.into());
+        n.parent_id = Some(repo_node_id.clone());
+        n
+    }).ok();
+    graph_db.merge_edge(&repo_node_id, &code_group_id, "CONTAINS_GROUP").ok();
+    graph_db.merge_edge(&repo_node_id, &docs_group_id, "CONTAINS_GROUP").ok();
     let workspace_members = crate::config::detector::detect_workspace_members(repo);
     let _file_to_package: HashMap<String, String> = HashMap::new(); // reserved for future file→package mapping
     for pkg in &workspace_members {
@@ -104,9 +121,9 @@ pub fn index_repo_with_progress(
         let mut node = HierarchyNode::group(pkg_id.clone(), pkg.name.clone(), NodeKind::Package, repo_id.into());
         node.level = Some(pkg.pkg_type.clone());
         node.file = Some(pkg.path.clone());
+        node.parent_id = Some(code_group_id.clone());
         graph_db.merge_node(&node).ok();
-        let project_node = format!("project:{}", repo_id);
-        graph_db.merge_edge(&project_node, &pkg_id, "CONTAINS_PKG").ok();
+        graph_db.merge_edge(&code_group_id, &pkg_id, "CONTAINS_PKG").ok();
         edges_created += 1;
         packages_indexed += 1;
     }
@@ -282,8 +299,17 @@ pub fn index_repo_with_progress(
         }
     }
 
-    // Pass 4: Index documentation files
+    // Pass 4: Index documentation files + wire doc parent_ids to docs group
     let docs_indexed = super::doc_indexer::index_docs(graph_db, repo_path, repo_id).unwrap_or(0);
+    // Set parent_id on all doc/extension nodes to the docs group
+    if let Ok(all_nodes) = graph_db.get_nodes(repo_id) {
+        for node in &all_nodes {
+            if node.kind == "doc" || node.kind == "extension" {
+                // Update parent_id via a lightweight SQL update
+                graph_db.merge_edge(&docs_group_id, &node.id, "CONTAINS_DOC").ok();
+            }
+        }
+    }
 
     // Pass 5: Framework/pattern tagging
     {
@@ -392,10 +418,10 @@ pub fn index_repo_with_progress(
             {
                 let mut root_pkg = HierarchyNode::group(root_pkg_id.clone(), "(root)".into(), NodeKind::Package, repo_id.into());
                 root_pkg.level = Some("root".into());
+                root_pkg.parent_id = Some(code_group_id.clone());
                 graph_db.merge_node(&root_pkg).ok();
             }
-            let project_node = format!("project:{}", repo_id);
-            graph_db.merge_edge(&project_node, &root_pkg_id, "CONTAINS_PKG").ok();
+            graph_db.merge_edge(&code_group_id, &root_pkg_id, "CONTAINS_PKG").ok();
             packages_indexed += 1;
             edges_created += 1;
         }
