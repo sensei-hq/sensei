@@ -2,9 +2,7 @@ import { defineConfig } from 'bumpp'
 
 export default defineConfig({
 	files: [
-		// JS packages
 		'package.json',
-		'packages/*/package.json',
 		'apps/*/package.json',
 		// Rust crates
 		'crates/senseid/Cargo.toml',

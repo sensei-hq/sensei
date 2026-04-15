@@ -26,12 +26,6 @@
   },
   "dependencies": {
     "@iconify-json/solar": "^1.2.5",
-    "@kavach/adapter-supabase": "link:@kavach/adapter-supabase",
-    "@kavach/logger": "link:@kavach/logger",
-    "@kavach/query": "link:@kavach/query",
-    "@kavach/sentry": "link:@kavach/sentry",
-    "@kavach/ui": "link:@kavach/ui",
-    "@kavach/vite": "link:@kavach/vite",
     "@rokkit/actions": "link:@rokkit/actions",
     "@rokkit/app": "link:@rokkit/app",
     "@rokkit/core": "link:@rokkit/core",
@@ -40,17 +34,11 @@
     "@rokkit/themes": "link:@rokkit/themes",
     "@rokkit/ui": "link:@rokkit/ui",
     "@rokkit/unocss": "link:@rokkit/unocss",
-    "@sensei/engine": "workspace:*",
-    "@sensei/server": "workspace:*",
-    "@sensei/shared": "workspace:*",
-    "@sensei/tools": "workspace:*",
-    "@supabase/supabase-js": "^2.101.1",
     "@sveltejs/adapter-static": "^3.0.10",
     "@unocss/extractor-svelte": "^66.6.7",
     "@unocss/reset": "^66.6.7",
     "@unocss/vite": "^66.6.7",
     "js-yaml": "^4.1.1",
-    "kavach": "link:kavach",
     "unocss": "^66.6.7"
   }
 }
