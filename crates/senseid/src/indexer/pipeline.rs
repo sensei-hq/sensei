@@ -299,15 +299,35 @@ pub fn index_repo_with_progress(
     }
 
     // Pass 6: Create Module nodes and containment edges
+    // Uses ALL discovered files (not just re-parsed ones) so incremental runs still build full hierarchy
     {
-        // Group files by directory → module
-        let mut dir_files: HashMap<String, Vec<String>> = HashMap::new(); // dir_path → [abs_paths]
-        for abs_path in all_results.keys() {
-            if let Some(parent) = Path::new(abs_path).parent() {
+        // Group ALL source files by directory → module
+        let mut dir_files: HashMap<String, Vec<String>> = HashMap::new();
+        for file_path in &files {
+            let abs_path = file_path.to_string_lossy().to_string();
+            if let Some(parent) = file_path.parent() {
                 let dir = parent.to_string_lossy().to_string();
-                dir_files.entry(dir).or_default().push(abs_path.clone());
+                dir_files.entry(dir).or_default().push(abs_path);
             }
         }
+
+        // Pre-build map of file→[exported fn/type IDs] from existing graph edges
+        // so we can create CONTAINS_FN for skipped (unchanged) files too
+        let file_exports: HashMap<String, Vec<String>> = {
+            let mut map: HashMap<String, Vec<String>> = HashMap::new();
+            if let Ok(edges) = graph_db.get_edges(repo_id) {
+                for e in &edges {
+                    if e.edge_type == "EXPORTS_FN" || e.edge_type == "EXPORTS_TYPE" {
+                        map.entry(e.source.clone()).or_default().push(e.target.clone());
+                    }
+                }
+            }
+            map
+        };
+
+        // Also create a virtual (root) package for files not under any workspace member
+        let root_pkg_id = format!("pkg:{}:(root)", repo_id);
+        let mut has_root_files = false;
 
         for (dir_path, file_paths) in &dir_files {
             let rel_dir = Path::new(dir_path).strip_prefix(repo)
@@ -322,30 +342,75 @@ pub fn index_repo_with_progress(
                 rel_dir.starts_with(&pkg.path)
             }).map(|pkg| format!("pkg:{}:{}", repo_id, pkg.name));
 
-            graph_db.merge_module(&mod_id, &mod_name, &rel_dir, pkg_id.as_deref(), repo_id).ok();
+            graph_db.merge_module(&mod_id, &mod_name, &rel_dir, pkg_id.as_deref().or(Some(&root_pkg_id)), repo_id).ok();
             modules_indexed += 1;
 
-            // CONTAINS_MOD edge: package → module (or project → module if no package)
+            // CONTAINS_MOD edge: package → module
             if let Some(ref pid) = pkg_id {
                 graph_db.merge_edge(pid, &mod_id, "CONTAINS_MOD").ok();
             } else {
-                let project_node = format!("project:{}", repo_id);
-                graph_db.merge_edge(&project_node, &mod_id, "CONTAINS_MOD").ok();
+                has_root_files = true;
+                graph_db.merge_edge(&root_pkg_id, &mod_id, "CONTAINS_MOD").ok();
             }
             edges_created += 1;
 
-            // CONTAINS_FN / CONTAINS_TYPE edges: module → symbols
+            // CONTAINS_FILE edges: module → file
             for abs_path in file_paths {
+                let file_id = format!("file:{}", abs_path);
+                graph_db.merge_edge(&mod_id, &file_id, "CONTAINS_FILE").ok();
+                edges_created += 1;
+
+                // CONTAINS_FN edges: module → functions
+                // For re-parsed files, use the results; for skipped files, query existing graph nodes
                 if let Some(result) = all_results.get(abs_path) {
                     for (_, fn_id) in &result.fn_ids {
                         graph_db.merge_edge(&mod_id, fn_id, "CONTAINS_FN").ok();
                         edges_created += 1;
                     }
+                } else if let Some(exported) = file_exports.get(&file_id) {
+                    // Skipped file — use pre-built exports map
+                    for target_id in exported {
+                        let edge_type = if target_id.starts_with("fn:") { "CONTAINS_FN" } else { "CONTAINS_TYPE" };
+                        graph_db.merge_edge(&mod_id, target_id, edge_type).ok();
+                        edges_created += 1;
+                    }
                 }
-                // Type edges via file_id → types (already linked via EXPORTS_TYPE)
-                let file_id = format!("file:{}", abs_path);
-                graph_db.merge_edge(&mod_id, &file_id, "CONTAINS_FILE").ok();
-                edges_created += 1;
+            }
+        }
+
+        // Create virtual (root) package if any files are outside workspace members
+        if has_root_files {
+            graph_db.merge_package(&root_pkg_id, "(root)", None, "", "root", repo_id).ok();
+            let project_node = format!("project:{}", repo_id);
+            graph_db.merge_edge(&project_node, &root_pkg_id, "CONTAINS_PKG").ok();
+            packages_indexed += 1;
+            edges_created += 1;
+        }
+
+        // Link doc nodes to their parent modules by directory path
+        // Create modules for doc-only directories that weren't covered by the source walker
+        if let Ok(all_nodes) = graph_db.get_nodes(repo_id) {
+            for node in &all_nodes {
+                if node.kind != "doc" { continue; }
+                let doc_path = Path::new(&node.file);
+                if let Some(parent) = doc_path.parent() {
+                    let rel_dir = parent.strip_prefix(repo)
+                        .unwrap_or(parent)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    let mod_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.clone() };
+                    let mod_id = format!("mod:{}:{}", repo_id, mod_name);
+
+                    // Ensure module exists (may be doc-only dir)
+                    let pkg_id = workspace_members.iter().find(|pkg| {
+                        rel_dir.starts_with(&pkg.path)
+                    }).map(|pkg| format!("pkg:{}:{}", repo_id, pkg.name));
+                    let parent_pkg = pkg_id.as_deref().unwrap_or(&root_pkg_id);
+                    graph_db.merge_module(&mod_id, &mod_name, &rel_dir, Some(parent_pkg), repo_id).ok();
+                    graph_db.merge_edge(parent_pkg, &mod_id, "CONTAINS_MOD").ok();
+                    graph_db.merge_edge(&mod_id, &node.id, "CONTAINS_DOC").ok();
+                    edges_created += 1;
+                }
             }
         }
     }
