@@ -121,9 +121,8 @@
     return nodes.filter(n => children.has(n.id) && n.kind === 'module');
   });
 
-  // Reset cascading filters when parent changes
-  $effect(() => { filterL1; filterL2 = 'all'; filterL3 = 'all'; });
-  $effect(() => { filterL2; filterL3 = 'all'; });
+  function setL1(val: string) { filterL1 = val; filterL2 = 'all'; filterL3 = 'all'; }
+  function setL2(val: string) { filterL2 = val; filterL3 = 'all'; }
 
   let activeFilters = $derived((filterL1 !== 'all' ? 1 : 0) + (filterL2 !== 'all' ? 1 : 0) + (filterL3 !== 'all' ? 1 : 0));
 
@@ -418,7 +417,7 @@
   <!-- Filter bar -->
   <div class="flex items-center gap-2 px-2 py-1.5 border-b border-surface-z0/30 bg-surface-z2/50 shrink-0 text-[10px]">
     {#if l1Options.length > 0}
-      <select bind:value={filterL1} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
+      <select value={filterL1} onchange={(e) => setL1((e.target as HTMLSelectElement).value)} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
         <option value="all">All</option>
         {#each l1Options as o}
           <option value={o.id}>{o.name === 'code' ? 'Code' : o.name === 'docs' ? 'Docs' : o.name}</option>
@@ -426,7 +425,7 @@
       </select>
     {/if}
     {#if l2Options.length > 0}
-      <select bind:value={filterL2} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
+      <select value={filterL2} onchange={(e) => setL2((e.target as HTMLSelectElement).value)} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
         <option value="all">{isDocsGroup ? 'All categories' : filterL1 !== 'all' ? 'All packages' : 'All'}</option>
         {#each l2Options as o}
           <option value={o.id}>{o.name}</option>
@@ -434,7 +433,7 @@
       </select>
     {/if}
     {#if l3Options.length > 0}
-      <select bind:value={filterL3} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
+      <select value={filterL3} onchange={(e) => filterL3 = (e.target as HTMLSelectElement).value} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
         <option value="all">All modules</option>
         {#each l3Options as o}
           <option value={o.id}>{o.name}</option>
