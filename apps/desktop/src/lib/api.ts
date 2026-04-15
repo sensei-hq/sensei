@@ -225,6 +225,43 @@ export function senseiApi(port: number) {
 
     deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
 
+    // ── ACP (AI Coding Platform) ────────────────────────────────────────
+    detectAcps: () => get<import('./types').AcpStatus[]>('/api/acp/detect', []),
+
+    configureAcps: (acps: string[]) =>
+      post<import('./types').AcpConfigureResult>('/api/acp/configure', { acps }, { configured: [], skipped: [], errors: [] }),
+
+    unconfigureAcps: () =>
+      post<{ ok: boolean; removed: string[] }>('/api/acp/unconfigure', {}, { ok: false, removed: [] }),
+
+    // ── Installer ───────────────────────────────────────────────────────
+    installAll: (acps: string[], scope = 'global') =>
+      post<import('./types').InstallResult>('/api/install', { acps, scope }, {
+        hooks_installed: 0, skills_installed: 0, commands_installed: 0,
+        acps_configured: [], errors: [], marketplace_version: '',
+      }),
+
+    installHooks: () =>
+      post<{ ok: boolean; count: number }>('/api/install/hooks', {}, { ok: false, count: 0 }),
+
+    installItem: (name: string, kind: string) =>
+      post<{ ok: boolean; path?: string; error?: string }>('/api/install/item', { name, kind }, { ok: false }),
+
+    uninstallItem: (name: string, kind: string) =>
+      post<{ ok: boolean }>('/api/install/item/remove', { name, kind }, { ok: false }),
+
+    getCatalog: () =>
+      get<import('./types').MarketplaceCatalog>('/api/install/catalog', { version: null, items: [] }),
+
+    getInstalledItems: () =>
+      get<import('./types').InstalledItem[]>('/api/install/installed', []),
+
+    uninstallAll: () =>
+      post<import('./types').UninstallResult>('/api/uninstall', {}, {
+        acps_removed: [], hooks_removed: false, skills_removed: 0,
+        plugin_removed: false, cache_cleared: false,
+      }),
+
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
   };

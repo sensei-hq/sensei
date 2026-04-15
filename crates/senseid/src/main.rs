@@ -5,6 +5,8 @@ mod indexer;
 mod config;
 mod watcher;
 mod api;
+pub mod acp;
+pub mod installer;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
