@@ -224,6 +224,15 @@ impl GraphDb {
         Ok(())
     }
 
+    pub fn delete_doc(&self, doc_id: &str) -> Result<(), String> {
+        self.conn.execute(
+            "DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1",
+            params![doc_id],
+        ).ok();
+        self.conn.execute("DELETE FROM docs WHERE id = ?1", params![doc_id]).ok();
+        Ok(())
+    }
+
     pub fn merge_doc(
         &self, id: &str, path: &str, title: &str, doc_type: &str, project: &str,
     ) -> Result<(), String> {
