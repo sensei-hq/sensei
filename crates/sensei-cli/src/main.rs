@@ -94,10 +94,10 @@ fn install(acp: &str, scope: &str, marketplace_path: Option<&str>) {
 
     // 2. Install hooks (embedded in binary)
     println!("[2/4] Installing hooks...");
-    write_hook(&plugin.join("hooks/session-start"), include_str!("../../../plugin/hooks/session-start"));
-    write_hook(&plugin.join("hooks/pre-tool"), include_str!("../../../plugin/hooks/pre-tool"));
-    write_hook(&plugin.join("hooks/post-tool"), include_str!("../../../plugin/hooks/post-tool"));
-    write_hook(&plugin.join("hooks/run-hook.cmd"), include_str!("../../../plugin/hooks/run-hook.cmd"));
+    write_hook(&plugin.join("hooks/session-start"), include_str!("../../../marketplace/hooks/session-start"));
+    write_hook(&plugin.join("hooks/pre-tool"), include_str!("../../../marketplace/hooks/pre-tool"));
+    write_hook(&plugin.join("hooks/post-tool"), include_str!("../../../marketplace/hooks/post-tool"));
+    write_hook(&plugin.join("hooks/run-hook.cmd"), include_str!("../../../marketplace/hooks/run-hook.cmd"));
 
     // 3. Install skills & commands from marketplace
     println!("[3/4] Installing skills & commands...");
