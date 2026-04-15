@@ -158,10 +158,12 @@
     'function': '#6366f1', 'method': '#6366f1',
     'class': '#f59e0b', 'struct': '#f59e0b', 'interface': '#f59e0b',
     'type': '#f59e0b', 'enum': '#f59e0b',
-    'file': '#10b981', 'doc': '#06b6d4',
+    'file': '#10b981',
+    'doc': '#06b6d4', 'extension': '#f97316', // orange for extensions
     'component': '#ec4899', 'hook': '#ec4899',
     'const': '#94a3b8',
     'package': '#8b5cf6', 'module': '#14b8a6',
+    'repo': '#ef4444', 'code-group': '#3b82f6', 'doc-group': '#06b6d4',
   };
 
   function nodeColor(node: GraphNode): string {
