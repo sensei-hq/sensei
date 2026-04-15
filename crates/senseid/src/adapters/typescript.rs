@@ -80,8 +80,9 @@ fn extract_statement(
             if let Some(id) = &c.id {
                 let start = line_col(source, c.span.start);
                 let end = line_col(source, c.span.end);
-                symbols.push(make_sym(id.name.to_string(), SymbolKind::Class, start, end, lines, false));
-                extract_class_body(&c.body, source, lines, symbols);
+                let class_name = id.name.to_string();
+                symbols.push(make_sym(class_name.clone(), SymbolKind::Class, start, end, lines, false));
+                extract_class_body(&c.body, source, lines, symbols, &class_name);
             }
         }
         Statement::VariableDeclaration(var) => {
@@ -104,8 +105,8 @@ fn extract_statement(
                     let name = c.id.as_ref().map(|i| i.name.to_string()).unwrap_or_else(|| "default".into());
                     let start = line_col(source, c.span.start);
                     let end = line_col(source, c.span.end);
-                    symbols.push(make_sym(name, SymbolKind::Class, start, end, lines, true));
-                    extract_class_body(&c.body, source, lines, symbols);
+                    symbols.push(make_sym(name.clone(), SymbolKind::Class, start, end, lines, true));
+                    extract_class_body(&c.body, source, lines, symbols, &name);
                 }
                 ExportDefaultDeclarationKind::TSInterfaceDeclaration(iface) => {
                     let start = line_col(source, iface.span.start);
@@ -161,8 +162,9 @@ fn extract_exported_decl(
             if let Some(id) = &c.id {
                 let start = line_col(source, c.span.start);
                 let end = line_col(source, c.span.end);
-                symbols.push(make_sym(id.name.to_string(), SymbolKind::Class, start, end, lines, true));
-                extract_class_body(&c.body, source, lines, symbols);
+                let class_name = id.name.to_string();
+                symbols.push(make_sym(class_name.clone(), SymbolKind::Class, start, end, lines, true));
+                extract_class_body(&c.body, source, lines, symbols, &class_name);
             }
         }
         Declaration::VariableDeclaration(var) => {
@@ -207,7 +209,7 @@ fn extract_var_decl(
 
 fn extract_class_body(
     body: &ClassBody, source: &str, lines: &[&str],
-    symbols: &mut Vec<ParsedSymbol>,
+    symbols: &mut Vec<ParsedSymbol>, class_name: &str,
 ) {
     for element in &body.body {
         match element {
@@ -215,7 +217,9 @@ fn extract_class_body(
                 if let Some(name) = method_name(&m.key) {
                     let start = line_col(source, m.span.start);
                     let end = line_col(source, m.span.end);
-                    symbols.push(make_sym(name, SymbolKind::Method, start, end, lines, true));
+                    let mut sym = make_sym(name, SymbolKind::Method, start, end, lines, true);
+                    sym.parent = Some(class_name.to_string());
+                    symbols.push(sym);
                 }
             }
             _ => {}
@@ -245,6 +249,7 @@ fn make_sym(
         line_start,
         line_end,
         is_exported,
+        parent: None,
     }
 }
 
@@ -360,5 +365,48 @@ mod tests {
         assert_eq!(pf.symbols.len(), 1);
         assert_eq!(pf.symbols[0].name, "main");
         assert!(pf.symbols[0].is_exported);
+    }
+
+    #[test]
+    fn method_parent_set_on_class() {
+        let pf = parse_ts_src("class Foo {\n  bar() {}\n  baz() {}\n}");
+        let foo = pf.symbols.iter().find(|s| s.name == "Foo").unwrap();
+        assert!(foo.parent.is_none(), "class itself should have no parent");
+        let bar = pf.symbols.iter().find(|s| s.name == "bar").unwrap();
+        assert_eq!(bar.parent.as_deref(), Some("Foo"));
+        assert_eq!(bar.kind, SymbolKind::Method);
+        let baz = pf.symbols.iter().find(|s| s.name == "baz").unwrap();
+        assert_eq!(baz.parent.as_deref(), Some("Foo"));
+    }
+
+    #[test]
+    fn method_parent_on_exported_class() {
+        let pf = parse_ts_src("export class Service {\n  handle() {}\n}");
+        let handle = pf.symbols.iter().find(|s| s.name == "handle").unwrap();
+        assert_eq!(handle.parent.as_deref(), Some("Service"));
+        assert!(handle.is_exported);
+    }
+
+    #[test]
+    fn method_parent_on_default_export_class() {
+        let pf = parse_ts_src("export default class Router {\n  route() {}\n}");
+        let route = pf.symbols.iter().find(|s| s.name == "route").unwrap();
+        assert_eq!(route.parent.as_deref(), Some("Router"));
+    }
+
+    #[test]
+    fn standalone_function_has_no_parent() {
+        let pf = parse_ts_src("function standalone() {}\nconst arrow = () => {};");
+        for sym in &pf.symbols {
+            assert!(sym.parent.is_none(), "{} should have no parent", sym.name);
+        }
+    }
+
+    #[test]
+    fn interface_and_enum_have_no_parent() {
+        let pf = parse_ts_src("interface Foo { x: number }\nenum Color { Red }");
+        for sym in &pf.symbols {
+            assert!(sym.parent.is_none(), "{} should have no parent", sym.name);
+        }
     }
 }

@@ -358,6 +358,8 @@ async fn project_summary(
     let graph = state.graph.lock().await;
     let (fn_count, type_count) = graph.count_symbols(&repo_id).unwrap_or((0, 0));
     let edge_count = graph.count_edges(&repo_id).unwrap_or(0);
+    let pkg_count = graph.count_packages(&repo_id).unwrap_or(0);
+    let mod_count = graph.count_modules(&repo_id).unwrap_or(0);
 
     // Find which solutions contain this repo
     let solutions = store.list_solutions().unwrap_or_default();
@@ -381,6 +383,8 @@ async fn project_summary(
         "indexedAt": project.indexed_at,
         "functions": fn_count,
         "types": type_count,
+        "packages": pkg_count,
+        "modules": mod_count,
         "edges": edge_count,
         "solutions": memberships,
     })))
@@ -399,25 +403,39 @@ async fn solution_graph(
 
     let graph = state.graph.lock().await;
 
-    // Merge nodes and edges from all repos in the solution
+    // Merge nodes and edges from all repos in the solution.
+    // For subtree repos, their data lives under the parent repo's graph.
     let mut all_nodes = Vec::new();
     let mut all_edges = Vec::new();
+    let mut seen_repo_ids = std::collections::HashSet::new();
 
     for sr in &solution.repos {
-        let nodes = graph.get_nodes(&sr.repo_id).unwrap_or_default();
-        let edges = graph.get_edges(&sr.repo_id).unwrap_or_default();
-        // Tag each node with its repo
-        for mut node in nodes {
+        // Subtree repos (e.g. "sensei:homebrew") share the parent's graph.
+        // Use the parent repo_id (before the ':') for graph lookup.
+        let graph_repo_id = if sr.role == "subtree" {
+            sr.repo_id.split(':').next().unwrap_or(&sr.repo_id).to_string()
+        } else {
+            sr.repo_id.clone()
+        };
+
+        // Avoid duplicating if parent already loaded
+        if !seen_repo_ids.insert(graph_repo_id.clone()) {
+            continue;
+        }
+
+        let nodes = graph.get_nodes(&graph_repo_id).unwrap_or_default();
+        let edges = graph.get_edges(&graph_repo_id).unwrap_or_default();
+        for node in nodes {
             all_nodes.push(serde_json::json!({
                 "id": node.id, "name": node.name, "kind": node.kind,
                 "file": node.file, "line": node.line, "complexity": node.complexity,
-                "repoId": sr.repo_id, "role": sr.role,
+                "repoId": graph_repo_id, "role": sr.role,
             }));
         }
         for edge in edges {
             all_edges.push(serde_json::json!({
                 "source": edge.source, "target": edge.target,
-                "type": edge.edge_type, "repoId": sr.repo_id,
+                "type": edge.edge_type, "repoId": graph_repo_id,
             }));
         }
     }
@@ -1916,10 +1934,9 @@ mod tests {
         ).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(repos.len(), 1);
-        assert_eq!(repos[0]["name"], "my-project");
-        assert_eq!(repos[0]["has_git"], true);
-        assert!(repos[0]["stack"].as_array().unwrap().len() >= 1);
+        // scan_folder returns {"ok": true, "scanning": true} — scan runs async in background
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["scanning"], true);
     }
 }
