@@ -163,7 +163,8 @@
     'component': '#ec4899', 'hook': '#ec4899',
     'const': '#94a3b8',
     'package': '#8b5cf6', 'module': '#14b8a6',
-    'repo': '#ef4444', 'code-group': '#3b82f6', 'doc-group': '#06b6d4',
+    'repo': '#ef4444', 'solution': '#dc2626',
+    'code-group': '#3b82f6', 'doc-group': '#06b6d4',
   };
 
   function nodeColor(node: GraphNode): string {
@@ -171,6 +172,8 @@
   }
 
   function nodeRadius(node: GraphNode): number {
+    if (node.kind === 'solution') return isLargeGraph ? 10 : 20;
+    if (node.kind === 'repo' || node.kind === 'code-group' || node.kind === 'doc-group') return isLargeGraph ? 8 : 16;
     if (node.kind === 'package') return isLargeGraph ? 6 : 14;
     if (node.kind === 'module') return isLargeGraph ? 4 : 10;
     if (node.kind === 'class' || node.kind === 'struct') return isLargeGraph ? 3 : 8;
@@ -356,7 +359,9 @@
       ctx.shadowBlur = 0;
 
       const showLabel = isSelected || isHovered
+        || n.kind === 'solution' || n.kind === 'repo'
         || n.kind === 'package' || n.kind === 'module'
+        || n.kind === 'code-group' || n.kind === 'doc-group'
         || (!isLargeGraph && r >= 6);
       if (showLabel) {
         ctx.fillStyle = isSelected ? '#2d5bff' : 'rgba(100, 100, 120, 0.8)';
