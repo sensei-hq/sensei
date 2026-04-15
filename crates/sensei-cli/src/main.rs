@@ -2,8 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::fs;
 
-const MARKETPLACE_REPO: &str = "https://raw.githubusercontent.com/mizukisu/sensei-marketplace/main";
-const MARKETPLACE_CATALOG: &str = "catalog.json";
+const DAEMON_URL: &str = "http://127.0.0.1:7744";
 
 #[derive(Parser)]
 #[command(name = "sensei", about = "Sensei — AI coding companion", version)]
@@ -75,151 +74,176 @@ fn main() {
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
-fn sensei_dir() -> PathBuf { dirs::home_dir().unwrap_or_default().join(".sensei") }
-fn plugin_dir() -> PathBuf { dirs::home_dir().unwrap_or_default().join(".claude/plugins/sensei") }
-fn daemon_bin() -> PathBuf { plugin_dir().join("bin/senseid") }
-fn mcp_bin() -> PathBuf { plugin_dir().join("bin/sensei-mcp") }
-fn config_file() -> PathBuf { sensei_dir().join("config.json") }
-fn cache_dir() -> PathBuf { sensei_dir().join("cache/marketplace") }
-
-// ── Config ───────────────────────────────────────────────────────────────────
-
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct SenseiConfig {
-    #[serde(default)]
-    configured_acps: Vec<String>,
-    #[serde(default)]
-    marketplace_version: String,
+fn plugin_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".claude/plugins/sensei")
+}
+fn daemon_bin() -> PathBuf {
+    plugin_dir().join("bin/senseid")
 }
 
-fn load_config() -> SenseiConfig {
-    config_file().exists()
-        .then(|| fs::read_to_string(config_file()).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+// ── Daemon helpers ───────────────────────────────────────────────────────────
+
+fn client() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap()
 }
 
-fn save_config(config: &SenseiConfig) {
-    fs::create_dir_all(sensei_dir()).ok();
-    fs::write(config_file(), serde_json::to_string_pretty(config).unwrap()).ok();
+fn daemon_available() -> bool {
+    client()
+        .get(format!("{}/health", DAEMON_URL))
+        .send()
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
-// ── ACP Detection ────────────────────────────────────────────────────────────
-
-struct AcpInfo {
-    name: &'static str,
-    id: &'static str,
-    detected: bool,
+fn require_daemon() {
+    if !daemon_available() {
+        eprintln!("Daemon not running. Start it first: sensei start");
+        std::process::exit(1);
+    }
 }
 
-fn detect_acps() -> Vec<AcpInfo> {
-    let home = dirs::home_dir().unwrap_or_default();
-    vec![
-        AcpInfo { name: "Claude Code", id: "claude-code", detected: home.join(".claude").exists() },
-        AcpInfo { name: "Cursor", id: "cursor", detected: home.join(".cursor").exists() || which("cursor") },
-        AcpInfo { name: "Windsurf", id: "windsurf", detected: home.join(".windsurf").exists() || which("windsurf") },
-        AcpInfo { name: "Zed", id: "zed", detected: which("zed") },
-        AcpInfo { name: "VS Code", id: "vscode", detected: which("code") },
-    ]
-}
-
-fn which(cmd: &str) -> bool {
-    std::process::Command::new("which").arg(cmd).output().map(|o| o.status.success()).unwrap_or(false)
-}
-
-// ── Configure ────────────────────────────────────────────────────────────────
+// ── Configure (thin wrapper → daemon) ────────────────────────────────────────
 
 fn configure() {
+    require_daemon();
     println!("Detecting AI coding platforms...\n");
 
-    let acps = detect_acps();
-    let mut detected: Vec<&str> = Vec::new();
+    // Detect
+    let acps: Vec<serde_json::Value> = client()
+        .get(format!("{}/api/acp/detect", DAEMON_URL))
+        .send()
+        .ok()
+        .and_then(|r| r.json().ok())
+        .unwrap_or_default();
 
+    let mut detected: Vec<String> = Vec::new();
     for acp in &acps {
-        let status = if acp.detected { "detected" } else { "not found" };
-        let mark = if acp.detected { "✓" } else { "·" };
-        println!("  {} {} ({})", mark, acp.name, status);
-        if acp.detected { detected.push(acp.id); }
+        let id = acp["id"].as_str().unwrap_or("");
+        let name = acp["name"].as_str().unwrap_or("");
+        let installed = acp["installed"].as_bool().unwrap_or(false);
+        let configured = acp["mcp_configured"].as_bool().unwrap_or(false);
+        let mark = if installed { "✓" } else { "·" };
+        let status = match (installed, configured) {
+            (true, true) => "configured",
+            (true, false) => "detected",
+            _ => "not found",
+        };
+        println!("  {} {} ({})", mark, name, status);
+        if installed { detected.push(id.to_string()); }
     }
 
     if detected.is_empty() {
         println!("\nNo AI coding platforms detected.");
-        println!("Install Claude Code, Cursor, or Windsurf and run again.");
         return;
     }
 
+    // Configure
     println!("\nConfiguring sensei for: {}", detected.join(", "));
-
-    let mut config = load_config();
-    config.configured_acps = detected.iter().map(|s| s.to_string()).collect();
-    save_config(&config);
-
-    println!("Configuration saved. Run: sensei install");
+    match client()
+        .post(format!("{}/api/acp/configure", DAEMON_URL))
+        .json(&serde_json::json!({"acps": detected}))
+        .send()
+    {
+        Ok(r) if r.status().is_success() => {
+            let result: serde_json::Value = r.json().unwrap_or_default();
+            for c in result["configured"].as_array().unwrap_or(&vec![]) {
+                println!("  ✓ {}", c.as_str().unwrap_or(""));
+            }
+            for e in result["errors"].as_array().unwrap_or(&vec![]) {
+                eprintln!("  ✗ {}", e.as_str().unwrap_or(""));
+            }
+        }
+        _ => eprintln!("Failed to configure ACPs"),
+    }
+    println!("\nDone.");
 }
 
 // ── Install ──────────────────────────────────────────────────────────────────
 
 fn install(specific_acp: Option<&str>, scope: &str) {
-    let mut config = load_config();
-
-    // If no ACPs configured, run configure first
-    if config.configured_acps.is_empty() && specific_acp.is_none() {
-        println!("No ACPs configured. Running detection...\n");
-        configure();
-        config = load_config();
-        if config.configured_acps.is_empty() { return; }
-        println!();
-    }
-
-    let acps: Vec<String> = if let Some(acp) = specific_acp {
-        vec![acp.to_string()]
-    } else {
-        config.configured_acps.clone()
-    };
-
     println!("Installing sensei...\n");
 
-    // 1. Install binaries
-    println!("[1/4] Binaries...");
+    // Step 1: Copy binaries (must happen before daemon starts)
+    println!("[1/2] Binaries...");
     install_binaries();
 
-    // 2. Install hooks (embedded)
-    println!("[2/4] Hooks...");
-    let plugin = plugin_dir();
-    fs::create_dir_all(plugin.join("hooks")).ok();
-    write_hook(&plugin.join("hooks/session-start"), include_str!("../../../marketplace/hooks/session-start"));
-    write_hook(&plugin.join("hooks/pre-tool"), include_str!("../../../marketplace/hooks/pre-tool"));
-    write_hook(&plugin.join("hooks/post-tool"), include_str!("../../../marketplace/hooks/post-tool"));
-    write_hook(&plugin.join("hooks/run-hook.cmd"), include_str!("../../../marketplace/hooks/run-hook.cmd"));
+    // Step 2: Everything else via daemon
+    println!("[2/2] Hooks, skills, commands, ACP config...");
 
-    // 3. Install skills & commands (cached marketplace)
-    println!("[3/4] Skills & commands...");
-    install_marketplace(scope, &acps, &mut config);
-
-    // 4. Configure each ACP
-    println!("[4/4] Configuring ACPs...");
-    for acp in &acps {
-        match acp.as_str() {
-            "claude-code" => configure_claude_code(),
-            "cursor" => configure_generic_mcp("cursor", ".cursor/mcp.json"),
-            "windsurf" => configure_generic_mcp("windsurf", ".windsurf/mcp.json"),
-            "zed" => configure_generic_mcp("zed", ".config/zed/mcp.json"),
-            _ => println!("  {} — skipped (unknown ACP)", acp),
+    if !daemon_available() {
+        // Try to start the daemon
+        let bin = daemon_bin();
+        if bin.exists() {
+            println!("  Starting daemon...");
+            std::process::Command::new(&bin)
+                .arg("start")
+                .arg("--port")
+                .arg("7744")
+                .spawn()
+                .ok();
+            // Wait for it to come up
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                if daemon_available() { break; }
+            }
         }
     }
 
-    save_config(&config);
+    if !daemon_available() {
+        eprintln!("  Daemon unavailable. Run: sensei start && sensei install");
+        return;
+    }
 
-    println!("\nSensei installed for: {}", acps.join(", "));
-    println!("  Start daemon: sensei start");
-    println!("  Scan repos:   sensei scan ~/Developer");
+    // Detect ACPs if none specified
+    let acps: Vec<String> = if let Some(acp) = specific_acp {
+        vec![acp.to_string()]
+    } else {
+        let detected: Vec<serde_json::Value> = client()
+            .get(format!("{}/api/acp/detect", DAEMON_URL))
+            .send()
+            .ok()
+            .and_then(|r| r.json().ok())
+            .unwrap_or_default();
+        detected
+            .iter()
+            .filter(|a| a["installed"].as_bool() == Some(true))
+            .filter_map(|a| a["id"].as_str().map(String::from))
+            .collect()
+    };
+
+    // Full install via daemon
+    match client()
+        .post(format!("{}/api/install", DAEMON_URL))
+        .json(&serde_json::json!({"acps": acps, "scope": scope}))
+        .send()
+    {
+        Ok(r) if r.status().is_success() => {
+            let result: serde_json::Value = r.json().unwrap_or_default();
+            let hooks = result["hooks_installed"].as_u64().unwrap_or(0);
+            let skills = result["skills_installed"].as_u64().unwrap_or(0);
+            let cmds = result["commands_installed"].as_u64().unwrap_or(0);
+            println!("  {} hooks, {} skills, {} commands installed", hooks, skills, cmds);
+            for c in result["acps_configured"].as_array().unwrap_or(&vec![]) {
+                println!("  ✓ {}", c.as_str().unwrap_or(""));
+            }
+            for e in result["errors"].as_array().unwrap_or(&vec![]) {
+                eprintln!("  ✗ {}", e.as_str().unwrap_or(""));
+            }
+        }
+        Ok(r) => eprintln!("  Install failed: HTTP {}", r.status()),
+        Err(e) => eprintln!("  Install failed: {}", e),
+    }
+
+    println!("\nSensei installed.");
+    println!("  Scan repos: sensei scan ~/Developer");
 }
 
 fn install_binaries() {
     let plugin = plugin_dir();
     fs::create_dir_all(plugin.join("bin")).ok();
-    fs::create_dir_all(sensei_dir()).ok();
 
     let self_path = std::env::current_exe().unwrap_or_default();
     let self_dir = self_path.parent().unwrap_or(Path::new("."));
@@ -230,198 +254,41 @@ fn install_binaries() {
         if src.exists() {
             fs::copy(&src, &dst).ok();
             #[cfg(unix)]
-            { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&dst, fs::Permissions::from_mode(0o755)).ok(); }
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&dst, fs::Permissions::from_mode(0o755)).ok();
+            }
             println!("  {}", bin_name);
         }
     }
 }
 
-fn write_hook(path: &Path, content: &str) {
-    fs::write(path, content).ok();
-    #[cfg(unix)]
-    { use std::os::unix::fs::PermissionsExt; fs::set_permissions(path, fs::Permissions::from_mode(0o755)).ok(); }
-}
-
-// ── Marketplace (cached) ─────────────────────────────────────────────────────
-
-#[derive(serde::Deserialize)]
-struct Catalog { version: Option<String>, items: Vec<CatalogItem> }
-
-#[derive(serde::Deserialize)]
-struct CatalogItem { name: String, kind: String, scope: String, path: String }
-
-fn install_marketplace(scope: &str, acps: &[String], config: &mut SenseiConfig) {
-    let catalog = load_or_fetch_catalog(config);
-    let catalog = match catalog {
-        Some(c) => c,
-        None => { println!("  Could not load marketplace. Skipping."); return; }
-    };
-
-    let supports_skills = acps.iter().any(|a| a == "claude-code");
-    let items: Vec<&CatalogItem> = catalog.items.iter()
-        .filter(|i| scope == "all" || i.scope == scope || i.scope == "global")
-        .filter(|i| match i.kind.as_str() {
-            "skill" | "command" => supports_skills,
-            _ => false,
-        })
-        .collect();
-
-    let home = dirs::home_dir().unwrap_or_default();
-    let cache = cache_dir();
-    let mut installed = 0;
-
-    for item in &items {
-        let cached = cache.join(&item.path);
-        let content = if cached.exists() {
-            fs::read_to_string(&cached).ok()
-        } else {
-            download_and_cache(&item.path)
-        };
-
-        let content = match content { Some(c) => c, None => continue };
-
-        let dest = match item.kind.as_str() {
-            "skill" => home.join(".claude/skills").join(format!("{}.md", item.name)),
-            "command" => home.join(".claude/commands").join(format!("{}.md", item.name)),
-            _ => continue,
-        };
-        fs::create_dir_all(dest.parent().unwrap()).ok();
-        fs::write(&dest, &content).ok();
-        installed += 1;
-    }
-
-    println!("  {} items installed", installed);
-}
-
-fn load_or_fetch_catalog(config: &mut SenseiConfig) -> Option<Catalog> {
-    let cache = cache_dir();
-    let cached_catalog = cache.join(MARKETPLACE_CATALOG);
-
-    // Check if cached version matches
-    if cached_catalog.exists() {
-        if let Ok(content) = fs::read_to_string(&cached_catalog) {
-            if let Ok(catalog) = serde_json::from_str::<Catalog>(&content) {
-                let cached_ver = catalog.version.as_deref().unwrap_or("");
-                if !cached_ver.is_empty() && cached_ver == config.marketplace_version {
-                    println!("  Using cached marketplace v{}", cached_ver);
-                    return Some(catalog);
-                }
-            }
-        }
-    }
-
-    // Download fresh
-    println!("  Downloading marketplace catalog...");
-    let url = format!("{}/{}", MARKETPLACE_REPO, MARKETPLACE_CATALOG);
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10)).build().ok()?;
-    let resp = client.get(&url).send().ok()?;
-    if !resp.status().is_success() { return None; }
-    let text = resp.text().ok()?;
-
-    // Cache it
-    fs::create_dir_all(&cache).ok();
-    fs::write(&cached_catalog, &text).ok();
-
-    let catalog: Catalog = serde_json::from_str(&text).ok()?;
-    config.marketplace_version = catalog.version.clone().unwrap_or_default();
-    Some(catalog)
-}
-
-fn download_and_cache(path: &str) -> Option<String> {
-    let url = format!("{}/{}", MARKETPLACE_REPO, path);
-    let cache = cache_dir().join(path);
-    fs::create_dir_all(cache.parent()?).ok();
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10)).build().ok()?;
-    let resp = client.get(&url).send().ok()?;
-    if !resp.status().is_success() { return None; }
-    let text = resp.text().ok()?;
-    fs::write(&cache, &text).ok();
-    Some(text)
-}
-
-// ── ACP Configuration ────────────────────────────────────────────────────────
-
-fn configure_claude_code() {
-    let home = dirs::home_dir().unwrap_or_default();
-    let plugin = plugin_dir();
-    let hooks_dir = plugin.join("hooks").to_string_lossy().to_string();
-
-    // MCP
-    let claude_json = home.join(".claude.json");
-    let mut config: serde_json::Value = claude_json.exists()
-        .then(|| fs::read_to_string(&claude_json).ok()).flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}));
-
-    config.as_object_mut().unwrap()
-        .entry("mcpServers").or_insert(serde_json::json!({}))
-        .as_object_mut().unwrap()
-        .insert("sensei".into(), serde_json::json!({ "command": mcp_bin().to_string_lossy(), "args": [] }));
-    fs::write(&claude_json, serde_json::to_string_pretty(&config).unwrap()).ok();
-
-    // Hooks
-    let hooks_file = home.join(".claude/hooks.json");
-    let hooks = serde_json::json!({ "hooks": {
-        "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd session-start", hooks_dir)}]}],
-        "PreToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd pre-tool", hooks_dir)}]}],
-        "PostToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd post-tool", hooks_dir)}]}],
-    }});
-    fs::write(&hooks_file, serde_json::to_string_pretty(&hooks).unwrap()).ok();
-
-    println!("  Claude Code — MCP + hooks + skills");
-}
-
-fn configure_generic_mcp(name: &str, config_path: &str) {
-    let home = dirs::home_dir().unwrap_or_default();
-    let full_path = home.join(config_path);
-    fs::create_dir_all(full_path.parent().unwrap()).ok();
-
-    let mut config: serde_json::Value = full_path.exists()
-        .then(|| fs::read_to_string(&full_path).ok()).flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}));
-
-    config.as_object_mut().unwrap()
-        .entry("mcpServers").or_insert(serde_json::json!({}))
-        .as_object_mut().unwrap()
-        .insert("sensei".into(), serde_json::json!({ "command": mcp_bin().to_string_lossy(), "args": [] }));
-    fs::write(&full_path, serde_json::to_string_pretty(&config).unwrap()).ok();
-
-    println!("  {} — MCP", name);
-}
-
 // ── Uninstall ────────────────────────────────────────────────────────────────
 
 fn uninstall() {
-    let home = dirs::home_dir().unwrap_or_default();
-
-    if plugin_dir().exists() { fs::remove_dir_all(plugin_dir()).ok(); println!("Removed plugin"); }
-    if cache_dir().exists() { fs::remove_dir_all(cache_dir()).ok(); }
-
-    // Remove MCP from all known configs
-    for path in &[".claude.json", ".cursor/mcp.json", ".windsurf/mcp.json", ".config/zed/mcp.json"] {
-        let full = home.join(path);
-        if full.exists() {
-            if let Ok(s) = fs::read_to_string(&full) {
-                if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&s) {
-                    if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
-                        servers.remove("sensei");
-                    }
-                    fs::write(&full, serde_json::to_string_pretty(&config).unwrap()).ok();
+    if daemon_available() {
+        match client()
+            .post(format!("{}/api/uninstall", DAEMON_URL))
+            .send()
+        {
+            Ok(r) if r.status().is_success() => {
+                let result: serde_json::Value = r.json().unwrap_or_default();
+                for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
+                    println!("  Removed MCP from {}", id.as_str().unwrap_or(""));
+                }
+                if result["skills_removed"].as_u64().unwrap_or(0) > 0 {
+                    println!("  Removed {} skills", result["skills_removed"]);
                 }
             }
+            _ => eprintln!("Daemon uninstall failed, cleaning up manually"),
         }
     }
 
-    // Remove hooks
-    let hooks_file = home.join(".claude/hooks.json");
-    if hooks_file.exists() { fs::remove_file(&hooks_file).ok(); }
-
-    // Clear config
-    if config_file().exists() { fs::remove_file(config_file()).ok(); }
+    // Always clean up local plugin dir
+    if plugin_dir().exists() {
+        fs::remove_dir_all(plugin_dir()).ok();
+        println!("Removed plugin directory");
+    }
 
     println!("Sensei uninstalled.");
 }
@@ -430,37 +297,64 @@ fn uninstall() {
 
 fn daemon_cmd(cmd: &str, port: Option<u16>) {
     let bin = daemon_bin();
-    if !bin.exists() { eprintln!("senseid not found. Run: sensei install"); std::process::exit(1); }
+    if !bin.exists() {
+        eprintln!("senseid not found. Run: sensei install");
+        std::process::exit(1);
+    }
     let mut args = vec![cmd.to_string()];
-    if let Some(p) = port { args.push("--port".into()); args.push(p.to_string()); }
+    if let Some(p) = port {
+        args.push("--port".into());
+        args.push(p.to_string());
+    }
     match std::process::Command::new(&bin).args(&args).status() {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
-        Err(e) => { eprintln!("Failed: {}", e); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("Failed: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
 fn scan(path: &str) {
-    let client = reqwest::blocking::Client::new();
-    match client.post("http://127.0.0.1:7744/api/scan")
-        .json(&serde_json::json!({"root": path, "max_depth": 4})).send()
+    require_daemon();
+    match client()
+        .post(format!("{}/api/scan", DAEMON_URL))
+        .json(&serde_json::json!({"root": path, "max_depth": 4}))
+        .send()
     {
         Ok(r) if r.status().is_success() => println!("Scanning {} (background)...", path),
-        _ => eprintln!("Cannot reach daemon. Run: sensei start"),
+        _ => eprintln!("Scan request failed"),
     }
 }
 
 fn add_lib(name: &str, url: Option<&str>) {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(45)).build().unwrap();
+    require_daemon();
+    let c = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(45))
+        .build()
+        .unwrap();
     let mut body = serde_json::json!({"tool": "add_library", "params": {"name": name}});
-    if let Some(u) = url { body["params"]["url"] = serde_json::json!(u); }
-    match client.post("http://127.0.0.1:7744/api/mcp/call").json(&body).send() {
+    if let Some(u) = url {
+        body["params"]["url"] = serde_json::json!(u);
+    }
+    match c
+        .post(format!("{}/api/mcp/call", DAEMON_URL))
+        .json(&body)
+        .send()
+    {
         Ok(r) if r.status().is_success() => {
             let d: serde_json::Value = r.json().unwrap_or_default();
             if d["ok"].as_bool() == Some(true) {
-                println!("Indexed {} docs for {} from {}", d["docsIndexed"], name, d["url"].as_str().unwrap_or("?"));
-            } else { println!("{}", d["error"].as_str().unwrap_or("Failed")); }
+                println!(
+                    "Indexed {} docs for {} from {}",
+                    d["docsIndexed"],
+                    name,
+                    d["url"].as_str().unwrap_or("?")
+                );
+            } else {
+                println!("{}", d["error"].as_str().unwrap_or("Failed"));
+            }
         }
-        _ => eprintln!("Cannot reach daemon. Run: sensei start"),
+        _ => eprintln!("Request failed"),
     }
 }

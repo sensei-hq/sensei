@@ -1,6 +1,6 @@
 <script lang="ts">
   // GitHub release base URL — update when releases exist
-  const GITHUB = 'https://github.com/sensei-dev/sensei';
+  const GITHUB = 'https://github.com/mizukisu/sensei';
   const RELEASE_BASE = `${GITHUB}/releases/latest/download`;
 
   const downloads = [
@@ -104,7 +104,7 @@
             <span class="font-semibold text-surface-z8">Homebrew</span>
             <span class="ml-auto rounded bg-surface-z3 px-2 py-0.5 text-[10px] font-medium text-surface-z5">macOS / Linux</span>
           </div>
-          <pre class="rounded-lg bg-surface-z0 p-3 text-xs text-surface-z7 overflow-x-auto"><code>brew install sensei-dev/tap/sensei</code></pre>
+          <pre class="rounded-lg bg-surface-z0 p-3 text-xs text-surface-z7 overflow-x-auto"><code>brew install mizukisu/tap/sensei</code></pre>
           <p class="mt-2 text-xs text-surface-z4">Updates automatically with <code class="bg-surface-z3 px-1 rounded">brew upgrade</code></p>
         </div>
 
