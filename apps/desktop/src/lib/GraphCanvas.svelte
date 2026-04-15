@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { Tree } from '@rokkit/ui';
   import * as d3Force from 'd3-force';
   import * as d3Selection from 'd3-selection';
   import * as d3Zoom from 'd3-zoom';
@@ -44,98 +43,78 @@
   let currentSimEdges: GraphEdge[] = [];
   let zoomBehavior: d3Zoom.ZoomBehavior<HTMLCanvasElement, unknown> | null = null;
 
-  // ── Tree filter ─────────────────────────────────────────────────────
-  let treeFilterIds = $state<Set<string> | null>(null);
-  let treeSelectedValue = $state<string | null>(null);
-  let showTree = $state(true);
+  // ── Level-based cascading filters ───────────────────────────────────
+  let filterL1 = $state<string>('all'); // code-group | doc-group
+  let filterL2 = $state<string>('all'); // package (code) | doc_type (docs)
+  let filterL3 = $state<string>('all'); // module (code) | kind (leaf)
 
-  const CONTAINER_EDGES = new Set(['CONTAINS_REPO', 'CONTAINS_GROUP', 'CONTAINS_PKG', 'CONTAINS_MOD']);
-  const TREE_KINDS = new Set(['solution', 'repo', 'code-group', 'doc-group', 'package', 'module']);
-  const KIND_ICONS: Record<string, string> = {
-    'solution': 'i-lucide:layers', 'repo': 'i-lucide:git-branch',
-    'code-group': 'i-lucide:code', 'doc-group': 'i-lucide:book-open',
-    'package': 'i-lucide:package', 'module': 'i-lucide:puzzle',
-  };
-
-  // Build tree items for Rokkit Tree
-  let treeItems = $derived.by(() => {
-    const childMap = new Map<string, string[]>();
-    for (const e of edges) {
-      const t = typeof e.type === 'string' ? e.type : '';
-      if (CONTAINER_EDGES.has(t)) {
-        const src = typeof e.source === 'string' ? e.source : e.source.id;
-        const tgt = typeof e.target === 'string' ? e.target : e.target.id;
-        if (!childMap.has(src)) childMap.set(src, []);
-        childMap.get(src)!.push(tgt);
-      }
-    }
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-
-    // Count descendants via all containment edges
-    const allContains = new Map<string, Set<string>>();
+  // Build containment maps from edges
+  let containsMap = $derived.by(() => {
+    const map = new Map<string, Set<string>>();
     for (const e of edges) {
       const t = typeof e.type === 'string' ? e.type : '';
       if (t.startsWith('CONTAINS_') || t === 'EXPORTS_FN' || t === 'EXPORTS_TYPE' || t === 'HAS_METHOD') {
         const src = typeof e.source === 'string' ? e.source : e.source.id;
         const tgt = typeof e.target === 'string' ? e.target : e.target.id;
-        if (!allContains.has(src)) allContains.set(src, new Set());
-        allContains.get(src)!.add(tgt);
+        if (!map.has(src)) map.set(src, new Set());
+        map.get(src)!.add(tgt);
       }
     }
-    function countDesc(id: string, visited = new Set<string>()): number {
-      if (visited.has(id)) return 0; visited.add(id);
-      const ch = allContains.get(id); if (!ch) return 0;
-      let c = 0;
-      for (const cid of ch) { const cn = nodeMap.get(cid); if (cn && !TREE_KINDS.has(cn.kind)) c++; c += countDesc(cid, visited); }
-      return c;
-    }
-
-    function build(id: string, depth: number): any {
-      const node = nodeMap.get(id);
-      if (!node || !TREE_KINDS.has(node.kind) || depth > 3) return null;
-      const childIds = childMap.get(id) ?? [];
-      const children: any[] = [];
-      for (const cid of childIds) { const c = build(cid, depth + 1); if (c) children.push(c); }
-      children.sort((a: any, b: any) => (a.label ?? '').localeCompare(b.label ?? ''));
-      const cnt = countDesc(id);
-      return { value: id, label: node.name, icon: KIND_ICONS[node.kind] ?? '', badge: cnt > 0 ? String(cnt) : '', children, expanded: depth < 2 };
-    }
-
-    const hasParent = new Set<string>();
-    for (const e of edges) { const t = typeof e.type === 'string' ? e.type : ''; if (CONTAINER_EDGES.has(t)) { const tgt = typeof e.target === 'string' ? e.target : e.target.id; hasParent.add(tgt); } }
-    const roots: any[] = [];
-    for (const n of nodes) { if (TREE_KINDS.has(n.kind) && !hasParent.has(n.id)) { const t = build(n.id, 0); if (t) roots.push(t); } }
-    return roots;
+    return map;
   });
 
-  function collectSubtreeIds(nodeId: string): Set<string> {
+  function collectDescendants(rootId: string): Set<string> {
     const ids = new Set<string>();
-    const queue = [nodeId];
+    const queue = [rootId];
     while (queue.length > 0) {
       const cur = queue.pop()!;
-      if (ids.has(cur)) continue; ids.add(cur);
-      for (const e of edges) {
-        const src = typeof e.source === 'string' ? e.source : e.source.id;
-        const tgt = typeof e.target === 'string' ? e.target : e.target.id;
-        const t = typeof e.type === 'string' ? e.type : '';
-        if (src === cur && (t.startsWith('CONTAINS_') || t === 'EXPORTS_FN' || t === 'EXPORTS_TYPE' || t === 'HAS_METHOD')) {
-          queue.push(tgt);
-        }
-      }
+      if (ids.has(cur)) continue;
+      ids.add(cur);
+      const ch = containsMap.get(cur);
+      if (ch) for (const cid of ch) queue.push(cid);
     }
     return ids;
   }
 
-  function handleTreeSelect(value: unknown) {
-    const id = value as string;
-    if (treeSelectedValue === id) { treeSelectedValue = null; treeFilterIds = null; }
-    else { treeSelectedValue = id; treeFilterIds = collectSubtreeIds(id); }
-  }
+  // L1 options: code-group and doc-group nodes
+  let l1Options = $derived(nodes.filter(n => n.kind === 'code-group' || n.kind === 'doc-group'));
 
-  // Filtered nodes — simple: if tree filter active, use it; otherwise show all
+  // L2 options: depends on L1 selection
+  let l2Options = $derived.by(() => {
+    if (filterL1 === 'all') return nodes.filter(n => n.kind === 'package' || n.kind === 'module');
+    const l1Node = nodes.find(n => n.id === filterL1);
+    if (!l1Node) return [];
+    const children = containsMap.get(filterL1);
+    if (!children) return [];
+    return nodes.filter(n => children.has(n.id));
+  });
+
+  // L3 options: depends on L2 selection
+  let l3Options = $derived.by(() => {
+    if (filterL2 === 'all') return [] as typeof nodes;
+    const children = containsMap.get(filterL2);
+    if (!children) return [] as typeof nodes;
+    // Only show sub-containers (modules under packages)
+    return nodes.filter(n => children.has(n.id) && (n.kind === 'module'));
+  });
+
+  // Reset cascading filters when parent changes
+  $effect(() => { filterL1; filterL2 = 'all'; filterL3 = 'all'; });
+  $effect(() => { filterL2; filterL3 = 'all'; });
+
+  let activeFilters = $derived((filterL1 !== 'all' ? 1 : 0) + (filterL2 !== 'all' ? 1 : 0) + (filterL3 !== 'all' ? 1 : 0));
+
+  // Filtered nodes
   let filteredNodes = $derived.by(() => {
-    if (!treeFilterIds) return nodes;
-    return nodes.filter(n => treeFilterIds!.has(n.id));
+    // Find the deepest active filter and collect its descendants
+    let rootId: string | null = null;
+    if (filterL3 !== 'all') rootId = filterL3;
+    else if (filterL2 !== 'all') rootId = filterL2;
+    else if (filterL1 !== 'all') rootId = filterL1;
+
+    if (!rootId) return nodes;
+    const ids = collectDescendants(rootId);
+    return nodes.filter(n => ids.has(n.id));
   });
 
   let filteredEdges = $derived.by(() => {
@@ -380,8 +359,9 @@
   }
 
   function clearFilters() {
-    treeSelectedValue = null;
-    treeFilterIds = null;
+    filterL1 = 'all';
+    filterL2 = 'all';
+    filterL3 = 'all';
   }
 
   $effect(() => {
@@ -402,45 +382,54 @@
   });
 </script>
 
-<div bind:this={container} class="relative w-full h-full min-h-60 bg-surface-z1 rounded-lg overflow-hidden flex">
-  <!-- Canvas (main area) -->
-  <div class="flex-1 relative min-h-0 flex flex-col">
-    <!-- Top bar -->
-    <div class="flex items-center gap-2 px-2 py-1 border-b border-surface-z0/30 bg-surface-z2/50 shrink-0 text-[10px]">
-      <button onclick={() => showTree = !showTree} class="text-surface-z5 hover:text-surface-z7" title="Toggle tree">{showTree ? '◂' : '▸'} Tree</button>
-      {#if treeFilterIds}
-        <button onclick={clearFilters} class="text-primary-z6 hover:text-primary-z7 font-medium">Clear filter</button>
-      {/if}
-      <button onclick={() => zoomToFit()} class="text-surface-z5 hover:text-surface-z7 font-medium" title="Zoom to fit">Fit</button>
-      <span class="text-surface-z4 ml-auto">{filteredNodes.length} nodes · {filteredEdges.length} edges</span>
-    </div>
-    <div class="flex-1 relative min-h-0">
-      <canvas bind:this={canvas} {width} {height} class="w-full h-full"></canvas>
-    </div>
-    <!-- Legend -->
-    <div class="absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-surface-z5 pointer-events-none">
-      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#8b5cf6"></span> packages</span>
-      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#14b8a6"></span> modules</span>
-      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#6366f1"></span> functions</span>
-      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f59e0b"></span> types</span>
-      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f97316"></span> extensions</span>
-      <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#06b6d4"></span> docs</span>
-    </div>
+<div bind:this={container} class="relative w-full h-full min-h-60 bg-surface-z1 rounded-lg overflow-hidden flex flex-col">
+  <!-- Filter bar -->
+  <div class="flex items-center gap-2 px-2 py-1.5 border-b border-surface-z0/30 bg-surface-z2/50 shrink-0 text-[10px]">
+    {#if l1Options.length > 0}
+      <select bind:value={filterL1} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
+        <option value="all">All</option>
+        {#each l1Options as o}
+          <option value={o.id}>{o.name === 'code' ? 'Code' : o.name === 'docs' ? 'Docs' : o.name}</option>
+        {/each}
+      </select>
+    {/if}
+    {#if l2Options.length > 0}
+      <select bind:value={filterL2} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
+        <option value="all">{filterL1 !== 'all' ? 'All in group' : 'All packages'}</option>
+        {#each l2Options as o}
+          <option value={o.id}>{o.name}</option>
+        {/each}
+      </select>
+    {/if}
+    {#if l3Options.length > 0}
+      <select bind:value={filterL3} class="bg-surface-z2 border border-surface-z0/40 rounded px-1.5 py-0.5 text-surface-z7 text-[10px]">
+        <option value="all">All modules</option>
+        {#each l3Options as o}
+          <option value={o.id}>{o.name}</option>
+        {/each}
+      </select>
+    {/if}
+    {#if activeFilters > 0}
+      <button onclick={clearFilters} class="text-primary-z6 hover:text-primary-z7 font-medium">Clear</button>
+    {/if}
+    <button onclick={() => zoomToFit()} class="text-surface-z5 hover:text-surface-z7 font-medium" title="Zoom to fit">Fit</button>
+    <span class="text-surface-z4 ml-auto">{filteredNodes.length} nodes · {filteredEdges.length} edges</span>
   </div>
 
-  <!-- Tree panel (right side) -->
-  {#if showTree && treeItems.length > 0}
-    <div class="w-56 shrink-0 border-l border-surface-z0/30 bg-surface-z2/30 overflow-y-auto">
-      <Tree
-        items={treeItems}
-        value={treeSelectedValue}
-        size="sm"
-        lineStyle="dashed"
-        icons={{ opened: 'i-lucide:chevron-down', closed: 'i-lucide:chevron-right' }}
-        onselect={handleTreeSelect}
-      />
-    </div>
-  {/if}
+  <!-- Canvas -->
+  <div class="flex-1 relative min-h-0">
+    <canvas bind:this={canvas} {width} {height} class="w-full h-full"></canvas>
+  </div>
+
+  <!-- Legend -->
+  <div class="absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-surface-z5 pointer-events-none">
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#8b5cf6"></span> packages</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#14b8a6"></span> modules</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#6366f1"></span> functions</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f59e0b"></span> types</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#f97316"></span> extensions</span>
+    <span><span class="inline-block w-2 h-2 rounded-full mr-0.5" style="background:#06b6d4"></span> docs</span>
+  </div>
 
   {#if hoveredNode && !selectedNode}
     <div class="absolute bottom-8 right-2 rounded-md bg-surface-z2 border border-surface-z3 px-2.5 py-1.5 text-xs shadow-sm pointer-events-none z-10">
