@@ -56,8 +56,10 @@ impl RepoWatcher {
             loop {
                 match event_rx.recv_timeout(Duration::from_millis(DEBOUNCE_MS)) {
                     Ok(event) => {
+                        let is_remove = matches!(event.kind, notify::EventKind::Remove(_));
                         for path in event.paths {
-                            if !path.is_file() { continue; }
+                            // For deletions, the file no longer exists — still track it
+                            if !is_remove && !path.is_file() { continue; }
 
                             // Check extension
                             let ext = path.extension()
