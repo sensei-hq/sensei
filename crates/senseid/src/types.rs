@@ -36,6 +36,191 @@ impl std::fmt::Display for SymbolKind {
     }
 }
 
+// ── Node kinds for unified hierarchy ─────────────────────────────────────────
+
+/// All node kinds in the unified hierarchy_nodes table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeKind {
+    // Structural grouping
+    Repo,
+    CodeGroup,
+    DocGroup,
+    // Code hierarchy
+    Package,
+    Module,
+    // Symbol kinds (mirrors SymbolKind)
+    Function,
+    Method,
+    Class,
+    Struct,
+    Interface,
+    Enum,
+    Const,
+    Type,
+    Component,
+    Hook,
+    File,
+    // Documentation hierarchy
+    Doc,
+    Extension,  // marketplace skills/commands/plugins — NOT documentation
+}
+
+impl NodeKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Repo => "repo",
+            Self::CodeGroup => "code-group",
+            Self::DocGroup => "doc-group",
+            Self::Package => "package",
+            Self::Module => "module",
+            Self::Function => "function",
+            Self::Method => "method",
+            Self::Class => "class",
+            Self::Struct => "struct",
+            Self::Interface => "interface",
+            Self::Enum => "enum",
+            Self::Const => "const",
+            Self::Type => "type",
+            Self::Component => "component",
+            Self::Hook => "hook",
+            Self::File => "file",
+            Self::Doc => "doc",
+            Self::Extension => "extension",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "repo" => Self::Repo,
+            "code-group" => Self::CodeGroup,
+            "doc-group" => Self::DocGroup,
+            "package" => Self::Package,
+            "module" => Self::Module,
+            "function" => Self::Function,
+            "method" => Self::Method,
+            "class" => Self::Class,
+            "struct" => Self::Struct,
+            "interface" => Self::Interface,
+            "enum" => Self::Enum,
+            "const" => Self::Const,
+            "type" => Self::Type,
+            "component" => Self::Component,
+            "hook" => Self::Hook,
+            "file" => Self::File,
+            "doc" => Self::Doc,
+            "extension" => Self::Extension,
+            _ => Self::File, // fallback
+        }
+    }
+
+    /// Whether this kind represents a function-like symbol.
+    pub fn is_function_like(&self) -> bool {
+        matches!(self, Self::Function | Self::Method | Self::Component | Self::Hook)
+    }
+
+    /// Whether this kind represents a type-like symbol.
+    pub fn is_type_like(&self) -> bool {
+        matches!(self, Self::Class | Self::Struct | Self::Interface | Self::Enum | Self::Type)
+    }
+
+    /// Convert from SymbolKind (adapter output) to NodeKind (graph storage).
+    pub fn from_symbol_kind(sk: &SymbolKind) -> Self {
+        match sk {
+            SymbolKind::Function => Self::Function,
+            SymbolKind::Method => Self::Method,
+            SymbolKind::Class => Self::Class,
+            SymbolKind::Struct => Self::Struct,
+            SymbolKind::Interface => Self::Interface,
+            SymbolKind::Enum => Self::Enum,
+            SymbolKind::Const => Self::Const,
+            SymbolKind::Type => Self::Type,
+            SymbolKind::Component => Self::Component,
+            SymbolKind::Hook => Self::Hook,
+            SymbolKind::Unknown => Self::Function,
+        }
+    }
+}
+
+impl std::fmt::Display for NodeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// A node in the unified hierarchy graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HierarchyNode {
+    pub id: String,
+    pub name: String,
+    pub kind: NodeKind,
+    /// Semantic level name — varies by content type.
+    /// Code: "crate", "npm-workspace", "go-module", directory path.
+    /// Docs: "requirement", "design", "feature", "usage", "changelog".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// Parent node ID for tree structure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// File path (for leaf nodes with a source file).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default)]
+    pub line: u32,
+    pub project: String,
+    // ── Specialized fields (nullable, only for relevant kinds) ──
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docstring: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub complexity: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_category: Option<String>,
+}
+
+impl HierarchyNode {
+    /// Create a minimal node (grouping/structural).
+    pub fn group(id: String, name: String, kind: NodeKind, project: String) -> Self {
+        Self {
+            id, name, kind, level: None, parent_id: None, file: None, line: 0,
+            project, sig: None, body: None, docstring: None, complexity: None,
+            tags: None, doc_type: None, doc_category: None,
+        }
+    }
+
+    /// Create a function/method node.
+    pub fn function(
+        id: String, name: String, kind: NodeKind, file: String, line: u32,
+        sig: Option<String>, body: Option<String>, docstring: Option<String>,
+        complexity: u32, project: String,
+    ) -> Self {
+        Self {
+            id, name, kind, level: None, parent_id: None, file: Some(file), line,
+            project, sig, body, docstring, complexity: Some(complexity),
+            tags: None, doc_type: None, doc_category: None,
+        }
+    }
+
+    /// Create a doc/extension node.
+    pub fn doc(
+        id: String, name: String, kind: NodeKind, file: String,
+        doc_type: Option<String>, doc_category: Option<String>, project: String,
+    ) -> Self {
+        Self {
+            id, name, kind, level: None, parent_id: None, file: Some(file), line: 0,
+            project, sig: None, body: None, docstring: None, complexity: None,
+            tags: None, doc_type, doc_category,
+        }
+    }
+}
+
 // ── Parsed file output ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
