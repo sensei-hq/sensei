@@ -320,7 +320,7 @@ impl GraphDb {
     /// Get all nodes for a project.
     pub fn get_nodes(&self, project: &str) -> Result<Vec<crate::types::GraphNode>, String> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, kind, COALESCE(file,''), line, complexity FROM hierarchy_nodes WHERE project = ?1"
+            "SELECT id, name, kind, COALESCE(file,''), line, complexity, doc_type, level, parent_id FROM hierarchy_nodes WHERE project = ?1"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(params![project], |row| {
             Ok(crate::types::GraphNode {
@@ -330,6 +330,9 @@ impl GraphDb {
                 file: row.get(3)?,
                 line: row.get(4)?,
                 complexity: row.get(5).ok(),
+                doc_type: row.get::<_, Option<String>>(6)?,
+                level: row.get::<_, Option<String>>(7)?,
+                parent_id: row.get::<_, Option<String>>(8)?,
             })
         }).map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
