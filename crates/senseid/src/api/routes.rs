@@ -440,6 +440,47 @@ async fn solution_graph(
         }
     }
 
+    // Inject solution-level hierarchy: soln → repo nodes for each member
+    let soln_node_id = format!("soln:{}", solution.id);
+    all_nodes.push(serde_json::json!({
+        "id": &soln_node_id, "name": &solution.name, "kind": "solution",
+        "file": "", "line": 0, "complexity": null,
+    }));
+    for sr in &solution.repos {
+        let repo_node_id = format!("repo:{}", sr.repo_id);
+        // Only add if not already present from graph data
+        if !all_nodes.iter().any(|n| n.get("id").and_then(|v| v.as_str()) == Some(&repo_node_id)) {
+            let label = sr.label.as_deref().unwrap_or(&sr.repo_id);
+            all_nodes.push(serde_json::json!({
+                "id": &repo_node_id, "name": label, "kind": "repo",
+                "file": sr.path.as_deref().unwrap_or(""), "line": 0, "complexity": null,
+                "role": sr.role,
+            }));
+        }
+        all_edges.push(serde_json::json!({
+            "source": &soln_node_id, "target": &repo_node_id, "type": "CONTAINS_REPO",
+        }));
+
+        // For subtree repos, link to modules/docs that match their directory path
+        if sr.role == "subtree" {
+            if let Some(ref subtree_path) = sr.path {
+                let subtree_dir = subtree_path.rsplit('/').next().unwrap_or(subtree_path);
+                for node in &all_nodes {
+                    if let (Some(id), Some(kind)) = (node.get("id").and_then(|v| v.as_str()), node.get("kind").and_then(|v| v.as_str())) {
+                        if (kind == "module" || kind == "doc" || kind == "extension") {
+                            let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            if name.starts_with(subtree_dir) || name.contains(&format!("/{}/", subtree_dir)) {
+                                all_edges.push(serde_json::json!({
+                                    "source": &repo_node_id, "target": id, "type": "CONTAINS_MOD",
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "solutionId": solution.id,
         "name": solution.name,
