@@ -3,20 +3,13 @@ use tokio::sync::Mutex;
 use tower_http::cors::{CorsLayer, Any};
 use crate::db::Store;
 use crate::indexer::graph::GraphDb;
-use crate::indexer::queue::IndexQueue;
-use crate::watcher::DirtyTracker;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::executor::{TaskContext, spawn_workers};
-use super::routes::{create_router, SharedState, AppState};
+use super::routes::{create_router, SharedState};
 
 const DEFAULT_WORKERS: usize = 3;
 
 pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::Result<()> {
-    // Old queue (kept for backward compat during migration)
-    let (index_queue, _rx) = IndexQueue::new();
-    let dirty_tracker = DirtyTracker::new();
-
-    // New task queue
     let task_queue = Arc::new(TaskQueue::new());
 
     // Read max concurrent repos from config
@@ -28,33 +21,22 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
 
     let graph_path = graph.db_path().map(|p| p.parent().unwrap_or(p).to_path_buf());
 
-    let state: AppState = Arc::new(SharedState {
+    let state = Arc::new(SharedState {
         store: Mutex::new(store),
         graph: Mutex::new(graph),
-        index_queue: index_queue.clone(),
-        dirty_tracker: dirty_tracker.clone(),
         task_queue: task_queue.clone(),
     });
 
-    // Spawn old worker (kept for backward compat)
-    crate::indexer::worker::spawn_worker(index_queue.clone(), state.clone()).await;
-
-    // Spawn new task workers — share AppState directly
+    // Spawn task workers
     let task_ctx = Arc::new(TaskContext {
         queue: task_queue.clone(),
         app_state: state.clone(),
         graph_path,
     });
-    spawn_workers(task_ctx.clone(), DEFAULT_WORKERS);
+    spawn_workers(task_ctx, DEFAULT_WORKERS);
 
-    // Spawn old file watchers (kept for backward compat)
-    spawn_watchers(state.clone()).await;
-
-    // Start root watchers for scanned roots
-    spawn_root_watchers(state.clone(), task_queue.clone()).await;
-
-    // Spawn old dirty flusher (kept for backward compat)
-    spawn_dirty_flusher(index_queue, dirty_tracker, state.clone());
+    // Start root watchers for persisted scanned roots
+    spawn_root_watchers(&state, task_queue.clone()).await;
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -69,63 +51,24 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
     axum::serve(listener, app).await
 }
 
-/// Spawn file watchers for all registered projects (OLD — backward compat).
-async fn spawn_watchers(state: AppState) {
-    let projects = {
-        let s = state.store.lock().await;
-        s.list_projects().unwrap_or_default()
-    };
-
-    for project in projects {
-        let path_buf = std::path::PathBuf::from(&project.path);
-        if !path_buf.exists() { continue; }
-
-        let repo_id = project.repo_id.clone();
-        let repo_path = project.path.clone();
-
-        state.dirty_tracker.register_repo(&repo_id, &repo_path).await;
-
-        let tracker = state.dirty_tracker.clone();
-        let rid = repo_id.clone();
-
-        tokio::task::spawn_blocking(move || {
-            let watcher = crate::watcher::RepoWatcher::new(&rid, &path_buf);
-            match watcher.watch() {
-                Ok(rx) => {
-                    tracing::info!("Watching {} at {}", rid, repo_path);
-                    loop {
-                        match rx.recv() {
-                            Ok(batch) => {
-                                let tracker = tracker.clone();
-                                let rid = rid.clone();
-                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                                    handle.block_on(async {
-                                        tracker.mark_dirty(&rid, batch).await;
-                                    });
-                                }
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
-                Err(e) => tracing::warn!("Failed to watch {}: {}", rid, e),
-            }
-        });
-    }
-}
-
-/// Start root watchers for persisted scanned roots (NEW task-based).
-async fn spawn_root_watchers(state: AppState, queue: Arc<TaskQueue>) {
+/// Start root watchers for persisted scanned roots.
+async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
     let store = state.store.lock().await;
 
-    // Get scanned roots from config
-    let roots: Vec<String> = store.execute_raw("CREATE TABLE IF NOT EXISTS scanned_roots(path TEXT PRIMARY KEY, created_at TEXT DEFAULT (datetime('now')))")
-        .ok()
-        .and_then(|_| {
-            // Query all roots
-            None // roots are populated via scan API — will start watchers then
-        })
-        .unwrap_or_default();
+    // Ensure scanned_roots table exists
+    store.execute_raw("CREATE TABLE IF NOT EXISTS scanned_roots(path TEXT PRIMARY KEY, created_at TEXT DEFAULT (datetime('now')))").ok();
+
+    // Get all scanned roots
+    let roots: Vec<String> = {
+        let mut stmt = match store.conn_ref().prepare("SELECT path FROM scanned_roots") {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .unwrap_or_else(|_| unreachable!())
+            .filter_map(|r| r.ok())
+            .collect()
+    };
 
     if roots.is_empty() { return; }
 
@@ -143,27 +86,6 @@ async fn spawn_root_watchers(state: AppState, queue: Arc<TaskQueue>) {
             queue.clone(),
             projects.clone(),
         ).ok();
+        tracing::info!("Root watcher: {}", root);
     }
-}
-
-/// Periodically flush dirty repos into the index queue (OLD — backward compat).
-fn spawn_dirty_flusher(
-    queue: Arc<IndexQueue>,
-    tracker: DirtyTracker,
-    state: AppState,
-) {
-    tokio::spawn(async move {
-        let flush_interval = std::time::Duration::from_secs(5);
-        loop {
-            tokio::time::sleep(flush_interval).await;
-
-            let dirty = tracker.dirty_repos().await;
-            for (repo_id, repo_path, count) in dirty {
-                if count > 0 {
-                    tracing::info!("Auto-enqueuing re-index for {} ({} dirty files)", repo_id, count);
-                    queue.enqueue(repo_id, repo_path, false).await;
-                }
-            }
-        }
-    });
 }
