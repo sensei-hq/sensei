@@ -43,13 +43,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/solutions/{id}/tags/{tag}", delete(remove_solution_tag))
         // Indexing
         .route("/api/index", post(index_project))
-        .route("/api/index/status", get(index_queue_status))
+        .route("/api/index/status", get(task_status))
         .route("/api/index/progress", get(index_progress_sse))
-        .route("/api/index/dirty", get(dirty_status))
+        // dirty_status removed — task queue handles incremental
         .route("/api/index/errors", get(list_index_errors))
         .route("/api/index/errors/{repo_id}", get(list_repo_index_errors))
         // Task queue (new)
-        .route("/api/tasks/status", get(task_queue_status))
+        .route("/api/tasks/status", get(task_status))
         .route("/api/tasks/progress", get(task_progress_sse))
         // Graph
         .route("/api/graph/nodes", get(graph_nodes))
@@ -717,14 +717,7 @@ async fn index_project(
     })))
 }
 
-async fn dirty_status(
-    State(_state): State<AppState>,
-) -> Json<serde_json::Value> {
-    // Dirty tracker removed — task queue handles incremental updates directly
-    Json(serde_json::json!([]))
-}
-
-async fn index_queue_status(
+async fn task_status(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
     let status = state.task_queue.status().await;
@@ -750,17 +743,6 @@ async fn index_progress_sse(
 }
 
 // ── Task Queue ──────────────────────────────────────────────────────────────
-
-async fn task_queue_status(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
-    let status = state.task_queue.status().await;
-    let progress = state.task_queue.progress().await;
-    Json(serde_json::json!({
-        "queue": status,
-        "repos": progress,
-    }))
-}
 
 async fn task_progress_sse(
     State(state): State<AppState>,

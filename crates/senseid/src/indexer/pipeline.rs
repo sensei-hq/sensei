@@ -8,6 +8,17 @@ use crate::adapters;
 use super::manifest::{Manifest, file_hash, file_mtime};
 use super::graph::{GraphDb, compute_complexity};
 
+/// Progress callback for indexing.
+pub trait ProgressCallback: Send + Sync {
+    fn on_file(&self, progress: crate::types::IndexProgress);
+}
+
+/// No-op progress callback.
+pub struct NoProgress;
+impl ProgressCallback for NoProgress {
+    fn on_file(&self, _progress: crate::types::IndexProgress) {}
+}
+
 /// Additional excludes beyond .gitignore (build artifacts, test files, etc.)
 const DEFAULT_EXCLUDE: &[&str] = &[
     "**/node_modules/**", "**/dist/**", "**/build/**", "**/target/**",
@@ -25,7 +36,7 @@ pub fn index_repo(
     repo_path: &str,
     repo_id: &str,
 ) -> Result<IndexResult, String> {
-    index_repo_with_progress(graph_db, repo_path, repo_id, &super::queue::NoProgress)
+    index_repo_with_progress(graph_db, repo_path, repo_id, &NoProgress)
 }
 
 /// Index a repository with progress reporting.
@@ -33,7 +44,7 @@ pub fn index_repo_with_progress(
     graph_db: &GraphDb,
     repo_path: &str,
     repo_id: &str,
-    progress: &dyn super::queue::ProgressCallback,
+    progress: &dyn ProgressCallback,
 ) -> Result<IndexResult, String> {
     let start = Instant::now();
     let repo = Path::new(repo_path);
@@ -562,7 +573,7 @@ pub fn index_dirty_files(
     repo_path: &str,
     repo_id: &str,
     dirty_files: &[std::path::PathBuf],
-    progress: &dyn super::queue::ProgressCallback,
+    progress: &dyn ProgressCallback,
 ) -> Result<(IndexResult, Vec<String>), String> {
     let start = Instant::now();
     let repo = Path::new(repo_path);
