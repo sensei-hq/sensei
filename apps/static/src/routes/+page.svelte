@@ -9,19 +9,22 @@
   const RELEASE_BASE = `${RELEASES}/releases/latest/download`;
 
   // ── Platform detection ──────────────────────────────────────────────────
-  type Platform = { os: string; svg: string; file: string; label: string };
+  type Platform = { os: string; svg: string; vb: string; file: string; label: string };
 
-  // Compact SVG icon paths (viewBox 0 0 24 24)
+  // Official SVG icon paths
+  // Apple (viewBox 0 0 24 24)
   const appleSvg = '<path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" fill="currentColor"/>';
+  // Windows (viewBox 0 0 24 24)
   const windowsSvg = '<path d="M3 12.5V5.81l7.5-1.04V12.5H3zm8.5-7.92L21 3v9.5H11.5V4.58zM3 13.5h7.5v7.73L3 20.19V13.5zm8.5 0H21V21l-9.5-1.42V13.5z" fill="currentColor"/>';
-  const linuxSvg = '<path d="M12.5 2C10 2 8.2 4.04 8.2 7.04c0 1.6.5 2.8 1.1 3.96-.9.6-2.7 1.8-3.3 3-1 2 .5 4 2.5 4h7c2 0 3.5-2 2.5-4-.6-1.2-2.4-2.4-3.3-3 .6-1.16 1.1-2.36 1.1-3.96C15.8 4.04 15 2 12.5 2zm-1.25 4a.75.75 0 110 1.5.75.75 0 010-1.5zm2.5 0a.75.75 0 110 1.5.75.75 0 010-1.5zM11 9.5h3s-.5 1.5-1.5 1.5S11 9.5 11 9.5z" fill="currentColor"/>';
+  // Linux — cib:linux (viewBox 0 0 32 32)
+  const linuxSvg = '<path fill="currentColor" d="M16.672 0q-.311.002-.641.027c-5.635.447-4.14 6.411-4.224 8.4c-.104 1.453-.4 2.604-1.4 4.027c-1.183 1.401-2.839 3.667-3.625 6.025c-.369 1.109-.547 2.251-.38 3.324a.5.5 0 0 0-.151.176c-.344.36-.6.803-.881 1.12c-.265.265-.645.355-1.063.532c-.416.181-.88.359-1.151.911c-.12.251-.183.521-.177.803c0 .26.037.531.073.713c.079.531.156.969.052 1.292c-.333.905-.369 1.525-.14 1.979c.233.448.713.625 1.249.803c1.084.265 2.547.181 3.704.796c1.233.625 2.489.896 3.489.631a2.38 2.38 0 0 0 1.609-1.26c.781-.005 1.64-.36 3.011-.448c.932-.079 2.099.359 3.437.265c.036.183.083.265.156.448v.005c.52 1.036 1.484 1.505 2.516 1.427c1.025-.083 2.119-.713 3.004-1.744c.844-1.016 2.245-1.444 3.172-2c.464-.267.839-.625.865-1.141c.031-.531-.265-1.083-.948-1.833v-.131l-.005-.005c-.229-.265-.333-.713-.453-1.233c-.115-.537-.24-1.047-.656-1.396c-.084-.073-.167-.089-.255-.177a.5.5 0 0 0-.251-.088c.573-1.704.349-3.396-.235-4.923c-.708-1.88-1.953-3.52-2.896-4.645c-1.063-1.339-2.104-2.609-2.083-4.489c.036-2.871.317-8.177-4.724-8.188z"/>';
 
   const platforms: Platform[] = [
-    { os: 'mac-arm',   svg: appleSvg,   file: 'sensei-cli-macos-arm64.tar.gz',   label: 'macOS Apple Silicon' },
-    { os: 'mac-intel', svg: appleSvg,   file: 'sensei-cli-macos-x86_64.tar.gz',  label: 'macOS Intel' },
-    { os: 'linux-x64', svg: linuxSvg,   file: 'sensei-cli-linux-x86_64.tar.gz',  label: 'Linux x86_64' },
-    { os: 'linux-arm', svg: linuxSvg,   file: 'sensei-cli-linux-arm64.tar.gz',   label: 'Linux ARM64' },
-    { os: 'windows',   svg: windowsSvg, file: 'sensei-cli-windows-x86_64.zip',   label: 'Windows x86_64' },
+    { os: 'mac-arm',   svg: appleSvg,   vb: '0 0 24 24', file: 'sensei-cli-macos-arm64.tar.gz',   label: 'macOS Apple Silicon' },
+    { os: 'mac-intel', svg: appleSvg,   vb: '0 0 24 24', file: 'sensei-cli-macos-x86_64.tar.gz',  label: 'macOS Intel' },
+    { os: 'linux-x64', svg: linuxSvg,   vb: '0 0 32 32', file: 'sensei-cli-linux-x86_64.tar.gz',  label: 'Linux x86_64' },
+    { os: 'linux-arm', svg: linuxSvg,   vb: '0 0 32 32', file: 'sensei-cli-linux-arm64.tar.gz',   label: 'Linux ARM64' },
+    { os: 'windows',   svg: windowsSvg, vb: '0 0 24 24', file: 'sensei-cli-windows-x86_64.zip',   label: 'Windows x86_64' },
   ];
   function detectPlatform(): Platform {
     if (!browser) return platforms[0];
@@ -69,7 +72,7 @@
     const h = 420;
     const nodeH = 36, rx = 8;
     const col1 = 80, col2 = w * 0.35, col3 = w * 0.60;
-    const col4 = w - 80 - 52;
+    const col4 = w - 80 - 55;       // right edge at w-80 (110/2=55)
 
     const primary   = 'rgb(124,58,237)';
     const secondary = 'rgb(13,148,136)';
@@ -78,20 +81,39 @@
     const plat      = '#a78bfa';
     const stor      = '#64748b';
 
-    interface N { id: string; label: string; x: number; y: number; color: string; w: number; sub?: string }
+    // Icon SVG data: { d: path, vb: viewBox, fill?: override color }
+    type Icon = { d: string; vb: string; fill?: string };
+    const ico: Record<string, Icon> = {
+      // material-icon-theme:claude
+      claude: { d: 'm14.375 6.48l.49.28v.209l-.14.489l-5.937 1.397l-.558-1.387zm0 0M12.155 2.373l.683.143l.182.224l.173.535l-.072.342l-3.983 5.447L7.81 7.737l3.673-4.82zM8.719 1.522l.419-.28l.349.14l.349.49l-.957 5.748l-.65-.441l-.279-.769l.49-4.33zM4.239 1.614l.43-.55L4.95 1l.558.081l.275.216l2.004 4.442l.724 2.11l-.848.471l-3.231-5.864zM2.154 4.665l-.14-.56l.42-.488l.488.07h.14l2.933 2.165l.908.698l1.257.978l-.698 1.187l-.629-.489l-.419-.419l-4.05-2.863zM1.316 8.296L1 7.946v-.31l.316-.108l3.562.21l3.491.279l-.113.695l-6.66-.346zM3.411 11.931h-.698l-.278-.32v-.382l1.186-.838l4.82-3.068l.487.833zM4.738 13.883l-.28.07l-.418-.21l.07-.35l4.12-5.446l.558.768l-3.072 4.05zM8.23 14.581l-.21.28l-.419.14l-.349-.28l-.21-.42L8.09 8.646l.629.07zM11.791 13.045v.558l-.07.21l-.279.14l-.489-.066l-3.356-4.996l1.331-1.014l1.117 2.025l.105.733zM13.398 12.207l.07.349l-.21.279l-.21-.07l-1.187-.838l-1.815-1.606l-1.397-.978l.419-1.326l.698.419l.42.768zM12.49 8.645l1.746.14l.419.28l.279.418v.302l-.768.327l-3.911-.978l-1.606-.07l.419-1.466l1.117.838z', vb: '0 0 16 16', fill: '#ff7043' },
+      // devicon-plain:cursor
+      cursor: { d: 'M117.9 30.289L66.664.713a5.32 5.32 0 0 0-5.323 0L10.09 30.29a4.48 4.48 0 0 0-2.234 3.872v59.663c0 1.6.853 3.077 2.24 3.878l51.24 29.586a5.33 5.33 0 0 0 5.324 0l51.246-29.586a4.48 4.48 0 0 0 2.24-3.878V34.166a4.48 4.48 0 0 0-2.24-3.872zm-3.216 6.272l-49.47 85.681c-.337.576-1.217.341-1.217-.325V65.81a3.15 3.15 0 0 0-1.573-2.72l-48.59-28.055c-.571-.331-.336-1.216.33-1.216h98.94c1.409 0 2.284 1.525 1.58 2.741', vb: '0 0 128 128' },
+      // simple-icons:windsurf
+      windsurf: { d: 'M23.55 5.067a2.177 2.177 0 0 0-2.18 2.177v4.867a1.77 1.77 0 0 1-1.76 1.76a1.82 1.82 0 0 1-1.472-.766l-4.971-7.1a2.2 2.2 0 0 0-1.81-.942c-1.134 0-2.154.964-2.154 2.153v4.896c0 .972-.797 1.76-1.76 1.76c-.57 0-1.136-.287-1.472-.766L.408 5.16A.224.224 0 0 0 0 5.288v4.245c0 .215.066.423.188.6l5.475 7.818c.324.462.8.805 1.351.93a2.164 2.164 0 0 0 2.645-2.098V11.89c0-.972.787-1.76 1.76-1.76h.002a1.8 1.8 0 0 1 1.472.766l4.972 7.1a2.172 2.172 0 0 0 3.96-1.212v-4.895a1.76 1.76 0 0 1 1.76-1.76h.195a.22.22 0 0 0 .22-.22V5.287a.22.22 0 0 0-.22-.22Z', vb: '0 0 24 24', fill: '#00b4d8' },
+      // Sensei hexagon (from desktop icon)
+      sensei: { d: 'M12 2L3 7v10l9 5l9-5V7z', vb: '0 0 24 24', fill: warn },
+      // Folder
+      folder: { d: 'M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6z', vb: '0 0 20 20' },
+      // Kuzu — simplified graph icon (no official SVG available)
+      kuzu: { d: 'M12 2a10 10 0 100 20 10 10 0 000-20zm0 3a7 7 0 110 14 7 7 0 010-14zm0 3a4 4 0 100 8 4 4 0 010-8z', vb: '0 0 24 24', fill: '#f97316' },
+      // SQLite — database icon
+      sqlite: { d: 'M4 4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2H4zm0 2h16v3c-1.5 1-5 1.5-8 1.5S5.5 10 4 9V6zm0 5c1.5 1 5 1.5 8 1.5s6.5-.5 8-1.5v3c-1.5 1-5 1.5-8 1.5S5.5 15 4 14v-3zm0 5c1.5 1 5 1.5 8 1.5s6.5-.5 8-1.5v2H4v-2z', vb: '0 0 24 24', fill: '#0f9fd8' },
+    };
+
+    interface N { id: string; label: string; x: number; y: number; color: string; w: number; icon?: string }
     interface L { source: string; target: string; label?: string }
 
     const nodes: N[] = [
-      { id: 'claude',   label: 'Claude Code',    x: col1, y: 60,  color: plat, w: 120, sub: 'claude' },
-      { id: 'cursor',   label: 'Cursor',         x: col1, y: 110, color: plat, w: 120, sub: 'cursor' },
-      { id: 'windsurf', label: 'Windsurf',       x: col1, y: 160, color: plat, w: 120, sub: 'windsurf' },
+      { id: 'claude',   label: 'Claude Code',    x: col1, y: 60,  color: plat, w: 125, icon: 'claude' },
+      { id: 'cursor',   label: 'Cursor',         x: col1, y: 110, color: plat, w: 125, icon: 'cursor' },
+      { id: 'windsurf', label: 'Windsurf',       x: col1, y: 160, color: plat, w: 125, icon: 'windsurf' },
       { id: 'mcp',      label: 'sensei-mcp',     x: col2, y: 110, color: secondary, w: 115 },
-      { id: 'desktop',  label: 'Sensei Desktop', x: col1, y: 280, color: warn, w: 130 },
-      { id: 'cli',      label: 'sensei CLI',     x: col1, y: 340, color: accent, w: 120 },
+      { id: 'desktop',  label: 'Sensei Desktop', x: col1, y: 280, color: warn, w: 135, icon: 'sensei' },
+      { id: 'cli',      label: 'sensei CLI',     x: col1, y: 340, color: accent, w: 125 },
       { id: 'senseid',  label: 'senseid',        x: col3, y: 210, color: primary, w: 110 },
-      { id: 'dotsensei',label: '~/.sensei',      x: col4, y: 150, color: stor, w: 105 },
-      { id: 'kuzu',     label: 'Kuzu',           x: col4, y: 210, color: '#f97316', w: 105 },
-      { id: 'sqlite',   label: 'SQLite',         x: col4, y: 270, color: '#0f9fd8', w: 105 },
+      { id: 'dotsensei',label: '~/.sensei',      x: col4, y: 150, color: stor, w: 110, icon: 'folder' },
+      { id: 'kuzu',     label: 'Kuzu',           x: col4, y: 210, color: '#f97316', w: 110, icon: 'kuzu' },
+      { id: 'sqlite',   label: 'SQLite',         x: col4, y: 270, color: '#0f9fd8', w: 110, icon: 'sqlite' },
     ];
     const links: L[] = [
       { source: 'claude', target: 'mcp', label: 'MCP' },
@@ -132,7 +154,24 @@
       const g = svg.append('g');
       g.append('rect').attr('x', n.x - n.w / 2).attr('y', n.y - nodeH / 2).attr('width', n.w).attr('height', nodeH)
         .attr('rx', rx).attr('fill', 'rgba(15,23,42,0.85)').attr('stroke', n.color).attr('stroke-width', 1.5);
-      g.append('text').attr('x', n.x).attr('y', n.y + 4).attr('text-anchor', 'middle')
+
+      const hasIcon = n.icon && ico[n.icon];
+      const textX = hasIcon ? n.x - n.w / 2 + 30 : n.x;
+      const anchor = hasIcon ? 'start' : 'middle';
+
+      if (hasIcon) {
+        const i = ico[n.icon!];
+        const iSize = 16;
+        const iX = n.x - n.w / 2 + 8;
+        const iY = n.y - iSize / 2;
+        const ig = g.append('svg').attr('x', iX).attr('y', iY).attr('width', iSize).attr('height', iSize).attr('viewBox', i.vb);
+        // Handle multi-path SVGs (Claude icon has multiple paths)
+        i.d.split(/(?=M)/).forEach(segment => {
+          if (segment.trim()) ig.append('path').attr('d', segment).attr('fill', i.fill || n.color);
+        });
+      }
+
+      g.append('text').attr('x', textX).attr('y', n.y + 4).attr('text-anchor', anchor)
         .attr('fill', '#e2e8f0').attr('font-size', '11px').attr('font-weight', '600')
         .attr('font-family', 'ui-monospace, monospace').text(n.label);
     });
@@ -193,7 +232,7 @@
   <div class="mb-8 rounded-xl border border-primary-z4 bg-primary-z1 p-5">
     <div class="flex items-center justify-between gap-4 flex-wrap">
       <div class="flex items-center gap-3">
-        <svg class="w-7 h-7 text-surface-z7 shrink-0" viewBox="0 0 24 24">{@html detected.svg}</svg>
+        <svg class="w-7 h-7 text-surface-z7 shrink-0" viewBox="{detected.vb}">{@html detected.svg}</svg>
         <div>
           <p class="text-sm font-semibold text-surface-z8">Download for {detected.label}</p>
           <p class="text-xs text-surface-z5 font-mono">{detected.file}</p>
@@ -237,7 +276,7 @@ sensei start</code></pre>
         {#each platforms as p}
           <a href="{RELEASE_BASE}/{p.file}"
              class="flex items-center gap-2 {p.os === detected.os ? 'text-primary-z6 font-semibold' : 'text-surface-z5'} hover:text-primary-z6 transition-colors">
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">{@html p.svg}</svg> {p.label}
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="{p.vb}">{@html p.svg}</svg> {p.label}
           </a>
         {/each}
       </div>
@@ -270,66 +309,12 @@ sensei start</code></pre>
   </div>
 </div>
 
-<!-- Usage -->
-<div id="usage" class="mx-auto max-w-4xl px-8 py-20">
-  <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Reference</div>
-  <h2 class="mb-3 text-3xl font-bold tracking-tight">Usage Guide</h2>
-  <p class="mb-10 text-surface-z5">CLI commands, daemon management, and MCP tools.</p>
+<!-- Architecture -->
+<div id="architecture" class="mx-auto max-w-4xl px-8 py-20">
+  <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">How it works</div>
+  <h2 class="mb-3 text-3xl font-bold tracking-tight">Architecture</h2>
+  <p class="mb-10 text-surface-z5">AI platforms connect via MCP. Desktop and CLI talk directly over HTTP. All data stays local.</p>
 
-  <!-- CLI + Daemon side by side -->
-  <div class="grid grid-cols-1 gap-5 mb-10 lg:grid-cols-2">
-    <!-- CLI Commands -->
-    <div>
-      <h3 class="mb-4 text-lg font-bold">CLI Commands</h3>
-      {#each cliGroups as group}
-        <div class="mb-4 rounded-xl border border-surface-z3 bg-surface-z2 p-4">
-          <div class="flex items-center gap-2 mb-3">
-            <span>{group.icon}</span>
-            <span class="font-bold text-sm">{group.title}</span>
-          </div>
-          <div class="space-y-2">
-            {#each group.commands as c}
-              <div>
-                <code class="text-xs font-semibold text-primary-z6">{c.cmd}</code>
-                <span class="text-xs text-surface-z5 ml-2">{c.desc}</span>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/each}
-    </div>
-
-    <!-- Daemon Management -->
-    <div>
-      <h3 class="mb-4 text-lg font-bold">Daemon Management</h3>
-      <div class="grid grid-cols-2 gap-3">
-        {#each daemonCommands as d}
-          <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-3">
-            <code class="block text-xs font-semibold text-primary-z6 mb-0.5">{d.cmd}</code>
-            <span class="text-xs text-surface-z5">{d.desc}</span>
-          </div>
-        {/each}
-      </div>
-    </div>
-  </div>
-
-  <!-- MCP Tools -->
-  <h3 class="mb-4 text-lg font-bold">MCP Tools</h3>
-  <p class="mb-5 text-sm text-surface-z5">Available to your AI coding platform when connected via <code class="bg-surface-z3 px-1.5 py-0.5 rounded text-xs">sensei-mcp</code>.</p>
-  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-10">
-    {#each mcpTools as t}
-      <div class="flex items-start gap-3 rounded-xl border border-surface-z3 bg-surface-z2 p-4">
-        <span class="text-lg">{t.icon}</span>
-        <div>
-          <code class="text-xs font-bold text-primary-z6">{t.tool}</code>
-          <p class="text-xs text-surface-z5 mt-0.5">{t.desc}</p>
-        </div>
-      </div>
-    {/each}
-  </div>
-
-  <!-- Architecture -->
-  <h3 class="mb-4 text-lg font-bold">Architecture</h3>
   <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-6 overflow-hidden" bind:this={graphContainer}></div>
   <div class="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
     {#each [
@@ -346,8 +331,66 @@ sensei start</code></pre>
   </div>
 </div>
 
+<!-- Usage / Reference -->
+<div id="usage" class="border-t border-surface-z0 bg-surface-z2">
+  <div class="mx-auto max-w-4xl px-8 py-20">
+    <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Reference</div>
+    <h2 class="mb-3 text-3xl font-bold tracking-tight">Usage Guide</h2>
+    <p class="mb-10 text-surface-z5">CLI commands, daemon management, and MCP tools.</p>
+
+    <!-- CLI + Daemon side by side -->
+    <div class="grid grid-cols-1 gap-5 mb-10 lg:grid-cols-2">
+      <div>
+        <h3 class="mb-4 text-lg font-bold">CLI Commands</h3>
+        {#each cliGroups as group}
+          <div class="mb-4 rounded-xl border border-surface-z3 bg-surface-z1 p-4">
+            <div class="flex items-center gap-2 mb-3">
+              <span>{group.icon}</span>
+              <span class="font-bold text-sm">{group.title}</span>
+            </div>
+            <div class="space-y-2">
+              {#each group.commands as c}
+                <div>
+                  <code class="text-xs font-semibold text-primary-z6">{c.cmd}</code>
+                  <span class="text-xs text-surface-z5 ml-2">{c.desc}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/each}
+      </div>
+      <div>
+        <h3 class="mb-4 text-lg font-bold">Daemon Management</h3>
+        <div class="grid grid-cols-2 gap-3">
+          {#each daemonCommands as d}
+            <div class="rounded-xl border border-surface-z3 bg-surface-z1 p-3">
+              <code class="block text-xs font-semibold text-primary-z6 mb-0.5">{d.cmd}</code>
+              <span class="text-xs text-surface-z5">{d.desc}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    </div>
+
+    <!-- MCP Tools -->
+    <h3 class="mb-4 text-lg font-bold">MCP Tools</h3>
+    <p class="mb-5 text-sm text-surface-z5">Available to your AI coding platform when connected via <code class="bg-surface-z3 px-1.5 py-0.5 rounded text-xs">sensei-mcp</code>.</p>
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {#each mcpTools as t}
+        <div class="flex items-start gap-3 rounded-xl border border-surface-z3 bg-surface-z1 p-4">
+          <span class="text-lg">{t.icon}</span>
+          <div>
+            <code class="text-xs font-bold text-primary-z6">{t.tool}</code>
+            <p class="text-xs text-surface-z5 mt-0.5">{t.desc}</p>
+          </div>
+        </div>
+      {/each}
+    </div>
+  </div>
+</div>
+
 <!-- Sponsor -->
-<div id="sponsor" class="border-t border-surface-z0 bg-surface-z2">
+<div id="sponsor">
   <div class="mx-auto max-w-3xl px-8 py-20 text-center">
     <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Support</div>
     <h2 class="mb-4 text-3xl font-bold tracking-tight">Sponsor Sensei</h2>
