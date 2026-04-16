@@ -15,16 +15,16 @@ class Sensei < Formula
   # Release archives (produced by `bun run build` + packaging)
   if OS.mac? && Hardware::CPU.arm?
     url "#{REPO_URL}/releases/download/v#{version}/sensei-cli-macos-arm64.tar.gz"
-    sha256 "3ad4c6565a6bb0e0d3db9c3c2161116c818555e378f4671001abcdeb0603910d"
+    sha256 "c87a6bfdcae2d4868b56fd19a050257b64e0be6d65e959fee79da0437737a1e3"
   elsif OS.mac? && Hardware::CPU.intel?
     url "#{REPO_URL}/releases/download/v#{version}/sensei-cli-macos-x86_64.tar.gz"
     sha256 "3ad4c6565a6bb0e0d3db9c3c2161116c818555e378f4671001abcdeb0603910d"
   elsif OS.linux? && Hardware::CPU.arm?
     url "#{REPO_URL}/releases/download/v#{version}/sensei-cli-linux-arm64.tar.gz"
-    sha256 "3ad4c6565a6bb0e0d3db9c3c2161116c818555e378f4671001abcdeb0603910d"
+    sha256 "620db1834c0b160b1d8a49b1be1480d00689c94b5187d6ac51bcd2b602e1c54d"
   else
     url "#{REPO_URL}/releases/download/v#{version}/sensei-cli-linux-x86_64.tar.gz"
-    sha256 "3ad4c6565a6bb0e0d3db9c3c2161116c818555e378f4671001abcdeb0603910d"
+    sha256 "ca9395ad6bce190cc74030cdc21dfec56c4b02209f6fabda594d62a9c9a1c91e"
   end
 
   bottle :unneeded
