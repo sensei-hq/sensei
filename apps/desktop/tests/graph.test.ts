@@ -83,7 +83,7 @@ test.describe('Graph API — hierarchy nodes and edges', () => {
 test.describe('Project page — graph visualization', () => {
   test('project page loads graph canvas', async ({ page }) => {
     await page.goto('/p/sensei');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
     // Page should have loaded — heading shows project name
     await expect(page.getByRole('heading', { name: 'sensei' })).toBeVisible({ timeout: 15_000 });
     // Canvas element should exist for the graph
@@ -93,7 +93,7 @@ test.describe('Project page — graph visualization', () => {
 
   test('project page shows stats including edges', async ({ page }) => {
     await page.goto('/p/sensei');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
     // Stats section — use exact text match for uppercase labels
     await expect(page.getByText('Functions', { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Types', { exact: true })).toBeVisible({ timeout: 10_000 });
@@ -102,7 +102,7 @@ test.describe('Project page — graph visualization', () => {
 
   test('graph canvas is rendered with non-zero dimensions', async ({ page }) => {
     await page.goto('/p/sensei');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
     const canvas = page.locator('canvas');
     await expect(canvas).toBeVisible({ timeout: 15_000 });
     const box = await canvas.boundingBox();
