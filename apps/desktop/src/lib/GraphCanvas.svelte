@@ -87,48 +87,19 @@
   // On project pages: single repo
   let l1Options = $derived(nodes.filter(n => n.kind === 'repo'));
 
-  // L2: packages (src) + doc categories (doc) — flattened, no code/docs layer
-  let l2Options = $derived.by((): Array<{ id: string; name: string; kind: string }> => {
-    // Determine which repo to scope to
-    const scopeRepoId = filterL1 !== 'all' ? filterL1 : null;
-
-    // Packages (code) — direct children of repo or all packages
-    const packages = nodes.filter(n => {
-      if (n.kind !== 'package') return false;
-      if (scopeRepoId) {
-        const children = containsMap.get(scopeRepoId);
-        return children?.has(n.id) ?? false;
-      }
-      return true;
-    });
-
-    // Doc categories — virtual entries from unique doc_type values
-    const scopedNodes = scopeRepoId ? nodes.filter(n => {
-      // nodes belonging to this repo (by checking if repo contains them transitively)
-      return collectDescendants(scopeRepoId).has(n.id);
-    }) : nodes;
-
-    const docTypes = new Set<string>();
-    for (const n of scopedNodes) {
-      if ((n.kind === 'doc' || n.kind === 'extension') && n.doc_type) {
-        docTypes.add(n.doc_type);
-      }
+  // L2: direct children of selected repo — packages (src) + doc categories (doc)
+  let l2Options = $derived.by((): typeof nodes => {
+    if (filterL1 === 'all') {
+      return nodes.filter(n => n.kind === 'package' || n.kind === 'doc-category');
     }
-    const docCategoryItems = [...docTypes].sort().map(dt => ({
-      id: `doctype:${dt}`,
-      name: dt.charAt(0).toUpperCase() + dt.slice(1),
-      kind: 'doc-category' as string,
-    }));
-
-    return [
-      ...packages.map(p => ({ id: p.id, name: p.name, kind: p.kind })),
-      ...docCategoryItems,
-    ];
+    const children = containsMap.get(filterL1);
+    if (!children) return [];
+    return nodes.filter(n => children.has(n.id) && (n.kind === 'package' || n.kind === 'doc-category'));
   });
 
-  // L3: modules under selected package (code only — doc categories have no L3)
-  let l3Options = $derived.by((): Array<{ id: string; name: string; kind: string }> => {
-    if (filterL2 === 'all' || filterL2.startsWith('doctype:')) return [];
+  // L3: modules under selected package, or individual docs under doc category
+  let l3Options = $derived.by((): typeof nodes => {
+    if (filterL2 === 'all') return [];
     const children = containsMap.get(filterL2);
     if (!children) return [];
     return nodes.filter(n => children.has(n.id) && n.kind === 'module');
@@ -175,7 +146,7 @@
     'class': '#f59e0b', 'struct': '#f59e0b', 'interface': '#f59e0b',
     'type': '#f59e0b', 'enum': '#f59e0b',
     'file': '#10b981',
-    'doc': '#06b6d4', 'extension': '#f97316', // orange for extensions
+    'doc': '#06b6d4', 'doc-category': '#0891b2', 'extension': '#f97316',
     'component': '#ec4899', 'hook': '#ec4899',
     'const': '#94a3b8',
     'package': '#8b5cf6', 'module': '#14b8a6',
