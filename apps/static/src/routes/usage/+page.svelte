@@ -14,16 +14,6 @@
       ]
     },
     {
-      title: 'Daemon',
-      icon: '⚡',
-      commands: [
-        { cmd: 'sensei start', desc: 'Start the senseid daemon (default port 7744)' },
-        { cmd: 'sensei start --port 8800', desc: 'Start on a custom port' },
-        { cmd: 'sensei stop', desc: 'Stop the running daemon' },
-        { cmd: 'sensei status', desc: 'Show daemon status — version, PID, uptime' },
-      ]
-    },
-    {
       title: 'Indexing',
       icon: '🔍',
       commands: [
@@ -172,7 +162,7 @@
     <h2 class="mb-2 text-2xl font-bold">CLI Commands</h2>
     <p class="mb-8 text-sm text-surface-z5">The <code class="bg-surface-z3 px-1.5 py-0.5 rounded text-xs">sensei</code> binary handles setup, daemon lifecycle, and indexing.</p>
 
-    <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-5 sm:grid-cols-2">
       {#each cliGroups as group}
         <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-5">
           <div class="flex items-center gap-2 mb-4">
