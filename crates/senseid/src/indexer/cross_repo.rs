@@ -446,6 +446,11 @@ pub fn auto_solution_for_monorepo(
 
 /// Detect git subtrees by finding directories that were merged via `git subtree add`.
 /// Looks for squash merge commits in git log that mention subtree paths.
+/// Public wrapper for task handlers.
+pub fn detect_git_subtrees_pub(repo_path: &std::path::Path) -> Vec<(String, String)> {
+    detect_git_subtrees(repo_path)
+}
+
 fn detect_git_subtrees(repo_path: &std::path::Path) -> Vec<(String, String)> {
     let mut subtrees = Vec::new();
 
