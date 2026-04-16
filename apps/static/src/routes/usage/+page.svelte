@@ -1,36 +1,54 @@
 <script lang="ts">
   import { base } from '$app/paths';
 
-  const commands = [
-    { cmd: 'sensei configure', desc: 'Detect installed AI coding platforms and generate config' },
-    { cmd: 'sensei install', desc: 'Install sensei for all configured platforms (hooks, skills, MCP)' },
-    { cmd: 'sensei install --acp claude-code', desc: 'Install for a specific platform only' },
-    { cmd: 'sensei uninstall', desc: 'Remove sensei from all configured platforms' },
-    { cmd: 'sensei start', desc: 'Start the senseid daemon (default port 7744)' },
-    { cmd: 'sensei start --port 8800', desc: 'Start on a custom port' },
-    { cmd: 'sensei stop', desc: 'Stop the running daemon' },
-    { cmd: 'sensei status', desc: 'Show daemon status (version, PID, uptime)' },
-    { cmd: 'sensei scan ~/Developer', desc: 'Scan a folder and index all repos found' },
-    { cmd: 'sensei add-lib react', desc: 'Add a library\'s docs (auto-discovers llms.txt)' },
-    { cmd: 'sensei add-lib kavach --url https://...', desc: 'Add a library with explicit doc URL' },
+  const cliGroups = [
+    {
+      title: 'Setup',
+      icon: '🔧',
+      commands: [
+        { cmd: 'sensei configure', desc: 'Detect installed AI coding platforms and generate config' },
+        { cmd: 'sensei install', desc: 'Install hooks, skills, and MCP server for all platforms' },
+        { cmd: 'sensei install --acp claude-code', desc: 'Install for a specific platform only' },
+        { cmd: 'sensei uninstall', desc: 'Remove sensei from all configured platforms' },
+      ]
+    },
+    {
+      title: 'Daemon',
+      icon: '⚡',
+      commands: [
+        { cmd: 'sensei start', desc: 'Start the senseid daemon (default port 7744)' },
+        { cmd: 'sensei start --port 8800', desc: 'Start on a custom port' },
+        { cmd: 'sensei stop', desc: 'Stop the running daemon' },
+        { cmd: 'sensei status', desc: 'Show daemon status — version, PID, uptime' },
+      ]
+    },
+    {
+      title: 'Indexing',
+      icon: '🔍',
+      commands: [
+        { cmd: 'sensei scan ~/Developer', desc: 'Scan a folder and index all repos found' },
+        { cmd: 'sensei add-lib react', desc: 'Add a library\'s docs (auto-discovers llms.txt)' },
+        { cmd: 'sensei add-lib kavach --url https://...', desc: 'Add a library with explicit doc URL' },
+      ]
+    }
   ];
 
-  const daemon = [
-    { cmd: 'senseid', desc: 'Start daemon in foreground' },
-    { cmd: 'senseid start', desc: 'Start daemon in background' },
+  const daemonCommands = [
+    { cmd: 'senseid', desc: 'Start in foreground (logs to stdout)' },
+    { cmd: 'senseid start', desc: 'Start as background daemon' },
     { cmd: 'senseid stop', desc: 'Stop the background daemon' },
-    { cmd: 'senseid status', desc: 'Show daemon version and PID' },
-    { cmd: 'senseid logs', desc: 'Tail the last 50 lines of the daemon log' },
+    { cmd: 'senseid status', desc: 'Show version and PID' },
+    { cmd: 'senseid logs', desc: 'Tail the last 50 lines' },
     { cmd: 'senseid clear-logs', desc: 'Clear the log file' },
   ];
 
   const mcpTools = [
-    { tool: 'get_session_context', desc: 'Resume from last checkpoint, load repo orientation' },
-    { tool: 'context_pack', desc: 'Load only the symbols relevant to a query (saves tokens)' },
-    { tool: 'search', desc: 'Semantic search across the entire codebase' },
-    { tool: 'load_context', desc: 'Load a specific file with symbol extraction' },
-    { tool: 'take_snapshot', desc: 'Record progress for interruption recovery' },
-    { tool: 'checkpoint', desc: 'Close a session with outcome tracking (FTR scoring)' },
+    { tool: 'get_session_context', desc: 'Resume from last checkpoint, load repo orientation', icon: '🎯' },
+    { tool: 'context_pack', desc: 'Load symbols relevant to a query — token-budgeted', icon: '📦' },
+    { tool: 'search', desc: 'Semantic search across the entire codebase', icon: '🔎' },
+    { tool: 'load_context', desc: 'Load a specific file with symbol extraction', icon: '📄' },
+    { tool: 'take_snapshot', desc: 'Record progress for interruption recovery', icon: '💾' },
+    { tool: 'checkpoint', desc: 'Close session with outcome and FTR scoring', icon: '✅' },
   ];
 </script>
 
@@ -52,63 +70,83 @@
     </div>
   </nav>
 
-  <div class="mx-auto max-w-3xl px-8 py-16">
+  <div class="mx-auto max-w-4xl px-8 py-16">
 
     <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Reference</div>
     <h1 class="mb-4 text-4xl font-extrabold tracking-tight">Usage Guide</h1>
-    <p class="mb-12 text-lg text-surface-z5">CLI commands, daemon management, and MCP tools.</p>
+    <p class="mb-14 text-lg text-surface-z5">Everything you need to configure, run, and integrate sensei.</p>
 
-    <!-- CLI Commands -->
-    <section class="mb-14">
-      <h2 class="mb-5 text-2xl font-bold">CLI Commands</h2>
-      <p class="mb-5 text-sm text-surface-z5">The <code class="bg-surface-z3 px-1 rounded">sensei</code> CLI manages installation, configuration, and scanning.</p>
-      <div class="rounded-xl border border-surface-z3 overflow-hidden">
-        {#each commands as c, i}
-          <div class="flex flex-col gap-1 px-5 py-3 {i % 2 === 0 ? 'bg-surface-z2' : 'bg-surface-z1'}">
-            <code class="text-xs font-semibold text-primary-z7">{c.cmd}</code>
-            <span class="text-xs text-surface-z5">{c.desc}</span>
+    <!-- CLI Commands — grouped cards -->
+    <section class="mb-16">
+      <h2 class="mb-2 text-2xl font-bold">CLI Commands</h2>
+      <p class="mb-8 text-sm text-surface-z5">The <code class="bg-surface-z3 px-1.5 py-0.5 rounded text-xs">sensei</code> binary handles setup, daemon lifecycle, and indexing.</p>
+
+      <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        {#each cliGroups as group}
+          <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-5">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="text-lg">{group.icon}</span>
+              <h3 class="font-bold text-sm">{group.title}</h3>
+            </div>
+            <div class="space-y-3">
+              {#each group.commands as c}
+                <div>
+                  <code class="block text-xs font-semibold text-primary-z6 mb-0.5">{c.cmd}</code>
+                  <span class="text-[11px] text-surface-z4 leading-tight">{c.desc}</span>
+                </div>
+              {/each}
+            </div>
           </div>
         {/each}
       </div>
     </section>
 
-    <!-- Daemon -->
-    <section class="mb-14">
-      <h2 class="mb-5 text-2xl font-bold">Daemon Management</h2>
-      <p class="mb-5 text-sm text-surface-z5">The <code class="bg-surface-z3 px-1 rounded">senseid</code> daemon runs the indexer and serves the API on port 7744.</p>
-      <div class="rounded-xl border border-surface-z3 overflow-hidden">
-        {#each daemon as d, i}
-          <div class="flex flex-col gap-1 px-5 py-3 {i % 2 === 0 ? 'bg-surface-z2' : 'bg-surface-z1'}">
-            <code class="text-xs font-semibold text-primary-z7">{d.cmd}</code>
-            <span class="text-xs text-surface-z5">{d.desc}</span>
+    <!-- Daemon Management -->
+    <section class="mb-16">
+      <h2 class="mb-2 text-2xl font-bold">Daemon Management</h2>
+      <p class="mb-8 text-sm text-surface-z5">The <code class="bg-surface-z3 px-1.5 py-0.5 rounded text-xs">senseid</code> daemon indexes repos and serves the local API.</p>
+
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {#each daemonCommands as d}
+          <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-4">
+            <code class="block text-xs font-semibold text-primary-z6 mb-1">{d.cmd}</code>
+            <span class="text-[11px] text-surface-z4">{d.desc}</span>
           </div>
         {/each}
       </div>
-      <div class="mt-4 rounded-lg bg-surface-z0 p-4 text-xs text-surface-z5">
-        <strong class="text-surface-z7">Homebrew service:</strong> If installed via Homebrew, you can also use
-        <code class="bg-surface-z3 px-1 rounded">brew services start sensei</code> to run senseid as a background service that starts on login.
+
+      <div class="mt-5 flex items-start gap-3 rounded-xl border border-surface-z3 bg-surface-z0 p-4">
+        <span class="text-lg mt-0.5">🍺</span>
+        <div>
+          <p class="text-xs font-semibold text-surface-z7 mb-1">Homebrew service</p>
+          <p class="text-xs text-surface-z4">Use <code class="bg-surface-z3 px-1 rounded">brew services start sensei</code> to run senseid as a login service.</p>
+        </div>
       </div>
     </section>
 
     <!-- MCP Tools -->
-    <section class="mb-14">
-      <h2 class="mb-5 text-2xl font-bold">MCP Tools</h2>
-      <p class="mb-5 text-sm text-surface-z5">When connected via <code class="bg-surface-z3 px-1 rounded">sensei-mcp</code>, your AI coding platform gets these tools:</p>
-      <div class="rounded-xl border border-surface-z3 overflow-hidden">
-        {#each mcpTools as t, i}
-          <div class="flex flex-col gap-1 px-5 py-3 {i % 2 === 0 ? 'bg-surface-z2' : 'bg-surface-z1'}">
-            <code class="text-xs font-semibold text-primary-z7">{t.tool}</code>
-            <span class="text-xs text-surface-z5">{t.desc}</span>
+    <section class="mb-16">
+      <h2 class="mb-2 text-2xl font-bold">MCP Tools</h2>
+      <p class="mb-8 text-sm text-surface-z5">Available to your AI coding platform when connected via <code class="bg-surface-z3 px-1.5 py-0.5 rounded text-xs">sensei-mcp</code>.</p>
+
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {#each mcpTools as t}
+          <div class="flex items-start gap-3 rounded-xl border border-surface-z3 bg-surface-z2 p-4 hover:border-primary-z4 transition-colors">
+            <span class="text-lg mt-0.5">{t.icon}</span>
+            <div>
+              <code class="text-xs font-bold text-primary-z6">{t.tool}</code>
+              <p class="text-[11px] text-surface-z4 mt-0.5">{t.desc}</p>
+            </div>
           </div>
         {/each}
       </div>
     </section>
 
     <!-- Architecture -->
-    <section class="mb-14">
-      <h2 class="mb-5 text-2xl font-bold">Architecture</h2>
-      <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-5">
-        <pre class="text-xs text-surface-z7 leading-relaxed"><code>┌─────────────┐     MCP      ┌────────────┐     HTTP     ┌──────────┐
+    <section class="mb-16">
+      <h2 class="mb-6 text-2xl font-bold">Architecture</h2>
+      <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-6">
+        <pre class="text-xs text-surface-z7 leading-relaxed overflow-x-auto"><code>┌─────────────┐     MCP      ┌────────────┐     HTTP     ┌──────────┐
 │ Claude Code │ ──────────── │ sensei-mcp │ ──────────── │ senseid  │
 │ Cursor      │  (stdio)     │            │  (:7744)     │ (daemon) │
 │ Windsurf    │              └────────────┘              └──────────┘
@@ -118,17 +156,29 @@
                                                          │ Graph DB │
                                                          └──────────┘</code></pre>
       </div>
-      <div class="mt-4 space-y-2 text-sm text-surface-z5">
-        <p><strong class="text-surface-z7">senseid</strong> — The indexer daemon. Watches your repos, builds a code graph in SQLite, and serves an HTTP API.</p>
-        <p><strong class="text-surface-z7">sensei-mcp</strong> — A thin MCP adapter. Translates MCP tool calls from your AI platform into senseid HTTP requests.</p>
-        <p><strong class="text-surface-z7">sensei</strong> — The CLI. Manages installation, configuration, and scanning. Talks to senseid over HTTP.</p>
+      <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {#each [
+          { name: 'senseid', desc: 'Indexer daemon — watches repos, builds code graph, serves HTTP API', color: 'primary' },
+          { name: 'sensei-mcp', desc: 'MCP adapter — translates AI platform tool calls to HTTP', color: 'secondary' },
+          { name: 'sensei', desc: 'CLI — manages installation, config, scanning over HTTP', color: 'accent' },
+        ] as comp}
+          <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-4">
+            <code class="text-xs font-bold text-{comp.color}-z6">{comp.name}</code>
+            <p class="text-[11px] text-surface-z4 mt-1">{comp.desc}</p>
+          </div>
+        {/each}
       </div>
     </section>
 
-    <!-- Data -->
-    <section class="border-t border-surface-z0 pt-10">
-      <h2 class="mb-3 text-lg font-bold">Data storage</h2>
-      <p class="text-sm text-surface-z5">All data is stored locally at <code class="bg-surface-z3 px-1 rounded">~/.sensei/</code>. Nothing is sent to external servers. The daemon stores its PID, logs, SQLite database, and per-repo graph data in this directory.</p>
+    <!-- Data storage -->
+    <section class="rounded-xl border border-surface-z3 bg-surface-z0 p-6 mb-10">
+      <div class="flex items-start gap-3">
+        <span class="text-lg">🔒</span>
+        <div>
+          <h2 class="text-sm font-bold mb-1">Local-first, private by default</h2>
+          <p class="text-xs text-surface-z5">All data is stored at <code class="bg-surface-z3 px-1 rounded">~/.sensei/</code>. Nothing is sent to external servers. The daemon stores its PID, logs, SQLite database, and per-repo graph data locally.</p>
+        </div>
+      </div>
     </section>
 
   </div>
