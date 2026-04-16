@@ -6,11 +6,21 @@ use super::{TaskKind, Task};
 use super::handlers;
 
 /// Shared state passed to task handlers.
+/// Wraps the same store/graph as the API routes via AppState.
 pub struct TaskContext {
     pub queue: Arc<TaskQueue>,
-    pub store: Arc<tokio::sync::Mutex<crate::db::Store>>,
-    pub graph: Arc<tokio::sync::Mutex<crate::indexer::graph::GraphDb>>,
+    pub app_state: crate::api::routes::AppState,
     pub graph_path: Option<std::path::PathBuf>,
+}
+
+impl TaskContext {
+    pub async fn store(&self) -> tokio::sync::MutexGuard<'_, crate::db::Store> {
+        self.app_state.store.lock().await
+    }
+
+    pub async fn graph(&self) -> tokio::sync::MutexGuard<'_, crate::indexer::graph::GraphDb> {
+        self.app_state.graph.lock().await
+    }
 }
 
 /// Spawn N worker threads that process tasks from the queue.
@@ -18,21 +28,21 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
     for worker_id in 0..n {
         let ctx = ctx.clone();
         tokio::spawn(async move {
-            tracing::info!("[worker-{}] started", worker_id);
+            tracing::info!("[task-worker-{}] started", worker_id);
             loop {
                 let task = ctx.queue.next_task().await;
-                tracing::debug!("[worker-{}] running {} for {} ({})", worker_id, task.kind, task.repo_id, task.path);
+                tracing::debug!("[task-worker-{}] running {} for {} ({})", worker_id, task.kind, task.repo_id, task.path);
 
                 let result = execute_task(&ctx, &task).await;
 
                 match result {
                     Ok(()) => {
                         ctx.queue.complete(task.id).await;
-                        tracing::debug!("[worker-{}] completed {} #{}", worker_id, task.kind, task.id);
+                        tracing::debug!("[task-worker-{}] completed {} #{}", worker_id, task.kind, task.id);
                     }
                     Err(e) => {
                         ctx.queue.fail(task.id, e.clone()).await;
-                        tracing::warn!("[worker-{}] failed {} #{}: {}", worker_id, task.kind, task.id, e);
+                        tracing::warn!("[task-worker-{}] failed {} #{}: {}", worker_id, task.kind, task.id, e);
                     }
                 }
             }
