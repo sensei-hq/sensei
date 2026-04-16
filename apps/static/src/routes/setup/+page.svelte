@@ -1,6 +1,38 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
+
   const RELEASES = 'https://github.com/mizukisu/sensei-releases';
   const RELEASE_BASE = `${RELEASES}/releases/latest/download`;
+
+  type Platform = { os: string; icon: string; file: string; label: string };
+
+  const platforms: Platform[] = [
+    { os: 'mac-arm',   icon: '🍎', file: 'sensei-cli-macos-arm64.tar.gz',   label: 'macOS Apple Silicon' },
+    { os: 'mac-intel', icon: '🍎', file: 'sensei-cli-macos-x86_64.tar.gz',  label: 'macOS Intel' },
+    { os: 'linux-x64', icon: '🐧', file: 'sensei-cli-linux-x86_64.tar.gz',  label: 'Linux x86_64' },
+    { os: 'linux-arm', icon: '🐧', file: 'sensei-cli-linux-arm64.tar.gz',   label: 'Linux ARM64' },
+    { os: 'windows',   icon: '🪟', file: 'sensei-cli-windows-x86_64.zip',   label: 'Windows x86_64' },
+  ];
+
+  function detectPlatform(): Platform {
+    if (!browser) return platforms[0];
+    const ua = navigator.userAgent.toLowerCase();
+    const platform = (navigator as any).userAgentData?.platform?.toLowerCase() ?? navigator.platform?.toLowerCase() ?? '';
+
+    if (ua.includes('win')) return platforms[4];
+    if (ua.includes('linux')) {
+      return ua.includes('aarch64') || ua.includes('arm') ? platforms[3] : platforms[2];
+    }
+    // macOS — check for Apple Silicon
+    if (platform.includes('mac') || ua.includes('mac')) {
+      // Safari and Chrome on Apple Silicon don't reliably expose arch in UA,
+      // but arm64 Macs are the vast majority now — default to arm64
+      return platforms[0];
+    }
+    return platforms[0];
+  }
+
+  let detected = $derived(detectPlatform());
 </script>
 
 <div class="mx-auto max-w-3xl px-8 py-16">
@@ -16,7 +48,25 @@
       <h2 class="text-xl font-bold">Install the binaries</h2>
     </div>
 
+    <!-- Platform-detected download -->
+    <div class="mb-5 rounded-xl border border-primary-z4 bg-primary-z1 p-5">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div class="flex items-center gap-3">
+          <span class="text-2xl">{detected.icon}</span>
+          <div>
+            <p class="text-sm font-semibold text-surface-z8">Download for {detected.label}</p>
+            <p class="text-xs text-surface-z4 font-mono">{detected.file}</p>
+          </div>
+        </div>
+        <a href="{RELEASE_BASE}/{detected.file}"
+           class="rounded-lg bg-primary-z5 px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-z6 transition-colors whitespace-nowrap">
+          Download
+        </a>
+      </div>
+    </div>
+
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <!-- Homebrew -->
       <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-5">
         <div class="flex items-center gap-2 mb-3">
           <span class="text-lg">🍺</span>
@@ -27,20 +77,24 @@
         <p class="mt-2 text-xs text-surface-z4">Installs <code class="bg-surface-z3 px-1 rounded">sensei</code>, <code class="bg-surface-z3 px-1 rounded">senseid</code>, and <code class="bg-surface-z3 px-1 rounded">sensei-mcp</code>.</p>
       </div>
 
+      <!-- All platforms -->
       <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-5">
         <div class="flex items-center gap-2 mb-3">
           <span class="text-lg">📦</span>
-          <span class="font-semibold">Direct download</span>
-          <span class="ml-auto rounded bg-surface-z3 px-2 py-0.5 text-[10px] font-medium text-surface-z5">All platforms</span>
+          <span class="font-semibold">All platforms</span>
         </div>
         <div class="space-y-1.5 text-xs">
-          <a href="{RELEASE_BASE}/sensei-cli-macos-arm64.tar.gz" class="block text-primary-z6 hover:underline">macOS Apple Silicon (.tar.gz)</a>
-          <a href="{RELEASE_BASE}/sensei-cli-macos-x86_64.tar.gz" class="block text-primary-z6 hover:underline">macOS Intel (.tar.gz)</a>
-          <a href="{RELEASE_BASE}/sensei-cli-linux-x86_64.tar.gz" class="block text-primary-z6 hover:underline">Linux x86_64 (.tar.gz)</a>
-          <a href="{RELEASE_BASE}/sensei-cli-linux-arm64.tar.gz" class="block text-primary-z6 hover:underline">Linux ARM64 (.tar.gz)</a>
-          <a href="{RELEASE_BASE}/sensei-cli-windows-x86_64.zip" class="block text-primary-z6 hover:underline">Windows x86_64 (.zip)</a>
+          {#each platforms as p}
+            <a href="{RELEASE_BASE}/{p.file}"
+               class="flex items-center gap-2 {p.os === detected.os ? 'text-primary-z6 font-semibold' : 'text-surface-z5'} hover:text-primary-z6 transition-colors">
+              <span class="text-sm">{p.icon}</span>
+              <span>{p.label}</span>
+              {#if p.os === detected.os}
+                <span class="ml-auto rounded bg-primary-z2 px-1.5 py-0.5 text-[9px] font-bold text-primary-z7">detected</span>
+              {/if}
+            </a>
+          {/each}
         </div>
-        <p class="mt-3 text-xs text-surface-z4">Extract and add to your <code class="bg-surface-z3 px-1 rounded">PATH</code>.</p>
       </div>
     </div>
   </section>
