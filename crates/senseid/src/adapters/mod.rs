@@ -7,6 +7,7 @@ pub mod swift;
 pub mod kotlin;
 pub mod svelte;
 pub mod vue;
+pub mod c_lang;
 
 use crate::types::ParsedFile;
 
@@ -22,25 +23,51 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
     match ext {
         ".py" => Some(Box::new(python::PythonAdapter)),
         ".rs" => Some(Box::new(rust_lang::RustAdapter)),
-        ".ts" | ".tsx" => Some(Box::new(typescript::TypeScriptAdapter)),
+        ".ts" | ".tsx" | ".cts" => Some(Box::new(typescript::TypeScriptAdapter)),
         ".js" | ".jsx" | ".mjs" | ".cjs" => Some(Box::new(typescript::JavaScriptAdapter)),
         ".java" => Some(Box::new(java::JavaAdapter)),
-        ".sql" => Some(Box::new(sql::SqlAdapter)),
+        ".sql" | ".ddl" => Some(Box::new(sql::SqlAdapter)),
         ".swift" => Some(Box::new(swift::SwiftAdapter)),
         ".kt" | ".kts" => Some(Box::new(kotlin::KotlinAdapter)),
         ".svelte" => Some(Box::new(svelte::SvelteAdapter)),
         ".vue" => Some(Box::new(vue::VueAdapter)),
+        ".c" | ".h" | ".cpp" | ".hpp" | ".cc" => Some(Box::new(c_lang::CAdapter)),
         _ => None,
     }
+}
+
+/// Get the adapter for a filename, handling compound extensions.
+/// e.g. "foo.svelte.ts" → TypeScript, "bar.spec.svelte.js" → JavaScript
+pub fn adapter_for_filename(filename: &str) -> Option<(Box<dyn LanguageAdapter>, &str)> {
+    let lower = filename.to_lowercase();
+
+    // Compound svelte extensions: .svelte.ts, .svelte.js
+    if lower.ends_with(".svelte.ts") || lower.ends_with(".svelte.tsx") {
+        return Some((Box::new(typescript::TypeScriptAdapter), "typescript"));
+    }
+    if lower.ends_with(".svelte.js") || lower.ends_with(".svelte.jsx") {
+        return Some((Box::new(typescript::JavaScriptAdapter), "javascript"));
+    }
+
+    // Fall back to regular extension
+    let ext = std::path::Path::new(filename).extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{}", e))
+        .unwrap_or_default();
+    adapter_for_ext(&ext).map(|a| {
+        let lang = a.language().to_string();
+        (a, Box::leak(lang.into_boxed_str()) as &str)
+    })
 }
 
 /// List all supported extensions.
 pub fn supported_extensions() -> &'static [&'static str] {
     &[
-        ".py", ".rs", ".java", ".sql",
-        ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+        ".py", ".rs", ".java", ".sql", ".ddl",
+        ".ts", ".tsx", ".cts", ".js", ".jsx", ".mjs", ".cjs",
         ".swift", ".kt", ".kts",
         ".svelte", ".vue",
+        ".c", ".h", ".cpp", ".hpp", ".cc",
     ]
 }
 
@@ -50,7 +77,7 @@ mod tests {
 
     #[test]
     fn adapter_for_known_extensions() {
-        for ext in &[".py", ".rs", ".java", ".sql", ".ts", ".tsx", ".js", ".jsx", ".swift", ".kt", ".kts", ".svelte", ".vue"] {
+        for ext in &[".py", ".rs", ".java", ".sql", ".ddl", ".ts", ".tsx", ".cts", ".js", ".jsx", ".swift", ".kt", ".kts", ".svelte", ".vue", ".c", ".h", ".cpp"] {
             assert!(adapter_for_ext(ext).is_some(), "Missing adapter for {}", ext);
         }
     }

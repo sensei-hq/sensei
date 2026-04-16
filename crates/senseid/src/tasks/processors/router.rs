@@ -30,8 +30,11 @@ pub fn process_file(abs_path: &str, repo_path: &str, repo_id: &str) -> Result<Fi
         // Documents
         "md" | "mdx" => Ok(doc::process(abs_path, &rel_path, &content, repo_id, repo_path)),
 
+        // Plain text docs (llms.txt, etc.)
+        "txt" => Ok(doc::process(abs_path, &rel_path, &content, repo_id, repo_path)),
+
         // Config
-        "json" | "toml" | "yaml" | "yml" => Ok(config::process(abs_path, &rel_path, ext)),
+        "json" | "toml" | "yaml" | "yml" | "jsonl" => Ok(config::process(abs_path, &rel_path, ext)),
 
         // Code — try language adapter
         _ => {
