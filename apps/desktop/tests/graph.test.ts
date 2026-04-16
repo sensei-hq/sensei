@@ -115,10 +115,10 @@ test.describe('Project page — graph visualization', () => {
 test.describe('All projects page', () => {
   test('projects list loads', async ({ page }) => {
     await page.goto('/all');
-    // Don't wait for networkidle — re-indexing creates ongoing SSE connections
-    const projectLinks = page.locator('a[href^="/p/"]');
-    await expect(projectLinks.first()).toBeVisible({ timeout: 30_000 });
-    const count = await projectLinks.count();
-    expect(count).toBeGreaterThan(0);
+    // Projects may link to /p/ (standalone) or /s/ (solution member)
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 15_000 });
+    // At least one project row should be visible
+    const projectText = page.getByText('sensei');
+    await expect(projectText.first()).toBeVisible({ timeout: 15_000 });
   });
 });

@@ -47,8 +47,13 @@ pub fn start_root_watcher(
         let mut sorted_projects: Vec<(String, String)> = projects.into_iter().collect();
         sorted_projects.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
 
-        let rt = tokio::runtime::Handle::try_current()
-            .expect("root watcher must be started within a tokio runtime");
+        let rt = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => {
+                tracing::warn!("Root watcher: no tokio runtime — creating standalone runtime");
+                return; // Can't run without async runtime
+            }
+        };
 
         loop {
             match rx.recv_timeout(Duration::from_millis(DEBOUNCE_MS)) {

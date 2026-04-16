@@ -18,7 +18,17 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 
     let max_depth = 3u32;
     let mut repos = Vec::new();
-    find_git_repos(root, 0, max_depth, &mut repos);
+
+    // If root itself is a git repo, register it directly
+    if root.join(".git").is_dir() {
+        let name = root.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        repos.push((name, root.to_string_lossy().to_string()));
+    } else {
+        find_git_repos(root, 0, max_depth, &mut repos);
+    }
 
     let store = ctx.store().await;
 
