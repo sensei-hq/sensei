@@ -10,13 +10,14 @@ use tokio::sync::{Mutex, Notify, broadcast};
 use super::{Task, TaskKind, TaskStatus};
 use super::progress::TaskEvent;
 
-const MAX_CONCURRENT_REPOS: usize = 3;
+const DEFAULT_MAX_CONCURRENT_REPOS: usize = 3;
 
 pub struct TaskQueue {
     inner: Mutex<QueueState>,
     notify: Notify,
     next_id: AtomicU64,
     tx: broadcast::Sender<TaskEvent>,
+    max_concurrent_repos: std::sync::atomic::AtomicUsize,
 }
 
 struct QueueState {
@@ -32,6 +33,10 @@ struct QueueState {
 
 impl TaskQueue {
     pub fn new() -> Self {
+        Self::with_max_repos(DEFAULT_MAX_CONCURRENT_REPOS)
+    }
+
+    pub fn with_max_repos(max_repos: usize) -> Self {
         let (tx, _) = broadcast::channel(1024);
         Self {
             inner: Mutex::new(QueueState {
@@ -45,7 +50,16 @@ impl TaskQueue {
             notify: Notify::new(),
             next_id: AtomicU64::new(1),
             tx,
+            max_concurrent_repos: std::sync::atomic::AtomicUsize::new(max_repos),
         }
+    }
+
+    pub fn set_max_concurrent_repos(&self, n: usize) {
+        self.max_concurrent_repos.store(n, Ordering::SeqCst);
+    }
+
+    pub fn max_concurrent_repos(&self) -> usize {
+        self.max_concurrent_repos.load(Ordering::SeqCst)
     }
 
     pub fn sender(&self) -> &broadcast::Sender<TaskEvent> {
@@ -120,9 +134,10 @@ impl TaskQueue {
             {
                 let mut state = self.inner.lock().await;
                 // Find a pending task whose repo isn't at the concurrency limit
+                let max_repos = self.max_concurrent_repos.load(Ordering::SeqCst);
                 let pos = state.pending.iter().position(|t| {
                     let count = state.repo_running_count.get(&t.repo_id).copied().unwrap_or(0);
-                    count < MAX_CONCURRENT_REPOS
+                    count < max_repos
                 });
 
                 if let Some(idx) = pos {

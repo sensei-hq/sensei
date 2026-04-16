@@ -165,10 +165,16 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
             .blocked_by(vec![u64::MAX]) // sentinel — will never auto-complete
     ).await;
 
-    let build_id = ctx.queue.enqueue(
-        Task::new(TaskKind::BuildConnections, repo_id, "")
+    let libs_id = ctx.queue.enqueue(
+        Task::new(TaskKind::ResolveLibs, repo_id, "")
             .with_parent(task.id)
             .blocked_by(vec![resolve_id])
+    ).await;
+
+    let _build_id = ctx.queue.enqueue(
+        Task::new(TaskKind::BuildConnections, repo_id, "")
+            .with_parent(task.id)
+            .blocked_by(vec![libs_id])
     ).await;
 
     // Enqueue folder tasks
@@ -595,6 +601,222 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
 
     tracing::info!("build_connections: {} complete", repo_id);
     Ok(())
+}
+
+// ── Resolve Libs ──────────────────────────────────────────────────────────
+
+/// Classify imports as internal vs external libraries. Update project.libs.
+pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+    let repo_id = &task.repo_id;
+    let graph = ctx.graph.lock().await;
+
+    let nodes = graph.get_nodes(repo_id)?;
+    let edges = graph.get_edges(repo_id)?;
+
+    // Collect all import targets from IMPORTS edges
+    let mut lib_set = std::collections::HashSet::new();
+    let file_ids: std::collections::HashSet<String> = nodes.iter()
+        .filter(|n| n.kind == "file")
+        .map(|n| n.id.clone())
+        .collect();
+
+    // Get raw import paths from unresolved_refs (already cleared by resolve_edges,
+    // so we need to look at IMPORTS edges + node metadata)
+    // Actually, imports are resolved into IMPORTS edges. External libs are imports
+    // that did NOT resolve to a local file. We can detect them by looking at
+    // the original import targets stored during process_file.
+    // Since unresolved_refs were cleared, let's scan node-level data instead.
+
+    // Simpler approach: scan all file nodes' level field (which stores language)
+    // and use the existing lib detection logic from the old pipeline
+    for edge in &edges {
+        if edge.edge_type == "IMPORTS" {
+            // If target is NOT a local file node, it's an external lib
+            if !file_ids.contains(&edge.target) {
+                // Extract lib name from the target
+                let target = &edge.target;
+                if !target.starts_with("file:") {
+                    lib_set.insert(target.clone());
+                }
+            }
+        }
+    }
+
+    // Also check what we can infer from existing data
+    // For now, use a simpler heuristic: re-read source files and extract non-relative imports
+    // This is expensive but accurate. TODO: store raw imports in a metadata field.
+    let repo_path_str = {
+        let store = ctx.store.lock().await;
+        store.get_project(repo_id).ok().flatten()
+            .map(|p| p.path.clone())
+            .unwrap_or_default()
+    };
+
+    // Walk source files and extract external imports
+    for node in &nodes {
+        if node.kind != "file" || node.file.is_empty() { continue; }
+        let ext = std::path::Path::new(&node.file).extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e))
+            .unwrap_or_default();
+        let adapter = match adapters::adapter_for_ext(&ext) {
+            Some(a) => a,
+            None => continue,
+        };
+        let content = match std::fs::read_to_string(&node.file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let rel_path = std::path::Path::new(&node.file).strip_prefix(&repo_path_str)
+            .unwrap_or(std::path::Path::new(&node.file))
+            .to_string_lossy().to_string();
+        let parsed = adapter.parse(&content, &rel_path);
+
+        for imp in &parsed.imports {
+            let path = &imp.target_path;
+            // Skip relative, absolute, node builtins, framework aliases
+            if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") { continue; }
+            if path.starts_with('$') { continue; }
+            if ["fs","path","os","url","http","https","module","child_process","crypto","util",
+                "events","stream","buffer","net","dns","tls","cluster","worker_threads",
+                "perf_hooks","process","assert","readline","querystring","string_decoder","zlib"]
+                .contains(&path.as_str()) { continue; }
+            if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
+            if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
+            if path.starts_with("java.") || path.starts_with("javax.") { continue; }
+            if path.starts_with("import_") || path.starts_with("from_") { continue; }
+            if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
+
+            let lib_name = if path.starts_with('@') {
+                path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
+            } else if path.contains("::") {
+                path.split("::").next().unwrap_or("").to_string()
+            } else {
+                path.split('/').next().unwrap_or("").to_string()
+            };
+            if !lib_name.is_empty() && lib_name.len() > 1 {
+                lib_set.insert(lib_name);
+            }
+        }
+    }
+
+    let mut libs: Vec<String> = lib_set.into_iter().collect();
+    libs.sort();
+
+    // Check which libs are internal (match another repo in a solution)
+    let store = ctx.store.lock().await;
+    let all_projects = store.list_projects().unwrap_or_default();
+    let internal_repos: std::collections::HashSet<String> = all_projects.iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
+
+    // Update project libs
+    store.mark_indexed(repo_id, &libs).ok();
+
+    tracing::info!("resolve_libs: {} — {} external libs detected", repo_id, libs.len());
+    Ok(())
+}
+
+// ── Import Lib ────────────────────────────────────────────────────────────
+
+/// User-triggered: fetch and index documentation for an external library.
+pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+    let lib_name = &task.path; // lib name stored in path field
+    let url = task.url.as_deref().unwrap_or("");
+
+    if url.is_empty() {
+        return Err("import_lib requires a URL".into());
+    }
+
+    // Fetch content from URL
+    let content = reqwest::get(url).await
+        .map_err(|e| format!("Failed to fetch {}: {}", url, e))?
+        .text().await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let store = ctx.store.lock().await;
+    match crate::indexer::lib_indexer::index_lib_content(&store, lib_name, url, &content, None) {
+        Ok(result) => {
+            tracing::info!("import_lib: {} — {} docs indexed from {}", lib_name, result.docs_indexed, result.source_type);
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to index lib {}: {}", lib_name, e))
+    }
+}
+
+// ── Branch Switch ─────────────────────────────────────────────────────────
+
+/// Handle a git branch switch: snapshot current graph, reindex for new branch.
+pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+    let repo_id = &task.repo_id;
+    let new_branch = task.branch.as_deref().ok_or("branch_switch requires branch field")?;
+
+    // Detect current branch from git
+    let repo_path = {
+        let store = ctx.store.lock().await;
+        store.get_project(repo_id).ok().flatten()
+            .map(|p| p.path.clone())
+            .ok_or("Project not found")?
+    };
+
+    let old_branch = detect_git_branch(&repo_path).unwrap_or_else(|| "unknown".to_string());
+    let old_branch_project = format!("{}@{}", repo_id, old_branch);
+    let new_branch_project = format!("{}@{}", repo_id, new_branch);
+
+    let graph = ctx.graph.lock().await;
+
+    // Check if we already have a snapshot for the new branch
+    if graph.project_exists(&new_branch_project) {
+        // Restore: swap current graph with the branch snapshot
+        // 1. Save current as old_branch snapshot (if not already saved)
+        if !graph.project_exists(&old_branch_project) {
+            graph.clone_project_graph(repo_id, &old_branch_project)?;
+            tracing::info!("branch_switch: saved {}  snapshot ({} nodes)", old_branch, graph.count_by_kind(&old_branch_project)?.values().sum::<u32>());
+        }
+        // 2. Clear current graph
+        graph.delete_project_graph(repo_id)?;
+        // 3. Restore new branch snapshot as current
+        graph.clone_project_graph(&new_branch_project, repo_id)?;
+        tracing::info!("branch_switch: restored {} from snapshot", new_branch);
+        return Ok(());
+    }
+
+    // No snapshot for new branch — save current and reindex
+    // 1. Save current as old_branch snapshot
+    if !graph.project_exists(&old_branch_project) {
+        graph.clone_project_graph(repo_id, &old_branch_project)?;
+        tracing::info!("branch_switch: saved {} snapshot", old_branch);
+    }
+
+    drop(graph); // release lock before enqueuing
+
+    // 2. Clear manifest for full re-parse
+    let manifest_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".sensei").join("projects").join(repo_id).join("manifest.json");
+    std::fs::remove_file(&manifest_path).ok();
+
+    // 3. Enqueue full repo reindex
+    let repo_task = Task::new(TaskKind::ProcessRepo, repo_id, &repo_path)
+        .with_branch(new_branch);
+    ctx.queue.enqueue(repo_task).await;
+
+    tracing::info!("branch_switch: {} → {} — reindex queued", old_branch, new_branch);
+    Ok(())
+}
+
+/// Detect the current git branch from HEAD.
+fn detect_git_branch(repo_path: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
