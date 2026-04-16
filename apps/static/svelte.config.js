@@ -4,6 +4,9 @@ import adapter from '@sveltejs/adapter-static';
 const config = {
 	kit: {
 		adapter: adapter({ fallback: null }),
+		paths: {
+			base: process.env.BASE_PATH || ''
+		}
 	},
 	vitePlugin: {
 		dynamicCompileOptions: ({ filename }) =>
