@@ -5,7 +5,7 @@
 
 cask "sensei-app" do
   GITHUB_ORG = "mizukisu".freeze
-  REPO_URL = "https://github.com/#{GITHUB_ORG}/sensei".freeze
+  REPO_URL = "https://github.com/#{GITHUB_ORG}/sensei-releases".freeze
 
   version "0.1.0"
 

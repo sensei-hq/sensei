@@ -5,7 +5,7 @@
 
 class Sensei < Formula
   GITHUB_ORG = "mizukisu".freeze
-  REPO_NAME = "sensei".freeze
+  REPO_NAME = "sensei-releases".freeze
   REPO_URL = "https://github.com/#{GITHUB_ORG}/#{REPO_NAME}".freeze
 
   desc "AI development intelligence — CLI for indexing, MCP server, and telemetry"

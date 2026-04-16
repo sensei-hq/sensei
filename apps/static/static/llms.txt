@@ -1,0 +1,83 @@
+# Sensei
+
+> AI Development Intelligence — capture how your team uses AI and feed that intelligence back into your workflow.
+
+## Overview
+
+Sensei is a local-first code intelligence platform that indexes your repositories, tracks AI coding session metrics, and provides context-aware tools to AI coding assistants via MCP (Model Context Protocol).
+
+## Components
+
+- senseid: Indexer daemon. Watches repos, builds a code graph in SQLite, serves HTTP API on port 7744.
+- sensei: CLI for installation, configuration, scanning, and daemon management.
+- sensei-mcp: MCP server binary. Translates MCP tool calls into senseid HTTP requests. Connects AI platforms like Claude Code, Cursor, and Windsurf.
+
+## Install
+
+```sh
+brew install mizukisu/tap/sensei
+sensei configure
+sensei install
+sensei start
+sensei scan ~/Developer
+```
+
+Or download binaries from: https://github.com/mizukisu/sensei-releases/releases
+
+## CLI Commands
+
+- sensei configure — Detect AI coding platforms and generate config
+- sensei install — Install hooks, skills, and MCP server for all configured platforms
+- sensei install --acp claude-code — Install for a specific platform
+- sensei uninstall — Remove sensei from all platforms
+- sensei start — Start the senseid daemon (default port 7744)
+- sensei stop — Stop the daemon
+- sensei status — Show daemon version, PID, uptime
+- sensei scan <path> — Scan a folder and index all repos
+- sensei add-lib <name> — Add a library's documentation (auto-discovers llms.txt)
+
+## Daemon Commands
+
+- senseid — Start in foreground
+- senseid start — Start in background
+- senseid stop — Stop background daemon
+- senseid status — Show version and PID
+- senseid logs — Tail the daemon log
+
+## MCP Tools (available to AI coding assistants)
+
+- get_session_context(task_description) — Resume from last checkpoint, load repo orientation
+- context_pack(query) — Load symbols relevant to a query (token-budgeted)
+- search(query) — Semantic search across the codebase
+- load_context(file_path) — Load a file with symbol extraction
+- take_snapshot(progress_summary) — Record progress for interruption recovery
+- checkpoint(outcome, summary) — Close session with FTR scoring
+
+## Architecture
+
+AI Platform (Claude Code / Cursor / Windsurf)
+  → sensei-mcp (MCP stdio adapter)
+    → senseid (HTTP API on :7744)
+      → SQLite graph database
+      → File watcher (per-repo)
+      → Task queue (scan → repo → folder → file → resolve → connect)
+
+## Key Features
+
+- First-Try-Right scoring: Track how often AI completes tasks on first attempt
+- Cost intelligence: Token-level cost tracking per task, session, and repo
+- Context packing: BM25 + semantic search for token-budgeted context loading
+- Session continuity: Automatic crash recovery and progress snapshots
+- Doc drift detection: Traceability matrix linking code to docs
+- Plugin ecosystem: Skills, commands, and hooks for Claude Code
+
+## Data
+
+All data stored locally at ~/.sensei/. Nothing sent to external servers.
+
+## Links
+
+- Source: https://github.com/mizukisu/sensei
+- Releases: https://github.com/mizukisu/sensei-releases
+- Homebrew: brew install mizukisu/tap/sensei
+- License: MIT
