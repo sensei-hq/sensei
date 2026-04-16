@@ -159,6 +159,10 @@ impl Store {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS scanned_roots(
+                path TEXT PRIMARY KEY,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
             "
         )
     }
@@ -208,6 +212,17 @@ impl Store {
                 p.duplicate_of, serde_json::to_string(&p.stack).unwrap(),
                 serde_json::to_string(&p.libs).unwrap(), p.status
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Quick project registration with just id, name, path.
+    pub fn upsert_project_basic(&self, repo_id: &str, name: &str, path: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO projects(repo_id, name, path, status, stack, libs)
+             VALUES(?1, ?2, ?3, 'active', '[]', '[]')
+             ON CONFLICT(repo_id) DO UPDATE SET name=excluded.name, path=excluded.path",
+            rusqlite::params![repo_id, name, path],
         )?;
         Ok(())
     }

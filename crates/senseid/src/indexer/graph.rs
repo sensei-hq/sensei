@@ -107,8 +107,15 @@ impl GraphDb {
             CREATE INDEX IF NOT EXISTS idx_hn_name ON hierarchy_nodes(name);
             CREATE INDEX IF NOT EXISTS idx_hn_file ON hierarchy_nodes(file);
             CREATE INDEX IF NOT EXISTS idx_hn_parent ON hierarchy_nodes(parent_id);
+            CREATE TABLE IF NOT EXISTS unresolved_refs(
+                source_id TEXT NOT NULL,
+                ref_kind TEXT NOT NULL,
+                ref_target TEXT NOT NULL,
+                project TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_edge_from ON edges(from_id);
             CREATE INDEX IF NOT EXISTS idx_edge_to ON edges(to_id);
+            CREATE INDEX IF NOT EXISTS idx_uref_project ON unresolved_refs(project);
         ").map_err(|e| e.to_string())?;
 
         // Set schema version
@@ -182,7 +189,7 @@ impl GraphDb {
     }
 
     pub fn clear_all(&self) -> Result<(), String> {
-        self.conn.execute_batch("DELETE FROM hierarchy_nodes; DELETE FROM edges;")
+        self.conn.execute_batch("DELETE FROM hierarchy_nodes; DELETE FROM edges; DELETE FROM unresolved_refs;")
             .map_err(|e| e.to_string())
     }
 
@@ -530,6 +537,44 @@ impl GraphDb {
             "exportCount": exports.iter().map(|m| m["functions"].as_array().map_or(0, |a| a.len())).sum::<usize>(),
             "callCount": calls.len(),
         }))
+    }
+
+    // ── Unresolved references (staging for resolve_edges) ──────────
+
+    /// Store an unresolved reference (import, call, parent) for later resolution.
+    pub fn add_unresolved_ref(&self, source_id: &str, ref_kind: &str, ref_target: &str, project: &str) -> Result<(), String> {
+        self.conn.execute(
+            "INSERT INTO unresolved_refs(source_id, ref_kind, ref_target, project) VALUES(?1,?2,?3,?4)",
+            params![source_id, ref_kind, ref_target, project],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Get all unresolved references for a project.
+    pub fn get_unresolved_refs(&self, project: &str) -> Result<Vec<(String, String, String)>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source_id, ref_kind, ref_target FROM unresolved_refs WHERE project = ?1"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![project], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Clear unresolved references for a project (after resolution).
+    pub fn clear_unresolved_refs(&self, project: &str) -> Result<(), String> {
+        self.conn.execute("DELETE FROM unresolved_refs WHERE project = ?1", params![project])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Clear unresolved references from a specific source node.
+    pub fn clear_unresolved_refs_from(&self, source_id: &str, project: &str) -> Result<(), String> {
+        self.conn.execute(
+            "DELETE FROM unresolved_refs WHERE source_id = ?1 AND project = ?2",
+            params![source_id, project],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     // ── Community detection support ──────────────────────────────────
