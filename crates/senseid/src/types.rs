@@ -63,7 +63,8 @@ pub enum NodeKind {
     File,
     // Documentation hierarchy
     Doc,
-    Extension,  // marketplace skills/commands/plugins — NOT documentation
+    DocCategory,  // grouping node for a doc type (design, feature, usage, etc.)
+    Extension,    // marketplace skills/commands/plugins — NOT documentation
 }
 
 impl NodeKind {
@@ -86,6 +87,7 @@ impl NodeKind {
             Self::Hook => "hook",
             Self::File => "file",
             Self::Doc => "doc",
+            Self::DocCategory => "doc-category",
             Self::Extension => "extension",
         }
     }
@@ -109,6 +111,7 @@ impl NodeKind {
             "hook" => Self::Hook,
             "file" => Self::File,
             "doc" => Self::Doc,
+            "doc-category" => Self::DocCategory,
             "extension" => Self::Extension,
             _ => Self::File, // fallback
         }
