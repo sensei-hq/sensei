@@ -10,7 +10,6 @@ pub struct KotlinAdapter;
 
 impl LanguageAdapter for KotlinAdapter {
     fn language(&self) -> &str { "kotlin" }
-    fn extensions(&self) -> &[&str] { &[".kt", ".kts"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut parser = Parser::new();
@@ -118,10 +117,6 @@ fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<P
             _ => {}
         }
     }
-}
-
-fn is_inside_class(node: &Node) -> bool {
-    node.kind() == "class_body"
 }
 
 fn find_property_name(node: &Node, src: &[u8]) -> String {

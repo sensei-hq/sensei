@@ -13,8 +13,7 @@ use tokio_stream::StreamExt;
 use crate::db::Store;
 use crate::indexer::graph::GraphDb;
 use crate::tasks::queue::TaskQueue;
-use crate::tasks::progress::TaskEvent;
-use crate::types::{Project, Solution, SolutionRepo, IndexError, IndexResult};
+use crate::types::{Project, Solution, SolutionRepo, IndexError};
 
 pub struct SharedState {
     pub store: Mutex<Store>,
@@ -951,7 +950,7 @@ async fn unified_query(
     Ok(Json(result))
 }
 
-async fn query_libs(state: &AppState, q: &str, repo_id: &str, solution_id: &Option<String>) -> serde_json::Value {
+async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> serde_json::Value {
     let store = state.store.lock().await;
     let projects = store.list_projects().unwrap_or_default();
 
@@ -1049,7 +1048,7 @@ async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> serde_json:
     let graph = state.graph.lock().await;
     let files = graph.files_by_tag(tag, repo_id).unwrap_or_default();
     let file_results: Vec<serde_json::Value> = files.into_iter()
-        .map(|(id, path, tags)| serde_json::json!({"path": path, "tags": tags}))
+        .map(|(_id, path, tags)| serde_json::json!({"path": path, "tags": tags}))
         .collect();
     serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": file_results })
 }
@@ -1322,9 +1321,9 @@ async fn marketplace_install(
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let target = body["target"].as_str().unwrap_or("");
-    let item_name = body["item"].as_str().unwrap_or("");
+    let _item_name = body["item"].as_str().unwrap_or("");
     let scope = body["scope"].as_str().unwrap_or("global");
-    let marketplace_path = body["marketplacePath"].as_str().unwrap_or("");
+    let _marketplace_path = body["marketplacePath"].as_str().unwrap_or("");
 
     if target.is_empty() {
         return Json(serde_json::json!({"ok": false, "error": "target required"}));
@@ -1604,14 +1603,6 @@ struct ScanBody {
 
 fn default_depth() -> u32 { 4 }
 
-#[derive(Serialize)]
-struct ScannedRepo {
-    name: String,
-    path: String,
-    stack: Vec<String>,
-    has_git: bool,
-}
-
 async fn scan_folder(
     State(state): State<AppState>,
     Json(body): Json<ScanBody>,
@@ -1637,38 +1628,6 @@ async fn scan_folder(
     let task_id = state.task_queue.enqueue(task).await;
 
     Ok(Json(serde_json::json!({"ok": true, "scanning": true, "taskId": task_id})))
-}
-
-fn scan_dir(dir: &std::path::Path, depth: u32, max_depth: u32, repos: &mut Vec<ScannedRepo>) {
-    if depth > max_depth { return; }
-
-    if dir.join(".git").exists() {
-        let name = dir.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let stack = crate::config::detect_stack(dir);
-        repos.push(ScannedRepo {
-            name,
-            path: dir.to_string_lossy().to_string(),
-            stack,
-            has_git: true,
-        });
-        return; // Don't recurse into git repos
-    }
-
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" {
-                    continue;
-                }
-                scan_dir(&path, depth + 1, max_depth, repos);
-            }
-        }
-    }
 }
 
 // ── Stop ─────────────────────────────────────────────────────────────────────

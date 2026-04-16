@@ -10,7 +10,6 @@ pub struct JavaScriptAdapter;
 
 impl LanguageAdapter for TypeScriptAdapter {
     fn language(&self) -> &str { "typescript" }
-    fn extensions(&self) -> &[&str] { &[".ts", ".tsx"] }
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         parse_oxc(source, file_path)
     }
@@ -18,7 +17,6 @@ impl LanguageAdapter for TypeScriptAdapter {
 
 impl LanguageAdapter for JavaScriptAdapter {
     fn language(&self) -> &str { "javascript" }
-    fn extensions(&self) -> &[&str] { &[".js", ".jsx", ".mjs", ".cjs"] }
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         parse_oxc(source, file_path)
     }
@@ -66,7 +64,7 @@ fn line_col(source: &str, offset: u32) -> u32 {
 fn extract_statement(
     stmt: &Statement, source: &str, lines: &[&str],
     symbols: &mut Vec<ParsedSymbol>, imports: &mut Vec<ParsedImport>,
-    edges: &mut Vec<ParsedEdge>,
+    _edges: &mut Vec<ParsedEdge>,
 ) {
     match stmt {
         Statement::FunctionDeclaration(f) => {

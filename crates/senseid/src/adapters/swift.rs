@@ -10,7 +10,6 @@ pub struct SwiftAdapter;
 
 impl LanguageAdapter for SwiftAdapter {
     fn language(&self) -> &str { "swift" }
-    fn extensions(&self) -> &[&str] { &[".swift"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut parser = Parser::new();
@@ -139,11 +138,6 @@ fn has_keyword(node: &Node, keyword: &str) -> bool {
         }
     }
     false
-}
-
-fn is_inside_body(node: &Node) -> bool {
-    let k = node.kind();
-    k.contains("body") || k == "class_body" || k == "protocol_body" || k == "extension_body"
 }
 
 fn find_type_name(node: &Node, src: &[u8]) -> String {

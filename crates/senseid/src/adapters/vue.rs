@@ -1,11 +1,10 @@
-use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
+use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 use super::LanguageAdapter;
 
 pub struct VueAdapter;
 
 impl LanguageAdapter for VueAdapter {
     fn language(&self) -> &str { "vue" }
-    fn extensions(&self) -> &[&str] { &[".vue"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut all_symbols = Vec::new();

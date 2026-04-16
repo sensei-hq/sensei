@@ -1,10 +1,7 @@
 use std::path::Path;
 use std::collections::HashSet;
-use walkdir::WalkDir;
 use crate::indexer::graph::GraphDb;
-use crate::types::{NodeKind, HierarchyNode};
-
-const DOC_EXTENSIONS: &[&str] = &["md", "mdx"];
+use crate::types::NodeKind;
 
 /// Frontmatter parsed from YAML between --- fences.
 #[derive(Default, serde::Deserialize)]
@@ -31,106 +28,6 @@ pub struct DocClassification {
 /// Index documentation files (.md, .mdx) into the graph.
 /// Classifies docs by frontmatter + path heuristics.
 /// Marketplace files (skills/commands/plugins) are classified as extensions.
-pub fn index_docs(
-    graph_db: &GraphDb,
-    repo_path: &str,
-    repo_id: &str,
-) -> Result<u32, String> {
-    let repo = Path::new(repo_path);
-    let mut docs_indexed = 0u32;
-
-    let doc_files: Vec<_> = WalkDir::new(repo)
-        .into_iter()
-        .filter_entry(|e| {
-            e.depth() == 0 || {
-                let name = e.file_name().to_string_lossy();
-                !name.starts_with('.')
-            }
-        })
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            let path = e.path().to_string_lossy();
-            !path.contains("node_modules") && !path.contains("/dist/") && !path.contains("/target/")
-        })
-        .filter(|e| {
-            e.path().extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| DOC_EXTENSIONS.contains(&ext))
-                .unwrap_or(false)
-        })
-        .collect();
-
-    // Prune stale docs/extensions
-    {
-        let current_doc_paths: HashSet<String> = doc_files.iter()
-            .map(|e| format!("file:{}", e.path().to_string_lossy()))
-            .collect();
-        let existing = graph_db.get_nodes(repo_id).unwrap_or_default();
-        for node in &existing {
-            if (node.kind == "doc" || node.kind == "extension") && !current_doc_paths.contains(&node.id) {
-                graph_db.delete_node(&node.id).ok();
-            }
-        }
-    }
-
-    for entry in &doc_files {
-        let abs_path = entry.path().to_string_lossy().to_string();
-        let rel_path = entry.path().strip_prefix(repo)
-            .unwrap_or(entry.path())
-            .to_string_lossy()
-            .to_string();
-
-        let content = match std::fs::read_to_string(entry.path()) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let frontmatter = parse_frontmatter(&content);
-        let classification = classify_doc(&rel_path, &frontmatter);
-
-        let title = frontmatter.title
-            .or(frontmatter.name)
-            .or_else(|| extract_title(&content))
-            .unwrap_or_else(|| rel_path.clone());
-
-        let doc_id = format!("file:{}", abs_path);
-
-        let node = HierarchyNode::doc(
-            doc_id.clone(),
-            title,
-            classification.kind,
-            abs_path.clone(),
-            Some(classification.doc_type),
-            classification.doc_category,
-            repo_id.into(),
-        );
-        graph_db.merge_node(&node)?;
-
-        // Extract file references from the doc content
-        let file_refs = extract_file_refs(&content, repo_path);
-        for file_ref in &file_refs {
-            let file_id = format!("file:{}", file_ref);
-            graph_db.merge_edge(&doc_id, &file_id, "COVERS").ok();
-        }
-
-        // Extract function mentions (backtick identifiers)
-        let fn_mentions = extract_fn_mentions(&content);
-        for fn_name in &fn_mentions {
-            if let Ok(Some(fn_id)) = graph_db.find_function_by_name(fn_name, repo_id) {
-                graph_db.merge_edge(&doc_id, &fn_id, "MENTIONS_FN").ok();
-            }
-        }
-
-        docs_indexed += 1;
-    }
-
-    // Traceability edges between doc stages
-    create_traceability_edges(graph_db, repo_id)?;
-
-    Ok(docs_indexed)
-}
-
 /// Public wrapper for use by task handlers.
 pub fn parse_frontmatter_pub(content: &str) -> DocFrontmatter { parse_frontmatter(content) }
 pub fn classify_doc_pub(rel_path: &str, fm: &DocFrontmatter) -> DocClassification { classify_doc(rel_path, fm) }
@@ -471,38 +368,5 @@ mod tests {
         assert!(refs[0].contains("src/main.py"));
     }
 
-    #[test]
-    fn index_docs_on_test_repo() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("README.md"), "# My Project\n\nA test project.\n").unwrap();
-        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
-        std::fs::write(dir.path().join("docs/design.md"), "# Design\n\nArchitecture notes.\n").unwrap();
-
-        let graph = GraphDb::open_memory().unwrap();
-        let count = index_docs(&graph, &dir.path().to_string_lossy(), "test").unwrap();
-        assert_eq!(count, 2);
-
-        // Verify node kinds
-        let nodes = graph.get_nodes("test").unwrap();
-        assert_eq!(nodes.len(), 2);
-        assert!(nodes.iter().all(|n| n.kind == "doc"));
-    }
-
-    #[test]
-    fn marketplace_indexed_as_extension() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(dir.path().join("marketplace/skills/test")).unwrap();
-        std::fs::write(dir.path().join("marketplace/skills/test/SKILL.md"),
-            "---\nname: test-skill\ndescription: Test\n---\n# Skill content").unwrap();
-        std::fs::create_dir_all(dir.path().join("marketplace/commands")).unwrap();
-        std::fs::write(dir.path().join("marketplace/commands/commit.md"),
-            "---\ndescription: Commit changes\n---\n# Commit").unwrap();
-
-        let graph = GraphDb::open_memory().unwrap();
-        let count = index_docs(&graph, &dir.path().to_string_lossy(), "test").unwrap();
-        assert_eq!(count, 2);
-
-        let nodes = graph.get_nodes("test").unwrap();
-        assert!(nodes.iter().all(|n| n.kind == "extension"), "marketplace files should be extensions");
-    }
+    // index_docs and marketplace tests moved to tasks/processors/doc.rs and tests.rs
 }

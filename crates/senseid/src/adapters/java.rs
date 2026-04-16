@@ -6,7 +6,6 @@ pub struct JavaAdapter;
 
 impl LanguageAdapter for JavaAdapter {
     fn language(&self) -> &str { "java" }
-    fn extensions(&self) -> &[&str] { &[".java"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut parser = Parser::new();

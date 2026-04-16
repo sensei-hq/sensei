@@ -7,7 +7,7 @@ use crate::types::NodeKind;
 
 /// Process a code file via the appropriate language adapter.
 /// Returns None if no adapter exists for this extension.
-pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, repo_id: &str) -> Option<FileProcessResult> {
+pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_id: &str) -> Option<FileProcessResult> {
     // Try compound extension first (e.g. .svelte.ts), then simple extension
     let filename = std::path::Path::new(abs_path).file_name()
         .and_then(|n| n.to_str()).unwrap_or("");

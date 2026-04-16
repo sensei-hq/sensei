@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use tokio::sync::{Mutex, Notify, broadcast};
-use super::{Task, TaskKind, TaskStatus};
+use super::{Task, TaskStatus};
 use super::progress::TaskEvent;
 
 const DEFAULT_MAX_CONCURRENT_REPOS: usize = 3;
@@ -58,6 +58,7 @@ impl TaskQueue {
         self.max_concurrent_repos.store(n, Ordering::SeqCst);
     }
 
+    #[allow(dead_code)]
     pub fn max_concurrent_repos(&self) -> usize {
         self.max_concurrent_repos.load(Ordering::SeqCst)
     }
@@ -103,6 +104,7 @@ impl TaskQueue {
     }
 
     /// Enqueue multiple tasks at once. Returns their IDs.
+    #[allow(dead_code)]
     pub async fn enqueue_batch(&self, tasks: Vec<Task>) -> Vec<u64> {
         let mut ids = Vec::with_capacity(tasks.len());
         for task in tasks {
@@ -114,6 +116,7 @@ impl TaskQueue {
     /// Add a dependency to a blocked task after creation.
     /// Used when file tasks are created by folder tasks and need to be
     /// added to the resolve_edges barrier.
+    #[allow(dead_code)]
     pub async fn add_dependency(&self, barrier_task_id: u64, new_dep_id: u64) {
         let mut state = self.inner.lock().await;
         // Add to blocked task's depends_on
@@ -307,6 +310,7 @@ pub struct QueueStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::{Task, TaskKind, TaskStatus};
 
     #[tokio::test]
     async fn enqueue_and_dequeue() {

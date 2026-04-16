@@ -2,7 +2,7 @@
 //! Detects file changes and feeds tasks directly into the queue.
 //! Replaces per-repo watchers + dirty tracker.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::collections::{HashMap, HashSet};
@@ -65,7 +65,7 @@ pub fn start_root_watcher(
 
                         // Detect branch switch: .git/HEAD changed
                         if path_str.ends_with(".git/HEAD") || path_str.ends_with(".git\\HEAD") {
-                            if let Some((repo_id, repo_path)) = sorted_projects.iter()
+                            if let Some((repo_id, _repo_path)) = sorted_projects.iter()
                                 .find(|(_, rp)| path_str.starts_with(rp.as_str()))
                             {
                                 let new_branch = read_git_head(&path_str);
@@ -211,29 +211,7 @@ async fn process_batch(
     }
 }
 
-/// Start watchers for all persisted scanned roots.
-pub async fn start_all_watchers(
-    store: &crate::db::Store,
-    queue: Arc<TaskQueue>,
-) {
-    // Get all scanned roots from store
-    let roots: Vec<String> = store.execute_raw("SELECT 1").ok() // ensure table exists
-        .and_then(|_| {
-            // Query scanned_roots
-            None // TODO: proper query — for now roots are started via API
-        })
-        .unwrap_or_default();
-
-    let projects_map: HashMap<String, String> = store.list_projects()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| (p.repo_id, p.path))
-        .collect();
-
-    for root in roots {
-        start_root_watcher(PathBuf::from(&root), queue.clone(), projects_map.clone()).ok();
-    }
-}
+// start_all_watchers removed — watchers started via scan_root handler + server.rs spawn_root_watchers
 
 /// Read current branch from .git/HEAD file.
 /// Returns None if detached HEAD or unreadable.

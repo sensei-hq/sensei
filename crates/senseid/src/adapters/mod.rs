@@ -14,7 +14,6 @@ use crate::types::ParsedFile;
 /// Trait for language-specific adapters.
 pub trait LanguageAdapter: Send + Sync {
     fn language(&self) -> &str;
-    fn extensions(&self) -> &[&str];
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile;
 }
 
@@ -60,17 +59,6 @@ pub fn adapter_for_filename(filename: &str) -> Option<(Box<dyn LanguageAdapter>,
     })
 }
 
-/// List all supported extensions.
-pub fn supported_extensions() -> &'static [&'static str] {
-    &[
-        ".py", ".rs", ".java", ".sql", ".ddl",
-        ".ts", ".tsx", ".cts", ".js", ".jsx", ".mjs", ".cjs",
-        ".swift", ".kt", ".kts",
-        ".svelte", ".vue",
-        ".c", ".h", ".cpp", ".hpp", ".cc",
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,16 +73,5 @@ mod tests {
     #[test]
     fn adapter_for_unknown_extension() {
         assert!(adapter_for_ext(".xyz").is_none());
-    }
-
-    #[test]
-    fn supported_exts_list() {
-        let exts = supported_extensions();
-        assert!(exts.contains(&".py"));
-        assert!(exts.contains(&".rs"));
-        assert!(exts.contains(&".swift"));
-        assert!(exts.contains(&".kt"));
-        assert!(exts.contains(&".svelte"));
-        assert!(exts.contains(&".vue"));
     }
 }
