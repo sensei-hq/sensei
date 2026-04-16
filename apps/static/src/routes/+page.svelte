@@ -209,7 +209,7 @@
 
 <!-- Stats -->
 <div class="border-y border-surface-z0 bg-surface-z2 py-10">
-  <div class="mx-auto grid max-w-4xl grid-cols-2 gap-8 px-8 text-center sm:grid-cols-4">
+  <div class="mx-auto grid max-w-5xl grid-cols-2 gap-8 px-8 text-center sm:grid-cols-4">
     {#each [
       { n: '62%', l: 'avg FTR improvement' }, { n: '$0.18', l: 'median task cost' },
       { n: '4.2×', l: 'faster with context' }, { n: '38%', l: 'token savings via cache' },
@@ -223,7 +223,7 @@
 </div>
 
 <!-- Setup -->
-<div id="setup" class="mx-auto max-w-4xl px-8 py-20">
+<div id="setup" class="mx-auto max-w-5xl px-8 py-20">
   <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Setup</div>
   <h2 class="mb-3 text-3xl font-bold tracking-tight">Install Sensei</h2>
   <p class="mb-10 text-surface-z5">Get the CLI and daemon running in under two minutes.</p>
@@ -310,7 +310,7 @@ sensei start</code></pre>
 </div>
 
 <!-- Architecture -->
-<div id="architecture" class="mx-auto max-w-4xl px-8 py-20">
+<div id="architecture" class="mx-auto max-w-5xl px-8 py-20">
   <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">How it works</div>
   <h2 class="mb-3 text-3xl font-bold tracking-tight">Architecture</h2>
   <p class="mb-10 text-surface-z5">AI platforms connect via MCP. Desktop and CLI talk directly over HTTP. All data stays local.</p>
@@ -333,7 +333,7 @@ sensei start</code></pre>
 
 <!-- Usage / Reference -->
 <div id="usage" class="border-t border-surface-z0 bg-surface-z2">
-  <div class="mx-auto max-w-4xl px-8 py-20">
+  <div class="mx-auto max-w-5xl px-8 py-20">
     <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Reference</div>
     <h2 class="mb-3 text-3xl font-bold tracking-tight">Usage Guide</h2>
     <p class="mb-10 text-surface-z5">CLI commands, daemon management, and MCP tools.</p>
@@ -391,7 +391,7 @@ sensei start</code></pre>
 
 <!-- Sponsor -->
 <div id="sponsor">
-  <div class="mx-auto max-w-3xl px-8 py-20 text-center">
+  <div class="mx-auto max-w-5xl px-8 py-20 text-center">
     <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Support</div>
     <h2 class="mb-4 text-3xl font-bold tracking-tight">Sponsor Sensei</h2>
     <p class="mb-10 mx-auto max-w-xl text-surface-z5 leading-relaxed">
@@ -410,23 +410,6 @@ sensei start</code></pre>
          class="flex items-center gap-2 rounded-xl border border-surface-z3 bg-surface-z1 px-6 py-3 text-sm font-medium hover:bg-surface-z2 transition-colors">
         ☕ Ko-fi
       </a>
-    </div>
-    <div class="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-3 text-left">
-      {#each [
-        { tier: '☕ Coffee', price: '$5/mo', perks: ['Supporter badge', 'Thanks in release notes'] },
-        { tier: '🚀 Pro', price: '$25/mo', perks: ['Priority issues', 'Discord access', 'Early previews'] },
-        { tier: '🏢 Team', price: '$100/mo', perks: ['Logo in README', 'Direct support channel', 'Feature input'] },
-      ] as t}
-        <div class="rounded-xl border border-surface-z3 bg-surface-z1 p-5">
-          <div class="font-semibold text-surface-z8">{t.tier}</div>
-          <div class="mt-1 text-2xl font-extrabold text-primary-z6">{t.price}</div>
-          <ul class="mt-4 space-y-1">
-            {#each t.perks as perk}
-              <li class="flex items-center gap-2 text-xs text-surface-z5"><span class="text-success-z5">✓</span> {perk}</li>
-            {/each}
-          </ul>
-        </div>
-      {/each}
     </div>
   </div>
 </div>
