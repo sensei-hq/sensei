@@ -60,6 +60,30 @@ pub fn start_root_watcher(
                     };
 
                     for path in event.paths {
+                        let path_str = path.to_string_lossy().to_string();
+
+                        // Detect branch switch: .git/HEAD changed
+                        if path_str.ends_with(".git/HEAD") || path_str.ends_with(".git\\HEAD") {
+                            if let Some((repo_id, repo_path)) = sorted_projects.iter()
+                                .find(|(_, rp)| path_str.starts_with(rp.as_str()))
+                            {
+                                let new_branch = read_git_head(&path_str);
+                                if let Some(branch) = new_branch {
+                                    let queue_clone = queue.clone();
+                                    let rid = repo_id.clone();
+                                    let br = branch.clone();
+                                    rt.spawn(async move {
+                                        let task = crate::tasks::Task::new(
+                                            crate::tasks::TaskKind::BranchSwitch, &rid, ""
+                                        ).with_branch(&br);
+                                        queue_clone.enqueue(task).await;
+                                    });
+                                    tracing::info!("Branch switch detected: {} → {}", repo_id, branch);
+                                }
+                            }
+                            continue;
+                        }
+
                         // Skip directories (we only care about files)
                         if change_kind != ChangeKind::Delete && !path.is_file() { continue; }
 
@@ -73,7 +97,6 @@ pub fn start_root_watcher(
                         if !is_code && !is_doc { continue; }
 
                         // Skip excluded directories
-                        let path_str = path.to_string_lossy();
                         if EXCLUDE_DIRS.iter().any(|d| path_str.contains(&format!("/{}/", d))) {
                             continue;
                         }
@@ -208,6 +231,19 @@ pub async fn start_all_watchers(
 
     for root in roots {
         start_root_watcher(PathBuf::from(&root), queue.clone(), projects_map.clone()).ok();
+    }
+}
+
+/// Read current branch from .git/HEAD file.
+/// Returns None if detached HEAD or unreadable.
+fn read_git_head(head_path: &str) -> Option<String> {
+    let content = std::fs::read_to_string(head_path).ok()?;
+    let trimmed = content.trim();
+    // Format: "ref: refs/heads/branch-name"
+    if trimmed.starts_with("ref: refs/heads/") {
+        Some(trimmed.strip_prefix("ref: refs/heads/")?.to_string())
+    } else {
+        None // detached HEAD (commit hash)
     }
 }
 
