@@ -49,6 +49,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
         TaskKind::DeleteFolder => handlers::delete_folder(ctx, task).await,
         TaskKind::ResolveEdges => handlers::resolve_edges(ctx, task).await,
+        TaskKind::ResolveLibs => handlers::resolve_libs(ctx, task).await,
+        TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
+        TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
         TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
     }
 }

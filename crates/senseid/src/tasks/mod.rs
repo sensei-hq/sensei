@@ -27,6 +27,9 @@ pub enum TaskKind {
     DeleteFile,
     DeleteFolder,
     ResolveEdges,
+    ResolveLibs,
+    ImportLib,
+    BranchSwitch,
     BuildConnections,
 }
 
@@ -40,6 +43,9 @@ impl std::fmt::Display for TaskKind {
             Self::DeleteFile => write!(f, "delete_file"),
             Self::DeleteFolder => write!(f, "delete_folder"),
             Self::ResolveEdges => write!(f, "resolve_edges"),
+            Self::ResolveLibs => write!(f, "resolve_libs"),
+            Self::ImportLib => write!(f, "import_lib"),
+            Self::BranchSwitch => write!(f, "branch_switch"),
             Self::BuildConnections => write!(f, "build_connections"),
         }
     }
@@ -65,6 +71,8 @@ pub struct Task {
     pub path: String,                    // file/folder/root path
     pub parent_task_id: Option<u64>,     // for hierarchy tracking
     pub module_id: Option<String>,       // for process_file: which module this file belongs to
+    pub branch: Option<String>,          // git branch name (for branch-aware indexing)
+    pub url: Option<String>,             // for import_lib: library docs URL
     pub status: TaskStatus,
     pub depends_on: Vec<u64>,            // won't run until these complete
     pub error: Option<String>,
@@ -82,6 +90,8 @@ impl Task {
             path: path.to_string(),
             parent_task_id: None,
             module_id: None,
+            branch: None,
+            url: None,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             error: None,
@@ -101,6 +111,16 @@ impl Task {
         self
     }
 
+    pub fn with_branch(mut self, branch: &str) -> Self {
+        self.branch = Some(branch.to_string());
+        self
+    }
+
+    pub fn with_url(mut self, url: &str) -> Self {
+        self.url = Some(url.to_string());
+        self
+    }
+
     pub fn blocked_by(mut self, deps: Vec<u64>) -> Self {
         if !deps.is_empty() {
             self.status = TaskStatus::Blocked;
@@ -114,7 +134,7 @@ impl Task {
     }
 
     pub fn is_barrier(&self) -> bool {
-        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::BuildConnections)
+        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections)
     }
 }
 
