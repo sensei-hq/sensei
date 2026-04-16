@@ -5,6 +5,7 @@ mod indexer;
 mod config;
 mod watcher;
 mod api;
+mod tasks;
 pub mod acp;
 pub mod installer;
 
