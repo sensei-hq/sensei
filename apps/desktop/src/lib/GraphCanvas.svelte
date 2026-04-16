@@ -90,12 +90,17 @@
   // L2: direct children of selected repo — packages (src) + doc categories (doc)
   let l2Options = $derived.by((): typeof nodes => {
     if (filterL1 === 'all') {
-      // Packages + doc category nodes (doc nodes that are direct children of a repo)
-      return nodes.filter(n => n.kind === 'package' || (n.kind === 'doc' && n.tags === 'doc' && !n.file));
+      return nodes.filter(n =>
+        (n.kind === 'package' && n.name !== '(root)') ||
+        (n.kind === 'doc' && n.tags === 'doc' && !n.file)
+      );
     }
     const children = containsMap.get(filterL1);
     if (!children) return [];
-    return nodes.filter(n => children.has(n.id) && (n.kind === 'package' || n.kind === 'doc'));
+    return nodes.filter(n =>
+      children.has(n.id) &&
+      ((n.kind === 'package' && n.name !== '(root)') || n.kind === 'doc')
+    );
   });
 
   // L3: modules under selected package, or individual docs under doc category
