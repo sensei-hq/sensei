@@ -14,6 +14,8 @@ use crate::db::Store;
 use crate::indexer::graph::GraphDb;
 use crate::indexer::queue::{IndexQueue, IndexEvent, BroadcastProgress};
 use crate::watcher::DirtyTracker;
+use crate::tasks::queue::TaskQueue;
+use crate::tasks::progress::TaskEvent;
 use crate::types::{Project, Solution, SolutionRepo, IndexError, IndexResult};
 
 pub struct SharedState {
@@ -21,6 +23,7 @@ pub struct SharedState {
     pub graph: Mutex<GraphDb>,
     pub index_queue: Arc<IndexQueue>,
     pub dirty_tracker: DirtyTracker,
+    pub task_queue: Arc<TaskQueue>,
 }
 
 pub type AppState = Arc<SharedState>;
@@ -49,6 +52,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/index/dirty", get(dirty_status))
         .route("/api/index/errors", get(list_index_errors))
         .route("/api/index/errors/{repo_id}", get(list_repo_index_errors))
+        // Task queue (new)
+        .route("/api/tasks/status", get(task_queue_status))
+        .route("/api/tasks/progress", get(task_progress_sse))
         // Graph
         .route("/api/graph/nodes", get(graph_nodes))
         .route("/api/graph/functions", get(search_functions))
@@ -702,16 +708,24 @@ async fn index_project(
     // Clear errors for this project
     { let s = state.store.lock().await; s.clear_index_errors(&body.repo_id).ok(); }
 
+    // Enqueue via old queue (backward compat — still used by old worker)
     let pos = state.index_queue.enqueue(
         body.repo_id.clone(),
         body.repo_path.clone(),
         body.force,
     ).await;
 
+    // Also enqueue via new task queue
+    let task = crate::tasks::Task::new(
+        crate::tasks::TaskKind::ProcessRepo, &body.repo_id, &body.repo_path,
+    );
+    let task_id = state.task_queue.enqueue(task).await;
+
     Ok(Json(serde_json::json!({
         "ok": true,
         "queued": true,
         "position": pos,
+        "taskId": task_id,
         "repoId": body.repo_id,
     })))
 }
@@ -749,6 +763,36 @@ async fn index_progress_sse(
                     Some(Ok(Event::default().data(data)))
                 }
                 Err(_) => None, // lagged — skip
+            }
+        });
+    Sse::new(stream)
+}
+
+// ── Task Queue ──────────────────────────────────────────────────────────────
+
+async fn task_queue_status(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let status = state.task_queue.status().await;
+    let progress = state.task_queue.progress().await;
+    Json(serde_json::json!({
+        "queue": status,
+        "repos": progress,
+    }))
+}
+
+async fn task_progress_sse(
+    State(state): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let rx = state.task_queue.sender().subscribe();
+    let stream = BroadcastStream::new(rx)
+        .filter_map(|result| {
+            match result {
+                Ok(event) => {
+                    let data = serde_json::to_string(&event).unwrap_or_default();
+                    Some(Ok(Event::default().data(data)))
+                }
+                Err(_) => None,
             }
         });
     Sse::new(stream)
@@ -1648,47 +1692,13 @@ async fn scan_folder(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let max_depth = body.max_depth;
+    // Enqueue ScanRoot task — runs asynchronously via task workers
+    let task = crate::tasks::Task::new(
+        crate::tasks::TaskKind::ScanRoot, "", &root_path,
+    );
+    let task_id = state.task_queue.enqueue(task).await;
 
-    // Return immediately — scan runs in background
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        let mut repos = Vec::new();
-        scan_dir(std::path::Path::new(&root_path), 0, max_depth, &mut repos);
-
-        // Register and queue each repo one at a time
-        for repo in &repos {
-            // Register as project
-            {
-                let store = state_clone.store.lock().await;
-                let project = crate::types::Project {
-                    repo_id: repo.name.clone(),
-                    name: repo.name.clone(),
-                    path: repo.path.clone(),
-                    remote_url: None,
-                    indexed_at: None,
-                    last_error: None,
-                    duplicate_of: None,
-                    stack: repo.stack.clone(),
-                    libs: vec![],
-                    tags: vec![],
-                    status: "active".into(),
-                };
-                store.upsert_project(&project).ok();
-            }
-
-            // Queue for indexing
-            state_clone.index_queue.enqueue(
-                repo.name.clone(),
-                repo.path.clone(),
-                false,
-            ).await;
-        }
-
-        tracing::info!("Scan complete: {} repos from {}", repos.len(), root_path);
-    });
-
-    Ok(Json(serde_json::json!({"ok": true, "scanning": true})))
+    Ok(Json(serde_json::json!({"ok": true, "scanning": true, "taskId": task_id})))
 }
 
 fn scan_dir(dir: &std::path::Path, depth: u32, max_depth: u32, repos: &mut Vec<ScannedRepo>) {
@@ -1749,6 +1759,7 @@ mod tests {
             graph: Mutex::new(graph),
             index_queue,
             dirty_tracker: DirtyTracker::new(),
+            task_queue: Arc::new(TaskQueue::new()),
         });
         let router = create_router(state.clone());
         (router, state)
