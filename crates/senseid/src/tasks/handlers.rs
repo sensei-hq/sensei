@@ -232,10 +232,32 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
             .blocked_by(vec![libs_id])
     ).await;
 
-    // Detect subtrees → auto-solution
-    let store = ctx.store().await;
-    if let Ok(Some(project)) = store.get_project(repo_id) {
-        crate::indexer::cross_repo::auto_solution_for_monorepo(&store, &project).ok();
+    // Detect subtrees → register as separate repos, create solution
+    {
+        let store = ctx.store().await;
+        if let Ok(Some(project)) = store.get_project(repo_id) {
+            // Detect git subtrees
+            let subtrees = crate::indexer::cross_repo::detect_git_subtrees_pub(repo_path);
+            if !subtrees.is_empty() {
+                // Create solution
+                crate::indexer::cross_repo::auto_solution_for_monorepo(&store, &project).ok();
+
+                // Register and index each subtree as a separate repo
+                for (name, subtree_path) in &subtrees {
+                    let subtree_repo_id = format!("{}:{}", repo_id, name);
+                    store.upsert_project_basic(&subtree_repo_id, name, subtree_path).ok();
+                }
+                drop(store); // release lock before enqueuing
+
+                for (name, subtree_path) in &subtrees {
+                    let subtree_repo_id = format!("{}:{}", repo_id, name);
+                    let sub_task = Task::new(TaskKind::ProcessRepo, &subtree_repo_id, subtree_path)
+                        .with_parent(task.id);
+                    ctx.queue.enqueue(sub_task).await;
+                    tracing::info!("process_repo: enqueued subtree {} at {}", subtree_repo_id, subtree_path);
+                }
+            }
+        }
     }
 
     tracing::info!("process_repo: {} — {} dirs, {} file tasks, barrier=#{}", repo_id, dirs.len(), all_file_task_ids.len(), resolve_id);
