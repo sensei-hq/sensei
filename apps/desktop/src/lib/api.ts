@@ -103,12 +103,14 @@ export function senseiApi(port: number) {
 
     // ── Indexing ─────────────────────────────────────────────────────────
     indexRepo: (repoId: string, repoPath: string, force = false) =>
-      post<{ ok: boolean; queued: boolean; position: number }>(
-        '/api/index', { repoId, repoPath, force }, { ok: false, queued: false, position: -1 },
+      post<{ ok: boolean; queued: boolean; taskId: number }>(
+        '/api/index', { repoId, repoPath, force }, { ok: false, queued: false, taskId: -1 },
       ),
 
     getIndexStatus: () =>
-      get<IndexQueueStatus>('/api/index/status', { current: null, queued: [], recent: [] }),
+      get<{ queue: { pending: number; blocked: number; running: number; completed: number }; repos: Record<string, { total: number; pending: number; running: number }> }>(
+        '/api/index/status', { queue: { pending: 0, blocked: 0, running: 0, completed: 0 }, repos: {} },
+      ),
 
     getIndexDirty: () => get<DirtyStatus[]>('/api/index/dirty', []),
 
