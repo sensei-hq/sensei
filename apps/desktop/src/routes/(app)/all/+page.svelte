@@ -179,13 +179,13 @@
   <div class="border-b border-surface-z0/50 px-4 py-2 shrink-0 flex items-center gap-3">
     <h1 class="text-sm font-semibold text-surface-z8">Projects</h1>
     <span class="text-xs text-surface-z4">{indexedCount}/{totalCount} indexed</span>
-    {#if queueStatus.current}
+    {#if queueStatus.queue?.running > 0}
       <span class="rounded px-1.5 py-0.5 text-[10px] bg-info-z2 text-info-z6">
-        indexing: {queueStatus.current.repo_id}
+        {queueStatus.queue.running} running
       </span>
     {/if}
-    {#if queueStatus.queued.length > 0}
-      <span class="text-[10px] text-surface-z4">{queueStatus.queued.length} queued</span>
+    {#if queueStatus.queue?.pending > 0}
+      <span class="text-[10px] text-surface-z4">{queueStatus.queue.pending} pending</span>
     {/if}
     {#if indexedCount > 0 && indexedCount < totalCount}
       <div class="w-20 h-1.5 rounded-full bg-surface-z3 overflow-hidden">
