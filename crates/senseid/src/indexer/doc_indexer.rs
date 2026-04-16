@@ -173,8 +173,11 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
     let lower = rel_path.to_lowercase();
 
     // Marketplace files are extensions, not docs
+    // Matches both "marketplace/skills/..." (parent repo) and "skills/..." (subtree repo)
     if lower.starts_with("marketplace/skills/") || lower.starts_with("marketplace/commands/")
         || lower.starts_with("marketplace/plugins/") || lower.starts_with("marketplace/hooks/")
+        || lower.starts_with("skills/") || lower.starts_with("commands/")
+        || lower.starts_with("plugins/") || lower.starts_with("hooks/")
     {
         let sub = if lower.contains("/skills/") { "skill" }
             else if lower.contains("/commands/") { "command" }

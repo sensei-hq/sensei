@@ -412,25 +412,20 @@ async fn solution_graph(
     let mut seen_repo_ids = std::collections::HashSet::new();
 
     for sr in &solution.repos {
-        // Subtree repos (e.g. "sensei:homebrew") share the parent's graph.
-        // Use the parent repo_id (before the ':') for graph lookup.
-        let graph_repo_id = if sr.role == "subtree" {
-            sr.repo_id.split(':').next().unwrap_or(&sr.repo_id).to_string()
-        } else {
-            sr.repo_id.clone()
-        };
+        // Each repo (including subtrees) is indexed under its own repo_id
+        let graph_repo_id = &sr.repo_id;
 
-        // Avoid duplicating if parent already loaded
         if !seen_repo_ids.insert(graph_repo_id.clone()) {
             continue;
         }
 
-        let nodes = graph.get_nodes(&graph_repo_id).unwrap_or_default();
-        let edges = graph.get_edges(&graph_repo_id).unwrap_or_default();
+        let nodes = graph.get_nodes(graph_repo_id).unwrap_or_default();
+        let edges = graph.get_edges(graph_repo_id).unwrap_or_default();
         for node in nodes {
             all_nodes.push(serde_json::json!({
                 "id": node.id, "name": node.name, "kind": node.kind,
                 "file": node.file, "line": node.line, "complexity": node.complexity,
+                "doc_type": node.doc_type, "level": node.level, "parent_id": node.parent_id,
                 "repoId": graph_repo_id, "role": sr.role,
             }));
         }
@@ -468,29 +463,9 @@ async fn solution_graph(
             "source": &soln_node_id, "target": &repo_node_id, "type": "CONTAINS_REPO",
         }));
 
-        // For subtree repos, link to nodes whose file path is under the subtree directory
-        if sr.role == "subtree" {
-            // Subtree dir name from label or repo_id suffix
-            let subtree_dir = sr.label.as_deref()
-                .or_else(|| sr.repo_id.split(':').last())
-                .unwrap_or("");
-            if !subtree_dir.is_empty() {
-                let dir_pattern = format!("/{}/", subtree_dir);
-                for node in &all_nodes {
-                    if let (Some(id), Some(kind)) = (node.get("id").and_then(|v| v.as_str()), node.get("kind").and_then(|v| v.as_str())) {
-                        if kind == "module" || kind == "doc" || kind == "extension" || kind == "file" {
-                            let file = node.get("file").and_then(|v| v.as_str()).unwrap_or("");
-                            let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            if file.contains(&dir_pattern) || name.starts_with(subtree_dir) {
-                                all_edges.push(serde_json::json!({
-                                    "source": &repo_node_id, "target": id, "type": "CONTAINS_MOD",
-                                }));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // Subtree repos are indexed as separate repos via process_repo.
+        // Their graph data is under their own repo_id (e.g. "sensei:marketplace").
+        // No API-level hacking needed — the graph already has the full hierarchy.
     }
 
     Ok(Json(serde_json::json!({
