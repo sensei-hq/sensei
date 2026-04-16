@@ -29,7 +29,7 @@ jobs:
       - name: Build
         run: bun run build
         env:
-          BASE_PATH: /sensei-site
+          BASE_PATH: /sensei
 
       - uses: actions/upload-pages-artifact@v3
         with:
