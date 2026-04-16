@@ -141,14 +141,15 @@ mod tests {
     // ═══ Non-code files (no adapter) ══════════════════════════════════
 
     #[test]
-    fn c_parser_no_adapter() {
-        // parser.c has no C adapter — should still register
+    fn c_parser_large_file() {
+        // parser.c is a 678K-line generated file — C adapter skips it by size
         let root = repo_root();
         let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
         if abs.exists() {
             let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
             assert_eq!(r.kind, "file");
-            assert_eq!(r.tags, "src"); // .c → src (not config, not binary)
+            assert_eq!(r.tags, "src");
+            assert!(r.symbols.is_empty(), "large generated C file should have no symbols");
         }
     }
 
