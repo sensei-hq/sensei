@@ -1,17 +1,17 @@
 <!doctype html>
-<html lang="en" data-mode="dark">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover" data-style="rokkit" data-density="comfortable">
+	<body data-sveltekit-preload-data="hover" data-mode="dark" data-style="rokkit" data-density="comfortable">
 		<script>
 			(function () {
 				try {
 					var t = JSON.parse(localStorage.getItem('sensei-theme') || '{}')
-					document.documentElement.dataset.mode = t.mode || 'dark'
 					var b = document.body
+					b.dataset.mode = t.mode || 'dark'
 					if (t.style) b.dataset.style = t.style
 					if (t.density) b.dataset.density = t.density
 				} catch (e) {}
