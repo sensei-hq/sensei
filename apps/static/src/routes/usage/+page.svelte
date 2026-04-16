@@ -50,20 +50,62 @@
 
   function drawArchGraph() {
     const w = graphContainer.clientWidth;
-    const h = 280;
-    const nodeW = 120, nodeH = 50, rx = 10;
+    const h = 420;
+    const nodeH = 36, rx = 8;
 
-    const nodes = [
-      { id: 'acp',     label: 'Claude Code\nCursor\nWindsurf', x: 80,       y: h/2,     color: '#a78bfa', w: 110 },
-      { id: 'mcp',     label: 'sensei-mcp',                    x: w * 0.38, y: h/2,     color: '#2dd4bf', w: nodeW },
-      { id: 'senseid', label: 'senseid',                       x: w * 0.68, y: h/2,     color: '#818cf8', w: nodeW },
-      { id: 'db',      label: 'SQLite\nGraph DB',              x: w * 0.68, y: h - 30,  color: '#6366f1', w: 100 },
+    // Layout columns
+    const col1 = 80;                // AI platforms + clients
+    const col2 = w * 0.35;          // sensei-mcp
+    const col3 = w * 0.60;          // senseid
+    const col4 = w - 70;            // storage
+
+    // Colors
+    const purple = '#a78bfa';
+    const teal   = '#2dd4bf';
+    const indigo = '#818cf8';
+    const amber  = '#fbbf24';
+    const green  = '#34d399';
+    const slate  = '#64748b';
+
+    interface Node { id: string; label: string; x: number; y: number; color: string; w: number; icon?: string }
+    interface Link { source: string; target: string; label?: string; side?: 'right'|'bottom'|'top' }
+
+    const nodes: Node[] = [
+      // AI Platforms (left, stacked)
+      { id: 'claude',   label: 'Claude Code', x: col1, y: 60,  color: purple, w: 105, icon: '🤖' },
+      { id: 'cursor',   label: 'Cursor',      x: col1, y: 110, color: purple, w: 105, icon: '📝' },
+      { id: 'windsurf', label: 'Windsurf',    x: col1, y: 160, color: purple, w: 105, icon: '🏄' },
+
+      // MCP server
+      { id: 'mcp', label: 'sensei-mcp', x: col2, y: 110, color: teal, w: 115 },
+
+      // Clients (below platforms)
+      { id: 'desktop', label: 'Sensei Desktop', x: col1, y: 280, color: amber, w: 125, icon: '🖥' },
+      { id: 'cli',     label: 'sensei CLI',     x: col1, y: 340, color: green, w: 105, icon: '⌨️' },
+
+      // Daemon (center)
+      { id: 'senseid', label: 'senseid', x: col3, y: 210, color: indigo, w: 110 },
+
+      // Storage (right, stacked)
+      { id: 'dotsensei', label: '~/.sensei',  x: col4, y: 150, color: slate, w: 90, icon: '📁' },
+      { id: 'kuzu',      label: 'Kuzu',       x: col4, y: 210, color: slate, w: 90, icon: '🔗' },
+      { id: 'sqlite',    label: 'SQLite',     x: col4, y: 270, color: slate, w: 90, icon: '🗄' },
     ];
 
-    const links = [
-      { source: 'acp', target: 'mcp',     label: 'MCP (stdio)' },
+    const links: Link[] = [
+      // AI platforms → mcp
+      { source: 'claude',   target: 'mcp', label: 'MCP' },
+      { source: 'cursor',   target: 'mcp' },
+      { source: 'windsurf', target: 'mcp' },
+      // mcp → senseid
       { source: 'mcp', target: 'senseid', label: 'HTTP :7744' },
-      { source: 'senseid', target: 'db',  label: '' },
+      // clients → senseid
+      { source: 'desktop', target: 'senseid', label: 'HTTP' },
+      { source: 'cli',     target: 'senseid' },
+      // senseid → storage
+      { source: 'senseid', target: 'dotsensei' },
+      { source: 'senseid', target: 'kuzu' },
+      { source: 'senseid', target: 'sqlite' },
     ];
 
     const svg = d3.select(graphContainer)
@@ -72,18 +114,14 @@
       .attr('height', h)
       .attr('viewBox', `0 0 ${w} ${h}`);
 
-    // Defs for arrow marker
+    // Arrow marker
     svg.append('defs').append('marker')
       .attr('id', 'arrow')
       .attr('viewBox', '0 0 10 6')
-      .attr('refX', 10)
-      .attr('refY', 3)
-      .attr('markerWidth', 8)
-      .attr('markerHeight', 6)
+      .attr('refX', 10).attr('refY', 3)
+      .attr('markerWidth', 8).attr('markerHeight', 6)
       .attr('orient', 'auto')
-      .append('path')
-      .attr('d', 'M0,0 L10,3 L0,6')
-      .attr('fill', '#64748b');
+      .append('path').attr('d', 'M0,0 L10,3 L0,6').attr('fill', '#475569');
 
     const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -91,29 +129,33 @@
     links.forEach(link => {
       const s = nodeMap.get(link.source)!;
       const t = nodeMap.get(link.target)!;
+      const x1 = s.x + s.w / 2;
+      const y1 = s.y;
+      const x2 = t.x - t.w / 2;
+      const y2 = t.y;
 
-      const isVertical = s.id === 'senseid' && t.id === 'db';
-      const x1 = isVertical ? s.x : s.x + (s.w / 2);
-      const y1 = isVertical ? s.y + nodeH / 2 : s.y;
-      const x2 = isVertical ? t.x : t.x - (t.w / 2);
-      const y2 = isVertical ? t.y - nodeH / 2 : t.y;
+      // Use a curved path for non-horizontal links
+      const dx = x2 - x1, dy = y2 - y1;
+      const path = Math.abs(dy) > 30
+        ? `M${x1},${y1} C${x1 + dx * 0.5},${y1} ${x2 - dx * 0.5},${y2} ${x2},${y2}`
+        : `M${x1},${y1} L${x2},${y2}`;
 
-      svg.append('line')
-        .attr('x1', x1).attr('y1', y1)
-        .attr('x2', x2).attr('y2', y2)
-        .attr('stroke', '#475569')
-        .attr('stroke-width', 2)
-        .attr('stroke-dasharray', '6,3')
+      svg.append('path')
+        .attr('d', path)
+        .attr('fill', 'none')
+        .attr('stroke', '#334155')
+        .attr('stroke-width', 1.5)
+        .attr('stroke-dasharray', '5,3')
         .attr('marker-end', 'url(#arrow)');
 
       if (link.label) {
         const mx = (x1 + x2) / 2;
-        const my = (y1 + y2) / 2 - 10;
+        const my = (y1 + y2) / 2 - 12;
         svg.append('text')
           .attr('x', mx).attr('y', my)
           .attr('text-anchor', 'middle')
-          .attr('fill', '#94a3b8')
-          .attr('font-size', '11px')
+          .attr('fill', '#64748b')
+          .attr('font-size', '10px')
           .attr('font-family', 'ui-monospace, monospace')
           .text(link.label);
       }
@@ -124,30 +166,61 @@
       const g = svg.append('g');
       const nw = node.w;
 
+      // Background rect
       g.append('rect')
         .attr('x', node.x - nw / 2)
         .attr('y', node.y - nodeH / 2)
         .attr('width', nw)
         .attr('height', nodeH)
         .attr('rx', rx)
-        .attr('fill', 'rgba(30,41,59,0.9)')
+        .attr('fill', 'rgba(15,23,42,0.85)')
         .attr('stroke', node.color)
-        .attr('stroke-width', 2);
+        .attr('stroke-width', 1.5);
 
-      const lines = node.label.split('\n');
-      lines.forEach((line, i) => {
-        const yOff = node.y + (i - (lines.length - 1) / 2) * 14;
+      if (node.icon) {
+        g.append('text')
+          .attr('x', node.x - nw / 2 + 12)
+          .attr('y', node.y + 5)
+          .attr('font-size', '13px')
+          .text(node.icon);
+
+        g.append('text')
+          .attr('x', node.x - nw / 2 + 28)
+          .attr('y', node.y + 4)
+          .attr('fill', '#e2e8f0')
+          .attr('font-size', '11px')
+          .attr('font-weight', '500')
+          .attr('font-family', 'ui-monospace, monospace')
+          .text(node.label);
+      } else {
         g.append('text')
           .attr('x', node.x)
-          .attr('y', yOff + 4)
+          .attr('y', node.y + 4)
           .attr('text-anchor', 'middle')
-          .attr('fill', i === 0 && lines.length === 1 ? node.color : '#e2e8f0')
-          .attr('font-size', lines.length > 2 ? '10px' : '12px')
-          .attr('font-weight', lines.length === 1 ? '700' : '400')
+          .attr('fill', node.color)
+          .attr('font-size', '12px')
+          .attr('font-weight', '700')
           .attr('font-family', 'ui-monospace, monospace')
-          .text(line);
-      });
+          .text(node.label);
+      }
     });
+
+    // Group labels
+    const groupLabel = (x: number, y: number, text: string) => {
+      svg.append('text')
+        .attr('x', x).attr('y', y)
+        .attr('text-anchor', 'middle')
+        .attr('fill', '#475569')
+        .attr('font-size', '9px')
+        .attr('font-weight', '600')
+        .attr('text-transform', 'uppercase')
+        .attr('letter-spacing', '1px')
+        .attr('font-family', 'system-ui, sans-serif')
+        .text(text);
+    };
+    groupLabel(col1, 30, 'AI PLATFORMS');
+    groupLabel(col1, 255, 'CLIENTS');
+    groupLabel(col4, 125, 'STORAGE');
   }
 </script>
 
@@ -227,11 +300,12 @@
   <section class="mb-16">
     <h2 class="mb-6 text-2xl font-bold">Architecture</h2>
     <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-6 overflow-hidden" bind:this={graphContainer}></div>
-    <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {#each [
         { name: 'senseid', desc: 'Indexer daemon — watches repos, builds code graph, serves HTTP API', color: 'primary' },
-        { name: 'sensei-mcp', desc: 'MCP adapter — translates AI platform tool calls to HTTP', color: 'secondary' },
-        { name: 'sensei', desc: 'CLI — manages installation, config, scanning over HTTP', color: 'accent' },
+        { name: 'sensei-mcp', desc: 'MCP adapter — translates AI platform tool calls into HTTP requests', color: 'secondary' },
+        { name: 'sensei CLI', desc: 'Manages installation, config, scanning — talks to senseid over HTTP', color: 'accent' },
+        { name: 'Sensei Desktop', desc: 'Tauri app — project navigator, graph viewer, indexer control', color: 'warning' },
       ] as comp}
         <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-4">
           <code class="text-xs font-bold text-{comp.color}-z6">{comp.name}</code>
