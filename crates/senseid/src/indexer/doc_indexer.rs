@@ -8,24 +8,24 @@ const DOC_EXTENSIONS: &[&str] = &["md", "mdx"];
 
 /// Frontmatter parsed from YAML between --- fences.
 #[derive(Default, serde::Deserialize)]
-struct DocFrontmatter {
+pub struct DocFrontmatter {
     #[serde(rename = "type")]
-    doc_type: Option<String>,
+    pub doc_type: Option<String>,
     #[serde(default)]
-    category: Option<String>,
+    pub category: Option<String>,
     #[serde(default)]
-    name: Option<String>,
+    pub name: Option<String>,
     #[serde(default)]
-    title: Option<String>,
+    pub title: Option<String>,
     #[serde(default)]
-    description: Option<String>,
+    pub description: Option<String>,
 }
 
 /// Classification result for a doc/extension file.
-struct DocClassification {
-    kind: NodeKind,     // Doc or Extension
-    doc_type: String,   // requirement, design, feature, usage, changelog, extension, doc
-    doc_category: Option<String>, // sub-category from frontmatter
+pub struct DocClassification {
+    pub kind: NodeKind,     // Doc or Extension
+    pub doc_type: String,   // requirement, design, feature, usage, changelog, extension, doc
+    pub doc_category: Option<String>, // sub-category from frontmatter
 }
 
 /// Index documentation files (.md, .mdx) into the graph.
@@ -130,6 +130,11 @@ pub fn index_docs(
 
     Ok(docs_indexed)
 }
+
+/// Public wrapper for use by task handlers.
+pub fn parse_frontmatter_pub(content: &str) -> DocFrontmatter { parse_frontmatter(content) }
+pub fn classify_doc_pub(rel_path: &str, fm: &DocFrontmatter) -> DocClassification { classify_doc(rel_path, fm) }
+pub fn create_traceability_edges_pub(graph: &GraphDb, repo_id: &str) -> Result<(), String> { create_traceability_edges(graph, repo_id) }
 
 /// Parse YAML frontmatter from between --- fences.
 fn parse_frontmatter(content: &str) -> DocFrontmatter {
