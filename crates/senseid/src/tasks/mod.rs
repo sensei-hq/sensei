@@ -31,6 +31,7 @@ pub enum TaskKind {
     ImportLib,
     BranchSwitch,
     BuildConnections,
+    ReconcileConnections,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -47,6 +48,7 @@ impl std::fmt::Display for TaskKind {
             Self::ImportLib => write!(f, "import_lib"),
             Self::BranchSwitch => write!(f, "branch_switch"),
             Self::BuildConnections => write!(f, "build_connections"),
+            Self::ReconcileConnections => write!(f, "reconcile_connections"),
         }
     }
 }
@@ -134,7 +136,7 @@ impl Task {
     }
 
     pub fn is_barrier(&self) -> bool {
-        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections)
+        matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections | TaskKind::ReconcileConnections)
     }
 }
 
