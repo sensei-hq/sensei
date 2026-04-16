@@ -32,7 +32,7 @@
   <!-- Header -->
   <nav class="sticky top-0 z-50 flex items-center justify-between border-b border-surface-z0 bg-surface-z1/95 backdrop-blur px-8 h-14">
     <a href="{base}/" class="flex items-center gap-2 font-bold text-base select-none no-underline text-surface-z8">
-      <span class="text-lg">⬡</span>
+      <img src="{base}/sensei-icon.png" alt="" class="w-6 h-6 rounded" />
       <span>sensei</span>
     </a>
     <div class="flex items-center gap-4 text-sm">
