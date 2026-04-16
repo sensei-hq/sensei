@@ -90,11 +90,12 @@
   // L2: direct children of selected repo — packages (src) + doc categories (doc)
   let l2Options = $derived.by((): typeof nodes => {
     if (filterL1 === 'all') {
-      return nodes.filter(n => n.kind === 'package' || n.kind === 'doc-category');
+      // Packages + doc category nodes (doc nodes that are direct children of a repo)
+      return nodes.filter(n => n.kind === 'package' || (n.kind === 'doc' && n.tags === 'doc' && !n.file));
     }
     const children = containsMap.get(filterL1);
     if (!children) return [];
-    return nodes.filter(n => children.has(n.id) && (n.kind === 'package' || n.kind === 'doc-category'));
+    return nodes.filter(n => children.has(n.id) && (n.kind === 'package' || n.kind === 'doc'));
   });
 
   // L3: modules under selected package, or individual docs under doc category
@@ -146,7 +147,7 @@
     'class': '#f59e0b', 'struct': '#f59e0b', 'interface': '#f59e0b',
     'type': '#f59e0b', 'enum': '#f59e0b',
     'file': '#10b981',
-    'doc': '#06b6d4', 'doc-category': '#0891b2', 'extension': '#f97316',
+    'doc': '#06b6d4', 'extension': '#f97316',
     'component': '#ec4899', 'hook': '#ec4899',
     'const': '#94a3b8',
     'package': '#8b5cf6', 'module': '#14b8a6',

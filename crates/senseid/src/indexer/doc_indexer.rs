@@ -64,7 +64,7 @@ pub fn index_docs(
     // Prune stale docs/extensions
     {
         let current_doc_paths: HashSet<String> = doc_files.iter()
-            .map(|e| format!("doc:{}", e.path().to_string_lossy()))
+            .map(|e| format!("file:{}", e.path().to_string_lossy()))
             .collect();
         let existing = graph_db.get_nodes(repo_id).unwrap_or_default();
         for node in &existing {
@@ -94,7 +94,7 @@ pub fn index_docs(
             .or_else(|| extract_title(&content))
             .unwrap_or_else(|| rel_path.clone());
 
-        let doc_id = format!("doc:{}", abs_path);
+        let doc_id = format!("file:{}", abs_path);
 
         let node = HierarchyNode::doc(
             doc_id.clone(),
