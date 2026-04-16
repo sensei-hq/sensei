@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link href="./_app/immutable/entry/start.DjhmArs2.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/DXEhAbFr.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/viUC3wAl.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/CZZqCL1N.js" rel="modulepreload">
+		<link href="./_app/immutable/entry/app.Bt-_lzPs.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/BgUy-a58.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/CFKVnMbq.js" rel="modulepreload">
+		<link href="./_app/immutable/nodes/0.DAGp3btE.js" rel="modulepreload">
+		<link href="./_app/immutable/nodes/4.XHoZowb-.js" rel="modulepreload">
+		<!--12qhfyh--><meta name="description" content="AI Development Intelligence — capture how your team uses AI and feed that intelligence back into your workflow."/><!----><title>Sensei</title>
+		<link href="./_app/immutable/assets/0.BTK0-E1R.css" rel="stylesheet">
+	</head>
+	<body data-sveltekit-preload-data="hover" data-mode="dark" data-style="rokkit" data-density="comfortable">
+		<script>
+			(function () {
+				try {
+					var t = JSON.parse(localStorage.getItem('sensei-theme') || '{}')
+					var b = document.body
+					b.dataset.mode = t.mode || 'dark'
+					if (t.style) b.dataset.style = t.style
+					if (t.density) b.dataset.density = t.density
+				} catch (e) {}
+			})()
+		</script>
+		<div style="display: contents"><!--[--><!--[0--><!--[--><!--[--><div class="min-h-screen overflow-y-auto bg-surface-z1 text-surface-z8"><nav class="sticky top-0 z-50 flex items-center justify-between border-b border-surface-z0 bg-surface-z1/95 px-8 h-14"><a href="./" class="flex items-center gap-2 font-bold text-base select-none"><span class="text-lg">⬡</span> <span>sensei</span></a> <div class="flex items-center gap-5 text-sm"><a href="./setup" class="text-surface-z5 hover:text-surface-z8 transition-colors">Setup</a> <a href="./usage" class="text-primary-z6 font-semibold">Usage</a> <a href="https://github.com/mizukisu/sensei" target="_blank" rel="noopener" class="flex items-center gap-1.5 rounded-lg border border-surface-z3 bg-surface-z2 px-3 py-1.5 text-xs font-medium hover:bg-surface-z3 transition-colors"><span class="i-solar-github-bold-duotone"></span> GitHub</a></div></nav> <div class="mx-auto max-w-3xl px-8 py-16"><div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Reference</div> <h1 class="mb-4 text-4xl font-extrabold tracking-tight">Usage Guide</h1> <p class="mb-12 text-lg text-surface-z5">CLI commands, daemon management, and MCP tools.</p> <section class="mb-14"><h2 class="mb-5 text-2xl font-bold">CLI Commands</h2> <p class="mb-5 text-sm text-surface-z5">The <code class="bg-surface-z3 px-1 rounded">sensei</code> CLI manages installation, configuration, and scanning.</p> <div class="rounded-xl border border-surface-z3 overflow-hidden"><!--[--><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">sensei configure</code> <span class="text-xs text-surface-z5">Detect installed AI coding platforms and generate config</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">sensei install</code> <span class="text-xs text-surface-z5">Install sensei for all configured platforms (hooks, skills, MCP)</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">sensei install --acp claude-code</code> <span class="text-xs text-surface-z5">Install for a specific platform only</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">sensei uninstall</code> <span class="text-xs text-surface-z5">Remove sensei from all configured platforms</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">sensei start</code> <span class="text-xs text-surface-z5">Start the senseid daemon (default port 7744)</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">sensei start --port 8800</code> <span class="text-xs text-surface-z5">Start on a custom port</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">sensei stop</code> <span class="text-xs text-surface-z5">Stop the running daemon</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">sensei status</code> <span class="text-xs text-surface-z5">Show daemon status (version, PID, uptime)</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">sensei scan ~/Developer</code> <span class="text-xs text-surface-z5">Scan a folder and index all repos found</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">sensei add-lib react</code> <span class="text-xs text-surface-z5">Add a library's docs (auto-discovers llms.txt)</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">sensei add-lib kavach --url https://...</code> <span class="text-xs text-surface-z5">Add a library with explicit doc URL</span></div><!--]--></div></section> <section class="mb-14"><h2 class="mb-5 text-2xl font-bold">Daemon Management</h2> <p class="mb-5 text-sm text-surface-z5">The <code class="bg-surface-z3 px-1 rounded">senseid</code> daemon runs the indexer and serves the API on port 7744.</p> <div class="rounded-xl border border-surface-z3 overflow-hidden"><!--[--><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">senseid</code> <span class="text-xs text-surface-z5">Start daemon in foreground</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">senseid start</code> <span class="text-xs text-surface-z5">Start daemon in background</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">senseid stop</code> <span class="text-xs text-surface-z5">Stop the background daemon</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">senseid status</code> <span class="text-xs text-surface-z5">Show daemon version and PID</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">senseid logs</code> <span class="text-xs text-surface-z5">Tail the last 50 lines of the daemon log</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">senseid clear-logs</code> <span class="text-xs text-surface-z5">Clear the log file</span></div><!--]--></div> <div class="mt-4 rounded-lg bg-surface-z0 p-4 text-xs text-surface-z5"><strong class="text-surface-z7">Homebrew service:</strong> If installed via Homebrew, you can also use <code class="bg-surface-z3 px-1 rounded">brew services start sensei</code> to run senseid as a background service that starts on login.</div></section> <section class="mb-14"><h2 class="mb-5 text-2xl font-bold">MCP Tools</h2> <p class="mb-5 text-sm text-surface-z5">When connected via <code class="bg-surface-z3 px-1 rounded">sensei-mcp</code>, your AI coding platform gets these tools:</p> <div class="rounded-xl border border-surface-z3 overflow-hidden"><!--[--><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">get_session_context</code> <span class="text-xs text-surface-z5">Resume from last checkpoint, load repo orientation</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">context_pack</code> <span class="text-xs text-surface-z5">Load only the symbols relevant to a query (saves tokens)</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">search</code> <span class="text-xs text-surface-z5">Semantic search across the entire codebase</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">load_context</code> <span class="text-xs text-surface-z5">Load a specific file with symbol extraction</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z2"><code class="text-xs font-semibold text-primary-z7">take_snapshot</code> <span class="text-xs text-surface-z5">Record progress for interruption recovery</span></div><div class="flex flex-col gap-1 px-5 py-3 bg-surface-z1"><code class="text-xs font-semibold text-primary-z7">checkpoint</code> <span class="text-xs text-surface-z5">Close a session with outcome tracking (FTR scoring)</span></div><!--]--></div></section> <section class="mb-14"><h2 class="mb-5 text-2xl font-bold">Architecture</h2> <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-5"><pre class="text-xs text-surface-z7 leading-relaxed"><code>┌─────────────┐     MCP      ┌────────────┐     HTTP     ┌──────────┐
+│ Claude Code │ ──────────── │ sensei-mcp │ ──────────── │ senseid  │
+│ Cursor      │  (stdio)     │            │  (:7744)     │ (daemon) │
+│ Windsurf    │              └────────────┘              └──────────┘
+└─────────────┘                                               │
+                                                         ┌────┴─────┐
+                                                         │ SQLite   │
+                                                         │ Graph DB │
+                                                         └──────────┘</code></pre></div> <div class="mt-4 space-y-2 text-sm text-surface-z5"><p><strong class="text-surface-z7">senseid</strong> — The indexer daemon. Watches your repos, builds a code graph in SQLite, and serves an HTTP API.</p> <p><strong class="text-surface-z7">sensei-mcp</strong> — A thin MCP adapter. Translates MCP tool calls from your AI platform into senseid HTTP requests.</p> <p><strong class="text-surface-z7">sensei</strong> — The CLI. Manages installation, configuration, and scanning. Talks to senseid over HTTP.</p></div></section> <section class="border-t border-surface-z0 pt-10"><h2 class="mb-3 text-lg font-bold">Data storage</h2> <p class="text-sm text-surface-z5">All data is stored locally at <code class="bg-surface-z3 px-1 rounded">~/.sensei/</code>. Nothing is sent to external servers. The daemon stores its PID, logs, SQLite database, and per-repo graph data in this directory.</p></section></div> <div class="border-t border-surface-z0 py-8 text-center text-xs text-surface-z4"><a href="./" class="hover:text-surface-z6 transition-colors font-bold text-surface-z6">⬡ sensei</a> <span class="mx-2">·</span> <a href="./setup" class="hover:text-surface-z6 transition-colors">Setup</a> <span class="mx-2">·</span> <a href="./usage" class="hover:text-surface-z6 transition-colors">Usage</a> <span class="mx-2">·</span> <a href="https://github.com/mizukisu/sensei" target="_blank" rel="noopener" class="hover:text-surface-z6 transition-colors">GitHub</a></div></div><!--]--><!----><!--]--><!--]--> <!--[-1--><!--]--><!--]-->
+			
+			<script>
+				{
+					__sveltekit_tspfvh = {
+						base: new URL(".", location).pathname.slice(0, -1),
+						assets: "/sensei-site"
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("./_app/immutable/entry/start.DjhmArs2.js"),
+						import("./_app/immutable/entry/app.Bt-_lzPs.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element, {
+							node_ids: [0, 4],
+							data: [null,null],
+							form: null,
+							error: null
+						});
+					});
+				}
+			</script>
+		</div>
+	</body>
+</html>
