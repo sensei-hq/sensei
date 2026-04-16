@@ -57,39 +57,51 @@
     const col1 = 80;                // AI platforms + clients
     const col2 = w * 0.35;          // sensei-mcp
     const col3 = w * 0.60;          // senseid
-    const col4 = w - 80 - 45;       // storage — right edge at w-80 (90/2=45)
+    const col4 = w - 80 - 52;       // storage — right edge at w-80 (105/2=52)
 
-    // Colors
-    const purple = '#a78bfa';
-    const teal   = '#2dd4bf';
-    const indigo = '#818cf8';
-    const amber  = '#fbbf24';
-    const green  = '#34d399';
-    const slate  = '#64748b';
+    // Colors matching Rokkit theme tokens used in component cards below
+    const primary   = 'rgb(124,58,237)';   // senseid — primary-z6
+    const secondary = 'rgb(13,148,136)';   // sensei-mcp — secondary-z6
+    const accent    = 'rgb(79,70,229)';    // sensei CLI — accent-z6
+    const warning   = 'rgb(217,119,6)';    // Sensei Desktop — warning-z6
+    const platform  = '#a78bfa';           // AI platforms — violet
+    const storage   = '#64748b';           // storage nodes — slate
 
-    interface Node { id: string; label: string; x: number; y: number; color: string; w: number; icon?: string }
+    interface Node { id: string; label: string; x: number; y: number; color: string; w: number; img?: string }
     interface Link { source: string; target: string; label?: string; side?: 'right'|'bottom'|'top' }
+
+    // SVG icon paths (16x16 viewBox)
+    const icons: Record<string, { path: string; color: string }> = {
+      claude:   { path: 'M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5a1.25 1.25 0 110 2.5 1.25 1.25 0 010-2.5zM6.5 7h3l-.5 5h-2z', color: '#cc785c' },
+      cursor:   { path: 'M2 2l12 6-5 1.5L7.5 15z', color: '#fff' },
+      windsurf: { path: 'M1 11c2-4 5-7 9-8-2 3-3 5-3 8 2-4 5-7 8-8-2 3-3 6-3 8', color: '#00b4d8' },
+      desktop:  { path: 'M2 3h12v8H2zm3 10h6m-3-2v2', color: warning },
+      cli:      { path: 'M4 6l3 2.5L4 11m5 0h4', color: accent },
+      folder:   { path: 'M2 4h5l1-1h4a2 2 0 012 2v6a2 2 0 01-2 2H2a1 1 0 01-1-1V5a1 1 0 011-1z', color: storage },
+      kuzu:     { path: 'M8 2a6 6 0 100 12A6 6 0 008 2zm0 2a4 4 0 110 8 4 4 0 010-8zm0 2a2 2 0 100 4 2 2 0 010-4z', color: '#f97316' },
+      sqlite:   { path: 'M4 2c2 0 4 1 5 3s1 4 0 6-3 3-5 3-4-1-5-3 0-4 1-6S2 2 4 2zm1 3a1 1 0 100 2 1 1 0 000-2z', color: '#0f9fd8' },
+    };
 
     const nodes: Node[] = [
       // AI Platforms (left, stacked)
-      { id: 'claude',   label: 'Claude Code', x: col1, y: 60,  color: purple, w: 105, icon: '🤖' },
-      { id: 'cursor',   label: 'Cursor',      x: col1, y: 110, color: purple, w: 105, icon: '📝' },
-      { id: 'windsurf', label: 'Windsurf',    x: col1, y: 160, color: purple, w: 105, icon: '🏄' },
+      { id: 'claude',   label: 'Claude Code', x: col1, y: 60,  color: platform, w: 120, img: 'claude' },
+      { id: 'cursor',   label: 'Cursor',      x: col1, y: 110, color: platform, w: 120, img: 'cursor' },
+      { id: 'windsurf', label: 'Windsurf',    x: col1, y: 160, color: platform, w: 120, img: 'windsurf' },
 
       // MCP server
-      { id: 'mcp', label: 'sensei-mcp', x: col2, y: 110, color: teal, w: 115 },
+      { id: 'mcp', label: 'sensei-mcp', x: col2, y: 110, color: secondary, w: 115 },
 
       // Clients (below platforms)
-      { id: 'desktop', label: 'Sensei Desktop', x: col1, y: 280, color: amber, w: 125, icon: '🖥' },
-      { id: 'cli',     label: 'sensei CLI',     x: col1, y: 340, color: green, w: 105, icon: '⌨️' },
+      { id: 'desktop', label: 'Sensei Desktop', x: col1, y: 280, color: warning, w: 130, img: 'desktop' },
+      { id: 'cli',     label: 'sensei CLI',     x: col1, y: 340, color: accent,  w: 120, img: 'cli' },
 
       // Daemon (center)
-      { id: 'senseid', label: 'senseid', x: col3, y: 210, color: indigo, w: 110 },
+      { id: 'senseid', label: 'senseid', x: col3, y: 210, color: primary, w: 110 },
 
       // Storage (right, stacked)
-      { id: 'dotsensei', label: '~/.sensei',  x: col4, y: 150, color: slate, w: 90, icon: '📁' },
-      { id: 'kuzu',      label: 'Kuzu',       x: col4, y: 210, color: slate, w: 90, icon: '🔗' },
-      { id: 'sqlite',    label: 'SQLite',     x: col4, y: 270, color: slate, w: 90, icon: '🗄' },
+      { id: 'dotsensei', label: '~/.sensei',  x: col4, y: 150, color: storage, w: 105, img: 'folder' },
+      { id: 'kuzu',      label: 'Kuzu',       x: col4, y: 210, color: '#f97316', w: 105, img: 'kuzu' },
+      { id: 'sqlite',    label: 'SQLite',     x: col4, y: 270, color: '#0f9fd8', w: 105, img: 'sqlite' },
     ];
 
     const links: Link[] = [
@@ -177,15 +189,22 @@
         .attr('stroke', node.color)
         .attr('stroke-width', 1.5);
 
-      if (node.icon) {
-        g.append('text')
-          .attr('x', node.x - nw / 2 + 12)
-          .attr('y', node.y + 5)
-          .attr('font-size', '13px')
-          .text(node.icon);
+      if (node.img && icons[node.img]) {
+        const ico = icons[node.img];
+        const iconSize = 14;
+        const iconX = node.x - nw / 2 + 10;
+        const iconY = node.y - iconSize / 2;
+        g.append('svg')
+          .attr('x', iconX).attr('y', iconY)
+          .attr('width', iconSize).attr('height', iconSize)
+          .attr('viewBox', '0 0 16 16')
+          .append('path')
+          .attr('d', ico.path)
+          .attr('fill', ico.color)
+          .attr('stroke', 'none');
 
         g.append('text')
-          .attr('x', node.x - nw / 2 + 28)
+          .attr('x', node.x - nw / 2 + 30)
           .attr('y', node.y + 4)
           .attr('fill', '#e2e8f0')
           .attr('font-size', '11px')
@@ -246,7 +265,7 @@
             {#each group.commands as c}
               <div>
                 <code class="block text-xs font-semibold text-primary-z6 mb-0.5">{c.cmd}</code>
-                <span class="text-[11px] text-surface-z4 leading-tight">{c.desc}</span>
+                <span class="text-xs text-surface-z5 leading-tight">{c.desc}</span>
               </div>
             {/each}
           </div>
@@ -264,7 +283,7 @@
       {#each daemonCommands as d}
         <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-4">
           <code class="block text-xs font-semibold text-primary-z6 mb-1">{d.cmd}</code>
-          <span class="text-[11px] text-surface-z4">{d.desc}</span>
+          <span class="text-xs text-surface-z5">{d.desc}</span>
         </div>
       {/each}
     </div>
@@ -273,7 +292,7 @@
       <span class="text-lg mt-0.5">🍺</span>
       <div>
         <p class="text-xs font-semibold text-surface-z7 mb-1">Homebrew service</p>
-        <p class="text-xs text-surface-z4">Use <code class="bg-surface-z3 px-1 rounded">brew services start sensei</code> to run senseid as a login service.</p>
+        <p class="text-xs text-surface-z5">Use <code class="bg-surface-z3 px-1 rounded">brew services start sensei</code> to run senseid as a login service.</p>
       </div>
     </div>
   </section>
@@ -289,7 +308,7 @@
           <span class="text-lg mt-0.5">{t.icon}</span>
           <div>
             <code class="text-xs font-bold text-primary-z6">{t.tool}</code>
-            <p class="text-[11px] text-surface-z4 mt-0.5">{t.desc}</p>
+            <p class="text-xs text-surface-z5 mt-0.5">{t.desc}</p>
           </div>
         </div>
       {/each}
@@ -309,7 +328,7 @@
       ] as comp}
         <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-4">
           <code class="text-xs font-bold text-{comp.color}-z6">{comp.name}</code>
-          <p class="text-[11px] text-surface-z4 mt-1">{comp.desc}</p>
+          <p class="text-xs text-surface-z6 mt-1">{comp.desc}</p>
         </div>
       {/each}
     </div>
