@@ -4,7 +4,6 @@ use std::path::Path;
 use super::executor::TaskContext;
 use super::{Task, TaskKind};
 use crate::types::{NodeKind, HierarchyNode};
-use crate::indexer::graph::compute_complexity;
 use crate::adapters;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
@@ -145,14 +144,13 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         let rel_str = rel.to_string_lossy();
         if exclude.is_match(&*rel_str) { continue; }
 
-        // Check if this file has a supported extension (code or doc)
+        // Skip binary files and files without extensions
         let ext = entry.path().extension()
             .and_then(|e| e.to_str())
-            .map(|e| format!(".{}", e))
-            .unwrap_or_default();
-        let is_code = adapters::adapter_for_ext(&ext).is_some();
-        let is_doc = ext == ".md" || ext == ".mdx";
-        if !is_code && !is_doc { continue; }
+            .unwrap_or("")
+            .to_string();
+        if ext.is_empty() { continue; }
+        if is_binary_ext(&ext) { continue; }
 
         if let Some(parent) = entry.path().parent() {
             dirs.insert(parent.to_path_buf());
@@ -186,11 +184,10 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
                 if !entry.path().is_file() { continue; }
                 let ext = entry.path().extension()
                     .and_then(|e| e.to_str())
-                    .map(|e| format!(".{}", e))
-                    .unwrap_or_default();
-                let is_code = adapters::adapter_for_ext(&ext).is_some();
-                let is_doc = ext == ".md" || ext == ".mdx";
-                if !is_code && !is_doc { continue; }
+                    .unwrap_or("")
+                    .to_string();
+                if ext.is_empty() { continue; }
+                if is_binary_ext(&ext) { continue; }
 
                 let rel_dir_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
                 let mod_id = format!("mod:{}:{}", repo_id, rel_dir_name);
@@ -297,175 +294,111 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
 
 // ── Process File ──────────────────────────────────────────────────────────
 
-/// Parse a single file using the appropriate adapter. Creates nodes + unresolved refs.
+/// Parse a single file using file_processor, then write results to graph.
 pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let file_path = Path::new(&task.path);
     let repo_id = &task.repo_id;
+    let abs_path = &task.path;
 
-    // Get repo path for relative path computation
     let repo_path_str = {
         let store = ctx.store().await;
         store.get_project(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
     };
-    let repo_path = Path::new(&repo_path_str);
 
-    let abs_path = task.path.clone();
-    let rel_path = file_path.strip_prefix(repo_path)
-        .unwrap_or(file_path)
-        .to_string_lossy().to_string();
-
-    let ext = file_path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| format!(".{}", e))
-        .unwrap_or_default();
-
-    let is_doc = ext == ".md" || ext == ".mdx";
-
-    // Read file content
-    let content = std::fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read {}: {}", abs_path, e))?;
+    // Use the testable file processor — no DB dependency in extraction
+    let result = super::file_processor::process_file(abs_path, &repo_path_str, repo_id)?;
 
     let graph = ctx.graph().await;
 
     // Delete old nodes for this file (handles modify case)
-    graph.delete_by_file(&abs_path, repo_id).ok();
-    graph.clear_unresolved_refs_from(&format!("file:{}", abs_path), repo_id).ok();
+    graph.delete_by_file(abs_path, repo_id).ok();
+    graph.clear_unresolved_refs_from(&result.file_id, repo_id).ok();
 
-    if is_doc {
-        // Doc/extension processing
-        process_doc_file(&graph, &abs_path, &rel_path, &content, repo_id)?;
-    } else {
-        // Code file processing via adapter
-        let adapter = adapters::adapter_for_ext(&ext)
-            .ok_or_else(|| format!("No adapter for {}", ext))?;
+    // Write file node
+    let node_kind = NodeKind::from_str(&result.kind);
+    let mut file_node = HierarchyNode::group(
+        result.file_id.clone(), result.title.clone().unwrap_or_else(|| result.rel_path.clone()),
+        node_kind.clone(), repo_id.to_string(),
+    );
+    file_node.file = Some(abs_path.to_string());
+    file_node.tags = Some(result.tags.clone());
+    file_node.level = result.language.clone();
+    file_node.doc_type = result.doc_type.clone();
+    file_node.doc_category = result.doc_category.clone();
 
-        let parsed = adapter.parse(&content, &rel_path);
-        let file_lines: Vec<&str> = content.lines().collect();
+    // Wire to module (parent)
+    if let Some(ref mod_id) = task.module_id {
+        file_node.parent_id = Some(mod_id.clone());
+    }
+    graph.merge_node(&file_node).ok();
 
-        // Create File node with src/test/e2e tag
-        let file_id = format!("file:{}", abs_path);
-        let module_name = rel_path.rsplit_once('.').map(|(n, _)| n).unwrap_or(&rel_path)
-            .replace('\\', "/");
-        let file_tag = classify_file_tag(&rel_path);
-        {
-            let mut file_node = HierarchyNode::group(file_id.clone(), module_name, NodeKind::File, repo_id.to_string());
-            file_node.file = Some(abs_path.clone());
-            file_node.level = Some(parsed.language.clone());
-            file_node.tags = Some(file_tag.clone());
+    // Wire file to module via edge
+    if let Some(ref mod_id) = task.module_id {
+        graph.merge_edge(mod_id, &result.file_id, "CONTAINS_FILE").ok();
+    }
+
+    // For doc/extension files: create category node + wire to repo
+    if result.kind == "doc" || result.kind == "extension" {
+        if let Some(ref doc_type) = result.doc_type {
+            let cat_id = format!("doc:{}:{}", repo_id, doc_type);
+            let repo_node_id = format!("repo:{}", repo_id);
+            let mut cat_node = HierarchyNode::group(
+                cat_id.clone(), capitalize(doc_type), NodeKind::Doc, repo_id.to_string(),
+            );
+            cat_node.tags = Some("doc".into());
+            cat_node.doc_type = Some(doc_type.clone());
+            cat_node.parent_id = Some(repo_node_id.clone());
+            graph.merge_node(&cat_node).ok();
+            graph.merge_edge(&repo_node_id, &cat_id, "CONTAINS_DOC").ok();
+            graph.merge_edge(&cat_id, &result.file_id, "CONTAINS_DOC").ok();
+
+            // Update file parent to category
+            file_node.parent_id = Some(cat_id);
             graph.merge_node(&file_node).ok();
         }
+    }
 
-        // Wire file to module
-        if let Some(ref mod_id) = task.module_id {
-            graph.merge_edge(mod_id, &file_id, "CONTAINS_FILE").ok();
-        }
-
-        // Process symbols
-        for sym in &parsed.symbols {
-            let node_kind = NodeKind::from_symbol_kind(&sym.kind);
-            if node_kind.is_function_like() {
-                let id = format!("fn:{}:{}:{}", abs_path, sym.name, sym.line_start);
-                let body = file_lines
-                    .get((sym.line_start as usize).saturating_sub(1)..sym.line_end as usize)
-                    .map(|lines| lines.join("\n"))
-                    .unwrap_or_default();
-                let complexity = compute_complexity(&body);
-
-                let node = HierarchyNode::function(
-                    id.clone(), sym.name.clone(), node_kind,
-                    abs_path.clone(), sym.line_start,
-                    sym.signature.clone(), Some(body), sym.docstring.clone(),
-                    complexity, repo_id.to_string(),
-                );
-                graph.merge_node(&node).ok();
-                graph.merge_edge(&file_id, &id, "EXPORTS_FN").ok();
-
-                // Wire to module
-                if let Some(ref mod_id) = task.module_id {
-                    graph.merge_edge(mod_id, &id, "CONTAINS_FN").ok();
-                }
-
-                // Store unresolved parent ref for HAS_METHOD resolution
-                if let Some(ref parent_name) = sym.parent {
-                    graph.add_unresolved_ref(&id, "parent", parent_name, repo_id).ok();
-                }
-            } else {
-                let id = format!("type:{}:{}:{}", abs_path, sym.name, sym.line_start);
-                let mut type_node = HierarchyNode::group(id.clone(), sym.name.clone(), node_kind, repo_id.to_string());
-                type_node.file = Some(abs_path.clone());
-                type_node.line = sym.line_start;
-                graph.merge_node(&type_node).ok();
-                graph.merge_edge(&file_id, &id, "EXPORTS_TYPE").ok();
+    // Write symbol nodes
+    for sym in &result.symbols {
+        let sym_kind = NodeKind::from_str(&sym.kind);
+        if sym_kind.is_function_like() {
+            let node = HierarchyNode::function(
+                sym.id.clone(), sym.name.clone(), sym_kind,
+                abs_path.to_string(), sym.line,
+                sym.signature.clone(), None, None, // body stored separately if needed
+                sym.complexity.unwrap_or(1), repo_id.to_string(),
+            );
+            graph.merge_node(&node).ok();
+            graph.merge_edge(&result.file_id, &sym.id, "EXPORTS_FN").ok();
+            if let Some(ref mod_id) = task.module_id {
+                graph.merge_edge(mod_id, &sym.id, "CONTAINS_FN").ok();
             }
-        }
-
-        // Store unresolved import references
-        for imp in &parsed.imports {
-            graph.add_unresolved_ref(&file_id, "imports", &imp.target_path, repo_id).ok();
-        }
-
-        // Store unresolved call references
-        for edge in &parsed.edges {
-            let caller_id = format!("fn:{}:{}:", abs_path, edge.caller_name); // partial match
-            graph.add_unresolved_ref(&caller_id, "calls", &edge.callee_name, repo_id).ok();
+        } else {
+            let mut type_node = HierarchyNode::group(sym.id.clone(), sym.name.clone(), sym_kind, repo_id.to_string());
+            type_node.file = Some(abs_path.to_string());
+            type_node.line = sym.line;
+            graph.merge_node(&type_node).ok();
+            graph.merge_edge(&result.file_id, &sym.id, "EXPORTS_TYPE").ok();
         }
     }
 
-    Ok(())
-}
-
-/// Process a markdown/mdx doc file.
-fn process_doc_file(graph: &crate::indexer::graph::GraphDb, abs_path: &str, rel_path: &str, content: &str, repo_id: &str) -> Result<(), String> {
-    let frontmatter = crate::indexer::doc_indexer::parse_frontmatter_pub(content);
-    let classification = crate::indexer::doc_indexer::classify_doc_pub(rel_path, &frontmatter);
-
-    let title = frontmatter.title
-        .or(frontmatter.name)
-        .or_else(|| crate::indexer::doc_indexer::extract_title(content))
-        .unwrap_or_else(|| rel_path.to_string());
-
-    // Ensure doc category node exists (e.g. doc:sensei:design)
-    let doc_type = &classification.doc_type;
-    let cat_id = format!("doc:{}:{}", repo_id, doc_type);
-    let repo_node_id = format!("repo:{}", repo_id);
-    {
-        let mut cat_node = HierarchyNode::group(
-            cat_id.clone(),
-            capitalize(doc_type),
-            NodeKind::Doc,
-            repo_id.to_string(),
-        );
-        cat_node.tags = Some("doc".into());
-        cat_node.doc_type = Some(doc_type.clone());
-        cat_node.parent_id = Some(repo_node_id.clone());
-        // merge_node is INSERT OR REPLACE — safe to call multiple times
-        graph.merge_node(&cat_node).ok();
-        graph.merge_edge(&repo_node_id, &cat_id, "CONTAINS_DOC").ok();
+    // Store unresolved references for resolve_edges barrier
+    for imp in &result.unresolved_imports {
+        graph.add_unresolved_ref(&result.file_id, "imports", imp, repo_id).ok();
     }
-
-    let doc_id = format!("file:{}", abs_path);
-    let mut node = HierarchyNode::doc(
-        doc_id.clone(), title, classification.kind, abs_path.to_string(),
-        Some(classification.doc_type.clone()), classification.doc_category, repo_id.to_string(),
-    );
-    node.tags = Some("doc".into());
-    node.parent_id = Some(cat_id.clone());
-    graph.merge_node(&node)?;
-    // Wire doc to its category
-    graph.merge_edge(&cat_id, &doc_id, "CONTAINS_DOC").ok();
-
-    // Store unresolved file refs for later COVERS resolution
-    let file_refs = crate::indexer::doc_indexer::extract_file_refs(content, &graph.db_path().map(|p| p.parent().unwrap_or(p).to_string_lossy().to_string()).unwrap_or_default());
-    for file_ref in &file_refs {
-        graph.add_unresolved_ref(&doc_id, "covers", file_ref, repo_id).ok();
+    for call in &result.unresolved_calls {
+        let caller_id = format!("fn:{}:{}:", abs_path, call.caller_name);
+        graph.add_unresolved_ref(&caller_id, "calls", &call.callee_name, repo_id).ok();
     }
-
-    // Store unresolved fn mentions
-    let fn_mentions = crate::indexer::doc_indexer::extract_fn_mentions(content);
-    for fn_name in &fn_mentions {
-        graph.add_unresolved_ref(&doc_id, "mentions_fn", fn_name, repo_id).ok();
+    for pref in &result.parent_refs {
+        graph.add_unresolved_ref(&pref.method_id, "parent", &pref.parent_name, repo_id).ok();
+    }
+    for fref in &result.file_refs {
+        graph.add_unresolved_ref(&result.file_id, "covers", fref, repo_id).ok();
+    }
+    for fname in &result.fn_mentions {
+        graph.add_unresolved_ref(&result.file_id, "mentions_fn", fname, repo_id).ok();
     }
 
     Ok(())
@@ -911,24 +844,12 @@ fn capitalize(s: &str) -> String {
 }
 
 /// Classify a file as src, test, or e2e based on path/name patterns.
-fn classify_file_tag(rel_path: &str) -> String {
-    let lower = rel_path.to_lowercase();
-    // E2E tests
-    if lower.contains("/e2e/") || lower.contains(".e2e.") || lower.contains("/e2e_") {
-        return "e2e".into();
-    }
-    // Unit/integration tests
-    if lower.contains(".spec.") || lower.contains(".test.")
-        || lower.contains("_test.") || lower.contains("/test/") || lower.contains("/tests/")
-        || lower.contains("__tests__") || lower.contains("_spec.")
-    {
-        return "test".into();
-    }
-    // Test fixtures/mocks
-    if lower.contains("/fixtures/") || lower.contains("/__mocks__/") || lower.contains("/mock") {
-        return "test".into();
-    }
-    "src".into()
+fn is_binary_ext(ext: &str) -> bool {
+    ["png","jpg","jpeg","gif","ico","svg","woff","woff2","ttf","eot",
+     "zip","tar","gz","bz2","xz","7z","rar",
+     "exe","dll","so","dylib","o","a","lib",
+     "db","sqlite","sqlite3","profraw",
+     "wasm","map","DS_Store","lock"].contains(&ext)
 }
 
 fn build_globset() -> globset::GlobSet {
