@@ -27,6 +27,10 @@ pub fn start_root_watcher(
 ) -> Result<(), String> {
     let root_clone = root.clone();
 
+    // Capture tokio handle BEFORE spawning the OS thread
+    let rt = tokio::runtime::Handle::try_current()
+        .map_err(|_| "Root watcher requires tokio runtime".to_string())?;
+
     std::thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
@@ -46,14 +50,6 @@ pub fn start_root_watcher(
         // Sort projects by path length (longest first) for best prefix match
         let mut sorted_projects: Vec<(String, String)> = projects.into_iter().collect();
         sorted_projects.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-
-        let rt = match tokio::runtime::Handle::try_current() {
-            Ok(h) => h,
-            Err(_) => {
-                tracing::warn!("Root watcher: no tokio runtime — creating standalone runtime");
-                return; // Can't run without async runtime
-            }
-        };
 
         loop {
             match rx.recv_timeout(Duration::from_millis(DEBOUNCE_MS)) {

@@ -49,6 +49,16 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         ctx.queue.enqueue(repo_task).await;
     }
 
+    // Start a root watcher for this scanned root
+    let projects_map: std::collections::HashMap<String, String> = repos.iter()
+        .map(|(name, path)| (name.clone(), path.clone()))
+        .collect();
+    crate::watcher::root_watcher::start_root_watcher(
+        std::path::PathBuf::from(&task.path),
+        ctx.queue.clone(),
+        projects_map,
+    ).ok();
+
     tracing::info!("scan_root: {} repos found in {}", repos.len(), task.path);
     Ok(())
 }
