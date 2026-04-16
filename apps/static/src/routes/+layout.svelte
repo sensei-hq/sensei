@@ -12,6 +12,7 @@
   const GITHUB = 'https://github.com/mizukisu/sensei';
 
   const navItems = [
+    { label: 'Home',         value: 'home',         href: '#',             icon: 'i-solar-home-2-bold-duotone' },
     { label: 'Setup',        value: 'setup',        href: '#setup',        icon: 'i-solar-download-square-bold-duotone' },
     { label: 'Features',     value: 'features',     href: '#features',     icon: 'i-solar-star-bold-duotone' },
     { label: 'Architecture', value: 'architecture', href: '#architecture', icon: 'i-solar-graph-bold-duotone' },
@@ -61,6 +62,6 @@
   </div>
 
   <!-- Floating nav -->
-  <FloatingNavigation items={navItems} position="right" size="sm" />
+  <FloatingNavigation items={navItems} position="right" size="sm" label="Navigation" />
 
 </div>
