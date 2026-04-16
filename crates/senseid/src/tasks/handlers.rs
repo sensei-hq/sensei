@@ -307,99 +307,11 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     };
 
     // Use the testable file processor — no DB dependency in extraction
-    let result = super::file_processor::process_file(abs_path, &repo_path_str, repo_id)?;
+    let result = super::processors::process_file(abs_path, &repo_path_str, repo_id)?;
 
+    // Write to graph via the separated graph writer
     let graph = ctx.graph().await;
-
-    // Delete old nodes for this file (handles modify case)
-    graph.delete_by_file(abs_path, repo_id).ok();
-    graph.clear_unresolved_refs_from(&result.file_id, repo_id).ok();
-
-    // Write file node
-    let node_kind = NodeKind::from_str(&result.kind);
-    let mut file_node = HierarchyNode::group(
-        result.file_id.clone(), result.title.clone().unwrap_or_else(|| result.rel_path.clone()),
-        node_kind.clone(), repo_id.to_string(),
-    );
-    file_node.file = Some(abs_path.to_string());
-    file_node.tags = Some(result.tags.clone());
-    file_node.level = result.language.clone();
-    file_node.doc_type = result.doc_type.clone();
-    file_node.doc_category = result.doc_category.clone();
-
-    // Wire to module (parent)
-    if let Some(ref mod_id) = task.module_id {
-        file_node.parent_id = Some(mod_id.clone());
-    }
-    graph.merge_node(&file_node).ok();
-
-    // Wire file to module via edge
-    if let Some(ref mod_id) = task.module_id {
-        graph.merge_edge(mod_id, &result.file_id, "CONTAINS_FILE").ok();
-    }
-
-    // For doc/extension files: create category node + wire to repo
-    if result.kind == "doc" || result.kind == "extension" {
-        if let Some(ref doc_type) = result.doc_type {
-            let cat_id = format!("doc:{}:{}", repo_id, doc_type);
-            let repo_node_id = format!("repo:{}", repo_id);
-            let mut cat_node = HierarchyNode::group(
-                cat_id.clone(), capitalize(doc_type), NodeKind::Doc, repo_id.to_string(),
-            );
-            cat_node.tags = Some("doc".into());
-            cat_node.doc_type = Some(doc_type.clone());
-            cat_node.parent_id = Some(repo_node_id.clone());
-            graph.merge_node(&cat_node).ok();
-            graph.merge_edge(&repo_node_id, &cat_id, "CONTAINS_DOC").ok();
-            graph.merge_edge(&cat_id, &result.file_id, "CONTAINS_DOC").ok();
-
-            // Update file parent to category
-            file_node.parent_id = Some(cat_id);
-            graph.merge_node(&file_node).ok();
-        }
-    }
-
-    // Write symbol nodes
-    for sym in &result.symbols {
-        let sym_kind = NodeKind::from_str(&sym.kind);
-        if sym_kind.is_function_like() {
-            let node = HierarchyNode::function(
-                sym.id.clone(), sym.name.clone(), sym_kind,
-                abs_path.to_string(), sym.line,
-                sym.signature.clone(), None, None, // body stored separately if needed
-                sym.complexity.unwrap_or(1), repo_id.to_string(),
-            );
-            graph.merge_node(&node).ok();
-            graph.merge_edge(&result.file_id, &sym.id, "EXPORTS_FN").ok();
-            if let Some(ref mod_id) = task.module_id {
-                graph.merge_edge(mod_id, &sym.id, "CONTAINS_FN").ok();
-            }
-        } else {
-            let mut type_node = HierarchyNode::group(sym.id.clone(), sym.name.clone(), sym_kind, repo_id.to_string());
-            type_node.file = Some(abs_path.to_string());
-            type_node.line = sym.line;
-            graph.merge_node(&type_node).ok();
-            graph.merge_edge(&result.file_id, &sym.id, "EXPORTS_TYPE").ok();
-        }
-    }
-
-    // Store unresolved references for resolve_edges barrier
-    for imp in &result.unresolved_imports {
-        graph.add_unresolved_ref(&result.file_id, "imports", imp, repo_id).ok();
-    }
-    for call in &result.unresolved_calls {
-        let caller_id = format!("fn:{}:{}:", abs_path, call.caller_name);
-        graph.add_unresolved_ref(&caller_id, "calls", &call.callee_name, repo_id).ok();
-    }
-    for pref in &result.parent_refs {
-        graph.add_unresolved_ref(&pref.method_id, "parent", &pref.parent_name, repo_id).ok();
-    }
-    for fref in &result.file_refs {
-        graph.add_unresolved_ref(&result.file_id, "covers", fref, repo_id).ok();
-    }
-    for fname in &result.fn_mentions {
-        graph.add_unresolved_ref(&result.file_id, "mentions_fn", fname, repo_id).ok();
-    }
+    super::processors::write_to_graph(&graph, &result, repo_id, task.module_id.as_deref())?;
 
     Ok(())
 }
@@ -835,13 +747,6 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().chain(c).collect(),
-    }
-}
 
 /// Classify a file as src, test, or e2e based on path/name patterns.
 fn is_binary_ext(ext: &str) -> bool {
