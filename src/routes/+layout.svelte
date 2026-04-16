@@ -10,7 +10,7 @@
 
   let { children } = $props();
 
-  const GITHUB = 'https://github.com/mizukisu/sensei';
+  const GITHUB = 'https://github.com/mizukisu/sensei-dev';
 
   const navItems = [
     { label: 'Home',         value: 'home',         href: '#',             icon: 'i-solar-home-2-bold-duotone' },

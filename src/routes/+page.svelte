@@ -4,7 +4,7 @@
   import { onMount } from 'svelte';
   import * as d3 from 'd3';
 
-  const GITHUB = 'https://github.com/mizukisu/sensei';
+  const GITHUB = 'https://github.com/mizukisu/sensei-dev';
   const RELEASES = 'https://github.com/mizukisu/sensei-releases';
   const RELEASE_BASE = `${RELEASES}/releases/latest/download`;
 
