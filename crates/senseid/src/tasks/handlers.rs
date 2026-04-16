@@ -113,7 +113,7 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     let mut root_pkg = HierarchyNode::group(root_pkg_id.clone(), "(root)".into(), NodeKind::Package, repo_id.to_string());
     root_pkg.level = Some("root".into());
     root_pkg.parent_id = Some(repo_node_id.clone());
-    root_pkg.tags = Some("code".into());
+    root_pkg.tags = Some("src".into());
     graph.merge_node(&root_pkg).ok();
     graph.merge_edge(&repo_node_id, &root_pkg_id, "CONTAINS_PKG").ok();
 
@@ -416,12 +416,35 @@ fn process_doc_file(graph: &crate::indexer::graph::GraphDb, abs_path: &str, rel_
         .or_else(|| crate::indexer::doc_indexer::extract_title(content))
         .unwrap_or_else(|| rel_path.to_string());
 
+    // Ensure doc category node exists (e.g. doccat:sensei:design)
+    let doc_type = &classification.doc_type;
+    let cat_id = format!("doccat:{}:{}", repo_id, doc_type);
+    let repo_node_id = format!("repo:{}", repo_id);
+    {
+        let mut cat_node = HierarchyNode::group(
+            cat_id.clone(),
+            capitalize(doc_type),
+            NodeKind::DocCategory,
+            repo_id.to_string(),
+        );
+        cat_node.tags = Some("doc".into());
+        cat_node.doc_type = Some(doc_type.clone());
+        cat_node.parent_id = Some(repo_node_id.clone());
+        // merge_node is INSERT OR REPLACE — safe to call multiple times
+        graph.merge_node(&cat_node).ok();
+        graph.merge_edge(&repo_node_id, &cat_id, "CONTAINS_DOC").ok();
+    }
+
     let doc_id = format!("doc:{}", abs_path);
-    let node = HierarchyNode::doc(
+    let mut node = HierarchyNode::doc(
         doc_id.clone(), title, classification.kind, abs_path.to_string(),
-        Some(classification.doc_type), classification.doc_category, repo_id.to_string(),
+        Some(classification.doc_type.clone()), classification.doc_category, repo_id.to_string(),
     );
+    node.tags = Some("doc".into());
+    node.parent_id = Some(cat_id.clone());
     graph.merge_node(&node)?;
+    // Wire doc to its category
+    graph.merge_edge(&cat_id, &doc_id, "CONTAINS_DOC").ok();
 
     // Store unresolved file refs for later COVERS resolution
     let file_refs = crate::indexer::doc_indexer::extract_file_refs(content, &graph.db_path().map(|p| p.parent().unwrap_or(p).to_string_lossy().to_string()).unwrap_or_default());
@@ -868,6 +891,14 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().chain(c).collect(),
+    }
+}
 
 /// Classify a file as src, test, or e2e based on path/name patterns.
 fn classify_file_tag(rel_path: &str) -> String {
