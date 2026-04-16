@@ -19,7 +19,7 @@ cask "sensei-app" do
 
   name "Sensei"
   desc "AI development intelligence desktop app"
-  homepage REPO_URL
+  homepage "https://github.com/#{GITHUB_ORG}/sensei-dev"
 
   app "Sensei.app"
 

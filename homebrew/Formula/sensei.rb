@@ -9,7 +9,7 @@ class Sensei < Formula
   REPO_URL = "https://github.com/#{GITHUB_ORG}/#{REPO_NAME}".freeze
 
   desc "AI development intelligence — CLI for indexing, MCP server, and telemetry"
-  homepage REPO_URL
+  homepage "https://github.com/#{GITHUB_ORG}/sensei-dev"
   version "0.1.0"
 
   # Release archives (produced by `bun run build` + packaging)
