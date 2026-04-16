@@ -416,15 +416,15 @@ fn process_doc_file(graph: &crate::indexer::graph::GraphDb, abs_path: &str, rel_
         .or_else(|| crate::indexer::doc_indexer::extract_title(content))
         .unwrap_or_else(|| rel_path.to_string());
 
-    // Ensure doc category node exists (e.g. doccat:sensei:design)
+    // Ensure doc category node exists (e.g. doc:sensei:design)
     let doc_type = &classification.doc_type;
-    let cat_id = format!("doccat:{}:{}", repo_id, doc_type);
+    let cat_id = format!("doc:{}:{}", repo_id, doc_type);
     let repo_node_id = format!("repo:{}", repo_id);
     {
         let mut cat_node = HierarchyNode::group(
             cat_id.clone(),
             capitalize(doc_type),
-            NodeKind::DocCategory,
+            NodeKind::Doc,
             repo_id.to_string(),
         );
         cat_node.tags = Some("doc".into());
@@ -435,7 +435,7 @@ fn process_doc_file(graph: &crate::indexer::graph::GraphDb, abs_path: &str, rel_
         graph.merge_edge(&repo_node_id, &cat_id, "CONTAINS_DOC").ok();
     }
 
-    let doc_id = format!("doc:{}", abs_path);
+    let doc_id = format!("file:{}", abs_path);
     let mut node = HierarchyNode::doc(
         doc_id.clone(), title, classification.kind, abs_path.to_string(),
         Some(classification.doc_type.clone()), classification.doc_category, repo_id.to_string(),
@@ -467,7 +467,7 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let graph = ctx.graph().await;
     graph.delete_by_file(&task.path, &task.repo_id)?;
     graph.clear_unresolved_refs_from(&format!("file:{}", task.path), &task.repo_id).ok();
-    graph.clear_unresolved_refs_from(&format!("doc:{}", task.path), &task.repo_id).ok();
+    // file: prefix used for both code and doc leaf files
     tracing::info!("delete_file: {}", task.path);
     Ok(())
 }
