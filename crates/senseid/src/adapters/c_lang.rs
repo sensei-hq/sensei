@@ -5,7 +5,6 @@ pub struct CAdapter;
 
 impl LanguageAdapter for CAdapter {
     fn language(&self) -> &str { "c" }
-    fn extensions(&self) -> &[&str] { &[".c", ".h", ".cpp", ".hpp", ".cc"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         // Skip very large generated files (e.g. tree-sitter parsers)

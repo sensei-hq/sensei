@@ -7,7 +7,6 @@ pub struct SqlAdapter;
 
 impl LanguageAdapter for SqlAdapter {
     fn language(&self) -> &str { "sql" }
-    fn extensions(&self) -> &[&str] { &[".sql"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let dialect = GenericDialect {};

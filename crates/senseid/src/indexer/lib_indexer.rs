@@ -48,7 +48,7 @@ pub fn index_lib_content(
 /// Fetch and store dependency versions from a project's manifest files.
 pub fn extract_dep_versions(
     store: &Store,
-    repo_id: &str,
+    _repo_id: &str,
     repo_path: &str,
 ) -> Result<Vec<DepVersion>, String> {
     let repo = std::path::Path::new(repo_path);

@@ -5,6 +5,7 @@ use crate::indexer::graph::GraphDb;
 
 /// Discover and index llms.txt files from a repo.
 /// Also generates llms-style docs from the call graph for repos without llms.txt.
+#[allow(dead_code)]
 pub fn index_llms(
     store: &Store,
     graph_db: &GraphDb,
@@ -55,6 +56,7 @@ pub fn index_llms(
 
 /// Find llms.txt files in standard locations within a repo.
 /// Returns (component_name, file_path) pairs.
+#[allow(dead_code)]
 fn discover_llms_files(repo: &Path) -> Vec<(String, String)> {
     let mut found = Vec::new();
 
@@ -119,6 +121,7 @@ fn discover_llms_files(repo: &Path) -> Vec<(String, String)> {
 
 /// Generate llms-style documentation from the indexed call graph.
 /// Creates an overview doc with exported functions, types, and their signatures.
+#[allow(dead_code)]
 fn generate_llms_from_graph(
     store: &Store,
     graph_db: &GraphDb,
