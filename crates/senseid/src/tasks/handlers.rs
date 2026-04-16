@@ -91,44 +91,31 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     graph.clear_hierarchy(repo_id).ok();
     graph.clear_unresolved_refs(repo_id).ok();
 
-    // Create virtual grouping nodes
+    // Create repo node — packages and docs wire directly to it (no code/docs grouping layer)
     let repo_node_id = format!("repo:{}", repo_id);
-    let code_group_id = format!("code:{}", repo_id);
-    let docs_group_id = format!("docs:{}", repo_id);
-
     graph.merge_node(&HierarchyNode::group(repo_node_id.clone(), repo_id.to_string(), NodeKind::Repo, repo_id.to_string())).ok();
-    graph.merge_node(&{
-        let mut n = HierarchyNode::group(code_group_id.clone(), "code".into(), NodeKind::CodeGroup, repo_id.to_string());
-        n.parent_id = Some(repo_node_id.clone());
-        n
-    }).ok();
-    graph.merge_node(&{
-        let mut n = HierarchyNode::group(docs_group_id.clone(), "docs".into(), NodeKind::DocGroup, repo_id.to_string());
-        n.parent_id = Some(repo_node_id.clone());
-        n
-    }).ok();
-    graph.merge_edge(&repo_node_id, &code_group_id, "CONTAINS_GROUP").ok();
-    graph.merge_edge(&repo_node_id, &docs_group_id, "CONTAINS_GROUP").ok();
 
-    // Detect workspace members → package nodes
+    // Detect workspace members → package nodes (parent = repo, tagged as code)
     let workspace_members = crate::config::detector::detect_workspace_members(repo_path);
     for pkg in &workspace_members {
         let pkg_id = format!("pkg:{}:{}", repo_id, pkg.name);
         let mut node = HierarchyNode::group(pkg_id.clone(), pkg.name.clone(), NodeKind::Package, repo_id.to_string());
         node.level = Some(pkg.pkg_type.clone());
         node.file = Some(pkg.path.clone());
-        node.parent_id = Some(code_group_id.clone());
+        node.parent_id = Some(repo_node_id.clone());
+        node.tags = Some("src".into());
         graph.merge_node(&node).ok();
-        graph.merge_edge(&code_group_id, &pkg_id, "CONTAINS_PKG").ok();
+        graph.merge_edge(&repo_node_id, &pkg_id, "CONTAINS_PKG").ok();
     }
 
     // Virtual root package for files not under any workspace member
     let root_pkg_id = format!("pkg:{}:(root)", repo_id);
     let mut root_pkg = HierarchyNode::group(root_pkg_id.clone(), "(root)".into(), NodeKind::Package, repo_id.to_string());
     root_pkg.level = Some("root".into());
-    root_pkg.parent_id = Some(code_group_id.clone());
+    root_pkg.parent_id = Some(repo_node_id.clone());
+    root_pkg.tags = Some("code".into());
     graph.merge_node(&root_pkg).ok();
-    graph.merge_edge(&code_group_id, &root_pkg_id, "CONTAINS_PKG").ok();
+    graph.merge_edge(&repo_node_id, &root_pkg_id, "CONTAINS_PKG").ok();
 
     drop(graph); // release lock before enqueuing
 
@@ -347,14 +334,16 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         let parsed = adapter.parse(&content, &rel_path);
         let file_lines: Vec<&str> = content.lines().collect();
 
-        // Create File node
+        // Create File node with src/test/e2e tag
         let file_id = format!("file:{}", abs_path);
         let module_name = rel_path.rsplit_once('.').map(|(n, _)| n).unwrap_or(&rel_path)
             .replace('\\', "/");
+        let file_tag = classify_file_tag(&rel_path);
         {
             let mut file_node = HierarchyNode::group(file_id.clone(), module_name, NodeKind::File, repo_id.to_string());
             file_node.file = Some(abs_path.clone());
             file_node.level = Some(parsed.language.clone());
+            file_node.tags = Some(file_tag.clone());
             graph.merge_node(&file_node).ok();
         }
 
@@ -879,6 +868,27 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/// Classify a file as src, test, or e2e based on path/name patterns.
+fn classify_file_tag(rel_path: &str) -> String {
+    let lower = rel_path.to_lowercase();
+    // E2E tests
+    if lower.contains("/e2e/") || lower.contains(".e2e.") || lower.contains("/e2e_") {
+        return "e2e".into();
+    }
+    // Unit/integration tests
+    if lower.contains(".spec.") || lower.contains(".test.")
+        || lower.contains("_test.") || lower.contains("/test/") || lower.contains("/tests/")
+        || lower.contains("__tests__") || lower.contains("_spec.")
+    {
+        return "test".into();
+    }
+    // Test fixtures/mocks
+    if lower.contains("/fixtures/") || lower.contains("/__mocks__/") || lower.contains("/mock") {
+        return "test".into();
+    }
+    "src".into()
+}
 
 fn build_globset() -> globset::GlobSet {
     let patterns = &[

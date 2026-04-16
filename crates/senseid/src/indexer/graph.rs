@@ -170,7 +170,7 @@ impl GraphDb {
     /// Clear all hierarchy nodes (packages, modules, grouping nodes, doc containment) for a project.
     /// Preserves function/type/file/doc leaf nodes.
     pub fn clear_hierarchy(&self, project: &str) -> Result<(), String> {
-        let hierarchy_kinds = "('repo','code-group','doc-group','package','module')";
+        let hierarchy_kinds = "('repo','package','module')";
         self.conn.execute(
             &format!("DELETE FROM edges WHERE from_id IN (SELECT id FROM hierarchy_nodes WHERE project = ?1 AND kind IN {}) OR to_id IN (SELECT id FROM hierarchy_nodes WHERE project = ?1 AND kind IN {})", hierarchy_kinds, hierarchy_kinds),
             params![project],
@@ -327,7 +327,7 @@ impl GraphDb {
     /// Get all nodes for a project.
     pub fn get_nodes(&self, project: &str) -> Result<Vec<crate::types::GraphNode>, String> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, kind, COALESCE(file,''), line, complexity, doc_type, level, parent_id FROM hierarchy_nodes WHERE project = ?1"
+            "SELECT id, name, kind, COALESCE(file,''), line, complexity, doc_type, level, parent_id, tags FROM hierarchy_nodes WHERE project = ?1"
         ).map_err(|e| e.to_string())?;
         let rows = stmt.query_map(params![project], |row| {
             Ok(crate::types::GraphNode {
@@ -340,6 +340,7 @@ impl GraphDb {
                 doc_type: row.get::<_, Option<String>>(6)?,
                 level: row.get::<_, Option<String>>(7)?,
                 parent_id: row.get::<_, Option<String>>(8)?,
+                tags: row.get::<_, Option<String>>(9)?,
             })
         }).map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())

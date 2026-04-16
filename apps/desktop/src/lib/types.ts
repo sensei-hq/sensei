@@ -198,6 +198,7 @@ export interface GraphNode {
   doc_type?: string;
   level?: string;
   parent_id?: string;
+  tags?: string;
   repoId?: string;
   role?: string;
 }
