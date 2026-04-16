@@ -14,29 +14,29 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@sveltejs/adapter-auto": "^7.0.1",
-    "@sveltejs/kit": "^2.56.1",
+    "@sveltejs/kit": "^2.57.1",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@types/d3": "^7.4.3",
-    "svelte": "^5.55.1",
+    "svelte": "^5.55.4",
     "svelte-check": "^4.4.6",
     "typescript": "^6.0.2",
-    "vite": "^8.0.3"
+    "vite": "^8.0.8"
   },
   "dependencies": {
     "@iconify-json/solar": "^1.2.5",
-    "@rokkit/actions": "^1.0.1",
-    "@rokkit/app": "^1.0.1",
-    "@rokkit/core": "^1.0.1",
-    "@rokkit/icons": "^1.0.1",
-    "@rokkit/states": "^1.0.1",
-    "@rokkit/themes": "^1.0.1",
-    "@rokkit/ui": "^1.0.1",
-    "@rokkit/unocss": "^1.0.1",
+    "@rokkit/actions": "^1.0.2",
+    "@rokkit/app": "^1.0.2",
+    "@rokkit/core": "^1.0.2",
+    "@rokkit/icons": "^1.0.2",
+    "@rokkit/states": "^1.0.2",
+    "@rokkit/themes": "^1.0.2",
+    "@rokkit/ui": "^1.0.2",
+    "@rokkit/unocss": "^1.0.2",
     "@sveltejs/adapter-static": "^3.0.10",
-    "@unocss/extractor-svelte": "^66.6.7",
-    "@unocss/reset": "^66.6.7",
-    "@unocss/vite": "^66.6.7",
+    "@unocss/extractor-svelte": "^66.6.8",
+    "@unocss/reset": "^66.6.8",
+    "@unocss/vite": "^66.6.8",
     "d3": "^7.9.0",
-    "unocss": "^66.6.7"
+    "unocss": "^66.6.8"
   }
 }
