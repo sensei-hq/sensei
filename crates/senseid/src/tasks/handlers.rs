@@ -153,32 +153,8 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         file_count += 1;
     }
 
-    // Create a barrier task for resolve_edges (will collect file task deps)
-    let resolve_task = Task::new(TaskKind::ResolveEdges, repo_id, "")
-        .with_parent(task.id)
-        .blocked_by(vec![0]); // placeholder — will be replaced by actual deps
-    // We need to enqueue it blocked, then add real deps as file tasks are created
-    // Use a two-step approach: enqueue with a dummy dep, then replace
-    let resolve_id = ctx.queue.enqueue(
-        Task::new(TaskKind::ResolveEdges, repo_id, "")
-            .with_parent(task.id)
-            .blocked_by(vec![u64::MAX]) // sentinel — will never auto-complete
-    ).await;
-
-    let libs_id = ctx.queue.enqueue(
-        Task::new(TaskKind::ResolveLibs, repo_id, "")
-            .with_parent(task.id)
-            .blocked_by(vec![resolve_id])
-    ).await;
-
-    let _build_id = ctx.queue.enqueue(
-        Task::new(TaskKind::BuildConnections, repo_id, "")
-            .with_parent(task.id)
-            .blocked_by(vec![libs_id])
-    ).await;
-
-    // Enqueue folder tasks
-    let mut folder_file_task_ids: Vec<u64> = Vec::new();
+    // Enqueue folder + file tasks first, collecting all file task IDs
+    let mut all_file_task_ids: Vec<u64> = Vec::new();
     for dir in &dirs {
         let rel_dir = dir.strip_prefix(repo_path).unwrap_or(dir)
             .to_string_lossy().to_string();
@@ -216,10 +192,9 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
                     .with_parent(folder_id)
                     .with_module(&mod_id);
                 let file_id = ctx.queue.enqueue(file_task).await;
-                folder_file_task_ids.push(file_id);
+                all_file_task_ids.push(file_id);
 
-                // Wire as dependency of resolve_edges
-                ctx.queue.add_dependency(resolve_id, file_id).await;
+                // file_id collected in all_file_task_ids for barrier
             }
         }
     }
@@ -228,16 +203,24 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     // (the sentinel u64::MAX will never complete, so we need to remove it)
     // Simplest: if we have real deps, the sentinel is harmless — it just means
     // resolve won't run until all file tasks AND the sentinel complete.
-    // Actually we need to remove it. Let's use a different approach:
-    // Clear the sentinel by completing a fake task... or better, just track properly.
-    // For now: if there are file tasks, they'll be the real deps. The sentinel stays
-    // but we can remove it from the blocked task's depends_on list.
-    if !folder_file_task_ids.is_empty() {
-        // The add_dependency calls above already wired real deps.
-        // We need to remove the sentinel. Let's add a method for that.
-        // For now, we'll just note this needs fixing.
-        // TODO: remove sentinel dep from resolve task
-    }
+    // Now create barrier tasks with REAL dependencies (no sentinel)
+    let resolve_id = ctx.queue.enqueue(
+        Task::new(TaskKind::ResolveEdges, repo_id, "")
+            .with_parent(task.id)
+            .blocked_by(all_file_task_ids.clone())
+    ).await;
+
+    let libs_id = ctx.queue.enqueue(
+        Task::new(TaskKind::ResolveLibs, repo_id, "")
+            .with_parent(task.id)
+            .blocked_by(vec![resolve_id])
+    ).await;
+
+    ctx.queue.enqueue(
+        Task::new(TaskKind::BuildConnections, repo_id, "")
+            .with_parent(task.id)
+            .blocked_by(vec![libs_id])
+    ).await;
 
     // Detect subtrees → auto-solution
     let store = ctx.store().await;
@@ -245,7 +228,7 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         crate::indexer::cross_repo::auto_solution_for_monorepo(&store, &project).ok();
     }
 
-    tracing::info!("process_repo: {} — {} dirs, {} files, barrier=#{}", repo_id, dirs.len(), file_count, resolve_id);
+    tracing::info!("process_repo: {} — {} dirs, {} file tasks, barrier=#{}", repo_id, dirs.len(), all_file_task_ids.len(), resolve_id);
     Ok(())
 }
 
