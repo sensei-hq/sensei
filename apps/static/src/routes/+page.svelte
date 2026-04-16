@@ -19,12 +19,13 @@
   // Linux — mdi:linux (viewBox 0 0 24 24)
   const linuxSvg = '<path fill="currentColor" d="M14.62 8.35c-.42.28-1.75 1.04-1.95 1.19c-.39.31-.75.29-1.14-.01c-.2-.16-1.53-.92-1.95-1.19c-.48-.31-.45-.7.08-.92c1.64-.69 3.28-.64 4.91.03c.49.21.51.6.05.9m7.22 7.28c-.93-2.09-2.2-3.99-3.84-5.66a4.3 4.3 0 0 1-1.06-1.88c-.1-.33-.17-.67-.24-1.01c-.2-.88-.29-1.78-.7-2.61c-.73-1.58-2-2.4-3.84-2.47c-1.81.05-3.16.81-3.95 2.4c-.21.43-.36.88-.46 1.34c-.17.76-.32 1.55-.5 2.32c-.15.65-.45 1.21-.96 1.71c-1.61 1.57-2.9 3.37-3.88 5.35c-.14.29-.28.58-.37.88c-.19.66.29 1.12.99.96c.44-.09.88-.18 1.3-.31c.41-.15.57-.05.67.35c.65 2.15 2.07 3.66 4.24 4.5c4.12 1.56 8.93-.66 9.97-4.58c.07-.27.17-.37.47-.27c.46.14.93.24 1.4.35c.49.09.85-.16.92-.64c.03-.26-.06-.49-.16-.73"/>';
 
+  // Desktop app installers — bootstraps daemon, CLI, and MCP on first run
   const platforms: Platform[] = [
-    { os: 'mac-arm',   svg: appleSvg,   vb: '0 0 24 24', file: 'sensei-cli-macos-arm64.tar.gz',   label: 'macOS Apple Silicon' },
-    { os: 'mac-intel', svg: appleSvg,   vb: '0 0 24 24', file: 'sensei-cli-macos-x86_64.tar.gz',  label: 'macOS Intel' },
-    { os: 'linux-x64', svg: linuxSvg,   vb: '0 0 24 24', file: 'sensei-cli-linux-x86_64.tar.gz',  label: 'Linux x86_64' },
-    { os: 'linux-arm', svg: linuxSvg,   vb: '0 0 24 24', file: 'sensei-cli-linux-arm64.tar.gz',   label: 'Linux ARM64' },
-    { os: 'windows',   svg: windowsSvg, vb: '0 0 24 24', file: 'sensei-cli-windows-x86_64.zip',   label: 'Windows x86_64' },
+    { os: 'mac-arm',   svg: appleSvg,   vb: '0 0 24 24', file: 'Sensei_aarch64.dmg',        label: 'macOS Apple Silicon' },
+    { os: 'mac-intel', svg: appleSvg,   vb: '0 0 24 24', file: 'Sensei_x86_64.dmg',         label: 'macOS Intel' },
+    { os: 'linux-x64', svg: linuxSvg,   vb: '0 0 24 24', file: 'sensei_amd64.AppImage',     label: 'Linux x86_64' },
+    { os: 'linux-arm', svg: linuxSvg,   vb: '0 0 24 24', file: 'sensei_arm64.AppImage',     label: 'Linux ARM64' },
+    { os: 'windows',   svg: windowsSvg, vb: '0 0 24 24', file: 'Sensei_x86_64-setup.exe',   label: 'Windows x86_64' },
   ];
   function detectPlatform(): Platform {
     if (!browser) return platforms[0];
@@ -226,7 +227,7 @@
 <div id="setup" class="mx-auto max-w-5xl px-8 py-20">
   <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-primary-z6">Setup</div>
   <h2 class="mb-3 text-3xl font-bold tracking-tight">Install Sensei</h2>
-  <p class="mb-10 text-surface-z5">Get the CLI and daemon running in under two minutes.</p>
+  <p class="mb-10 text-surface-z5">Download the desktop app — it installs the daemon, CLI, and MCP server on first run.</p>
 
   <!-- Platform-detected download -->
   <div class="mb-8 rounded-xl border border-primary-z4 bg-primary-z1 p-5">
@@ -251,19 +252,24 @@
       <div class="flex items-center gap-2 mb-3">
         <span class="text-lg">🍺</span>
         <span class="font-semibold">Homebrew</span>
+        <span class="ml-auto rounded bg-surface-z3 px-2 py-0.5 text-[10px] font-medium text-surface-z5">macOS / Linux</span>
       </div>
-      <pre class="rounded-lg bg-surface-z0 p-3 text-xs text-surface-z7 overflow-x-auto"><code>brew install mizukisu/tap/sensei</code></pre>
+      <pre class="rounded-lg bg-surface-z0 p-3 text-xs text-surface-z7 overflow-x-auto"><code>brew install --cask mizukisu/tap/sensei-app</code></pre>
+      <p class="mt-2 text-xs text-surface-z5">Or CLI only: <code class="bg-surface-z3 px-1 rounded">brew install mizukisu/tap/sensei</code></p>
     </div>
 
-    <!-- Quick start -->
+    <!-- What's included -->
     <div class="rounded-xl border border-surface-z3 bg-surface-z2 p-5">
       <div class="flex items-center gap-2 mb-3">
         <span class="text-lg">⚡</span>
-        <span class="font-semibold">Quick start</span>
+        <span class="font-semibold">Included</span>
       </div>
-      <pre class="rounded-lg bg-surface-z0 p-3 text-xs text-surface-z7 overflow-x-auto"><code>sensei configure
-sensei install
-sensei start</code></pre>
+      <ul class="space-y-1.5 text-xs text-surface-z5">
+        <li class="flex items-center gap-2"><span class="text-success-z5">✓</span> Desktop app with setup wizard</li>
+        <li class="flex items-center gap-2"><span class="text-success-z5">✓</span> <code class="bg-surface-z3 px-1 rounded">senseid</code> indexer daemon</li>
+        <li class="flex items-center gap-2"><span class="text-success-z5">✓</span> <code class="bg-surface-z3 px-1 rounded">sensei</code> CLI</li>
+        <li class="flex items-center gap-2"><span class="text-success-z5">✓</span> <code class="bg-surface-z3 px-1 rounded">sensei-mcp</code> server</li>
+      </ul>
     </div>
 
     <!-- All platforms -->
@@ -272,11 +278,14 @@ sensei start</code></pre>
         <span class="text-lg">📦</span>
         <span class="font-semibold">All downloads</span>
       </div>
-      <div class="space-y-1 text-xs">
+      <div class="space-y-1.5 text-xs">
         {#each platforms as p}
           <a href="{RELEASE_BASE}/{p.file}"
              class="flex items-center gap-2 {p.os === detected.os ? 'text-primary-z6 font-semibold' : 'text-surface-z5'} hover:text-primary-z6 transition-colors">
             <svg class="w-3.5 h-3.5 shrink-0" viewBox="{p.vb}">{@html p.svg}</svg> {p.label}
+            {#if p.os === detected.os}
+              <span class="ml-auto rounded bg-primary-z2 px-1.5 py-0.5 text-[9px] font-bold text-primary-z7">detected</span>
+            {/if}
           </a>
         {/each}
       </div>
