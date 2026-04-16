@@ -29,6 +29,9 @@ fn row_to_session(row: &Row) -> rusqlite::Result<serde_json::Value> {
 }
 
 impl Store {
+    /// Get a reference to the underlying connection (for direct queries).
+    pub fn conn_ref(&self) -> &Connection { &self.conn }
+
     /// Open (or create) the database at the given path.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
