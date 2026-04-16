@@ -33,3 +33,94 @@ pub fn process(abs_path: &str, rel_path: &str, content: &str, repo_id: &str, rep
         fn_mentions,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap().parent().unwrap().to_path_buf()
+    }
+
+    fn process_doc_file(rel: &str) -> FileProcessResult {
+        let root = repo_root();
+        let abs = root.join(rel);
+        let content = std::fs::read_to_string(&abs).expect(&format!("not found: {}", abs.display()));
+        process(&abs.to_string_lossy(), rel, &content, "sensei", &root.to_string_lossy())
+    }
+
+    fn process_subtree_doc(rel: &str, subtree: &str) -> FileProcessResult {
+        let root = repo_root();
+        let subtree_root = root.join(subtree);
+        let abs = root.join(rel);
+        let sub_rel = abs.strip_prefix(&subtree_root).unwrap_or(&abs).to_string_lossy().to_string();
+        let content = std::fs::read_to_string(&abs).expect(&format!("not found: {}", abs.display()));
+        process(&abs.to_string_lossy(), &sub_rel, &content, &format!("sensei:{}", subtree), &subtree_root.to_string_lossy())
+    }
+
+    #[test]
+    fn design_doc_architecture() {
+        let r = process_doc_file("docs/design/01-architecture.md");
+        assert_eq!(r.kind, "doc");
+        assert_eq!(r.tags, "doc");
+        assert_eq!(r.doc_type.as_deref(), Some("design"));
+        assert!(r.title.is_some(), "should extract title from # heading");
+        assert!(r.title.as_deref().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn feature_doc_codebase_intelligence() {
+        let r = process_doc_file("docs/features/01-codebase-intelligence.md");
+        assert_eq!(r.kind, "doc");
+        assert_eq!(r.doc_type.as_deref(), Some("feature"));
+    }
+
+    #[test]
+    fn roadmap_doc_paradigm_shift() {
+        let r = process_doc_file("docs/roadmap/01-paradigm-shift.md");
+        assert_eq!(r.kind, "doc");
+        assert_eq!(r.doc_type.as_deref(), Some("design")); // roadmap → design
+    }
+
+    #[test]
+    fn gap_analysis() {
+        let r = process_doc_file("docs/gap-analysis.md");
+        assert_eq!(r.kind, "doc");
+        assert_eq!(r.tags, "doc");
+    }
+
+    #[test]
+    fn root_readme() {
+        let r = process_doc_file("README.md");
+        assert_eq!(r.kind, "doc");
+        assert_eq!(r.doc_type.as_deref(), Some("usage"));
+        assert!(r.title.is_some());
+    }
+
+    #[test]
+    fn homebrew_readme() {
+        let r = process_subtree_doc("homebrew/README.md", "homebrew");
+        assert_eq!(r.kind, "doc");
+        assert_eq!(r.doc_type.as_deref(), Some("usage"));
+    }
+
+    #[test]
+    fn marketplace_skill_is_extension() {
+        let r = process_subtree_doc(
+            "marketplace/skills/auditing-skill-descriptions/SKILL.md",
+            "marketplace",
+        );
+        assert_eq!(r.kind, "extension", "marketplace skill should be extension, not doc");
+        assert_eq!(r.doc_type.as_deref(), Some("extension"));
+    }
+
+    #[test]
+    fn design_doc_has_frontmatter_type() {
+        // docs/design files with frontmatter type: design should use frontmatter
+        let r = process_doc_file("docs/design/41-task-queue-architecture.md");
+        assert_eq!(r.doc_type.as_deref(), Some("design"));
+    }
+}
+
