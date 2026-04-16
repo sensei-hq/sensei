@@ -57,7 +57,7 @@
     const col1 = 80;                // AI platforms + clients
     const col2 = w * 0.35;          // sensei-mcp
     const col3 = w * 0.60;          // senseid
-    const col4 = w - 80;            // storage (matches col1 padding)
+    const col4 = w - 80 - 45;       // storage — right edge at w-80 (90/2=45)
 
     // Colors
     const purple = '#a78bfa';
