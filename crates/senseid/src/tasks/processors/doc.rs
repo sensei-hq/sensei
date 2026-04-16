@@ -117,6 +117,18 @@ mod tests {
     }
 
     #[test]
+    fn llms_txt_is_usage_doc() {
+        let root = repo_root();
+        let abs = root.join("docs/llms/index.txt");
+        if abs.exists() {
+            let content = std::fs::read_to_string(&abs).unwrap();
+            let r = process(&abs.to_string_lossy(), "docs/llms/index.txt", &content, "sensei", &root.to_string_lossy());
+            assert_eq!(r.kind, "doc");
+            assert_eq!(r.doc_type.as_deref(), Some("usage"), "llms.txt should be usage doc");
+        }
+    }
+
+    #[test]
     fn design_doc_has_frontmatter_type() {
         // docs/design files with frontmatter type: design should use frontmatter
         let r = process_doc_file("docs/design/41-task-queue-architecture.md");
