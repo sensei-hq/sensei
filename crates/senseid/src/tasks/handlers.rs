@@ -20,7 +20,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let mut repos = Vec::new();
     find_git_repos(root, 0, max_depth, &mut repos);
 
-    let store = ctx.store.lock().await;
+    let store = ctx.store().await;
 
     // Persist this root for watcher recreation on restart
     store.execute_raw(&format!(
@@ -75,7 +75,7 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     }
 
     let repo_id = &task.repo_id;
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
 
     // Clear stale hierarchy
     graph.clear_hierarchy(repo_id).ok();
@@ -240,7 +240,7 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     }
 
     // Detect subtrees → auto-solution
-    let store = ctx.store.lock().await;
+    let store = ctx.store().await;
     if let Ok(Some(project)) = store.get_project(repo_id) {
         crate::indexer::cross_repo::auto_solution_for_monorepo(&store, &project).ok();
     }
@@ -255,7 +255,7 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
     let repo_path_str = {
-        let store = ctx.store.lock().await;
+        let store = ctx.store().await;
         store.get_project(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
@@ -270,7 +270,7 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
 
     let pkg_id = task.module_id.clone(); // parent package ID stored here by process_repo
 
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
     let mut mod_node = HierarchyNode::group(mod_id.clone(), mod_name, NodeKind::Module, repo_id.to_string());
     mod_node.file = Some(rel_dir);
     mod_node.parent_id = pkg_id.clone();
@@ -292,7 +292,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 
     // Get repo path for relative path computation
     let repo_path_str = {
-        let store = ctx.store.lock().await;
+        let store = ctx.store().await;
         store.get_project(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
@@ -315,7 +315,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     let content = std::fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read {}: {}", abs_path, e))?;
 
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
 
     // Delete old nodes for this file (handles modify case)
     graph.delete_by_file(&abs_path, repo_id).ok();
@@ -437,7 +437,7 @@ fn process_doc_file(graph: &crate::indexer::graph::GraphDb, abs_path: &str, rel_
 // ── Delete File / Folder ──────────────────────────────────────────────────
 
 pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
     graph.delete_by_file(&task.path, &task.repo_id)?;
     graph.clear_unresolved_refs_from(&format!("file:{}", task.path), &task.repo_id).ok();
     graph.clear_unresolved_refs_from(&format!("doc:{}", task.path), &task.repo_id).ok();
@@ -446,7 +446,7 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 }
 
 pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
     let nodes = graph.get_nodes(&task.repo_id)?;
     for node in &nodes {
         if node.file.starts_with(&task.path) {
@@ -455,7 +455,7 @@ pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String>
     }
     // Delete the module node
     let repo_path_str = {
-        let store = ctx.store.lock().await;
+        let store = ctx.store().await;
         store.get_project(&task.repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
@@ -474,7 +474,7 @@ pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String>
 /// Resolve all unresolved references for a repo: IMPORTS, CALLS, HAS_METHOD, COVERS, MENTIONS_FN.
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
 
     let refs = graph.get_unresolved_refs(repo_id)?;
     let nodes = graph.get_nodes(repo_id)?;
@@ -496,7 +496,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
         .collect();
 
     let repo_path_str = {
-        let store = ctx.store.lock().await;
+        let store = ctx.store().await;
         store.get_project(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
@@ -580,13 +580,13 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
 /// Build doc↔code traceability and cross-repo links.
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
 
     // Doc↔code traceability (SPECIFIES, IMPLEMENTS, DOCUMENTS)
     crate::indexer::doc_indexer::create_traceability_edges_pub(&graph, repo_id)?;
 
     // Mark project as indexed
-    let store = ctx.store.lock().await;
+    let store = ctx.store().await;
     // Collect libs from unresolved import targets
     let nodes = graph.get_nodes(repo_id)?;
     let mut libs = std::collections::HashSet::new();
@@ -608,7 +608,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
 /// Classify imports as internal vs external libraries. Update project.libs.
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
 
     let nodes = graph.get_nodes(repo_id)?;
     let edges = graph.get_edges(repo_id)?;
@@ -646,7 +646,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     // For now, use a simpler heuristic: re-read source files and extract non-relative imports
     // This is expensive but accurate. TODO: store raw imports in a metadata field.
     let repo_path_str = {
-        let store = ctx.store.lock().await;
+        let store = ctx.store().await;
         store.get_project(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
@@ -704,7 +704,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     libs.sort();
 
     // Check which libs are internal (match another repo in a solution)
-    let store = ctx.store.lock().await;
+    let store = ctx.store().await;
     let all_projects = store.list_projects().unwrap_or_default();
     let internal_repos: std::collections::HashSet<String> = all_projects.iter()
         .map(|p| p.name.to_lowercase())
@@ -734,7 +734,7 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         .text().await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    let store = ctx.store.lock().await;
+    let store = ctx.store().await;
     match crate::indexer::lib_indexer::index_lib_content(&store, lib_name, url, &content, None) {
         Ok(result) => {
             tracing::info!("import_lib: {} — {} docs indexed from {}", lib_name, result.docs_indexed, result.source_type);
@@ -753,7 +753,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
 
     // Detect current branch from git
     let repo_path = {
-        let store = ctx.store.lock().await;
+        let store = ctx.store().await;
         store.get_project(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .ok_or("Project not found")?
@@ -763,7 +763,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
     let old_branch_project = format!("{}@{}", repo_id, old_branch);
     let new_branch_project = format!("{}@{}", repo_id, new_branch);
 
-    let graph = ctx.graph.lock().await;
+    let graph = ctx.graph().await;
 
     // Check if we already have a snapshot for the new branch
     if graph.project_exists(&new_branch_project) {
