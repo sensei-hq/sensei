@@ -8,8 +8,15 @@ use crate::types::NodeKind;
 /// Process a code file via the appropriate language adapter.
 /// Returns None if no adapter exists for this extension.
 pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, repo_id: &str) -> Option<FileProcessResult> {
-    let dotted = format!(".{}", ext);
-    let adapter = adapters::adapter_for_ext(&dotted)?;
+    // Try compound extension first (e.g. .svelte.ts), then simple extension
+    let filename = std::path::Path::new(abs_path).file_name()
+        .and_then(|n| n.to_str()).unwrap_or("");
+    let adapter = if let Some((a, _)) = adapters::adapter_for_filename(filename) {
+        a
+    } else {
+        let dotted = format!(".{}", ext);
+        adapters::adapter_for_ext(&dotted)?
+    };
 
     let parsed = adapter.parse(content, rel_path);
     let file_lines: Vec<&str> = content.lines().collect();
@@ -200,13 +207,18 @@ mod tests {
     }
 
     #[test]
-    fn c_file_no_adapter() {
+    fn c_file_with_adapter() {
         let root = repo_root();
         let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
-        if !abs.exists() { return; } // skip if file doesn't exist
+        if !abs.exists() { return; }
         let content = std::fs::read_to_string(&abs).unwrap();
         let result = process(&abs.to_string_lossy(), "crates/senseid/grammars/kotlin/src/parser.c", "c", &content, "sensei");
-        assert!(result.is_none(), "no C adapter — should return None");
+        // Large generated file — C adapter skips files > 500K chars
+        assert!(result.is_some(), "C adapter should handle .c files");
+        let r = result.unwrap();
+        assert_eq!(r.language.as_deref(), Some("c"));
+        // parser.c is 678K lines — should be skipped by size threshold
+        assert!(r.symbols.is_empty(), "generated parser.c should have no symbols (too large)");
     }
 }
 
