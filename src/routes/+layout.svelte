@@ -6,6 +6,7 @@
   import { FloatingNavigation } from '@rokkit/ui';
   import { ThemeSwitcherToggle } from '@rokkit/app';
   import { base } from '$app/paths';
+  import { browser } from '$app/environment';
 
   let { children } = $props();
 
@@ -19,6 +20,14 @@
     { label: 'Reference',    value: 'usage',        href: '#usage',        icon: 'i-solar-document-text-bold-duotone' },
     { label: 'Sponsor',      value: 'sponsor',      href: '#sponsor',      icon: 'i-solar-heart-bold-duotone' },
   ];
+
+  // Workaround: sync data-mode to <html> so dark mode CSS selectors match
+  // (rokkit#137 — [data-mode=dark] [data-style=rokkit] needs ancestor/descendant)
+  $effect(() => {
+    if (browser) {
+      document.documentElement.dataset.mode = vibe.mode;
+    }
+  });
 </script>
 
 <svelte:head>
