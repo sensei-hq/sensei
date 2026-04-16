@@ -14,6 +14,7 @@
     doc_type?: string;
     level?: string;
     parent_id?: string;
+    tags?: string;
     // d3 simulation adds these
     x?: number;
     y?: number;
@@ -86,61 +87,55 @@
   // On project pages: single repo
   let l1Options = $derived(nodes.filter(n => n.kind === 'repo'));
 
-  // L2: children of selected L1 (code-group, doc-group)
-  let l2Options = $derived.by((): typeof nodes => {
-    if (filterL1 === 'all') {
-      // Show all code-group and doc-group nodes
-      return nodes.filter(n => n.kind === 'code-group' || n.kind === 'doc-group');
+  // L2: packages (src) + doc categories (doc) — flattened, no code/docs layer
+  let l2Options = $derived.by((): Array<{ id: string; name: string; kind: string }> => {
+    // Determine which repo to scope to
+    const scopeRepoId = filterL1 !== 'all' ? filterL1 : null;
+
+    // Packages (code) — direct children of repo or all packages
+    const packages = nodes.filter(n => {
+      if (n.kind !== 'package') return false;
+      if (scopeRepoId) {
+        const children = containsMap.get(scopeRepoId);
+        return children?.has(n.id) ?? false;
+      }
+      return true;
+    });
+
+    // Doc categories — virtual entries from unique doc_type values
+    const scopedNodes = scopeRepoId ? nodes.filter(n => {
+      // nodes belonging to this repo (by checking if repo contains them transitively)
+      return collectDescendants(scopeRepoId).has(n.id);
+    }) : nodes;
+
+    const docTypes = new Set<string>();
+    for (const n of scopedNodes) {
+      if ((n.kind === 'doc' || n.kind === 'extension') && n.doc_type) {
+        docTypes.add(n.doc_type);
+      }
     }
-    const children = containsMap.get(filterL1);
-    if (!children) return [];
-    // For repo: children are code-group and doc-group
-    // For solution: children are repos — show those
-    const l1Node = nodes.find(n => n.id === filterL1);
-    if (l1Node?.kind === 'solution') {
-      return nodes.filter(n => children.has(n.id) && n.kind === 'repo');
-    }
-    return nodes.filter(n => children.has(n.id));
+    const docCategoryItems = [...docTypes].sort().map(dt => ({
+      id: `doctype:${dt}`,
+      name: dt.charAt(0).toUpperCase() + dt.slice(1),
+      kind: 'doc-category' as string,
+    }));
+
+    return [
+      ...packages.map(p => ({ id: p.id, name: p.name, kind: p.kind })),
+      ...docCategoryItems,
+    ];
   });
 
-  // Is L2 a docs group?
-  let l2IsDocsGroup = $derived(nodes.find(n => n.id === filterL2)?.kind === 'doc-group');
-
-  // L3: children of selected L2
-  // For code-group → packages
-  // For doc-group → doc_type categories (virtual)
-  // For repo (when L1 is solution) → code-group/doc-group
+  // L3: modules under selected package (code only — doc categories have no L3)
   let l3Options = $derived.by((): Array<{ id: string; name: string; kind: string }> => {
-    if (filterL2 === 'all') return [];
-    if (l2IsDocsGroup) {
-      // Doc categories from doc_type field
-      const docTypes = new Set<string>();
-      for (const n of nodes) {
-        if ((n.kind === 'doc' || n.kind === 'extension') && n.doc_type) {
-          docTypes.add(n.doc_type);
-        }
-      }
-      return [...docTypes].sort().map(dt => ({
-        id: `doctype:${dt}`,
-        name: dt.charAt(0).toUpperCase() + dt.slice(1),
-        kind: 'doc-category',
-      }));
-    }
-    // Code-group → packages, or repo → code/docs groups
+    if (filterL2 === 'all' || filterL2.startsWith('doctype:')) return [];
     const children = containsMap.get(filterL2);
     if (!children) return [];
-    return nodes.filter(n => children.has(n.id));
+    return nodes.filter(n => children.has(n.id) && n.kind === 'module');
   });
 
-  let l2Label = $derived(
-    l1Options.some(n => n.kind === 'solution') ? 'All repos'
-    : filterL1 !== 'all' ? 'All' : 'Code / Docs'
-  );
-
-  let l3Label = $derived(
-    l2IsDocsGroup ? 'All categories'
-    : filterL2 !== 'all' ? 'All packages' : 'All'
-  );
+  let l2Label = $derived(filterL1 !== 'all' ? 'All' : 'Package / Category');
+  let l3Label = $derived('All modules');
 
   function setL1(val: string) { filterL1 = val; filterL2 = 'all'; filterL3 = 'all'; }
   function setL2(val: string) { filterL2 = val; filterL3 = 'all'; }
