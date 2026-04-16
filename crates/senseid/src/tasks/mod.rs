@@ -9,7 +9,7 @@ pub mod queue;
 pub mod executor;
 pub mod handlers;
 pub mod progress;
-pub mod file_processor;
+pub mod processors;
 #[cfg(test)]
 mod integration_tests;
 
