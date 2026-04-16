@@ -377,7 +377,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
         .map(|n| (n.name.clone(), n.id.clone()))
         .collect();
 
-    let repo_path_str = {
+    let _repo_path_str = {
         let store = ctx.store().await;
         store.get_project(repo_id).ok().flatten()
             .map(|p| p.path.clone())
@@ -471,7 +471,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
     let store = ctx.store().await;
     // Collect libs from unresolved import targets
     let nodes = graph.get_nodes(repo_id)?;
-    let mut libs = std::collections::HashSet::new();
+    let libs = std::collections::HashSet::new();
     // Simple lib detection from file-level imports
     for node in &nodes {
         if node.kind == "file" {
@@ -588,7 +588,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     // Check which libs are internal (match another repo in a solution)
     let store = ctx.store().await;
     let all_projects = store.list_projects().unwrap_or_default();
-    let internal_repos: std::collections::HashSet<String> = all_projects.iter()
+    let _internal_repos: std::collections::HashSet<String> = all_projects.iter()
         .map(|p| p.name.to_lowercase())
         .collect();
 

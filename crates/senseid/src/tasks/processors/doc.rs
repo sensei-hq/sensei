@@ -4,7 +4,7 @@ use super::types::*;
 use crate::indexer::doc_indexer;
 
 /// Process a markdown/mdx document file.
-pub fn process(abs_path: &str, rel_path: &str, content: &str, repo_id: &str, repo_path: &str) -> FileProcessResult {
+pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, repo_path: &str) -> FileProcessResult {
     let frontmatter = doc_indexer::parse_frontmatter_pub(content);
     let classification = doc_indexer::classify_doc_pub(rel_path, &frontmatter);
 

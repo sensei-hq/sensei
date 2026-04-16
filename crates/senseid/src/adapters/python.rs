@@ -6,7 +6,6 @@ pub struct PythonAdapter;
 
 impl LanguageAdapter for PythonAdapter {
     fn language(&self) -> &str { "python" }
-    fn extensions(&self) -> &[&str] { &[".py"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut parser = Parser::new();

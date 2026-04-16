@@ -1,12 +1,11 @@
 use tree_sitter::{Parser, Node};
-use crate::types::{ParsedFile, ParsedSymbol, ParsedEdge, ParsedImport, SymbolKind};
+use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
 use super::LanguageAdapter;
 
 pub struct RustAdapter;
 
 impl LanguageAdapter for RustAdapter {
     fn language(&self) -> &str { "rust" }
-    fn extensions(&self) -> &[&str] { &[".rs"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut parser = Parser::new();
