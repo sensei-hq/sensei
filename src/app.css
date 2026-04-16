@@ -1,0 +1,8 @@
+@import '@unocss/reset/tailwind.css';
+@import '@rokkit/themes/base.css';
+@import '@rokkit/themes/rokkit.css';
+
+html, body {
+  background-color: rgb(var(--color-surface-z0));
+  height: 100%;
+}
