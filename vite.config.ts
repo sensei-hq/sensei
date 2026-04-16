@@ -12,7 +12,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      // @rokkit/themes npm package doesn't ship dist/ — resolve CSS to source
+      // rokkit#136 — @rokkit/themes doesn't ship dist/, resolve CSS to source
       '@rokkit/themes/base.css': path.resolve(`${themesRoot}/base/index.css`),
       '@rokkit/themes/rokkit.css': path.resolve(`${themesRoot}/rokkit/index.css`),
     }
