@@ -45,3 +45,4 @@ firebase-debug.log
 .worktrees/
 .cocoindex_code
 
+target/

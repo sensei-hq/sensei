@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Check pages are live
         env:
-          SITE_URL: ${{ vars.PAGES_URL || 'https://mizukisu.github.io/sensei-site' }}
+          SITE_URL: ${{ vars.PAGES_URL || 'https://mizukisu.github.io/sensei' }}
         run: |
           for path in "" "/setup" "/usage" "/llms.txt"; do
             url="${SITE_URL}${path}"
