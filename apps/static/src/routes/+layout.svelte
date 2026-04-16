@@ -26,9 +26,9 @@
     </a>
     <div class="flex items-center gap-5 text-sm">
       <a href="{base}/#setup" class="text-surface-z5 hover:text-surface-z8 transition-colors">Setup</a>
-      <a href="{base}/#usage" class="text-surface-z5 hover:text-surface-z8 transition-colors">Usage</a>
       <a href="{base}/#features" class="text-surface-z5 hover:text-surface-z8 transition-colors">Features</a>
-      <a href="{base}/#sponsor" class="text-surface-z5 hover:text-surface-z8 transition-colors">Sponsor</a>
+      <a href="{base}/#architecture" class="text-surface-z5 hover:text-surface-z8 transition-colors">Architecture</a>
+      <a href="{base}/#usage" class="text-surface-z5 hover:text-surface-z8 transition-colors">Reference</a>
       <a href={GITHUB} target="_blank" rel="noopener"
          class="flex items-center gap-1.5 rounded-lg border border-surface-z3 bg-surface-z2 px-3 py-1.5 text-xs font-medium hover:bg-surface-z3 transition-colors">
         <span class="i-solar-github-bold-duotone"></span> GitHub
