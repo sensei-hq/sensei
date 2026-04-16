@@ -84,3 +84,129 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, repo_id
         fn_mentions: vec![],
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap().parent().unwrap().to_path_buf()
+    }
+
+    fn process_code_file(rel: &str) -> FileProcessResult {
+        let root = repo_root();
+        let abs = root.join(rel);
+        let content = std::fs::read_to_string(&abs).expect(&format!("File not found: {}", abs.display()));
+        let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
+        process(&abs.to_string_lossy(), rel, ext, &content, "sensei").expect("should process")
+    }
+
+    #[test]
+    fn rust_svelte_adapter() {
+        let r = process_code_file("crates/senseid/src/adapters/svelte.rs");
+        assert_eq!(r.language.as_deref(), Some("rust"));
+        assert_eq!(r.tags, "src");
+
+        // Should find SvelteAdapter struct
+        let struct_syms: Vec<_> = r.symbols.iter().filter(|s| s.name == "SvelteAdapter").collect();
+        assert_eq!(struct_syms.len(), 1, "should find SvelteAdapter");
+        assert_eq!(struct_syms[0].kind, "class"); // Rust struct → class kind
+
+        // Should find parse method (impl LanguageAdapter)
+        let methods: Vec<_> = r.symbols.iter().filter(|s| s.kind == "method").collect();
+        assert!(methods.len() > 0, "should find methods");
+
+        // Should have imports (use statements)
+        assert!(r.unresolved_imports.len() > 0, "should have imports");
+    }
+
+    #[test]
+    fn svelte_component_serverstatus() {
+        let r = process_code_file("apps/desktop/src/lib/ServerStatus.svelte");
+        assert_eq!(r.language.as_deref(), Some("svelte"));
+
+        // Should find component symbol
+        let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
+        assert_eq!(components.len(), 1, "should find exactly 1 component");
+        assert_eq!(components[0].name, "ServerStatus");
+    }
+
+    #[test]
+    fn svelte_ts_appstate() {
+        let r = process_code_file("apps/desktop/src/lib/appstate.svelte.ts");
+        // .svelte.ts files are TypeScript
+        assert!(r.language.as_deref() == Some("typescript") || r.language.as_deref() == Some("javascript"));
+
+        // Should find exported functions (getPort, loadAppState, etc.)
+        let fns: Vec<_> = r.symbols.iter().filter(|s| s.kind == "function").collect();
+        assert!(fns.len() > 0, "should find functions");
+        let names: Vec<&str> = fns.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"getPort") || names.contains(&"loadAppState"),
+            "should find getPort or loadAppState, got {:?}", names);
+    }
+
+    #[test]
+    fn page_svelte_route() {
+        let r = process_code_file("apps/desktop/src/routes/(app)/p/[id]/+page.svelte");
+        assert_eq!(r.language.as_deref(), Some("svelte"));
+
+        // Should find the page component
+        let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
+        assert_eq!(components.len(), 1);
+
+        // Should have imports (svelte imports)
+        assert!(r.unresolved_imports.len() > 0, "should have imports");
+    }
+
+    #[test]
+    fn rust_file_with_tests_and_src() {
+        // Rust files contain both src and test code in the same file
+        let r = process_code_file("crates/senseid/src/adapters/svelte.rs");
+
+        // Should have both regular functions AND test functions
+        let all_fns: Vec<&str> = r.symbols.iter()
+            .filter(|s| s.kind == "function" || s.kind == "method")
+            .map(|s| s.name.as_str())
+            .collect();
+
+        // Check for test functions (svelte_component_name, svelte_script_extraction, etc.)
+        let test_fns: Vec<&&str> = all_fns.iter()
+            .filter(|n| n.starts_with("svelte_") || n.starts_with("extract_"))
+            .collect();
+        assert!(test_fns.len() > 0, "should find test functions, all fns: {:?}", all_fns);
+    }
+
+    #[test]
+    fn rust_methods_have_parent() {
+        let r = process_code_file("crates/senseid/src/adapters/svelte.rs");
+
+        // Methods should have parent refs (from impl blocks)
+        let methods_with_parent: Vec<_> = r.symbols.iter()
+            .filter(|s| s.kind == "method" && s.parent.is_some())
+            .collect();
+        // SvelteAdapter impl has methods with parent
+        if !methods_with_parent.is_empty() {
+            assert!(methods_with_parent.iter().any(|m|
+                m.parent.as_deref() == Some("SvelteAdapter") ||
+                m.parent.as_deref() == Some("LanguageAdapter")),
+                "methods should have SvelteAdapter parent, got {:?}",
+                methods_with_parent.iter().map(|m| (&m.name, &m.parent)).collect::<Vec<_>>());
+        }
+
+        // parent_refs should match
+        assert_eq!(r.parent_refs.len(), methods_with_parent.len());
+    }
+
+    #[test]
+    fn c_file_no_adapter() {
+        let root = repo_root();
+        let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
+        if !abs.exists() { return; } // skip if file doesn't exist
+        let content = std::fs::read_to_string(&abs).unwrap();
+        let result = process(&abs.to_string_lossy(), "crates/senseid/grammars/kotlin/src/parser.c", "c", &content, "sensei");
+        assert!(result.is_none(), "no C adapter — should return None");
+    }
+}
+
