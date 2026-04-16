@@ -77,7 +77,7 @@ All data stored locally at ~/.sensei/. Nothing sent to external servers.
 
 ## Links
 
-- Source: https://github.com/mizukisu/sensei
+- Source: https://github.com/mizukisu/sensei-dev
 - Releases: https://github.com/mizukisu/sensei-releases
 - Homebrew: brew install mizukisu/tap/sensei
 - License: MIT
