@@ -63,5 +63,6 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
         TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
         TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
+        TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
     }
 }

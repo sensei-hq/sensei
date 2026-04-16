@@ -796,12 +796,18 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
         .join(".sensei").join("projects").join(repo_id).join("manifest.json");
     std::fs::remove_file(&manifest_path).ok();
 
-    // 3. Enqueue full repo reindex
+    // 3. Enqueue full repo reindex + reconcile cross-repo links after
     let repo_task = Task::new(TaskKind::ProcessRepo, repo_id, &repo_path)
         .with_branch(new_branch);
-    ctx.queue.enqueue(repo_task).await;
+    let repo_task_id = ctx.queue.enqueue(repo_task).await;
 
-    tracing::info!("branch_switch: {} → {} — reindex queued", old_branch, new_branch);
+    // 4. Reconcile cross-repo connections after reindex completes
+    ctx.queue.enqueue(
+        Task::new(TaskKind::ReconcileConnections, repo_id, "")
+            .blocked_by(vec![repo_task_id])
+    ).await;
+
+    tracing::info!("branch_switch: {} → {} — reindex + reconcile queued", old_branch, new_branch);
     Ok(())
 }
 
@@ -817,6 +823,44 @@ fn detect_git_branch(repo_path: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+// ── Reconcile Connections ──────────────────────────────────────────────────
+
+/// Re-evaluate cross-repo edges after a branch switch or repo update.
+pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+    let repo_id = &task.repo_id;
+    let store = ctx.store().await;
+    let graph = ctx.graph().await;
+
+    // Find solutions containing this repo
+    let solutions = store.list_solutions().map_err(|e| e.to_string())?;
+    let my_solutions: Vec<_> = solutions.iter()
+        .filter(|s| s.repos.iter().any(|r| r.repo_id == *repo_id))
+        .collect();
+
+    if my_solutions.is_empty() {
+        tracing::info!("reconcile_connections: {} not in any solution", repo_id);
+        return Ok(());
+    }
+
+    for solution in &my_solutions {
+        match crate::indexer::cross_repo::analyze_solution(&store, &graph, solution) {
+            Ok(analysis) => {
+                tracing::info!(
+                    "reconcile_connections: solution {} — {} links, {} shared libs",
+                    solution.id, analysis.links.len(), analysis.shared_libs.len()
+                );
+            }
+            Err(e) => tracing::warn!("reconcile failed for {}: {}", solution.id, e),
+        }
+    }
+
+    // Rebuild doc↔code traceability
+    crate::indexer::doc_indexer::create_traceability_edges_pub(&graph, repo_id)?;
+
+    tracing::info!("reconcile_connections: {} — {} solutions", repo_id, my_solutions.len());
+    Ok(())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
