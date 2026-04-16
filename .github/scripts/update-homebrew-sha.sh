@@ -22,7 +22,11 @@ while IFS=' ' read -r sha file; do
     *) continue ;;
   esac
   placeholder="REPLACE_WITH_${key}_SHA256"
-  # Replace either the placeholder or a previous 64-char hex SHA
-  sed -i "s/\(sha256 \"\)\([a-f0-9]\{64\}\|${placeholder}\)\"/\1${sha}\"/" "$FORMULA"
+  # Replace either the placeholder or a previous 64-char hex SHA (portable sed -i)
+  if [[ "$OSTYPE" == darwin* ]]; then
+    sed -i '' "s|${placeholder}|${sha}|" "$FORMULA"
+  else
+    sed -i "s|${placeholder}|${sha}|" "$FORMULA"
+  fi
   echo "Updated $key: $sha"
 done < "$SUMS_FILE"
