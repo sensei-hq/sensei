@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { base } from '$app/paths';
+
   // GitHub release base URL — update when releases exist
   const GITHUB = 'https://github.com/mizukisu/sensei';
-  const RELEASE_BASE = `${GITHUB}/releases/latest/download`;
+  const RELEASES = 'https://github.com/mizukisu/sensei-releases';
+  const RELEASE_BASE = `${RELEASES}/releases/latest/download`;
 
   const downloads = [
     { os: 'macOS (Apple Silicon)', file: 'Sensei_aarch64.dmg',   icon: '🍎' },
@@ -21,7 +24,8 @@
       <span>sensei</span>
     </div>
     <div class="flex items-center gap-5 text-sm">
-      <a href="#install" class="text-surface-z5 hover:text-surface-z8 transition-colors">Install</a>
+      <a href="{base}/setup" class="text-surface-z5 hover:text-surface-z8 transition-colors">Setup</a>
+      <a href="{base}/usage" class="text-surface-z5 hover:text-surface-z8 transition-colors">Usage</a>
       <a href="#features" class="text-surface-z5 hover:text-surface-z8 transition-colors">Features</a>
       <a href="#sponsor" class="text-surface-z5 hover:text-surface-z8 transition-colors">Sponsor</a>
       <a href={GITHUB} target="_blank" rel="noopener"
@@ -208,7 +212,8 @@ sensei setup --mcp   # register MCP server for Claude Code</code></pre>
       <a href={GITHUB} target="_blank" rel="noopener" class="hover:text-surface-z6 transition-colors">GitHub</a>
       <a href="{GITHUB}/blob/main/LICENSE" target="_blank" rel="noopener" class="hover:text-surface-z6 transition-colors">MIT License</a>
       <a href="{GITHUB}/issues" target="_blank" rel="noopener" class="hover:text-surface-z6 transition-colors">Issues</a>
-      <a href="{GITHUB}/releases" target="_blank" rel="noopener" class="hover:text-surface-z6 transition-colors">Releases</a>
+      <a href="{RELEASES}/releases" target="_blank" rel="noopener" class="hover:text-surface-z6 transition-colors">Releases</a>
+      <a href="{base}/llms.txt" class="hover:text-surface-z6 transition-colors">llms.txt</a>
     </div>
     <span class="font-bold text-surface-z6">⬡ sensei</span> · AI Development Intelligence · MIT License
   </div>
