@@ -120,6 +120,7 @@ impl NodeKind {
     }
 
     /// Whether this kind represents a type-like symbol.
+    #[allow(dead_code)]
     pub fn is_type_like(&self) -> bool {
         matches!(self, Self::Class | Self::Struct | Self::Interface | Self::Enum | Self::Type)
     }
@@ -209,6 +210,7 @@ impl HierarchyNode {
     }
 
     /// Create a doc/extension node.
+    #[allow(dead_code)]
     pub fn doc(
         id: String, name: String, kind: NodeKind, file: String,
         doc_type: Option<String>, doc_category: Option<String>, project: String,
@@ -343,33 +345,6 @@ pub struct PackageInfo {
 // ── Indexing ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexProgress {
-    pub repo_id: String,
-    pub current_file: String,
-    pub files_processed: u32,
-    pub files_total: u32,
-    pub files_unchanged: u32,
-    pub files_skipped: u32,
-    pub files_failed: u32,
-    pub started_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexResult {
-    pub files_indexed: u32,
-    pub files_skipped: u32,
-    pub files_failed: u32,
-    pub functions_indexed: u32,
-    pub types_indexed: u32,
-    pub packages_indexed: u32,
-    pub modules_indexed: u32,
-    pub edges_created: u32,
-    pub docs_indexed: u32,
-    pub libs: Vec<String>,
-    pub duration_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexError {
     pub repo_id: String,
     pub file_path: String,
@@ -377,14 +352,6 @@ pub struct IndexError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter: Option<String>,
     pub timestamp: String,
-}
-
-// ── Manifest ─────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManifestEntry {
-    pub mtime: u64,
-    pub hash: String,
 }
 
 // ── Graph query results ──────────────────────────────────────────────────────

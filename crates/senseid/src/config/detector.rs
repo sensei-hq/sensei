@@ -9,6 +9,7 @@ pub struct ConfigFile {
 }
 
 /// Detect the technology stack from config files in a repo.
+#[allow(dead_code)]
 pub fn detect_stack(repo_path: &Path) -> Vec<String> {
     let mut stack = Vec::new();
 
@@ -56,6 +57,7 @@ pub fn detect_stack(repo_path: &Path) -> Vec<String> {
 }
 
 /// Detect and parse config files in a repo.
+#[allow(dead_code)]
 pub fn detect_config_files(repo_path: &Path) -> Vec<ConfigFile> {
     let mut configs = Vec::new();
 

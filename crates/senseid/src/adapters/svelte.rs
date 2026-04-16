@@ -1,11 +1,10 @@
-use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, ParsedEdge, SymbolKind};
+use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 use super::LanguageAdapter;
 
 pub struct SvelteAdapter;
 
 impl LanguageAdapter for SvelteAdapter {
     fn language(&self) -> &str { "svelte" }
-    fn extensions(&self) -> &[&str] { &[".svelte"] }
 
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         // Extract <script> block(s) and parse with oxc (TypeScript)

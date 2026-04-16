@@ -119,6 +119,7 @@ impl Task {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_string());
         self
@@ -132,10 +133,12 @@ impl Task {
         self
     }
 
+    #[allow(dead_code)]
     pub fn is_runnable(&self) -> bool {
         self.status == TaskStatus::Pending
     }
 
+    #[allow(dead_code)]
     pub fn is_barrier(&self) -> bool {
         matches!(self.kind, TaskKind::ResolveEdges | TaskKind::ResolveLibs | TaskKind::BuildConnections | TaskKind::ReconcileConnections)
     }

@@ -42,6 +42,7 @@ impl Store {
     }
 
     /// Open an in-memory database (for tests).
+    #[allow(dead_code)]
     pub fn open_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         let store = Self { conn };
@@ -265,6 +266,7 @@ impl Store {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn mark_indexed_timestamp(&self, repo_id: &str) -> rusqlite::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
@@ -274,6 +276,7 @@ impl Store {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn mark_index_failed(&self, repo_id: &str, error: &str) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE projects SET last_error = ?1 WHERE repo_id = ?2",
@@ -482,7 +485,7 @@ impl Store {
 
     pub fn upsert_lib_meta(
         &self, name: &str, source_type: &str, base_url: Option<&str>,
-        version: Option<&str>, indexed_at: &str,
+        _version: Option<&str>, indexed_at: &str,
     ) -> rusqlite::Result<()> {
         // Merge: keep existing used_by, update other fields
         self.conn.execute(
@@ -552,6 +555,7 @@ impl Store {
 
     // ── Index Errors ─────────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub fn log_index_error(&self, err: &IndexError) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO index_errors(repo_id, file_path, error, adapter, timestamp) VALUES(?1, ?2, ?3, ?4, ?5)",
