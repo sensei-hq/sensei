@@ -12,8 +12,6 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use crate::db::Store;
 use crate::indexer::graph::GraphDb;
-use crate::indexer::queue::{IndexQueue, IndexEvent, BroadcastProgress};
-use crate::watcher::DirtyTracker;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::progress::TaskEvent;
 use crate::types::{Project, Solution, SolutionRepo, IndexError, IndexResult};
@@ -21,8 +19,6 @@ use crate::types::{Project, Solution, SolutionRepo, IndexError, IndexResult};
 pub struct SharedState {
     pub store: Mutex<Store>,
     pub graph: Mutex<GraphDb>,
-    pub index_queue: Arc<IndexQueue>,
-    pub dirty_tracker: DirtyTracker,
     pub task_queue: Arc<TaskQueue>,
 }
 
@@ -708,14 +704,6 @@ async fn index_project(
     // Clear errors for this project
     { let s = state.store.lock().await; s.clear_index_errors(&body.repo_id).ok(); }
 
-    // Enqueue via old queue (backward compat — still used by old worker)
-    let pos = state.index_queue.enqueue(
-        body.repo_id.clone(),
-        body.repo_path.clone(),
-        body.force,
-    ).await;
-
-    // Also enqueue via new task queue
     let task = crate::tasks::Task::new(
         crate::tasks::TaskKind::ProcessRepo, &body.repo_id, &body.repo_path,
     );
@@ -724,37 +712,30 @@ async fn index_project(
     Ok(Json(serde_json::json!({
         "ok": true,
         "queued": true,
-        "position": pos,
         "taskId": task_id,
         "repoId": body.repo_id,
     })))
 }
 
 async fn dirty_status(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    let snapshots = state.dirty_tracker.status().await;
-    let result: Vec<serde_json::Value> = snapshots.iter().map(|s| {
-        serde_json::json!({
-            "repoId": s.repo_id,
-            "codeFiles": s.code_files.len(),
-            "docFiles": s.doc_files.len(),
-            "total": s.code_files.len() + s.doc_files.len(),
-        })
-    }).collect();
-    Json(serde_json::json!(result))
+    // Dirty tracker removed — task queue handles incremental updates directly
+    Json(serde_json::json!([]))
 }
 
 async fn index_queue_status(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    Json(state.index_queue.status().await)
+    let status = state.task_queue.status().await;
+    let progress = state.task_queue.progress().await;
+    Json(serde_json::json!({ "queue": status, "repos": progress }))
 }
 
 async fn index_progress_sse(
     State(state): State<AppState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.index_queue.subscribe();
+    let rx = state.task_queue.sender().subscribe();
     let stream = BroadcastStream::new(rx)
         .filter_map(|result| {
             match result {
@@ -762,7 +743,7 @@ async fn index_progress_sse(
                     let data = serde_json::to_string(&event).unwrap_or_default();
                     Some(Ok(Event::default().data(data)))
                 }
-                Err(_) => None, // lagged — skip
+                Err(_) => None,
             }
         });
     Sse::new(stream)
@@ -1753,12 +1734,9 @@ mod tests {
     fn test_app() -> (Router, AppState) {
         let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
-        let (index_queue, _rx) = crate::indexer::queue::IndexQueue::new();
         let state = Arc::new(SharedState {
             store: Mutex::new(store),
             graph: Mutex::new(graph),
-            index_queue,
-            dirty_tracker: DirtyTracker::new(),
             task_queue: Arc::new(TaskQueue::new()),
         });
         let router = create_router(state.clone());
@@ -1960,7 +1938,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(json["queued"].is_array());
+        assert!(json["queue"].is_object());
     }
 
     #[tokio::test]
