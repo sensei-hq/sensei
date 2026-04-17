@@ -33,7 +33,7 @@ Available at any phase. Do not advance the phase — they operate within it.
 
 | Command | Purpose | Behavior |
 |---------|---------|----------|
-| `/sensei:brainstorm` | Decision-making | Structured back-and-forth. AI presents options, human reacts. Can happen within any phase when decisions are needed. |
+| `/sensei:brainstorm` | Open creative conversation | The primary creative command. One conversation can produce artifacts at multiple depth levels — ideas, analysis, design. The AI routes content to the appropriate folder (`docs/ideas/`, `docs/analysis/`, `docs/blueprints/`) based on depth, using frontmatter `origin:` to trace lineage. Phase commands set intent within a brainstorm; brainstorm is the container. (Decision D11) |
 | `/sensei:review` | Quality check | Duplication, pattern adherence, test coverage, doc accuracy at current stage. Auto-triggers after each `/sensei:build` feature. Also available on demand. Subsumes the former `/sensei:audit` command (OWASP/NFR auditing is a form of quality review). |
 
 ---
