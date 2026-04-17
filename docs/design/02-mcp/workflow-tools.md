@@ -25,7 +25,7 @@ The sensei-mcp binary exposes daemon capabilities as MCP tools that the AI calls
 | Tool | Params | Returns | Called by |
 |------|--------|---------|----------|
 | `update_phase(phase, task?, issue?)` | phase: string, task?: string, issue?: number | `{ ok: true, state: WorkflowState }` | Phase commands |
-| `get_workflow_state()` | (none) | `{ phase, task, issue, last_checkpoint, guardrails_hash }` | `/sensei:status`, `/sensei:refocus`, AI when lost |
+| `get_workflow_state()` | (none) | `{ phase, task, issue, last_checkpoint, rules_hash }` | `/sensei:status`, `/sensei:refocus`, AI when lost |
 
 ### Event logging
 

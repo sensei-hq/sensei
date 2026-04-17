@@ -22,7 +22,7 @@ These apply across all phases and shape how the AI behaves throughout the workfl
 
 ## Guardrails as a living document
 
-- Project guardrails file (e.g., `.sensei/guardrails.md`) captures patterns, constraints, and quality rules
+- Project rules file (e.g., `.sensei/rules.md`) captures patterns, constraints, and quality rules
 - Guardrails **grow from feedback**: when the user corrects the AI ("you didn't use the adapter pattern"), the AI asks clarifying questions and adds the pattern to guardrails
 - Next session, guardrails are loaded automatically — the correction persists without the user repeating it
 - This is different from memory (which stores facts about the user/project) — guardrails store **enforceable rules about how to build**

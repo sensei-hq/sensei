@@ -151,14 +151,14 @@ Patterns evolve from corrections and new discoveries:
 
 | Trigger | Action |
 |---------|--------|
-| User corrects AI: "you should have used the adapter pattern" | AI asks clarifying questions → adds to `.sensei/guardrails.md` AND indexes the correction as a pattern enforcement rule |
+| User corrects AI: "you should have used the adapter pattern" | AI asks clarifying questions → adds to `.sensei/rules.md` AND indexes the correction as a pattern enforcement rule |
 | `/sensei:pattern-extract` discovers a new pattern | Adds to PATTERNS.md → next index pass picks it up → becomes enforceable |
 | `/sensei:review` finds repeated violations | Suggests: "3 files violate the adapter pattern this week — should I add a guardrail?" |
 | Indexer detects a new recurring structure | Surfaces as candidate pattern during `/sensei:analyze` → user confirms or dismisses |
 
 **The guardrails ↔ patterns connection:**
 
-Guardrails (`.sensei/guardrails.md`) and patterns (PATTERNS.md + graph) are complementary:
+Guardrails (`.sensei/rules.md`) and patterns (PATTERNS.md + graph) are complementary:
 - **Patterns** describe WHAT the structure looks like (interface, files, registration)
 - **Guardrails** describe WHEN to use them ("always use adapter pattern for language parsers")
 - Pattern detection feeds guardrail growth: when the AI violates a pattern and gets corrected, the correction becomes a guardrail
