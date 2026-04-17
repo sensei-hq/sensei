@@ -102,7 +102,7 @@ origin: docs/ideas/01-workflow-system.md
 │  │  ├── .sensei/guardrails.md           │    │  │  ├── docs/blueprints/     │  │
 │  │  ├── .sensei/state.yaml             │    │  │  ├── docs/experiments/     │  │
 │  │  └── PATTERNS.md                     │    │  │  ├── docs/plans/          │  │
-│  └──────────────────────────────────────┘    │  │  └── docs/templates/      │  │
+│  └──────────────────────────────────────┘    │  │  └── marketplace/templates/      │  │
 │                                              │  └──────────────────────────┘  │
 │  ┌──────────────────────────────────────┐    │                               │
 │  │  Graph Data                          │    │  ┌──────────────────────────┐  │

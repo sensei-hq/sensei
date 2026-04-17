@@ -272,7 +272,7 @@ commands:
 
 ### 5. Templates
 
-**Location:** `docs/templates/`
+**Location:** `marketplace/templates/`
 
 Each phase gets a template that defines the output contract:
 
