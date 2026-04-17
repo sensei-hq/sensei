@@ -221,20 +221,13 @@ flowchart TD
 | [plans/](./plans/) | 05 Plan | Task breakdowns with acceptance criteria | — |
 | [templates/](./templates/) | — | Doc templates for each phase | 2 files (needs expansion) |
 
-### Reference (still valid, needs refresh)
+### Reference
 
 | Folder | Purpose | Status |
 |--------|---------|--------|
-| [features/](./features/) | User-facing feature specs with Gherkin scenarios | 12 files — good template, content needs updating |
-| [design/](./design/) | Technical design docs — schemas, algorithms, APIs | 30+ files — many stale (Supabase refs), some still valid |
-| [roadmap/](./roadmap/) | Architectural direction docs | 12 files — mix of current and stale |
-| [gap-analysis.md](./gap-analysis.md) | Codebase health assessment (2026-04-10) | Valid — model for `/sensei:analyze` output |
-
-### Archive (to be moved per D1)
-
-| Folder | Purpose | Status |
-|--------|---------|--------|
-| [superpowers/](./superpowers/) | Plans and specs from prior plugin-building phase | 43 files — to archive to `_archive/superpowers/` |
+| [features/](./features/) | User-facing feature specs with Gherkin scenarios | 12 files — needs refresh against current capabilities |
+| [design/](./design/) | Technical design docs organized by layer | 7 layers + roadmap + decisions |
+| [reference/](./reference/) | Historical docs — gap analysis, blocking gaps | 2 files |
 
 ---
 
