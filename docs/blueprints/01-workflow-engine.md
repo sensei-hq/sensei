@@ -821,10 +821,11 @@ Based on analysis priority actions and dependency chain:
 
 | Dependency | Idea | What's needed | Minimum viable |
 |-----------|------|---------------|----------------|
-| **Pattern detection in indexer** | 08 Codebase Intelligence | `get_patterns()` MCP tool needs the indexer to detect design patterns (adapter, factory, etc.) | Phase A (naming heuristics) is sufficient to unblock locate step |
+| **Rich graph nodes** | Analysis 02 | All intelligence depends on rich nodes — docstrings, params, return types, implements/extends. Currently skeletal. | Fixes 1-3 (quick wins: store docstring, line_end, is_exported) unblock basic intelligence. Fixes 4-7, 9 (params, returns, frontmatter, implements) unblock pattern detection and traceability. |
+| **Pattern detection in indexer** | 08 Codebase Intelligence | `get_patterns()` MCP tool needs the indexer to detect design patterns (adapter, factory, etc.) | Phase A (naming heuristics) is sufficient to unblock locate step. Structural detection needs rich nodes (implements/extends edges). |
 | **Duplicate detection** | 08 Codebase Intelligence | `/sensei:review` quality checks need duplicate detection | Phase A (qlty/jscpd CLI) gives immediate value |
 
-These are tracked in idea 08. The workflow engine can ship with the locate step using `search()` and `get_callers()` first — `get_patterns()` becomes more powerful as the indexer improves.
+The graph node enrichment (analysis 02) is the deepest dependency — most intelligence features are limited by node richness. Quick wins (fixes 1-3) are near-zero effort since the data is already extracted but discarded. See `docs/analysis/02-graph-node-gaps.md` for the full fix list.
 
 ## What this blueprint does NOT cover
 
