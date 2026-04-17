@@ -29,7 +29,7 @@ See [blueprints/01-workflow-engine.md](../blueprints/01-workflow-engine.md) sect
 
 See [blueprints/01-workflow-engine.md](../blueprints/01-workflow-engine.md) section 7.
 
-## Phase doc templates (docs/templates/)
+## Phase doc templates (marketplace/templates/)
 
 Templates to create:
 
