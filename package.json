@@ -9,6 +9,7 @@
     "reset": "./scripts/reset-sensei.sh",
     "clean": "find packages apps -name 'dist' -maxdepth 5 -type d -exec rm -rf {} + 2>/dev/null; rm -rf apps/desktop/build apps/desktop/.svelte-kit apps/static/.svelte-kit; echo 'clean done'",
     "build": "cd apps/desktop && bun run tauri:build",
+    "build:server": "cargo build --release && ./scripts/link.sh",
     "test": "cargo test --manifest-path crates/senseid/Cargo.toml",
     "test:e2e": "cd apps/desktop && npx playwright test",
     "dev": "cd apps/desktop && bun run dev",
