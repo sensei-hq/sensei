@@ -427,6 +427,155 @@ The entire roadmap (all 3 waves, 22 components) should be pushed as GitHub issue
 
 ---
 
+## Data Architecture — What lives where
+
+### The three layers
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Desktop (Tauri + SvelteKit)                                        │
+│  Sees, configures, analyzes                                         │
+│  ├── Phase progression timeline                                     │
+│  ├── Quality metrics charts (FTR, turn count, rework rate)          │
+│  ├── Event log viewer                                               │
+│  ├── Issue/backlog status                                           │
+│  ├── Guardrails editor                                              │
+│  └── Configuration UI                                               │
+│                                                                     │
+│  Reads from daemon HTTP API. Does NOT write workflow state.         │
+└──────────────────┬──────────────────────────────────────────────────┘
+                   │ HTTP (read)
+                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Daemon (senseid :7744) — persistent store + compute                │
+│                                                                     │
+│  Stores (SQLite):                                                   │
+│  ├── events        — append-only log of everything that happens     │
+│  ├── sessions      — session lifecycle (start, checkpoint, end)     │
+│  ├── metrics       — computed from events (FTR, turn count, etc.)   │
+│  └── phase_history — timeline of phase transitions per project      │
+│                                                                     │
+│  Computes:                                                          │
+│  ├── FTR score (from rework events / total tasks)                   │
+│  ├── Turn efficiency (turns per task)                               │
+│  ├── Tool preference adherence (MCP vs grep usage ratio)            │
+│  ├── Pattern adherence (guardrail violations over time)             │
+│  └── Phase velocity (time spent per phase)                          │
+│                                                                     │
+│  HTTP API:                                                          │
+│  ├── POST /api/events         — log an event                       │
+│  ├── GET  /api/metrics/:proj  — computed metrics for a project     │
+│  ├── GET  /api/phases/:proj   — phase transition history           │
+│  └── GET  /api/state/:proj    — current workflow state              │
+└──────────────────┬──────────────────────────────────────────────────┘
+                   │ MCP (tools)
+                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  MCP (sensei-mcp) — exposes daemon to AI                            │
+│                                                                     │
+│  Existing tools (code intelligence):                                │
+│  ├── search(), get_callers(), get_callees()                         │
+│  ├── get_patterns(), get_communities()                              │
+│  ├── get_lib_docs(), search_lib_docs(), add_library()               │
+│  └── get_project_summary()                                          │
+│                                                                     │
+│  New tools (workflow intelligence):                                  │
+│  ├── log_event(type, data)     — record workflow event              │
+│  ├── get_workflow_state()      — current phase, task, issue         │
+│  ├── get_metrics(range?)       — FTR, turns, adherence scores       │
+│  └── update_phase(phase, task?, issue?)  — transition phase         │
+└──────────────────┬──────────────────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  State file (.sensei/state.yaml) — local fast-read for hooks        │
+│                                                                     │
+│  Written by: commands (via MCP or directly)                         │
+│  Read by: hooks (bash — no MCP access), /sensei:status              │
+│                                                                     │
+│  This is a CACHE of daemon state, not the source of truth.          │
+│  If state.yaml is missing, commands recreate it from daemon.        │
+│  If daemon is down, commands work from state.yaml (degraded mode).  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Event types
+
+The daemon's event log captures everything needed for analysis. Events are appended by hooks and commands via `POST /api/events` (or MCP `log_event()`).
+
+| Event type | Source | Data captured | Used for |
+|-----------|--------|---------------|----------|
+| `phase_transition` | Phase commands | from_phase, to_phase, trigger (command or nudge) | Phase velocity, workflow patterns |
+| `command_invoked` | All commands | command_name, arguments, phase_context | Command usage analytics |
+| `tool_used` | pre-tool hook | tool_name, is_mcp (bool) | Tool preference adherence |
+| `tool_result` | post-tool hook | tool_name, exit_code, duration_ms | Tool reliability metrics |
+| `checkpoint` | `/sensei:checkpoint` | summary, phase, task | Session continuity |
+| `issue_started` | `/sensei:build` | issue_number, title | Task tracking |
+| `issue_completed` | `/sensei:commit`, `/sensei:validate` | issue_number, turns_taken | FTR, turn efficiency |
+| `review_finding` | `/sensei:review` | finding_type, severity, file | Quality trends |
+| `guardrail_added` | `/sensei:guardrails` | rule_text, triggered_by | Guardrail growth tracking |
+| `rework` | AI detects it's redoing prior work | original_task, reason | Rework rate, coaching |
+| `compaction` | pre-compact hook | context_preserved (summary) | Context decay measurement |
+
+### How capture happens
+
+The key constraint: **hooks are bash scripts with no MCP access**. Commands are markdown executed by the AI with full MCP access.
+
+| Capture point | Mechanism | Notes |
+|--------------|-----------|-------|
+| **Hooks** (pre-tool, post-tool, session-start, pre-compact) | HTTP POST to daemon (`curl`) | Already implemented for pre-tool/post-tool. Add phase context from state.yaml. |
+| **Commands** (phase transitions, checkpoints, issue lifecycle) | MCP `log_event()` tool | Commands include instructions: "call `log_event(type='phase_transition', data={...})`" |
+| **Rework detection** | AI self-reports via MCP | Command instructions: "if you notice you're redoing work from a prior session, call `log_event(type='rework', ...)`" |
+| **State file updates** | Commands write YAML | After logging event to daemon, also update `.sensei/state.yaml` for hook access |
+
+### What hooks capture vs. what commands capture
+
+```
+Hook (bash, fires automatically)        Command (AI, fires on invocation)
+├── tool_used (every tool call)          ├── phase_transition
+├── tool_result (every tool call)        ├── command_invoked
+├── compaction (pre-compact)             ├── checkpoint
+└── session lifecycle                    ├── issue_started / issue_completed
+                                         ├── review_finding
+                                         ├── guardrail_added
+                                         └── rework
+```
+
+Hooks handle high-frequency, automatic capture. Commands handle semantic, intent-driven capture.
+
+### Desktop reads, daemon computes
+
+The desktop app reads computed metrics from the daemon API. It does NOT process raw events — the daemon does the aggregation.
+
+| Desktop view | Daemon endpoint | What it shows |
+|-------------|-----------------|---------------|
+| Phase timeline | `GET /api/phases/:proj` | Visual timeline of phase transitions with duration |
+| Quality dashboard | `GET /api/metrics/:proj` | FTR trend, turn count trend, rework rate, tool adherence |
+| Event log | `GET /api/events/:proj?limit=50` | Recent events with filtering |
+| Active work | `GET /api/state/:proj` | Current phase, task, issue |
+
+### New MCP tools needed
+
+| Tool | Purpose | Called by |
+|------|---------|----------|
+| `log_event(type, data)` | Record a workflow event to daemon's event store | Commands, via instructions in command markdown |
+| `get_workflow_state()` | Return current phase, task, issue, guardrails status | `/sensei:status`, `/sensei:refocus`, AI when lost |
+| `get_metrics(range?)` | Return computed FTR, turn count, rework rate for project | `/sensei:analyze` when reviewing interaction quality |
+| `update_phase(phase, task?, issue?)` | Transition to new phase, optionally set active task/issue | Phase commands |
+
+### New daemon endpoints needed
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/events` | POST | Log an event (hook or command) |
+| `/api/events/:proj` | GET | List events for a project (with filters) |
+| `/api/state/:proj` | GET | Current workflow state |
+| `/api/state/:proj` | PUT | Update workflow state (phase, task, issue) |
+| `/api/metrics/:proj` | GET | Computed metrics for a project |
+| `/api/phases/:proj` | GET | Phase transition history |
+
+---
+
 ## Verification & Testability
 
 How each component type can be tested:
@@ -462,48 +611,52 @@ Based on analysis priority actions and dependency chain:
 | 1 | Phase doc templates (idea, analysis, blueprint, experiment, plan) | Templates | Nothing |
 | 2 | Guardrails file template | Template | Nothing |
 | 3 | State file schema (`.sensei/state.yaml`) | Schema | Nothing |
-| 4 | `/sensei:guardrails` command | Command | Guardrails template |
-| 5 | `/sensei:refocus` command | Command | State file |
-| 6 | `/sensei:status` command | Command | State file |
-| 7 | Pre-compact hook | Hook | Guardrails template, state file |
-| 8 | Wire pre-tool/post-tool hooks | Hook config | Nothing |
-| 9 | Update session-start hook | Hook | Guardrails template, state file |
-| 10 | GitHub issue template + labels | GitHub config | Nothing |
+| 4 | Daemon: event log + workflow state endpoints | Rust (senseid) | Nothing |
+| 5 | MCP: `log_event`, `get_workflow_state`, `update_phase` tools | Rust (sensei-mcp) | Daemon endpoints |
+| 6 | `/sensei:guardrails` command | Command | Guardrails template |
+| 7 | `/sensei:refocus` command | Command | State file, MCP tools |
+| 8 | `/sensei:status` command | Command | State file, MCP tools |
+| 9 | Pre-compact hook | Hook | Guardrails template, state file |
+| 10 | Wire pre-tool/post-tool hooks (add phase context) | Hook config | State file |
+| 11 | Update session-start hook | Hook | Guardrails template, state file |
+| 12 | GitHub issue template + labels | GitHub config | Nothing |
 
 ### Wave 2: Phase commands (core workflow)
 
 | # | Component | Type | Depends on |
 |---|-----------|------|-----------|
-| 11 | `/sensei:brainstorm` command | Command | Templates, config, state file |
-| 12 | `/sensei:idea` command | Command | Idea template, state file |
-| 13 | `/sensei:analyze` command | Command | Analysis template, state file |
-| 14 | `/sensei:blueprint` command | Command | Blueprint template, state file |
-| 15 | `/sensei:experiment` command | Command | Experiment template, state file |
-| 16 | `/sensei:plan` command | Command | Plan template, state file, GitHub issues |
-| 17 | `/sensei:build` command | Command | Plan template, guardrails, state file, GitHub issues |
-| 18 | `/sensei:validate` command | Command | State file, GitHub issues |
+| 13 | `/sensei:brainstorm` command | Command | Templates, config, MCP tools |
+| 14 | `/sensei:idea` command | Command | Idea template, MCP tools |
+| 15 | `/sensei:analyze` command | Command | Analysis template, MCP tools |
+| 16 | `/sensei:blueprint` command | Command | Blueprint template, MCP tools |
+| 17 | `/sensei:experiment` command | Command | Experiment template, MCP tools |
+| 18 | `/sensei:plan` command | Command | Plan template, MCP tools, GitHub issues |
+| 19 | `/sensei:build` command | Command | Plan template, guardrails, MCP tools, GitHub issues |
+| 20 | `/sensei:validate` command | Command | MCP tools, GitHub issues |
 
 ### Wave 3: Cross-cutting and polish
 
 | # | Component | Type | Depends on |
 |---|-----------|------|-----------|
-| 19 | `/sensei:review` command | Command | Nothing |
-| 20 | `/sensei:tools` command | Command | Nothing |
-| 21 | `/sensei:patterns` command | Command | PATTERNS.md |
-| 22 | Update `/sensei:help` | Command | All commands exist |
-| 23 | Update catalog.json | Config | All commands exist |
-| 24 | Retire absorbed skills | Cleanup | Replacement commands tested |
-| 25 | Archive `docs/superpowers/` | Cleanup | Nothing |
-| 26 | Push roadmap as GitHub issues | Backlog | All waves defined |
+| 21 | `/sensei:review` command | Command | MCP tools |
+| 22 | `/sensei:tools` command | Command | Nothing |
+| 23 | `/sensei:patterns` command | Command | PATTERNS.md |
+| 24 | Daemon: `get_metrics` endpoint | Rust (senseid) | Event log |
+| 25 | MCP: `get_metrics` tool | Rust (sensei-mcp) | Daemon endpoint |
+| 26 | Update `/sensei:help` | Command | All commands exist |
+| 27 | Update catalog.json | Config | All commands exist |
+| 28 | Retire absorbed skills | Cleanup | Replacement commands tested |
+| 29 | Archive `docs/superpowers/` | Cleanup | Nothing |
+| 30 | Push roadmap as GitHub issues | Backlog | All waves defined |
 
 ---
 
 ## What this blueprint does NOT cover
 
-- **MCP tool contracts**: Stale references marked (D13). New commands will use current Rust API tools directly during build phase.
-- **Dashboard/visualization**: Separate idea (10). Orthogonal to workflow engine.
+- **MCP tool contracts for code intelligence**: Stale references marked (D13). New commands will use current Rust API tools directly during build phase.
+- **Dashboard UI implementation**: Separate idea (10). The data architecture above defines what the desktop reads — building the actual views is a separate effort.
 - **Multi-coordinator**: Separate idea (12). Build for Claude Code first, abstract later.
-- **Metrics instrumentation**: Pre-tool/post-tool hooks capture data. Analysis of that data is a separate feature.
+- **Metric computation algorithms**: The daemon endpoints and event types are defined above. The actual FTR/rework/adherence computation logic is implementation detail for the daemon build.
 
 ---
 
