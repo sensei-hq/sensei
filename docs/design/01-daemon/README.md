@@ -12,6 +12,7 @@ The core engine. Rust binary running as a background service on `:7744`. Owns th
 | [indexing-architecture.md](./indexing-architecture.md) | Language adapters, AST parsing, graph building pipeline |
 | [task-queue.md](./task-queue.md) | Task queue: scan → repo → folder → file → resolve → connect |
 | [enhancements.md](./enhancements.md) | What needs to be built — graph enrichment, events, state, metrics, patterns |
+| [sqlite-schema.md](./sqlite-schema.md) | SQLite schema — two-database model, table definitions, type mappings |
 | [llmspec.md](./llmspec.md) | `.sensei/llmspec.yaml` output format |
 | [local-model-indexer.md](./local-model-indexer.md) | Optional Ollama adapter for local inference |
 
@@ -21,6 +22,6 @@ These are built on the daemon's data layer. If the graph or event store is wrong
 
 | Sub-layer | Docs | Description |
 |-----------|------|-------------|
-| [intelligence/](./intelligence/) | 5 | Context delivery, compression, patterns, metadata, response cache |
+| [intelligence/](./intelligence/) | 6 | Context delivery, compression, patterns, metadata, response cache, graph intelligence |
 | [traceability/](./traceability/) | 3 | Drift detection, doc tools, traceability matrix |
 | [analytics/](./analytics/) | 3 | Benchmarking, telemetry, project memory |
