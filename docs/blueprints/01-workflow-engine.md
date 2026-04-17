@@ -519,33 +519,41 @@ The daemon's event log captures everything needed for analysis. Events are appen
 
 ### How capture happens
 
-The key constraint: **hooks are bash scripts with no MCP access**. Commands are markdown executed by the AI with full MCP access.
+**The AI only calls MCP tools. It never calls daemon HTTP endpoints directly.**
+
+Three callers, three paths:
+
+```
+AI (Claude)  → MCP tools (sensei-mcp)  → Daemon HTTP API (senseid)
+Hooks (bash) → Daemon HTTP API (curl)   directly
+Desktop      → Daemon HTTP API (fetch)  directly
+```
 
 | Capture point | Mechanism | Notes |
 |--------------|-----------|-------|
-| **Hooks** (pre-tool, post-tool, session-start, pre-compact) | HTTP POST to daemon (`curl`) | Already implemented for pre-tool/post-tool. Add phase context from state.yaml. |
-| **Commands** (phase transitions, checkpoints, issue lifecycle) | MCP `log_event()` tool | Commands include instructions: "call `log_event(type='phase_transition', data={...})`" |
-| **Rework detection** | AI self-reports via MCP | Command instructions: "if you notice you're redoing work from a prior session, call `log_event(type='rework', ...)`" |
-| **State file updates** | Commands write YAML | After logging event to daemon, also update `.sensei/state.yaml` for hook access |
+| **Hooks** (pre-tool, post-tool, session-start, pre-compact) | `curl` to daemon HTTP | Bash scripts, no MCP access. Already implemented for pre-tool/post-tool. Add phase context from state.yaml. |
+| **Commands** (phase transitions, checkpoints, issue lifecycle) | MCP `log_event()` tool | Commands include AI instructions: "call `log_event(type='phase_transition', data={...})`" |
+| **Rework detection** | AI calls MCP `log_event()` | Command instructions: "if you notice you're redoing work from a prior session, call `log_event(type='rework', ...)`" |
+| **State file updates** | Commands call MCP `update_phase()` | MCP tool writes to daemon AND updates `.sensei/state.yaml` for hook access |
 
 ### What hooks capture vs. what commands capture
 
 ```
-Hook (bash, fires automatically)        Command (AI, fires on invocation)
-├── tool_used (every tool call)          ├── phase_transition
-├── tool_result (every tool call)        ├── command_invoked
-├── compaction (pre-compact)             ├── checkpoint
-└── session lifecycle                    ├── issue_started / issue_completed
-                                         ├── review_finding
-                                         ├── guardrail_added
-                                         └── rework
+Hook (bash → curl to daemon)             Command (AI → MCP tool → daemon)
+├── tool_used (every tool call)           ├── phase_transition
+├── tool_result (every tool call)         ├── command_invoked
+├── compaction (pre-compact)              ├── checkpoint
+└── session lifecycle                     ├── issue_started / issue_completed
+                                          ├── review_finding
+                                          ├── guardrail_added
+                                          └── rework
 ```
 
-Hooks handle high-frequency, automatic capture. Commands handle semantic, intent-driven capture.
+Hooks handle high-frequency, automatic capture (bash → curl). Commands handle semantic, intent-driven capture (AI → MCP).
 
 ### Desktop reads, daemon computes
 
-The desktop app reads computed metrics from the daemon API. It does NOT process raw events — the daemon does the aggregation.
+The desktop app reads computed metrics from the daemon HTTP API. It does NOT process raw events — the daemon does the aggregation.
 
 | Desktop view | Daemon endpoint | What it shows |
 |-------------|-----------------|---------------|
@@ -554,25 +562,27 @@ The desktop app reads computed metrics from the daemon API. It does NOT process 
 | Event log | `GET /api/events/:proj?limit=50` | Recent events with filtering |
 | Active work | `GET /api/state/:proj` | Current phase, task, issue |
 
-### New MCP tools needed
+### MCP tools (what the AI calls)
 
 | Tool | Purpose | Called by |
 |------|---------|----------|
-| `log_event(type, data)` | Record a workflow event to daemon's event store | Commands, via instructions in command markdown |
+| `log_event(type, data)` | Record a workflow event | Commands (AI instructions say "call this tool") |
 | `get_workflow_state()` | Return current phase, task, issue, guardrails status | `/sensei:status`, `/sensei:refocus`, AI when lost |
-| `get_metrics(range?)` | Return computed FTR, turn count, rework rate for project | `/sensei:analyze` when reviewing interaction quality |
-| `update_phase(phase, task?, issue?)` | Transition to new phase, optionally set active task/issue | Phase commands |
+| `get_metrics(range?)` | Return computed FTR, turn count, rework rate | `/sensei:analyze` when reviewing interaction quality |
+| `update_phase(phase, task?, issue?)` | Transition phase, update state.yaml + daemon | Phase commands |
 
-### New daemon endpoints needed
+### Daemon HTTP API (internal — never called by AI)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/events` | POST | Log an event (hook or command) |
-| `/api/events/:proj` | GET | List events for a project (with filters) |
-| `/api/state/:proj` | GET | Current workflow state |
-| `/api/state/:proj` | PUT | Update workflow state (phase, task, issue) |
-| `/api/metrics/:proj` | GET | Computed metrics for a project |
-| `/api/phases/:proj` | GET | Phase transition history |
+Called by hooks (curl), desktop (fetch), and sensei-mcp (internal). The AI never sees these.
+
+| Endpoint | Method | Caller | Purpose |
+|----------|--------|--------|---------|
+| `/api/events` | POST | hooks, sensei-mcp | Log an event |
+| `/api/events/:proj` | GET | desktop, sensei-mcp | List events for a project |
+| `/api/state/:proj` | GET | desktop, sensei-mcp, hooks | Current workflow state |
+| `/api/state/:proj` | PUT | sensei-mcp | Update workflow state |
+| `/api/metrics/:proj` | GET | desktop, sensei-mcp | Computed metrics |
+| `/api/phases/:proj` | GET | desktop, sensei-mcp | Phase transition history |
 
 ---
 
