@@ -67,6 +67,7 @@ Precision assistance — understand the codebase deeply, serve the right context
 | 15 | [Pattern Store](./15-pattern-store.md) — detect, surface, enforce, grow lifecycle | Idea |
 | 17 | [Pattern Knowledge](./17-pattern-knowledge.md) — library patterns, industry patterns, architectural options | Idea |
 | 18 | [Testability & TDD](./18-testability-tdd.md) — composable functions, test-first with human approval, testability scoring | Idea |
+| 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — competitive comparison, reproducible benchmarks, community results, honest limitations | Idea |
 
 ---
 
@@ -88,3 +89,4 @@ Make sensei usable beyond Claude Code. Multi-repo, multi-coordinator, multi-team
 |---|----------|--------|
 | 12 | [Multi-Coordinator Support](./12-multi-coordinator.md) — adapter pattern for Cursor, Copilot, etc. | Idea |
 | 16 | [Workspace & System Intelligence](./16-workspace-system-intelligence.md) — multi-repo, conformance, health | Idea |
+| 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — competitive comparison, reproducible benchmarks, honest limitations | Idea |
