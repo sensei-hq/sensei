@@ -61,10 +61,11 @@ Precision assistance — understand the codebase deeply, serve the right context
 
 | # | Document | Status |
 |---|----------|--------|
-| 08 | [Codebase Intelligence](./08-codebase-intelligence.md) — indexing, call graph, graph analysis | Idea |
+| 08 | [Codebase Intelligence](./08-codebase-intelligence.md) — indexing, call graph, graph analysis, pattern detection | Idea |
 | 09 | [Library Intelligence](./09-library-intelligence.md) — doc indexing, registry, skill generation | Idea |
 | 14 | [Context Delivery](./14-context-delivery.md) — resolution levels, token budgeting, ranking | Idea |
-| 15 | [Pattern Store](./15-pattern-store.md) — detection, search, enforcement, templates | Idea |
+| 15 | [Pattern Store](./15-pattern-store.md) — detect, surface, enforce, grow lifecycle | Idea |
+| 17 | [Pattern Knowledge](./17-pattern-knowledge.md) — library patterns, industry patterns, architectural options | Idea |
 
 ---
 
