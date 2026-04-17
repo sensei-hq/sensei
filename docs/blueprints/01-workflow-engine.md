@@ -578,7 +578,36 @@ A new hook that fires on every user message. This is how we count turns per task
 ]
 ```
 
-The hook reads `active_task` and `active_issue` from state.yaml, increments a turn counter, and POSTs to daemon. This gives us turn count per task without relying on the AI to self-report.
+The hook reads `active_task` and `active_issue` from state.yaml, classifies the prompt, and POSTs to daemon. This gives us turn count AND correction detection without relying on the AI to self-report.
+
+**Prompt classification (for FTR):**
+
+The hook classifies each user prompt as one of:
+
+| Classification | Detection | FTR impact |
+|---------------|-----------|------------|
+| `correction` | Contains: "no", "wrong", "not what I", "try again", "fix this", "redo", "that's incorrect", "go back" | Negative — triggers `revision_requested` event |
+| `continuation` | Starts with: "now", "next", "also", "and then" | Neutral |
+| `clarification` | Contains: "what about", "how does", "can you explain" | Neutral |
+| `new_request` | Default — doesn't match other patterns | Neutral |
+
+This is a simple heuristic — not perfect, but far more reliable than AI self-reporting. The `revision_requested` event fires automatically when a correction is detected, giving us real FTR data.
+
+```bash
+# Prompt classification in user-prompt hook
+classify_prompt() {
+  local prompt="$1"
+  if echo "$prompt" | grep -qiE "(^no[,. ]|wrong|not what|try again|fix (this|that|it)|redo|that's (incorrect|not)|go back|revert)"; then
+    echo "correction"
+  elif echo "$prompt" | grep -qiE "^(now|next|also|and then|continue)"; then
+    echo "continuation"
+  elif echo "$prompt" | grep -qiE "(what about|how does|can you explain|why did)"; then
+    echo "clarification"
+  else
+    echo "new_request"
+  fi
+}
+```
 
 ### Code intelligence integration — the locate step
 
@@ -788,12 +817,22 @@ Based on analysis priority actions and dependency chain:
 
 ---
 
+## Dependencies on other ideas
+
+| Dependency | Idea | What's needed | Minimum viable |
+|-----------|------|---------------|----------------|
+| **Pattern detection in indexer** | 08 Codebase Intelligence | `get_patterns()` MCP tool needs the indexer to detect design patterns (adapter, factory, etc.) | Phase A (naming heuristics) is sufficient to unblock locate step |
+| **Duplicate detection** | 08 Codebase Intelligence | `/sensei:review` quality checks need duplicate detection | Phase A (qlty/jscpd CLI) gives immediate value |
+
+These are tracked in idea 08. The workflow engine can ship with the locate step using `search()` and `get_callers()` first — `get_patterns()` becomes more powerful as the indexer improves.
+
 ## What this blueprint does NOT cover
 
 - **MCP tool contracts for code intelligence**: Stale references marked (D13). New commands will use current Rust API tools directly during build phase.
 - **Dashboard UI implementation**: Separate idea (10). The data architecture above defines what the desktop reads — building the actual views is a separate effort.
 - **Multi-coordinator**: Separate idea (12). Build for Claude Code first, abstract later.
 - **Metric computation algorithms**: The daemon endpoints and event types are defined above. The actual FTR/rework/adherence computation logic is implementation detail for the daemon build.
+- **Design pattern recognition in indexer**: Defined in idea 08. Phase A (naming heuristics) is a Wave 1 candidate to unblock `get_patterns()`.
 
 ---
 
