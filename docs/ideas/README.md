@@ -66,6 +66,7 @@ Precision assistance — understand the codebase deeply, serve the right context
 | 14 | [Context Delivery](./14-context-delivery.md) — resolution levels, token budgeting, ranking | Idea |
 | 15 | [Pattern Store](./15-pattern-store.md) — detect, surface, enforce, grow lifecycle | Idea |
 | 17 | [Pattern Knowledge](./17-pattern-knowledge.md) — library patterns, industry patterns, architectural options | Idea |
+| 18 | [Testability & TDD](./18-testability-tdd.md) — composable functions, test-first with human approval, testability scoring | Idea |
 
 ---
 
