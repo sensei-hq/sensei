@@ -302,6 +302,153 @@ All templates use frontmatter with `name`, `description`, `date`, `status`, `ori
 
 The AI uses judgment to route. When in doubt, it asks: "This is getting into blueprint territory — should I put this in `docs/blueprints/`?"
 
+### 7. Workflow state file
+
+**Location:** `.sensei/state.yaml`
+
+The single source of truth for "where am I." Updated by commands, read by hooks and refocus. This is the **testable artifact** — after running a command, check if state was updated correctly.
+
+```yaml
+# .sensei/state.yaml (managed by commands and hooks, not edited by hand)
+active_phase: build
+active_plan: docs/plans/workflow-engine.md
+active_task: "Wave 1, item 3: /sensei:guardrails command"
+active_issue: 42                    # GitHub issue number, if tracking via issues
+last_checkpoint: "2026-04-17T12:00:00Z"
+guardrails_hash: "a3f2..."         # quick check if guardrails changed since last load
+```
+
+**Lifecycle:**
+1. Phase commands update `active_phase` when invoked
+2. `/sensei:plan` sets `active_plan`; `/sensei:build` advances `active_task`
+3. `/sensei:checkpoint` updates `last_checkpoint`
+4. Session-start hook reads this to orient the AI
+5. Pre-compact hook reads this to preserve state across compaction
+6. `/sensei:refocus` reads this to re-anchor
+
+**Testability:** After any command, you can `cat .sensei/state.yaml` and verify the state is correct. Hooks can be tested by running the script and checking JSON output against state.yaml contents.
+
+### 8. `/sensei:status` command
+
+The "where am I" query. Reads state file + project structure and returns full orientation:
+
+```
+/sensei:status
+
+Phase:      build
+Plan:       docs/plans/workflow-engine.md
+Task:       Wave 1, item 3: /sensei:guardrails command
+Issue:      #42 (open)
+Checkpoint: 2026-04-17T12:00:00Z
+
+Guardrails: .sensei/guardrails.md (12 rules loaded)
+Patterns:   PATTERNS.md (3 patterns)
+
+Docs:
+  ideas/       7 files
+  analysis/    1 file
+  blueprints/  1 file
+  plans/       0 files
+
+Tools: sensei-mcp connected (14 tools)
+```
+
+This is also callable by the AI internally when it feels lost — not just a user-facing command. The pre-compact hook can remind the AI: "call `/sensei:status` if you need orientation after compaction."
+
+### 9. Backlog management — GitHub issues as source of truth
+
+Markdown backlogs go stale because the AI forgets to update them. GitHub issues are persistent, queryable, and manageable independently. For repos on GitHub, issues ARE the backlog.
+
+**Flow:**
+
+```
+Brainstorm/Ideate
+  → Feature doc (docs/ideas/ or docs/features/)
+    → Push as GitHub issue (with labels)
+      → AI picks issue → works on it
+        → Closes issue referencing commit
+```
+
+**Issue labels:**
+
+| Label type | Values | Purpose |
+|-----------|--------|---------|
+| `concept:` | workflow, qualitative, quantitative, tooling, integrity, platform | Which core concept |
+| `depth:` | idea, analysis, blueprint, experiment, build | How deep to go |
+| `wave:` | 1, 2, 3 | Implementation wave |
+| `priority:` | critical, high, medium, low | Ordering |
+| `type:` | feature, bug, enhancement, cleanup | Nature of work |
+
+**GitHub issue template:**
+
+```markdown
+---
+name: Feature
+about: New capability or enhancement
+labels: type:feature
+---
+
+## Summary
+<!-- One paragraph: what and why -->
+
+## Depth
+<!-- How far should this go? -->
+- [ ] Idea — explore the concept, document in docs/ideas/
+- [ ] Analysis — assess feasibility, map against existing code
+- [ ] Blueprint — design the architecture
+- [ ] Build — implement with TDD
+
+## Acceptance criteria
+<!-- How do we know this is done? -->
+- [ ] ...
+
+## Related docs
+<!-- Links to idea/analysis/blueprint docs if they exist -->
+
+## Context
+<!-- Feature doc, design doc, or conversation that led to this -->
+```
+
+**Commands integration:**
+
+| Command | GitHub interaction |
+|---------|-------------------|
+| `/sensei:plan` | Reads approved blueprint → creates GitHub issues for each feature (or links to existing ones) |
+| `/sensei:build` | Reads open issues → picks highest priority → sets `active_issue` in state.yaml → works on it |
+| `/sensei:refocus` | Shows current issue, remaining issues in milestone |
+| `/sensei:status` | Shows active issue number and title |
+| `/sensei:commit` | Includes `Closes #42` or `Refs #42` in commit message |
+| `/sensei:validate` | Verifies acceptance criteria from issue are met before closing |
+
+**Roadmap decomposition:**
+The entire roadmap (all 3 waves, 22 components) should be pushed as GitHub issues with wave milestones. Then implementation becomes: pick the next open issue, work on it, close it. One at a time, verified.
+
+**For non-GitHub repos:** Fall back to `docs/backlog.md` with a simple task list. The commands detect whether `gh` is available and the repo has a remote.
+
+---
+
+## Verification & Testability
+
+How each component type can be tested:
+
+| Component | Test method | What to verify |
+|-----------|------------|----------------|
+| **Hooks** (bash scripts) | Run script, check JSON output | Output contains expected context, state.yaml values, guardrails |
+| **State file** | `cat .sensei/state.yaml` after command | Phase, task, issue, checkpoint updated correctly |
+| **Commands** (markdown) | E2E conversation test OR manual walkthrough | Correct artifact created in correct folder with correct frontmatter |
+| **Guardrails** | `/sensei:status` shows loaded count | File exists, rules parsed, hash matches |
+| **GitHub issues** | `gh issue list --label "wave:1"` | Issues exist, labels correct, milestone set |
+| **Pre-compact hook** | Trigger compaction, check if AI retains guardrails | AI can still reference guardrails and current task after compaction |
+| **Content routing** | Check file location after brainstorm | Design-depth content in blueprints/, idea-depth in ideas/ |
+
+**E2E test approach (using Playwright MCP or scripted sessions):**
+1. Start a session → verify session-start hook injected context
+2. Run `/sensei:idea "test concept"` → verify file created in `docs/ideas/` with correct template
+3. Run `/sensei:status` → verify state shows phase: ideate
+4. Trigger compaction → verify pre-compact hook fires, AI retains context
+5. Run `/sensei:refocus` → verify AI re-anchors to current task
+6. Run `/sensei:build` on an issue → verify state.yaml updates, tests written first, issue closed on completion
+
 ---
 
 ## Implementation Order
@@ -314,36 +461,40 @@ Based on analysis priority actions and dependency chain:
 |---|-----------|------|-----------|
 | 1 | Phase doc templates (idea, analysis, blueprint, experiment, plan) | Templates | Nothing |
 | 2 | Guardrails file template | Template | Nothing |
-| 3 | `/sensei:guardrails` command | Command | Guardrails template |
-| 4 | `/sensei:refocus` command | Command | Nothing |
-| 5 | Pre-compact hook | Hook | Guardrails template |
-| 6 | Wire pre-tool/post-tool hooks | Hook config | Nothing |
-| 7 | Update session-start hook | Hook | Guardrails template |
+| 3 | State file schema (`.sensei/state.yaml`) | Schema | Nothing |
+| 4 | `/sensei:guardrails` command | Command | Guardrails template |
+| 5 | `/sensei:refocus` command | Command | State file |
+| 6 | `/sensei:status` command | Command | State file |
+| 7 | Pre-compact hook | Hook | Guardrails template, state file |
+| 8 | Wire pre-tool/post-tool hooks | Hook config | Nothing |
+| 9 | Update session-start hook | Hook | Guardrails template, state file |
+| 10 | GitHub issue template + labels | GitHub config | Nothing |
 
 ### Wave 2: Phase commands (core workflow)
 
 | # | Component | Type | Depends on |
 |---|-----------|------|-----------|
-| 8 | `/sensei:brainstorm` command | Command | Templates, config |
-| 9 | `/sensei:idea` command | Command | Idea template |
-| 10 | `/sensei:analyze` command | Command | Analysis template |
-| 11 | `/sensei:blueprint` command | Command | Blueprint template |
-| 12 | `/sensei:experiment` command | Command | Experiment template |
-| 13 | `/sensei:plan` command | Command | Plan template |
-| 14 | `/sensei:build` command | Command | Plan template, guardrails |
-| 15 | `/sensei:validate` command | Command | Nothing |
+| 11 | `/sensei:brainstorm` command | Command | Templates, config, state file |
+| 12 | `/sensei:idea` command | Command | Idea template, state file |
+| 13 | `/sensei:analyze` command | Command | Analysis template, state file |
+| 14 | `/sensei:blueprint` command | Command | Blueprint template, state file |
+| 15 | `/sensei:experiment` command | Command | Experiment template, state file |
+| 16 | `/sensei:plan` command | Command | Plan template, state file, GitHub issues |
+| 17 | `/sensei:build` command | Command | Plan template, guardrails, state file, GitHub issues |
+| 18 | `/sensei:validate` command | Command | State file, GitHub issues |
 
 ### Wave 3: Cross-cutting and polish
 
 | # | Component | Type | Depends on |
 |---|-----------|------|-----------|
-| 16 | `/sensei:review` command | Command | Nothing |
-| 17 | `/sensei:tools` command | Command | Nothing |
-| 18 | `/sensei:patterns` command | Command | PATTERNS.md |
-| 19 | Update `/sensei:help` | Command | All commands exist |
-| 20 | Update catalog.json | Config | All commands exist |
-| 21 | Retire absorbed skills | Cleanup | Replacement commands tested |
-| 22 | Archive `docs/superpowers/` | Cleanup | Nothing |
+| 19 | `/sensei:review` command | Command | Nothing |
+| 20 | `/sensei:tools` command | Command | Nothing |
+| 21 | `/sensei:patterns` command | Command | PATTERNS.md |
+| 22 | Update `/sensei:help` | Command | All commands exist |
+| 23 | Update catalog.json | Config | All commands exist |
+| 24 | Retire absorbed skills | Cleanup | Replacement commands tested |
+| 25 | Archive `docs/superpowers/` | Cleanup | Nothing |
+| 26 | Push roadmap as GitHub issues | Backlog | All waves defined |
 
 ---
 
