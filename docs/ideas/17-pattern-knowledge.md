@@ -220,7 +220,7 @@ These derived patterns are **implicit guardrails** — the AI should follow them
 | `/sensei:review` | Checks for pattern violations across ALL sources — not just codebase patterns but also library conventions, established choices. |
 | `/sensei:brainstorm` | When discussing implementation approach, AI presents pattern options with tradeoffs instead of picking one silently. |
 | `/sensei:patterns` | Shows full pattern catalog — codebase, library, registry, derived. User can explore and configure. |
-| `/sensei:guardrails` | Architectural choices (i18n, data loading) are recorded as guardrails once the user picks an option. |
+| `/sensei:rules` | Architectural choices (i18n, data loading) are recorded as guardrails once the user picks an option. |
 
 ---
 

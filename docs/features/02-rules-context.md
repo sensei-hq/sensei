@@ -1,40 +1,40 @@
 ---
-id: guardrails-context
+id: rules-context
 type: feature
 traces: ideas/04-cross-cutting.md, blueprints/01-workflow-engine.md
 ---
 
-# Guardrails & Context Preservation
+# Rules & Context Preservation
 
-> Sensei remembers the rules even when the AI forgets — guardrails persist across sessions and survive context compaction.
+> Sensei remembers the rules even when the AI forgets — rules persist across sessions and survive context compaction.
 
-In long conversations, the AI forgets constraints. It ignores patterns established 50 turns ago, uses grep instead of the graph, and makes mistakes it was corrected for in a previous session. Sensei's guardrails are a living document that grows from corrections, loaded automatically every session, and preserved across compaction.
+In long conversations, the AI forgets constraints. It ignores patterns established 50 turns ago, uses grep instead of the graph, and makes mistakes it was corrected for in a previous session. Sensei's rules are a living document that grows from corrections, loaded automatically every session, and preserved across compaction.
 
 ## Features
 
-### Guardrails as a Living Document
+### Rules as a Living Document
 
 ```gherkin
-Feature: Guardrails
+Feature: Rules
 
-  Scenario: Guardrails loaded at session start
-    Given a project with .sensei/guardrails.md containing 5 rules
+  Scenario: Rules loaded at session start
+    Given a project with .sensei/rules.md containing 5 rules
     When a new Claude Code session starts
-    Then the session-start hook injects a guardrails summary into context
+    Then the session-start hook injects a rules summary into context
     And the AI can reference the rules when making decisions
 
-  Scenario: Guardrails grow from corrections
+  Scenario: Rules grow from corrections
     Given the AI wrote code that doesn't use the adapter pattern
     And the user corrects: "you should have used the adapter pattern"
-    When the user types /sensei:guardrails
+    When the user types /sensei:rules
     Then the AI asks clarifying questions about when to use the pattern
-    And adds the rule to .sensei/guardrails.md
-    And next session loads the updated guardrails automatically
+    And adds the rule to .sensei/rules.md
+    And next session loads the updated rules automatically
 
-  Scenario: Guardrails survive compaction
-    Given guardrails are loaded and the conversation is long
+  Scenario: Rules survive compaction
+    Given rules are loaded and the conversation is long
     When Claude Code compacts the context
-    Then the pre-compact hook preserves guardrails in the compressed context
+    Then the pre-compact hook preserves rules in the compressed context
     And the AI can still reference the rules after compaction
 ```
 
@@ -59,17 +59,17 @@ Feature: Refocus
   Scenario: Status check
     Given a session in progress
     When the user types /sensei:status
-    Then the AI displays: phase, plan, task, issue, guardrails count, pattern count, doc counts, tool status
+    Then the AI displays: phase, plan, task, issue, rules count, pattern count, doc counts, tool status
 ```
 
 ## Status
 
 | Feature | Status |
 |---------|--------|
-| Guardrails file | Planned |
-| Session-start guardrails injection | Planned |
+| Rules file | Planned |
+| Session-start rules injection | Planned |
 | Pre-compact hook | Planned |
-| /sensei:guardrails command | Planned |
+| /sensei:rules command | Planned |
 | /sensei:refocus command | Planned |
 | /sensei:tools command | Planned |
 | /sensei:status command | Planned |

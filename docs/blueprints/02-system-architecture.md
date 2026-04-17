@@ -99,7 +99,7 @@ origin: docs/ideas/01-workflow-system.md
 │  │  Configuration                       │    │  │  Phase Documents          │  │
 │  │  ├── ~/.sensei/config.yaml (global)  │    │  │  ├── docs/ideas/          │  │
 │  │  ├── .sensei/config.yaml (project)   │    │  │  ├── docs/analysis/       │  │
-│  │  ├── .sensei/guardrails.md           │    │  │  ├── docs/blueprints/     │  │
+│  │  ├── .sensei/rules.md           │    │  │  ├── docs/blueprints/     │  │
 │  │  ├── .sensei/state.yaml             │    │  │  ├── docs/experiments/     │  │
 │  │  └── PATTERNS.md                     │    │  │  ├── docs/plans/          │  │
 │  └──────────────────────────────────────┘    │  │  └── marketplace/templates/      │  │
@@ -172,7 +172,7 @@ origin: docs/ideas/01-workflow-system.md
 |------|----------|-------|---------|
 | Global config | `~/.sensei/config.yaml` | User | Commands, daemon |
 | Project config | `.sensei/config.yaml` | User | Commands, hooks |
-| Guardrails | `.sensei/guardrails.md` | User + AI (grows from feedback) | Commands, hooks, session-start |
+| Guardrails | `.sensei/rules.md` | User + AI (grows from feedback) | Commands, hooks, session-start |
 | State | `.sensei/state.yaml` | Commands + hooks (auto-managed) | Hooks, refocus, status |
 | Patterns | `PATTERNS.md` | User + AI | Commands, hooks |
 | Phase docs | `docs/{ideas,analysis,blueprints,...}/` | AI (via commands) | Commands (cross-reference) |
@@ -227,8 +227,8 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A[User corrects AI] --> B[AI asks questions<br/>adds to guardrails.md]
-    B --> C[.sensei/guardrails.md<br/>updated]
+    A[User corrects AI] --> B[AI asks questions<br/>adds to rules.md]
+    B --> C[.sensei/rules.md<br/>updated]
     C --> D[session-start hook<br/>loads guardrails<br/>next session]
     C --> E[pre-compact hook<br/>preserves guardrails<br/>across compaction]
     D --> F[AI follows rules<br/>fewer corrections]
