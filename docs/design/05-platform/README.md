@@ -8,3 +8,4 @@ Architecture overview and multi-coordinator support. How sensei adapts to differ
 |-----|-------------|
 | [architecture-overview.md](./architecture-overview.md) | Full system architecture — all components and how they connect |
 | [platform-architecture.md](./platform-architecture.md) | Multi-coordinator abstraction, ACP adapters (deferred) |
+| [coordinator-adapters.md](./coordinator-adapters.md) | ACPAdapter interface, per-coordinator paths, event capture strategies |
