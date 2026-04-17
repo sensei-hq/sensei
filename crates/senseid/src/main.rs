@@ -11,6 +11,7 @@ pub mod installer;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "senseid", about = "Sensei indexer daemon")]
@@ -57,7 +58,7 @@ async fn main() {
 
     match cli.command {
         Some(Commands::Start { port }) => {
-            run_foreground(port).await;
+            start_daemon(port);
         }
         Some(Commands::Stop) => {
             stop_daemon(cli.port).await;
@@ -75,6 +76,48 @@ async fn main() {
             run_foreground(cli.port).await;
         }
     }
+}
+
+fn start_daemon(port: u16) {
+    // Check if already running
+    let pid_path = sensei_dir().join("serve.pid");
+    if pid_path.exists() {
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                // Check if process is alive
+                let alive = Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if alive {
+                    eprintln!("senseid: already running (pid {})", pid);
+                    std::process::exit(1);
+                }
+                // Stale PID file — clean up and continue
+                std::fs::remove_file(&pid_path).ok();
+            }
+        }
+    }
+
+    let log_path = sensei_dir().join("senseid.log");
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .expect("senseid: cannot open log file");
+    let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
+
+    let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
+    let child = Command::new(exe)
+        .args(["--port", &port.to_string()])
+        .stdout(log_file)
+        .stderr(log_err)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .expect("senseid: failed to spawn daemon");
+
+    println!("senseid: started (pid {})", child.id());
 }
 
 fn graph_path() -> PathBuf {
