@@ -18,4 +18,4 @@ The current `docs/` folder has accumulated artifacts from multiple architectural
 | `docs/features/` | Reorganize | Good Gherkin-based template. Update to reflect current capabilities. |
 | `docs/roadmap/` | Reorganize | Some docs still valid (Rust daemon plan), others stale (Supabase references). |
 | `docs/gap-analysis.md` | Keep | Good model for what `/sensei:analyze` produces. Reference as an example. |
-| `docs/templates/` | Update | Add templates for new phases: idea, analysis, blueprint, experiment, plan. Keep existing design and feature templates. |
+| `marketplace/templates/` | Update | Add templates for new phases: idea, analysis, blueprint, experiment, plan. Keep existing design and feature templates. |
