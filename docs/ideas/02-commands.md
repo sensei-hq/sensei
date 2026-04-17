@@ -46,7 +46,7 @@ A lightweight refocus also auto-fires via PreCompact hook. The manual commands c
 
 | Command | Purpose | Behavior |
 |---------|---------|----------|
-| `/sensei:guardrails` | Reload constraints | Re-reads project guardrails: workflow config, quality policy, tool preferences, active phase rules. Outputs a compact summary of what's in force. Acts as a mid-session reset. |
+| `/sensei:rules` | Reload constraints | Re-reads project guardrails: workflow config, quality policy, tool preferences, active phase rules. Outputs a compact summary of what's in force. Acts as a mid-session reset. |
 | `/sensei:patterns` | Reload patterns | Re-reads `PATTERNS.md` and active design patterns for the current task. Ensures the AI builds on existing foundations rather than reinventing. Subsumes the former `/sensei:pattern-use` command. |
 | `/sensei:refocus` | Re-anchor on current task | Re-reads the active phase document + plan + current task acceptance criteria. Flushes tangential context. Outputs: "here's where we are, here's what's left." Subsumes the former `/sensei:backlog` command (surfacing open work is part of re-anchoring). |
 | `/sensei:tools` | Reload tool awareness | Re-reads available MCP tools, their purposes, and the preference hierarchy. Counteracts the AI's tendency to forget external tools exist after compaction. |
@@ -98,7 +98,7 @@ These are absorbed into the new workflow commands and will be removed.
 | 7 | `/sensei:validate` | Phase |
 | 8 | `/sensei:brainstorm` | Cross-cutting |
 | 9 | `/sensei:review` | Cross-cutting |
-| 10 | `/sensei:guardrails` | Refocus |
+| 10 | `/sensei:rules` | Refocus |
 | 11 | `/sensei:patterns` | Refocus |
 | 12 | `/sensei:refocus` | Refocus |
 | 13 | `/sensei:tools` | Refocus |

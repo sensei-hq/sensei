@@ -71,7 +71,7 @@ AI writes monolithic functions. TDD is stated but not enforced. Tests written af
 Guardrails, tool awareness, and task focus disappear after compaction. The AI forgets constraints, uses grep instead of MCP, ignores guardrails it was given 50 turns ago.
 
 - PreCompact hook auto-reloads guardrails and state before context compression
-- Refocus commands (`/sensei:refocus`, `/sensei:guardrails`, `/sensei:tools`) re-anchor manually
+- Refocus commands (`/sensei:refocus`, `/sensei:rules`, `/sensei:tools`) re-anchor manually
 - State file persists across compaction — phase, task, issue survive
 - UserPromptSubmit hook tracks turns and detects corrections automatically
 
@@ -159,7 +159,7 @@ flowchart TD
     C --> D[Event log shows<br/>3 corrections:<br/>wrong pattern, should use adapter]
     D --> E[System recommends:<br/>Pattern adherence dropped.<br/>Add guardrail for adapters.]
     E --> F{User acts}
-    F -->|Click Add guardrail| G[.sensei/guardrails.md updated<br/>all parsers must use<br/>LanguageAdapter trait]
+    F -->|Click Add guardrail| G[.sensei/rules.md updated<br/>all parsers must use<br/>LanguageAdapter trait]
     F -->|Generate prompt| H[Guided prompt for<br/>next coding session]
     G --> I[Next session:<br/>AI reads guardrail,<br/>follows pattern, FTR recovers]
     H --> I
@@ -174,7 +174,7 @@ flowchart TD
     C --> D[/sensei:pattern-extract<br/>on best adapter implementation]
     D --> E[AI extracts:<br/>interface, invariants,<br/>registration, file structure]
     E --> F[Added to PATTERNS.md]
-    F --> G[/sensei:guardrails<br/>all new parsers must<br/>follow adapter pattern]
+    F --> G[/sensei:rules<br/>all new parsers must<br/>follow adapter pattern]
     G --> H[Next /sensei:build<br/>AI automatically<br/>follows the pattern]
     H --> I[/sensei:review<br/>flags any violation]
 ```

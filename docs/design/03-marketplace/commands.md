@@ -44,7 +44,7 @@ The marketplace plugin is the AI-facing layer — markdown commands that instruc
 
 | Command | Key behavior | MCP tools called | Traces to |
 |---------|-------------|-----------------|-----------|
-| `guardrails.md` | Re-read .sensei/guardrails.md, output compact summary. | `get_workflow_state` | ideas/01 (D9) |
+| `rules.md` | Re-read .sensei/rules.md, output compact summary. | `get_workflow_state` | ideas/01 (D9) |
 | `patterns.md` | Re-read PATTERNS.md + detected patterns. Show catalog. | `get_patterns`, `get_project_conventions` | ideas/15, ideas/17 |
 | `refocus.md` | Re-read state, plan, current task. Flush tangential context. | `get_workflow_state` | ideas/01 |
 | `tools.md` | Re-read available MCP tools and preference hierarchy. | `get_workflow_state` | ideas/01 |
@@ -107,7 +107,7 @@ test_prompts:
   - id: build-with-pattern
     prompt: "/sensei:build — work on issue #1: add SQL adapter"
     setup:
-      - create .sensei/guardrails.md with "use adapter pattern for parsers"
+      - create .sensei/rules.md with "use adapter pattern for parsers"
       - create PATTERNS.md with adapter pattern entry
       - create .sensei/state.yaml with active_plan
     assertions:

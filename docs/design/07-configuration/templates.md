@@ -21,7 +21,7 @@ The data layer files that multiple components read and write. Defines schemas fo
 
 See [ideas/03-configuration.md](../ideas/03-configuration.md) for full spec.
 
-## Guardrails template (.sensei/guardrails.md)
+## Guardrails template (.sensei/rules.md)
 
 See [blueprints/01-workflow-engine.md](../blueprints/01-workflow-engine.md) section 2.
 

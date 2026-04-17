@@ -11,7 +11,7 @@ analysis: docs/analysis/01-skill-command-mapping.md
 
 ## Overview
 
-The workflow engine is not a runtime — it's a set of **markdown commands, templates, a guardrails file, and hooks** that shape how the AI assistant behaves. There is no new code to run. The "engine" is the plugin structure itself: commands set intent, templates define output contracts, guardrails encode rules, and hooks maintain context across compaction.
+The workflow engine is not a runtime — it's a set of **markdown commands, templates, a rules file, and hooks** that shape how the AI assistant behaves. There is no new code to run. The "engine" is the plugin structure itself: commands set intent, templates define output contracts, guardrails encode rules, and hooks maintain context across compaction.
 
 ---
 
@@ -55,7 +55,7 @@ The workflow engine is not a runtime — it's a set of **markdown commands, temp
 │                                                                     │
 │  .sensei/                                                           │
 │  ├── config.yaml       ← per-project config (command overrides)     │
-│  └── guardrails.md     ← living rules document                     │
+│  └── rules.md     ← living rules document                     │
 │                                                                     │
 │  docs/                                                              │
 │  ├── ideas/            ← phase 01 artifacts                         │
@@ -116,13 +116,13 @@ argument-hint: <what arguments are accepted>
 
 **Key design decisions:**
 - Commands read config from `.sensei/config.yaml` to determine output directories, naming, templates
-- Commands load guardrails from `.sensei/guardrails.md` at the start
+- Commands load guardrails from `.sensei/rules.md` at the start
 - Phase commands load prior phase artifacts (e.g., `/sensei:blueprint` reads from `docs/analysis/`)
 - `/sensei:brainstorm` is the open container — it routes content to the right folder based on depth (D11)
 
-### 2. Guardrails file
+### 2. Rules file
 
-**Location:** `.sensei/guardrails.md`
+**Location:** `.sensei/rules.md`
 
 A living document at project level that captures enforceable rules. Different from CLAUDE.md (project setup) and memory (user facts). Guardrails store **how to build in this project**.
 
@@ -152,10 +152,10 @@ updated: 2026-04-17
 ```
 
 **Lifecycle:**
-1. Created during project setup (or first `/sensei:guardrails` call creates a template)
+1. Created during project setup (or first `/sensei:rules` call creates a template)
 2. Grows from feedback: user corrects AI → AI asks clarifying questions → adds rule to guardrails
 3. Loaded automatically by session-start hook
-4. Reloaded on demand by `/sensei:guardrails`
+4. Reloaded on demand by `/sensei:rules`
 5. Reloaded automatically by pre-compact hook (lightweight summary)
 
 ### 3. Hooks
@@ -165,7 +165,7 @@ updated: 2026-04-17
 Fires on: startup, resume, clear, compact.
 
 **What changes from current:**
-- Adds guardrails loading: reads `.sensei/guardrails.md` and injects a compact summary
+- Adds guardrails loading: reads `.sensei/rules.md` and injects a compact summary
 - Adds command awareness: lists available workflow commands grouped by category
 - Adds tool preference reminder: "prefer sensei MCP tools over grep/sed"
 - Keeps: session creation on daemon, MCP tool list, package manager rules
@@ -179,7 +179,7 @@ Fires on: PreCompact event.
 ```bash
 #!/usr/bin/env bash
 # Reads current guardrails and outputs a compact reminder
-GUARDRAILS=$(cat "${CLAUDE_PROJECT_ROOT}/.sensei/guardrails.md" 2>/dev/null | head -50)
+GUARDRAILS=$(cat "${CLAUDE_PROJECT_ROOT}/.sensei/rules.md" 2>/dev/null | head -50)
 # Output compact context that survives compaction
 cat <<EOF
 {
@@ -312,10 +312,10 @@ The single source of truth for "where am I." Updated by commands, read by hooks 
 # .sensei/state.yaml (managed by commands and hooks, not edited by hand)
 active_phase: build
 active_plan: docs/plans/workflow-engine.md
-active_task: "Wave 1, item 3: /sensei:guardrails command"
+active_task: "Wave 1, item 3: /sensei:rules command"
 active_issue: 42                    # GitHub issue number, if tracking via issues
 last_checkpoint: "2026-04-17T12:00:00Z"
-guardrails_hash: "a3f2..."         # quick check if guardrails changed since last load
+rules_hash: "a3f2..."         # quick check if guardrails changed since last load
 ```
 
 **Lifecycle:**
@@ -337,11 +337,11 @@ The "where am I" query. Reads state file + project structure and returns full or
 
 Phase:      build
 Plan:       docs/plans/workflow-engine.md
-Task:       Wave 1, item 3: /sensei:guardrails command
+Task:       Wave 1, item 3: /sensei:rules command
 Issue:      #42 (open)
 Checkpoint: 2026-04-17T12:00:00Z
 
-Guardrails: .sensei/guardrails.md (12 rules loaded)
+Guardrails: .sensei/rules.md (12 rules loaded)
 Patterns:   PATTERNS.md (3 patterns)
 
 Docs:
@@ -513,7 +513,7 @@ The daemon's event log captures everything needed for analysis. Events are appen
 | `issue_started` | `/sensei:build` | issue_number, title | Task tracking |
 | `issue_completed` | `/sensei:commit`, `/sensei:validate` | issue_number, turns_taken | FTR, turn efficiency |
 | `review_finding` | `/sensei:review` | finding_type, severity, file | Quality trends |
-| `guardrail_added` | `/sensei:guardrails` | rule_text, triggered_by | Guardrail growth tracking |
+| `guardrail_added` | `/sensei:rules` | rule_text, triggered_by | Guardrail growth tracking |
 | `rework` | AI detects it's redoing prior work | original_task, reason | Rework rate, coaching |
 | `compaction` | pre-compact hook | context_preserved (summary) | Context decay measurement |
 | `turn` | UserPromptSubmit hook | turn_number, phase, active_task | Turn count per task |
@@ -775,11 +775,11 @@ Based on analysis priority actions and dependency chain:
 | # | Component | Type | Depends on |
 |---|-----------|------|-----------|
 | 1 | Phase doc templates (idea, analysis, blueprint, experiment, plan) | Templates | Nothing |
-| 2 | Guardrails file template | Template | Nothing |
+| 2 | Rules file template | Template | Nothing |
 | 3 | State file schema (`.sensei/state.yaml`) | Schema | Nothing |
 | 4 | Daemon: event log + workflow state endpoints | Rust (senseid) | Nothing |
 | 5 | MCP: `log_event`, `get_workflow_state`, `update_phase` tools | Rust (sensei-mcp) | Daemon endpoints |
-| 6 | `/sensei:guardrails` command | Command | Guardrails template |
+| 6 | `/sensei:rules` command | Command | Guardrails template |
 | 7 | `/sensei:refocus` command | Command | State file, MCP tools |
 | 8 | `/sensei:status` command | Command | State file, MCP tools |
 | 9 | Pre-compact hook | Hook | Guardrails template, state file |

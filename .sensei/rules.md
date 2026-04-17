@@ -1,10 +1,10 @@
 ---
-name: Project Guardrails — sensei-dev
+name: Project Rules — sensei-dev
 updated: 2026-04-17
 mindsets: marketplace/templates/mindsets.md
 ---
 
-# Guardrails
+# Rules
 
 > Mindsets (analyst, developer, BAT) are in `marketplace/templates/mindsets.md` — loaded by session-start hook. This file contains project-specific rules.
 

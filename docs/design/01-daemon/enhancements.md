@@ -130,7 +130,7 @@ CREATE TABLE workflow_state (
     active_task TEXT,
     active_issue INTEGER,
     last_checkpoint TEXT,
-    guardrails_hash TEXT,
+    rules_hash TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
