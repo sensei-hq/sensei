@@ -208,39 +208,29 @@ flowchart TD
 
 ---
 
-## Documentation structure
+## Documentation
 
-### Active (current)
-
-| Folder | Phase | Purpose | Status |
-|--------|-------|---------|--------|
-| [ideas/](./ideas/) | 01 Ideate | Problem statements, concepts, early exploration | 18 files |
-| [analysis/](./analysis/) | 02 Analyze | Feasibility, gap analysis, mapping against existing code | 2 files |
-| [blueprints/](./blueprints/) | 03 Blueprint | Architecture, components, interfaces, data flow | 1 file |
-| [experiments/](./experiments/) | 04 Experiment | Findings from trying options | — |
-| [plans/](./plans/) | 05 Plan | Task breakdowns with acceptance criteria | — |
-| [templates/](./templates/) | — | Doc templates for each phase | 2 files (needs expansion) |
-
-### Reference
-
-| Folder | Purpose | Status |
-|--------|---------|--------|
-| [features/](./features/) | User-facing feature specs with Gherkin scenarios | 12 files — needs refresh against current capabilities |
-| [design/](./design/) | Technical design docs organized by layer | 7 layers + roadmap + decisions |
-| [reference/](./reference/) | Historical docs — gap analysis, blocking gaps | 2 files |
-
----
+| # | Folder | Description |
+|---|--------|-------------|
+| 1 | [ideas/](./ideas/) | Problem statements, concepts, and early-stage thinking. 20 idea files across 6 core concepts. |
+| 2 | [analysis/](./analysis/) | Feasibility assessments and gap analyses. Skills/command mapping, graph node gaps. |
+| 3 | [blueprints/](./blueprints/) | High-level architecture. Workflow engine, system architecture. |
+| 4 | [experiments/](./experiments/) | Findings from trying options. What worked, what didn't, recommendations. |
+| 5 | [plans/](./plans/) | Task breakdowns with acceptance criteria and test scenarios. |
+| 6 | [design/](./design/) | Technical design docs organized by system layer — daemon, MCP, marketplace, desktop, platform, CLI, configuration. |
+| 7 | [features/](./features/) | User-facing feature specs with Gherkin scenarios. Reference, needs refresh. |
+| 8 | [reference/](./reference/) | Historical docs — gap analysis, blocking gaps from prior roadmap. |
 
 ## Core concepts
 
 | # | Concept | Ideas | Description |
 |---|---------|-------|-------------|
-| 1 | Workflow | 01–06 | Phased development workflow — commands, configuration, quality gates |
-| 2 | Logging & Qualitative Analysis | 07, 11 | Interaction tracking, session recovery, coaching feedback |
-| 3 | Metrics & Quantitative Analysis | 07, 10 | FTR, turn count, rework rate, trend visualization |
-| 4 | Assistive Tooling | 08, 09, 14, 15, 17, 18 | Code intelligence, library knowledge, patterns, testability |
-| 5 | Knowledge Integrity | 13 | Doc traceability, drift detection, freshness |
-| 6 | Platform & Adoption | 12, 16 | Multi-coordinator, multi-repo, workspaces |
+| 1 | **Workflow** | 01–06 | Phased development workflow — commands, configuration, quality gates |
+| 2 | **Logging & Qualitative Analysis** | 07, 11 | Interaction tracking, session recovery, coaching feedback |
+| 3 | **Metrics & Quantitative Analysis** | 07, 10 | FTR, turn count, rework rate, trend visualization |
+| 4 | **Assistive Tooling** | 08, 09, 14, 15, 17, 18, 20 | Code intelligence, library knowledge, patterns, testability, local inference |
+| 5 | **Knowledge Integrity** | 13 | Doc traceability, drift detection, freshness |
+| 6 | **Platform & Adoption** | 12, 16, 19 | Multi-coordinator, multi-repo, workspaces, benchmarking |
 
 ## Decisions log
 
