@@ -91,3 +91,4 @@ Make sensei usable beyond Claude Code. Multi-repo, multi-coordinator, multi-team
 | 16 | [Workspace & System Intelligence](./16-workspace-system-intelligence.md) — multi-repo, conformance, health | Idea |
 | 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — competitive comparison, reproducible benchmarks, honest limitations | Idea |
 | 20 | [Local Inference](./20-local-inference.md) — Gemma4 via Ollama for summaries, embeddings, classification, pattern detection | Idea |
+| 21 | [Custom Agents](./21-custom-agents.md) — autonomous multi-step agents for review, build, analysis, benchmarking | Idea |
