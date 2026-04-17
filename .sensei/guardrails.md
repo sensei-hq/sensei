@@ -42,7 +42,7 @@ mindsets: marketplace/templates/mindsets.md
 ## Process
 
 - **Design before code** — brainstorm/analyze/blueprint THEN build (D18)
-- **Ask before assuming** — when information is incomplete, ask for clarity rather than proceeding
+- **Ask before assuming** — when information is incomplete, ask for clarity rather than proceeding. Keep questions small: 3-4 simple questions max, 1 complex question at a time. Make it a conversation, not a survey.
 - **Trace the runtime flow** — before implementing, walk through: who triggers this → what reads it → where does output go → how is it verified
 - **One issue at a time** — pick from backlog, complete it, verify it, close it, then move on
 - **Log events** — every command calls log_event() (MANDATORY, not optional)
