@@ -137,12 +137,12 @@ Skills for reverse-engineering and multi-coordinator support.
 | `/sensei:validate` | Command | 1 Workflow | 01 | Medium — absorbs drift detection |
 | `/sensei:brainstorm` | Command | 1 Workflow | 01 | Medium — new capability |
 | `/sensei:review` | Command | 1 Workflow | 01 | High — absorbs audit |
-| `/sensei:guardrails` | Command | 1 Workflow | 01 | High — context decay mitigation |
+| `/sensei:rules` | Command | 1 Workflow | 01 | High — context decay mitigation |
 | `/sensei:patterns` | Command | 1 Workflow | 01 | Medium — replaces pattern-use |
 | `/sensei:refocus` | Command | 1 Workflow | 01 | High — context decay mitigation |
 | `/sensei:tools` | Command | 1 Workflow | 01 | Medium — tool amnesia mitigation |
 | PreCompact hook | Hook | 1 Workflow | 01 | High — auto-refocus on compaction |
-| Guardrails file template | Template | 1 Workflow | 01 | High — living document for project rules |
+| Rules file template | Template | 1 Workflow | 01 | High — living document for project rules |
 | Phase doc templates | Templates | 1 Workflow | 01 | High — idea, analysis, blueprint, experiment, plan |
 
 ### Broken or stale components (need fixing)
@@ -193,7 +193,7 @@ These skills call MCP tools from the old JS server. References are **stale** and
 
 1. **Create phase doc templates** — Templates for idea, analysis, blueprint, experiment, plan. These define the contract for what each phase produces. Needed before any command can be implemented.
 
-2. **Create guardrails file template** — Define the structure of `.sensei/guardrails.md`. This is the living document that grows from feedback.
+2. **Create rules file template** — Define the structure of `.sensei/rules.md`. This is the living document that grows from feedback.
 
 3. **Wire pre-tool and post-tool hooks** — They exist but aren't in hooks.json. Wiring them enables interaction tracking (idea 07) without new code.
 
@@ -211,7 +211,7 @@ These skills call MCP tools from the old JS server. References are **stale** and
 
 ### Priority 3: Build incrementally (do during build phase)
 
-9. **Implement commands one at a time** — Start with `/sensei:refocus` and `/sensei:guardrails` (highest immediate value — solve context decay). Then `/sensei:build` (absorbs most skills). Then remaining phase commands.
+9. **Implement commands one at a time** — Start with `/sensei:refocus` and `/sensei:rules` (highest immediate value — solve context decay). Then `/sensei:build` (absorbs most skills). Then remaining phase commands.
 
 10. **Retire absorbed skills** — Only after their replacement commands are tested and working.
 

@@ -61,8 +61,8 @@ traces:
 | 1.5 | MCP: `get_workflow_state` tool | Rust | MCP | Returns current phase, task, issue |
 | 1.6 | MCP: `update_phase` tool | Rust | MCP | Updates daemon + state.yaml |
 | 1.7 | Phase doc templates (5 templates) | Markdown | Templates | Each template parseable, frontmatter valid |
-| 1.8 | Guardrails template | Markdown | Config | Template creates valid guardrails.md |
-| 1.9 | `/sensei:guardrails` command | Markdown | Marketplace | Eval: reads guardrails, outputs summary |
+| 1.8 | Guardrails template | Markdown | Config | Template creates valid rules.md |
+| 1.9 | `/sensei:rules` command | Markdown | Marketplace | Eval: reads guardrails, outputs summary |
 | 1.10 | `/sensei:refocus` command | Markdown | Marketplace | Eval: reads state, outputs orientation |
 | 1.11 | `/sensei:status` command | Markdown | Marketplace | Eval: displays phase, task, issue, docs, tools |
 | 1.12 | Pre-compact hook | Bash | Marketplace | Run script, JSON output contains guardrails + state |
