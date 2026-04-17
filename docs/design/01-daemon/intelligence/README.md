@@ -11,3 +11,4 @@ Context delivery, compression, pattern detection, and metadata — the daemon's 
 | [pattern-store.md](./pattern-store.md) | Pattern detection, storage, and query surface |
 | [metadata-model.md](./metadata-model.md) | Metadata schema for codebase intelligence |
 | [response-cache.md](./response-cache.md) | Semantic cache for LLM responses |
+| [graph-intelligence.md](./graph-intelligence.md) | Kuzu vs alternatives analysis, confidence tagging, community detection |

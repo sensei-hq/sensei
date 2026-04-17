@@ -32,7 +32,3 @@ These are not independent systems — they are **capabilities built on the daemo
 |-----|-------------|
 | [roadmap.md](./roadmap.md) | Implementation roadmap — 66 items across 6 waves |
 | [decisions/](./decisions/) | Architecture Decision Records (ADRs) |
-
-## Archive
-
-[_archive/](./_archive/) — superseded and stale docs from prior eras (Supabase, SaaS, pre-Rust). Preserved for historical reference.
