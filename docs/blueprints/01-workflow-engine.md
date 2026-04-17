@@ -516,6 +516,11 @@ The daemon's event log captures everything needed for analysis. Events are appen
 | `guardrail_added` | `/sensei:guardrails` | rule_text, triggered_by | Guardrail growth tracking |
 | `rework` | AI detects it's redoing prior work | original_task, reason | Rework rate, coaching |
 | `compaction` | pre-compact hook | context_preserved (summary) | Context decay measurement |
+| `turn` | UserPromptSubmit hook | turn_number, phase, active_task | Turn count per task |
+| `locate` | `/sensei:build` (locate step) | task, mcp_tools_used, symbols_found, files_identified | Task accuracy, locate efficiency |
+| `revision_requested` | User correction or issue re-open | issue, reason, files_affected | FTR accuracy (not just AI self-report) |
+| `context_loaded` | Phase commands, `/sensei:refocus` | files_loaded, token_count, resolution_level | Context efficiency |
+| `files_modified` | `/sensei:commit` | files[], issue, lines_added, lines_removed | Task scope, change tracking |
 
 ### How capture happens
 
@@ -542,14 +547,122 @@ Desktop      → Daemon HTTP API (fetch)  directly
 Hook (bash → curl to daemon)             Command (AI → MCP tool → daemon)
 ├── tool_used (every tool call)           ├── phase_transition
 ├── tool_result (every tool call)         ├── command_invoked
-├── compaction (pre-compact)              ├── checkpoint
-└── session lifecycle                     ├── issue_started / issue_completed
+├── turn (every user message)             ├── checkpoint
+├── compaction (pre-compact)              ├── issue_started / issue_completed
+└── session lifecycle                     ├── locate (code discovery step)
+                                          ├── context_loaded
+                                          ├── files_modified
                                           ├── review_finding
                                           ├── guardrail_added
+                                          ├── revision_requested
                                           └── rework
 ```
 
 Hooks handle high-frequency, automatic capture (bash → curl). Commands handle semantic, intent-driven capture (AI → MCP).
+
+### Hook: UserPromptSubmit (turn counting)
+
+A new hook that fires on every user message. This is how we count turns per task.
+
+```json
+"UserPromptSubmit": [
+  {
+    "matcher": "",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd user-prompt"
+      }
+    ]
+  }
+]
+```
+
+The hook reads `active_task` and `active_issue` from state.yaml, increments a turn counter, and POSTs to daemon. This gives us turn count per task without relying on the AI to self-report.
+
+### Code intelligence integration — the locate step
+
+When `/sensei:build` starts an issue, the AI needs to go from "implement X" to "modify these specific files and functions." This is the **locate step** — and it's where sensei MCP code intelligence tools connect to the workflow.
+
+**The locate step in `/sensei:build`:**
+
+```
+Step 1: Read issue → understand WHAT to build
+         │
+Step 2: LOCATE — use MCP to find WHERE
+         ├── search(keywords from issue)         → candidate symbols
+         ├── get_patterns("adapter|worker|route") → structural matches
+         ├── get_callers(symbol)                  → blast radius
+         ├── get_callees(symbol)                  → dependencies
+         ├── get_project_summary()                → orient in project
+         └── get_lib_docs(library)                → third-party API
+         │
+Step 3: Log locate event
+         └── log_event("locate", {
+               task: "issue #42",
+               tools_used: ["search", "get_callers", "get_patterns"],
+               symbols_found: ["SqlAdapter", "parse_file", "TaskWorker"],
+               files_identified: ["src/adapters/sql.rs", "src/tasks/mod.rs"]
+             })
+         │
+Step 4: Load guardrails + patterns → understand HOW to build
+         │
+Step 5: Write tests first (TDD)
+         │
+Step 6: Implement
+         │
+Step 7: Log files_modified, close issue
+```
+
+**Why the locate event matters:**
+
+By logging what the AI searched for, what it found, and which files it decided to modify, we can measure:
+
+| Metric | How computed | What it reveals |
+|--------|-------------|-----------------|
+| **Locate accuracy** | Did the files in `locate.files_identified` match `files_modified`? | Whether the AI found the right code on first try |
+| **Search efficiency** | How many MCP tool calls in the locate step? | Whether the AI is getting better at navigating the codebase |
+| **Tool utilization** | Which MCP tools were used during locate? | Whether the AI is using graph intelligence or falling back to grep |
+| **Blast radius awareness** | Did the AI check callers/callees before modifying? | Whether the AI understands impact of changes |
+
+**How this impacts commands:**
+
+The `/sensei:build` command markdown must include explicit instructions for the locate step:
+
+```markdown
+## Step 2: Locate relevant code
+
+Before writing any code, use sensei MCP to find the right files:
+
+1. Call `search()` with keywords from the issue to find candidate symbols
+2. Call `get_patterns()` to find structurally similar implementations
+3. Call `get_callers()` on symbols you plan to modify — understand blast radius
+4. Call `get_callees()` to understand dependencies
+5. If using a third-party library, call `get_lib_docs()` first
+
+Log the locate step:
+```
+call: log_event(type="locate", data={
+  task: "<issue description>",
+  tools_used: [<list of MCP tools called>],
+  symbols_found: [<key symbols identified>],
+  files_identified: [<files you plan to modify>]
+})
+```
+
+Do NOT skip this step. Do NOT use grep or file reading as a substitute for MCP search.
+```
+
+**Existing code intelligence skills that feed into this:**
+
+| Former skill | Behavior absorbed into locate step |
+|-------------|-----------------------------------|
+| `context-efficiency` | `recommend_next()` before loading files |
+| `pattern-based-development` | Check PATTERNS.md during locate |
+| `design` | `search()` + `get_callers()` for pattern discovery |
+| `analyze` | `get_project_summary()` for orientation |
+
+The locate step is where all these scattered skills converge into a single, measurable procedure.
 
 ### Desktop reads, daemon computes
 
@@ -558,9 +671,23 @@ The desktop app reads computed metrics from the daemon HTTP API. It does NOT pro
 | Desktop view | Daemon endpoint | What it shows |
 |-------------|-----------------|---------------|
 | Phase timeline | `GET /api/phases/:proj` | Visual timeline of phase transitions with duration |
-| Quality dashboard | `GET /api/metrics/:proj` | FTR trend, turn count trend, rework rate, tool adherence |
+| Quality dashboard | `GET /api/metrics/:proj` | FTR, turn count, rework rate, tool adherence, locate accuracy |
 | Event log | `GET /api/events/:proj?limit=50` | Recent events with filtering |
 | Active work | `GET /api/state/:proj` | Current phase, task, issue |
+| Task detail | `GET /api/events/:proj?issue=42` | All events for a specific issue — locate, turns, files modified, outcome |
+
+### Computable metrics (from events)
+
+| Metric | Formula | Events used |
+|--------|---------|-------------|
+| **FTR (First-Time-Right)** | issues completed without `revision_requested` / total issues | `issue_completed`, `revision_requested` |
+| **Turn count per task** | count of `turn` events between `issue_started` and `issue_completed` | `turn`, `issue_started`, `issue_completed` |
+| **Rework rate** | `rework` events / total tasks | `rework`, `issue_completed` |
+| **Tool preference adherence** | MCP tool calls / (MCP + built-in tool calls) | `tool_used` with `is_mcp` flag |
+| **Locate accuracy** | files in `locate.files_identified` that appear in `files_modified` / total | `locate`, `files_modified` |
+| **Phase velocity** | time between consecutive `phase_transition` events | `phase_transition` |
+| **Context efficiency** | average `context_loaded.token_count` per task | `context_loaded` |
+| **Guardrail growth** | cumulative count of `guardrail_added` over time | `guardrail_added` |
 
 ### MCP tools (what the AI calls)
 
