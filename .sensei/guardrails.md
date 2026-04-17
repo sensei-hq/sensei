@@ -34,10 +34,19 @@ mindsets: marketplace/templates/mindsets.md
 
 ## Tools
 
-- **Prefer sensei MCP** over grep/sed for symbol lookup
-- **Use get_callers()/get_callees()** for dependency analysis, not manual file reading
-- **Use match_pattern()** before creating new structures — check if a pattern exists first
-- **Use get_lib_docs()** before writing code that uses a library — don't guess from training data
+Available today:
+- **Prefer sensei MCP `search()`** over grep/sed for symbol lookup
+- **Use `get_callers()`/`get_callees()`** for dependency analysis, not manual file reading
+- **Use `get_patterns()`** to find files by framework pattern (hook, middleware, route, component)
+- **Use `get_lib_docs()`** before writing code that uses a library — don't guess from training data
+- **Use `search_lib_docs()`** to search across all indexed library docs
+- **Use `add_library()`** to index a library's docs when not yet available
+
+Planned (not yet available):
+- `match_pattern()` — structural pattern matching (#83)
+- `log_event()` — workflow event logging (#80)
+- `update_phase()` — workflow state management (#79)
+- `get_workflow_state()` — orientation query (#79)
 
 ## Process
 
@@ -45,4 +54,4 @@ mindsets: marketplace/templates/mindsets.md
 - **Ask before assuming** — when information is incomplete, ask for clarity rather than proceeding. Keep questions small: 3-4 simple questions max, 1 complex question at a time. Make it a conversation, not a survey.
 - **Trace the runtime flow** — before implementing, walk through: who triggers this → what reads it → where does output go → how is it verified
 - **One issue at a time** — pick from backlog, complete it, verify it, close it, then move on
-- **Log events** — every command calls log_event() (MANDATORY, not optional)
+- **Log events** — when `log_event()` MCP tool is available, every command calls it (MANDATORY). Until implemented (#80), this rule is pending.
