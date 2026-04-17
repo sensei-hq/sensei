@@ -157,20 +157,22 @@ Skills for reverse-engineering and multi-coordinator support.
 
 ### Skills with stale MCP tool references
 
-These skills call MCP tools that may have changed in the Rust rewrite. Each needs verification against the current `sensei-mcp` tool list.
+> **Decision D13:** These are marked for removal/rewrite during build phase. Do not fix now — the skills that reference them are being absorbed into new commands anyway. When implementing new commands, use the current Rust `sensei-mcp` tool contracts directly.
 
-| Skill | MCP tools referenced | Status |
-|-------|---------------------|--------|
-| `session-management` | `get_session_context`, `recommend_next`, `take_snapshot`, `checkpoint`, `record_memory`, `close_memory` | Verify |
-| `context-efficiency` | `get_session_context`, `recommend_next`, `context_pack`, `search`, `checkpoint` | Verify |
-| `design` | `context_pack`, `search`, `get_bearings`, `get_symbol`, `record_memory`, `take_snapshot` | Verify |
-| `analyze` | `get_session_context`, `get_complexity`, `get_bearings`, `record_memory` | Verify |
-| `codebase-indexing` | `get_llmspec` | Verify |
-| `test-gen` | `search`, `get_symbol` | Verify |
-| `refactor` | `get_complexity`, `get_symbol`, `context_pack`, `record_memory`, `take_snapshot` | Verify |
-| `extract-docs` | `get_bearings`, `get_symbol`, `record_memory` | Verify |
-| `detecting-doc-drift` | `check_drift` | Verify |
-| `reverse-engineering` | Various — complex multi-tool workflow | Verify |
+These skills call MCP tools from the old JS server. References are **stale** and will not match the Rust daemon API.
+
+| Skill | MCP tools referenced | Disposition | Stale? |
+|-------|---------------------|-------------|--------|
+| `session-management` | `get_session_context`, `recommend_next`, `take_snapshot`, `checkpoint`, `record_memory`, `close_memory` | Absorb into `/sensei:session` + phase commands | STALE — remove with skill |
+| `context-efficiency` | `get_session_context`, `recommend_next`, `context_pack`, `search`, `checkpoint` | Absorb into phase commands | STALE — remove with skill |
+| `design` | `context_pack`, `search`, `get_bearings`, `get_symbol`, `record_memory`, `take_snapshot` | Absorb into `/sensei:blueprint` | STALE — remove with skill |
+| `analyze` | `get_session_context`, `get_complexity`, `get_bearings`, `record_memory` | Absorb into `/sensei:analyze` | STALE — remove with skill |
+| `codebase-indexing` | `get_llmspec` | Keep (revise) | STALE — rewrite to use Rust API |
+| `test-gen` | `search`, `get_symbol` | Keep (revise) | STALE — rewrite to use Rust API |
+| `refactor` | `get_complexity`, `get_symbol`, `context_pack`, `record_memory`, `take_snapshot` | Keep (revise) | STALE — rewrite to use Rust API |
+| `extract-docs` | `get_bearings`, `get_symbol`, `record_memory` | Keep (revise) | STALE — rewrite to use Rust API |
+| `detecting-doc-drift` | `check_drift` | Absorb into `/sensei:validate` | STALE — remove with skill |
+| `reverse-engineering` | Various — complex multi-tool workflow | Absorb into `/sensei:analyze` | STALE — remove with skill |
 
 ---
 
@@ -189,15 +191,15 @@ These skills call MCP tools that may have changed in the Rust rewrite. Each need
 
 ### Priority 1: Foundations (do first)
 
-1. **Verify MCP tool contracts** — Audit the Rust `sensei-mcp` binary's actual tool list against what skills reference. Create a tool contract document mapping old JS tool names to current Rust tool names. This unblocks all skill revisions.
+1. **Create phase doc templates** — Templates for idea, analysis, blueprint, experiment, plan. These define the contract for what each phase produces. Needed before any command can be implemented.
 
-2. **Wire pre-tool and post-tool hooks** — They exist but aren't in hooks.json. Wiring them enables interaction tracking (idea 07) without new code.
+2. **Create guardrails file template** — Define the structure of `.sensei/guardrails.md`. This is the living document that grows from feedback.
 
-3. **Fix sensei-mcp plugin config** — Update to point to the correct binary path. Already fixed in Claude settings but marketplace plugin config needs updating too.
+3. **Wire pre-tool and post-tool hooks** — They exist but aren't in hooks.json. Wiring them enables interaction tracking (idea 07) without new code.
 
-4. **Create phase doc templates** — Templates for idea, analysis, blueprint, experiment, plan. These define the contract for what each phase produces. Needed before any command can be implemented.
+4. **Fix sensei-mcp plugin config** — Update to point to the correct binary path. Already fixed in Claude settings but marketplace plugin config needs updating too.
 
-5. **Create guardrails file template** — Define the structure of `.sensei/guardrails.md`. This is the living document that grows from feedback.
+5. ~~**Verify MCP tool contracts**~~ — Deferred (D13). Stale MCP references are marked. Skills being absorbed will be rewritten against the Rust API during build phase. Skills being kept (codebase-indexing, test-gen, refactor, extract-docs) will be rewritten when reached.
 
 ### Priority 2: Reorganize (do during blueprint)
 
