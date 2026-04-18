@@ -1,5 +1,6 @@
 use super::common::extract_script_blocks;
 use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
+use crate::ir::IRParsedFile;
 use super::LanguageAdapter;
 
 pub struct VueAdapter;
@@ -59,6 +60,20 @@ impl LanguageAdapter for VueAdapter {
     }
 }
 
+
+/// Parse Vue SFC into IR — delegates script blocks to TypeScript adapter.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let blocks = extract_script_blocks(source);
+    if blocks.is_empty() {
+        return IRParsedFile { file_path: file_path.into(), language: "vue".into(), ..Default::default() };
+    }
+    let script = &blocks[0].0;
+    let ext = if blocks[0].2 { "component.vue.ts" } else { "component.vue.js" };
+    let mut ir = super::typescript::parse_to_ir(script, ext);
+    ir.file_path = file_path.into();
+    ir.language = "vue".into();
+    ir
+}
 
 #[cfg(test)]
 mod tests {
