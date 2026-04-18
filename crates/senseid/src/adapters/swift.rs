@@ -1,3 +1,4 @@
+use super::common::{field_text, make_symbol};
 use tree_sitter::{Language, Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
 use super::LanguageAdapter;
@@ -182,16 +183,7 @@ fn has_access_modifier(node: &Node, src: &[u8], modifier: &str) -> bool {
 }
 
 fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[u8], is_exported: bool) -> ParsedSymbol {
-    ParsedSymbol {
-        name,
-        kind,
-        signature: lines.get(node.start_position().row).map(|l| l.trim().to_string()),
-        docstring: extract_doc_comment(node, src),
-        line_start: node.start_position().row as u32 + 1,
-        line_end: node.end_position().row as u32 + 1,
-        is_exported,
-        parent: None,
-    }
+    make_symbol(name, kind, node, lines, is_exported, extract_doc_comment(node, src))
 }
 
 fn extract_doc_comment(node: &Node, src: &[u8]) -> Option<String> {
@@ -210,13 +202,6 @@ fn extract_doc_comment(node: &Node, src: &[u8]) -> Option<String> {
     } else {
         None
     }
-}
-
-fn field_text(node: &Node, field: &str, src: &[u8]) -> String {
-    node.child_by_field_name(field)
-        .and_then(|n| n.utf8_text(src).ok())
-        .unwrap_or_default()
-        .to_string()
 }
 
 #[cfg(test)]
