@@ -24,17 +24,28 @@ analysis: docs/analysis/02-graph-node-gaps.md
 ### Base fields (shared by all node types)
 
 ```rust
-/// Fields common to every node in the IR.
+/// Fields common to every node in the IR — code, docs, config all share these.
 struct IRBase {
     name: String,
     file: String,              // repo-relative path
     line_start: u32,
     line_end: u32,
+
+    // Classification (universal — not just doc-specific)
+    extension: Option<String>,  // .rs, .md, .py, .svelte
+    language: Option<String>,   // rust, markdown, python, svelte
+    framework: Option<String>,  // sveltekit, axum, express, django
+    node_type: Option<String>,  // function, class, doc, config, test, module
+    category: Option<String>,   // design, feature, adapter, handler, utility
+
+    // Content
     docstring: Option<String>,
     is_exported: bool,
     tags: Vec<String>,         // arbitrary classification tags
 }
 ```
+
+IRBase carries enough context for any downstream processor — pattern detection can check `framework`, testability can check `node_type`, traceability can check `category`.
 
 ### Document nodes
 
@@ -53,7 +64,7 @@ struct IRDoc {
 
     // Structure
     title: Option<String>,         // from first # heading or frontmatter name
-    headings: Vec<IRHeading>,      // section structure for section-level linking
+    sections: Vec<IRSection>,      // content split by headings — for section-level linking and context delivery
     code_blocks: Vec<IRCodeBlock>, // for example extraction
 
     // References found in content
@@ -62,10 +73,12 @@ struct IRDoc {
     doc_references: Vec<String>,   // links to other docs → TRACES_TO edges
 }
 
-struct IRHeading {
-    level: u8,         // 1-6
-    text: String,
-    line: u32,
+struct IRSection {
+    heading: String,       // heading text
+    level: u8,             // 1-6
+    line_start: u32,
+    line_end: u32,         // end of section content (before next heading or EOF)
+    content_preview: Option<String>, // first 200 chars for context delivery
 }
 
 struct IRCodeBlock {
@@ -394,11 +407,11 @@ Once all adapters produce the IR:
 
 ---
 
-## Open questions
+## Resolved questions
 
-| # | Question |
-|---|----------|
-| 1 | Should IR structs be the same as the Rust types in types.rs, or separate? Separate allows the IR to evolve without breaking existing code. |
-| 2 | body_hash: normalize how? Strip whitespace + variable names? Or simpler (strip whitespace only)? |
-| 3 | Should we compute complexity during parsing (Phase 1) or as a post-processing step (Phase 2)? Currently computed during graph writing. |
-| 4 | How do we handle partial frontmatter in docs? Store raw HashMap and also extract known fields? |
+| # | Question | Decision |
+|---|----------|----------|
+| 1 | Should IR structs replace types.rs or live alongside? | **Replace.** IR is the new types.rs. IRBase includes universal fields: extension, language, framework, type, category — not just doc-specific. Docs have sections as additional structure. |
+| 2 | body_hash normalization? | Strip whitespace, normalize indentation. Start simple, refine if too many false positives. |
+| 3 | Complexity: during parsing or post-processing? | **During parsing (Phase 1).** AST is already in memory, counting control flow nodes is cheap. Re-reading in Phase 2 would be wasteful. |
+| 4 | Partial frontmatter in docs? | **Store raw HashMap AND extract known fields.** Fallback processing for missing fields — infer doc_type from path if not in frontmatter, infer title from first heading, etc. |
