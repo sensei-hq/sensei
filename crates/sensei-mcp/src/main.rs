@@ -121,6 +121,16 @@ fn handle_list_tools() -> Value {
                 ("url", "string", "Explicit URL if auto-discovery fails"),
                 ("version", "string", "Library version"),
             ]),
+            // Workflow state
+            tool("update_phase", "Update the workflow phase, task, or active issue. Call this at the start of every phase command. MANDATORY — do not skip.", &[
+                ("phase", "string", "Phase name: ideate, analyze, blueprint, experiment, plan, build, validate, brainstorm"),
+            ], &[
+                ("task", "string", "Active task description"),
+                ("issue", "string", "GitHub issue number"),
+                ("plan", "string", "Path to active plan doc"),
+                ("checkpoint", "string", "Checkpoint description"),
+            ]),
+            tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[]),
         ]
     })
 }
@@ -153,6 +163,41 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         obj.insert("q".into(), json!(query));
     }
 
+    // ── Workflow state tools (direct endpoints, not mcp proxy) ─────────
+    if tool_name == "update_phase" {
+        let body = json!({
+            "active_phase": args["phase"].as_str(),
+            "active_task": args["task"].as_str(),
+            "active_issue": args["issue"].as_str().and_then(|s| s.parse::<i64>().ok()),
+            "active_plan": args["plan"].as_str(),
+            "last_checkpoint": args["checkpoint"].as_str(),
+            "project_path": cwd,
+        });
+        let result = client.put(format!("{}/api/state/{}", DAEMON_URL, repo_id))
+            .json(&body)
+            .send();
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: Value = resp.json().unwrap_or(json!({"ok": true}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+    if tool_name == "get_workflow_state" {
+        let result = client.get(format!("{}/api/state/{}", DAEMON_URL, repo_id)).send();
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: Value = resp.json().unwrap_or(json!({}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+
+    // ── Standard tools (via daemon mcp proxy) ───────────────────────────
     // Map tool names
     let daemon_tool = match tool_name {
         "get_patterns" => "get_file_tags",
