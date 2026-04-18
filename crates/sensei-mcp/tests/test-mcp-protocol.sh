@@ -152,6 +152,25 @@ run_test "has log_event tool in tools/list" "$TOOLS_RESP" \
 run_test "at least 15 tools registered" "$TOOLS_RESP" \
   "import sys,json; d=json.load(sys.stdin); n=len(d['result']['tools']); assert n >= 15, f'Only {n}'"
 
+# ── match_pattern call ───────────────────────────────────────────────────────
+echo ""
+echo "=== tools/call: match_pattern ==="
+
+MATCH_MSGS='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"match_pattern","arguments":{"description":"add SQL adapter"}}}'
+
+MATCH_RESP=$(mcp_call "$MATCH_MSGS" 2)
+
+run_test "match_pattern returns content" "$MATCH_RESP" \
+  "import sys,json; d=json.load(sys.stdin); assert 'content' in d['result']"
+
+run_test "match_pattern result is valid JSON" "$MATCH_RESP" \
+  "import sys,json; d=json.load(sys.stdin); text=d['result']['content'][0]['text']; data=json.loads(text); assert 'matches' in data or 'error' not in data"
+
+run_test "has match_pattern in tools/list" "$TOOLS_RESP" \
+  "import sys,json; d=json.load(sys.stdin); names=[t['name'] for t in d['result']['tools']]; assert 'match_pattern' in names"
+
 # ── error handling ───────────────────────────────────────────────────────────
 echo ""
 echo "=== Error handling ==="
