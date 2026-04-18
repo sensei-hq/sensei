@@ -1,3 +1,4 @@
+use super::common::field_text;
 use tree_sitter::{Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
 use super::LanguageAdapter;
@@ -146,12 +147,6 @@ fn walk_nodes(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<ParsedS
     }
 }
 
-fn field_text(node: &Node, field: &str, src: &[u8]) -> String {
-    node.child_by_field_name(field)
-        .and_then(|n| n.utf8_text(src).ok())
-        .unwrap_or_default()
-        .to_string()
-}
 
 fn line_at(lines: &[&str], row: usize) -> Option<String> {
     lines.get(row).map(|l| l.trim().to_string())
