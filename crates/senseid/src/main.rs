@@ -247,4 +247,75 @@ mod integration_tests {
         let dir = sensei_dir();
         assert!(dir.to_string_lossy().contains(".sensei"));
     }
+
+    // ── Workflow State Tests ─────────────────────────────────────────────
+
+    #[test]
+    fn workflow_state_upsert_and_get() {
+        let store = db::Store::open_memory().unwrap();
+
+        // Initially no state
+        let state = store.get_workflow_state("test-project").unwrap();
+        assert!(state.is_none());
+
+        // Upsert phase
+        store.upsert_workflow_state(
+            "test-project",
+            Some("ideate"), None, None, None, None, None,
+        ).unwrap();
+
+        let state = store.get_workflow_state("test-project").unwrap().unwrap();
+        assert_eq!(state["active_phase"], "ideate");
+        assert!(state["active_task"].is_null());
+
+        // Update task without overwriting phase
+        store.upsert_workflow_state(
+            "test-project",
+            None, None, Some("implement SqlAdapter"), Some(42), None, None,
+        ).unwrap();
+
+        let state = store.get_workflow_state("test-project").unwrap().unwrap();
+        assert_eq!(state["active_phase"], "ideate"); // preserved
+        assert_eq!(state["active_task"], "implement SqlAdapter");
+        assert_eq!(state["active_issue"], 42);
+    }
+
+    #[test]
+    fn workflow_state_full_update() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.upsert_workflow_state(
+            "test-project",
+            Some("build"),
+            Some("docs/plans/wave1.md"),
+            Some("feature #1"),
+            Some(55),
+            Some("2026-04-17T12:00:00Z"),
+            Some("abc123"),
+        ).unwrap();
+
+        let state = store.get_workflow_state("test-project").unwrap().unwrap();
+        assert_eq!(state["active_phase"], "build");
+        assert_eq!(state["active_plan"], "docs/plans/wave1.md");
+        assert_eq!(state["active_task"], "feature #1");
+        assert_eq!(state["active_issue"], 55);
+        assert_eq!(state["last_checkpoint"], "2026-04-17T12:00:00Z");
+        assert_eq!(state["rules_hash"], "abc123");
+        assert!(state["updated_at"].as_str().is_some());
+    }
+
+    #[test]
+    fn workflow_state_multiple_projects() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.upsert_workflow_state("project-a", Some("ideate"), None, None, None, None, None).unwrap();
+        store.upsert_workflow_state("project-b", Some("build"), None, None, Some(10), None, None).unwrap();
+
+        let a = store.get_workflow_state("project-a").unwrap().unwrap();
+        let b = store.get_workflow_state("project-b").unwrap().unwrap();
+        assert_eq!(a["active_phase"], "ideate");
+        assert_eq!(b["active_phase"], "build");
+        assert_eq!(b["active_issue"], 10);
+        assert!(a["active_issue"].is_null());
+    }
 }
