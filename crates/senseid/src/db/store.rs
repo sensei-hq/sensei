@@ -602,60 +602,130 @@ impl Store {
         Ok(None)
     }
 
-    /// Find functions with duplicate or very similar signatures across different files.
-    /// Uses signature comparison from the graph hierarchy_nodes table.
+    /// Find genuine code duplicates — filters out noise (common names, pattern instances).
+    ///
+    /// Three categories of results:
+    /// - "true_duplicate": identical non-trivial signature in different files, not part of a pattern
+    /// - "potential_pattern": same name across files, possibly an undocumented pattern (should be tagged)
+    /// - "suspicious": same non-trivial name in different dirs, worth investigating
     pub fn find_duplicates(&self, graph: &rusqlite::Connection, project: &str) -> rusqlite::Result<Vec<serde_json::Value>> {
-        // Find functions with identical signatures in different files
-        let mut stmt = graph.prepare(
+        // Names to exclude — too generic to be meaningful duplicates
+        let noise_names: Vec<&str> = vec![
+            "__init__", "new", "default", "main", "run", "start", "stop",
+            "get", "set", "close", "open", "read", "write", "send", "init",
+            "clone", "drop", "from", "into", "try_from", "try_into",
+            "fmt", "display", "debug", "serialize", "deserialize",
+            "to_string", "as_ref", "as_mut", "eq", "hash", "cmp",
+            "setup", "teardown", "before", "after", "test", "it", "describe",
+            "empty", "len", "is_empty", "push", "pop", "clear",
+            "build", "create", "update", "delete", "handle", "process",
+            "render", "load", "save", "parse", "validate",
+        ];
+
+        // Get detected patterns so we can exclude pattern instances
+        let patterns = self.list_detected_patterns(project).unwrap_or_default();
+        let pattern_instance_names: Vec<String> = patterns.iter()
+            .flat_map(|p| {
+                p["instances"].as_array().unwrap_or(&vec![]).iter()
+                    .filter_map(|i| i["name"].as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let mut results = Vec::new();
+
+        // 1. Identical non-trivial signatures in different files
+        let sig_query = graph.prepare(
             "SELECT a.name, a.file, a.sig, b.name, b.file, b.sig
              FROM hierarchy_nodes a
              JOIN hierarchy_nodes b ON a.sig = b.sig AND a.id < b.id
              WHERE a.project = ?1 AND b.project = ?1
              AND a.kind IN ('function','method') AND b.kind IN ('function','method')
-             AND a.sig IS NOT NULL AND a.sig != ''
+             AND a.sig IS NOT NULL AND length(a.sig) > 20
              AND a.file != b.file"
-        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+        );
 
-        let duplicates: Vec<serde_json::Value> = stmt.query_map(
-            rusqlite::params![project],
-            |row| {
-                Ok(serde_json::json!({
-                    "file_a": { "name": row.get::<_, String>(0)?, "file": row.get::<_, Option<String>>(1)?, "sig": row.get::<_, Option<String>>(2)? },
-                    "file_b": { "name": row.get::<_, String>(3)?, "file": row.get::<_, Option<String>>(4)?, "sig": row.get::<_, Option<String>>(5)? },
-                    "match_type": "identical_signature",
-                }))
-            }
-        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
-        .filter_map(|r| r.ok())
-        .collect();
+        if let Ok(mut stmt) = sig_query {
+            let sig_dups: Vec<serde_json::Value> = stmt.query_map(
+                rusqlite::params![project],
+                |row| {
+                    let name_a: String = row.get(0)?;
+                    let name_b: String = row.get(3)?;
+                    Ok((name_a, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?,
+                        name_b, row.get::<_, Option<String>>(4)?, row.get::<_, Option<String>>(5)?))
+                }
+            ).ok()
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(name_a, _, _, name_b, _, _)| {
+                // Exclude noise names
+                let a_lower = name_a.to_lowercase();
+                let b_lower = name_b.to_lowercase();
+                !noise_names.contains(&a_lower.as_str()) && !noise_names.contains(&b_lower.as_str())
+                // Exclude known pattern instances
+                && !pattern_instance_names.contains(name_a) && !pattern_instance_names.contains(name_b)
+            })
+            .map(|(name_a, file_a, sig_a, name_b, file_b, sig_b)| {
+                serde_json::json!({
+                    "category": "true_duplicate",
+                    "description": format!("Identical signature in different files: {} and {}", name_a, name_b),
+                    "a": {"name": name_a, "file": file_a, "sig": sig_a},
+                    "b": {"name": name_b, "file": file_b, "sig": sig_b},
+                })
+            })
+            .collect();
+            results.extend(sig_dups);
+        }
 
-        // Also find functions with similar names in different files (potential pattern instances)
-        let mut name_stmt = graph.prepare(
-            "SELECT name, GROUP_CONCAT(file, '|'), COUNT(*) as cnt
+        // 2. Same non-trivial name in different directories (potential undocumented pattern or copy-paste)
+        let name_query = graph.prepare(
+            "SELECT name, GROUP_CONCAT(DISTINCT file, '|'), COUNT(DISTINCT file) as file_cnt
              FROM hierarchy_nodes
-             WHERE project = ?1 AND kind IN ('function','method') AND name IS NOT NULL
-             GROUP BY name HAVING cnt > 1"
-        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+             WHERE project = ?1 AND kind IN ('function','method')
+             AND name IS NOT NULL AND length(name) > 5
+             GROUP BY name HAVING file_cnt >= 2"
+        );
 
-        let name_dups: Vec<serde_json::Value> = name_stmt.query_map(
-            rusqlite::params![project],
-            |row| {
-                let files_str: String = row.get(1)?;
+        if let Ok(mut stmt) = name_query {
+            let name_dups: Vec<serde_json::Value> = stmt.query_map(
+                rusqlite::params![project],
+                |row| {
+                    let name: String = row.get(0)?;
+                    let files_str: String = row.get(1)?;
+                    let count: i64 = row.get(2)?;
+                    Ok((name, files_str, count))
+                }
+            ).ok()
+            .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(name, _, _)| {
+                let lower = name.to_lowercase();
+                !noise_names.contains(&lower.as_str())
+                && !pattern_instance_names.contains(name)
+            })
+            .map(|(name, files_str, count)| {
                 let files: Vec<&str> = files_str.split('|').collect();
-                Ok(serde_json::json!({
-                    "name": row.get::<_, String>(0)?,
+                // Check if files are in different directories — more suspicious
+                let dirs: std::collections::HashSet<&str> = files.iter()
+                    .filter_map(|f| f.rfind('/').map(|i| &f[..i]))
+                    .collect();
+                let category = if dirs.len() > 1 { "suspicious" } else { "potential_pattern" };
+                serde_json::json!({
+                    "category": category,
+                    "description": format!("'{}' appears in {} files across {} directories", name, count, dirs.len()),
+                    "name": name,
                     "files": files,
-                    "count": row.get::<_, i64>(2)?,
-                    "match_type": "same_name_different_files",
-                }))
-            }
-        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
-        .filter_map(|r| r.ok())
-        .collect();
+                    "file_count": count,
+                    "directory_count": dirs.len(),
+                })
+            })
+            .collect();
+            results.extend(name_dups);
+        }
 
-        let mut all = duplicates;
-        all.extend(name_dups);
-        Ok(all)
+        Ok(results)
     }
 
     /// Analyze project conventions — naming patterns, file structures, consistent patterns.
