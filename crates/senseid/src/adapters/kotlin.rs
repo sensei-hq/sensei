@@ -1,6 +1,7 @@
-use super::common::{field_text, make_symbol};
+use super::common::{field_text, make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use tree_sitter::{Language, Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
+use crate::ir::{IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
 use super::LanguageAdapter;
 
 unsafe extern "C" {
@@ -188,6 +189,77 @@ fn find_name(node: &Node, src: &[u8]) -> String {
     String::new()
 }
 
+/// Parse Kotlin source into IR.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let mut parser = Parser::new();
+    let lang = unsafe { tree_sitter_kotlin() };
+    parser.set_language(&lang).expect("kotlin");
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return IRParsedFile { file_path: file_path.into(), language: "kotlin".into(), ..Default::default() },
+    };
+    let lines: Vec<&str> = source.lines().collect();
+    let root = tree.root_node();
+    let src = source.as_bytes();
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+    let mut constants = Vec::new();
+    // Kotlin top-level: functions, classes, objects, imports
+    for i in 0..root.child_count() {
+        let child = root.child(i).unwrap();
+        match child.kind() {
+            "function_declaration" => {
+                let name = find_name(&child, src);
+                if name.is_empty() { continue; }
+                let is_pub = !has_modifier(&child, src, "private");
+                functions.push(ir_function(name, &child, &lines, is_pub, node_text(&child, src).contains("suspend "), Vec::new(), None, extract_kdoc(&child, src), Vec::new(), &node_text(&child, src)));
+            }
+            "class_declaration" | "object_declaration" => {
+                let name = find_name(&child, src);
+                let kind = if child.kind() == "object_declaration" { ClassKind::Class } else { ClassKind::Class };
+                let is_pub = !has_modifier(&child, src, "private");
+                let mut class = ir_class(name, &child, kind, is_pub, extract_kdoc(&child, src), Vec::new());
+                // Walk class body — Kotlin uses "class_body" child, not field name
+                for c in 0..child.child_count() {
+                    let cc = child.child(c).unwrap();
+                    if cc.kind() != "class_body" { continue; }
+                    for j in 0..cc.child_count() {
+                        if let Some(m) = cc.child(j) {
+                            if m.kind() == "function_declaration" {
+                                let mname = find_name(&m, src);
+                                class.methods.push(ir_method(mname, &m, !has_modifier(&m, src, "private"), node_text(&m, src).contains("suspend "), false, Vec::new(), None, extract_kdoc(&m, src), Vec::new(), Visibility::Public, &node_text(&m, src)));
+                            }
+                        }
+                    }
+                }
+                classes.push(class);
+            }
+            "import_header" | "import_directive" => {
+                let text = node_text(&child, src);
+                let path = text.trim_start_matches("import ").trim();
+                let name = path.rsplit('.').next().unwrap_or(path).to_string();
+                imports.push(IRImport { source: path.into(), names: vec![name], is_reexport: false });
+            }
+            _ => {
+                // Walk deeper for nested imports
+                for j in 0..child.child_count() {
+                    if let Some(c) = child.child(j) {
+                        if c.kind() == "import_header" {
+                            let text = node_text(&c, src);
+                            let path = text.trim_start_matches("import ").trim();
+                            let name = path.rsplit('.').next().unwrap_or(path).to_string();
+                            imports.push(IRImport { source: path.into(), names: vec![name], is_reexport: false });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let module = ir_module(file_path, "kotlin", functions, constants, imports, file_path.contains("Test"));
+    ir_parsed_file(file_path, "kotlin", module, classes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +354,15 @@ mod tests {
     fn data_class_no_parent() {
         let pf = parse("data class Point(val x: Int, val y: Int)");
         assert!(pf.symbols[0].parent.is_none());
+    }
+
+    fn parse_ir(src: &str) -> IRParsedFile { parse_to_ir(src, "Test.kt") }
+
+    #[test]
+    fn ir_class() {
+        let pf = parse_ir("class Dog {\n    fun bark(): String = \"woof\"\n}");
+        assert_eq!(pf.classes.len(), 1);
+        assert_eq!(pf.classes[0].base.name, "Dog");
+        assert!(pf.classes[0].methods.len() >= 1);
     }
 }

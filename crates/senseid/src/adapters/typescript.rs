@@ -1,4 +1,6 @@
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, ParsedEdge, SymbolKind};
+use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
+use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
 use oxc_allocator::Allocator;
 use oxc_parser::Parser;
@@ -249,6 +251,102 @@ fn make_sym(
         is_exported,
         parent: None,
     }
+}
+
+/// Parse TypeScript/JavaScript source into IR.
+/// Uses OXC parser internally, converts ParsedFile output to IR types.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let pf = parse_oxc(source, file_path);
+
+    // Convert ParsedSymbol list → IR structures
+    let mut functions = Vec::new();
+    let mut classes: Vec<IRClass> = Vec::new();
+    let mut imports = Vec::new();
+    let mut constants = Vec::new();
+
+    for sym in &pf.symbols {
+        match sym.kind {
+            SymbolKind::Function | SymbolKind::Hook | SymbolKind::Component => {
+                functions.push(IRFunction {
+                    base: IRBase {
+                        name: sym.name.clone(),
+                        line_start: sym.line_start,
+                        line_end: sym.line_end,
+                        docstring: sym.docstring.clone(),
+                        is_exported: sym.is_exported,
+                        node_type: Some(match sym.kind {
+                            SymbolKind::Hook => "hook",
+                            SymbolKind::Component => "component",
+                            _ => "function",
+                        }.into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+            }
+            SymbolKind::Class | SymbolKind::Interface | SymbolKind::Type => {
+                let kind = match sym.kind {
+                    SymbolKind::Interface => ClassKind::Interface,
+                    SymbolKind::Type => ClassKind::Class,
+                    _ => ClassKind::Class,
+                };
+                classes.push(IRClass {
+                    base: IRBase {
+                        name: sym.name.clone(),
+                        line_start: sym.line_start,
+                        line_end: sym.line_end,
+                        docstring: sym.docstring.clone(),
+                        is_exported: sym.is_exported,
+                        node_type: Some("class".into()),
+                        ..Default::default()
+                    },
+                    class_kind: kind,
+                    ..Default::default()
+                });
+            }
+            SymbolKind::Method => {
+                // Attach to last class
+                if let Some(class) = classes.last_mut() {
+                    class.methods.push(IRMethod {
+                        base: IRBase {
+                            name: sym.name.clone(),
+                            line_start: sym.line_start,
+                            line_end: sym.line_end,
+                            is_exported: sym.is_exported,
+                            node_type: Some("method".into()),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                }
+            }
+            SymbolKind::Const | SymbolKind::Enum => {
+                constants.push(IRConstant {
+                    base: IRBase {
+                        name: sym.name.clone(),
+                        line_start: sym.line_start,
+                        line_end: sym.line_end,
+                        is_exported: sym.is_exported,
+                        node_type: Some("const".into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+            }
+            _ => {}
+        }
+    }
+
+    for imp in &pf.imports {
+        imports.push(IRImport {
+            source: imp.target_path.clone(),
+            names: imp.names.clone(),
+            is_reexport: false,
+        });
+    }
+
+    let module = ir_module(file_path, &pf.language, functions, constants, imports, file_path.contains("test") || file_path.contains("spec"));
+    ir_parsed_file(file_path, &pf.language, module, classes)
 }
 
 #[cfg(test)]
