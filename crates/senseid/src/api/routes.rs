@@ -96,6 +96,10 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/sessions", get(get_sessions_stub).post(create_session))
         .route("/api/sessions/{id}", put(update_session_handler))
+        // Patterns
+        .route("/api/patterns/{project}/detect", post(detect_patterns))
+        .route("/api/patterns/{project}", get(list_patterns))
+        .route("/api/patterns/{project}/match", get(match_pattern_handler))
         // Events
         .route("/api/events", post(create_event))
         .route("/api/events/{project}", get(list_events))
@@ -1562,6 +1566,49 @@ async fn update_session_handler(
         body["tokensOut"].as_i64(),
     ).ok();
     Json(serde_json::json!({"ok": true}))
+}
+
+// ── Patterns ────────────────────────────────────────────────────────────────
+
+async fn detect_patterns(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    let graph = state.graph.lock().await;
+    match store.detect_patterns_from_graph(graph.conn_ref(), &project) {
+        Ok(patterns) => Json(serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()})),
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+async fn list_patterns(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    match store.list_detected_patterns(&project) {
+        Ok(patterns) => Json(serde_json::json!({"patterns": patterns, "count": patterns.len()})),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+#[derive(Deserialize)]
+struct MatchQuery {
+    description: Option<String>,
+}
+
+async fn match_pattern_handler(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Query(q): Query<MatchQuery>,
+) -> Json<serde_json::Value> {
+    let desc = q.description.unwrap_or_default();
+    let store = state.store.lock().await;
+    match store.match_pattern(&project, &desc) {
+        Ok(matches) => Json(serde_json::json!({"matches": matches, "count": matches.len()})),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
 }
 
 // ── Events ──────────────────────────────────────────────────────────────────
