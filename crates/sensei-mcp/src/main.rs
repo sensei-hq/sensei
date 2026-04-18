@@ -135,6 +135,11 @@ fn handle_list_tools() -> Value {
             tool("match_pattern", "Find applicable patterns for a task. Returns detected patterns from the codebase that match the description. Call during the locate step before writing code. MANDATORY in /sensei:build.", &[
                 ("description", "string", "What you're about to build (e.g. 'add SQL parsing', 'new API endpoint')"),
             ], &[]),
+            tool("get_pattern_for", "Check if a specific symbol belongs to a detected pattern. Use during /sensei:review to check pattern conformance.", &[
+                ("symbol", "string", "Symbol name to check (e.g. 'SqlAdapter', 'TaskWorker')"),
+            ], &[]),
+            tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
+            tool("get_project_conventions", "Analyze project conventions — naming patterns, directory structure, design patterns. Use to understand how this project is structured.", &[], &[]),
             // Event logging
             tool("log_event", "Log a workflow event. Call this to record phase transitions, locate steps, issue lifecycle, review findings. MANDATORY in commands — do not skip.", &[
                 ("type", "string", "Event type: phase_transition, command_invoked, locate, issue_started, issue_completed, review_finding, rework, checkpoint, context_loaded, files_modified"),
@@ -213,6 +218,41 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         let result = client.get(format!("{}/api/patterns/{}/match", DAEMON_URL, repo_id))
             .query(&[("description", desc)])
             .send();
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: serde_json::Value = resp.json().unwrap_or(json!({}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+
+    if tool_name == "get_pattern_for" {
+        let symbol = args["symbol"].as_str().unwrap_or("");
+        let result = client.get(format!("{}/api/patterns/{}/for/{}", DAEMON_URL, repo_id, symbol)).send();
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: serde_json::Value = resp.json().unwrap_or(json!({}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+    if tool_name == "get_duplicates" {
+        let result = client.get(format!("{}/api/patterns/{}/duplicates", DAEMON_URL, repo_id)).send();
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: serde_json::Value = resp.json().unwrap_or(json!({}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+    if tool_name == "get_project_conventions" {
+        let result = client.get(format!("{}/api/patterns/{}/conventions", DAEMON_URL, repo_id)).send();
         return match result {
             Ok(resp) if resp.status().is_success() => {
                 let data: serde_json::Value = resp.json().unwrap_or(json!({}));
