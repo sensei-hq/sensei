@@ -9,6 +9,7 @@ mod tasks;
 pub mod acp;
 pub mod installer;
 pub mod paths;
+pub mod ir;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
