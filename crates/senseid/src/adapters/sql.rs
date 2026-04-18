@@ -1,6 +1,8 @@
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser as SqlParser;
 use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
+use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRConstant, IRParsedFile, ClassKind};
+use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
 
 pub struct SqlAdapter;
@@ -120,6 +122,48 @@ fn find_preceding_comment(lines: &[&str], line: u32) -> Option<String> {
     if comments.is_empty() { return None; }
     comments.reverse();
     Some(comments.join("\n"))
+}
+
+/// Parse SQL into IR — tables as classes, functions/procedures as functions.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let pf = SqlAdapter.parse(source, file_path);
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut constants = Vec::new();
+
+    for sym in &pf.symbols {
+        match sym.kind {
+            SymbolKind::Class => { // tables, views
+                classes.push(IRClass {
+                    base: IRBase {
+                        name: sym.name.clone(),
+                        line_start: sym.line_start, line_end: sym.line_end,
+                        is_exported: true,
+                        node_type: Some("class".into()),
+                        ..Default::default()
+                    },
+                    class_kind: ClassKind::Class,
+                    ..Default::default()
+                });
+            }
+            SymbolKind::Function => {
+                functions.push(IRFunction {
+                    base: IRBase {
+                        name: sym.name.clone(),
+                        line_start: sym.line_start, line_end: sym.line_end,
+                        is_exported: true,
+                        node_type: Some("function".into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let module = ir_module(file_path, "sql", functions, constants, Vec::new(), false);
+    ir_parsed_file(file_path, "sql", module, classes)
 }
 
 #[cfg(test)]

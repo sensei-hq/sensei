@@ -1,5 +1,6 @@
 use super::common::extract_script_blocks;
 use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
+use crate::ir::IRParsedFile;
 use super::LanguageAdapter;
 
 pub struct SvelteAdapter;
@@ -64,6 +65,21 @@ impl LanguageAdapter for SvelteAdapter {
 }
 
 /// Extract script blocks from Svelte SFC. Returns (source, line_offset, is_typescript).
+
+/// Parse Svelte SFC into IR — delegates script blocks to TypeScript adapter.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let blocks = extract_script_blocks(source);
+    if blocks.is_empty() {
+        return IRParsedFile { file_path: file_path.into(), language: "svelte".into(), ..Default::default() };
+    }
+    // Parse the first (main) script block with TS adapter
+    let script = &blocks[0].0;
+    let ext = if blocks[0].2 { "component.svelte.ts" } else { "component.svelte.js" };
+    let mut ir = super::typescript::parse_to_ir(script, ext);
+    ir.file_path = file_path.into();
+    ir.language = "svelte".into();
+    ir
+}
 
 #[cfg(test)]
 mod tests {

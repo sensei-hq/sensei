@@ -1,4 +1,6 @@
 use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
+use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRConstant, IRParsedFile, ClassKind};
+use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
 
 pub struct CAdapter;
@@ -137,6 +139,48 @@ fn extract_c_function_name(line: &str) -> Option<String> {
     } else {
         Some(name)
     }
+}
+
+/// Parse C/C++ into IR — functions and structs.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let pf = CAdapter.parse(source, file_path);
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+
+    for sym in &pf.symbols {
+        match sym.kind {
+            SymbolKind::Function => {
+                functions.push(IRFunction {
+                    base: IRBase {
+                        name: sym.name.clone(),
+                        line_start: sym.line_start, line_end: sym.line_end,
+                        docstring: sym.docstring.clone(),
+                        is_exported: sym.is_exported,
+                        node_type: Some("function".into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+            }
+            SymbolKind::Class => {
+                classes.push(IRClass {
+                    base: IRBase {
+                        name: sym.name.clone(),
+                        line_start: sym.line_start, line_end: sym.line_end,
+                        is_exported: sym.is_exported,
+                        node_type: Some("class".into()),
+                        ..Default::default()
+                    },
+                    class_kind: ClassKind::Struct,
+                    ..Default::default()
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let module = ir_module(file_path, "c", functions, Vec::new(), Vec::new(), file_path.contains("test"));
+    ir_parsed_file(file_path, "c", module, classes)
 }
 
 #[cfg(test)]
