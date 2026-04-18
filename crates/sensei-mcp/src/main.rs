@@ -131,6 +131,13 @@ fn handle_list_tools() -> Value {
                 ("checkpoint", "string", "Checkpoint description"),
             ]),
             tool("get_workflow_state", "Get current workflow state — active phase, task, issue, checkpoint. Call when you need orientation or feel lost.", &[], &[]),
+            // Event logging
+            tool("log_event", "Log a workflow event. Call this to record phase transitions, locate steps, issue lifecycle, review findings. MANDATORY in commands — do not skip.", &[
+                ("type", "string", "Event type: phase_transition, command_invoked, locate, issue_started, issue_completed, review_finding, rework, checkpoint, context_loaded, files_modified"),
+            ], &[
+                ("data", "string", "JSON string with event-specific data"),
+                ("session_id", "string", "Session ID if known"),
+            ]),
         ]
     })
 }
@@ -190,6 +197,29 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         return match result {
             Ok(resp) if resp.status().is_success() => {
                 let data: Value = resp.json().unwrap_or(json!({}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+
+    if tool_name == "log_event" {
+        let event_type = args["type"].as_str().unwrap_or("unknown");
+        let data_str = args["data"].as_str().unwrap_or("{}");
+        let session_id = args["session_id"].as_str();
+        let body = json!({
+            "project": repo_id,
+            "event_type": event_type,
+            "session_id": session_id,
+            "data": serde_json::from_str::<serde_json::Value>(data_str).unwrap_or(json!(data_str)),
+        });
+        let result = client.post(format!("{}/api/events", DAEMON_URL))
+            .json(&body)
+            .send();
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: serde_json::Value = resp.json().unwrap_or(json!({"ok": true}));
                 json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
             }
             Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),

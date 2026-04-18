@@ -96,6 +96,9 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/sessions", get(get_sessions_stub).post(create_session))
         .route("/api/sessions/{id}", put(update_session_handler))
+        // Events
+        .route("/api/events", post(create_event))
+        .route("/api/events/{project}", get(list_events))
         // Workflow state
         .route("/api/state/{project}", get(get_workflow_state).put(update_workflow_state))
         // Reset (clears all data)
@@ -1559,6 +1562,53 @@ async fn update_session_handler(
         body["tokensOut"].as_i64(),
     ).ok();
     Json(serde_json::json!({"ok": true}))
+}
+
+// ── Events ──────────────────────────────────────────────────────────────────
+
+async fn create_event(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let id = body["id"].as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let project = body["project"].as_str().unwrap_or("unknown");
+    let session_id = body["session_id"].as_str();
+    let event_type = match body["event_type"].as_str().or(body["type"].as_str()) {
+        Some(t) => t,
+        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "event_type is required"}))),
+    };
+    let data = body.get("data")
+        .map(|d| serde_json::to_string(d).unwrap_or_default())
+        .unwrap_or_else(|| "{}".to_string());
+
+    let store = state.store.lock().await;
+    match store.insert_event(&id, project, session_id, event_type, &data) {
+        Ok(_) => (StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "error": e.to_string()}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct EventQuery {
+    #[serde(rename = "type")]
+    event_type: Option<String>,
+    session: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn list_events(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Query(q): Query<EventQuery>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    let limit = q.limit.unwrap_or(50).min(500);
+    match store.list_events(&project, q.event_type.as_deref(), q.session.as_deref(), limit) {
+        Ok(events) => Json(serde_json::json!({"events": events, "count": events.len()})),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
 }
 
 // ── Workflow State ───────────────────────────────────────────────────────────

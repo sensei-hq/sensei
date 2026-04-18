@@ -127,6 +127,31 @@ run_test "get_workflow_state has active_phase" "$STATE_RESP" \
 run_test "get_workflow_state has updated_at" "$STATE_RESP" \
   "import sys,json; d=json.load(sys.stdin); text=d['result']['content'][0]['text']; data=json.loads(text); assert 'updated_at' in data or data.get('active_phase') is None"
 
+# ── log_event call ───────────────────────────────────────────────────────────
+echo ""
+echo "=== tools/call: log_event ==="
+
+LOG_MSGS='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"log_event","arguments":{"type":"phase_transition","data":"{\"from\":\"ideate\",\"to\":\"analyze\"}"}}}'
+
+LOG_RESP=$(mcp_call "$LOG_MSGS" 2)
+
+run_test "log_event returns content" "$LOG_RESP" \
+  "import sys,json; d=json.load(sys.stdin); assert 'content' in d['result']"
+
+run_test "log_event content has ok:true" "$LOG_RESP" \
+  "import sys,json; d=json.load(sys.stdin); text=d['result']['content'][0]['text']; data=json.loads(text); assert data.get('ok') == True"
+
+run_test "log_event returns id" "$LOG_RESP" \
+  "import sys,json; d=json.load(sys.stdin); text=d['result']['content'][0]['text']; data=json.loads(text); assert 'id' in data"
+
+run_test "has log_event tool in tools/list" "$TOOLS_RESP" \
+  "import sys,json; d=json.load(sys.stdin); names=[t['name'] for t in d['result']['tools']]; assert 'log_event' in names"
+
+run_test "at least 15 tools registered" "$TOOLS_RESP" \
+  "import sys,json; d=json.load(sys.stdin); n=len(d['result']['tools']); assert n >= 15, f'Only {n}'"
+
 # ── error handling ───────────────────────────────────────────────────────────
 echo ""
 echo "=== Error handling ==="
