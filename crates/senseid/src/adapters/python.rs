@@ -1,5 +1,7 @@
 use tree_sitter::{Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedEdge, ParsedImport, SymbolKind};
+use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
+use super::common::{field_text, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use super::LanguageAdapter;
 
 pub struct PythonAdapter;
@@ -36,6 +38,274 @@ impl LanguageAdapter for PythonAdapter {
             edges,
             imports,
         }
+    }
+}
+
+/// Parse Python source into IR with params, return types, decorators, inheritance.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_python::LANGUAGE.into()).expect("python");
+
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return IRParsedFile { file_path: file_path.into(), language: "python".into(), ..Default::default() },
+    };
+
+    let lines: Vec<&str> = source.lines().collect();
+    let root = tree.root_node();
+    let src = source.as_bytes();
+
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+    let mut constants = Vec::new();
+
+    walk_ir_py(&root, src, &lines, &mut functions, &mut classes, &mut imports, &mut constants, None);
+
+    let is_test = file_path.contains("test") || source.contains("import pytest") || source.contains("import unittest");
+    let module = ir_module(file_path, "python", functions, constants, imports, is_test);
+    ir_parsed_file(file_path, "python", module, classes)
+}
+
+fn walk_ir_py(
+    node: &Node, src: &[u8], lines: &[&str],
+    functions: &mut Vec<IRFunction>,
+    classes: &mut Vec<IRClass>,
+    imports: &mut Vec<IRImport>,
+    constants: &mut Vec<IRConstant>,
+    class_ctx: Option<&str>,
+) {
+    for i in 0..node.child_count() {
+        let child = node.child(i).unwrap();
+        match child.kind() {
+            "function_definition" | "decorated_definition" => {
+                let (func_node, decorators) = if child.kind() == "decorated_definition" {
+                    let decos = collect_py_decorators(&child, src);
+                    let inner = (0..child.child_count())
+                        .find_map(|j| child.child(j).filter(|c| c.kind() == "function_definition"));
+                    match inner {
+                        Some(f) => (f, decos),
+                        None => {
+                            // Might be a decorated class
+                            if let Some(cls) = (0..child.child_count())
+                                .find_map(|j| child.child(j).filter(|c| c.kind() == "class_definition"))
+                            {
+                                let name = cls.child_by_field_name("name")
+                                    .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
+                                    .unwrap_or_default();
+                                let mut class = ir_class(name, &cls, ClassKind::Class,
+                                    !cls.child_by_field_name("name").map(|n| n.utf8_text(src).unwrap_or_default().starts_with('_')).unwrap_or(false),
+                                    extract_docstring(&cls, lines), collect_py_decorators(&child, src));
+                                class.extends = extract_py_base_class(&cls, src);
+                                if let Some(body) = cls.child_by_field_name("body") {
+                                    walk_ir_py_methods(&body, src, lines, &mut class);
+                                }
+                                classes.push(class);
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    (child, Vec::new())
+                };
+
+                let name = func_node.child_by_field_name("name")
+                    .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
+                    .unwrap_or_default();
+                let is_exported = !name.starts_with('_');
+                let params = extract_py_params(&func_node, src);
+                let return_type = extract_py_return_type(&func_node, src);
+                let docstring = extract_docstring(&func_node, lines);
+                let is_async = node_text(&func_node, src).starts_with("async ");
+                let body_text = node_text(&func_node, src);
+
+                if class_ctx.is_none() {
+                    functions.push(ir_function(name, &func_node, lines, is_exported, is_async, params, return_type, docstring, decorators, &body_text));
+                }
+                // Methods are handled in walk_ir_py_methods
+            }
+            "class_definition" => {
+                let name = child.child_by_field_name("name")
+                    .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
+                    .unwrap_or_default();
+                let is_exported = !name.starts_with('_');
+                let mut class = ir_class(name, &child, ClassKind::Class, is_exported,
+                    extract_docstring(&child, lines), Vec::new());
+                class.extends = extract_py_base_class(&child, src);
+                if let Some(body) = child.child_by_field_name("body") {
+                    walk_ir_py_methods(&body, src, lines, &mut class);
+                }
+                classes.push(class);
+            }
+            "expression_statement" if class_ctx.is_none() => {
+                if let Some(expr) = child.child(0) {
+                    if expr.kind() == "assignment" {
+                        if let Some(left) = expr.child_by_field_name("left") {
+                            let name = left.utf8_text(src).unwrap_or_default().to_string();
+                            if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1 {
+                                constants.push(IRConstant {
+                                    base: IRBase {
+                                        name, is_exported: true,
+                                        line_start: child.start_position().row as u32 + 1,
+                                        line_end: child.end_position().row as u32 + 1,
+                                        node_type: Some("const".into()),
+                                        ..Default::default()
+                                    },
+                                    type_: None,
+                                    value_preview: Some(node_text(&expr, src).chars().take(100).collect()),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            "import_statement" | "import_from_statement" => {
+                extract_py_imports(&child, src, imports);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn walk_ir_py_methods(body: &Node, src: &[u8], lines: &[&str], class: &mut IRClass) {
+    for i in 0..body.child_count() {
+        let child = body.child(i).unwrap();
+        let (func_node, decorators) = match child.kind() {
+            "function_definition" => (child, Vec::new()),
+            "decorated_definition" => {
+                let decos = collect_py_decorators(&child, src);
+                match (0..child.child_count()).find_map(|j| child.child(j).filter(|c| c.kind() == "function_definition")) {
+                    Some(f) => (f, decos),
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+
+        let name = func_node.child_by_field_name("name")
+            .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
+            .unwrap_or_default();
+        let is_exported = !name.starts_with('_');
+        let is_static = decorators.iter().any(|d| d.contains("staticmethod"));
+        let is_async = node_text(&func_node, src).starts_with("async ");
+        let body_text = node_text(&func_node, src);
+
+        class.methods.push(ir_method(
+            name, &func_node, is_exported, is_async, is_static,
+            extract_py_params(&func_node, src),
+            extract_py_return_type(&func_node, src),
+            extract_docstring(&func_node, lines),
+            decorators,
+            if is_exported { Visibility::Public } else { Visibility::Private },
+            &body_text,
+        ));
+    }
+}
+
+fn extract_py_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
+    let mut params = Vec::new();
+    if let Some(param_list) = node.child_by_field_name("parameters") {
+        for i in 0..param_list.child_count() {
+            if let Some(p) = param_list.child(i) {
+                match p.kind() {
+                    "identifier" => {
+                        let name = p.utf8_text(src).unwrap_or_default().to_string();
+                        if name != "self" && name != "cls" {
+                            params.push(IRParam { name, ..Default::default() });
+                        } else {
+                            params.push(IRParam { name, type_: Some("Self".into()), ..Default::default() });
+                        }
+                    }
+                    "typed_parameter" => {
+                        let name = p.child_by_field_name("name")
+                            .or_else(|| p.child(0))
+                            .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
+                            .unwrap_or_default();
+                        let type_ = p.child_by_field_name("type")
+                            .map(|t| t.utf8_text(src).unwrap_or_default().to_string());
+                        params.push(IRParam { name, type_, ..Default::default() });
+                    }
+                    "default_parameter" | "typed_default_parameter" => {
+                        let name = p.child_by_field_name("name")
+                            .or_else(|| p.child(0))
+                            .map(|n| n.utf8_text(src).unwrap_or_default().to_string())
+                            .unwrap_or_default();
+                        let type_ = p.child_by_field_name("type")
+                            .map(|t| t.utf8_text(src).unwrap_or_default().to_string());
+                        let default = p.child_by_field_name("value")
+                            .map(|v| v.utf8_text(src).unwrap_or_default().to_string());
+                        params.push(IRParam { name, type_, default_value: default, is_optional: true });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_py_return_type(node: &Node, src: &[u8]) -> Option<String> {
+    node.child_by_field_name("return_type")
+        .map(|t| t.utf8_text(src).unwrap_or_default().trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn extract_py_base_class(node: &Node, src: &[u8]) -> Option<String> {
+    node.child_by_field_name("superclasses")
+        .and_then(|args| args.child(1)) // skip '('
+        .map(|c| c.utf8_text(src).unwrap_or_default().to_string())
+        .filter(|s| !s.is_empty() && s != ")")
+}
+
+fn collect_py_decorators(decorated_node: &Node, src: &[u8]) -> Vec<String> {
+    let mut decos = Vec::new();
+    for i in 0..decorated_node.child_count() {
+        if let Some(c) = decorated_node.child(i) {
+            if c.kind() == "decorator" {
+                decos.push(c.utf8_text(src).unwrap_or_default().trim().to_string());
+            }
+        }
+    }
+    decos
+}
+
+fn extract_py_imports(node: &Node, src: &[u8], imports: &mut Vec<IRImport>) {
+    match node.kind() {
+        "import_statement" => {
+            for j in 0..node.child_count() {
+                if let Some(c) = node.child(j) {
+                    if c.kind() == "dotted_name" {
+                        let text = c.utf8_text(src).unwrap_or_default().to_string();
+                        let name = text.rsplit('.').next().unwrap_or(&text).to_string();
+                        imports.push(IRImport { source: text, names: vec![name], is_reexport: false });
+                    }
+                }
+            }
+        }
+        "import_from_statement" => {
+            let mut target = String::new();
+            let mut names = Vec::new();
+            for j in 0..node.child_count() {
+                if let Some(c) = node.child(j) {
+                    match c.kind() {
+                        "dotted_name" | "relative_import" => {
+                            let text = c.utf8_text(src).unwrap_or_default().to_string();
+                            if target.is_empty() { target = text; } else { names.push(text); }
+                        }
+                        "aliased_import" => {
+                            if let Some(n) = c.child_by_field_name("name") {
+                                names.push(n.utf8_text(src).unwrap_or_default().to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if !target.is_empty() {
+                imports.push(IRImport { source: target, names, is_reexport: false });
+            }
+        }
+        _ => {}
     }
 }
 
@@ -331,5 +601,59 @@ mod tests {
     fn constant_no_parent() {
         let pf = parse("TIMEOUT = 30\n");
         assert!(pf.symbols[0].parent.is_none());
+    }
+
+    // ── IR Tests ──────────────────────────────────────────────────────
+
+    fn parse_ir(src: &str) -> IRParsedFile { parse_to_ir(src, "test.py") }
+
+    #[test]
+    fn ir_function_with_typed_params() {
+        let pf = parse_ir("def hello(name: str, count: int = 5) -> str:\n    return name * count\n");
+        let func = &pf.modules[0].functions[0];
+        assert_eq!(func.base.name, "hello");
+        assert_eq!(func.params.len(), 2);
+        assert_eq!(func.params[0].name, "name");
+        assert_eq!(func.params[0].type_, Some("str".into()));
+        assert_eq!(func.params[1].name, "count");
+        assert!(func.params[1].is_optional);
+        assert_eq!(func.return_type, Some("str".into()));
+    }
+
+    #[test]
+    fn ir_class_with_methods_and_inheritance() {
+        let pf = parse_ir("class Dog(Animal):\n    \"\"\"A dog.\"\"\"\n    def bark(self) -> str:\n        return 'woof'\n");
+        assert_eq!(pf.classes.len(), 1);
+        assert_eq!(pf.classes[0].base.name, "Dog");
+        assert_eq!(pf.classes[0].extends, Some("Animal".into()));
+        assert_eq!(pf.classes[0].base.docstring, Some("A dog.".into()));
+        assert!(pf.classes[0].methods.len() >= 1);
+        assert_eq!(pf.classes[0].methods[0].base.name, "bark");
+    }
+
+    #[test]
+    fn ir_async_function() {
+        let pf = parse_ir("async def fetch(url: str) -> bytes:\n    pass\n");
+        let func = &pf.modules[0].functions[0];
+        assert!(func.is_async);
+    }
+
+    #[test]
+    fn ir_decorator() {
+        let pf = parse_ir("@app.route('/hello')\ndef hello():\n    pass\n");
+        let func = &pf.modules[0].functions[0];
+        assert!(func.decorators.iter().any(|d| d.contains("app.route")));
+    }
+
+    #[test]
+    fn ir_constant() {
+        let pf = parse_ir("TIMEOUT = 30\nMAX_RETRIES = 3\n");
+        assert_eq!(pf.modules[0].constants.len(), 2);
+    }
+
+    #[test]
+    fn ir_imports() {
+        let pf = parse_ir("import os\nfrom typing import Optional, List\n");
+        assert!(pf.modules[0].imports.len() >= 2);
     }
 }
