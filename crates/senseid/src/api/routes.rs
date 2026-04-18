@@ -1604,8 +1604,11 @@ async fn update_workflow_state(
         return Json(serde_json::json!({"ok": false, "error": e.to_string()}));
     }
 
-    // Sync to .sensei/state.yaml if we can find the project path
-    if let Ok(Some(project_path)) = store.get_project_path(&project) {
+    // Sync to .sensei/state.yaml
+    // Use explicit project_path from body, or look up from projects table
+    let project_path = body["project_path"].as_str().map(String::from)
+        .or_else(|| store.get_project_path(&project).ok().flatten());
+    if let Some(project_path) = project_path {
         let sensei_dir = std::path::Path::new(&project_path).join(".sensei");
         std::fs::create_dir_all(&sensei_dir).ok();
         let state_file = sensei_dir.join("state.yaml");
