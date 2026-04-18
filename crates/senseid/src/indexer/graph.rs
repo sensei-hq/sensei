@@ -109,6 +109,42 @@ impl GraphDb {
             CREATE INDEX IF NOT EXISTS idx_hn_name ON hierarchy_nodes(name);
             CREATE INDEX IF NOT EXISTS idx_hn_file ON hierarchy_nodes(file);
             CREATE INDEX IF NOT EXISTS idx_hn_parent ON hierarchy_nodes(parent_id);
+
+            -- IR extension tables (Option B: type-specific, cleaner than column bloat)
+            CREATE TABLE IF NOT EXISTS ir_docs(
+                node_id TEXT PRIMARY KEY REFERENCES hierarchy_nodes(id),
+                frontmatter TEXT,       -- JSON: raw key-value pairs
+                status TEXT,
+                origin TEXT,            -- parent doc path for TRACES_TO
+                description TEXT,
+                date TEXT,
+                sections TEXT,          -- JSON: [{heading, level, line_start, line_end, content_preview}]
+                code_blocks TEXT,       -- JSON: [{language, content, line_start, line_end}]
+                file_references TEXT,   -- JSON: [path, ...]
+                symbol_references TEXT, -- JSON: [name, ...]
+                doc_references TEXT     -- JSON: [path, ...]
+            );
+
+            CREATE TABLE IF NOT EXISTS ir_functions(
+                node_id TEXT PRIMARY KEY REFERENCES hierarchy_nodes(id),
+                params TEXT,            -- JSON: [{name, type_, default_value, is_optional}]
+                return_type TEXT,
+                is_async INTEGER DEFAULT 0,
+                complexity INTEGER DEFAULT 1,
+                body_hash TEXT,
+                decorators TEXT,        -- JSON array
+                calls TEXT              -- JSON: [name, ...]
+            );
+
+            CREATE TABLE IF NOT EXISTS ir_classes(
+                node_id TEXT PRIMARY KEY REFERENCES hierarchy_nodes(id),
+                class_kind TEXT,
+                implements TEXT,         -- JSON array
+                extends TEXT,
+                generic_params TEXT,     -- JSON array
+                decorators TEXT,         -- JSON array
+                mixins TEXT             -- JSON array
+            );
             CREATE TABLE IF NOT EXISTS unresolved_refs(
                 source_id TEXT NOT NULL,
                 ref_kind TEXT NOT NULL,
@@ -256,6 +292,170 @@ impl GraphDb {
         n.file = Some(path.into());
         n.parent_id = package_id.map(|s| s.into());
         self.merge_node(&n)
+    }
+
+    /// Write an IRDoc to the graph — hierarchy_nodes base + ir_docs extension.
+    pub fn write_ir_doc(&self, doc: &crate::ir::IRDoc, project: &str) -> Result<(), String> {
+        let id = format!("doc:{}", doc.base.file);
+
+        // Write base node
+        let n = HierarchyNode {
+            id: id.clone(),
+            name: doc.title.clone().unwrap_or_else(|| doc.base.name.clone()),
+            kind: NodeKind::Doc,
+            level: doc.base.language.clone(),
+            parent_id: None,
+            file: Some(doc.base.file.clone()),
+            line: 0,
+            project: project.into(),
+            sig: None,
+            body: None,
+            docstring: doc.description.clone(),
+            complexity: None,
+            tags: Some(doc.base.tags.join(",")),
+            doc_type: doc.doc_type.clone(),
+            doc_category: doc.base.category.clone(),
+        };
+        self.merge_node(&n)?;
+
+        // Write IR extension
+        let sections_json = serde_json::to_string(&doc.sections).unwrap_or_default();
+        let code_blocks_json = serde_json::to_string(&doc.code_blocks).unwrap_or_default();
+        let frontmatter_json = serde_json::to_string(&doc.frontmatter).unwrap_or_default();
+        let file_refs_json = serde_json::to_string(&doc.file_references).unwrap_or_default();
+        let sym_refs_json = serde_json::to_string(&doc.symbol_references).unwrap_or_default();
+        let doc_refs_json = serde_json::to_string(&doc.doc_references).unwrap_or_default();
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO ir_docs(node_id, frontmatter, status, origin, description, date, sections, code_blocks, file_references, symbol_references, doc_references)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                id, frontmatter_json,
+                doc.status, doc.origin, doc.description, doc.date,
+                sections_json, code_blocks_json,
+                file_refs_json, sym_refs_json, doc_refs_json,
+            ],
+        ).map_err(|e| e.to_string())?;
+
+        // Create TRACES_TO edge from origin
+        if let Some(ref origin) = doc.origin {
+            let origin_id = format!("doc:{}", origin);
+            self.merge_edge(&id, &origin_id, "TRACES_TO")?;
+        }
+
+        // Create COVERS edges from file references
+        for file_ref in &doc.file_references {
+            let file_id = format!("file:{}", file_ref);
+            self.merge_edge(&id, &file_id, "COVERS")?;
+        }
+
+        // Create MENTIONS edges from symbol references
+        for sym_ref in &doc.symbol_references {
+            // Symbol IDs are harder — just store the name reference for now
+            self.conn.execute(
+                "INSERT OR IGNORE INTO edges(from_id, to_id, edge_type) VALUES(?1, ?2, 'MENTIONS_FN')",
+                rusqlite::params![id, format!("fn:{}:{}", project, sym_ref)],
+            ).ok();
+        }
+
+        Ok(())
+    }
+
+    /// Read an IRDoc back from the graph (for testing and queries).
+    pub fn read_ir_doc(&self, node_id: &str) -> Result<Option<crate::ir::IRDoc>, String> {
+        // Read base node
+        let node = self.conn.query_row(
+            "SELECT name, file, level, doc_type, doc_category, tags, docstring FROM hierarchy_nodes WHERE id=?1",
+            params![node_id],
+            |row| Ok(HierarchyNode {
+                id: node_id.into(),
+                name: row.get(0)?,
+                kind: NodeKind::Doc,
+                level: row.get(2)?,
+                parent_id: None,
+                file: row.get(1)?,
+                line: 0,
+                project: String::new(),
+                sig: None, body: None,
+                docstring: row.get(6)?,
+                complexity: None,
+                tags: row.get(5)?,
+                doc_type: row.get(3)?,
+                doc_category: row.get(4)?,
+            }),
+        ).optional().map_err(|e| e.to_string())?;
+
+        let node = match node {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+
+        let ir_row = self.conn.query_row(
+            "SELECT frontmatter, status, origin, description, date, sections, code_blocks, file_references, symbol_references, doc_references FROM ir_docs WHERE node_id=?1",
+            rusqlite::params![node_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                ))
+            },
+        ).optional().map_err(|e| e.to_string())?;
+
+        let (fm_json, status, origin, desc, date, sections_json, blocks_json, file_refs_json, sym_refs_json, doc_refs_json) = match ir_row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let frontmatter: std::collections::HashMap<String, String> = fm_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let sections: Vec<crate::ir::IRSection> = sections_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let code_blocks: Vec<crate::ir::IRCodeBlock> = blocks_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let file_references: Vec<String> = file_refs_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let symbol_references: Vec<String> = sym_refs_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let doc_references: Vec<String> = doc_refs_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+
+        let title = node.name.clone();
+        Ok(Some(crate::ir::IRDoc {
+            base: crate::ir::IRBase {
+                name: node.name,
+                file: node.file.unwrap_or_default(),
+                language: node.level,
+                category: node.doc_category,
+                tags: node.tags.map(|t| t.split(',').map(String::from).collect()).unwrap_or_default(),
+                ..Default::default()
+            },
+            doc_type: node.doc_type,
+            frontmatter,
+            status,
+            origin,
+            description: desc,
+            date,
+            title: Some(title),
+            sections,
+            code_blocks,
+            file_references,
+            symbol_references,
+            doc_references,
+        }))
     }
 
     pub fn delete_file(&self, abs_path: &str, project: &str) -> Result<(), String> {
@@ -981,5 +1181,138 @@ mod tests {
         db.merge_edge("file:a.py", "fn:a:hello:1", "EXPORTS_FN").unwrap();
         let flow = db.get_call_flow("proj").unwrap();
         assert!(flow["moduleCount"].as_u64().unwrap() >= 1);
+    }
+
+    // ── IR Doc write/read tests ──────────────────────────────────────
+
+    #[test]
+    fn write_and_read_ir_doc_with_frontmatter() {
+        let db = GraphDb::open_memory().unwrap();
+
+        let mut fm = std::collections::HashMap::new();
+        fm.insert("name".into(), "Workflow System".into());
+        fm.insert("status".into(), "complete".into());
+
+        let doc = crate::ir::IRDoc {
+            base: crate::ir::IRBase {
+                name: "Workflow System".into(),
+                file: "docs/ideas/01-workflow.md".into(),
+                language: Some("markdown".into()),
+                category: Some("idea".into()),
+                tags: vec!["doc".into()],
+                ..Default::default()
+            },
+            doc_type: Some("idea".into()),
+            frontmatter: fm,
+            status: Some("complete".into()),
+            origin: Some("conversation".into()),
+            description: Some("A phased development workflow".into()),
+            date: Some("2026-04-17".into()),
+            title: Some("Workflow System".into()),
+            sections: vec![
+                crate::ir::IRSection { heading: "Problem".into(), level: 2, line_start: 5, line_end: 15, content_preview: Some("AI-assisted...".into()) },
+                crate::ir::IRSection { heading: "Solution".into(), level: 2, line_start: 16, line_end: 30, content_preview: None },
+            ],
+            file_references: vec!["src/main.rs".into()],
+            symbol_references: vec!["parse_file".into()],
+            doc_references: vec!["docs/analysis/01.md".into()],
+            ..Default::default()
+        };
+
+        db.write_ir_doc(&doc, "test-proj").unwrap();
+
+        // Read back
+        let read = db.read_ir_doc("doc:docs/ideas/01-workflow.md").unwrap().unwrap();
+        assert_eq!(read.title, Some("Workflow System".into()));
+        assert_eq!(read.doc_type, Some("idea".into()));
+        assert_eq!(read.status, Some("complete".into()));
+        assert_eq!(read.origin, Some("conversation".into()));
+        assert_eq!(read.description, Some("A phased development workflow".into()));
+        assert_eq!(read.date, Some("2026-04-17".into()));
+        assert_eq!(read.sections.len(), 2);
+        assert_eq!(read.sections[0].heading, "Problem");
+        assert_eq!(read.sections[1].line_start, 16);
+        assert_eq!(read.file_references, vec!["src/main.rs"]);
+        assert_eq!(read.symbol_references, vec!["parse_file"]);
+        assert_eq!(read.frontmatter["name"], "Workflow System");
+    }
+
+    #[test]
+    fn write_ir_doc_without_frontmatter() {
+        let db = GraphDb::open_memory().unwrap();
+
+        let doc = crate::ir::IRDoc {
+            base: crate::ir::IRBase {
+                name: "README".into(),
+                file: "README.md".into(),
+                ..Default::default()
+            },
+            title: Some("Project Readme".into()),
+            ..Default::default()
+        };
+
+        db.write_ir_doc(&doc, "test-proj").unwrap();
+
+        let read = db.read_ir_doc("doc:README.md").unwrap().unwrap();
+        assert_eq!(read.title, Some("Project Readme".into()));
+        assert!(read.frontmatter.is_empty());
+        assert!(read.status.is_none());
+        assert!(read.sections.is_empty());
+    }
+
+    #[test]
+    fn ir_doc_creates_traces_to_edge() {
+        let db = GraphDb::open_memory().unwrap();
+
+        let doc = crate::ir::IRDoc {
+            base: crate::ir::IRBase {
+                name: "Blueprint".into(),
+                file: "docs/blueprints/01.md".into(),
+                ..Default::default()
+            },
+            origin: Some("docs/ideas/01.md".into()),
+            ..Default::default()
+        };
+
+        db.write_ir_doc(&doc, "test-proj").unwrap();
+
+        // Check TRACES_TO edge exists
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id='doc:docs/blueprints/01.md' AND to_id='doc:docs/ideas/01.md' AND edge_type='TRACES_TO'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn ir_doc_creates_covers_edges() {
+        let db = GraphDb::open_memory().unwrap();
+
+        let doc = crate::ir::IRDoc {
+            base: crate::ir::IRBase {
+                name: "Design".into(),
+                file: "docs/design/arch.md".into(),
+                ..Default::default()
+            },
+            file_references: vec!["src/main.rs".into(), "src/lib.rs".into()],
+            ..Default::default()
+        };
+
+        db.write_ir_doc(&doc, "test-proj").unwrap();
+
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id='doc:docs/design/arch.md' AND edge_type='COVERS'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn read_nonexistent_ir_doc() {
+        let db = GraphDb::open_memory().unwrap();
+        let result = db.read_ir_doc("doc:nonexistent.md").unwrap();
+        assert!(result.is_none());
     }
 }
