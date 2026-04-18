@@ -1,3 +1,4 @@
+use super::common::extract_script_blocks;
 use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
 use super::LanguageAdapter;
 
@@ -63,43 +64,6 @@ impl LanguageAdapter for SvelteAdapter {
 }
 
 /// Extract script blocks from Svelte SFC. Returns (source, line_offset, is_typescript).
-fn extract_script_blocks(source: &str) -> Vec<(String, u32, bool)> {
-    let mut blocks = Vec::new();
-    let mut remaining = source;
-    let mut global_offset = 0u32;
-
-    while let Some(start_idx) = remaining.find("<script") {
-        let lines_before = remaining[..start_idx].matches('\n').count() as u32;
-        // Find end of opening tag
-        let after_tag = &remaining[start_idx..];
-        let tag_end = match after_tag.find('>') {
-            Some(i) => i,
-            None => break,
-        };
-        let tag = &after_tag[..tag_end];
-        let is_ts = tag.contains("lang=\"ts\"") || tag.contains("lang='ts'");
-
-        // Content starts after '>'
-        let content_start = start_idx + tag_end + 1;
-        let content_after = &remaining[content_start..];
-
-        let close_idx = match content_after.find("</script>") {
-            Some(i) => i,
-            None => break,
-        };
-
-        let script_content = &content_after[..close_idx];
-        let line_offset = global_offset + lines_before + remaining[start_idx..content_start].matches('\n').count() as u32;
-
-        blocks.push((script_content.to_string(), line_offset, is_ts));
-
-        let advance = content_start + close_idx + "</script>".len();
-        global_offset += remaining[..advance].matches('\n').count() as u32;
-        remaining = &remaining[advance..];
-    }
-
-    blocks
-}
 
 #[cfg(test)]
 mod tests {
