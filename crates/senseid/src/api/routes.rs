@@ -96,6 +96,8 @@ pub fn create_router(state: AppState) -> Router {
         // Sessions
         .route("/api/sessions", get(get_sessions_stub).post(create_session))
         .route("/api/sessions/{id}", put(update_session_handler))
+        // Workflow state
+        .route("/api/state/{project}", get(get_workflow_state).put(update_workflow_state))
         // Reset (clears all data)
         .route("/api/reset", post(reset_all))
         // Scan
@@ -1556,6 +1558,73 @@ async fn update_session_handler(
         body["tokensIn"].as_i64(),
         body["tokensOut"].as_i64(),
     ).ok();
+    Json(serde_json::json!({"ok": true}))
+}
+
+// ── Workflow State ───────────────────────────────────────────────────────────
+
+async fn get_workflow_state(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    match store.get_workflow_state(&project) {
+        Ok(Some(ws)) => Json(ws),
+        Ok(None) => Json(serde_json::json!({
+            "project": project,
+            "active_phase": null,
+            "active_plan": null,
+            "active_task": null,
+            "active_issue": null,
+            "last_checkpoint": null,
+            "rules_hash": null,
+        })),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn update_workflow_state(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+
+    let result = store.upsert_workflow_state(
+        &project,
+        body["active_phase"].as_str(),
+        body["active_plan"].as_str(),
+        body["active_task"].as_str(),
+        body["active_issue"].as_i64(),
+        body["last_checkpoint"].as_str(),
+        body["rules_hash"].as_str(),
+    );
+
+    if let Err(e) = result {
+        return Json(serde_json::json!({"ok": false, "error": e.to_string()}));
+    }
+
+    // Sync to .sensei/state.yaml if we can find the project path
+    if let Ok(Some(project_path)) = store.get_project_path(&project) {
+        let sensei_dir = std::path::Path::new(&project_path).join(".sensei");
+        std::fs::create_dir_all(&sensei_dir).ok();
+        let state_file = sensei_dir.join("state.yaml");
+
+        // Read back the state we just wrote to get all fields
+        if let Ok(Some(ws)) = store.get_workflow_state(&project) {
+            let yaml = format!(
+                "active_phase: {}\nactive_plan: {}\nactive_task: {}\nactive_issue: {}\nlast_checkpoint: {}\nrules_hash: {}\n",
+                ws["active_phase"].as_str().unwrap_or("~"),
+                ws["active_plan"].as_str().unwrap_or("~"),
+                ws["active_task"].as_str().unwrap_or("~"),
+                ws["active_issue"].as_i64().map(|n| n.to_string()).unwrap_or("~".to_string()),
+                ws["last_checkpoint"].as_str().unwrap_or("~"),
+                ws["rules_hash"].as_str().unwrap_or("~"),
+            );
+            std::fs::write(&state_file, yaml).ok();
+        }
+    }
+
     Json(serde_json::json!({"ok": true}))
 }
 
