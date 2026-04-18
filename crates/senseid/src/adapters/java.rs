@@ -1,6 +1,7 @@
 use tree_sitter::{Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
 use super::LanguageAdapter;
+use super::common::{field_text, make_symbol};
 
 pub struct JavaAdapter;
 
@@ -103,16 +104,7 @@ fn extract_members(body: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<Pa
 }
 
 fn make_sym(name: String, kind: SymbolKind, node: &Node, lines: &[&str], src: &[u8], is_exported: bool) -> ParsedSymbol {
-    ParsedSymbol {
-        name,
-        kind,
-        signature: lines.get(node.start_position().row).map(|l| l.trim().to_string()),
-        docstring: extract_javadoc(node, src),
-        line_start: node.start_position().row as u32 + 1,
-        line_end: node.end_position().row as u32 + 1,
-        is_exported,
-        parent: None,
-    }
+    make_symbol(name, kind, node, lines, is_exported, extract_javadoc(node, src))
 }
 
 fn extract_javadoc(node: &Node, src: &[u8]) -> Option<String> {
@@ -126,13 +118,6 @@ fn extract_javadoc(node: &Node, src: &[u8]) -> Option<String> {
         .filter(|l| !l.is_empty())
         .collect();
     if cleaned.is_empty() { None } else { Some(cleaned.join("\n")) }
-}
-
-fn field_text(node: &Node, field: &str, src: &[u8]) -> String {
-    node.child_by_field_name(field)
-        .and_then(|n| n.utf8_text(src).ok())
-        .unwrap_or_default()
-        .to_string()
 }
 
 fn has_modifier(node: &Node, src: &[u8], keyword: &str) -> bool {
