@@ -168,6 +168,17 @@ impl Store {
                 created_at TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS detected_patterns(
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                pattern_type TEXT NOT NULL,
+                instance_count INTEGER NOT NULL DEFAULT 0,
+                instances TEXT NOT NULL DEFAULT '[]',
+                project TEXT NOT NULL,
+                detected_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_patterns_project ON detected_patterns(project);
+
             CREATE TABLE IF NOT EXISTS events(
                 id TEXT PRIMARY KEY,
                 project TEXT NOT NULL,
@@ -490,6 +501,114 @@ impl Store {
             stmt.query_map([], row_to_session)?
         };
         rows.collect()
+    }
+
+    // ── Detected Patterns ──────────────────────────────────────────────────
+
+    /// Detect patterns by naming convention from hierarchy_nodes in the graph.
+    /// Scans for suffixes like Adapter, Factory, Observer, etc.
+    /// Returns detected patterns and stores them in detected_patterns table.
+    pub fn detect_patterns_from_graph(&self, graph: &rusqlite::Connection, project: &str) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let suffixes = [
+            ("Adapter", "adapter"), ("Factory", "factory"), ("Observer", "observer"),
+            ("Builder", "builder"), ("Strategy", "strategy"), ("Handler", "handler"),
+            ("Middleware", "middleware"), ("Provider", "provider"), ("Decorator", "decorator"),
+            ("Worker", "worker"), ("Hook", "hook"), ("Plugin", "plugin"),
+            ("Controller", "controller"), ("Service", "service"), ("Repository", "repository"),
+        ];
+
+        // Clear existing detections for this project
+        self.conn.execute("DELETE FROM detected_patterns WHERE project=?1", params![project])?;
+
+        let mut results = Vec::new();
+
+        for (suffix, pattern_type) in &suffixes {
+            let like_pattern = format!("%{}", suffix);
+            let mut stmt = graph.prepare(
+                "SELECT name, file, kind FROM hierarchy_nodes WHERE project=?1 AND name LIKE ?2 AND kind IN ('class','struct','interface','type','component')"
+            ).map_err(|e| rusqlite::Error::QueryReturnedNoRows)?; // map graph error
+
+            let instances: Vec<serde_json::Value> = stmt.query_map(
+                rusqlite::params![project, like_pattern],
+                |row| {
+                    Ok(serde_json::json!({
+                        "name": row.get::<_, String>(0)?,
+                        "file": row.get::<_, Option<String>>(1)?,
+                        "kind": row.get::<_, String>(2)?,
+                    }))
+                }
+            ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
+            .filter_map(|r| r.ok())
+            .collect();
+
+            if instances.len() >= 2 {
+                let id = format!("pattern:{}:{}", project, pattern_type);
+                let name = format!("{}-pattern", pattern_type);
+                let instances_json = serde_json::to_string(&instances).unwrap_or_default();
+
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO detected_patterns(id, name, pattern_type, instance_count, instances, project) VALUES(?1,?2,?3,?4,?5,?6)",
+                    params![id, name, pattern_type, instances.len() as i64, instances_json, project],
+                )?;
+
+                results.push(serde_json::json!({
+                    "name": name,
+                    "pattern_type": pattern_type,
+                    "instance_count": instances.len(),
+                    "instances": instances,
+                }));
+            }
+        }
+
+        Ok(results)
+    }
+
+    pub fn list_detected_patterns(&self, project: &str) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, pattern_type, instance_count, instances FROM detected_patterns WHERE project=?1"
+        )?;
+        let rows = stmt.query_map(params![project], |row| {
+            let instances_str: String = row.get(3)?;
+            let instances: serde_json::Value = serde_json::from_str(&instances_str)
+                .unwrap_or(serde_json::json!([]));
+            Ok(serde_json::json!({
+                "name": row.get::<_, String>(0)?,
+                "pattern_type": row.get::<_, String>(1)?,
+                "instance_count": row.get::<_, i64>(2)?,
+                "instances": instances,
+            }))
+        })?;
+        rows.collect()
+    }
+
+    pub fn match_pattern(&self, project: &str, description: &str) -> rusqlite::Result<Vec<serde_json::Value>> {
+        // Simple keyword matching against pattern types and instance names
+        let desc_lower = description.to_lowercase();
+        let patterns = self.list_detected_patterns(project)?;
+
+        let mut matches: Vec<serde_json::Value> = patterns.into_iter().filter(|p| {
+            let ptype = p["pattern_type"].as_str().unwrap_or("");
+            let pname = p["name"].as_str().unwrap_or("");
+            // Check if description mentions the pattern type or any instance name
+            desc_lower.contains(ptype)
+                || p["instances"].as_array().map_or(false, |insts| {
+                    insts.iter().any(|i| {
+                        let iname = i["name"].as_str().unwrap_or("").to_lowercase();
+                        desc_lower.contains(&iname) || iname.contains(&desc_lower)
+                    })
+                })
+                || desc_lower.contains(&pname.to_lowercase())
+        }).collect();
+
+        // If no keyword match, return all patterns as context
+        if matches.is_empty() && !desc_lower.is_empty() {
+            matches = self.list_detected_patterns(project)?;
+            for m in &mut matches {
+                m.as_object_mut().map(|o| o.insert("match_type".into(), serde_json::json!("context")));
+            }
+        }
+
+        Ok(matches)
     }
 
     // ── Events ────────────────────────────────────────────────────────────

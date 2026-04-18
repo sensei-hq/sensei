@@ -11,6 +11,8 @@ pub struct GraphDb {
 }
 
 impl GraphDb {
+    pub fn conn_ref(&self) -> &Connection { &self.conn }
+
     pub fn open(path: &Path) -> Result<Self, String> {
         let db_path = path.join("graph.db");
         let conn = Connection::open(&db_path).map_err(|e| format!("Failed to open graph DB: {}", e))?;

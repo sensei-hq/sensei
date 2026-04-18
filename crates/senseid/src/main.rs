@@ -483,6 +483,100 @@ mod integration_tests {
         assert_eq!(events[0]["data"]["files"][0], "src/main.rs");
     }
 
+    // ── Pattern Detection Tests ────────────────────────────────────────
+
+    #[test]
+    fn detect_patterns_by_naming() {
+        let store = db::Store::open_memory().unwrap();
+        // Create a graph DB with adapter-named types
+        let graph_conn = rusqlite::Connection::open_in_memory().unwrap();
+        graph_conn.execute_batch("
+            CREATE TABLE hierarchy_nodes(id TEXT PRIMARY KEY, name TEXT, kind TEXT, level TEXT, parent_id TEXT, file TEXT, line INTEGER, project TEXT, sig TEXT, body TEXT, docstring TEXT, complexity INTEGER, tags TEXT, doc_type TEXT, doc_category TEXT);
+        ").unwrap();
+
+        // Insert 3 adapters (should detect pattern) and 1 factory (below threshold)
+        for (name, file) in [("TypeScriptAdapter", "ts.rs"), ("PythonAdapter", "py.rs"), ("RustAdapter", "rust.rs")] {
+            graph_conn.execute(
+                "INSERT INTO hierarchy_nodes(id, name, kind, project, file) VALUES(?1,?2,'class','test-proj',?3)",
+                rusqlite::params![format!("type:{}",name), name, file],
+            ).unwrap();
+        }
+        graph_conn.execute(
+            "INSERT INTO hierarchy_nodes(id, name, kind, project, file) VALUES('type:TaskFactory','TaskFactory','class','test-proj','factory.rs')",
+            [],
+        ).unwrap();
+
+        let patterns = store.detect_patterns_from_graph(&graph_conn, "test-proj").unwrap();
+        assert_eq!(patterns.len(), 1); // Only adapter (3 instances), not factory (1 instance < threshold of 2)
+        assert_eq!(patterns[0]["pattern_type"], "adapter");
+        assert_eq!(patterns[0]["instance_count"], 3);
+    }
+
+    #[test]
+    fn detect_patterns_requires_two_instances() {
+        let store = db::Store::open_memory().unwrap();
+        let graph_conn = rusqlite::Connection::open_in_memory().unwrap();
+        graph_conn.execute_batch("
+            CREATE TABLE hierarchy_nodes(id TEXT PRIMARY KEY, name TEXT, kind TEXT, level TEXT, parent_id TEXT, file TEXT, line INTEGER, project TEXT, sig TEXT, body TEXT, docstring TEXT, complexity INTEGER, tags TEXT, doc_type TEXT, doc_category TEXT);
+        ").unwrap();
+
+        // Only 1 adapter — should NOT detect pattern
+        graph_conn.execute(
+            "INSERT INTO hierarchy_nodes(id, name, kind, project) VALUES('type:SqlAdapter','SqlAdapter','class','test')",
+            [],
+        ).unwrap();
+
+        let patterns = store.detect_patterns_from_graph(&graph_conn, "test").unwrap();
+        assert!(patterns.is_empty());
+    }
+
+    #[test]
+    fn match_pattern_by_keyword() {
+        let store = db::Store::open_memory().unwrap();
+        let graph_conn = rusqlite::Connection::open_in_memory().unwrap();
+        graph_conn.execute_batch("
+            CREATE TABLE hierarchy_nodes(id TEXT PRIMARY KEY, name TEXT, kind TEXT, level TEXT, parent_id TEXT, file TEXT, line INTEGER, project TEXT, sig TEXT, body TEXT, docstring TEXT, complexity INTEGER, tags TEXT, doc_type TEXT, doc_category TEXT);
+        ").unwrap();
+
+        for name in ["TypeScriptAdapter", "PythonAdapter", "RustAdapter"] {
+            graph_conn.execute(
+                "INSERT INTO hierarchy_nodes(id, name, kind, project) VALUES(?1,?2,'class','test')",
+                rusqlite::params![format!("type:{}", name), name],
+            ).unwrap();
+        }
+        store.detect_patterns_from_graph(&graph_conn, "test").unwrap();
+
+        // Match by pattern type
+        let matches = store.match_pattern("test", "add SQL adapter").unwrap();
+        assert!(!matches.is_empty());
+        assert_eq!(matches[0]["pattern_type"], "adapter");
+
+        // No match returns all as context
+        let matches = store.match_pattern("test", "add logging").unwrap();
+        assert!(!matches.is_empty());
+        assert_eq!(matches[0]["match_type"], "context");
+    }
+
+    #[test]
+    fn list_detected_patterns() {
+        let store = db::Store::open_memory().unwrap();
+        let graph_conn = rusqlite::Connection::open_in_memory().unwrap();
+        graph_conn.execute_batch("
+            CREATE TABLE hierarchy_nodes(id TEXT PRIMARY KEY, name TEXT, kind TEXT, level TEXT, parent_id TEXT, file TEXT, line INTEGER, project TEXT, sig TEXT, body TEXT, docstring TEXT, complexity INTEGER, tags TEXT, doc_type TEXT, doc_category TEXT);
+        ").unwrap();
+
+        for name in ["FooHandler", "BarHandler", "FooWorker", "BarWorker"] {
+            graph_conn.execute(
+                "INSERT INTO hierarchy_nodes(id, name, kind, project) VALUES(?1,?2,'class','test')",
+                rusqlite::params![format!("type:{}", name), name],
+            ).unwrap();
+        }
+        store.detect_patterns_from_graph(&graph_conn, "test").unwrap();
+
+        let patterns = store.list_detected_patterns("test").unwrap();
+        assert_eq!(patterns.len(), 2); // handler + worker
+    }
+
     #[test]
     fn event_isolates_projects() {
         let store = db::Store::open_memory().unwrap();
