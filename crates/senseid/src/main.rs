@@ -318,4 +318,74 @@ mod integration_tests {
         assert_eq!(b["active_issue"], 10);
         assert!(a["active_issue"].is_null());
     }
+
+    #[test]
+    fn workflow_state_partial_update_preserves_fields() {
+        let store = db::Store::open_memory().unwrap();
+
+        // Set all fields
+        store.upsert_workflow_state(
+            "test", Some("build"), Some("plan.md"), Some("task 1"), Some(42),
+            Some("2026-04-17T12:00:00Z"), Some("hash123"),
+        ).unwrap();
+
+        // Update only phase — others should be preserved via COALESCE
+        store.upsert_workflow_state(
+            "test", Some("validate"), None, None, None, None, None,
+        ).unwrap();
+
+        let state = store.get_workflow_state("test").unwrap().unwrap();
+        assert_eq!(state["active_phase"], "validate"); // updated
+        assert_eq!(state["active_plan"], "plan.md"); // preserved
+        assert_eq!(state["active_task"], "task 1"); // preserved
+        assert_eq!(state["active_issue"], 42); // preserved
+        assert_eq!(state["last_checkpoint"], "2026-04-17T12:00:00Z"); // preserved
+        assert_eq!(state["rules_hash"], "hash123"); // preserved
+    }
+
+    #[test]
+    fn workflow_state_nonexistent_project_returns_none() {
+        let store = db::Store::open_memory().unwrap();
+        let state = store.get_workflow_state("does-not-exist").unwrap();
+        assert!(state.is_none());
+    }
+
+    #[test]
+    fn workflow_state_updated_at_changes() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.upsert_workflow_state("test", Some("ideate"), None, None, None, None, None).unwrap();
+        let s1 = store.get_workflow_state("test").unwrap().unwrap();
+        let t1 = s1["updated_at"].as_str().unwrap().to_string();
+
+        // Small delay to ensure timestamp differs
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        store.upsert_workflow_state("test", Some("analyze"), None, None, None, None, None).unwrap();
+        let s2 = store.get_workflow_state("test").unwrap().unwrap();
+        let t2 = s2["updated_at"].as_str().unwrap().to_string();
+
+        assert_ne!(t1, t2);
+    }
+
+    #[test]
+    fn get_project_path_found() {
+        let store = db::Store::open_memory().unwrap();
+        store.upsert_project_basic("test-repo", "test-project", "/home/user/project").unwrap();
+
+        // Match by name
+        let path = store.get_project_path("test-project").unwrap();
+        assert_eq!(path, Some("/home/user/project".to_string()));
+
+        // Match by repo_id
+        let path = store.get_project_path("test-repo").unwrap();
+        assert_eq!(path, Some("/home/user/project".to_string()));
+    }
+
+    #[test]
+    fn get_project_path_not_found() {
+        let store = db::Store::open_memory().unwrap();
+        let path = store.get_project_path("nonexistent").unwrap();
+        assert!(path.is_none());
+    }
 }
