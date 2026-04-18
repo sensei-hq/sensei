@@ -1,7 +1,8 @@
 use tree_sitter::{Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
+use crate::ir::{IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
+use super::common::{field_text, make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text, has_child_kind};
 use super::LanguageAdapter;
-use super::common::{field_text, make_symbol};
 
 pub struct JavaAdapter;
 
@@ -139,6 +140,120 @@ fn find_child_kind<'a>(node: &'a Node, kind: &str) -> Option<Node<'a>> {
     None
 }
 
+/// Parse Java source into IR.
+pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_java::LANGUAGE.into()).expect("java");
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return IRParsedFile { file_path: file_path.into(), language: "java".into(), ..Default::default() },
+    };
+    let lines: Vec<&str> = source.lines().collect();
+    let root = tree.root_node();
+    let src = source.as_bytes();
+
+    let mut functions = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+    let mut constants = Vec::new();
+
+    for i in 0..root.child_count() {
+        let child = root.child(i).unwrap();
+        match child.kind() {
+            "class_declaration" | "interface_declaration" | "enum_declaration" => {
+                let name = field_text(&child, "name", src);
+                let kind = match child.kind() {
+                    "interface_declaration" => ClassKind::Interface,
+                    "enum_declaration" => ClassKind::Enum,
+                    _ => ClassKind::Class,
+                };
+                let is_pub = has_modifier(&child, src, "public");
+                let mut class = ir_class(name, &child, kind, is_pub, extract_javadoc(&child, src), collect_java_annotations(&child, src));
+
+                // Extract implements/extends
+                if let Some(sc) = child.child_by_field_name("superclass") {
+                    class.extends = Some(sc.utf8_text(src).unwrap_or_default().to_string());
+                }
+                if let Some(ifaces) = child.child_by_field_name("interfaces") {
+                    class.implements = ifaces.utf8_text(src).unwrap_or_default()
+                        .split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                }
+
+                // Extract methods from body
+                if let Some(body) = child.child_by_field_name("body") {
+                    for j in 0..body.child_count() {
+                        if let Some(member) = body.child(j) {
+                            if member.kind() == "method_declaration" || member.kind() == "constructor_declaration" {
+                                let mname = field_text(&member, "name", src);
+                                let mparams = extract_java_params(&member, src);
+                                let ret = field_text(&member, "type", src);
+                                let is_static = has_modifier(&member, src, "static");
+                                let vis = if has_modifier(&member, src, "public") { Visibility::Public }
+                                    else if has_modifier(&member, src, "private") { Visibility::Private }
+                                    else if has_modifier(&member, src, "protected") { Visibility::Protected }
+                                    else { Visibility::Internal };
+                                class.methods.push(ir_method(
+                                    mname, &member, vis == Visibility::Public, false, is_static,
+                                    mparams, if ret.is_empty() { None } else { Some(ret) },
+                                    extract_javadoc(&member, src),
+                                    collect_java_annotations(&member, src), vis, &node_text(&member, src),
+                                ));
+                            }
+                        }
+                    }
+                }
+                classes.push(class);
+            }
+            "import_declaration" => {
+                let text = child.utf8_text(src).unwrap_or_default();
+                let path = text.trim_start_matches("import ").trim_end_matches(';').trim();
+                let name = path.rsplit('.').next().unwrap_or(path).to_string();
+                imports.push(IRImport { source: path.to_string(), names: vec![name], is_reexport: false });
+            }
+            _ => {}
+        }
+    }
+
+    let is_test = file_path.contains("test") || file_path.contains("Test");
+    let module = ir_module(file_path, "java", functions, constants, imports, is_test);
+    ir_parsed_file(file_path, "java", module, classes)
+}
+
+fn extract_java_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
+    let mut params = Vec::new();
+    if let Some(param_list) = node.child_by_field_name("parameters") {
+        for i in 0..param_list.child_count() {
+            if let Some(p) = param_list.child(i) {
+                if p.kind() == "formal_parameter" || p.kind() == "spread_parameter" {
+                    let ptype = field_text(&p, "type", src);
+                    let pname = field_text(&p, "name", src);
+                    params.push(IRParam {
+                        name: pname,
+                        type_: if ptype.is_empty() { None } else { Some(ptype) },
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+    params
+}
+
+fn collect_java_annotations(node: &Node, src: &[u8]) -> Vec<String> {
+    let mut annots = Vec::new();
+    let mut prev = node.prev_sibling();
+    while let Some(sib) = prev {
+        if sib.kind() == "marker_annotation" || sib.kind() == "annotation" {
+            annots.push(sib.utf8_text(src).unwrap_or_default().trim().to_string());
+        } else if sib.kind() != "line_comment" && sib.kind() != "block_comment" {
+            break;
+        }
+        prev = sib.prev_sibling();
+    }
+    annots.reverse();
+    annots
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,5 +338,40 @@ mod tests {
     fn enum_has_no_parent() {
         let pf = parse("public enum Color { RED, GREEN }");
         assert!(pf.symbols[0].parent.is_none());
+    }
+
+    // ── IR Tests ──────────────────────────────────────────────────────
+
+    fn parse_ir(src: &str) -> IRParsedFile { parse_to_ir(src, "Test.java") }
+
+    #[test]
+    fn ir_class_with_methods() {
+        let pf = parse_ir("public class Svc {\n  public String getName(int id) { return null; }\n}");
+        assert_eq!(pf.classes.len(), 1);
+        assert_eq!(pf.classes[0].base.name, "Svc");
+        assert_eq!(pf.classes[0].methods.len(), 1);
+        assert_eq!(pf.classes[0].methods[0].base.name, "getName");
+        assert_eq!(pf.classes[0].methods[0].params.len(), 1);
+        assert_eq!(pf.classes[0].methods[0].params[0].type_, Some("int".into()));
+        assert_eq!(pf.classes[0].methods[0].return_type, Some("String".into()));
+    }
+
+    #[test]
+    fn ir_interface() {
+        let pf = parse_ir("public interface Handler { void handle(String input); }");
+        assert_eq!(pf.classes[0].class_kind, ClassKind::Interface);
+    }
+
+    #[test]
+    fn ir_enum() {
+        let pf = parse_ir("public enum Color { RED, GREEN, BLUE }");
+        assert_eq!(pf.classes[0].class_kind, ClassKind::Enum);
+    }
+
+    #[test]
+    fn ir_imports() {
+        let pf = parse_ir("import java.util.List;\npublic class X {}");
+        assert!(pf.modules[0].imports.len() >= 1);
+        assert_eq!(pf.modules[0].imports[0].source, "java.util.List");
     }
 }
