@@ -167,6 +167,17 @@ impl Store {
                 path TEXT PRIMARY KEY,
                 created_at TEXT DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS workflow_state(
+                project TEXT PRIMARY KEY,
+                active_phase TEXT,
+                active_plan TEXT,
+                active_task TEXT,
+                active_issue INTEGER,
+                last_checkpoint TEXT,
+                rules_hash TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
             "
         )
     }
@@ -467,6 +478,64 @@ impl Store {
             stmt.query_map([], row_to_session)?
         };
         rows.collect()
+    }
+
+    // ── Workflow State ──────────────────────────────────────────────────────
+
+    pub fn upsert_workflow_state(
+        &self,
+        project: &str,
+        phase: Option<&str>,
+        plan: Option<&str>,
+        task: Option<&str>,
+        issue: Option<i64>,
+        checkpoint: Option<&str>,
+        rules_hash: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO workflow_state(project, active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(project) DO UPDATE SET
+               active_phase=COALESCE(?2, active_phase),
+               active_plan=COALESCE(?3, active_plan),
+               active_task=COALESCE(?4, active_task),
+               active_issue=COALESCE(?5, active_issue),
+               last_checkpoint=COALESCE(?6, last_checkpoint),
+               rules_hash=COALESCE(?7, rules_hash),
+               updated_at=?8",
+            params![project, phase, plan, task, issue, checkpoint, rules_hash, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_workflow_state(&self, project: &str) -> rusqlite::Result<Option<serde_json::Value>> {
+        self.conn.query_row(
+            "SELECT active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at
+             FROM workflow_state WHERE project=?1",
+            params![project],
+            |row| {
+                Ok(serde_json::json!({
+                    "project": project,
+                    "active_phase": row.get::<_, Option<String>>(0)?,
+                    "active_plan": row.get::<_, Option<String>>(1)?,
+                    "active_task": row.get::<_, Option<String>>(2)?,
+                    "active_issue": row.get::<_, Option<i64>>(3)?,
+                    "last_checkpoint": row.get::<_, Option<String>>(4)?,
+                    "rules_hash": row.get::<_, Option<String>>(5)?,
+                    "updated_at": row.get::<_, String>(6)?,
+                }))
+            },
+        ).optional()
+    }
+
+    /// Get the file path for a project (needed for state.yaml sync)
+    pub fn get_project_path(&self, project: &str) -> rusqlite::Result<Option<String>> {
+        self.conn.query_row(
+            "SELECT path FROM projects WHERE name=?1 OR repo_id=?1",
+            params![project],
+            |row| row.get(0),
+        ).optional()
     }
 
     // ── Library Docs & Meta ────────────────────────────────────────────────
