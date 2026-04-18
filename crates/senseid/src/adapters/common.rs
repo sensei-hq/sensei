@@ -3,6 +3,7 @@
 
 use tree_sitter::Node;
 use crate::types::{ParsedSymbol, SymbolKind};
+use crate::ir::{IRBase, IRFunction, IRMethod, IRClass, IRParam, IRImport, IRConstant, IRParsedFile, IRModule, ClassKind, Visibility};
 
 /// Extract the text of a named field from a tree-sitter node.
 pub fn field_text(node: &Node, field: &str, src: &[u8]) -> String {
@@ -64,6 +65,138 @@ pub fn extract_script_blocks(source: &str) -> Vec<(String, u32, bool)> {
         }
     }
     blocks
+}
+
+// ── IR helpers ──────────────────────────────────────────────────────────────
+
+/// Build an IRFunction from common fields. Used by all adapters.
+pub fn ir_function(
+    name: String, node: &Node, lines: &[&str],
+    is_exported: bool, is_async: bool,
+    params: Vec<IRParam>, return_type: Option<String>,
+    docstring: Option<String>, decorators: Vec<String>,
+    body_text: &str,
+) -> IRFunction {
+    IRFunction {
+        base: IRBase {
+            name,
+            line_start: node.start_position().row as u32 + 1,
+            line_end: node.end_position().row as u32 + 1,
+            docstring,
+            is_exported,
+            node_type: Some("function".into()),
+            ..Default::default()
+        },
+        params,
+        return_type,
+        is_async,
+        decorators,
+        complexity: crate::indexer::graph::compute_complexity(body_text),
+        ..Default::default()
+    }
+}
+
+/// Build an IRMethod from common fields. Used by all adapters.
+pub fn ir_method(
+    name: String, node: &Node,
+    is_exported: bool, is_async: bool, is_static: bool,
+    params: Vec<IRParam>, return_type: Option<String>,
+    docstring: Option<String>, decorators: Vec<String>,
+    visibility: Visibility, body_text: &str,
+) -> IRMethod {
+    IRMethod {
+        base: IRBase {
+            name,
+            line_start: node.start_position().row as u32 + 1,
+            line_end: node.end_position().row as u32 + 1,
+            docstring,
+            is_exported,
+            node_type: Some("method".into()),
+            ..Default::default()
+        },
+        params,
+        return_type,
+        is_async,
+        is_static,
+        decorators,
+        visibility,
+        complexity: crate::indexer::graph::compute_complexity(body_text),
+        ..Default::default()
+    }
+}
+
+/// Build an IRClass from common fields. Used by all adapters.
+pub fn ir_class(
+    name: String, node: &Node, kind: ClassKind,
+    is_exported: bool, docstring: Option<String>,
+    decorators: Vec<String>,
+) -> IRClass {
+    IRClass {
+        base: IRBase {
+            name,
+            line_start: node.start_position().row as u32 + 1,
+            line_end: node.end_position().row as u32 + 1,
+            docstring,
+            is_exported,
+            node_type: Some("class".into()),
+            ..Default::default()
+        },
+        class_kind: kind,
+        decorators,
+        ..Default::default()
+    }
+}
+
+/// Build a minimal IRParsedFile wrapper.
+pub fn ir_parsed_file(
+    file_path: &str, language: &str,
+    module: IRModule, classes: Vec<IRClass>,
+) -> IRParsedFile {
+    let is_test = file_path.contains("test");
+    IRParsedFile {
+        file_path: file_path.into(),
+        language: language.into(),
+        modules: vec![module],
+        classes,
+        is_test_file: is_test,
+        ..Default::default()
+    }
+}
+
+/// Build an IRModule with file metadata.
+pub fn ir_module(
+    file_path: &str, language: &str,
+    functions: Vec<IRFunction>, constants: Vec<IRConstant>,
+    imports: Vec<IRImport>, is_test: bool,
+) -> IRModule {
+    let ext = std::path::Path::new(file_path).extension()
+        .and_then(|e| e.to_str()).map(|e| format!(".{}", e));
+    IRModule {
+        base: IRBase {
+            name: std::path::Path::new(file_path).file_stem()
+                .map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            file: file_path.into(),
+            extension: ext,
+            language: Some(language.into()),
+            node_type: Some("module".into()),
+            ..Default::default()
+        },
+        functions,
+        constants,
+        imports,
+        is_test,
+        ..Default::default()
+    }
+}
+
+/// Get full source text of a tree-sitter node.
+pub fn node_text(node: &Node, src: &[u8]) -> String {
+    node.utf8_text(src).unwrap_or_default().to_string()
+}
+
+/// Check if a node has a child of a specific kind.
+pub fn has_child_kind(node: &Node, kind: &str) -> bool {
+    (0..node.child_count()).any(|i| node.child(i).map_or(false, |c| c.kind() == kind))
 }
 
 #[cfg(test)]
