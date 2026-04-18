@@ -168,6 +168,18 @@ impl Store {
                 created_at TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS events(
+                id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                session_id TEXT,
+                event_type TEXT NOT NULL,
+                data TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_project ON events(project, created_at);
+            CREATE INDEX IF NOT EXISTS idx_events_type ON events(project, event_type);
+            CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+
             CREATE TABLE IF NOT EXISTS workflow_state(
                 project TEXT PRIMARY KEY,
                 active_phase TEXT,
@@ -478,6 +490,99 @@ impl Store {
             stmt.query_map([], row_to_session)?
         };
         rows.collect()
+    }
+
+    // ── Events ────────────────────────────────────────────────────────────
+
+    pub fn insert_event(
+        &self,
+        id: &str,
+        project: &str,
+        session_id: Option<&str>,
+        event_type: &str,
+        data: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO events(id, project, session_id, event_type, data) VALUES(?1,?2,?3,?4,?5)",
+            params![id, project, session_id, event_type, data],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_events(
+        &self,
+        project: &str,
+        event_type: Option<&str>,
+        session_id: Option<&str>,
+        limit: u32,
+    ) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let mut sql = String::from(
+            "SELECT id, project, session_id, event_type, data, created_at FROM events WHERE project=?1"
+        );
+        let mut param_idx = 2;
+        if event_type.is_some() {
+            sql.push_str(&format!(" AND event_type=?{}", param_idx));
+            param_idx += 1;
+        }
+        if session_id.is_some() {
+            sql.push_str(&format!(" AND session_id=?{}", param_idx));
+        }
+        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT {}", limit));
+
+        let mut stmt = self.conn.prepare(&sql)?;
+
+        // Build params dynamically
+        let rows: Vec<serde_json::Value> = match (event_type, session_id) {
+            (Some(et), Some(sid)) => {
+                stmt.query_map(params![project, et, sid], Self::row_to_event)?
+                    .filter_map(|r| r.ok()).collect()
+            }
+            (Some(et), None) => {
+                stmt.query_map(params![project, et], Self::row_to_event)?
+                    .filter_map(|r| r.ok()).collect()
+            }
+            (None, Some(sid)) => {
+                stmt.query_map(params![project, sid], Self::row_to_event)?
+                    .filter_map(|r| r.ok()).collect()
+            }
+            (None, None) => {
+                stmt.query_map(params![project], Self::row_to_event)?
+                    .filter_map(|r| r.ok()).collect()
+            }
+        };
+        Ok(rows)
+    }
+
+    pub fn count_events(&self, project: &str, event_type: Option<&str>) -> rusqlite::Result<u64> {
+        let (sql, count) = if let Some(et) = event_type {
+            let mut stmt = self.conn.prepare(
+                "SELECT COUNT(*) FROM events WHERE project=?1 AND event_type=?2"
+            )?;
+            let c: u64 = stmt.query_row(params![project, et], |r| r.get(0))?;
+            (String::new(), c)
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT COUNT(*) FROM events WHERE project=?1"
+            )?;
+            let c: u64 = stmt.query_row(params![project], |r| r.get(0))?;
+            (String::new(), c)
+        };
+        let _ = sql;
+        Ok(count)
+    }
+
+    fn row_to_event(row: &Row) -> rusqlite::Result<serde_json::Value> {
+        let data_str: String = row.get(4)?;
+        let data: serde_json::Value = serde_json::from_str(&data_str)
+            .unwrap_or(serde_json::json!(data_str));
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "project": row.get::<_, String>(1)?,
+            "session_id": row.get::<_, Option<String>>(2)?,
+            "event_type": row.get::<_, String>(3)?,
+            "data": data,
+            "created_at": row.get::<_, String>(5)?,
+        }))
     }
 
     // ── Workflow State ──────────────────────────────────────────────────────

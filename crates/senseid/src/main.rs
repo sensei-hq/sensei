@@ -388,4 +388,110 @@ mod integration_tests {
         let path = store.get_project_path("nonexistent").unwrap();
         assert!(path.is_none());
     }
+
+    // ── Event Store Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn event_insert_and_list() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.insert_event("e1", "proj-a", Some("s1"), "phase_transition", r#"{"from":"ideate","to":"analyze"}"#).unwrap();
+        store.insert_event("e2", "proj-a", Some("s1"), "tool_used", r#"{"tool":"search","is_mcp":true}"#).unwrap();
+        store.insert_event("e3", "proj-a", Some("s1"), "turn", r#"{"classification":"new_request"}"#).unwrap();
+
+        let events = store.list_events("proj-a", None, None, 50).unwrap();
+        assert_eq!(events.len(), 3);
+        // Ordered by created_at DESC — most recent first
+        assert_eq!(events[0]["event_type"], "turn");
+    }
+
+    #[test]
+    fn event_filter_by_type() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.insert_event("e1", "proj-b", None, "phase_transition", "{}").unwrap();
+        store.insert_event("e2", "proj-b", None, "tool_used", "{}").unwrap();
+        store.insert_event("e3", "proj-b", None, "tool_used", "{}").unwrap();
+        store.insert_event("e4", "proj-b", None, "turn", "{}").unwrap();
+
+        let tool_events = store.list_events("proj-b", Some("tool_used"), None, 50).unwrap();
+        assert_eq!(tool_events.len(), 2);
+        assert!(tool_events.iter().all(|e| e["event_type"] == "tool_used"));
+    }
+
+    #[test]
+    fn event_filter_by_session() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.insert_event("e1", "proj-c", Some("s1"), "turn", "{}").unwrap();
+        store.insert_event("e2", "proj-c", Some("s2"), "turn", "{}").unwrap();
+        store.insert_event("e3", "proj-c", Some("s1"), "turn", "{}").unwrap();
+
+        let s1_events = store.list_events("proj-c", None, Some("s1"), 50).unwrap();
+        assert_eq!(s1_events.len(), 2);
+        assert!(s1_events.iter().all(|e| e["session_id"] == "s1"));
+    }
+
+    #[test]
+    fn event_filter_by_type_and_session() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.insert_event("e1", "proj-d", Some("s1"), "turn", "{}").unwrap();
+        store.insert_event("e2", "proj-d", Some("s1"), "tool_used", "{}").unwrap();
+        store.insert_event("e3", "proj-d", Some("s2"), "turn", "{}").unwrap();
+
+        let filtered = store.list_events("proj-d", Some("turn"), Some("s1"), 50).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["event_type"], "turn");
+        assert_eq!(filtered[0]["session_id"], "s1");
+    }
+
+    #[test]
+    fn event_limit_respected() {
+        let store = db::Store::open_memory().unwrap();
+
+        for i in 0..10 {
+            store.insert_event(&format!("e{}", i), "proj-e", None, "turn", "{}").unwrap();
+        }
+
+        let limited = store.list_events("proj-e", None, None, 3).unwrap();
+        assert_eq!(limited.len(), 3);
+    }
+
+    #[test]
+    fn event_count() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.insert_event("e1", "proj-f", None, "turn", "{}").unwrap();
+        store.insert_event("e2", "proj-f", None, "turn", "{}").unwrap();
+        store.insert_event("e3", "proj-f", None, "tool_used", "{}").unwrap();
+
+        assert_eq!(store.count_events("proj-f", None).unwrap(), 3);
+        assert_eq!(store.count_events("proj-f", Some("turn")).unwrap(), 2);
+        assert_eq!(store.count_events("proj-f", Some("tool_used")).unwrap(), 1);
+        assert_eq!(store.count_events("proj-f", Some("nonexistent")).unwrap(), 0);
+    }
+
+    #[test]
+    fn event_data_parsed_as_json() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.insert_event("e1", "proj-g", None, "locate", r#"{"tools":["search","get_callers"],"files":["src/main.rs"]}"#).unwrap();
+
+        let events = store.list_events("proj-g", None, None, 1).unwrap();
+        assert_eq!(events[0]["data"]["tools"][0], "search");
+        assert_eq!(events[0]["data"]["files"][0], "src/main.rs");
+    }
+
+    #[test]
+    fn event_isolates_projects() {
+        let store = db::Store::open_memory().unwrap();
+
+        store.insert_event("e1", "proj-x", None, "turn", "{}").unwrap();
+        store.insert_event("e2", "proj-y", None, "turn", "{}").unwrap();
+
+        assert_eq!(store.list_events("proj-x", None, None, 50).unwrap().len(), 1);
+        assert_eq!(store.list_events("proj-y", None, None, 50).unwrap().len(), 1);
+        assert_eq!(store.list_events("proj-z", None, None, 50).unwrap().len(), 0);
+    }
 }
