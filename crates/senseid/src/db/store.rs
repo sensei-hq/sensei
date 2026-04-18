@@ -581,6 +581,185 @@ impl Store {
         rows.collect()
     }
 
+    /// Check if a specific symbol belongs to a detected pattern.
+    pub fn get_pattern_for(&self, project: &str, symbol_name: &str) -> rusqlite::Result<Option<serde_json::Value>> {
+        let patterns = self.list_detected_patterns(project)?;
+        for pattern in patterns {
+            if let Some(instances) = pattern["instances"].as_array() {
+                for inst in instances {
+                    if inst["name"].as_str() == Some(symbol_name) {
+                        return Ok(Some(serde_json::json!({
+                            "pattern_name": pattern["name"],
+                            "pattern_type": pattern["pattern_type"],
+                            "instance_count": pattern["instance_count"],
+                            "role": "instance",
+                            "instances": pattern["instances"],
+                        })));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Find functions with duplicate or very similar signatures across different files.
+    /// Uses signature comparison from the graph hierarchy_nodes table.
+    pub fn find_duplicates(&self, graph: &rusqlite::Connection, project: &str) -> rusqlite::Result<Vec<serde_json::Value>> {
+        // Find functions with identical signatures in different files
+        let mut stmt = graph.prepare(
+            "SELECT a.name, a.file, a.sig, b.name, b.file, b.sig
+             FROM hierarchy_nodes a
+             JOIN hierarchy_nodes b ON a.sig = b.sig AND a.id < b.id
+             WHERE a.project = ?1 AND b.project = ?1
+             AND a.kind IN ('function','method') AND b.kind IN ('function','method')
+             AND a.sig IS NOT NULL AND a.sig != ''
+             AND a.file != b.file"
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+
+        let duplicates: Vec<serde_json::Value> = stmt.query_map(
+            rusqlite::params![project],
+            |row| {
+                Ok(serde_json::json!({
+                    "file_a": { "name": row.get::<_, String>(0)?, "file": row.get::<_, Option<String>>(1)?, "sig": row.get::<_, Option<String>>(2)? },
+                    "file_b": { "name": row.get::<_, String>(3)?, "file": row.get::<_, Option<String>>(4)?, "sig": row.get::<_, Option<String>>(5)? },
+                    "match_type": "identical_signature",
+                }))
+            }
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        // Also find functions with similar names in different files (potential pattern instances)
+        let mut name_stmt = graph.prepare(
+            "SELECT name, GROUP_CONCAT(file, '|'), COUNT(*) as cnt
+             FROM hierarchy_nodes
+             WHERE project = ?1 AND kind IN ('function','method') AND name IS NOT NULL
+             GROUP BY name HAVING cnt > 1"
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+
+        let name_dups: Vec<serde_json::Value> = name_stmt.query_map(
+            rusqlite::params![project],
+            |row| {
+                let files_str: String = row.get(1)?;
+                let files: Vec<&str> = files_str.split('|').collect();
+                Ok(serde_json::json!({
+                    "name": row.get::<_, String>(0)?,
+                    "files": files,
+                    "count": row.get::<_, i64>(2)?,
+                    "match_type": "same_name_different_files",
+                }))
+            }
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        let mut all = duplicates;
+        all.extend(name_dups);
+        Ok(all)
+    }
+
+    /// Analyze project conventions — naming patterns, file structures, consistent patterns.
+    pub fn get_project_conventions(&self, graph: &rusqlite::Connection, project: &str) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let mut conventions = Vec::new();
+
+        // 1. File naming conventions — what suffixes are consistent?
+        let mut file_stmt = graph.prepare(
+            "SELECT REPLACE(REPLACE(file, RTRIM(file, REPLACE(file, '/', '')), ''), RTRIM(REPLACE(file, RTRIM(file, REPLACE(file, '/', '')), ''), REPLACE(REPLACE(file, RTRIM(file, REPLACE(file, '/', '')), ''), '.', '')), '') as ext, COUNT(*) as cnt
+             FROM hierarchy_nodes WHERE project=?1 AND kind='file' AND file IS NOT NULL
+             GROUP BY ext HAVING cnt >= 3 ORDER BY cnt DESC LIMIT 10"
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+
+        let file_exts: Vec<serde_json::Value> = file_stmt.query_map(
+            rusqlite::params![project],
+            |row| Ok(serde_json::json!({"extension": row.get::<_, String>(0)?, "count": row.get::<_, i64>(1)?}))
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
+        .filter_map(|r| r.ok()).collect();
+
+        if !file_exts.is_empty() {
+            conventions.push(serde_json::json!({
+                "convention": "file_types",
+                "description": "Consistent file types in the project",
+                "evidence": file_exts,
+            }));
+        }
+
+        // 2. Module structure conventions — common directory patterns
+        let mut dir_stmt = graph.prepare(
+            "SELECT DISTINCT REPLACE(file, '/' || REPLACE(file, RTRIM(file, REPLACE(file, '/', '')), ''), '') as dir
+             FROM hierarchy_nodes WHERE project=?1 AND kind='file' AND file IS NOT NULL
+             LIMIT 20"
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+
+        let dirs: Vec<String> = dir_stmt.query_map(
+            rusqlite::params![project],
+            |row| row.get(0)
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
+        .filter_map(|r| r.ok()).collect();
+
+        // Check for common patterns like src/, tests/, adapters/
+        let common_dirs: Vec<&String> = dirs.iter().filter(|d| {
+            let d = d.to_lowercase();
+            d.contains("adapter") || d.contains("handler") || d.contains("worker")
+                || d.contains("test") || d.contains("hook") || d.contains("middleware")
+        }).collect();
+
+        if !common_dirs.is_empty() {
+            conventions.push(serde_json::json!({
+                "convention": "directory_patterns",
+                "description": "Directories suggesting structural patterns",
+                "evidence": common_dirs,
+            }));
+        }
+
+        // 3. Naming conventions — consistent prefixes/suffixes across functions
+        let mut naming_stmt = graph.prepare(
+            "SELECT
+               CASE
+                 WHEN name LIKE 'get_%' THEN 'get_*'
+                 WHEN name LIKE 'set_%' THEN 'set_*'
+                 WHEN name LIKE 'is_%' THEN 'is_*'
+                 WHEN name LIKE 'has_%' THEN 'has_*'
+                 WHEN name LIKE 'create_%' THEN 'create_*'
+                 WHEN name LIKE 'update_%' THEN 'update_*'
+                 WHEN name LIKE 'delete_%' THEN 'delete_*'
+                 WHEN name LIKE 'handle_%' THEN 'handle_*'
+                 WHEN name LIKE 'parse_%' THEN 'parse_*'
+                 WHEN name LIKE 'test_%' THEN 'test_*'
+                 ELSE NULL
+               END as prefix,
+               COUNT(*) as cnt
+             FROM hierarchy_nodes WHERE project=?1 AND kind IN ('function','method')
+             GROUP BY prefix HAVING prefix IS NOT NULL AND cnt >= 3
+             ORDER BY cnt DESC"
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+
+        let naming: Vec<serde_json::Value> = naming_stmt.query_map(
+            rusqlite::params![project],
+            |row| Ok(serde_json::json!({"prefix": row.get::<_, String>(0)?, "count": row.get::<_, i64>(1)?}))
+        ).map_err(|_| rusqlite::Error::QueryReturnedNoRows)?
+        .filter_map(|r| r.ok()).collect();
+
+        if !naming.is_empty() {
+            conventions.push(serde_json::json!({
+                "convention": "naming_patterns",
+                "description": "Consistent function naming prefixes",
+                "evidence": naming,
+            }));
+        }
+
+        // 4. Detected design patterns (from detect_patterns)
+        let patterns = self.list_detected_patterns(project)?;
+        if !patterns.is_empty() {
+            conventions.push(serde_json::json!({
+                "convention": "design_patterns",
+                "description": "Detected design patterns by naming convention",
+                "evidence": patterns,
+            }));
+        }
+
+        Ok(conventions)
+    }
+
     pub fn match_pattern(&self, project: &str, description: &str) -> rusqlite::Result<Vec<serde_json::Value>> {
         // Simple keyword matching against pattern types and instance names
         let desc_lower = description.to_lowercase();
