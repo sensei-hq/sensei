@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn design_doc() {
-        let r = process("docs/design/01-architecture.md");
+        let r = process("docs/design/01-daemon/architecture.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("design"));
@@ -76,21 +76,21 @@ mod tests {
 
     #[test]
     fn feature_doc() {
-        let r = process("docs/features/01-codebase-intelligence.md");
+        let r = process("docs/features/01-workflow-commands.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("feature"));
     }
 
     #[test]
-    fn roadmap_doc() {
-        let r = process("docs/roadmap/01-paradigm-shift.md");
+    fn idea_doc() {
+        let r = process("docs/ideas/01-workflow-system.md");
         assert_eq!(r.kind, "doc");
-        assert_eq!(r.doc_type.as_deref(), Some("design")); // roadmap → design category
+        assert_eq!(r.tags, "doc");
     }
 
     #[test]
     fn gap_analysis_doc() {
-        let r = process("docs/gap-analysis.md");
+        let r = process("docs/reference/gap-analysis.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
     }

@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn design_doc_architecture() {
-        let r = process_doc_file("docs/design/01-architecture.md");
+        let r = process_doc_file("docs/design/01-daemon/architecture.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("design"));
@@ -71,22 +71,22 @@ mod tests {
     }
 
     #[test]
-    fn feature_doc_codebase_intelligence() {
-        let r = process_doc_file("docs/features/01-codebase-intelligence.md");
+    fn feature_doc_workflow_commands() {
+        let r = process_doc_file("docs/features/01-workflow-commands.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("feature"));
     }
 
     #[test]
-    fn roadmap_doc_paradigm_shift() {
-        let r = process_doc_file("docs/roadmap/01-paradigm-shift.md");
+    fn idea_doc_workflow_system() {
+        let r = process_doc_file("docs/ideas/01-workflow-system.md");
         assert_eq!(r.kind, "doc");
-        assert_eq!(r.doc_type.as_deref(), Some("design")); // roadmap → design
+        assert_eq!(r.tags, "doc");
     }
 
     #[test]
     fn gap_analysis() {
-        let r = process_doc_file("docs/gap-analysis.md");
+        let r = process_doc_file("docs/reference/gap-analysis.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
     }
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn design_doc_has_frontmatter_type() {
         // docs/design files with frontmatter type: design should use frontmatter
-        let r = process_doc_file("docs/design/41-task-queue-architecture.md");
+        let r = process_doc_file("docs/design/01-daemon/task-queue.md");
         assert_eq!(r.doc_type.as_deref(), Some("design"));
     }
 }
