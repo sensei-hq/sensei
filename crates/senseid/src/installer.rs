@@ -12,20 +12,12 @@ const MARKETPLACE_REPO: &str =
     "https://raw.githubusercontent.com/mizukisu/sensei-marketplace/main";
 const MARKETPLACE_CATALOG: &str = "catalog.json";
 
-// ── Paths ────────────────────────────────────────────────────────────────────
+// ── Paths (delegated to crate::paths) ────────────────────────────────────────
 
-fn home() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
-}
-fn sensei_dir() -> PathBuf {
-    home().join(".sensei")
-}
-fn plugin_dir() -> PathBuf {
-    home().join(".claude/plugins/sensei")
-}
-fn cache_dir() -> PathBuf {
-    sensei_dir().join("cache/marketplace")
-}
+fn home() -> PathBuf { crate::paths::home() }
+fn sensei_dir() -> PathBuf { crate::paths::sensei_dir() }
+fn plugin_dir() -> PathBuf { crate::paths::plugin_dir() }
+fn cache_dir() -> PathBuf { crate::paths::cache_dir() }
 
 // ── Catalog types ────────────────────────────────────────────────────────────
 

@@ -29,9 +29,7 @@ pub struct AcpStatus {
     pub config_path: String,
 }
 
-fn home() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
-}
+fn home() -> PathBuf { crate::paths::home() }
 
 /// Check if a binary is on PATH (no shell-out, safe from injection).
 fn which_exists(name: &str) -> bool {
