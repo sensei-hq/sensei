@@ -100,6 +100,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/patterns/{project}/detect", post(detect_patterns))
         .route("/api/patterns/{project}", get(list_patterns))
         .route("/api/patterns/{project}/match", get(match_pattern_handler))
+        .route("/api/patterns/{project}/for/{symbol}", get(pattern_for_symbol))
+        .route("/api/patterns/{project}/duplicates", get(find_duplicates_handler))
+        .route("/api/patterns/{project}/conventions", get(project_conventions_handler))
         // Events
         .route("/api/events", post(create_event))
         .route("/api/events/{project}", get(list_events))
@@ -1607,6 +1610,42 @@ async fn match_pattern_handler(
     let store = state.store.lock().await;
     match store.match_pattern(&project, &desc) {
         Ok(matches) => Json(serde_json::json!({"matches": matches, "count": matches.len()})),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn pattern_for_symbol(
+    State(state): State<AppState>,
+    Path((project, symbol)): Path<(String, String)>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    match store.get_pattern_for(&project, &symbol) {
+        Ok(Some(pattern)) => Json(pattern),
+        Ok(None) => Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"})),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn find_duplicates_handler(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    let graph = state.graph.lock().await;
+    match store.find_duplicates(graph.conn_ref(), &project) {
+        Ok(dups) => Json(serde_json::json!({"duplicates": dups, "count": dups.len()})),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn project_conventions_handler(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    let graph = state.graph.lock().await;
+    match store.get_project_conventions(graph.conn_ref(), &project) {
+        Ok(conventions) => Json(serde_json::json!({"conventions": conventions, "count": conventions.len()})),
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
 }
