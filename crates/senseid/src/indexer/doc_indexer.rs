@@ -124,6 +124,20 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
         return DocClassification { kind: NodeKind::Doc, doc_type: "design".into(), doc_category: Some("roadmap".into()) };
     }
 
+    // Sensei workflow phases
+    if lower.contains("/ideas/") {
+        return DocClassification { kind: NodeKind::Doc, doc_type: "idea".into(), doc_category: Some("idea".into()) };
+    }
+    if lower.contains("/analysis/") {
+        return DocClassification { kind: NodeKind::Doc, doc_type: "analysis".into(), doc_category: Some("analysis".into()) };
+    }
+    if lower.contains("/blueprints/") {
+        return DocClassification { kind: NodeKind::Doc, doc_type: "blueprint".into(), doc_category: Some("blueprint".into()) };
+    }
+    if lower.contains("/experiments/") {
+        return DocClassification { kind: NodeKind::Doc, doc_type: "experiment".into(), doc_category: Some("experiment".into()) };
+    }
+
     // Operations
     if lower.contains("runbook") || lower.contains("/ops/") {
         return DocClassification { kind: NodeKind::Doc, doc_type: "operations".into(), doc_category: None };
@@ -217,6 +231,245 @@ fn create_traceability_edges(graph_db: &GraphDb, repo_id: &str) -> Result<(), St
     }
 
     Ok(())
+}
+
+// ── IR Doc Parser ────────────────────────────────────────────────────────────
+// Pure function: content + metadata → IRDoc. No graph, no IO.
+
+/// Parse a markdown file into an IRDoc.
+/// This is the doc adapter's parse() implementation.
+pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir::IRDoc {
+    let fm = parse_frontmatter(content);
+    let classification = classify_doc(rel_path, &fm);
+    let title = fm.name.clone()
+        .or_else(|| fm.title.clone())
+        .or_else(|| extract_title(content));
+    let sections = extract_sections(content);
+    let code_blocks = extract_code_blocks(content);
+    let file_refs = extract_file_refs(content, repo_path);
+    let fn_mentions = extract_fn_mentions(content);
+    let doc_refs = extract_doc_refs(content);
+
+    // Build raw frontmatter HashMap
+    let mut frontmatter = std::collections::HashMap::new();
+    if let Some(ref v) = fm.name { frontmatter.insert("name".into(), v.clone()); }
+    if let Some(ref v) = fm.title { frontmatter.insert("title".into(), v.clone()); }
+    if let Some(ref v) = fm.doc_type { frontmatter.insert("type".into(), v.clone()); }
+    if let Some(ref v) = fm.category { frontmatter.insert("category".into(), v.clone()); }
+    if let Some(ref v) = fm.description { frontmatter.insert("description".into(), v.clone()); }
+    // Also extract additional frontmatter fields we haven't typed
+    extract_raw_frontmatter(content, &mut frontmatter);
+
+    // Infer category from path if not in frontmatter
+    let category = classification.doc_category.clone()
+        .or_else(|| infer_category_from_path(rel_path));
+
+    // Infer extension
+    let ext = std::path::Path::new(rel_path).extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{}", e));
+
+    crate::ir::IRDoc {
+        base: crate::ir::IRBase {
+            name: title.clone().unwrap_or_else(|| {
+                std::path::Path::new(rel_path).file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            }),
+            file: rel_path.into(),
+            line_start: 0,
+            line_end: content.lines().count() as u32,
+            extension: ext,
+            language: Some("markdown".into()),
+            node_type: Some("doc".into()),
+            category,
+            tags: vec!["doc".into()],
+            ..Default::default()
+        },
+        doc_type: Some(classification.doc_type),
+        frontmatter,
+        status: fm.doc_type.as_deref()
+            .and_then(|_| None) // status not in DocFrontmatter yet — use raw
+            .or_else(|| extract_frontmatter_field(content, "status")),
+        origin: extract_frontmatter_field(content, "origin"),
+        description: fm.description.clone(),
+        date: extract_frontmatter_field(content, "date"),
+        title,
+        sections,
+        code_blocks,
+        file_references: file_refs,
+        symbol_references: fn_mentions,
+        doc_references: doc_refs,
+    }
+}
+
+/// Extract sections split by headings.
+fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut sections = Vec::new();
+    let mut current_heading: Option<(String, u8, u32)> = None;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if let Some((level, text)) = parse_heading(trimmed) {
+            // Close previous section
+            if let Some((heading, lvl, start)) = current_heading.take() {
+                let end = i as u32;
+                let preview = make_preview(&lines, start as usize + 1, end as usize);
+                sections.push(crate::ir::IRSection {
+                    heading, level: lvl, line_start: start + 1, line_end: end,
+                    content_preview: preview,
+                });
+            }
+            current_heading = Some((text, level, i as u32));
+        }
+    }
+
+    // Close last section
+    if let Some((heading, level, start)) = current_heading {
+        let end = lines.len() as u32;
+        let preview = make_preview(&lines, start as usize + 1, end as usize);
+        sections.push(crate::ir::IRSection {
+            heading, level, line_start: start + 1, line_end: end,
+            content_preview: preview,
+        });
+    }
+
+    sections
+}
+
+fn parse_heading(line: &str) -> Option<(u8, String)> {
+    if line.starts_with("######") { Some((6, line[6..].trim().into())) }
+    else if line.starts_with("#####") { Some((5, line[5..].trim().into())) }
+    else if line.starts_with("####") { Some((4, line[4..].trim().into())) }
+    else if line.starts_with("###") { Some((3, line[3..].trim().into())) }
+    else if line.starts_with("##") { Some((2, line[2..].trim().into())) }
+    else if line.starts_with("# ") { Some((1, line[2..].trim().into())) }
+    else { None }
+}
+
+fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
+    let text: String = lines.get(start..end.min(lines.len()))
+        .map(|s| s.join("\n"))
+        .unwrap_or_default()
+        .chars()
+        .take(200)
+        .collect();
+    if text.trim().is_empty() { None } else { Some(text.trim().into()) }
+}
+
+/// Extract code blocks with language tags.
+fn extract_code_blocks(content: &str) -> Vec<crate::ir::IRCodeBlock> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut blocks = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("```") {
+            let lang = trimmed[3..].trim();
+            let lang = if lang.is_empty() { None } else { Some(lang.to_string()) };
+            let start = i as u32 + 1;
+            i += 1;
+            let mut block_lines = Vec::new();
+            while i < lines.len() && !lines[i].trim().starts_with("```") {
+                block_lines.push(lines[i]);
+                i += 1;
+            }
+            let end = i as u32;
+            let content_str = block_lines.join("\n");
+            if !content_str.trim().is_empty() {
+                blocks.push(crate::ir::IRCodeBlock {
+                    language: lang,
+                    content: content_str,
+                    line_start: start + 1,
+                    line_end: end,
+                });
+            }
+        }
+        i += 1;
+    }
+
+    blocks
+}
+
+/// Extract doc-to-doc references from markdown links.
+fn extract_doc_refs(content: &str) -> Vec<String> {
+    let mut refs = HashSet::new();
+    // Match [text](path.md) style links
+    for line in content.lines() {
+        let mut remaining = line;
+        while let Some(start) = remaining.find("](") {
+            let after = &remaining[start + 2..];
+            if let Some(end) = after.find(')') {
+                let path = &after[..end];
+                if (path.ends_with(".md") || path.ends_with(".txt"))
+                    && !path.starts_with("http")
+                    && path.len() < 200
+                {
+                    // Normalize: strip leading ./ and ../
+                    let normalized = path.trim_start_matches("./");
+                    refs.insert(normalized.to_string());
+                }
+                remaining = &after[end..];
+            } else {
+                break;
+            }
+        }
+    }
+    refs.into_iter().collect()
+}
+
+/// Extract a specific frontmatter field by name from raw content.
+fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") { return None; }
+    let after_first = &trimmed[3..];
+    let end = after_first.find("\n---")?;
+    let yaml = &after_first[..end];
+    for line in yaml.lines() {
+        let line = line.trim();
+        if line.starts_with(&format!("{}:", field)) {
+            let val = line[field.len() + 1..].trim();
+            if val.is_empty() { return None; }
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
+/// Extract all raw frontmatter key-value pairs.
+fn extract_raw_frontmatter(content: &str, map: &mut std::collections::HashMap<String, String>) {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") { return; }
+    let after_first = &trimmed[3..];
+    if let Some(end) = after_first.find("\n---") {
+        let yaml = &after_first[..end];
+        for line in yaml.lines() {
+            let line = line.trim();
+            if let Some(colon_pos) = line.find(':') {
+                let key = line[..colon_pos].trim().to_string();
+                let val = line[colon_pos + 1..].trim().to_string();
+                if !key.is_empty() && !val.is_empty() && !key.contains(' ') {
+                    map.entry(key).or_insert(val);
+                }
+            }
+        }
+    }
+}
+
+/// Infer category from path.
+fn infer_category_from_path(rel_path: &str) -> Option<String> {
+    let lower = rel_path.to_lowercase();
+    if lower.contains("/ideas/") { Some("idea".into()) }
+    else if lower.contains("/analysis/") { Some("analysis".into()) }
+    else if lower.contains("/blueprints/") { Some("blueprint".into()) }
+    else if lower.contains("/experiments/") { Some("experiment".into()) }
+    else if lower.contains("/plans/") { Some("plan".into()) }
+    else if lower.contains("/design/") { Some("design".into()) }
+    else if lower.contains("/features/") { Some("feature".into()) }
+    else if lower.contains("/reference/") { Some("reference".into()) }
+    else { None }
 }
 
 /// Extract the first H1 title from markdown.
@@ -369,4 +622,96 @@ mod tests {
     }
 
     // index_docs and marketplace tests moved to tasks/processors/doc.rs and tests.rs
+
+    // ── IR Doc Parser Tests ──────────────────────────────────────────
+
+    #[test]
+    fn parse_to_ir_with_full_frontmatter() {
+        let content = "---\nname: Workflow System\ndescription: A phased workflow\ndate: 2026-04-17\nstatus: complete\norigin: conversation\n---\n\n# Workflow System\n\n## Problem\n\nAI starts cold.\n\n## Solution\n\nUse phases.\n";
+        let doc = parse_to_ir(content, "docs/ideas/01-workflow.md", "/tmp/repo");
+
+        assert_eq!(doc.base.name, "Workflow System");
+        assert_eq!(doc.doc_type, Some("idea".into()));
+        assert_eq!(doc.base.category, Some("idea".into()));
+        assert_eq!(doc.status, Some("complete".into()));
+        assert_eq!(doc.origin, Some("conversation".into()));
+        assert_eq!(doc.date, Some("2026-04-17".into()));
+        assert_eq!(doc.description, Some("A phased workflow".into()));
+        assert_eq!(doc.title, Some("Workflow System".into()));
+        assert_eq!(doc.frontmatter["name"], "Workflow System");
+    }
+
+    #[test]
+    fn parse_to_ir_without_frontmatter() {
+        let content = "# Plain Readme\n\nSome content here.\n\n## Section One\n\nDetails.\n";
+        let doc = parse_to_ir(content, "README.md", "/tmp/repo");
+
+        assert_eq!(doc.title, Some("Plain Readme".into()));
+        assert!(doc.frontmatter.is_empty());
+        assert!(doc.status.is_none());
+        assert!(doc.origin.is_none());
+        assert_eq!(doc.doc_type, Some("usage".into())); // README → usage
+    }
+
+    #[test]
+    fn parse_to_ir_extracts_sections() {
+        let content = "# Title\n\nIntro.\n\n## Problem\n\nAI is forgetful.\n\n## Solution\n\nUse documents.\n\n### Sub-section\n\nDetails.\n";
+        let doc = parse_to_ir(content, "doc.md", "/tmp/repo");
+
+        assert!(doc.sections.len() >= 3); // Title, Problem, Solution (maybe Sub-section)
+        let problem = doc.sections.iter().find(|s| s.heading == "Problem").unwrap();
+        assert_eq!(problem.level, 2);
+        assert!(problem.content_preview.as_ref().unwrap().contains("forgetful"));
+    }
+
+    #[test]
+    fn parse_to_ir_extracts_code_blocks() {
+        let content = "# Doc\n\n```rust\nfn main() {}\n```\n\n```yaml\nkey: value\n```\n";
+        let doc = parse_to_ir(content, "doc.md", "/tmp/repo");
+
+        assert_eq!(doc.code_blocks.len(), 2);
+        assert_eq!(doc.code_blocks[0].language, Some("rust".into()));
+        assert!(doc.code_blocks[0].content.contains("fn main"));
+        assert_eq!(doc.code_blocks[1].language, Some("yaml".into()));
+    }
+
+    #[test]
+    fn parse_to_ir_extracts_symbol_references() {
+        let content = "Use `parse_file` and `get_callers` for analysis. See `src/main.rs`.";
+        let doc = parse_to_ir(content, "doc.md", "/tmp/repo");
+
+        assert!(doc.symbol_references.contains(&"parse_file".to_string()));
+        assert!(doc.symbol_references.contains(&"get_callers".to_string()));
+        // src/main.rs should NOT be in symbol references (has / and .)
+        assert!(!doc.symbol_references.iter().any(|s| s.contains("src")));
+    }
+
+    #[test]
+    fn parse_to_ir_extracts_doc_refs() {
+        let content = "See [ideas](./ideas/01-workflow.md) and [blueprint](../blueprints/01.md).";
+        let doc = parse_to_ir(content, "doc.md", "/tmp/repo");
+
+        assert!(doc.doc_references.iter().any(|r| r.contains("01-workflow.md")));
+        assert!(doc.doc_references.iter().any(|r| r.contains("01.md")));
+    }
+
+    #[test]
+    fn parse_to_ir_infers_doc_type_from_path() {
+        let content = "# Some Design\n\nContent.";
+        let doc = parse_to_ir(content, "docs/design/01-daemon/architecture.md", "/tmp/repo");
+        assert_eq!(doc.doc_type, Some("design".into()));
+        assert_eq!(doc.base.category, Some("design".into()));
+    }
+
+    #[test]
+    fn parse_to_ir_base_fields() {
+        let content = "---\nname: Test\n---\n# Test\nline 2\nline 3\n";
+        let doc = parse_to_ir(content, "docs/test.md", "/tmp/repo");
+
+        assert_eq!(doc.base.file, "docs/test.md");
+        assert_eq!(doc.base.extension, Some(".md".into()));
+        assert_eq!(doc.base.language, Some("markdown".into()));
+        assert_eq!(doc.base.node_type, Some("doc".into()));
+        assert!(doc.base.tags.contains(&"doc".to_string()));
+    }
 }
