@@ -73,9 +73,10 @@ fn main() {
 }
 
 // ── Paths ────────────────────────────────────────────────────────────────────
+// Mirrors senseid::paths — CLI can't depend on senseid (heavy deps).
 
 fn plugin_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".claude/plugins/sensei")
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join(".claude/plugins/sensei")
 }
 fn daemon_bin() -> PathBuf {
     plugin_dir().join("bin/senseid")

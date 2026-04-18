@@ -8,6 +8,7 @@ mod api;
 mod tasks;
 pub mod acp;
 pub mod installer;
+pub mod paths;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -42,13 +43,8 @@ enum Commands {
     ClearLogs,
 }
 
-fn sensei_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".sensei")
-}
-
-fn db_path() -> PathBuf {
-    sensei_dir().join("sensei.db")
-}
+fn sensei_dir() -> PathBuf { paths::sensei_dir() }
+fn db_path() -> PathBuf { paths::db_path() }
 
 #[tokio::main]
 async fn main() {
@@ -120,9 +116,7 @@ fn start_daemon(port: u16) {
     println!("senseid: started (pid {})", child.id());
 }
 
-fn graph_path() -> PathBuf {
-    sensei_dir().join("graph")
-}
+fn graph_path() -> PathBuf { paths::graph_dir() }
 
 async fn run_foreground(port: u16) {
     let db_dir = sensei_dir();
