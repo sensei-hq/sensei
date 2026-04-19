@@ -10,7 +10,7 @@ Feature requests submitted to ACP providers that block or enhance sensei observa
 | FR-2 | PostToolUse response preview | — | not submitted | **workaround**: MCP tools re-executable via daemon cache |
 | FR-3 | Quota/cost programmatic access | [#50926](https://github.com/anthropics/claude-code/issues/50926) + related [#11008](https://github.com/anthropics/claude-code/issues/11008), [#49588](https://github.com/anthropics/claude-code/issues/49588) | [#50926](https://github.com/anthropics/claude-code/issues/50926) | open |
 | FR-4 | Headless/batch session mode | [#50927](https://github.com/anthropics/claude-code/issues/50927) | [#50927](https://github.com/anthropics/claude-code/issues/50927) | open |
-| FR-5 | Task-level lifecycle hooks (PreTask/PostTask) | — | not submitted (draft: `claude-code/FR-5-task-lifecycle-hooks.md`) | draft — review before submitting |
+| FR-5 | Task-level lifecycle hooks (PreTask/PostTask) | — | not submitted (draft: `claude-code/FR-5-task-lifecycle-hooks.md`) | draft — review before submitting. **SessionEnd workaround:** SessionStart closes previous session; PreCompact = context reset boundary; Stop = explicit exit. All hooks exist. Task-level granularity still needs FR. |
 
 ## OpenCode (opencode-ai/opencode)
 
