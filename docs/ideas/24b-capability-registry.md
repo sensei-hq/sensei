@@ -28,8 +28,8 @@ Each capability has:
 - `description` — what this enables
 - `enabled` — on/off
 - `source` — where the data comes from (hook, api, cache, estimate)
-- `fallback` — alternative when primary source unavailable
-- `feature_request` — link to upstream issue tracking this
+- `workaround` — temporary alternative when primary source unavailable. Marked for replacement — when the real source becomes available, discard the workaround.
+- `feature_request` — link to upstream issue tracking the real solution
 
 ### 2. Configuration
 
@@ -38,94 +38,115 @@ Each capability has:
 capabilities:
   token_tracking:
     enabled: false
-    source: session_hook
-    fallback: estimate_from_turns
+    source: session_hook          # the real solution: ACP provides token counts
+    workaround:
+      method: estimate_from_turns # avg tokens per turn × turn count
+      discard_when: "anthropics/claude-code#11008 resolved"
     feature_request: "anthropics/claude-code#11008"
-    notes: "Enable when ACP exposes token counts in hooks"
 
   tool_response_capture:
     enabled: true
-    source: mcp_cache
-    fallback: null
-    notes: "MCP tools re-executed via daemon cache. Non-MCP tools still opaque."
+    source: post_tool_hook        # the real solution: ACP includes response preview
+    workaround:
+      method: mcp_cache           # re-execute MCP calls via daemon, cache response
+      limitation: "only works for MCP tools, not Bash/Read/Edit"
+      discard_when: "anthropics/claude-code FR-2 resolved"
+    feature_request: null         # not submitted — workaround sufficient for now
 
   quota_tracking:
     enabled: false
-    source: cli_json
-    fallback: null
+    source: cli_json              # the real solution: /cost --json or hook payload
+    workaround:
+      method: null                # no workaround currently
+      discard_when: "anthropics/claude-code#50926 resolved"
     feature_request: "anthropics/claude-code#50926"
-    notes: "Enable when /cost --json or equivalent available"
 
   task_lifecycle:
     enabled: true
-    source: command_events
-    fallback: session_start_closes_prev
+    source: task_hooks            # the real solution: ACP PreTask/PostTask hooks
+    workaround:
+      method: session_start_closes_prev  # SessionStart finalizes previous session
+      limitation: "session-level only, not per-task within a session"
+      discard_when: "anthropics/claude-code#50931 resolved"
     feature_request: "anthropics/claude-code#50931"
-    notes: "Partial: commands log task events. Full PreTask/PostTask needs ACP support."
 
   headless_benchmarks:
     enabled: false
-    source: cli_headless
-    fallback: manual_sessions
+    source: cli_headless          # the real solution: ACP headless mode
+    workaround:
+      method: manual_sessions     # user runs sessions manually, app tracks them
+      limitation: "doesn't scale, introduces human variance"
+      discard_when: "anthropics/claude-code#50927 resolved"
     feature_request: "anthropics/claude-code#50927"
-    notes: "Enable when ACP supports headless execution"
 
   mindset_tracking:
     enabled: true
-    source: command_events
-    fallback: null
-    notes: "Commands log mindset_applied events via log_event() MCP tool"
+    source: command_events        # commands log mindset_applied via log_event()
+    workaround: null              # this IS the real implementation, not a workaround
 
   persona_tracking:
     enabled: true
     source: command_events
-    fallback: null
-    notes: "Commands log persona_applied events"
+    workaround: null
 
   rule_adherence:
     enabled: true
     source: command_events
-    fallback: null
-    notes: "Commands log rule_checked events"
+    workaround: null
 ```
 
 ### 3. Registry in daemon
 
 ```rust
-// Capability check — used by dashboard, sessions, profiles pages
-pub fn is_capable(cap: &str) -> bool {
-    CAPABILITIES.get(cap).map(|c| c.enabled).unwrap_or(false)
+pub enum CapabilityStatus {
+    Real,                    // primary source available — use it
+    Workaround(String),      // temporary alternative — discard when real source lands
+    Unavailable(String),     // not possible yet — show disabled state + tracking link
 }
 
-// Graceful fallback
-pub fn get_token_count(session_id: &str) -> Option<TokenData> {
-    if is_capable("token_tracking") {
-        // Read from session hook data
-        store.get_session_tokens(session_id)
-    } else if is_capable("token_tracking.fallback") {
-        // Estimate from turn count
-        let turns = store.count_session_turns(session_id);
-        Some(TokenData::estimated(turns * AVG_TOKENS_PER_TURN))
-    } else {
-        None // UI shows "—" instead of a number
+pub fn capability_status(cap: &str) -> CapabilityStatus {
+    let c = CAPABILITIES.get(cap);
+    match c {
+        Some(c) if c.enabled && c.workaround.is_none() => CapabilityStatus::Real,
+        Some(c) if c.enabled && c.workaround.is_some() => 
+            CapabilityStatus::Workaround(c.workaround.limitation.clone()),
+        Some(c) => CapabilityStatus::Unavailable(c.feature_request.clone()),
+        None => CapabilityStatus::Unavailable("unknown".into()),
+    }
+}
+
+// Data access adapts to status
+pub fn get_token_count(session_id: &str) -> TokenResult {
+    match capability_status("token_tracking") {
+        Real => TokenResult::exact(store.get_session_tokens(session_id)),
+        Workaround(_) => {
+            let turns = store.count_session_turns(session_id);
+            TokenResult::estimated(turns * AVG_TOKENS_PER_TURN)
+        }
+        Unavailable(fr) => TokenResult::unavailable(fr),
     }
 }
 ```
 
-### 4. Desktop adapts to capabilities
+### 4. Desktop adapts to capability status
 
 ```svelte
-{#if capabilities.token_tracking}
-  <MetricCard label="Tokens" value={session.tokens_in} />
-{:else if capabilities.token_tracking_fallback}
-  <MetricCard label="Tokens (est.)" value={session.estimated_tokens} muted />
+{#if tokenResult.kind === "exact"}
+  <MetricCard label="Tokens" value={tokenResult.value} />
+{:else if tokenResult.kind === "estimated"}
+  <MetricCard label="Tokens" value={tokenResult.value} badge="est."
+    hint="Estimated from turn count. Exact tracking pending: {tokenResult.trackingUrl}" />
 {:else}
   <MetricCard label="Tokens" value="—" disabled
-    hint="Enable when ACP supports token tracking" />
+    hint="Pending ACP support"
+    action={{ label: "Track issue", url: tokenResult.trackingUrl }} />
 {/if}
 ```
 
-Disabled features show a clear explanation, not empty space. "Tokens: — (requires ACP support → [track issue](link))"
+Three visual states:
+- **Real data** — clean display, no qualifier
+- **Workaround data** — shown with "est." or "approx" badge + link to the issue that will replace it
+- **Unavailable** — disabled with "Track issue" link so the user can watch/upvote
 
 ### 5. ACP profiles
 
@@ -171,11 +192,23 @@ capabilities:
 When an ACP implements a requested feature:
 
 1. Update the ACP profile (`claude-code.yaml`: `token_counts: true`)
-2. Run `sensei init` or `./scripts/install-plugin.sh` — picks up new profile
-3. Capability auto-enables
-4. Dashboard starts showing real data where estimates were
+2. Remove the workaround config (`workaround: null`)
+3. Run `sensei init` or `./scripts/install-plugin.sh` — picks up new profile
+4. Capability switches from `Workaround` to `Real`
+5. Dashboard shows real data, "est." badges disappear
+6. Workaround code can be removed in a subsequent cleanup
 
-No code changes needed — just profile config.
+**No application code changes needed** — the capability registry handles the switch. The workaround code stays inert (never called) until explicitly cleaned up.
+
+### 7. Workaround lifecycle
+
+```
+Workaround created → used while FR is open → FR resolved → 
+  ACP profile updated → capability switches to Real → 
+  workaround code inert → cleanup PR removes workaround
+```
+
+Each workaround has a `discard_when` field that ties it to a specific upstream issue. When that issue closes, the workaround is stale and should be removed.
 
 ## What to build now
 
