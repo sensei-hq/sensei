@@ -127,6 +127,19 @@ else
   echo "[info] .sensei/personas/ — not found (optional, create with /sensei:persona add)"
 fi
 
+# Verify every command on disk is in catalog
+CMDS_ON_DISK=$(ls "$PLUGIN_ROOT/commands/"*.md 2>/dev/null | xargs -I{} basename {} .md | sort)
+CMDS_IN_CATALOG=$(python3 -c "import json; items=json.load(open('$PLUGIN_ROOT/catalog.json'))['items']; print('\n'.join(sorted(i['name'] for i in items if i['kind']=='command')))" 2>/dev/null)
+MISSING_CMDS=$(comm -23 <(echo "$CMDS_ON_DISK") <(echo "$CMDS_IN_CATALOG"))
+if [ -n "$MISSING_CMDS" ]; then
+  echo "[FAIL] commands on disk but NOT in catalog.json:"
+  echo "$MISSING_CMDS" | sed 's/^/       /'
+  PASS=false
+else
+  CMD_COUNT=$(echo "$CMDS_ON_DISK" | wc -l | tr -d ' ')
+  echo "[ok] catalog — all $CMD_COUNT commands registered"
+fi
+
 if [ -f "$REPO_ROOT/CLAUDE.md" ]; then
   if grep -q "Gate Check" "$REPO_ROOT/CLAUDE.md"; then
     echo "[ok] CLAUDE.md — gate check reference present"
