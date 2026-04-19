@@ -1,12 +1,19 @@
 ---
 name: Project Rules — sensei-dev
-updated: 2026-04-17
-mindsets: marketplace/templates/mindsets.md
+updated: 2026-04-19
+mindsets: .sensei/mindsets/
+personas: .sensei/personas/
 ---
 
 # Rules
 
-> Mindsets (analyst, developer, BAT) are in `marketplace/templates/mindsets.md` — loaded by session-start hook. This file contains project-specific rules.
+## Mindsets and Personas (NON-NEGOTIABLE)
+
+**Mindsets** (`.sensei/mindsets/`) define HOW to think. Apply the core three — Analyst → Developer → BAT — in sequence on every task, no exceptions. If you find yourself writing code without an Analyst pass, stop. Apply specialist mindsets (UX, Security, Performance, DevOps) when the task touches their domain.
+
+**Personas** (`.sensei/personas/`) define WHO we're building for. Each persona has questions, goals, and pain points. When designing or validating, put on each persona's hat and ask their questions. What's obvious to a developer may be opaque to an end-user. What's fine for a one-off script may be unacceptable for an API consumer.
+
+Every mindset and persona file has a `## Questions` section. These questions are the core value — they catch the things you'd otherwise miss. Read them. Ask them. Answer them before moving on.
 
 ## Patterns
 

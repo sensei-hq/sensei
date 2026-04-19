@@ -1,0 +1,35 @@
+name: Enhancement
+description: Improve an existing feature
+labels: ["concept:quality", "depth:build"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose improvements to existing features.
+
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current Behavior
+      description: What does it do today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-improvement
+    attributes:
+      label: Proposed Improvement
+      description: What should change? Why is this better?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: How do we know this is done?
+      value: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
