@@ -261,14 +261,49 @@ TDD rule                 │ 12       │ +18% FTR   │ +15% tokens  │ ✓ ke
 
 ## Design Principles
 
-1. **Three metrics drive everything** — Quality (FTR), Time (turns), Cost (tokens). Every page connects back to at least one. If a feature doesn't move these numbers, question whether it belongs.
-2. **Every number is clickable** — FTR links to sessions, tool adherence links to calls, persona usage links to profile
-3. **Every insight has an action** — "Dead code found" → "Tell Claude to investigate". Not just display — enable the next step.
-4. **Show impact, not inventory** — Don't list mindsets. Show which ones improved FTR and which cost tokens without helping. The user tunes levers by impact, not by reading descriptions.
-5. **Token/cost awareness everywhere** — header shows burn rate, sessions show cost, dashboard shows quota remaining
-6. **Suggest, don't prescribe** — "60% of corrections were about UX" → suggests a persona. Doesn't force it. The user decides what levers to add/remove based on their data.
-7. **Simulate before committing** — test a tool call, preview a library index, run a benchmark on a subset before going all-in
-8. **Stale data is flagged** — library docs indexed 3 months ago get a warning. Unused tools get a hint. Mindsets never applied get a nudge.
+### 1. No insight without action
+
+Every piece of information shown must have a clear "so what?" and a clear "do this next." If the user can't act on it, don't show it. A number on screen without a recipe to improve it is decoration, not intelligence.
+
+**Test:** For every element on every page, ask: "What does the user DO with this?" If the answer is "look at it," remove it or attach an action.
+
+Examples:
+- Bad: "FTR: 83%" — a number
+- Good: "FTR: 83% ↓ — 3 corrections this week were about missing user perspective → [Create end-user persona] [View corrections]"
+- Bad: "Security Reviewer mindset: applied 0 times" — a stat
+- Good: "Security Reviewer: never triggered. [Remove] or [Lower trigger threshold]"
+
+### 2. Progressive disclosure, not information dump
+
+Show the minimum needed to decide. Details on demand. The home page has 4 numbers and a list. Clicking a number reveals the story. Clicking the story reveals the events. Never show all three layers at once.
+
+**Hierarchy:** Metric → Insight → Detail → Action
+- Metric: "Rework rate: 18%"
+- Insight: "3 of 5 corrections were about missed rules"
+- Detail: "Session #12, turn 5: Claude used grep instead of MCP search"
+- Action: "[Add rule: prefer MCP tools] [View session]"
+
+A cluttered UI means the hierarchy collapsed — detail is showing where metric should be.
+
+### 3. Three outcomes drive everything
+
+Quality (FTR), Time (turns), Cost (tokens). Every page connects back to at least one. If a feature doesn't move these numbers, question whether it belongs.
+
+### 4. Show impact, not inventory
+
+Don't list mindsets. Show which ones improved FTR and which cost tokens without helping. The user tunes levers by impact, not by reading descriptions.
+
+### 5. Suggest from data, not templates
+
+"60% of corrections were about UX" → suggests a persona. Don't offer a generic catalog of personas to browse. Surface what THIS user's sessions need.
+
+### 6. Token/cost awareness everywhere
+
+Header shows burn rate. Sessions show cost. Dashboard shows quota remaining. The user should never be surprised by their usage.
+
+### 7. Simulate before committing
+
+Test a tool call. Preview a library index. Run a benchmark on a subset. Reduce the cost of trying something new.
 
 ## Personas served
 
