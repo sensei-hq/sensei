@@ -20,25 +20,33 @@ An AI-assisted developer uses Claude Code daily and wants to pace their usage. T
 
 Today this is impossible. The developer finds out they're over quota only when a request fails.
 
-## Proposed Solution
+## Data already exists
 
-### Option A: CLI command
+Claude Code's `/cost` and `/usage` commands already display this data interactively. The ask is to expose the same data programmatically so plugins and hooks can consume it.
+
+## Proposed Solution (pick any)
+
+### Option A: Machine-readable flag on existing commands
 ```bash
-claude quota
-# Output: {"used": 420000, "limit": 1000000, "remaining": 580000, "reset_at": "2026-05-01T00:00:00Z"}
+claude /cost --json
+# {"session_cost_usd": 0.35, "total_cost_usd": 4.20, "tokens_in": 142000, "tokens_out": 38000}
+
+claude /usage --json
+# {"used_pct": 42, "reset_at": "2026-05-01T00:00:00Z"}
 ```
 
 ### Option B: Hook payload enrichment
-Include quota info in SessionStart hook:
+Include cost/usage in SessionStart or SessionEnd hook payload:
 ```json
 {
   "quota_remaining_pct": 58,
-  "quota_reset_at": "2026-05-01T00:00:00Z"
+  "quota_reset_at": "2026-05-01T00:00:00Z",
+  "session_cost_usd": 0.35
 }
 ```
 
-### Option C: API endpoint
-`GET /v1/usage` on the Anthropic API returning current period usage and limits.
+### Option C: Well-known file
+Write session cost data to `~/.claude/session-stats.json` that plugins can read — no API needed.
 
 ## Impact
 
