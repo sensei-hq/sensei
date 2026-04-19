@@ -139,13 +139,13 @@ No cached version:    Error with fetch failure message, no fallback
 
 ## Template Detection
 
-Templates live in `docs/templates/`. Detection is path-based:
+Templates live in `marketplace/templates/`. Detection is path-based:
 
 | Path pattern | Template used |
 |---|---|
-| `docs/design/**` | `docs/templates/design.md` |
-| `docs/features/**` | `docs/templates/feature.md` |
-| `docs/requirements/**` | `docs/templates/feature.md` |
+| `docs/design/**` | `marketplace/templates/design.md` |
+| `docs/features/**` | `marketplace/templates/feature.md` |
+| `docs/requirements/**` | `marketplace/templates/feature.md` |
 | `docs/plans/**` | Skipped — plans are implementation artifacts |
 | Anything else | Interactive prompt: select template |
 
@@ -162,7 +162,7 @@ Doctor the following document to match the canonical template.
 
 ## Template
 
-[full contents of docs/templates/design.md or feature.md]
+[full contents of marketplace/templates/design.md or feature.md]
 
 ## Existing Document
 
@@ -236,7 +236,7 @@ trigger: when asked to doctor, restructure, or migrate docs to match a template
 
 **In-session workflow:**
 ```
-1. call: get_file_context("docs/templates/design.md", "L3")   ← load template
+1. call: get_file_context("marketplace/templates/design.md", "L3")   ← load template
 2. call: get_file_context("docs/design/03-auth.md", "L3")     ← load existing doc
 3. Rewrite the doc following the rules above
 4. Write the doctorted content back to the file

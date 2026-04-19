@@ -67,7 +67,7 @@ Precision assistance — understand the codebase deeply, serve the right context
 | 15 | [Pattern Store](./15-pattern-store.md) — detect, surface, enforce, grow lifecycle | Idea |
 | 17 | [Pattern Knowledge](./17-pattern-knowledge.md) — library patterns, industry patterns, architectural options | Idea |
 | 18 | [Testability & TDD](./18-testability-tdd.md) — composable functions, test-first with human approval, testability scoring | Idea |
-| 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — competitive comparison, reproducible benchmarks, community results, honest limitations | Idea |
+| 22 | [Adapter IR](./22-adapter-ir.md) — common intermediate representation, separates parsing from processing | Complete |
 
 ---
 
@@ -92,3 +92,4 @@ Make sensei usable beyond Claude Code. Multi-repo, multi-coordinator, multi-team
 | 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — competitive comparison, reproducible benchmarks, honest limitations | Idea |
 | 20 | [Local Inference](./20-local-inference.md) — Gemma4 via Ollama for summaries, embeddings, classification, pattern detection | Idea |
 | 21 | [Custom Agents](./21-custom-agents.md) — autonomous multi-step agents for review, build, analysis, benchmarking | Idea |
+| 23 | [Personas & Mindsets](./23-personas-mindsets.md) — process mindsets + project personas for design and validation | Idea |
