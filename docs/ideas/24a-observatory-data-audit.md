@@ -225,7 +225,7 @@ Benchmarking requires running Claude Code sessions programmatically with control
 |---|------|--------|-----|
 | FR-1 | **Token counts in session hooks** | submitted | [anthropics/claude-code#50863](https://github.com/anthropics/claude-code/issues/50863) |
 | FR-2 | **PostToolUse response preview** | workaround available | `docs/feature-requests/claude-code/FR-2-post-tool-response-preview.md` — MCP tools can be re-executed via daemon `/api/mcp/call`; add daemon-side response cache to avoid duplicate work |
-| FR-3 | **Quota introspection API** | draft | `docs/feature-requests/claude-code/FR-3-quota-introspection.md` |
+| FR-3 | **Quota introspection API** | workaround available | `docs/feature-requests/claude-code/FR-3-quota-introspection.md` — Claude Code has `/cost` and `/usage` commands internally; data exists but isn't exposed to hooks/plugins. FR still needed for programmatic access. |
 | FR-4 | **Headless/batch session mode** | draft | `docs/feature-requests/claude-code/FR-4-headless-session-mode.md` |
 | FR-5 | **SessionEnd hook with metrics** | draft | `docs/feature-requests/claude-code/FR-5-session-end-hook.md` |
 
