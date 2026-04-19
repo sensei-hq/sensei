@@ -57,7 +57,7 @@ This is the #1 blocker. Without token counts per session, we can't show cost, bu
 | Session list with outcomes | sessions table | ✅ | exists |
 | Event timeline | events table ordered by time | ✅ | exists |
 | Tool call name + params | pre-tool hook captures tool + params | 🔧 | hook exists but may not store params in events |
-| Tool call response/output | post-tool hook with response content | 🚫 | PostToolUse hook gets exit code, not response content |
+| Tool call response/output | post-tool hook with response content | 🔧 | Workaround: re-execute MCP calls via `/api/mcp/call` + daemon response cache. Non-MCP tools (Bash, Read, Edit) still blocked — need FR-2 for those. |
 | Which mindsets applied | "mindset_applied" event | 🔧 | not captured today — add to command prompts |
 | Which personas applied | "persona_applied" event | 🔧 | not captured today — add to command prompts |
 | Rules adherence per session | "rule_checked" / "rule_violated" events | 🔧 | not captured — add to command/skill prompts |
@@ -215,6 +215,7 @@ Benchmarking requires running Claude Code sessions programmatically with control
 | 7 | Profile impact correlation | store.rs | medium — query joining lever events with session FTR |
 | 8 | Persona discovery heuristics | store.rs or command | medium — classify correction patterns |
 | 9 | Token estimation fallback | store.rs | small — turns × avg tokens estimate |
+| 10 | MCP response cache in daemon | routes.rs / store.rs | medium — cache MCP call responses keyed by (tool, params, time bucket), TTL ~5min, desktop reads cache for session replay |
 
 ### Feature Requests to ACP Providers
 
@@ -223,7 +224,7 @@ Benchmarking requires running Claude Code sessions programmatically with control
 | # | What | Status | Ref |
 |---|------|--------|-----|
 | FR-1 | **Token counts in session hooks** | submitted | [anthropics/claude-code#50863](https://github.com/anthropics/claude-code/issues/50863) |
-| FR-2 | **PostToolUse response preview** | draft | `docs/feature-requests/claude-code/FR-2-post-tool-response-preview.md` |
+| FR-2 | **PostToolUse response preview** | workaround available | `docs/feature-requests/claude-code/FR-2-post-tool-response-preview.md` — MCP tools can be re-executed via daemon `/api/mcp/call`; add daemon-side response cache to avoid duplicate work |
 | FR-3 | **Quota introspection API** | draft | `docs/feature-requests/claude-code/FR-3-quota-introspection.md` |
 | FR-4 | **Headless/batch session mode** | draft | `docs/feature-requests/claude-code/FR-4-headless-session-mode.md` |
 | FR-5 | **SessionEnd hook with metrics** | draft | `docs/feature-requests/claude-code/FR-5-session-end-hook.md` |
