@@ -3,11 +3,11 @@ name: AI Driven Developer
 category: persona
 description: Developer who uses AI-assisted coding daily and wants to understand, optimize, and debug their AI sessions
 goals:
-  - Understand session efficiency — time spent, tokens burned, quota remaining
-  - See what Claude did and why — which tools, which profiles, which libraries
-  - Identify what's going wrong — rework rate, corrections, failed approaches
-  - Improve both their own workflow AND Claude's behavior over time
-  - Investigate and resolve issues when sessions go sideways
+  - Improve quality — fewer corrections, higher FTR, better outcomes
+  - Reduce time — fewer turns, less rework, faster task completion
+  - Reduce cost — fewer tokens, less quota burn, efficient sessions
+  - Understand the levers — which skills, personas, rules, libraries actually help vs cause problems
+  - Continuously tune — identify what's working, double down; identify what's not, fix or remove
 pain_points:
   - No visibility into token usage or cost per session
   - Can't see which mindset/persona was applied or if rules were followed
