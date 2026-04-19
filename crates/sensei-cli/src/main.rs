@@ -13,6 +13,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize sensei for the current repo (.sensei/, .claude/, .mcp.json)
+    Init {
+        /// Path to the plugin/marketplace directory (default: auto-detect)
+        #[arg(long)]
+        plugin_dir: Option<String>,
+    },
+
     /// Detect and configure AI coding platforms (Claude Code, Cursor, Windsurf, etc)
     Configure,
 
@@ -61,6 +68,7 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Init { plugin_dir } => init_repo(plugin_dir.as_deref()),
         Commands::Configure => configure(),
         Commands::Install { acp, scope } => install(acp.as_deref(), &scope),
         Commands::Uninstall => uninstall(),
@@ -102,6 +110,211 @@ fn daemon_available() -> bool {
 fn require_daemon() {
     if !daemon_available() {
         eprintln!("Daemon not running. Start it first: sensei start");
+        std::process::exit(1);
+    }
+}
+
+// ── Init (per-repo, no daemon required) ─────────────────────────────────────
+
+fn init_repo(plugin_dir_arg: Option<&str>) {
+    let repo_root = std::env::current_dir().expect("Cannot determine current directory");
+    println!("=== sensei init ===");
+    println!("Repo: {}\n", repo_root.display());
+
+    // Resolve plugin directory
+    let plugin_root = if let Some(pd) = plugin_dir_arg {
+        PathBuf::from(pd)
+    } else {
+        // Auto-detect: check for marketplace/ in repo, then ~/.sensei/marketplace/
+        let local = repo_root.join("marketplace");
+        if local.join("mindsets").exists() || local.join("templates/mindsets.md").exists() {
+            local
+        } else {
+            let global = dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join(".sensei/marketplace");
+            if global.join("mindsets").exists() || global.join("templates/mindsets.md").exists() {
+                global
+            } else {
+                eprintln!("Cannot find plugin directory. Use --plugin-dir or ensure marketplace/ exists.");
+                std::process::exit(1);
+            }
+        }
+    };
+    println!("Plugin: {}\n", plugin_root.display());
+
+    // ── 1. Create .sensei/ ──────────────────────────────────────────────────
+    let sensei_dir = repo_root.join(".sensei");
+    fs::create_dir_all(&sensei_dir).ok();
+
+    let rules_file = sensei_dir.join("rules.md");
+    if !rules_file.exists() {
+        let project_name = repo_root.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project");
+        let today = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            // Simple date formatting (YYYY-MM-DD) without chrono
+            let days = now / 86400;
+            let mut y = 1970i32;
+            let mut remaining = days as i32;
+            loop {
+                let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+                if remaining < year_days { break; }
+                remaining -= year_days;
+                y += 1;
+            }
+            let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+            let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            let mut m = 0usize;
+            while m < 12 && remaining >= mdays[m] { remaining -= mdays[m]; m += 1; }
+            format!("{}-{:02}-{:02}", y, m + 1, remaining + 1)
+        };
+        fs::write(&rules_file, format!(
+            "---\nname: Project Rules — {}\nupdated: {}\nmindsets: .sensei/mindsets.md\npersonas: .sensei/personas/\n---\n\n# Rules\n\n> Mindsets loaded from `.sensei/mindsets.md`. This file contains project-specific rules.\n\n## Patterns\n\n<!-- Add project patterns here -->\n\n## Quality\n\n- **Zero errors** — test suite must pass before and after every change\n\n## Process\n\n- **Design before code** — analyst mindset first\n- **One issue at a time** — complete, verify, close, then next\n",
+            project_name, today,
+        )).ok();
+        println!("[created] .sensei/rules.md");
+    } else {
+        println!("[exists]  .sensei/rules.md");
+    }
+
+    let personas_dir = sensei_dir.join("personas");
+    if !personas_dir.exists() {
+        fs::create_dir_all(&personas_dir).ok();
+        println!("[created] .sensei/personas/ (empty — use /sensei:persona add)");
+    } else {
+        let count = fs::read_dir(&personas_dir)
+            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
+            .unwrap_or(0);
+        println!("[exists]  .sensei/personas/ ({} personas)", count);
+    }
+
+    // Copy mindsets from plugin into .sensei/mindsets/ (always update on init)
+    let mindsets_src = plugin_root.join("mindsets");
+    let mindsets_dst = sensei_dir.join("mindsets");
+    if mindsets_src.exists() && mindsets_src.is_dir() {
+        fs::create_dir_all(&mindsets_dst).ok();
+        let mut count = 0;
+        for entry in fs::read_dir(&mindsets_src).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "md") {
+                let dst = mindsets_dst.join(entry.file_name());
+                fs::copy(&path, &dst).ok();
+                count += 1;
+            }
+        }
+        println!("[copied]  .sensei/mindsets/ ({} mindsets from plugin)", count);
+    } else {
+        // Fall back to single mindsets.md
+        let single_src = plugin_root.join("templates/mindsets.md");
+        if single_src.exists() {
+            fs::create_dir_all(&mindsets_dst).ok();
+            fs::copy(&single_src, mindsets_dst.join("all.md")).ok();
+            println!("[copied]  .sensei/mindsets/ (single file from plugin/templates)");
+        } else {
+            println!("[WARN]    mindsets not found in plugin");
+        }
+    }
+
+    // ── 2. Create .mcp.json ─────────────────────────────────────────────────
+    let mcp_file = repo_root.join(".mcp.json");
+    fs::write(&mcp_file, "{\n  \"mcpServers\": {\n    \"sensei\": {\n      \"command\": \"senseid\",\n      \"args\": [\"--mcp\"]\n    }\n  }\n}\n").ok();
+    println!("[ok]      .mcp.json");
+
+    // ── 3. Wire .claude/settings.local.json ─────────────────────────────────
+    let claude_dir = repo_root.join(".claude");
+    fs::create_dir_all(&claude_dir).ok();
+
+    let settings_file = claude_dir.join("settings.local.json");
+    let plugin_root_str = plugin_root.to_string_lossy();
+
+    // Preserve existing permissions
+    let permissions: serde_json::Value = if settings_file.exists() {
+        let content = fs::read_to_string(&settings_file).unwrap_or_default();
+        serde_json::from_str::<serde_json::Value>(&content)
+            .ok()
+            .and_then(|v| v.get("permissions").cloned())
+            .unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let settings = serde_json::json!({
+        "permissions": permissions,
+        "hooks": {
+            "SessionStart": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{}/hooks/run-hook.cmd session-start", plugin_root_str)
+                }]
+            }],
+            "PreCompact": [{
+                "matcher": "",
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{}/hooks/run-hook.cmd pre-compact", plugin_root_str)
+                }]
+            }],
+            "UserPromptSubmit": [{
+                "matcher": "",
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{}/hooks/run-hook.cmd user-prompt", plugin_root_str)
+                }]
+            }]
+        }
+    });
+
+    fs::write(&settings_file, serde_json::to_string_pretty(&settings).unwrap()).ok();
+    println!("[ok]      .claude/settings.local.json");
+
+    // ── 4. Gate check ───────────────────────────────────────────────────────
+    println!("\n=== gate check ===");
+    let mut pass = true;
+
+    if mindsets_dst.exists() {
+        let count = fs::read_dir(&mindsets_dst)
+            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
+            .unwrap_or(0);
+        println!("[ok]   mindsets/ ({} mindsets)", count);
+    } else {
+        println!("[FAIL] mindsets/ — not found");
+        pass = false;
+    }
+
+    if rules_file.exists() {
+        println!("[ok]   rules.md");
+    }
+
+    if personas_dir.exists() {
+        let count = fs::read_dir(&personas_dir)
+            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
+            .unwrap_or(0);
+        println!("[ok]   personas/ ({} personas)", count);
+    }
+
+    if repo_root.join("CLAUDE.md").exists() {
+        println!("[ok]   CLAUDE.md");
+    } else {
+        println!("[info] CLAUDE.md — not found (recommended: add gate check reference)");
+    }
+
+    if std::process::Command::new("senseid").arg("--version").output().is_ok() {
+        println!("[ok]   senseid on PATH");
+    } else {
+        println!("[warn] senseid not on PATH (run: sensei install)");
+    }
+
+    println!();
+    if pass {
+        println!("=== init complete ===");
+        println!("Start a new Claude Code session to activate sensei.");
+    } else {
+        println!("=== init incomplete — fix FAIL items above ===");
         std::process::exit(1);
     }
 }

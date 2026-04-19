@@ -11,6 +11,7 @@ pub mod vue;
 pub mod c_lang;
 
 use crate::types::ParsedFile;
+use crate::ir::IRParsedFile;
 
 /// Trait for language-specific adapters.
 pub trait LanguageAdapter: Send + Sync {
@@ -58,6 +59,39 @@ pub fn adapter_for_filename(filename: &str) -> Option<(Box<dyn LanguageAdapter>,
         let lang = a.language().to_string();
         (a, Box::leak(lang.into_boxed_str()) as &str)
     })
+}
+
+/// Get the IR parse for a file extension, or None if unsupported.
+pub fn parse_to_ir_for_ext(ext: &str, source: &str, file_path: &str) -> Option<IRParsedFile> {
+    match ext {
+        ".py" => Some(python::parse_to_ir(source, file_path)),
+        ".rs" => Some(rust_lang::parse_to_ir(source, file_path)),
+        ".ts" | ".tsx" | ".cts" => Some(typescript::parse_to_ir(source, file_path)),
+        ".js" | ".jsx" | ".mjs" | ".cjs" => Some(typescript::parse_to_ir(source, file_path)),
+        ".java" => Some(java::parse_to_ir(source, file_path)),
+        ".sql" | ".ddl" => Some(sql::parse_to_ir(source, file_path)),
+        ".swift" => Some(swift::parse_to_ir(source, file_path)),
+        ".kt" | ".kts" => Some(kotlin::parse_to_ir(source, file_path)),
+        ".svelte" => Some(svelte::parse_to_ir(source, file_path)),
+        ".vue" => Some(vue::parse_to_ir(source, file_path)),
+        ".c" | ".h" | ".cpp" | ".hpp" | ".cc" => Some(c_lang::parse_to_ir(source, file_path)),
+        _ => None,
+    }
+}
+
+/// Get the IR parse for a filename, handling compound extensions.
+pub fn parse_to_ir_for_filename(filename: &str, source: &str, file_path: &str) -> Option<IRParsedFile> {
+    let lower = filename.to_lowercase();
+    if lower.ends_with(".svelte.ts") || lower.ends_with(".svelte.tsx")
+        || lower.ends_with(".svelte.js") || lower.ends_with(".svelte.jsx")
+    {
+        return Some(typescript::parse_to_ir(source, file_path));
+    }
+    let ext = std::path::Path::new(filename).extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{}", e))
+        .unwrap_or_default();
+    parse_to_ir_for_ext(&ext, source, file_path)
 }
 
 #[cfg(test)]

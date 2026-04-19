@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn marketplace_skill_md() {
         let r = process_subtree(
-            "marketplace/skills/auditing-skill-descriptions/SKILL.md",
+            "marketplace/skills/analyze/SKILL.md",
             "marketplace",
         );
         assert_eq!(r.kind, "extension");
