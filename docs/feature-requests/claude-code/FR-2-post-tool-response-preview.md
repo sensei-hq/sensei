@@ -47,3 +47,7 @@ This keeps the hook payload small while giving plugins enough to log meaningful 
 ## Impact
 
 Without this, session drill-down shows "search was called" but not "search found 3 results in store.rs." The developer can't understand WHY Claude made a decision without seeing what data it had.
+
+## Workaround
+
+call the tool with input to inspect the response or cache response internally.
