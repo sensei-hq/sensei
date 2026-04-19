@@ -114,38 +114,24 @@
         {/if}
       {/if}
 
-      <!-- Separator + global links -->
+      <!-- Separator + main navigation -->
       <div class="pt-4 border-t border-surface-z0/30 mt-3">
-        <a href="/all"
-          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
-                 {($page.url.pathname as string) === '/all' ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
-          <span class="text-base i-solar-layers-bold-duotone"></span>
-          Projects
-        </a>
-        <a href="/libraries"
-          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
-                 {$page.url.pathname.startsWith('/libraries') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
-          <span class="text-base i-solar-book-2-bold-duotone"></span>
-          Libraries
-        </a>
-        <a href="/catalog"
-          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
-                 {$page.url.pathname.startsWith('/catalog') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
-          <span class="text-base i-solar-widget-5-bold-duotone"></span>
-          Catalog
-        </a>
-        <a href="/benchmarks"
-          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
-                 {$page.url.pathname.startsWith('/benchmarks') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
-          <span class="text-base i-solar-chart-2-bold-duotone"></span>
-          Benchmarks
-        </a>
-        <a href="/acp"
-          class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
-                 {$page.url.pathname.startsWith('/acp') ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
-          <span class="text-base i-solar-cpu-bold-duotone"></span>
-          ACP Registry
-        </a>
+        {#each [
+          { href: '/home', icon: 'i-solar-home-2-bold-duotone', label: 'Home' },
+          { href: '/sessions', icon: 'i-solar-history-bold-duotone', label: 'Sessions' },
+          { href: '/all', icon: 'i-solar-layers-bold-duotone', label: 'Projects' },
+          { href: '/libraries', icon: 'i-solar-book-2-bold-duotone', label: 'Libraries' },
+          { href: '/tools', icon: 'i-solar-widget-5-bold-duotone', label: 'Tools' },
+          { href: '/profiles', icon: 'i-solar-user-id-bold-duotone', label: 'Profiles' },
+          { href: '/benchmarks', icon: 'i-solar-chart-2-bold-duotone', label: 'Benchmarks' },
+        ] as item (item.href)}
+          <a href={item.href}
+            class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
+                   {$page.url.pathname.startsWith(item.href) ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
+            <span class="text-base {item.icon}"></span>
+            {item.label}
+          </a>
+        {/each}
       </div>
     </nav>
 

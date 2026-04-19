@@ -14,7 +14,6 @@
       return;
     }
 
-    const activeSolution = getActiveSolutionId();
-    goto(activeSolution ? `/s/${activeSolution}` : '/all', { replaceState: true });
+    goto('/home', { replaceState: true });
   });
 </script>
