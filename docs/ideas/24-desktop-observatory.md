@@ -165,18 +165,45 @@ Every available MCP tool with:
 - Side-by-side: "search('foo')" vs "grep foo" — what does each find?
 - Demonstrates why MCP is preferred
 
-### 6. Profiles — "What's guiding Claude?"
+### 6. Profiles — "What's helping and what's not?"
 
-**Mindsets (.sensei/mindsets/):**
-- List with application count per mindset
-- Adherence: how often is each mindset's questions being answered?
-- Click to view, edit questions
-- "This mindset was applied 0 times — consider if it's relevant to your project"
+The user doesn't care about profiles for their own sake. They care about outcomes. This page connects the dots: which levers (skills, mindsets, personas, rules, libraries) are improving quality/time/cost, and which are noise or actively hurting.
+
+**Impact view (default):**
+Every active lever ranked by impact on session outcomes:
+```
+Lever                    │ Sessions │ FTR Impact │ Token Impact │ Verdict
+─────────────────────────┼──────────┼────────────┼──────────────┼─────────
+Analyst mindset          │ 12       │ +15% FTR   │ +8% tokens   │ ✓ keep — worth the token cost
+BAT mindset              │ 10       │ +22% FTR   │ +12% tokens  │ ✓ keep — biggest quality gain
+Developer mindset        │ 12       │ +5% FTR    │ +3% tokens   │ ✓ keep — low cost, steady
+Security Reviewer        │ 0        │ n/a        │ n/a          │ ? unused — remove or needs trigger?
+get_lib_docs(rokkit)     │ 4        │ +10% FTR   │ −5% tokens   │ ✓ keep — saves rework
+Plugin Developer persona │ 3        │ +8% FTR    │ +6% tokens   │ ~ marginal — review questions
+TDD rule                 │ 12       │ +18% FTR   │ +15% tokens  │ ✓ keep — high quality lift
+```
+
+**What to look for:**
+- High token cost, low FTR impact → remove or simplify
+- Never applied → wrong trigger, irrelevant to project, or poorly described
+- High FTR impact, modest token cost → keep and possibly strengthen
+- Negative FTR impact → actively causing problems, investigate
+
+**Discovery: "How do I identify personas for my repo?"**
+- Sensei analyzes your session corrections and groups them by root cause
+- "60% of corrections were about missing user perspective" → suggests an end-user persona
+- "3 sessions failed because auth wasn't considered" → suggests a security reviewer mindset
+- Persona/mindset recommendations based on YOUR project's actual pain points, not generic templates
+
+**Actions:**
+- Toggle any lever on/off
+- Edit questions, rules, descriptions inline
+- "Suggest improvements" — analyzes recent sessions and recommends changes to profiles
+- "Create persona from session data" — extracts a persona from patterns in corrections
 
 **Personas (.sensei/personas/):**
 - List with usage stats
 - Click to view questions, journey, pain points
-- "Add persona" workflow
 - "This persona's validates were checked 2/5 times — coverage gap"
 
 **Rules (.sensei/rules.md):**
@@ -234,12 +261,14 @@ Every available MCP tool with:
 
 ## Design Principles
 
-1. **Every number is clickable** — FTR links to sessions, tool adherence links to calls, persona usage links to profile
-2. **Every insight has an action** — "Dead code found" → "Tell Claude to investigate". Not just display — enable the next step.
-3. **Token/cost awareness everywhere** — header shows burn rate, sessions show cost, dashboard shows quota remaining
-4. **Profiles are first-class** — mindsets, personas, rules aren't settings. They directly affect session quality and deserve their own section with analytics.
-5. **Simulate before committing** — test a tool call, preview a library index, run a benchmark on a subset before going all-in
-6. **Stale data is flagged** — library docs indexed 3 months ago get a warning. Unused tools get a hint. Mindsets never applied get a nudge.
+1. **Three metrics drive everything** — Quality (FTR), Time (turns), Cost (tokens). Every page connects back to at least one. If a feature doesn't move these numbers, question whether it belongs.
+2. **Every number is clickable** — FTR links to sessions, tool adherence links to calls, persona usage links to profile
+3. **Every insight has an action** — "Dead code found" → "Tell Claude to investigate". Not just display — enable the next step.
+4. **Show impact, not inventory** — Don't list mindsets. Show which ones improved FTR and which cost tokens without helping. The user tunes levers by impact, not by reading descriptions.
+5. **Token/cost awareness everywhere** — header shows burn rate, sessions show cost, dashboard shows quota remaining
+6. **Suggest, don't prescribe** — "60% of corrections were about UX" → suggests a persona. Doesn't force it. The user decides what levers to add/remove based on their data.
+7. **Simulate before committing** — test a tool call, preview a library index, run a benchmark on a subset before going all-in
+8. **Stale data is flagged** — library docs indexed 3 months ago get a warning. Unused tools get a hint. Mindsets never applied get a nudge.
 
 ## Personas served
 
