@@ -218,13 +218,34 @@ Benchmarking requires running Claude Code sessions programmatically with control
 
 ### Feature Requests to ACP Providers
 
-| # | What | Why | Target |
-|---|------|-----|--------|
-| FR-1 | **Token counts in session hooks** | Can't compute cost, burn rate, or quota without knowing tokens per session | Claude Code (Anthropic) |
-| FR-2 | **PostToolUse response preview** | Can't show what a tool returned in session drill-down | Claude Code (Anthropic) |
-| FR-3 | **Quota introspection API** | Can't show remaining quota or project burn-out date | Anthropic API |
-| FR-4 | **Headless/batch session mode** | Can't run automated benchmarks without programmatic session execution | Claude Code (Anthropic) |
-| FR-5 | **SessionEnd hook with metrics** | Clean way to capture session-level aggregates (tokens, cost, duration) at close | Claude Code (Anthropic) |
+**Claude Code (anthropics/claude-code):**
+
+| # | What | Status | Ref |
+|---|------|--------|-----|
+| FR-1 | **Token counts in session hooks** | submitted | [anthropics/claude-code#50863](https://github.com/anthropics/claude-code/issues/50863) |
+| FR-2 | **PostToolUse response preview** | draft | `docs/feature-requests/claude-code/FR-2-post-tool-response-preview.md` |
+| FR-3 | **Quota introspection API** | draft | `docs/feature-requests/claude-code/FR-3-quota-introspection.md` |
+| FR-4 | **Headless/batch session mode** | draft | `docs/feature-requests/claude-code/FR-4-headless-session-mode.md` |
+| FR-5 | **SessionEnd hook with metrics** | draft | `docs/feature-requests/claude-code/FR-5-session-end-hook.md` |
+
+**OpenCode (opencode-ai/opencode):**
+
+| # | What | Status | Ref |
+|---|------|--------|-----|
+| FR-1 | **Session metrics + lifecycle hooks** | draft | `docs/feature-requests/opencode/FR-1-session-metrics.md` |
+| FR-2 | **Headless/batch mode** | draft | `docs/feature-requests/opencode/FR-2-headless-mode.md` |
+
+**OpenAI Codex (openai/codex):**
+
+| # | What | Status | Ref |
+|---|------|--------|-----|
+| FR-1 | **Session metrics + task result structure** | draft | `docs/feature-requests/codex/FR-1-session-metrics.md` |
+
+**GitHub Copilot (github/copilot-docs):**
+
+| # | What | Status | Ref |
+|---|------|--------|-----|
+| FR-1 | **Session metrics + lifecycle events** | draft | `docs/feature-requests/copilot/FR-1-session-metrics.md` |
 
 ### Document for Future (not blocked, just deferred)
 
