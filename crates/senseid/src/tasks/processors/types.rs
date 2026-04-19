@@ -20,6 +20,9 @@ pub struct FileProcessResult {
     pub parent_refs: Vec<ParentRef>,
     pub file_refs: Vec<String>,       // doc: backtick file references
     pub fn_mentions: Vec<String>,     // doc: backtick function mentions
+    /// IR parse result — rich data for ir_functions/ir_classes tables.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ir: Option<crate::ir::IRParsedFile>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,7 +31,10 @@ pub struct SymbolResult {
     pub name: String,
     pub kind: String,
     pub line: u32,
+    pub line_end: u32,
     pub signature: Option<String>,
+    pub docstring: Option<String>,
+    pub is_exported: bool,
     pub complexity: Option<u32>,
     pub parent: Option<String>,
 }
@@ -55,6 +61,7 @@ impl FileProcessResult {
             symbols: vec![], unresolved_imports: vec![],
             unresolved_calls: vec![], parent_refs: vec![],
             file_refs: vec![], fn_mentions: vec![],
+            ir: None,
         }
     }
 }

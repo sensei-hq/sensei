@@ -106,6 +106,8 @@ pub fn create_router(state: AppState) -> Router {
         // Events
         .route("/api/events", post(create_event))
         .route("/api/events/{project}", get(list_events))
+        // Metrics
+        .route("/api/metrics/{project}", get(get_metrics))
         // Workflow state
         .route("/api/state/{project}", get(get_workflow_state).put(update_workflow_state))
         // Reset (clears all data)
@@ -1140,6 +1142,7 @@ async fn mcp_list_tools() -> Json<serde_json::Value> {
             {"name": "search_lib_docs", "description": "Search indexed library documentation", "params": ["query"]},
             {"name": "query", "description": "Natural language query across graph", "params": ["q", "repoId"]},
             {"name": "get_project_summary", "description": "Get project stats and metadata", "params": ["repoId"]},
+            {"name": "get_metrics", "description": "Get project quality metrics: FTR, turn count, rework rate, tool adherence", "params": ["repoId"]},
         ]
     }))
 }
@@ -1320,6 +1323,10 @@ async fn mcp_call_tool(
                 "functions": fns,
                 "types": types,
             })
+        }
+        "get_metrics" => {
+            let store = state.store.lock().await;
+            store.compute_metrics(repo_id).unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}))
         }
         _ => serde_json::json!({"error": format!("Unknown tool: {}", tool)}),
     };
@@ -1693,6 +1700,19 @@ async fn list_events(
     let limit = q.limit.unwrap_or(50).min(500);
     match store.list_events(&project, q.event_type.as_deref(), q.session.as_deref(), limit) {
         Ok(events) => Json(serde_json::json!({"events": events, "count": events.len()})),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+// ── Metrics ─────────────────────────────────────────────────────────────────
+
+async fn get_metrics(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    match store.compute_metrics(&project) {
+        Ok(metrics) => Json(metrics),
         Err(e) => Json(serde_json::json!({"error": e.to_string()})),
     }
 }

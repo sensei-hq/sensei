@@ -1137,6 +1137,56 @@ impl Store {
         self.conn.execute("DELETE FROM index_errors WHERE repo_id = ?1", params![repo_id])?;
         Ok(())
     }
+
+    // ── Metrics ─────────────────────────────────────────────────────────────
+
+    /// Compute aggregate metrics for a project from sessions + events.
+    pub fn compute_metrics(&self, project: &str) -> rusqlite::Result<serde_json::Value> {
+        // Sessions → FTR
+        let sessions = self.get_sessions(Some(project))?;
+        let session_count = sessions.len() as u64;
+        let ftr: Option<f64> = if sessions.is_empty() {
+            None
+        } else {
+            let sum: f64 = sessions.iter()
+                .filter_map(|s| s["ftr"].as_f64())
+                .sum();
+            let count = sessions.iter().filter(|s| s["ftr"].as_f64().is_some()).count();
+            if count > 0 { Some(sum / count as f64) } else { None }
+        };
+
+        // Events → turn count, rework rate, tool adherence
+        let turn_count = self.count_events(project, Some("turn"))?;
+        let revision_count = self.count_events(project, Some("revision_requested"))?;
+        let rework_rate = if turn_count > 0 {
+            revision_count as f64 / turn_count as f64
+        } else {
+            0.0
+        };
+
+        // Tool adherence: MCP tools / total tools
+        let tool_events = self.list_events(project, Some("tool_used"), None, 500)?;
+        let total_tools = tool_events.len() as u64;
+        let mcp_tools = tool_events.iter()
+            .filter(|e| e["data"]["is_mcp"].as_bool() == Some(true))
+            .count() as u64;
+        let tool_adherence: Option<f64> = if total_tools > 0 {
+            Some(mcp_tools as f64 / total_tools as f64)
+        } else {
+            None
+        };
+
+        Ok(serde_json::json!({
+            "session_count": session_count,
+            "ftr": ftr,
+            "turn_count": turn_count,
+            "rework_rate": rework_rate,
+            "revision_count": revision_count,
+            "tool_adherence": tool_adherence,
+            "mcp_tool_count": mcp_tools,
+            "total_tool_count": total_tools,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -1346,5 +1396,69 @@ mod tests {
         s.mark_index_failed("foo", "Kuzu connection error").unwrap();
         let p = s.get_project("foo").unwrap().unwrap();
         assert_eq!(p.last_error.as_deref(), Some("Kuzu connection error"));
+    }
+
+    // ── Metrics tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn metrics_empty_project() {
+        let s = test_store();
+        let m = s.compute_metrics("nonexistent").unwrap();
+        assert_eq!(m["session_count"], 0);
+        assert_eq!(m["turn_count"], 0);
+        assert_eq!(m["rework_rate"], 0.0);
+        assert!(m["ftr"].is_null()); // no sessions → no FTR
+    }
+
+    #[test]
+    fn metrics_ftr_from_sessions() {
+        let s = test_store();
+        // 3 sessions: 2 completed (FTR=1.0), 1 partial (FTR=0.5)
+        s.create_session("s1", "proj", "task 1").unwrap();
+        s.update_session("s1", Some("completed"), Some("done"), None, None, None).unwrap();
+        s.create_session("s2", "proj", "task 2").unwrap();
+        s.update_session("s2", Some("completed"), Some("done"), None, None, None).unwrap();
+        s.create_session("s3", "proj", "task 3").unwrap();
+        s.update_session("s3", Some("partial"), Some("wip"), None, None, None).unwrap();
+
+        let m = s.compute_metrics("proj").unwrap();
+        assert_eq!(m["session_count"], 3);
+        // FTR = (1.0 + 1.0 + 0.5) / 3 = 0.833...
+        let ftr = m["ftr"].as_f64().unwrap();
+        assert!((ftr - 0.833).abs() < 0.01, "FTR should be ~0.83, got {}", ftr);
+    }
+
+    #[test]
+    fn metrics_turn_count_and_rework() {
+        let s = test_store();
+        // 5 turns, 2 of which are corrections (revision_requested)
+        s.insert_event("e1", "proj", None, "turn", "{}").unwrap();
+        s.insert_event("e2", "proj", None, "turn", "{}").unwrap();
+        s.insert_event("e3", "proj", None, "revision_requested", "{}").unwrap();
+        s.insert_event("e4", "proj", None, "turn", "{}").unwrap();
+        s.insert_event("e5", "proj", None, "revision_requested", "{}").unwrap();
+        s.insert_event("e6", "proj", None, "turn", "{}").unwrap();
+        s.insert_event("e7", "proj", None, "turn", "{}").unwrap();
+
+        let m = s.compute_metrics("proj").unwrap();
+        assert_eq!(m["turn_count"], 5);
+        // rework_rate = revision_requested / turns = 2/5 = 0.4
+        let rr = m["rework_rate"].as_f64().unwrap();
+        assert!((rr - 0.4).abs() < 0.01, "rework_rate should be 0.4, got {}", rr);
+    }
+
+    #[test]
+    fn metrics_tool_adherence() {
+        let s = test_store();
+        // 4 tool_used events: 3 MCP, 1 non-MCP
+        s.insert_event("t1", "proj", None, "tool_used", r#"{"tool":"search","is_mcp":true}"#).unwrap();
+        s.insert_event("t2", "proj", None, "tool_used", r#"{"tool":"grep","is_mcp":false}"#).unwrap();
+        s.insert_event("t3", "proj", None, "tool_used", r#"{"tool":"get_callers","is_mcp":true}"#).unwrap();
+        s.insert_event("t4", "proj", None, "tool_used", r#"{"tool":"get_patterns","is_mcp":true}"#).unwrap();
+
+        let m = s.compute_metrics("proj").unwrap();
+        // tool_adherence = mcp_tools / total_tools = 3/4 = 0.75
+        let ta = m["tool_adherence"].as_f64().unwrap();
+        assert!((ta - 0.75).abs() < 0.01, "tool_adherence should be 0.75, got {}", ta);
     }
 }

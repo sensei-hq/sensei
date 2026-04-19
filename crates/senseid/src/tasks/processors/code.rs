@@ -51,7 +51,10 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
             name: sym.name.clone(),
             kind: node_kind.as_str().to_string(),
             line: sym.line_start,
+            line_end: sym.line_end,
             signature: sym.signature.clone(),
+            docstring: sym.docstring.clone(),
+            is_exported: sym.is_exported,
             complexity,
             parent: sym.parent.clone(),
         });
@@ -73,6 +76,9 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
             callee_name: e.callee_name.clone(),
         }).collect();
 
+    // Parse IR (rich data) alongside the old path
+    let ir = adapters::parse_to_ir_for_filename(filename, content, rel_path);
+
     Some(FileProcessResult {
         file_id,
         rel_path: rel_path.to_string(),
@@ -89,6 +95,7 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
         parent_refs,
         file_refs: vec![],
         fn_mentions: vec![],
+        ir,
     })
 }
 

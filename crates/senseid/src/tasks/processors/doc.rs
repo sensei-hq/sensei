@@ -31,6 +31,7 @@ pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, re
         parent_refs: vec![],
         file_refs,
         fn_mentions,
+        ir: None,
     }
 }
 
@@ -127,7 +128,7 @@ mod tests {
     #[test]
     fn marketplace_skill_is_extension() {
         let r = process_subtree_doc(
-            "marketplace/skills/auditing-skill-descriptions/SKILL.md",
+            "marketplace/skills/analyze/SKILL.md",
             "marketplace",
         );
         assert_eq!(r.kind, "extension", "marketplace skill should be extension, not doc");
