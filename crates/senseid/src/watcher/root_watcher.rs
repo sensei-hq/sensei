@@ -240,4 +240,292 @@ mod tests {
         let path2_str = path2.to_string_lossy();
         assert!(!EXCLUDE_DIRS.iter().any(|d| path2_str.contains(&format!("/{}/", d))));
     }
+
+    // ── EXCLUDE_DIRS coverage ──────────────────────────────────────────
+
+    #[test]
+    fn exclude_dirs_all_entries_matched() {
+        // Every entry in EXCLUDE_DIRS should match when embedded in a path
+        for dir in EXCLUDE_DIRS {
+            let p = format!("/project/{}/some_file.rs", dir);
+            assert!(
+                EXCLUDE_DIRS.iter().any(|d| p.contains(&format!("/{}/", d))),
+                "EXCLUDE_DIRS entry '{}' was not matched in path '{}'",
+                dir,
+                p,
+            );
+        }
+    }
+
+    #[test]
+    fn exclude_dirs_no_false_positive_for_prefix() {
+        // A directory name that merely starts with an excluded name should not match
+        let path = PathBuf::from("/repo/node_modules_extra/foo.ts");
+        let path_str = path.to_string_lossy();
+        assert!(
+            !EXCLUDE_DIRS.iter().any(|d| path_str.contains(&format!("/{}/", d))),
+            "partial directory name should not be excluded",
+        );
+    }
+
+    // ── ChangeKind ─────────────────────────────────────────────────────
+
+    #[test]
+    fn change_kind_equality() {
+        assert_eq!(ChangeKind::Create, ChangeKind::Create);
+        assert_eq!(ChangeKind::Modify, ChangeKind::Modify);
+        assert_eq!(ChangeKind::Delete, ChangeKind::Delete);
+        assert_ne!(ChangeKind::Create, ChangeKind::Delete);
+        assert_ne!(ChangeKind::Create, ChangeKind::Modify);
+        assert_ne!(ChangeKind::Delete, ChangeKind::Modify);
+    }
+
+    #[test]
+    fn change_kind_clone() {
+        let k = ChangeKind::Create;
+        let k2 = k;
+        assert_eq!(k, k2);
+    }
+
+    #[test]
+    fn change_kind_debug() {
+        let s = format!("{:?}", ChangeKind::Modify);
+        assert_eq!(s, "Modify");
+    }
+
+    // ── read_git_head ──────────────────────────────────────────────────
+
+    #[test]
+    fn read_git_head_valid_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("HEAD");
+        std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
+        assert_eq!(
+            read_git_head(head.to_str().unwrap()),
+            Some("main".to_string()),
+        );
+    }
+
+    #[test]
+    fn read_git_head_feature_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("HEAD");
+        std::fs::write(&head, "ref: refs/heads/feature/foo-bar\n").unwrap();
+        assert_eq!(
+            read_git_head(head.to_str().unwrap()),
+            Some("feature/foo-bar".to_string()),
+        );
+    }
+
+    #[test]
+    fn read_git_head_detached() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("HEAD");
+        std::fs::write(&head, "abc123def456\n").unwrap();
+        assert_eq!(read_git_head(head.to_str().unwrap()), None);
+    }
+
+    #[test]
+    fn read_git_head_missing_file() {
+        assert_eq!(read_git_head("/nonexistent/path/HEAD"), None);
+    }
+
+    #[test]
+    fn read_git_head_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("HEAD");
+        std::fs::write(&head, "").unwrap();
+        assert_eq!(read_git_head(head.to_str().unwrap()), None);
+    }
+
+    #[test]
+    fn read_git_head_whitespace_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = dir.path().join("HEAD");
+        std::fs::write(&head, "   \n").unwrap();
+        assert_eq!(read_git_head(head.to_str().unwrap()), None);
+    }
+
+    // ── process_batch ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn process_batch_groups_by_repo() {
+        let queue = TaskQueue::new();
+        let projects = vec![
+            ("repo-a".to_string(), "/projects/repo-a".to_string()),
+            ("repo-b".to_string(), "/projects/repo-b".to_string()),
+        ];
+
+        let mut changes = HashMap::new();
+        changes.insert(
+            PathBuf::from("/projects/repo-a/src/lib.rs"),
+            ChangeKind::Modify,
+        );
+        changes.insert(
+            PathBuf::from("/projects/repo-b/src/main.rs"),
+            ChangeKind::Create,
+        );
+
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        // 2 file tasks (ProcessFile) + 2 ResolveEdges barriers
+        assert_eq!(status.pending + status.blocked, 4);
+    }
+
+    #[tokio::test]
+    async fn process_batch_delete_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path().to_string_lossy().to_string();
+        let projects = vec![("repo".to_string(), repo_path.clone())];
+
+        // Create a file so parent dir exists (not a folder deletion)
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let file = src.join("old.rs");
+        std::fs::write(&file, "fn main() {}").unwrap();
+        // Now remove the file but keep dir
+        std::fs::remove_file(&file).unwrap();
+
+        let mut changes = HashMap::new();
+        changes.insert(file, ChangeKind::Delete);
+
+        let queue = TaskQueue::new();
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        // 1 DeleteFile + 1 ResolveEdges
+        assert_eq!(status.pending + status.blocked, 2);
+    }
+
+    #[tokio::test]
+    async fn process_batch_folder_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path().to_string_lossy().to_string();
+        let projects = vec![("repo".to_string(), repo_path.clone())];
+
+        // Parent directory does NOT exist — this triggers folder deletion logic
+        let gone_dir = dir.path().join("gone_dir");
+        let gone_file = gone_dir.join("removed.rs");
+
+        let mut changes = HashMap::new();
+        changes.insert(gone_file, ChangeKind::Delete);
+
+        let queue = TaskQueue::new();
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        // 1 DeleteFolder (the parent) — the file is skipped because parent was deleted
+        // No file-level tasks → no ResolveEdges barrier
+        assert_eq!(status.pending, 1);
+        assert_eq!(status.blocked, 0);
+    }
+
+    #[tokio::test]
+    async fn process_batch_module_id_from_subdir() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path().to_string_lossy().to_string();
+        let projects = vec![("repo".to_string(), repo_path.clone())];
+
+        let src = dir.path().join("src").join("util");
+        std::fs::create_dir_all(&src).unwrap();
+        let file = src.join("helper.rs");
+        std::fs::write(&file, "pub fn help() {}").unwrap();
+
+        let mut changes = HashMap::new();
+        changes.insert(file, ChangeKind::Create);
+
+        let queue = TaskQueue::new();
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        // 1 ProcessFile + 1 ResolveEdges
+        assert_eq!(status.pending + status.blocked, 2);
+    }
+
+    #[tokio::test]
+    async fn process_batch_root_level_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path().to_string_lossy().to_string();
+        let projects = vec![("repo".to_string(), repo_path.clone())];
+
+        let file = dir.path().join("main.rs");
+        std::fs::write(&file, "fn main() {}").unwrap();
+
+        let mut changes = HashMap::new();
+        changes.insert(file, ChangeKind::Modify);
+
+        let queue = TaskQueue::new();
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        // 1 ProcessFile + 1 ResolveEdges
+        assert_eq!(status.pending + status.blocked, 2);
+    }
+
+    #[tokio::test]
+    async fn process_batch_no_changes() {
+        let queue = TaskQueue::new();
+        let projects = vec![("repo".to_string(), "/projects/repo".to_string())];
+
+        let changes = HashMap::new();
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        assert_eq!(status.pending, 0);
+        assert_eq!(status.blocked, 0);
+    }
+
+    #[tokio::test]
+    async fn process_batch_file_outside_any_repo() {
+        let queue = TaskQueue::new();
+        let projects = vec![("repo".to_string(), "/projects/repo".to_string())];
+
+        let mut changes = HashMap::new();
+        changes.insert(
+            PathBuf::from("/other/location/file.rs"),
+            ChangeKind::Modify,
+        );
+
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        // File doesn't belong to any repo — nothing enqueued
+        assert_eq!(status.pending, 0);
+        assert_eq!(status.blocked, 0);
+    }
+
+    #[tokio::test]
+    async fn process_batch_resolve_edges_blocked_by_file_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path().to_string_lossy().to_string();
+        let projects = vec![("repo".to_string(), repo_path.clone())];
+
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let f1 = src.join("a.rs");
+        let f2 = src.join("b.rs");
+        std::fs::write(&f1, "").unwrap();
+        std::fs::write(&f2, "").unwrap();
+
+        let mut changes = HashMap::new();
+        changes.insert(f1, ChangeKind::Create);
+        changes.insert(f2, ChangeKind::Modify);
+
+        let queue = TaskQueue::new();
+        process_batch(changes, &queue, &projects).await;
+
+        let status = queue.status().await;
+        // 2 ProcessFile (pending) + 1 ResolveEdges (blocked)
+        assert_eq!(status.pending, 2);
+        assert_eq!(status.blocked, 1);
+    }
+
+    // ── DEBOUNCE_MS constant ───────────────────────────────────────────
+
+    #[test]
+    fn debounce_constant_is_reasonable() {
+        assert!(DEBOUNCE_MS >= 100, "debounce should be at least 100ms");
+        assert!(DEBOUNCE_MS <= 5000, "debounce should be at most 5s");
+    }
 }
