@@ -65,10 +65,13 @@ export function include(repoId: string) { const s = new Set(_excluded); s.delete
 export function getExcluded(): string[] { return [..._excluded]; }
 export function isExcluded(repoId: string): boolean { return _excluded.has(repoId); }
 
-// ── Accessors (reactive — UI derives from these) ────────────────────────────
+// ── Derived (reactive — Svelte auto-tracks dependencies) ────────────────────
 
-/** All repos after search, filter, exclude — sorted with indexing repos first. */
-export function getRepos(): RepoState[] {
+/** All repos unfiltered */
+export const allRepos = $derived([..._repos.values()]);
+
+/** Filtered + searched + sorted repos — UI renders this */
+export const repos = $derived.by(() => {
   let list = [..._repos.values()];
 
   // Exclude
@@ -100,25 +103,18 @@ export function getRepos(): RepoState[] {
   });
 
   return list;
-}
+});
 
-/** Get all repos unfiltered (for counts etc.) */
-export function getAllRepos(): RepoState[] { return [..._repos.values()]; }
+export const queueTotals = $derived(_queueTotals);
+export const indexedCount = $derived([..._repos.values()].filter(r => r.indexState === 'indexed').length);
+export const totalCount = $derived(_repos.size);
+export const anyIndexing = $derived([..._repos.values()].some(r => r.indexState === 'indexing' || r.indexState === 'queued'));
+export const searchQuery = $derived(_searchQuery);
+export const filterState = $derived(_filterState);
+export const excludedList = $derived([..._excluded]);
 
 export function getRepo(repoId: string): RepoState | undefined {
   return _repos.get(repoId);
-}
-
-export function getQueueTotals() { return _queueTotals; }
-
-export function getIndexedCount(): number {
-  return [..._repos.values()].filter(r => r.indexState === 'indexed').length;
-}
-
-export function getTotalCount(): number { return _repos.size; }
-
-export function isAnyIndexing(): boolean {
-  return [..._repos.values()].some(r => r.indexState === 'indexing' || r.indexState === 'queued');
 }
 
 export function onReposChange(cb: () => void) { _onChange = cb; }
