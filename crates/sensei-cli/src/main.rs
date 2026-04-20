@@ -149,15 +149,13 @@ fn start_daemon() {
 
 /// Check if daemon version matches CLI. If mismatched, restart once.
 fn check_daemon_version(allow_restart: bool) {
-    let daemon_version = client()
-        .get(format!("{}/health", DAEMON_URL))
-        .send()
-        .ok()
-        .and_then(|r| r.json::<serde_json::Value>().ok())
-        .and_then(|v| v["version"].as_str().map(String::from))
-        .unwrap_or_default();
+    let daemon_version = get_daemon_version();
 
     if daemon_version == CLI_VERSION {
+        if !allow_restart {
+            // This is the post-restart verification — confirm it worked
+            eprintln!("  ✓ Daemon version now matches: {}", daemon_version);
+        }
         return;
     }
 
@@ -173,21 +171,28 @@ fn check_daemon_version(allow_restart: bool) {
 
     if allow_restart {
         eprintln!("  Restarting daemon...");
-        // Stop the old daemon
         let bin = daemon_bin();
         let _ = std::process::Command::new(&bin).arg("stop").status();
         std::thread::sleep(std::time::Duration::from_millis(500));
 
-        // Start fresh
         start_daemon();
-
-        // Check again (no restart loop)
         check_daemon_version(false);
     } else {
-        eprintln!("  Daemon still out of sync after restart.");
+        eprintln!("  ✗ Daemon still out of sync after restart.");
+        eprintln!("  The daemon binary on PATH is outdated.");
         eprintln!("  Rebuild: bun run build:daemon && senseid stop && senseid start");
         std::process::exit(1);
     }
+}
+
+fn get_daemon_version() -> String {
+    client()
+        .get(format!("{}/health", DAEMON_URL))
+        .send()
+        .ok()
+        .and_then(|r| r.json::<serde_json::Value>().ok())
+        .and_then(|v| v["version"].as_str().map(String::from))
+        .unwrap_or_default()
 }
 
 /// Prompt user with [Y/n] — returns true if accepted.
