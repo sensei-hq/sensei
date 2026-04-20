@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "sensei": {
-      "command": "senseid",
-      "args": ["--mcp"]
+      "command": "sensei-mcp"
+    },
+    "svelte": {
+      "command": "npx",
+      "args": ["-y", "svelte-mcp"]
     }
   }
 }
