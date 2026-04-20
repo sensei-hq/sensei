@@ -87,6 +87,20 @@ mod tests {
     }
 
     #[test]
+    fn log_path_under_sensei_dir() {
+        let lp = log_path();
+        assert!(lp.starts_with(sensei_dir()));
+        assert!(lp.to_string_lossy().ends_with("senseid.log"));
+    }
+
+    #[test]
+    fn pid_path_under_sensei_dir() {
+        let pp = pid_path();
+        assert!(pp.starts_with(sensei_dir()));
+        assert!(pp.to_string_lossy().ends_with("serve.pid"));
+    }
+
+    #[test]
     fn all_paths_are_absolute() {
         assert!(home().is_absolute() || home() == PathBuf::from("/tmp"));
         assert!(sensei_dir().is_absolute() || sensei_dir().starts_with("/tmp"));

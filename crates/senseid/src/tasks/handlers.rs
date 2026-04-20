@@ -785,3 +785,450 @@ fn build_globset() -> globset::GlobSet {
     }
     builder.build().unwrap_or_else(|_| globset::GlobSetBuilder::new().build().unwrap())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    use crate::db::Store;
+    use crate::indexer::graph::GraphDb;
+    use crate::tasks::queue::TaskQueue;
+    use crate::tasks::{Task, TaskKind};
+    use crate::api::routes::SharedState;
+    use super::super::executor::TaskContext;
+
+    /// Build a TaskContext backed by in-memory Store + GraphDb and a fresh TaskQueue.
+    fn make_ctx() -> Arc<TaskContext> {
+        let store = Store::open_memory().unwrap();
+        let graph = GraphDb::open_memory().unwrap();
+        let queue = Arc::new(TaskQueue::new());
+        let app_state = Arc::new(SharedState {
+            store: Mutex::new(store),
+            graph: Mutex::new(graph),
+            task_queue: queue.clone(),
+        });
+        Arc::new(TaskContext {
+            queue,
+            app_state,
+            _graph_path: None,
+        })
+    }
+
+    // ── Pure function tests ──────────────────────────────────────────
+
+    #[test]
+    fn is_binary_ext_recognises_binaries() {
+        assert!(is_binary_ext("png"));
+        assert!(is_binary_ext("exe"));
+        assert!(is_binary_ext("wasm"));
+        assert!(is_binary_ext("sqlite3"));
+        assert!(is_binary_ext("lock"));
+    }
+
+    #[test]
+    fn is_binary_ext_rejects_source_extensions() {
+        assert!(!is_binary_ext("rs"));
+        assert!(!is_binary_ext("ts"));
+        assert!(!is_binary_ext("py"));
+        assert!(!is_binary_ext("md"));
+        assert!(!is_binary_ext("json"));
+        assert!(!is_binary_ext(""));
+    }
+
+    #[test]
+    fn build_globset_matches_excluded_paths() {
+        let gs = build_globset();
+        assert!(gs.is_match("node_modules/foo/bar.js"));
+        assert!(gs.is_match("src/foo.spec.ts"));
+        assert!(gs.is_match("src/foo.test.tsx"));
+        assert!(gs.is_match("tests/foo_test.py"));
+        assert!(gs.is_match("pkg/foo_test.go"));
+        assert!(gs.is_match("src/types.d.ts"));
+        assert!(gs.is_match("dist/bundle.js"));
+        assert!(gs.is_match("target/debug/foo"));
+        assert!(gs.is_match("__pycache__/foo.pyc"));
+    }
+
+    #[test]
+    fn build_globset_allows_normal_source_files() {
+        let gs = build_globset();
+        assert!(!gs.is_match("src/main.rs"));
+        assert!(!gs.is_match("lib/utils.ts"));
+        assert!(!gs.is_match("app.py"));
+        assert!(!gs.is_match("docs/readme.md"));
+    }
+
+    #[test]
+    fn find_git_repos_discovers_repos_in_tempdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create two nested git repos
+        let repo_a = tmp.path().join("repo-a");
+        let repo_b = tmp.path().join("repo-b");
+        std::fs::create_dir_all(repo_a.join(".git")).unwrap();
+        std::fs::create_dir_all(repo_b.join(".git")).unwrap();
+
+        let mut repos = Vec::new();
+        find_git_repos(tmp.path(), 0, 3, &mut repos);
+
+        let names: Vec<&str> = repos.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"repo-a"));
+        assert!(names.contains(&"repo-b"));
+        assert_eq!(repos.len(), 2);
+    }
+
+    #[test]
+    fn find_git_repos_respects_max_depth() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a repo at depth=2 and one at depth=4
+        let shallow = tmp.path().join("level1").join("shallow-repo");
+        let deep = tmp.path().join("l1").join("l2").join("l3").join("deep-repo");
+        std::fs::create_dir_all(shallow.join(".git")).unwrap();
+        std::fs::create_dir_all(deep.join(".git")).unwrap();
+
+        let mut repos = Vec::new();
+        find_git_repos(tmp.path(), 0, 2, &mut repos);
+
+        let names: Vec<&str> = repos.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"shallow-repo"));
+        assert!(!names.contains(&"deep-repo"), "should not find repos beyond max_depth");
+    }
+
+    #[test]
+    fn find_git_repos_skips_dotdirs_and_node_modules() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Hidden dir with a repo inside
+        let hidden = tmp.path().join(".hidden").join("repo");
+        std::fs::create_dir_all(hidden.join(".git")).unwrap();
+        // node_modules with a repo inside
+        let nm = tmp.path().join("node_modules").join("pkg-repo");
+        std::fs::create_dir_all(nm.join(".git")).unwrap();
+        // Normal repo
+        let normal = tmp.path().join("real-repo");
+        std::fs::create_dir_all(normal.join(".git")).unwrap();
+
+        let mut repos = Vec::new();
+        find_git_repos(tmp.path(), 0, 3, &mut repos);
+
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].0, "real-repo");
+    }
+
+    // ── Handler integration tests (in-memory DB) ─────────────────────
+
+    #[tokio::test]
+    async fn scan_root_errors_on_nonexistent_path() {
+        let ctx = make_ctx();
+        let task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path/xyz");
+        let result = scan_root(&ctx, &task).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn scan_root_discovers_repos_and_enqueues() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create two repos under the scan root
+        let repo_a = tmp.path().join("alpha");
+        let repo_b = tmp.path().join("beta");
+        std::fs::create_dir_all(repo_a.join(".git")).unwrap();
+        std::fs::create_dir_all(repo_b.join(".git")).unwrap();
+        // Add a file so directories aren't completely empty
+        std::fs::write(repo_a.join("main.rs"), "fn main() {}").unwrap();
+        std::fs::write(repo_b.join("main.py"), "print('hi')").unwrap();
+
+        let ctx = make_ctx();
+        let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        // Two ProcessRepo tasks should have been enqueued
+        let status = ctx.queue.status().await;
+        assert_eq!(status.pending, 2, "expected 2 process_repo tasks enqueued");
+
+        // Verify projects were registered in store
+        let store = ctx.store().await;
+        let projects = store.list_projects().unwrap();
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+    }
+
+    #[tokio::test]
+    async fn scan_root_registers_root_itself_when_it_is_a_git_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join("lib.rs"), "pub fn x() {}").unwrap();
+
+        let ctx = make_ctx();
+        let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        let status = ctx.queue.status().await;
+        assert_eq!(status.pending, 1, "root repo itself should be enqueued");
+    }
+
+    #[tokio::test]
+    async fn process_repo_errors_on_nonexistent_path() {
+        let ctx = make_ctx();
+        let task = Task::new(TaskKind::ProcessRepo, "test-repo", "/nonexistent/repo");
+        let result = process_repo(&ctx, &task).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn process_folder_creates_module_node() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+        let repo_path = tmp.path().to_string_lossy().to_string();
+
+        // Register the project so process_folder can look up its path
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic(repo_id, repo_id, &repo_path).unwrap();
+        }
+
+        let pkg_id = format!("pkg:{}:(root)", repo_id);
+
+        // Create the parent package node so get_edges can find it
+        {
+            let graph = ctx.graph().await;
+            let pkg_node = HierarchyNode::group(
+                pkg_id.clone(), "(root)".to_string(),
+                NodeKind::Package, repo_id.to_string(),
+            );
+            graph.merge_node(&pkg_node).unwrap();
+        }
+
+        let mut task = Task::new(TaskKind::ProcessFolder, repo_id, &src_dir.to_string_lossy());
+        task.module_id = Some(pkg_id.clone());
+
+        process_folder(&ctx, &task).await.unwrap();
+
+        // Verify module node was created (package + module = 2 nodes)
+        let graph = ctx.graph().await;
+        let nodes = graph.get_nodes(repo_id).unwrap();
+        assert_eq!(nodes.len(), 2);
+        let module_node = nodes.iter().find(|n| n.kind == "module").expect("module node");
+        assert_eq!(module_node.name, "src");
+
+        // Verify edge from package to module
+        let edges = graph.get_edges(repo_id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].edge_type, "CONTAINS_MOD");
+        assert_eq!(edges[0].source, pkg_id);
+    }
+
+    #[tokio::test]
+    async fn delete_file_removes_nodes_and_edges() {
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+
+        // Seed graph with two file nodes and an edge
+        {
+            let graph = ctx.graph().await;
+            graph.merge_file("file:/tmp/a.rs", "/tmp/a.rs", "mod_a", "rust", repo_id).unwrap();
+            graph.merge_function("fn:/tmp/a.rs:foo:1", "foo", "/tmp/a.rs", 1, "", "", "", 1, repo_id).unwrap();
+            graph.merge_file("file:/tmp/b.rs", "/tmp/b.rs", "mod_b", "rust", repo_id).unwrap();
+            graph.merge_edge("file:/tmp/a.rs", "file:/tmp/b.rs", "IMPORTS").unwrap();
+        }
+
+        let task = Task::new(TaskKind::DeleteFile, repo_id, "/tmp/a.rs");
+        delete_file(&ctx, &task).await.unwrap();
+
+        let graph = ctx.graph().await;
+        let nodes = graph.get_nodes(repo_id).unwrap();
+        // Only file b should remain; a.rs and its function were deleted
+        let remaining_files: Vec<&str> = nodes.iter()
+            .filter(|n| n.kind == "file")
+            .map(|n| n.file.as_str())
+            .collect();
+        assert_eq!(remaining_files, vec!["/tmp/b.rs"]);
+    }
+
+    #[tokio::test]
+    async fn delete_folder_removes_module_and_child_nodes() {
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+        let repo_path = "/tmp/myrepo";
+
+        // Register project
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic(repo_id, repo_id, repo_path).unwrap();
+        }
+
+        // Seed graph: module node + file node under /tmp/myrepo/src/
+        {
+            let graph = ctx.graph().await;
+            graph.merge_module("mod:test-repo:src", "src", "src", None, repo_id).unwrap();
+            graph.merge_file("file:src/main.rs", "/tmp/myrepo/src/main.rs", "main", "rust", repo_id).unwrap();
+            graph.merge_function("fn:src/main.rs:main:1", "main", "/tmp/myrepo/src/main.rs", 1, "", "", "", 1, repo_id).unwrap();
+        }
+
+        let task = Task::new(TaskKind::DeleteFolder, repo_id, "/tmp/myrepo/src");
+        delete_folder(&ctx, &task).await.unwrap();
+
+        let graph = ctx.graph().await;
+        let nodes = graph.get_nodes(repo_id).unwrap();
+        // All nodes under /tmp/myrepo/src should be deleted, plus the module node
+        assert!(nodes.is_empty(), "all nodes under deleted folder should be removed, got: {:?}",
+            nodes.iter().map(|n| &n.id).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn resolve_edges_resolves_calls_and_parent_refs() {
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+
+        // Seed graph with functions and types
+        {
+            let graph = ctx.graph().await;
+            graph.merge_function("fn:a:caller:1", "caller", "a.rs", 1, "", "", "", 1, repo_id).unwrap();
+            graph.merge_function("fn:a:callee:10", "callee", "a.rs", 10, "", "", "", 1, repo_id).unwrap();
+            graph.merge_type("type:a:MyStruct:1", "MyStruct", "a.rs", 1, "struct", repo_id).unwrap();
+            graph.merge_function("fn:a:my_method:20", "my_method", "a.rs", 20, "", "", "", 1, repo_id).unwrap();
+
+            // Add unresolved refs: a call and a parent (HAS_METHOD)
+            graph.add_unresolved_ref("fn:a:caller:1", "calls", "callee", repo_id).unwrap();
+            graph.add_unresolved_ref("fn:a:my_method:20", "parent", "MyStruct", repo_id).unwrap();
+        }
+
+        // Register project (resolve_edges reads project path)
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+        }
+
+        let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
+        resolve_edges(&ctx, &task).await.unwrap();
+
+        let graph = ctx.graph().await;
+        let edges = graph.get_edges(repo_id).unwrap();
+        let edge_types: Vec<&str> = edges.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(edge_types.contains(&"CALLS"), "expected a CALLS edge, got: {:?}", edge_types);
+        assert!(edge_types.contains(&"HAS_METHOD"), "expected a HAS_METHOD edge, got: {:?}", edge_types);
+
+        // Unresolved refs should be cleared
+        let refs = graph.get_unresolved_refs(repo_id).unwrap();
+        assert!(refs.is_empty(), "unresolved refs should be cleared after resolve_edges");
+    }
+
+    #[tokio::test]
+    async fn resolve_edges_resolves_covers_refs() {
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+
+        {
+            let graph = ctx.graph().await;
+            graph.merge_file("file:src/main.rs", "src/main.rs", "main", "rust", repo_id).unwrap();
+            graph.merge_doc("doc:docs/arch.md", "docs/arch.md", "Architecture", "design", repo_id).unwrap();
+            // Unresolved ref: doc covers file
+            graph.add_unresolved_ref("doc:docs/arch.md", "covers", "src/main.rs", repo_id).unwrap();
+        }
+
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+        }
+
+        let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
+        resolve_edges(&ctx, &task).await.unwrap();
+
+        let graph = ctx.graph().await;
+        let edges = graph.get_edges(repo_id).unwrap();
+        let covers: Vec<_> = edges.iter().filter(|e| e.edge_type == "COVERS").collect();
+        assert_eq!(covers.len(), 1);
+        assert_eq!(covers[0].source, "doc:docs/arch.md");
+        assert_eq!(covers[0].target, "file:src/main.rs");
+    }
+
+    #[tokio::test]
+    async fn resolve_edges_resolves_mentions_fn_refs() {
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+
+        {
+            let graph = ctx.graph().await;
+            graph.merge_function("fn:a:process:5", "process", "a.rs", 5, "", "", "", 1, repo_id).unwrap();
+            graph.merge_doc("doc:docs/api.md", "docs/api.md", "API", "design", repo_id).unwrap();
+            graph.add_unresolved_ref("doc:docs/api.md", "mentions_fn", "process", repo_id).unwrap();
+        }
+
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+        }
+
+        let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
+        resolve_edges(&ctx, &task).await.unwrap();
+
+        let graph = ctx.graph().await;
+        let edges = graph.get_edges(repo_id).unwrap();
+        let mentions: Vec<_> = edges.iter().filter(|e| e.edge_type == "MENTIONS_FN").collect();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].target, "fn:a:process:5");
+    }
+
+    #[tokio::test]
+    async fn resolve_edges_skips_non_relative_imports() {
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+
+        {
+            let graph = ctx.graph().await;
+            graph.merge_file("file:src/main.rs", "src/main.rs", "main", "rust", repo_id).unwrap();
+            // Non-relative import: should be skipped
+            graph.add_unresolved_ref("file:src/main.rs", "imports", "react", repo_id).unwrap();
+        }
+
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+        }
+
+        let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
+        resolve_edges(&ctx, &task).await.unwrap();
+
+        let graph = ctx.graph().await;
+        let edges = graph.get_edges(repo_id).unwrap();
+        let imports: Vec<_> = edges.iter().filter(|e| e.edge_type == "IMPORTS").collect();
+        assert!(imports.is_empty(), "non-relative imports should not produce edges");
+    }
+
+    #[tokio::test]
+    async fn resolve_edges_with_no_refs_is_noop() {
+        let ctx = make_ctx();
+        let repo_id = "test-repo";
+
+        {
+            let graph = ctx.graph().await;
+            graph.merge_file("file:a.rs", "a.rs", "a", "rust", repo_id).unwrap();
+        }
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+        }
+
+        let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
+        resolve_edges(&ctx, &task).await.unwrap();
+
+        let graph = ctx.graph().await;
+        let edges = graph.get_edges(repo_id).unwrap();
+        assert!(edges.is_empty());
+    }
+
+    // ── Tests for handlers that need external services ────────────────
+    // import_lib: requires network (reqwest). Tested via integration tests.
+    // branch_switch: requires git repo with branch history. Tested via integration tests.
+    // reconcile_connections: requires cross_repo module + solutions. Tested via integration tests.
+    // build_connections: requires doc_indexer traceability logic. Tested via integration tests.
+    // process_repo: deeply integrated (walks FS, detects workspaces, enqueues many tasks,
+    //   starts root watcher). Covered by integration_tests.rs with a real temp repo.
+    // process_file: delegates to processors::process_file + write_to_graph, which have
+    //   dedicated tests in processors/tests.rs.
+}

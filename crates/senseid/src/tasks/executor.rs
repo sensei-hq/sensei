@@ -66,3 +66,179 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::Mutex;
+    use crate::db::Store;
+    use crate::indexer::graph::GraphDb;
+    use crate::api::routes::SharedState;
+
+    /// Build a TaskContext backed by in-memory Store + GraphDb.
+    fn make_ctx() -> Arc<TaskContext> {
+        let store = Store::open_memory().unwrap();
+        let graph = GraphDb::open_memory().unwrap();
+        let queue = Arc::new(TaskQueue::new());
+        let app_state = Arc::new(SharedState {
+            store: Mutex::new(store),
+            graph: Mutex::new(graph),
+            task_queue: queue.clone(),
+        });
+        Arc::new(TaskContext {
+            queue,
+            app_state,
+            _graph_path: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_scan_root() {
+        let ctx = make_ctx();
+        let task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path");
+        let result = execute_task(&ctx, &task).await;
+        // ScanRoot with a nonexistent path should fail with a clear error
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_process_repo() {
+        let ctx = make_ctx();
+        let task = Task::new(TaskKind::ProcessRepo, "repo", "/nonexistent/repo");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_delete_file() {
+        let ctx = make_ctx();
+        // DeleteFile on an empty graph should succeed (no-op)
+        let task = Task::new(TaskKind::DeleteFile, "repo", "/some/file.rs");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_delete_folder() {
+        let ctx = make_ctx();
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+        }
+        let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_resolve_edges() {
+        let ctx = make_ctx();
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+        }
+        let task = Task::new(TaskKind::ResolveEdges, "repo", "");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_resolve_libs() {
+        let ctx = make_ctx();
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+        }
+        let task = Task::new(TaskKind::ResolveLibs, "repo", "");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_build_connections() {
+        let ctx = make_ctx();
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+        }
+        let task = Task::new(TaskKind::BuildConnections, "repo", "");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_import_lib_without_url() {
+        let ctx = make_ctx();
+        // ImportLib without a URL should fail
+        let task = Task::new(TaskKind::ImportLib, "repo", "react");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("requires a URL"));
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_branch_switch_without_branch() {
+        let ctx = make_ctx();
+        // BranchSwitch without branch field should fail
+        let task = Task::new(TaskKind::BranchSwitch, "repo", "");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("branch"));
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_process_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let ctx = make_ctx();
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic("repo", "repo", &tmp.path().to_string_lossy()).unwrap();
+        }
+
+        let mut task = Task::new(TaskKind::ProcessFolder, "repo", &src_dir.to_string_lossy());
+        task.module_id = Some("pkg:repo:(root)".into());
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+
+        // Verify module node was created by the dispatched handler
+        let graph = ctx.graph().await;
+        let nodes = graph.get_nodes("repo").unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, "module");
+    }
+
+    #[tokio::test]
+    async fn execute_task_dispatches_reconcile_connections() {
+        let ctx = make_ctx();
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+        }
+        // ReconcileConnections with no solutions should succeed (no-op)
+        let task = Task::new(TaskKind::ReconcileConnections, "repo", "");
+        let result = execute_task(&ctx, &task).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn task_context_provides_store_and_graph() {
+        let ctx = make_ctx();
+        // Verify we can access both store and graph
+        {
+            let store = ctx.store().await;
+            store.upsert_project_basic("test", "test", "/tmp/test").unwrap();
+            let p = store.get_project("test").unwrap();
+            assert!(p.is_some());
+        }
+        {
+            let graph = ctx.graph().await;
+            let counts = graph.count_by_kind("empty").unwrap();
+            assert!(counts.is_empty());
+        }
+    }
+}
