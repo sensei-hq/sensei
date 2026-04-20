@@ -266,24 +266,62 @@ fn save_marketplace_version(version: &str) {
 
 // ── Uninstall ────────────────────────────────────────────────────────────────
 
+// ── Uninstall request/result ────────────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+pub struct UninstallRequest {
+    #[serde(default = "default_scope")]
+    pub scope: String,
+    #[serde(default)]
+    pub projects: Vec<String>,
+}
+fn default_scope() -> String { "all".into() }
+
 #[derive(Serialize, Default)]
 pub struct UninstallResult {
     pub acps_removed: Vec<String>,
     pub hooks_removed: bool,
     pub skills_removed: u32,
+    pub commands_removed: u32,
     pub plugin_removed: bool,
     pub cache_cleared: bool,
+    pub projects_cleaned: Vec<String>,
+    pub errors: Vec<String>,
 }
 
-/// Full uninstall: remove MCP config from ACPs, hooks, skills, plugin dir, cache.
-pub fn uninstall() -> UninstallResult {
+/// Scoped uninstall — handles user scope, project scope, or both.
+pub fn uninstall(req: &UninstallRequest) -> UninstallResult {
     let mut result = UninstallResult::default();
+    let do_user = req.scope == "all" || req.scope == "user";
+    let do_project = req.scope == "all" || req.scope == "project";
+
+    if do_user {
+        uninstall_user_scope(&mut result);
+    }
+
+    if do_project {
+        for path in &req.projects {
+            uninstall_project_scope(path, &mut result);
+        }
+    }
+
+    result
+}
+
+/// Legacy uninstall — backward compat for old API callers.
+pub fn uninstall_legacy() -> UninstallResult {
+    let req = UninstallRequest { scope: "user".into(), projects: vec![] };
+    uninstall(&req)
+}
+
+/// User scope: remove ACP configs, global commands/skills, cache, config.
+fn uninstall_user_scope(result: &mut UninstallResult) {
     let h = home();
 
-    // 1. Remove ACP configurations
+    // 1. Remove ACP configurations (each adapter handles its own cleanup)
     result.acps_removed = crate::acp::unconfigure();
 
-    // 2. Remove plugin directory (hooks + binaries)
+    // 2. Remove legacy plugin directory (hooks + binaries)
     let plugin = plugin_dir();
     if plugin.exists() {
         fs::remove_dir_all(&plugin).ok();
@@ -291,30 +329,13 @@ pub fn uninstall() -> UninstallResult {
         result.hooks_removed = true;
     }
 
-    // 3. Remove installed skills
+    // 3. Remove global skills (user-scoped, in ~/.claude/skills/)
     let skills_dir = h.join(".claude/skills");
-    if skills_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&skills_dir) {
-            for entry in entries.flatten() {
-                if entry.path().extension().is_some_and(|e| e == "md") {
-                    fs::remove_file(entry.path()).ok();
-                    result.skills_removed += 1;
-                }
-            }
-        }
-    }
+    result.skills_removed += remove_md_files_in(&skills_dir);
 
-    // 4. Remove installed commands
+    // 4. Remove global commands (user-scoped, in ~/.claude/commands/)
     let commands_dir = h.join(".claude/commands");
-    if commands_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&commands_dir) {
-            for entry in entries.flatten() {
-                if entry.path().extension().is_some_and(|e| e == "md") {
-                    fs::remove_file(entry.path()).ok();
-                }
-            }
-        }
-    }
+    result.commands_removed += remove_md_files_in(&commands_dir);
 
     // 5. Clear marketplace cache
     let cache = cache_dir();
@@ -323,13 +344,77 @@ pub fn uninstall() -> UninstallResult {
         result.cache_cleared = true;
     }
 
-    // 6. Clear config
-    let config_file = sensei_dir().join("config.json");
-    if config_file.exists() {
-        fs::remove_file(&config_file).ok();
+    // 6. Clear ~/.sensei/ (config, cache, indexes, projects registry)
+    let sd = sensei_dir();
+    if sd.exists() {
+        fs::remove_dir_all(&sd).ok();
+    }
+}
+
+/// Project scope: remove .sensei/, .claude/{commands,skills,agents}, sensei from .mcp.json.
+fn uninstall_project_scope(project_path: &str, result: &mut UninstallResult) {
+    let root = std::path::PathBuf::from(project_path);
+    if !root.exists() { return; }
+
+    // .sensei/ directory
+    let sensei = root.join(".sensei");
+    if sensei.exists() {
+        fs::remove_dir_all(&sensei).ok();
     }
 
-    result
+    // .claude/commands/, .claude/skills/, .claude/agents/
+    for subdir in &["commands", "skills", "agents"] {
+        let dir = root.join(".claude").join(subdir);
+        if dir.exists() {
+            let count = remove_md_files_in(&dir);
+            match *subdir {
+                "skills" => result.skills_removed += count,
+                "commands" => result.commands_removed += count,
+                _ => {}
+            }
+        }
+    }
+
+    // Remove sensei entry from .mcp.json (preserve other servers)
+    let mcp_file = root.join(".mcp.json");
+    if mcp_file.exists() {
+        if let Ok(content) = fs::read_to_string(&mcp_file) {
+            if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(servers) = config
+                    .get_mut("mcpServers")
+                    .and_then(|s| s.as_object_mut())
+                {
+                    if servers.remove("sensei").is_some() {
+                        if servers.is_empty() {
+                            fs::remove_file(&mcp_file).ok();
+                        } else {
+                            fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    result.projects_cleaned.push(project_path.to_string());
+}
+
+/// Remove all .md files in a directory. Removes the directory if empty afterward.
+fn remove_md_files_in(dir: &std::path::Path) -> u32 {
+    if !dir.exists() { return 0; }
+    let mut count = 0u32;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().is_some_and(|e| e == "md") {
+                fs::remove_file(entry.path()).ok();
+                count += 1;
+            }
+        }
+    }
+    if fs::read_dir(dir).map(|mut d| d.next().is_none()).unwrap_or(true) {
+        fs::remove_dir(dir).ok();
+    }
+    count
 }
 
 // ── Individual item install (for desktop UI) ─────────────────────────────────
