@@ -31,40 +31,55 @@
 
   // Group projects by solution (standalone projects become single-project solutions)
   let solutionViews = $derived((): SolutionSummary[] => {
-    const solRepoIds = new Set(solutions.flatMap(s => s.repos.map(r => r.repoId)));
+    const solRepoIds = new Set(solutions.flatMap(s => s.repos.map((r: any) => r.repoId ?? r.repo_id)));
     const result: SolutionSummary[] = [];
 
     // Real solutions
     for (const sol of solutions) {
-      const solProjects = sol.repos.map(r => {
-        const proj = projects.find(p => p.repo_id === r.repoId);
+      // Solution repos use repo_id (daemon) or repoId (desktop alias)
+      const solProjects = sol.repos.map((r: any) => {
+        const rid = r.repoId ?? r.repo_id;
+        const proj = projects.find(p => p.repo_id === rid || p.repoId === rid);
         return {
-          id: r.repoId,
-          name: proj?.name ?? r.repoId,
-          role: r.role,
+          id: rid,
+          name: proj?.name ?? rid,
+          role: r.role ?? 'unknown',
           sourceType: 'git' as const,
-          state: proj?.indexed_at ? 'active' as const : 'inactive' as const,
-          indexedAt: proj?.indexed_at,
+          state: proj?.status === 'active' ? 'active' as const
+               : proj?.indexed_at ? 'recent' as const
+               : 'inactive' as const,
+          indexedAt: proj?.indexed_at ?? proj?.indexedAt,
         };
       });
       result.push({
         id: sol.id, name: sol.name, description: sol.description,
         projects: solProjects,
         state: solProjects.some(p => p.state === 'active') ? 'active' : 'inactive',
-        metrics: aggregateMetrics(sol.repos.map(r => r.repoId)),
+        metrics: aggregateMetrics(solProjects.map(p => p.id)),
       });
     }
 
     // Standalone projects (not in any solution)
     for (const p of projects.filter(pr => !solRepoIds.has(pr.repo_id))) {
+      const state = p.status === 'active' ? 'active' as const
+                  : p.indexed_at ? 'recent' as const
+                  : 'inactive' as const;
       result.push({
-        id: p.repo_id, name: p.name, description: p.path,
-        projects: [{ id: p.repo_id, name: p.name, role: 'monorepo', sourceType: 'git', state: p.indexed_at ? 'active' : 'inactive', indexedAt: p.indexed_at }],
-        state: p.indexed_at ? 'active' : 'inactive',
+        id: `p:${p.repo_id}`, name: p.name, description: p.path,
+        projects: [{ id: p.repo_id, name: p.name, role: 'monorepo', sourceType: 'git', state, indexedAt: p.indexed_at }],
+        state,
         metrics: aggregateMetrics([p.repo_id]),
       });
     }
 
+    // Sort: solutions first, then standalone; active before inactive
+    const stateOrder: Record<string, number> = { active: 0, recent: 1, inactive: 2, archived: 3 };
+    result.sort((a, b) => {
+      const aIsSol = !a.id.startsWith('p:') ? 0 : 1;
+      const bIsSol = !b.id.startsWith('p:') ? 0 : 1;
+      if (aIsSol !== bIsSol) return aIsSol - bIsSol;
+      return (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9);
+    });
     return result;
   });
 
@@ -176,7 +191,8 @@
       </p>
 
       {#each solutionViews() as sol (sol.id)}
-        <a href="/s/{sol.id}" class="block rounded-lg bg-surface-z2 px-4 py-3 hover:bg-surface-z3/60 transition-colors">
+        {@const href = sol.id.startsWith('p:') ? `/p/${sol.id.slice(2)}` : `/s/${sol.id}`}
+        <a {href} class="block rounded-lg bg-surface-z2 px-4 py-3 hover:bg-surface-z3/60 transition-colors">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
               <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-z3 text-sm font-bold text-primary-z7">
