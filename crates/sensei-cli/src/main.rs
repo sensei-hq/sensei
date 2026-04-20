@@ -29,8 +29,8 @@ enum Commands {
         #[arg(long)]
         acp: Option<String>,
 
-        /// Skills scope: global, all
-        #[arg(long, default_value = "global")]
+        /// Skills scope: all, global, project
+        #[arg(long, default_value = "all")]
         scope: String,
     },
 
