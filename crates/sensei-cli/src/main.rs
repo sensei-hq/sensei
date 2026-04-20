@@ -90,6 +90,28 @@ fn daemon_bin() -> PathBuf {
     plugin_dir().join("bin/senseid")
 }
 
+/// Check if the sensei Claude Code plugin is installed (cache dir has our plugin).
+fn is_claude_plugin_installed() -> bool {
+    let h = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    // Claude Code stores installed plugins in ~/.claude/plugins/cache/
+    let cache_dir = h.join(".claude/plugins/cache");
+    if cache_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.join(".claude-plugin/plugin.json").exists() {
+                    if let Ok(content) = fs::read_to_string(path.join(".claude-plugin/plugin.json")) {
+                        if content.contains("\"name\": \"sensei\"") || content.contains("\"name\":\"sensei\"") {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 // ── Daemon helpers ───────────────────────────────────────────────────────────
 
 fn client() -> reqwest::blocking::Client {
@@ -252,57 +274,96 @@ fn init_repo(plugin_dir_arg: Option<&str>) {
         }
     }
 
-    // ── 2. Create .mcp.json ─────────────────────────────────────────────────
-    let mcp_file = repo_root.join(".mcp.json");
-    fs::write(&mcp_file, "{\n  \"mcpServers\": {\n    \"sensei\": {\n      \"command\": \"senseid\",\n      \"args\": [\"--mcp\"]\n    }\n  }\n}\n").ok();
-    println!("[ok]      .mcp.json");
+    // ── 2. Claude Code integration ────────────────────────────────────────
+    // If the sensei plugin is installed in Claude Code, it handles agents, hooks,
+    // and MCP. Otherwise, fall back to manual setup for non-plugin ACPs.
+    let claude_plugin_installed = is_claude_plugin_installed();
+    let agents_dst = repo_root.join(".claude/agents");
 
-    // ── 3. Wire .claude/settings.local.json ─────────────────────────────────
-    let claude_dir = repo_root.join(".claude");
-    fs::create_dir_all(&claude_dir).ok();
-
-    let settings_file = claude_dir.join("settings.local.json");
-    let plugin_root_str = plugin_root.to_string_lossy();
-
-    // Preserve existing permissions
-    let permissions: serde_json::Value = if settings_file.exists() {
-        let content = fs::read_to_string(&settings_file).unwrap_or_default();
-        serde_json::from_str::<serde_json::Value>(&content)
-            .ok()
-            .and_then(|v| v.get("permissions").cloned())
-            .unwrap_or(serde_json::json!({}))
+    if claude_plugin_installed {
+        println!("[ok]      Claude Code plugin installed — agents, hooks, MCP managed by plugin");
     } else {
-        serde_json::json!({})
-    };
-
-    let settings = serde_json::json!({
-        "permissions": permissions,
-        "hooks": {
-            "SessionStart": [{
-                "hooks": [{
-                    "type": "command",
-                    "command": format!("{}/hooks/run-hook.cmd session-start", plugin_root_str)
-                }]
-            }],
-            "PreCompact": [{
-                "matcher": "",
-                "hooks": [{
-                    "type": "command",
-                    "command": format!("{}/hooks/run-hook.cmd pre-compact", plugin_root_str)
-                }]
-            }],
-            "UserPromptSubmit": [{
-                "matcher": "",
-                "hooks": [{
-                    "type": "command",
-                    "command": format!("{}/hooks/run-hook.cmd user-prompt", plugin_root_str)
-                }]
-            }]
+        // Copy agents from plugin into .claude/agents/ (always update on init)
+        let agents_src = plugin_root.join("agents");
+        if agents_src.exists() && agents_src.is_dir() {
+            fs::create_dir_all(&agents_dst).ok();
+            let mut count = 0;
+            for entry in fs::read_dir(&agents_src).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "md") {
+                    let dst = agents_dst.join(entry.file_name());
+                    fs::copy(&path, &dst).ok();
+                    count += 1;
+                }
+            }
+            println!("[copied]  .claude/agents/ ({} agents from plugin)", count);
+        } else {
+            println!("[info]    no agents found in plugin");
         }
-    });
 
-    fs::write(&settings_file, serde_json::to_string_pretty(&settings).unwrap()).ok();
-    println!("[ok]      .claude/settings.local.json");
+        // Upsert sensei entry in .mcp.json — preserve existing MCP servers
+        let mcp_file = repo_root.join(".mcp.json");
+        let mut mcp_config: serde_json::Value = mcp_file
+            .exists()
+            .then(|| fs::read_to_string(&mcp_file).ok())
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({"mcpServers": {}}));
+
+        mcp_config
+            .as_object_mut()
+            .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
+            .map(|servers| servers.insert("sensei".into(), serde_json::json!({"command": "sensei-mcp"})));
+
+        fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
+        println!("[ok]      .mcp.json (sensei entry upserted, other servers preserved)");
+
+        // Wire .claude/settings.local.json hooks
+        let claude_dir = repo_root.join(".claude");
+        fs::create_dir_all(&claude_dir).ok();
+
+        let settings_file = claude_dir.join("settings.local.json");
+        let plugin_root_str = plugin_root.to_string_lossy();
+
+        let permissions: serde_json::Value = if settings_file.exists() {
+            let content = fs::read_to_string(&settings_file).unwrap_or_default();
+            serde_json::from_str::<serde_json::Value>(&content)
+                .ok()
+                .and_then(|v| v.get("permissions").cloned())
+                .unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        let settings = serde_json::json!({
+            "permissions": permissions,
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("{}/hooks/run-hook.cmd session-start", plugin_root_str)
+                    }]
+                }],
+                "PreCompact": [{
+                    "matcher": "",
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("{}/hooks/run-hook.cmd pre-compact", plugin_root_str)
+                    }]
+                }],
+                "UserPromptSubmit": [{
+                    "matcher": "",
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("{}/hooks/run-hook.cmd user-prompt", plugin_root_str)
+                    }]
+                }]
+            }
+        });
+
+        fs::write(&settings_file, serde_json::to_string_pretty(&settings).unwrap()).ok();
+        println!("[ok]      .claude/settings.local.json");
+    }
 
     // ── 4. Gate check ───────────────────────────────────────────────────────
     println!("\n=== gate check ===");
@@ -327,6 +388,15 @@ fn init_repo(plugin_dir_arg: Option<&str>) {
             .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
             .unwrap_or(0);
         println!("[ok]   personas/ ({} personas)", count);
+    }
+
+    if agents_dst.exists() {
+        let count = fs::read_dir(&agents_dst)
+            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
+            .unwrap_or(0);
+        println!("[ok]   agents/ ({} agents)", count);
+    } else {
+        println!("[info] .claude/agents/ — not found");
     }
 
     if repo_root.join("CLAUDE.md").exists() {
@@ -416,32 +486,9 @@ fn install(specific_acp: Option<&str>, scope: &str) {
     println!("[1/2] Binaries...");
     install_binaries();
 
-    // Step 2: Everything else via daemon
-    println!("[2/2] Hooks, skills, commands, ACP config...");
-
-    if !daemon_available() {
-        // Try to start the daemon
-        let bin = daemon_bin();
-        if bin.exists() {
-            println!("  Starting daemon...");
-            std::process::Command::new(&bin)
-                .arg("start")
-                .arg("--port")
-                .arg("7744")
-                .spawn()
-                .ok();
-            // Wait for it to come up
-            for _ in 0..20 {
-                std::thread::sleep(std::time::Duration::from_millis(250));
-                if daemon_available() { break; }
-            }
-        }
-    }
-
-    if !daemon_available() {
-        eprintln!("  Daemon unavailable. Run: sensei start && sensei install");
-        return;
-    }
+    // Step 2: All ACP config goes through the daemon adapter
+    println!("[2/2] ACP integration...");
+    require_daemon();
 
     // Detect ACPs if none specified
     let acps: Vec<String> = if let Some(acp) = specific_acp {
@@ -460,7 +507,8 @@ fn install(specific_acp: Option<&str>, scope: &str) {
             .collect()
     };
 
-    // Full install via daemon
+    // All ACPs use the same daemon adapter path — each adapter knows its own strategy
+    // (claude-code adapter tries plugin install, others write MCP config)
     match client()
         .post(format!("{}/api/install", DAEMON_URL))
         .json(&serde_json::json!({"acps": acps, "scope": scope}))
@@ -471,7 +519,9 @@ fn install(specific_acp: Option<&str>, scope: &str) {
             let hooks = result["hooks_installed"].as_u64().unwrap_or(0);
             let skills = result["skills_installed"].as_u64().unwrap_or(0);
             let cmds = result["commands_installed"].as_u64().unwrap_or(0);
-            println!("  {} hooks, {} skills, {} commands installed", hooks, skills, cmds);
+            if hooks > 0 || skills > 0 || cmds > 0 {
+                println!("  {} hooks, {} skills, {} commands", hooks, skills, cmds);
+            }
             for c in result["acps_configured"].as_array().unwrap_or(&vec![]) {
                 println!("  ✓ {}", c.as_str().unwrap_or(""));
             }
@@ -484,7 +534,7 @@ fn install(specific_acp: Option<&str>, scope: &str) {
     }
 
     println!("\nSensei installed.");
-    println!("  Scan repos: sensei scan ~/Developer");
+    println!("  Run: sensei scan ~/Developer");
 }
 
 fn install_binaries() {
