@@ -338,9 +338,10 @@ fn adapter_claude_code_unconfigure() -> bool {
     let h = home();
     let mut removed = false;
 
-    // 1. Try `claude mcp remove`
+    // 1. Try `claude plugin uninstall` (mirrors plugin install path)
+    //    This removes agents, hooks, MCP, commands, and skills installed by the plugin.
     if std::process::Command::new("claude")
-        .args(["mcp", "remove", "-s", "user", "sensei"])
+        .args(["plugin", "uninstall", "sensei"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -348,14 +349,26 @@ fn adapter_claude_code_unconfigure() -> bool {
         removed = true;
     }
 
-    // 2. Fallback: remove from ~/.claude.json
+    // 2. Try `claude mcp remove` (covers non-plugin install path)
+    if !removed {
+        if std::process::Command::new("claude")
+            .args(["mcp", "remove", "-s", "user", "sensei"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            removed = true;
+        }
+    }
+
+    // 3. Fallback: remove from ~/.claude.json
     if !removed {
         if remove_sensei_from_json(&h.join(".claude.json"), "mcpServers") {
             removed = true;
         }
     }
 
-    // 3. Remove hooks
+    // 4. Remove hooks (in case plugin uninstall didn't clean them)
     let hooks_file = h.join(".claude/hooks.json");
     if hooks_file.exists() {
         std::fs::remove_file(&hooks_file).ok();
