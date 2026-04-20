@@ -7,7 +7,7 @@ cask "sensei-app" do
   GITHUB_ORG = "mizukisu".freeze
   REPO_URL = "https://github.com/#{GITHUB_ORG}/sensei-releases".freeze
 
-  version "0.2.0"
+  version "0.2.1"
 
   if Hardware::CPU.arm?
     url "#{REPO_URL}/releases/download/v#{version}/Sensei_aarch64.dmg"
