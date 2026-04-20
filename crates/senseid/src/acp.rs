@@ -116,16 +116,19 @@ fn check_mcp_configured(config_path: &std::path::Path, mcp_key: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Find the sensei-mcp binary.
+/// Find the sensei-mcp command. Prefer bare name if on PATH (stable across upgrades),
+/// fall back to absolute path if not.
 fn find_mcp_binary() -> Option<PathBuf> {
-    let h = home();
-    // Prefer plugin dir (installed by sensei install)
-    let plugin_bin = h.join(".claude/plugins/sensei/bin/sensei-mcp");
-    if plugin_bin.exists() {
-        return Some(plugin_bin);
+    // Prefer bare command name — works if installed via Homebrew or any PATH-visible method.
+    // This avoids hardcoding absolute paths that break on upgrade.
+    if which_exists("sensei-mcp") {
+        return Some(PathBuf::from("sensei-mcp"));
     }
-    // Search common bin dirs
+
+    // Fallback: search known locations with absolute paths
+    let h = home();
     let search = [
+        h.join(".claude/plugins/sensei/bin/sensei-mcp"),
         h.join(".bun/bin/sensei-mcp"),
         h.join(".local/bin/sensei-mcp"),
         PathBuf::from("/opt/homebrew/bin/sensei-mcp"),
@@ -212,37 +215,95 @@ pub fn configure(acp_ids: &[String]) -> ConfigureResult {
     result
 }
 
-/// Configure Claude Code — MCP server + hooks.
+/// Configure Claude Code — try plugin install first, fall back to manual MCP + hooks.
 fn configure_claude_code(mcp_cmd: &str) -> Result<(), String> {
+    // Try plugin install first — this handles agents, hooks, MCP, commands, skills
+    if let Some(plugin_path) = find_marketplace_plugin() {
+        let status = std::process::Command::new("claude")
+            .args(["plugin", "install", &plugin_path.to_string_lossy()])
+            .status();
+
+        match status {
+            Ok(s) if s.success() => return Ok(()),
+            Ok(s) => {
+                eprintln!("claude plugin install exited with {}, falling back to manual", s);
+            }
+            Err(_) => {
+                eprintln!("claude CLI not found, falling back to manual config");
+            }
+        }
+    }
+
+    // Fallback: manual MCP + hooks configuration
+    configure_claude_code_manual(mcp_cmd)
+}
+
+/// Find the sensei marketplace directory containing .claude-plugin/plugin.json.
+fn find_marketplace_plugin() -> Option<PathBuf> {
     let h = home();
 
-    // 1. MCP in ~/.claude.json (Claude Code's global MCP config)
-    let claude_json = h.join(".claude.json");
-    let mut config: serde_json::Value = claude_json
-        .exists()
-        .then(|| std::fs::read_to_string(&claude_json).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}));
+    // Check ~/.sensei/marketplace/ (installed by Homebrew or manually)
+    let global = h.join(".sensei/marketplace");
+    if global.join(".claude-plugin/plugin.json").exists() {
+        return Some(global);
+    }
 
-    config
-        .as_object_mut()
-        .ok_or("invalid claude.json")?
-        .entry("mcpServers")
-        .or_insert(serde_json::json!({}))
-        .as_object_mut()
-        .ok_or("invalid mcpServers")?
-        .insert(
-            "sensei".into(),
-            serde_json::json!({ "command": mcp_cmd, "args": [] }),
-        );
-    std::fs::write(&claude_json, serde_json::to_string_pretty(&config).unwrap())
-        .map_err(|e| e.to_string())?;
+    // Check Homebrew share location
+    let brew_paths = [
+        PathBuf::from("/opt/homebrew/share/sensei/marketplace"),
+        PathBuf::from("/usr/local/share/sensei/marketplace"),
+    ];
+    for path in &brew_paths {
+        if path.join(".claude-plugin/plugin.json").exists() {
+            return Some(path.clone());
+        }
+    }
+
+    None
+}
+
+/// Manual fallback: use `claude mcp add` CLI, then write hooks.
+fn configure_claude_code_manual(mcp_cmd: &str) -> Result<(), String> {
+    // 1. MCP via `claude mcp add` — uses Claude's own config management
+    let mcp_added = std::process::Command::new("claude")
+        .args(["mcp", "add", "-t", "stdio", "-s", "user", "sensei", "--", mcp_cmd])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if mcp_added {
+        eprintln!("  MCP registered via claude mcp add");
+    } else {
+        // Fallback: write ~/.claude.json directly
+        eprintln!("  claude CLI unavailable, writing MCP config directly");
+        let h = home();
+        let claude_json = h.join(".claude.json");
+        let mut config: serde_json::Value = claude_json
+            .exists()
+            .then(|| std::fs::read_to_string(&claude_json).ok())
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({}));
+
+        config
+            .as_object_mut()
+            .ok_or("invalid claude.json")?
+            .entry("mcpServers")
+            .or_insert(serde_json::json!({}))
+            .as_object_mut()
+            .ok_or("invalid mcpServers")?
+            .insert(
+                "sensei".into(),
+                serde_json::json!({ "command": mcp_cmd, "args": [] }),
+            );
+        std::fs::write(&claude_json, serde_json::to_string_pretty(&config).unwrap())
+            .map_err(|e| e.to_string())?;
+    }
 
     // 2. Hooks in ~/.claude/hooks.json
     let hooks = hooks_dir();
     let hooks_str = hooks.to_string_lossy();
-    let hooks_file = h.join(".claude/hooks.json");
+    let hooks_file = home().join(".claude/hooks.json");
     let hooks_config = serde_json::json!({ "hooks": {
         "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd session-start", hooks_str)}]}],
         "PreToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd pre-tool", hooks_str)}]}],
