@@ -135,6 +135,15 @@ export class RepoStore {
     this.all = this.all.filter(r => r.project.repo_id !== repoId);
   }
 
+  async addToSolution(solutionId: string, repoId: string, role = 'unknown') {
+    const repo = this.all.find(r => r.project.repo_id === repoId);
+    if (!repo) return;
+    const api = senseiApi(this.port);
+    // API client sends repoId, daemon expects repo_id — both are sent for compat
+    await api.addSolutionRepo(solutionId, { repoId, role });
+    await this.fetchAll();
+  }
+
   getRepo(repoId: string): RepoEntry | undefined {
     return this.all.find(r => r.project.repo_id === repoId);
   }
