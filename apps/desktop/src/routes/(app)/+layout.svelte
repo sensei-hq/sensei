@@ -114,19 +114,18 @@
         {/if}
       {/if}
 
-      <!-- Separator + main navigation -->
+      <!-- Global navigation -->
       <div class="pt-4 border-t border-surface-z0/30 mt-3">
+        <p class="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-surface-z4">Global</p>
         {#each [
-          { href: '/home', icon: 'i-solar-home-2-bold-duotone', label: 'Home' },
-          { href: '/sessions', icon: 'i-solar-history-bold-duotone', label: 'Sessions' },
-          { href: '/all', icon: 'i-solar-layers-bold-duotone', label: 'Projects' },
+          { href: '/overview', icon: 'i-solar-home-2-bold-duotone', label: 'Overview' },
           { href: '/libraries', icon: 'i-solar-book-2-bold-duotone', label: 'Libraries' },
           { href: '/tools', icon: 'i-solar-widget-5-bold-duotone', label: 'Tools' },
-          { href: '/profiles', icon: 'i-solar-user-id-bold-duotone', label: 'Profiles' },
+          { href: '/skills', icon: 'i-solar-star-bold-duotone', label: 'Skills & Plugins' },
           { href: '/benchmarks', icon: 'i-solar-chart-2-bold-duotone', label: 'Benchmarks' },
         ] as item (item.href)}
           <a href={item.href}
-            class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm no-drag transition-colors
+            class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm no-drag transition-colors
                    {$page.url.pathname.startsWith(item.href) ? 'bg-primary-z2 font-medium text-primary-z7' : 'text-surface-z5 hover:bg-surface-z3/60 hover:text-surface-z7'}">
             <span class="text-base {item.icon}"></span>
             {item.label}
