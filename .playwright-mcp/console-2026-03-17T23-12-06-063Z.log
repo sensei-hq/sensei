@@ -1,7 +1,0 @@
-[   64585ms] TypeError: Cannot read properties of undefined (reading 'signIn')
-    at signIn (http://localhost:5173/@fs/Users/Jerry/Developer/kavach/packages/ui/src/AuthProvider.svelte:48:51)
-    at HTMLFormElement.submit (http://localhost:5173/@fs/Users/Jerry/Developer/kavach/packages/ui/src/AuthProvider.svelte:210:5)
-    at http://localhost:5173/node_modules/.vite/deps/chunk-3CIOGNDO.js?v=d800e83a:42:25
-    at without_reactive_context (http://localhost:5173/node_modules/.vite/deps/chunk-S5IL6JH7.js?v=d800e83a:3209:12)
-    at HTMLFormElement.target_handler (http://localhost:5173/node_modules/.vite/deps/chunk-3CIOGNDO.js?v=d800e83a:41:14)
-[  146228ms] [WARNING] GoTrueClient@sb-localhost-auth-token:1 (2.99.1) 2026-03-17T23:14:32.289Z Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key. @ http://localhost:5173/@fs/Users/Jerry/Developer/sensei/node_modules/.bun/@sveltejs+kit@2.55.0+5a9f3a85bf16d17c/node_modules/@sveltejs/kit/src/runtime/client/client.js?v=0c85dc44:3298
