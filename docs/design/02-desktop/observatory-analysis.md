@@ -310,14 +310,22 @@ Agents are especially useful for:
 - **Session analysis** — review events, correlate with profiles, suggest improvements
 - **Codebase audit** — check all files against patterns, find violations
 
-### Proposed agents (opt-in, in `marketplace/agents/`)
+### Agents — mindset wrapping (in `marketplace/agents/`)
 
-| Agent | Description | Tools | When to use |
-|-------|-------------|-------|-------------|
-| `session-analyst` | Analyzes session events, identifies patterns in corrections, suggests profile improvements | Read, Grep, Glob | After a session with low FTR or many corrections |
-| `code-investigator` | Traces dead code, complexity hotspots, and duplicate clusters with recommendations | Read, Grep, Glob, Bash | When code page shows actionable findings |
-| `profile-tuner` | Reviews project profiles against session data, suggests additions/removals | Read, Grep, Glob | Periodically, or when Profiles page shows unused levers |
-| `doc-auditor` | Checks docs against code for drift, missing coverage, stale references | Read, Grep, Glob | After code changes to documented areas |
+Each mindset gets a corresponding agent that wraps the mindset (keeps why + what) and adds the **how** (procedures, tools, report format). Plus one generic persona agent.
+
+| Agent | Wraps | Tools | When to use |
+|-------|-------|-------|-------------|
+| `analyst.md` | Analyst mindset | Read, Grep, Glob | Autonomous problem analysis before design |
+| `developer.md` | Developer mindset | Read, Grep, Glob, Bash | Verify implementation approach before coding |
+| `acceptance-tester.md` | Acceptance Tester mindset | Read, Grep, Glob, Bash | Acceptance testing from user perspective |
+| `ux-designer.md` | UX Designer mindset | Read, Grep, Glob | Review interfaces for usability and consistency |
+| `security-reviewer.md` | Security Reviewer mindset | Read, Grep, Glob, Bash | OWASP audit, auth, data exposure |
+| `performance-engineer.md` | Performance Engineer mindset | Read, Grep, Glob, Bash | Complexity, memory, bottleneck analysis |
+| `devops-sre.md` | DevOps/SRE mindset | Read, Grep, Glob, Bash | Deployability, monitoring, rollback checks |
+| `persona-reviewer.md` | Any persona (generic) | Read, Grep, Glob | Review work from one or all personas' perspective |
+
+See `docs/ideas/21-custom-agents.md` for full design.
 
 ### Integration with desktop
 
@@ -344,17 +352,17 @@ The agent **includes** the full mindset content — it doesn't replace it. The m
 - What actions to suggest
 
 ```markdown
-# .sensei/agents/bat.md
+# .sensei/agents/acceptance-tester.md
 ---
-name: bat
-description: BAT review — verify implementation from user perspective
+name: acceptance-tester
+description: Acceptance testing — verify implementation from user perspective
 tools: Read, Glob, Grep, Bash
 model: sonnet
 ---
 
 ## Mindset (what + why)
 
-[full content from .sensei/mindsets/bat.md — questions preserved exactly]
+[full content from .sensei/mindsets/acceptance-tester.md — questions preserved exactly]
 
 1. **Walk the user journey** — Start from the trigger...
 2. **Test the happy path end-to-end** — Not unit by unit...
@@ -381,7 +389,7 @@ This means:
 - When the user wants deeper verification, they promote a mindset to an agent
 - The agent contains the full mindset + the procedural how
 - `sensei init` can optionally install agents alongside mindsets
-- The Profiles page shows both: "Analyst mindset active, BAT agent available"
+- The Profiles page shows both: "Analyst mindset active, Acceptance Tester agent available"
 
 ### Creating and Promoting Agents
 
@@ -393,7 +401,7 @@ The Profiles page shows every mindset and persona. Each row has a status:
 
 ```
 Analyst     mindset only    [Promote to agent]
-BAT         mindset + agent  ✓ agent active
+Acceptance Tester  mindset + agent  ✓ agent active
 UX Designer mindset only    [Promote to agent]
 AI Driven Developer  persona only  [Promote to agent]
 ```
@@ -456,7 +464,7 @@ The Profiles page gains an "Agents" section alongside the lever impact table:
 ```
 ACTIVE AGENTS
 ┌─────────────────────────────────────────────────────────┐
-│ 🤖 bat               mindset agent    applied 10x  keep │
+│ 🤖 acceptance-tester  mindset agent    applied 10x  keep │
 │ 🤖 persona-reviewer   generic agent    applied 3x  keep │
 └─────────────────────────────────────────────────────────┘
 

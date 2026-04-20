@@ -10,13 +10,13 @@ related: 01-workflow-system.md, 18-testability-tdd.md
 
 ## Problem
 
-The three core mindsets (analyst, developer, BAT) guide HOW to work. But projects also need to consider WHO they're building for. A healthcare app has patients, doctors, and admins — each with different needs. A developer tool has end users, plugin authors, and API consumers. Without persona awareness, the AI builds for an abstract "user" instead of specific people with specific journeys.
+The three core mindsets (analyst, developer, Acceptance Tester) guide HOW to work. But projects also need to consider WHO they're building for. A healthcare app has patients, doctors, and admins — each with different needs. A developer tool has end users, plugin authors, and API consumers. Without persona awareness, the AI builds for an abstract "user" instead of specific people with specific journeys.
 
 ## Two dimensions
 
 | Dimension | What it answers | Scope | Examples |
 |-----------|----------------|-------|---------|
-| **Process mindsets** | How should I approach this work? | Universal (plugin) | Analyst, developer, BAT, UX designer, security reviewer |
+| **Process mindsets** | How should I approach this work? | Universal (plugin) | Analyst, developer, Acceptance Tester, UX designer, security reviewer |
 | **Persona mindsets** | Who am I building for? What do they need? | Project-specific | End user, admin, API consumer, plugin developer |
 
 ## Core process mindsets (universal)
@@ -24,7 +24,7 @@ The three core mindsets (analyst, developer, BAT) guide HOW to work. But project
 Already built:
 - **Analyst** — understand the problem before designing
 - **Developer** — understand the implementation before coding
-- **BAT** — verify from user's perspective
+- **Acceptance Tester** — verify from user's perspective
 
 To add:
 - **UX Designer** — is the interface intuitive, accessible, consistent? Does the journey flow?
