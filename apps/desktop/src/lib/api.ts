@@ -69,6 +69,9 @@ export function senseiApi(port: number) {
 
     deleteProject: (repoId: string) => del(`/api/projects/${enc(repoId)}`),
 
+    excludeRepo: (repoId: string) =>
+      post(`/api/projects/${enc(repoId)}/exclude`, {}, { ok: false }),
+
     addProjectTag: (repoId: string, tag: string) =>
       post(`/api/projects/${enc(repoId)}/tags`, { tag }, { ok: false }),
 

@@ -33,6 +33,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{repo_id}/tags", post(add_project_tag))
         .route("/api/projects/{repo_id}/tags/{tag}", delete(remove_project_tag))
         .route("/api/projects/{repo_id}/summary", get(project_summary))
+        .route("/api/projects/{repo_id}/exclude", post(exclude_project))
+        // Exclusions
+        .route("/api/exclusions", get(list_exclusions))
+        .route("/api/exclusions/{path}", delete(remove_exclusion))
         // Solutions
         .route("/api/solutions", get(list_solutions).post(create_solution))
         .route("/api/solutions/{id}", put(update_solution).delete(delete_solution))
@@ -204,6 +208,57 @@ async fn delete_project(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
     s.delete_project(&repo_id)
+        .map(|_| Json(serde_json::json!({"ok": true})))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+// ── Exclude / Exclusions ─────────────────────────────────────────────────────
+
+async fn exclude_project(
+    State(state): State<AppState>,
+    Path(repo_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    // Look up project path before deleting
+    let path = store.get_project(&repo_id)
+        .ok().flatten()
+        .map(|p| p.path.clone())
+        .unwrap_or_default();
+
+    // Clear indexed data from graph
+    {
+        let graph = state.graph.lock().await;
+        graph.delete_project_graph(&repo_id).ok();
+    }
+
+    // Exclude in store (adds to excluded_paths, deletes project)
+    store.exclude_project(&repo_id, &path)
+        .map(|_| Json(serde_json::json!({"ok": true, "excluded": path})))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_exclusions(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    match store.list_exclusions() {
+        Ok(exclusions) => Json(serde_json::json!({
+            "exclusions": exclusions.iter().map(|(path, repo_id, at)| serde_json::json!({
+                "path": path, "repo_id": repo_id, "excluded_at": at,
+            })).collect::<Vec<_>>()
+        })),
+        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+async fn remove_exclusion(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let store = state.store.lock().await;
+    // Path comes URL-encoded from the route parameter
+    let decoded = path.replace("%2F", "/").replace("%20", " ");
+    store.remove_exclusion(&decoded)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
