@@ -384,3 +384,331 @@ fn adapter_opencode_configure(spec: &AcpSpec, mcp_cmd: &str) -> Result<(), Strin
     let entry = serde_json::json!({"type": "local", "command": [mcp_cmd, ""], "enabled": true});
     upsert_sensei_in_json(&config_path, spec.mcp_key, entry)
 }
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── upsert_sensei_in_json ───────────────────────────────────────────
+
+    #[test]
+    fn upsert_creates_file_from_scratch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
+
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+    }
+
+    #[test]
+    fn upsert_preserves_existing_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{"svelte":{"command":"npx","args":["-y","svelte-mcp"]}}}"#).unwrap();
+
+        let entry = serde_json::json!({"command": "sensei-mcp"});
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
+    }
+
+    #[test]
+    fn upsert_overwrites_existing_sensei_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{"sensei":{"command":"old-binary"}}}"#).unwrap();
+
+        let entry = serde_json::json!({"command": "sensei-mcp"});
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+    }
+
+    #[test]
+    fn upsert_creates_nested_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("deep/nested/mcp.json");
+
+        let entry = serde_json::json!({"command": "sensei-mcp"});
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn upsert_with_different_mcp_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+
+        let entry = serde_json::json!({"type": "local", "command": ["sensei-mcp", ""], "enabled": true});
+        upsert_sensei_in_json(&path, "mcp", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["mcp"]["sensei"]["type"], "local");
+        assert_eq!(content["mcp"]["sensei"]["enabled"], true);
+    }
+
+    // ── remove_sensei_from_json ─────────────────────────────────────────
+
+    #[test]
+    fn remove_from_nonexistent_file_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("does-not-exist.json");
+        assert!(!remove_sensei_from_json(&path, "mcpServers"));
+    }
+
+    #[test]
+    fn remove_when_sensei_not_present_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{"svelte":{"command":"npx"}}}"#).unwrap();
+
+        assert!(!remove_sensei_from_json(&path, "mcpServers"));
+        // File unchanged
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(content["mcpServers"]["svelte"].is_object());
+    }
+
+    #[test]
+    fn remove_sensei_preserves_other_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"},"svelte":{"command":"npx"}}}"#).unwrap();
+
+        assert!(remove_sensei_from_json(&path, "mcpServers"));
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(content["mcpServers"]["sensei"].is_null());
+        assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
+    }
+
+    #[test]
+    fn remove_sensei_only_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"}}}"#).unwrap();
+
+        assert!(remove_sensei_from_json(&path, "mcpServers"));
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(content["mcpServers"]["sensei"].is_null());
+        assert!(content["mcpServers"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_with_opencode_mcp_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+        std::fs::write(&path, r#"{"mcp":{"sensei":{"type":"local","command":["sensei-mcp",""]}}}"#).unwrap();
+
+        assert!(remove_sensei_from_json(&path, "mcp"));
+    }
+
+    // ── roundtrip: upsert then remove ───────────────────────────────────
+
+    #[test]
+    fn roundtrip_upsert_then_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{"svelte":{"command":"npx"}}}"#).unwrap();
+
+        // Install
+        let entry = serde_json::json!({"command": "sensei-mcp"});
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(content["mcpServers"]["sensei"].is_object());
+        assert!(content["mcpServers"]["svelte"].is_object());
+
+        // Uninstall
+        assert!(remove_sensei_from_json(&path, "mcpServers"));
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(content["mcpServers"]["sensei"].is_null());
+        assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
+    }
+
+    #[test]
+    fn roundtrip_fresh_file_upsert_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+
+        // Install into new file
+        upsert_sensei_in_json(&path, "mcpServers", serde_json::json!({"command": "sensei-mcp"})).unwrap();
+        assert!(path.exists());
+
+        // Uninstall
+        assert!(remove_sensei_from_json(&path, "mcpServers"));
+    }
+
+    // ── AcpAdapter dispatch ─────────────────────────────────────────────
+
+    #[test]
+    fn mcp_file_adapter_configure_creates_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_rel = dir.path().join("test-acp/mcp.json");
+        let spec = AcpSpec {
+            id: "test-acp",
+            name: "Test ACP",
+            mcp_key: "mcpServers",
+            config_rel: "", // not used — we call the helper directly
+            adapter: AcpAdapter::McpFile,
+        };
+
+        let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
+        upsert_sensei_in_json(&config_rel, spec.mcp_key, entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_rel).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+
+        // Unconfigure
+        assert!(remove_sensei_from_json(&config_rel, spec.mcp_key));
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_rel).unwrap()).unwrap();
+        assert!(content["mcpServers"]["sensei"].is_null());
+    }
+
+    #[test]
+    fn opencode_adapter_uses_different_entry_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+
+        let entry = serde_json::json!({"type": "local", "command": ["sensei-mcp", ""], "enabled": true});
+        upsert_sensei_in_json(&path, "mcp", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["mcp"]["sensei"]["type"], "local");
+        assert_eq!(content["mcp"]["sensei"]["enabled"], true);
+        let cmd = content["mcp"]["sensei"]["command"].as_array().unwrap();
+        assert_eq!(cmd[0], "sensei-mcp");
+    }
+
+    // ── ACP_SPECS consistency ───────────────────────────────────────────
+
+    #[test]
+    fn all_acp_specs_have_unique_ids() {
+        let mut ids: Vec<&str> = ACP_SPECS.iter().map(|s| s.id).collect();
+        let original_len = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), original_len, "duplicate ACP ids found");
+    }
+
+    #[test]
+    fn all_acp_specs_have_nonempty_fields() {
+        for spec in ACP_SPECS {
+            assert!(!spec.id.is_empty(), "empty id");
+            assert!(!spec.name.is_empty(), "empty name for {}", spec.id);
+            assert!(!spec.mcp_key.is_empty(), "empty mcp_key for {}", spec.id);
+            assert!(!spec.config_rel.is_empty(), "empty config_rel for {}", spec.id);
+        }
+    }
+
+    #[test]
+    fn claude_code_spec_uses_claude_code_adapter() {
+        let spec = ACP_SPECS.iter().find(|s| s.id == "claude-code").unwrap();
+        assert!(matches!(spec.adapter, AcpAdapter::ClaudeCode));
+    }
+
+    #[test]
+    fn opencode_spec_uses_opencode_adapter() {
+        let spec = ACP_SPECS.iter().find(|s| s.id == "opencode").unwrap();
+        assert!(matches!(spec.adapter, AcpAdapter::OpenCode));
+    }
+
+    #[test]
+    fn generic_acps_use_mcp_file_adapter() {
+        let generic = ["cursor", "windsurf", "zed", "kiro", "vscode", "claude-desktop"];
+        for id in generic {
+            let spec = ACP_SPECS.iter().find(|s| s.id == id).expect(id);
+            assert!(matches!(spec.adapter, AcpAdapter::McpFile), "{} should use McpFile adapter", id);
+        }
+    }
+
+    // ── Edge cases ──────────────────────────────────────────────────────
+
+    #[test]
+    fn upsert_into_invalid_json_file_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, "not json at all").unwrap();
+
+        // serde_json::from_str fails → falls back to empty object
+        let entry = serde_json::json!({"command": "sensei-mcp"});
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+    }
+
+    #[test]
+    fn remove_from_invalid_json_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, "not json").unwrap();
+
+        assert!(!remove_sensei_from_json(&path, "mcpServers"));
+    }
+
+    #[test]
+    fn remove_when_mcp_key_missing_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"otherKey": {}}"#).unwrap();
+
+        assert!(!remove_sensei_from_json(&path, "mcpServers"));
+    }
+
+    // Note: adapter_claude_code_configure/unconfigure call `claude` CLI which
+    // can't be safely mocked in parallel unit tests (requires PATH mutation).
+    // The CLI invocation behavior is tested via the integration/e2e path.
+    // Here we test the fallback paths that operate on JSON files.
+
+    #[test]
+    fn claude_code_unconfigure_fallback_removes_from_claude_json() {
+        // Simulate the fallback path: claude CLI not available, remove from JSON
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        std::fs::write(&claude_json, r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"},"svelte":{"command":"npx"}}}"#).unwrap();
+
+        // Direct test of the shared helper used by the fallback
+        assert!(remove_sensei_from_json(&claude_json, "mcpServers"));
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
+        assert!(content["mcpServers"]["sensei"].is_null());
+        assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
+    }
+
+    #[test]
+    fn claude_code_configure_fallback_writes_claude_json() {
+        // Simulate the fallback path: claude CLI not available, write JSON directly
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+
+        upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": "sensei-mcp", "args": []})).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+    }
+
+    #[test]
+    fn claude_code_configure_fallback_preserves_existing_claude_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_json = dir.path().join(".claude.json");
+        std::fs::write(&claude_json, r#"{"mcpServers":{"svelte":{"command":"npx"}},"other":"data"}"#).unwrap();
+
+        upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": "sensei-mcp"})).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
+        assert_eq!(content["other"], "data");
+    }
+}
