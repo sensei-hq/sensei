@@ -79,7 +79,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub depends_on: Vec<u64>,            // won't run until these complete
     pub error: Option<String>,
-    pub created_at: Instant,
+    pub _created_at: Instant,
     pub started_at: Option<Instant>,
     pub completed_at: Option<Instant>,
 }
@@ -98,7 +98,7 @@ impl Task {
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             error: None,
-            created_at: Instant::now(),
+            _created_at: Instant::now(),
             started_at: None,
             completed_at: None,
         }

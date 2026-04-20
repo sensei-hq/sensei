@@ -1,4 +1,6 @@
-use rusqlite::{Connection, params, OptionalExtension};
+use rusqlite::{Connection, params};
+#[cfg(test)]
+use rusqlite::OptionalExtension;
 use std::path::Path;
 use crate::types::{NodeKind, HierarchyNode};
 
@@ -22,6 +24,7 @@ impl GraphDb {
         Ok(db)
     }
 
+    #[cfg(test)]
     pub fn clone_connection(&self) -> Result<Self, String> {
         let db_path = self.db_file.as_ref().ok_or("Cannot clone in-memory DB")?;
         let conn = Connection::open(db_path).map_err(|e| format!("Failed to clone graph DB: {}", e))?;
@@ -35,6 +38,7 @@ impl GraphDb {
         self.db_file.as_deref()
     }
 
+    #[cfg(test)]
     pub fn open_memory() -> Result<Self, String> {
         let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
         let db = Self { conn, db_file: None };
@@ -234,6 +238,7 @@ impl GraphDb {
     // ── Compatibility wrappers (delegate to merge_node/search_nodes) ──
     // These will be removed once all callers are migrated.
 
+    #[cfg(test)]
     pub fn merge_function(
         &self, id: &str, name: &str, file: &str, line: u32,
         sig: &str, body: &str, docstring: &str, complexity: u32, project: &str,
@@ -247,6 +252,7 @@ impl GraphDb {
         ))
     }
 
+    #[cfg(test)]
     pub fn merge_file(
         &self, id: &str, path: &str, module: &str, lang: &str, project: &str,
     ) -> Result<(), String> {
@@ -256,6 +262,7 @@ impl GraphDb {
         self.merge_node(&n)
     }
 
+    #[cfg(test)]
     pub fn merge_type(
         &self, id: &str, name: &str, file: &str, line: u32, kind: &str, project: &str,
     ) -> Result<(), String> {
@@ -266,6 +273,7 @@ impl GraphDb {
         self.merge_node(&n)
     }
 
+    #[cfg(test)]
     pub fn merge_doc(
         &self, id: &str, path: &str, title: &str, doc_type: &str, project: &str,
     ) -> Result<(), String> {
@@ -275,6 +283,7 @@ impl GraphDb {
         ))
     }
 
+    #[cfg(test)]
     pub fn merge_package(
         &self, id: &str, name: &str, version: Option<&str>, path: &str, pkg_type: &str, project: &str,
     ) -> Result<(), String> {
@@ -285,6 +294,7 @@ impl GraphDb {
         self.merge_node(&n)
     }
 
+    #[cfg(test)]
     pub fn merge_module(
         &self, id: &str, name: &str, path: &str, package_id: Option<&str>, project: &str,
     ) -> Result<(), String> {
@@ -295,6 +305,7 @@ impl GraphDb {
     }
 
     /// Write an IRDoc to the graph — hierarchy_nodes base + ir_docs extension.
+    #[cfg(test)]
     pub fn write_ir_doc(&self, doc: &crate::ir::IRDoc, project: &str) -> Result<(), String> {
         let id = format!("doc:{}", doc.base.file);
 
@@ -362,6 +373,7 @@ impl GraphDb {
     }
 
     /// Read an IRDoc back from the graph (for testing and queries).
+    #[cfg(test)]
     pub fn read_ir_doc(&self, node_id: &str) -> Result<Option<crate::ir::IRDoc>, String> {
         // Read base node
         let node = self.conn.query_row(
@@ -514,6 +526,7 @@ impl GraphDb {
     }
 
     /// Read an IRFunction back from the graph.
+    #[cfg(test)]
     pub fn read_ir_function(&self, node_id: &str) -> Result<Option<crate::ir::IRFunction>, String> {
         let node = self.conn.query_row(
             "SELECT name, file, line, docstring, tags, level FROM hierarchy_nodes WHERE id=?1",
@@ -664,6 +677,7 @@ impl GraphDb {
     }
 
     /// Read an IRClass back from the graph.
+    #[cfg(test)]
     pub fn read_ir_class(&self, node_id: &str) -> Result<Option<crate::ir::IRClass>, String> {
         let node = self.conn.query_row(
             "SELECT name, file, line, docstring, tags, level FROM hierarchy_nodes WHERE id=?1",
@@ -737,10 +751,12 @@ impl GraphDb {
         }))
     }
 
+    #[cfg(test)]
     pub fn delete_file(&self, abs_path: &str, project: &str) -> Result<(), String> {
         self.delete_by_file(abs_path, project)
     }
 
+    #[cfg(test)]
     pub fn delete_doc(&self, doc_id: &str) -> Result<(), String> {
         self.delete_node(doc_id)
     }
@@ -778,6 +794,7 @@ impl GraphDb {
         }).collect())
     }
 
+    #[cfg(test)]
     pub fn find_function_by_name(&self, name: &str, project: &str) -> Result<Option<String>, String> {
         // Search across all function-like kinds
         self.conn.query_row(
@@ -786,7 +803,9 @@ impl GraphDb {
         ).optional().map_err(|e| e.to_string())
     }
 
+    #[cfg(test)]
     pub fn tag_file(&self, id: &str, tags: &str) -> Result<(), String> { self.tag_node(id, tags) }
+    #[cfg(test)]
     pub fn tag_function(&self, id: &str, tags: &str) -> Result<(), String> { self.tag_node(id, tags) }
 
     pub fn files_by_tag(&self, tag: &str, project: &str) -> Result<Vec<(String, String, String)>, String> {
@@ -892,6 +911,7 @@ impl GraphDb {
     }
 
     /// Find a node by exact name and kind.
+    #[cfg(test)]
     pub fn find_node_by_name(&self, name: &str, project: &str, kind: &str) -> Result<Option<String>, String> {
         self.conn.query_row(
             "SELECT id FROM hierarchy_nodes WHERE name = ?1 AND project = ?2 AND kind = ?3 LIMIT 1",
@@ -901,6 +921,7 @@ impl GraphDb {
     }
 
     /// Tag a node (sets the tags field).
+    #[cfg(test)]
     pub fn tag_node(&self, node_id: &str, tags: &str) -> Result<(), String> {
         self.conn.execute(
             "UPDATE hierarchy_nodes SET tags = ?2 WHERE id = ?1",
@@ -1140,6 +1161,7 @@ impl GraphDb {
 
     // ── Doc drift ────────────────────────────────────────────────────
 
+    #[cfg(test)]
     pub fn find_drifted_docs(
         &self, changed_file_ids: &[String], changed_fn_ids: &[String],
     ) -> Result<Vec<DocDrift>, String> {
@@ -1175,6 +1197,7 @@ impl GraphDb {
         Ok(drifts)
     }
 
+    #[cfg(test)]
     pub fn record_doc_drift(&self, drifts: &[DocDrift], project: &str) -> Result<(), String> {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS doc_drift(

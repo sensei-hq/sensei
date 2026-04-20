@@ -31,7 +31,7 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
     let task_ctx = Arc::new(TaskContext {
         queue: task_queue.clone(),
         app_state: state.clone(),
-        graph_path,
+        _graph_path: graph_path,
     });
     spawn_workers(task_ctx, DEFAULT_WORKERS);
 

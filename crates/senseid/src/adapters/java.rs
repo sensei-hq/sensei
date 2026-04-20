@@ -1,7 +1,7 @@
 use tree_sitter::{Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
-use crate::ir::{IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
-use super::common::{field_text, make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text, has_child_kind};
+use crate::ir::{IRParam, IRImport, IRParsedFile, ClassKind, Visibility};
+use super::common::{field_text, make_symbol, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use super::LanguageAdapter;
 
 pub struct JavaAdapter;
@@ -148,14 +148,14 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
         Some(t) => t,
         None => return IRParsedFile { file_path: file_path.into(), language: "java".into(), ..Default::default() },
     };
-    let lines: Vec<&str> = source.lines().collect();
+    let _lines: Vec<&str> = source.lines().collect();
     let root = tree.root_node();
     let src = source.as_bytes();
 
-    let mut functions = Vec::new();
+    let functions = Vec::new();
     let mut classes = Vec::new();
     let mut imports = Vec::new();
-    let mut constants = Vec::new();
+    let constants = Vec::new();
 
     for i in 0..root.child_count() {
         let child = root.child(i).unwrap();

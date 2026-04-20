@@ -37,6 +37,8 @@ pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, re
 
 /// IR-based document processing — thin wrapper that calls parse → write.
 /// No logic here — just orchestration. (D18: workers are thin wrappers)
+/// Currently test-only; will be wired into the processing pipeline (issue #90).
+#[cfg(test)]
 pub fn process_ir(
     rel_path: &str,
     content: &str,

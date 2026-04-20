@@ -572,7 +572,7 @@ impl Store {
             let like_pattern = format!("%{}", suffix);
             let mut stmt = graph.prepare(
                 "SELECT name, file, kind FROM hierarchy_nodes WHERE project=?1 AND name LIKE ?2 AND kind IN ('class','struct','interface','type','component')"
-            ).map_err(|e| rusqlite::Error::QueryReturnedNoRows)?; // map graph error
+            ).map_err(|_e| rusqlite::Error::QueryReturnedNoRows)?; // map graph error
 
             let instances: Vec<serde_json::Value> = stmt.query_map(
                 rusqlite::params![project, like_pattern],
