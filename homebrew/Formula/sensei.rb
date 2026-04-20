@@ -10,7 +10,7 @@ class Sensei < Formula
 
   desc "AI development intelligence — CLI for indexing, MCP server, and telemetry"
   homepage "https://github.com/#{GITHUB_ORG}/sensei-dev"
-  version "0.2.0"
+  version "0.2.1"
 
   # Release archives (produced by `bun run build` + packaging)
   if OS.mac? && Hardware::CPU.arm?
