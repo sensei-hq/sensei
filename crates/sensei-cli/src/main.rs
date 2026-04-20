@@ -33,8 +33,12 @@ enum Commands {
         plugin_dir: Option<String>,
     },
 
-    /// Remove sensei configuration from all ACPs
-    Uninstall,
+    /// Remove sensei configuration
+    Uninstall {
+        /// Scope: user (global), project (current repo), or all (default)
+        #[arg(long, default_value = "all")]
+        scope: String,
+    },
 
     /// Start the sensei daemon
     Start {
@@ -70,7 +74,7 @@ fn main() {
         Commands::Init { scope, acp, recommended, plugin_dir } => {
             init(scope.as_deref(), acp.as_deref(), recommended, plugin_dir.as_deref());
         }
-        Commands::Uninstall => uninstall(),
+        Commands::Uninstall { scope } => uninstall(&scope),
         Commands::Start { port } => daemon_cmd("start", Some(port)),
         Commands::Stop => daemon_cmd("stop", None),
         Commands::Status => daemon_cmd("status", None),
@@ -526,44 +530,166 @@ fn format_date() -> String {
 
 // ── Uninstall ───────────────────────────────────────────────────────────────
 
-fn uninstall() {
-    if daemon_available() {
-        match client()
-            .post(format!("{}/api/uninstall", DAEMON_URL))
-            .send()
-        {
-            Ok(r) if r.status().is_success() => {
-                let result: serde_json::Value = r.json().unwrap_or_default();
-                for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
-                    println!("  Removed MCP from {}", id.as_str().unwrap_or(""));
+fn uninstall(scope: &str) {
+    println!("=== sensei uninstall (scope: {}) ===\n", scope);
+
+    let do_user = scope == "all" || scope == "user";
+    let do_project = scope == "all" || scope == "project";
+
+    // ── User scope cleanup ──────────────────────────────────────────────
+    if do_user {
+        println!("[user scope]");
+
+        // Remove MCP from configured ACPs via daemon
+        if daemon_available() {
+            match client()
+                .post(format!("{}/api/uninstall", DAEMON_URL))
+                .send()
+            {
+                Ok(r) if r.status().is_success() => {
+                    let result: serde_json::Value = r.json().unwrap_or_default();
+                    for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
+                        println!("  ✓ Removed MCP from {}", id.as_str().unwrap_or(""));
+                    }
                 }
-                if result["skills_removed"].as_u64().unwrap_or(0) > 0 {
-                    println!("  Removed {} skills", result["skills_removed"]);
+                _ => eprintln!("  ✗ Daemon uninstall failed"),
+            }
+        }
+
+        // Also try `claude mcp remove` for clean Claude Code removal
+        let _ = std::process::Command::new("claude")
+            .args(["mcp", "remove", "-s", "user", "sensei"])
+            .status();
+
+        // Remove global commands installed by init --scope user
+        let global_cmds = home().join(".claude/commands");
+        let global_cmd_names = ["help", "commit", "checkpoint", "session", "get-api-docs"];
+        let mut removed_cmds = 0;
+        for name in &global_cmd_names {
+            let path = global_cmds.join(format!("{}.md", name));
+            if path.exists() {
+                fs::remove_file(&path).ok();
+                removed_cmds += 1;
+            }
+        }
+        if removed_cmds > 0 {
+            println!("  ✓ Removed {} global commands", removed_cmds);
+        }
+
+        // Remove global skills (if any were installed globally)
+        let global_skills = home().join(".claude/skills");
+        if global_skills.exists() {
+            let mut removed_skills = 0;
+            if let Ok(entries) = fs::read_dir(&global_skills) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |e| e == "md") {
+                        // Only remove sensei-installed skills (check for sensei marker in content)
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            if content.contains("sensei") || content.contains("get_session_context")
+                                || content.contains("get_callers") || content.contains("search(")
+                            {
+                                fs::remove_file(&path).ok();
+                                removed_skills += 1;
+                            }
+                        }
+                    }
                 }
             }
-            _ => eprintln!("Daemon uninstall failed, cleaning up manually"),
+            if removed_skills > 0 {
+                println!("  ✓ Removed {} global skills", removed_skills);
+            }
+        }
+
+        // Remove ~/.sensei/ (cache, config, indexes)
+        let sensei_home = home().join(".sensei");
+        if sensei_home.exists() {
+            fs::remove_dir_all(&sensei_home).ok();
+            println!("  ✓ Removed ~/.sensei/ (cache, config, indexes)");
+        }
+
+        // Remove legacy plugin dir
+        let legacy = home().join(".claude/plugins/sensei");
+        if legacy.exists() {
+            fs::remove_dir_all(&legacy).ok();
+            println!("  ✓ Removed legacy plugin directory");
         }
     }
 
-    // Clean up legacy plugin dir
-    let legacy = home().join(".claude/plugins/sensei");
-    if legacy.exists() {
-        fs::remove_dir_all(&legacy).ok();
-        println!("Removed legacy plugin directory");
-    }
+    // ── Project scope cleanup ───────────────────────────────────────────
+    if do_project {
+        let repo_root = std::env::current_dir().unwrap_or_default();
+        println!("[project scope] {}", repo_root.display());
 
-    // Reset user scope flag
-    let config_file = home().join(".sensei/config.json");
-    if config_file.exists() {
-        if let Ok(s) = fs::read_to_string(&config_file) {
-            if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&s) {
-                config["user_scope_configured"] = serde_json::json!(false);
-                fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+        // Remove .sensei/ directory
+        let sensei_dir = repo_root.join(".sensei");
+        if sensei_dir.exists() {
+            fs::remove_dir_all(&sensei_dir).ok();
+            println!("  ✓ Removed .sensei/");
+        }
+
+        // Remove sensei-installed project commands
+        let cmds_dir = repo_root.join(".claude/commands");
+        if cmds_dir.exists() {
+            let count = remove_md_files(&cmds_dir);
+            if count > 0 { println!("  ✓ Removed {} project commands", count); }
+        }
+
+        // Remove sensei-installed project skills
+        let skills_dir = repo_root.join(".claude/skills");
+        if skills_dir.exists() {
+            let count = remove_md_files(&skills_dir);
+            if count > 0 { println!("  ✓ Removed {} project skills", count); }
+        }
+
+        // Remove agents
+        let agents_dir = repo_root.join(".claude/agents");
+        if agents_dir.exists() {
+            let count = remove_md_files(&agents_dir);
+            if count > 0 { println!("  ✓ Removed {} agents", count); }
+        }
+
+        // Remove sensei entry from .mcp.json (preserve other servers)
+        let mcp_file = repo_root.join(".mcp.json");
+        if mcp_file.exists() {
+            if let Ok(content) = fs::read_to_string(&mcp_file) {
+                if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+                        if servers.remove("sensei").is_some() {
+                            if servers.is_empty() {
+                                fs::remove_file(&mcp_file).ok();
+                                println!("  ✓ Removed .mcp.json (was only sensei)");
+                            } else {
+                                fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+                                println!("  ✓ Removed sensei from .mcp.json (other servers preserved)");
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    println!("Sensei uninstalled.");
+    println!("\nSensei uninstalled.");
+}
+
+/// Remove all .md files from a directory, returns count.
+fn remove_md_files(dir: &std::path::Path) -> u32 {
+    let mut count = 0u32;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "md") {
+                fs::remove_file(&path).ok();
+                count += 1;
+            }
+        }
+    }
+    // Remove directory if empty
+    if fs::read_dir(dir).map(|mut d| d.next().is_none()).unwrap_or(true) {
+        fs::remove_dir(dir).ok();
+    }
+    count
 }
 
 // ── Daemon / Scan / AddLib ──────────────────────────────────────────────────
