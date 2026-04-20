@@ -1,82 +1,66 @@
 /**
- * RepoStore — reactive class managing all project/repo state.
- * Subscribes to SSE, polls daemon, exposes reactive derived lists.
- * UI just reads properties — all logic lives here.
+ * RepoStore — reactive class for project/repo state.
+ * Simple: fetch list, subscribe to SSE, update in place, sort by activity.
+ * Daemon owns exclusions — this class just renders what the daemon says exists.
  */
 import { senseiApi } from './api.js';
 import type { ServerProject } from './types.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface RepoState {
+export type IndexState = 'idle' | 'queued' | 'indexing' | 'indexed' | 'failed';
+
+export interface RepoEntry {
   project: ServerProject;
-  progress: RepoProgress | null;
-  indexState: 'idle' | 'queued' | 'indexing' | 'indexed' | 'failed';
-}
-
-export interface RepoProgress {
-  total: number;
-  pending: number;
-  running: number;
-  completed: number;
-  failed: number;
+  indexState: IndexState;
+  filesTotal: number;
+  filesCompleted: number;
+  filesFailed: number;
   currentFile: string | null;
-}
-
-interface QueueStatus {
-  queue: { pending: number; blocked: number; running: number; completed: number; repos_active?: number };
-  repos: Record<string, { total: number; pending: number; running: number; completed?: number; failed?: number; current_file?: string | null }>;
-}
-
-interface SSEEvent {
-  event: 'queued' | 'started' | 'completed' | 'failed';
-  task_id: number;
-  repo_id?: string;
-  kind?: string;
-  path?: string;
-  error?: string;
+  updatedAt: number; // epoch ms — for recency sort
 }
 
 // ── Reactive Class ───────────────────────────────────────────────────────────
 
 export class RepoStore {
-  // Reactive state
-  all = $state<RepoState[]>([]);
+  // State
+  all = $state<RepoEntry[]>([]);
   search = $state('');
-  filter = $state<RepoState['indexState'] | 'all'>('all');
-  excluded = $state<Set<string>>(new Set());
-  queueTotals = $state({ pending: 0, running: 0, completed: 0, failed: 0 });
 
-  // Derived (auto-recompute when dependencies change)
+  // Derived
   repos = $derived.by(() => {
     let list = this.all;
-    if (this.excluded.size > 0) list = list.filter(r => !this.excluded.has(r.project.repo_id));
-    if (this.filter !== 'all') list = list.filter(r => r.indexState === this.filter);
     if (this.search) {
       const q = this.search.toLowerCase();
       list = list.filter(r =>
         r.project.name.toLowerCase().includes(q) ||
-        r.project.path.toLowerCase().includes(q) ||
-        (r.project.stack ?? []).some((s: string) => s.toLowerCase().includes(q))
+        r.project.path.toLowerCase().includes(q)
       );
     }
     return [...list].sort((a, b) => {
+      // In-progress first
       const aActive = a.indexState === 'indexing' || a.indexState === 'queued' ? 0 : 1;
       const bActive = b.indexState === 'indexing' || b.indexState === 'queued' ? 0 : 1;
       if (aActive !== bActive) return aActive - bActive;
-      return a.project.name.localeCompare(b.project.name);
+      // Then by recency (most recently updated first)
+      return b.updatedAt - a.updatedAt;
     });
   });
 
-  indexedCount = $derived(this.all.filter(r => r.indexState === 'indexed').length);
   totalCount = $derived(this.all.length);
+  indexedCount = $derived(this.all.filter(r => r.indexState === 'indexed').length);
+  indexingCount = $derived(this.all.filter(r => r.indexState === 'indexing' || r.indexState === 'queued').length);
+  failedCount = $derived(this.all.filter(r => r.indexState === 'failed').length);
   anyIndexing = $derived(this.all.some(r => r.indexState === 'indexing' || r.indexState === 'queued'));
+
+  // Aggregate totals derived from individual repos
+  totalFiles = $derived(this.all.reduce((s, r) => s + r.filesTotal, 0));
+  completedFiles = $derived(this.all.reduce((s, r) => s + r.filesCompleted, 0));
 
   // Private
   private port: number;
-  private eventSource: EventSource | null = null;
+  private es: EventSource | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(port: number) {
     this.port = port;
@@ -86,135 +70,122 @@ export class RepoStore {
 
   connect() {
     this.disconnect();
+    this.fetchAll();
 
-    this.eventSource = new EventSource(`http://127.0.0.1:${this.port}/api/tasks/progress`);
+    this.es = new EventSource(`http://127.0.0.1:${this.port}/api/tasks/progress`);
+    this.es.onmessage = (e) => { try { this.onEvent(JSON.parse(e.data)); } catch {} };
+    this.es.onerror = () => { this.disconnect(); setTimeout(() => this.connect(), 3000); };
 
-    this.eventSource.onmessage = (event) => {
-      try {
-        this.applyEvent(JSON.parse(event.data));
-      } catch { /* ignore */ }
-      this.scheduleRefresh();
-    };
-
-    this.eventSource.onerror = () => {
-      this.disconnect();
-      setTimeout(() => this.connect(), 3000);
-    };
-
-    this.pollTimer = setInterval(() => this.refresh(), 5000);
-    this.refresh();
+    // Periodic full sync as backup
+    this.pollTimer = setInterval(() => this.fetchAll(), 5000);
   }
 
   disconnect() {
-    this.eventSource?.close();
-    this.eventSource = null;
+    this.es?.close(); this.es = null;
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
-    if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null; }
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
   async scanFolder(path: string) {
     await senseiApi(this.port).scanFolder(path);
-    this.scheduleRefresh();
   }
 
   async indexRepo(repoId: string, repoPath: string, force = false) {
     await senseiApi(this.port).indexRepo(repoId, repoPath, force);
-    this.scheduleRefresh();
   }
 
-  async indexAll(force = false) {
-    for (const repo of this.all) {
-      if (repo.indexState !== 'indexing' && repo.indexState !== 'queued') {
-        await this.indexRepo(repo.project.repo_id, repo.project.path, force);
-      }
-    }
+  async excludeRepo(repoId: string) {
+    // TODO: call daemon API to exclude + remove from index
+    // await senseiApi(this.port).excludeRepo(repoId);
+    // For now just remove locally — daemon exclusion API needed
+    this.all = this.all.filter(r => r.project.repo_id !== repoId);
   }
 
-  exclude(repoId: string) { this.excluded = new Set([...this.excluded, repoId]); }
-  include(repoId: string) { const s = new Set(this.excluded); s.delete(repoId); this.excluded = s; }
+  // ── Fetch (full sync from daemon) ──────────────────────────────────────────
 
-  getRepo(repoId: string): RepoState | undefined {
-    return this.all.find(r => r.project.repo_id === repoId);
-  }
-
-  // ── Internal ───────────────────────────────────────────────────────────────
-
-  private scheduleRefresh() {
-    if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(() => this.refresh(), 300);
-  }
-
-  private async refresh() {
+  private async fetchAll() {
     const api = senseiApi(this.port);
     try {
       const [projects, status] = await Promise.all([
         api.getProjects() as Promise<ServerProject[]>,
-        api.getIndexStatus() as Promise<QueueStatus>,
+        api.getIndexStatus() as Promise<any>,
       ]);
 
+      const repoStatus: Record<string, any> = status.repos ?? {};
+      const now = Date.now();
+
       this.all = projects.map(p => {
-        const prog = status.repos[p.repo_id];
-        const progress: RepoProgress | null = prog ? {
-          total: prog.total, pending: prog.pending, running: prog.running,
-          completed: prog.completed ?? 0, failed: prog.failed ?? 0,
-          currentFile: prog.current_file ?? null,
-        } : null;
+        const rs = repoStatus[p.repo_id];
+        const existing = this.all.find(r => r.project.repo_id === p.repo_id);
 
-        let indexState: RepoState['indexState'] = 'idle';
-        if (progress && progress.running > 0) indexState = 'indexing';
-        else if (progress && progress.pending > 0) indexState = 'queued';
-        else if (progress && progress.failed > 0 && progress.completed === 0) indexState = 'failed';
-        else if (p.indexed_at || (progress && progress.completed > 0 && progress.pending === 0 && progress.running === 0)) indexState = 'indexed';
+        let indexState: IndexState = 'idle';
+        let filesTotal = 0, filesCompleted = 0, filesFailed = 0;
+        let currentFile: string | null = null;
 
-        return { project: p, progress, indexState };
+        if (rs) {
+          filesTotal = rs.total ?? 0;
+          filesCompleted = rs.completed ?? 0;
+          filesFailed = rs.failed ?? 0;
+          currentFile = rs.current_file ?? null;
+
+          if (rs.running > 0) indexState = 'indexing';
+          else if (rs.pending > 0) indexState = 'queued';
+          else if (filesFailed > 0 && filesCompleted === 0) indexState = 'failed';
+          else if (filesCompleted > 0 && rs.pending === 0 && rs.running === 0) indexState = 'indexed';
+        }
+
+        if (indexState === 'idle' && p.indexed_at) indexState = 'indexed';
+
+        // Preserve updatedAt if state hasn't changed, otherwise bump
+        const prevState = existing?.indexState;
+        const updatedAt = (prevState && prevState === indexState) ? (existing?.updatedAt ?? now) : now;
+
+        return { project: p, indexState, filesTotal, filesCompleted, filesFailed, currentFile, updatedAt };
       });
-
-      this.queueTotals = {
-        pending: status.queue.pending, running: status.queue.running,
-        completed: status.queue.completed, failed: 0,
-      };
     } catch { /* daemon unavailable */ }
   }
 
-  private applyEvent(evt: SSEEvent) {
+  // ── SSE event handling ─────────────────────────────────────────────────────
+
+  private onEvent(evt: { event: string; repo_id?: string; path?: string }) {
     if (!evt.repo_id) return;
     const idx = this.all.findIndex(r => r.project.repo_id === evt.repo_id);
-    if (idx === -1) return;
 
-    const existing = this.all[idx];
-    const progress = existing.progress
-      ? { ...existing.progress }
-      : { total: 0, pending: 0, running: 0, completed: 0, failed: 0, currentFile: null };
-
-    if (evt.event === 'started') {
-      progress.running++;
-      if (progress.pending > 0) progress.pending--;
-      if (evt.path) progress.currentFile = evt.path;
-    } else if (evt.event === 'completed') {
-      progress.completed++;
-      if (progress.running > 0) progress.running--;
-      progress.currentFile = null;
-    } else if (evt.event === 'failed') {
-      progress.failed++;
-      if (progress.running > 0) progress.running--;
+    if (idx === -1) {
+      // New repo appeared (from scan) — fetch all to pick it up
+      this.fetchAll();
+      return;
     }
 
-    let indexState = existing.indexState;
-    if (progress.running > 0) indexState = 'indexing';
-    else if (progress.pending > 0) indexState = 'queued';
-    else if (progress.completed > 0 && progress.pending === 0 && progress.running === 0) indexState = 'indexed';
+    const entry = { ...this.all[idx] };
+    const now = Date.now();
 
-    // Reassign array to trigger reactivity
+    if (evt.event === 'started') {
+      entry.indexState = 'indexing';
+      if (evt.path) entry.currentFile = evt.path;
+      entry.updatedAt = now;
+    } else if (evt.event === 'completed') {
+      entry.filesCompleted++;
+      entry.currentFile = null;
+      entry.updatedAt = now;
+      // Check if all done
+      if (entry.filesCompleted + entry.filesFailed >= entry.filesTotal && entry.filesTotal > 0) {
+        entry.indexState = 'indexed';
+      }
+    } else if (evt.event === 'failed') {
+      entry.filesFailed++;
+      entry.currentFile = null;
+      entry.updatedAt = now;
+    }
+
     const updated = [...this.all];
-    updated[idx] = { ...existing, progress, indexState };
+    updated[idx] = entry;
     this.all = updated;
   }
 }
 
 // ── Singleton ────────────────────────────────────────────────────────────────
-// Create once, import everywhere. Connect in root layout.
 
 let _instance: RepoStore | null = null;
 
