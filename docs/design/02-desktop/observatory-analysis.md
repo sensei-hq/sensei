@@ -327,9 +327,65 @@ The "Tell Claude" action buttons on observatory pages could offer a choice:
 
 This turns the desktop from "observe and copy" to "observe and delegate."
 
+### Mindset-to-Agent Promotion
+
+Mindsets and agents are not separate things — they're layers of the same concept.
+
+| Layer | Contains | Execution | Example |
+|-------|----------|-----------|---------|
+| **Mindset** (what + why) | Questions to ask, principles to follow | Passive context — loaded at session start | "Walk the user journey. Does it flow?" |
+| **Agent** (what + why + how) | Same questions PLUS procedures, tool usage, report format | Active autonomous execution in isolated context | "Read the route files. Trace from trigger to output. Check each step against persona validates. Report findings." |
+
+The agent **includes** the full mindset content — it doesn't replace it. The mindset questions become the agent's checklist. The agent adds:
+- Which files to read
+- Which tools to use
+- What to check specifically
+- How to format the report
+- What actions to suggest
+
+```markdown
+# .sensei/agents/bat.md
+---
+name: bat
+description: BAT review — verify implementation from user perspective
+tools: Read, Glob, Grep, Bash
+model: sonnet
+---
+
+## Mindset (what + why)
+
+[full content from .sensei/mindsets/bat.md — questions preserved exactly]
+
+1. **Walk the user journey** — Start from the trigger...
+2. **Test the happy path end-to-end** — Not unit by unit...
+3. **Test the first-time experience** — No config, no state...
+...
+
+## Procedure (how)
+
+For each question above:
+
+1. Read `.sensei/rules.md` — understand project rules
+2. Read `.sensei/personas/*.md` — load all personas
+3. Identify the files changed in this session (git diff)
+4. For each persona, walk through the changed code from their perspective
+5. For each mindset question, check if it was addressed
+6. Report:
+   - Questions answered ✓ / missed ✗
+   - Persona-specific findings
+   - Action recipes for anything missed
+```
+
+This means:
+- A project starts with mindsets only (passive, low overhead)
+- When the user wants deeper verification, they promote a mindset to an agent
+- The agent contains the full mindset + the procedural how
+- `sensei init` can optionally install agents alongside mindsets
+- The Profiles page shows both: "Analyst mindset active, BAT agent available"
+
 ### How agents are installed
 
-Agents live in `marketplace/agents/` as `.md` files. The `sensei init` command copies them to `.claude/agents/` (or the plugin provides them via `agents/` dir). They appear as opt-in — user enables them per project.
+Agents live in `marketplace/agents/` as `.md` files. The `sensei init` command copies them to `.sensei/agents/` (project-level) or `.claude/agents/` (Claude Code discovers them). They appear as opt-in — user enables them per project.
 
 ## 9. Open Questions
 
