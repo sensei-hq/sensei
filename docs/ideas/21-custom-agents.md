@@ -1,8 +1,9 @@
 ---
 name: Custom Agents
-description: Specialized autonomous agents that go beyond commands/skills — deeper integration with the sensei ecosystem for complex multi-step workflows
+description: Agents wrap mindsets (why+what→+how) in marketplace/agents/; generic persona agent loads any persona for task execution
 date: 2026-04-17
-status: idea
+updated: 2026-04-20
+status: accepted
 related: 01-workflow-system.md, 18-testability-tdd.md, 15-pattern-store.md
 ---
 
@@ -10,63 +11,119 @@ related: 01-workflow-system.md, 18-testability-tdd.md, 15-pattern-store.md
 
 ## Problem
 
-Commands are instructions the AI reads and follows. Skills auto-trigger on patterns. Both are single-turn — they guide one interaction. But complex workflows like code review, build cycles, and codebase analysis need **multi-step autonomous execution** with their own system prompt, tool restrictions, and specialized behavior. An agent can run a full review pass without user intervention, report findings, and log events — something a command can't do reliably.
+Mindsets tell the AI **what** to think about and **why** — but not **how** to execute autonomously. Commands are single-turn instructions the user triggers. For deeper, multi-step verification and analysis, we need agents that can run autonomously in isolated context with their own tool restrictions, procedures, and report format.
 
-## Why agents over commands
+## Core idea: wrap mindsets in agents
 
-| Aspect | Command | Skill | Agent |
-|--------|---------|-------|-------|
-| Trigger | User types `/sensei:X` | Auto on pattern match | User invokes or spawned by another agent |
-| Execution | AI follows instructions once | AI follows instructions once | Runs autonomously with own system prompt |
-| Tool access | All tools | All tools | Restricted to specific tools |
-| Context | Shares main conversation | Shares main conversation | Isolated context (can be focused) |
-| Multi-step | Relies on AI memory within turn | Single turn | Can loop, retry, branch |
-| State | Manual (AI must remember) | Manual | Managed by agent framework |
+Mindsets already define the right questions. Agents add the execution layer:
 
-## Potential sensei agents
+| Layer | Contains | Execution |
+|-------|----------|-----------|
+| **Mindset** (what + why) | Questions to ask, principles to follow | Passive — loaded at session start |
+| **Agent** (what + why + how) | Same questions PLUS procedures, tools, report format | Active — runs autonomously in isolated context |
 
-| Agent | What it does | Why it's better than a command |
-|-------|-------------|-------------------------------|
-| **review-agent** | Multi-pass code review: patterns → duplicates → test coverage → doc drift | Command does one pass. Agent can iterate, cross-reference findings, prioritize. |
-| **build-agent** | Full build cycle: locate → decompose → test → implement → review | Command relies on AI holding all steps in context. Agent manages state between steps. |
-| **analyze-agent** | Deep codebase analysis: scan all modules, identify patterns, produce comprehensive report | Command would overload main context. Agent works in isolation, reports summary. |
-| **index-agent** | Run indexer, verify graph quality, flag issues | Can retry failed files, handle timeouts, report progress. |
-| **benchmark-agent** | Run A/B benchmarks, collect metrics, generate comparison report | Long-running, needs isolation from main conversation. |
-| **onboard-agent** | New project setup: detect stack, index, create rules, configure | Multi-step setup that adapts based on what it finds. |
+The agent **includes** the full mindset content. It doesn't replace it. The mindset stays in `marketplace/mindsets/`, the agent lives in `marketplace/agents/`.
+
+## Agent inventory
+
+### Mindset agents (1:1 mapping)
+
+Each of the 7 mindsets gets a corresponding agent:
+
+| Mindset | Agent | Tools | Purpose |
+|---------|-------|-------|---------|
+| Analyst | `analyst.md` | Read, Grep, Glob | Autonomous problem analysis before design |
+| Developer | `developer.md` | Read, Grep, Glob, Bash | Verify implementation approach before coding |
+| Acceptance Tester | `acceptance-tester.md` | Read, Grep, Glob, Bash | Autonomous acceptance testing from user perspective |
+| UX Designer | `ux-designer.md` | Read, Grep, Glob | Review interfaces for usability, accessibility, consistency |
+| Security Reviewer | `security-reviewer.md` | Read, Grep, Glob, Bash | Audit for OWASP, auth, data exposure, injection |
+| Performance Engineer | `performance-engineer.md` | Read, Grep, Glob, Bash | Analyze complexity, memory, network, bottlenecks |
+| DevOps/SRE | `devops-sre.md` | Read, Grep, Glob, Bash | Check deployability, monitoring, rollback, failure modes |
+
+### Generic persona agent
+
+One agent that loads **any** persona from `.sensei/personas/` to perform tasks from that persona's perspective:
+
+| Agent | Tools | Purpose |
+|-------|-------|---------|
+| `persona-reviewer.md` | Read, Grep, Glob | Review work from one or all personas' perspective |
+
+Usage:
+- `@persona-reviewer check the new API endpoint` — reviews from all personas
+- `@persona-reviewer as API Consumer, is this endpoint intuitive?` — one persona
+
+This eliminates the need for a dedicated agent per persona. The generic agent handles ad-hoc persona reviews.
+
+## Agent structure
+
+```
+marketplace/
+  mindsets/              ← why + what (passive)
+    analyst.md
+    developer.md
+    acceptance-tester.md
+    ux-designer.md
+    security-reviewer.md
+    performance-engineer.md
+    devops-sre.md
+  agents/                ← why + what + HOW (active)
+    analyst.md           ← wraps mindsets/analyst.md + procedures
+    developer.md
+    acceptance-tester.md
+    ux-designer.md
+    security-reviewer.md
+    performance-engineer.md
+    devops-sre.md
+    persona-reviewer.md  ← generic, loads any persona
+```
+
+Each agent `.md` has frontmatter + two sections:
+
+```markdown
+---
+name: acceptance-tester
+description: Acceptance testing — verify implementation from user perspective
+tools: Read, Glob, Grep, Bash
+model: sonnet
+---
+
+## Mindset (what + why)
+
+[full content from marketplace/mindsets/acceptance-tester.md — questions preserved exactly]
+
+## Procedure (how)
+
+1. Read `.sensei/rules.md` and `.sensei/personas/*.md`
+2. Identify changed files (git diff)
+3. For each mindset question, check if it was addressed
+4. For each persona, walk through changes from their perspective
+5. Report: questions answered ✓ / missed ✗, persona findings, action recipes
+```
 
 ## How agents integrate with sensei
 
-Agents would use the same MCP tools as commands, plus:
-- Read/write `.sensei/state.yaml` for workflow state
-- Call `log_event()` for event capture
+Agents use the same MCP tools as commands:
+- `search()`, `get_callers()`, `get_callees()` for code intelligence
 - Read `.sensei/rules.md` for project rules
-- Access the graph for code intelligence
+- Read `.sensei/personas/*.md` for persona context
+- Call `update_session()` for event capture
 
-The daemon doesn't need to know about agents — they're plugin-level (marketplace). The MCP tools are the interface.
+The daemon doesn't need to know about agents — they're plugin-level (marketplace). Claude Code discovers them from the plugin's `agents/` directory.
 
-## Agent structure (Claude Code plugin format)
+## Promotion path
 
-```
-marketplace/agents/
-  review-agent.md       ← system prompt, tool restrictions, behavior
-  build-agent.md
-  analyze-agent.md
-```
+Projects start with mindsets only (low overhead). When deeper autonomous verification is needed:
 
-Each agent file has frontmatter defining:
-- `name` — agent identifier
-- `description` — when to use (for auto-triggering or user invocation)
-- `tools` — restricted tool list (e.g., review-agent only gets read tools, not write)
-- `model` — can use a different model (e.g., haiku for fast passes, opus for deep analysis)
-- `color` — visual indicator in the UI
+1. **Ship defaults** — `marketplace/agents/` ships all 7 mindset agents + persona-reviewer
+2. **Project customization** — users can copy an agent to `.sensei/agents/` and customize the procedure
+3. **Create from scratch** — `/sensei:agent create` or desktop Profiles page
 
 ## Open questions
 
-| # | Question |
-|---|----------|
-| 1 | Should agents be invocable via `/sensei:agent review` or have their own commands `/sensei:deep-review`? |
-| 2 | Can agents spawn sub-agents? (e.g., build-agent spawns review-agent after implementation) |
-| 3 | How do agents report back to the main conversation? Summary only, or full findings? |
-| 4 | Should agents run in worktrees for isolation, or in the same working directory? |
-| 5 | How do we test agents? The skill-creator eval framework or something more specialized? |
-| 6 | Which agent to build first? review-agent seems highest value — catches quality issues autonomously. |
+| # | Question | Status |
+|---|----------|--------|
+| 1 | Which agent to build first? | **acceptance-tester** — highest value, catches quality issues autonomously |
+| 2 | Can agents spawn sub-agents? | Defer — start simple, add composition later |
+| 3 | How do agents report back? | Summary to main conversation, full findings available on request |
+| 4 | Worktrees or same directory? | Same directory — agents are read-heavy, not write-heavy |
+| 5 | Testing approach? | Skill-creator evals — same framework, agents are just autonomous skills |

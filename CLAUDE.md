@@ -11,7 +11,7 @@ If the session-start hook injected `<sensei-session>`, mindsets and rules are al
 2. Read `.sensei/rules.md` — project rules, patterns, quality policy
 3. Read `.sensei/personas/*.md` — who we're building for, each with questions to ask
 
-**Core discipline:** Apply mindsets in sequence (Analyst → Developer → BAT) on every task. This is non-negotiable. If you catch yourself writing code without having done an Analyst pass, stop and do it.
+**Core discipline:** Apply mindsets in sequence (Analyst → Developer → Acceptance Tester) on every task. This is non-negotiable. If you catch yourself writing code without having done an Analyst pass, stop and do it.
 
 ## Session Protocol
 
