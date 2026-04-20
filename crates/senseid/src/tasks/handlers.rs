@@ -209,6 +209,14 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         }
     }
 
+    // Emit RepoQueued event with file count so UI can show accurate progress
+    let _ = ctx.queue.sender().send(
+        crate::tasks::progress::TaskEvent::RepoQueued {
+            repo_id: repo_id.to_string(),
+            files_total: all_file_task_ids.len() as u32,
+        }
+    );
+
     // Remove the sentinel dependency from resolve_edges now that real deps are wired
     // (the sentinel u64::MAX will never complete, so we need to remove it)
     // Simplest: if we have real deps, the sentinel is harmless — it just means

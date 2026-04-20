@@ -10,6 +10,8 @@ pub enum TaskEvent {
     Started { task_id: u64, repo_id: String, kind: String, path: String },
     Completed { task_id: u64, repo_id: String, kind: String },
     Failed { task_id: u64, repo_id: String, kind: String, error: String },
+    /// Emitted once when a repo's file tasks are first queued — carries total file count.
+    RepoQueued { repo_id: String, files_total: u32 },
 }
 
 /// Accumulated progress for a single repo.
