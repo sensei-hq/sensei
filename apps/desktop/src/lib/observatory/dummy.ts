@@ -274,20 +274,25 @@ export function toolsDummy(): ToolInfo[] {
 export function profilesDummy(): ProfilesData {
   return {
     levers: [
-      { name: 'Analyst', category: 'mindset', type: 'core', sessionsApplied: 12, ftrImpact: exact(0.15), tokenImpact: estimated(0.08, 'Estimated'), verdict: 'keep', verdictReason: 'Worth the token cost — catches scope issues early' },
-      { name: 'BAT', category: 'mindset', type: 'core', sessionsApplied: 10, ftrImpact: exact(0.22), tokenImpact: estimated(0.12, 'Estimated'), verdict: 'keep', verdictReason: 'Biggest quality gain — catches integration issues' },
-      { name: 'Developer', category: 'mindset', type: 'core', sessionsApplied: 12, ftrImpact: exact(0.05), tokenImpact: estimated(0.03, 'Estimated'), verdict: 'keep', verdictReason: 'Low cost, steady quality lift' },
-      { name: 'UX Designer', category: 'mindset', type: 'specialist', sessionsApplied: 2, ftrImpact: exact(0.0), tokenImpact: estimated(0.04, 'Estimated'), verdict: 'review', verdictReason: 'Low usage — only relevant for UI tasks' },
-      { name: 'Security Reviewer', category: 'mindset', type: 'specialist', sessionsApplied: 0, ftrImpact: exact(0.0), tokenImpact: estimated(0.0, 'Estimated'), verdict: 'unused', verdictReason: 'Never triggered — remove or lower threshold?' },
-      { name: 'AI Driven Developer', category: 'persona', sessionsApplied: 5, ftrImpact: exact(0.08), tokenImpact: estimated(0.06, 'Estimated'), verdict: 'keep', verdictReason: 'Validates from user perspective' },
-      { name: 'Plugin Developer', category: 'persona', sessionsApplied: 3, ftrImpact: exact(0.04), tokenImpact: estimated(0.05, 'Estimated'), verdict: 'review', verdictReason: 'Marginal impact — review questions' },
-      { name: 'TDD rule', category: 'rule', sessionsApplied: 12, ftrImpact: exact(0.18), tokenImpact: estimated(0.15, 'Estimated'), verdict: 'keep', verdictReason: 'High quality lift — tests-first catches bugs early' },
-      { name: 'MCP preferred', category: 'rule', sessionsApplied: 12, ftrImpact: exact(0.10), tokenImpact: estimated(-0.05, 'Estimated'), verdict: 'keep', verdictReason: 'Saves tokens AND improves quality' },
-      { name: 'rokkit lib docs', category: 'library', sessionsApplied: 6, ftrImpact: exact(0.10), tokenImpact: estimated(-0.05, 'Estimated'), verdict: 'keep', verdictReason: 'Prevents incorrect API usage' },
+      { name: 'Analyst', category: 'mindset', type: 'core', hasAgent: false, sessionsApplied: 12, ftrImpact: exact(0.15), tokenImpact: estimated(0.08, 'Estimated'), verdict: 'keep', verdictReason: 'Worth the token cost — catches scope issues early' },
+      { name: 'BAT', category: 'mindset', type: 'core', hasAgent: true, sessionsApplied: 10, ftrImpact: exact(0.22), tokenImpact: estimated(0.12, 'Estimated'), verdict: 'keep', verdictReason: 'Biggest quality gain — catches integration issues' },
+      { name: 'Developer', category: 'mindset', type: 'core', hasAgent: false, sessionsApplied: 12, ftrImpact: exact(0.05), tokenImpact: estimated(0.03, 'Estimated'), verdict: 'keep', verdictReason: 'Low cost, steady quality lift' },
+      { name: 'UX Designer', category: 'mindset', type: 'specialist', hasAgent: false, sessionsApplied: 2, ftrImpact: exact(0.0), tokenImpact: estimated(0.04, 'Estimated'), verdict: 'review', verdictReason: 'Low usage — only relevant for UI tasks' },
+      { name: 'Security Reviewer', category: 'mindset', type: 'specialist', hasAgent: false, sessionsApplied: 0, ftrImpact: exact(0.0), tokenImpact: estimated(0.0, 'Estimated'), verdict: 'unused', verdictReason: 'Never triggered — remove or lower threshold?' },
+      { name: 'AI Driven Developer', category: 'persona', hasAgent: false, sessionsApplied: 5, ftrImpact: exact(0.08), tokenImpact: estimated(0.06, 'Estimated'), verdict: 'keep', verdictReason: 'Validates from user perspective' },
+      { name: 'Plugin Developer', category: 'persona', hasAgent: false, sessionsApplied: 3, ftrImpact: exact(0.04), tokenImpact: estimated(0.05, 'Estimated'), verdict: 'review', verdictReason: 'Marginal impact — review questions' },
+      { name: 'TDD rule', category: 'rule', hasAgent: false, sessionsApplied: 12, ftrImpact: exact(0.18), tokenImpact: estimated(0.15, 'Estimated'), verdict: 'keep', verdictReason: 'High quality lift — tests-first catches bugs early' },
+      { name: 'MCP preferred', category: 'rule', hasAgent: false, sessionsApplied: 12, ftrImpact: exact(0.10), tokenImpact: estimated(-0.05, 'Estimated'), verdict: 'keep', verdictReason: 'Saves tokens AND improves quality' },
+      { name: 'rokkit lib docs', category: 'library', hasAgent: false, sessionsApplied: 6, ftrImpact: exact(0.10), tokenImpact: estimated(-0.05, 'Estimated'), verdict: 'keep', verdictReason: 'Prevents incorrect API usage' },
+    ],
+    agents: [
+      { name: 'bat', description: 'BAT review — verify implementation from user perspective', source: 'promoted', basedOn: 'BAT', timesInvoked: 6, lastInvoked: '2026-04-19T09:10:00Z' },
+      { name: 'persona-reviewer', description: 'Review from any persona perspective on demand', source: 'plugin', timesInvoked: 3, lastInvoked: '2026-04-18T16:00:00Z' },
     ],
     suggestions: [
       { type: 'add_persona', reason: '60% of corrections in last 5 sessions were about missing user perspective on CLI output', action: { label: 'Create CLI User persona', prompt: '/sensei:persona add cli-user', severity: 'info' } },
-      { type: 'remove_lever', reason: 'Security Reviewer mindset applied 0 times in 12 sessions', action: { label: 'Remove Security Reviewer', prompt: 'Remove .sensei/mindsets/security-reviewer.md — never triggers for this project. Re-add if you start handling auth or external input.', severity: 'info' } },
+      { type: 'promote_agent', reason: 'Analyst mindset applied 12x but corrections still slip through — an active agent could catch more', action: { label: 'Promote Analyst to agent', prompt: 'Create .sensei/agents/analyst.md from mindset with verify-before-build procedures', severity: 'info' } },
+      { type: 'remove_lever', reason: 'Security Reviewer mindset applied 0 times in 12 sessions', action: { label: 'Remove Security Reviewer', prompt: 'Remove .sensei/mindsets/security-reviewer.md — never triggers for this project.', severity: 'info' } },
     ],
   };
 }
