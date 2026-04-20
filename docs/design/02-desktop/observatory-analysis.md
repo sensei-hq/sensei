@@ -288,7 +288,50 @@ Solution-level sessions page is a consolidated view, not separate data.
 18. Jira adapter
 19. Connector config in solution management UI
 
-## 8. Open Questions
+## 8. Agents — Opt-in Autonomous Specialists
+
+### Commands vs Agents
+
+| | Command | Agent |
+|---|---------|-------|
+| Format | Markdown procedure | Markdown system prompt + frontmatter |
+| Execution | Claude follows steps in main context | Isolated context window, autonomous |
+| Context cost | Steps consume main conversation tokens | Isolated — results return as summary only |
+| Control | Prescriptive — "do step 1, then step 2" | Autonomous — "you are X, figure it out" |
+| Best for | Structured workflows with user checkpoints | Deep analysis, review, investigation |
+
+### Why both?
+
+A command like `/sensei:build` walks through a structured workflow with user approval at each step. An agent like `@sensei-reviewer` can autonomously analyze code quality, read profiles, check patterns, and return a structured report — all without consuming main context tokens.
+
+Agents are especially useful for:
+- **Review tasks** — deep analysis that reads many files (context-heavy, benefits from isolation)
+- **Investigation** — "trace this dead code", "analyze why this session had 5 corrections"
+- **Session analysis** — review events, correlate with profiles, suggest improvements
+- **Codebase audit** — check all files against patterns, find violations
+
+### Proposed agents (opt-in, in `marketplace/agents/`)
+
+| Agent | Description | Tools | When to use |
+|-------|-------------|-------|-------------|
+| `session-analyst` | Analyzes session events, identifies patterns in corrections, suggests profile improvements | Read, Grep, Glob | After a session with low FTR or many corrections |
+| `code-investigator` | Traces dead code, complexity hotspots, and duplicate clusters with recommendations | Read, Grep, Glob, Bash | When code page shows actionable findings |
+| `profile-tuner` | Reviews project profiles against session data, suggests additions/removals | Read, Grep, Glob | Periodically, or when Profiles page shows unused levers |
+| `doc-auditor` | Checks docs against code for drift, missing coverage, stale references | Read, Grep, Glob | After code changes to documented areas |
+
+### Integration with desktop
+
+The "Tell Claude" action buttons on observatory pages could offer a choice:
+- **Copy prompt** — pastes into main conversation (current behavior)
+- **Run agent** — launches the appropriate agent in isolated context, returns summary
+
+This turns the desktop from "observe and copy" to "observe and delegate."
+
+### How agents are installed
+
+Agents live in `marketplace/agents/` as `.md` files. The `sensei init` command copies them to `.claude/agents/` (or the plugin provides them via `agents/` dir). They appear as opt-in — user enables them per project.
+
+## 9. Open Questions
 
 1. **Solution profiles storage** — where do solution-level profiles live? A `.sensei/` in a shared location? Or in the daemon DB only?
 2. **Cross-solution dedup** — should dedup run across solutions? ("This backup in Solution B is a copy of repo in Solution A")
