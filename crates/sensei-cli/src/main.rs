@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::fs;
 
@@ -13,28 +14,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize sensei for the current repo (.sensei/, .claude/, .mcp.json)
+    /// Initialize sensei — sets up MCP, commands, skills, agents, mindsets
     Init {
+        /// Scope: user (global ~/.claude/) or project (repo .claude/)
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Target ACP (default: auto-detect)
+        #[arg(long)]
+        acp: Option<String>,
+
+        /// Skip interactive prompts — install recommended set
+        #[arg(long)]
+        recommended: bool,
+
         /// Path to the plugin/marketplace directory (default: auto-detect)
         #[arg(long)]
         plugin_dir: Option<String>,
     },
 
-    /// Detect and configure AI coding platforms (Claude Code, Cursor, Windsurf, etc)
-    Configure,
-
-    /// Install sensei: binaries, hooks, skills, MCP — uses configured ACPs
-    Install {
-        /// Install for specific ACP only
-        #[arg(long)]
-        acp: Option<String>,
-
-        /// Skills scope: all, global, project
-        #[arg(long, default_value = "all")]
-        scope: String,
-    },
-
-    /// Uninstall sensei from all configured ACPs
+    /// Remove sensei configuration from all ACPs
     Uninstall,
 
     /// Start the sensei daemon
@@ -68,9 +67,9 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { plugin_dir } => init_repo(plugin_dir.as_deref()),
-        Commands::Configure => configure(),
-        Commands::Install { acp, scope } => install(acp.as_deref(), &scope),
+        Commands::Init { scope, acp, recommended, plugin_dir } => {
+            init(scope.as_deref(), acp.as_deref(), recommended, plugin_dir.as_deref());
+        }
         Commands::Uninstall => uninstall(),
         Commands::Start { port } => daemon_cmd("start", Some(port)),
         Commands::Stop => daemon_cmd("stop", None),
@@ -80,43 +79,11 @@ fn main() {
     }
 }
 
-// ── Paths ────────────────────────────────────────────────────────────────────
-// Mirrors senseid::paths — CLI can't depend on senseid (heavy deps).
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn daemon_bin() -> PathBuf {
-    // Prefer senseid on PATH (installed via Homebrew)
-    if which_exists("senseid") {
-        return PathBuf::from("senseid");
-    }
-    // Fallback: legacy plugin dir
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".claude/plugins/sensei/bin/senseid")
+fn home() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
 }
-
-/// Check if the sensei Claude Code plugin is installed (cache dir has our plugin).
-fn is_claude_plugin_installed() -> bool {
-    let h = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-    // Claude Code stores installed plugins in ~/.claude/plugins/cache/
-    let cache_dir = h.join(".claude/plugins/cache");
-    if cache_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&cache_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.join(".claude-plugin/plugin.json").exists() {
-                    if let Ok(content) = fs::read_to_string(path.join(".claude-plugin/plugin.json")) {
-                        if content.contains("\"name\": \"sensei\"") || content.contains("\"name\":\"sensei\"") {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-// ── Daemon helpers ───────────────────────────────────────────────────────────
 
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
@@ -133,441 +100,431 @@ fn daemon_available() -> bool {
         .unwrap_or(false)
 }
 
-fn require_daemon() {
-    if daemon_available() { return; }
-
-    // Try auto-start
-    eprintln!("Daemon not running — starting...");
-    let bin = daemon_bin();
-    if bin.exists() {
-        std::process::Command::new(&bin)
-            .args(["start", "--port", "7744"])
-            .spawn()
-            .ok();
-        for _ in 0..20 {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-            if daemon_available() {
-                eprintln!("Daemon started.");
-                return;
-            }
-        }
-    }
-
-    // Also try senseid on PATH
-    if std::process::Command::new("senseid")
-        .args(["start", "--port", "7744"])
-        .spawn()
-        .is_ok()
-    {
-        for _ in 0..20 {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-            if daemon_available() {
-                eprintln!("Daemon started.");
-                return;
-            }
-        }
-    }
-
-    eprintln!("Could not start daemon. Run manually: senseid start");
-    std::process::exit(1);
-}
-
-// ── Init (per-repo, no daemon required) ─────────────────────────────────────
-
-fn init_repo(plugin_dir_arg: Option<&str>) {
-    let repo_root = std::env::current_dir().expect("Cannot determine current directory");
-    println!("=== sensei init ===");
-    println!("Repo: {}\n", repo_root.display());
-
-    // Resolve plugin directory
-    let plugin_root = if let Some(pd) = plugin_dir_arg {
-        PathBuf::from(pd)
-    } else {
-        // Auto-detect: check for marketplace/ in repo, then ~/.sensei/marketplace/
-        let local = repo_root.join("marketplace");
-        if local.join("mindsets").exists() || local.join("templates/mindsets.md").exists() {
-            local
-        } else {
-            let global = dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("/tmp"))
-                .join(".sensei/marketplace");
-            if global.join("mindsets").exists() || global.join("templates/mindsets.md").exists() {
-                global
-            } else {
-                eprintln!("Cannot find plugin directory. Use --plugin-dir or ensure marketplace/ exists.");
-                std::process::exit(1);
-            }
-        }
-    };
-    println!("Plugin: {}\n", plugin_root.display());
-
-    // ── 1. Create .sensei/ ──────────────────────────────────────────────────
-    let sensei_dir = repo_root.join(".sensei");
-    fs::create_dir_all(&sensei_dir).ok();
-
-    let rules_file = sensei_dir.join("rules.md");
-    if !rules_file.exists() {
-        let project_name = repo_root.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("project");
-        let today = {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            // Simple date formatting (YYYY-MM-DD) without chrono
-            let days = now / 86400;
-            let mut y = 1970i32;
-            let mut remaining = days as i32;
-            loop {
-                let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
-                if remaining < year_days { break; }
-                remaining -= year_days;
-                y += 1;
-            }
-            let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-            let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-            let mut m = 0usize;
-            while m < 12 && remaining >= mdays[m] { remaining -= mdays[m]; m += 1; }
-            format!("{}-{:02}-{:02}", y, m + 1, remaining + 1)
-        };
-        fs::write(&rules_file, format!(
-            "---\nname: Project Rules — {}\nupdated: {}\nmindsets: .sensei/mindsets.md\npersonas: .sensei/personas/\n---\n\n# Rules\n\n> Mindsets loaded from `.sensei/mindsets.md`. This file contains project-specific rules.\n\n## Patterns\n\n<!-- Add project patterns here -->\n\n## Quality\n\n- **Zero errors** — test suite must pass before and after every change\n\n## Process\n\n- **Design before code** — analyst mindset first\n- **One issue at a time** — complete, verify, close, then next\n",
-            project_name, today,
-        )).ok();
-        println!("[created] .sensei/rules.md");
-    } else {
-        println!("[exists]  .sensei/rules.md");
-    }
-
-    let personas_dir = sensei_dir.join("personas");
-    if !personas_dir.exists() {
-        fs::create_dir_all(&personas_dir).ok();
-        println!("[created] .sensei/personas/ (empty — use /sensei:persona add)");
-    } else {
-        let count = fs::read_dir(&personas_dir)
-            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
-            .unwrap_or(0);
-        println!("[exists]  .sensei/personas/ ({} personas)", count);
-    }
-
-    // Copy mindsets from plugin into .sensei/mindsets/ (always update on init)
-    let mindsets_src = plugin_root.join("mindsets");
-    let mindsets_dst = sensei_dir.join("mindsets");
-    if mindsets_src.exists() && mindsets_src.is_dir() {
-        fs::create_dir_all(&mindsets_dst).ok();
-        let mut count = 0;
-        for entry in fs::read_dir(&mindsets_src).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.extension().map_or(false, |e| e == "md") {
-                let dst = mindsets_dst.join(entry.file_name());
-                fs::copy(&path, &dst).ok();
-                count += 1;
-            }
-        }
-        println!("[copied]  .sensei/mindsets/ ({} mindsets from plugin)", count);
-    } else {
-        // Fall back to single mindsets.md
-        let single_src = plugin_root.join("templates/mindsets.md");
-        if single_src.exists() {
-            fs::create_dir_all(&mindsets_dst).ok();
-            fs::copy(&single_src, mindsets_dst.join("all.md")).ok();
-            println!("[copied]  .sensei/mindsets/ (single file from plugin/templates)");
-        } else {
-            println!("[WARN]    mindsets not found in plugin");
-        }
-    }
-
-    // ── 2. Claude Code integration ────────────────────────────────────────
-    // If the sensei plugin is installed in Claude Code, it handles agents, hooks,
-    // and MCP. Otherwise, fall back to manual setup for non-plugin ACPs.
-    let claude_plugin_installed = is_claude_plugin_installed();
-    let agents_dst = repo_root.join(".claude/agents");
-
-    if claude_plugin_installed {
-        println!("[ok]      Claude Code plugin installed — agents, hooks, MCP managed by plugin");
-    } else {
-        // Copy agents from plugin into .claude/agents/ (always update on init)
-        let agents_src = plugin_root.join("agents");
-        if agents_src.exists() && agents_src.is_dir() {
-            fs::create_dir_all(&agents_dst).ok();
-            let mut count = 0;
-            for entry in fs::read_dir(&agents_src).into_iter().flatten().flatten() {
-                let path = entry.path();
-                if path.extension().map_or(false, |e| e == "md") {
-                    let dst = agents_dst.join(entry.file_name());
-                    fs::copy(&path, &dst).ok();
-                    count += 1;
-                }
-            }
-            println!("[copied]  .claude/agents/ ({} agents from plugin)", count);
-        } else {
-            println!("[info]    no agents found in plugin");
-        }
-
-        // Upsert sensei entry in .mcp.json — preserve existing MCP servers
-        let mcp_file = repo_root.join(".mcp.json");
-        let mut mcp_config: serde_json::Value = mcp_file
-            .exists()
-            .then(|| fs::read_to_string(&mcp_file).ok())
-            .flatten()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(serde_json::json!({"mcpServers": {}}));
-
-        mcp_config
-            .as_object_mut()
-            .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
-            .map(|servers| servers.insert("sensei".into(), serde_json::json!({"command": "sensei-mcp"})));
-
-        fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
-        println!("[ok]      .mcp.json (sensei entry upserted, other servers preserved)");
-
-        // Wire .claude/settings.local.json hooks
-        let claude_dir = repo_root.join(".claude");
-        fs::create_dir_all(&claude_dir).ok();
-
-        let settings_file = claude_dir.join("settings.local.json");
-        let plugin_root_str = plugin_root.to_string_lossy();
-
-        let permissions: serde_json::Value = if settings_file.exists() {
-            let content = fs::read_to_string(&settings_file).unwrap_or_default();
-            serde_json::from_str::<serde_json::Value>(&content)
-                .ok()
-                .and_then(|v| v.get("permissions").cloned())
-                .unwrap_or(serde_json::json!({}))
-        } else {
-            serde_json::json!({})
-        };
-
-        let settings = serde_json::json!({
-            "permissions": permissions,
-            "hooks": {
-                "SessionStart": [{
-                    "hooks": [{
-                        "type": "command",
-                        "command": format!("{}/hooks/run-hook.cmd session-start", plugin_root_str)
-                    }]
-                }],
-                "PreCompact": [{
-                    "matcher": "",
-                    "hooks": [{
-                        "type": "command",
-                        "command": format!("{}/hooks/run-hook.cmd pre-compact", plugin_root_str)
-                    }]
-                }],
-                "UserPromptSubmit": [{
-                    "matcher": "",
-                    "hooks": [{
-                        "type": "command",
-                        "command": format!("{}/hooks/run-hook.cmd user-prompt", plugin_root_str)
-                    }]
-                }]
-            }
-        });
-
-        fs::write(&settings_file, serde_json::to_string_pretty(&settings).unwrap()).ok();
-        println!("[ok]      .claude/settings.local.json");
-    }
-
-    // ── 4. Gate check ───────────────────────────────────────────────────────
-    println!("\n=== gate check ===");
-    let mut pass = true;
-
-    if mindsets_dst.exists() {
-        let count = fs::read_dir(&mindsets_dst)
-            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
-            .unwrap_or(0);
-        println!("[ok]   mindsets/ ({} mindsets)", count);
-    } else {
-        println!("[FAIL] mindsets/ — not found");
-        pass = false;
-    }
-
-    if rules_file.exists() {
-        println!("[ok]   rules.md");
-    }
-
-    if personas_dir.exists() {
-        let count = fs::read_dir(&personas_dir)
-            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
-            .unwrap_or(0);
-        println!("[ok]   personas/ ({} personas)", count);
-    }
-
-    if agents_dst.exists() {
-        let count = fs::read_dir(&agents_dst)
-            .map(|rd| rd.filter(|e| e.as_ref().map(|e| e.path().extension().map_or(false, |x| x == "md")).unwrap_or(false)).count())
-            .unwrap_or(0);
-        println!("[ok]   agents/ ({} agents)", count);
-    } else {
-        println!("[info] .claude/agents/ — not found");
-    }
-
-    if repo_root.join("CLAUDE.md").exists() {
-        println!("[ok]   CLAUDE.md");
-    } else {
-        println!("[info] CLAUDE.md — not found (recommended: add gate check reference)");
-    }
-
-    if std::process::Command::new("senseid").arg("--version").output().is_ok() {
-        println!("[ok]   senseid on PATH");
-    } else {
-        println!("[warn] senseid not on PATH (run: sensei install)");
-    }
-
-    println!();
-    if pass {
-        println!("=== init complete ===");
-        println!("Start a new Claude Code session to activate sensei.");
-    } else {
-        println!("=== init incomplete — fix FAIL items above ===");
-        std::process::exit(1);
-    }
-}
-
-// ── Configure (thin wrapper → daemon) ────────────────────────────────────────
-
-fn configure() {
-    require_daemon();
-    println!("Detecting AI coding platforms...\n");
-
-    // Detect
-    let acps: Vec<serde_json::Value> = client()
-        .get(format!("{}/api/acp/detect", DAEMON_URL))
-        .send()
-        .ok()
-        .and_then(|r| r.json().ok())
-        .unwrap_or_default();
-
-    let mut detected: Vec<String> = Vec::new();
-    for acp in &acps {
-        let id = acp["id"].as_str().unwrap_or("");
-        let name = acp["name"].as_str().unwrap_or("");
-        let installed = acp["installed"].as_bool().unwrap_or(false);
-        let configured = acp["mcp_configured"].as_bool().unwrap_or(false);
-        let mark = if installed { "✓" } else { "·" };
-        let status = match (installed, configured) {
-            (true, true) => "configured",
-            (true, false) => "detected",
-            _ => "not found",
-        };
-        println!("  {} {} ({})", mark, name, status);
-        if installed { detected.push(id.to_string()); }
-    }
-
-    if detected.is_empty() {
-        println!("\nNo AI coding platforms detected.");
-        return;
-    }
-
-    // Configure
-    println!("\nConfiguring sensei for: {}", detected.join(", "));
-    match client()
-        .post(format!("{}/api/acp/configure", DAEMON_URL))
-        .json(&serde_json::json!({"acps": detected}))
-        .send()
-    {
-        Ok(r) if r.status().is_success() => {
-            let result: serde_json::Value = r.json().unwrap_or_default();
-            for c in result["configured"].as_array().unwrap_or(&vec![]) {
-                println!("  ✓ {}", c.as_str().unwrap_or(""));
-            }
-            for e in result["errors"].as_array().unwrap_or(&vec![]) {
-                eprintln!("  ✗ {}", e.as_str().unwrap_or(""));
-            }
-        }
-        _ => eprintln!("Failed to configure ACPs"),
-    }
-    println!("\nDone.");
-}
-
-// ── Install ──────────────────────────────────────────────────────────────────
-
-fn install(specific_acp: Option<&str>, scope: &str) {
-    println!("Installing sensei...\n");
-
-    // Step 1: Verify binaries are available
-    println!("[1/2] Checking binaries...");
-    verify_binaries();
-
-    // Step 2: All ACP config goes through the daemon adapter
-    println!("[2/2] ACP integration...");
-    require_daemon();
-
-    // Detect ACPs if none specified
-    let acps: Vec<String> = if let Some(acp) = specific_acp {
-        vec![acp.to_string()]
-    } else {
-        let detected: Vec<serde_json::Value> = client()
-            .get(format!("{}/api/acp/detect", DAEMON_URL))
-            .send()
-            .ok()
-            .and_then(|r| r.json().ok())
-            .unwrap_or_default();
-        detected
-            .iter()
-            .filter(|a| a["installed"].as_bool() == Some(true))
-            .filter_map(|a| a["id"].as_str().map(String::from))
-            .collect()
-    };
-
-    // All ACPs use the same daemon adapter path — each adapter knows its own strategy
-    // (claude-code adapter tries plugin install, others write MCP config)
-    match client()
-        .post(format!("{}/api/install", DAEMON_URL))
-        .json(&serde_json::json!({"acps": acps, "scope": scope}))
-        .send()
-    {
-        Ok(r) if r.status().is_success() => {
-            let result: serde_json::Value = r.json().unwrap_or_default();
-            let hooks = result["hooks_installed"].as_u64().unwrap_or(0);
-            let skills = result["skills_installed"].as_u64().unwrap_or(0);
-            let cmds = result["commands_installed"].as_u64().unwrap_or(0);
-            if hooks > 0 || skills > 0 || cmds > 0 {
-                println!("  {} hooks, {} skills, {} commands", hooks, skills, cmds);
-            }
-            for c in result["acps_configured"].as_array().unwrap_or(&vec![]) {
-                println!("  ✓ {}", c.as_str().unwrap_or(""));
-            }
-            for e in result["errors"].as_array().unwrap_or(&vec![]) {
-                eprintln!("  ✗ {}", e.as_str().unwrap_or(""));
-            }
-        }
-        Ok(r) => eprintln!("  Install failed: HTTP {}", r.status()),
-        Err(e) => eprintln!("  Install failed: {}", e),
-    }
-
-    println!("\nSensei installed.");
-    println!("  Run: sensei scan ~/Developer");
-}
-
-/// Verify required binaries are on PATH. Does NOT copy — Homebrew manages binaries.
-fn verify_binaries() {
-    let bins = ["senseid", "sensei-mcp"];
-    let mut missing = vec![];
-
-    for name in &bins {
-        if which_exists(name) {
-            println!("  ✓ {}", name);
-        } else {
-            println!("  ✗ {} — not found on PATH", name);
-            missing.push(*name);
-        }
-    }
-
-    if !missing.is_empty() {
-        eprintln!("\n  Missing binaries. Install via: brew install mizukisu/tap/sensei");
-    }
-}
-
-/// Check if a binary is on PATH.
 fn which_exists(name: &str) -> bool {
     std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
         .unwrap_or(false)
 }
 
-// ── Uninstall ────────────────────────────────────────────────────────────────
+fn daemon_bin() -> PathBuf {
+    if which_exists("senseid") {
+        return PathBuf::from("senseid");
+    }
+    home().join(".claude/plugins/sensei/bin/senseid")
+}
+
+fn ensure_daemon() {
+    if daemon_available() { return; }
+
+    eprintln!("Daemon not running — starting...");
+    let bin = daemon_bin();
+    let _ = std::process::Command::new(&bin)
+        .args(["start", "--port", "7744"])
+        .spawn();
+
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if daemon_available() {
+            eprintln!("Daemon started.");
+            return;
+        }
+    }
+
+    eprintln!("Could not start daemon. Run: brew services start sensei");
+    std::process::exit(1);
+}
+
+/// Prompt user with [Y/n] — returns true if accepted.
+fn confirm(prompt: &str, auto_yes: bool) -> bool {
+    if auto_yes { return true; }
+    print!("{} [Y/n] ", prompt);
+    io::stdout().flush().ok();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).ok();
+    let trimmed = input.trim().to_lowercase();
+    trimmed.is_empty() || trimmed == "y" || trimmed == "yes"
+}
+
+/// Resolve the marketplace directory.
+fn find_marketplace(override_path: Option<&str>) -> PathBuf {
+    if let Some(pd) = override_path {
+        return PathBuf::from(pd);
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let local = cwd.join("marketplace");
+    if local.join("mindsets").exists() { return local; }
+
+    let global = home().join(".sensei/marketplace");
+    if global.join("mindsets").exists() { return global; }
+
+    let brew = PathBuf::from("/opt/homebrew/share/sensei/marketplace");
+    if brew.join("mindsets").exists() { return brew; }
+
+    let brew_intel = PathBuf::from("/usr/local/share/sensei/marketplace");
+    if brew_intel.join("mindsets").exists() { return brew_intel; }
+
+    eprintln!("Cannot find marketplace directory. Use --plugin-dir or run: brew install mizukisu/tap/sensei");
+    std::process::exit(1);
+}
+
+/// Check if user-scope init has been done (MCP registered for at least one ACP).
+fn is_user_scope_configured() -> bool {
+    let config_file = home().join(".sensei/config.json");
+    config_file
+        .exists()
+        .then(|| fs::read_to_string(&config_file).ok())
+        .flatten()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["user_scope_configured"].as_bool())
+        .unwrap_or(false)
+}
+
+/// Mark user scope as configured.
+fn mark_user_scope_configured() {
+    let sensei_dir = home().join(".sensei");
+    fs::create_dir_all(&sensei_dir).ok();
+    let config_file = sensei_dir.join("config.json");
+    let mut config: serde_json::Value = config_file
+        .exists()
+        .then(|| fs::read_to_string(&config_file).ok())
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::json!({}));
+    config["user_scope_configured"] = serde_json::json!(true);
+    fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+}
+
+/// Copy .md files from src dir to dst dir, returns count.
+fn copy_md_files(src: &std::path::Path, dst: &std::path::Path) -> u32 {
+    fs::create_dir_all(dst).ok();
+    let mut count = 0u32;
+    if let Ok(entries) = fs::read_dir(src) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "md") {
+                fs::copy(&path, dst.join(entry.file_name())).ok();
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+
+fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool, plugin_dir: Option<&str>) {
+    println!("=== sensei init ===\n");
+
+    // Verify binaries
+    if !which_exists("senseid") || !which_exists("sensei-mcp") {
+        eprintln!("Missing binaries. Install: brew install mizukisu/tap/sensei");
+        std::process::exit(1);
+    }
+
+    let marketplace = find_marketplace(plugin_dir);
+
+    match scope {
+        Some("user") => {
+            init_user_scope(acp, recommended, &marketplace);
+        }
+        Some("project") => {
+            init_project_scope(recommended, &marketplace);
+        }
+        Some(other) => {
+            eprintln!("Unknown scope: {}. Use 'user' or 'project'.", other);
+            std::process::exit(1);
+        }
+        None => {
+            // Auto-detect: if user scope not configured, do both
+            if !is_user_scope_configured() {
+                println!("First-time setup detected — configuring user + project scope.\n");
+                init_user_scope(acp, recommended, &marketplace);
+                println!();
+            }
+            init_project_scope(recommended, &marketplace);
+        }
+    }
+
+    println!("\n=== init complete ===");
+}
+
+// ── User scope ──────────────────────────────────────────────────────────────
+
+fn init_user_scope(acp: Option<&str>, recommended: bool, marketplace: &std::path::Path) {
+    println!("[user scope] Global setup — MCP, daemon, global commands\n");
+
+    // 1. Daemon
+    ensure_daemon();
+    println!("  ✓ daemon running");
+
+    // 2. Register MCP with ACP(s)
+    let acps: Vec<String> = if let Some(a) = acp {
+        vec![a.to_string()]
+    } else {
+        // Auto-detect via daemon
+        let detected: Vec<serde_json::Value> = client()
+            .get(format!("{}/api/acp/detect", DAEMON_URL))
+            .send()
+            .ok()
+            .and_then(|r| r.json().ok())
+            .unwrap_or_default();
+
+        let installed: Vec<String> = detected
+            .iter()
+            .filter(|a| a["installed"].as_bool() == Some(true))
+            .filter_map(|a| a["id"].as_str().map(String::from))
+            .collect();
+
+        if installed.is_empty() {
+            eprintln!("  No AI coding platforms detected.");
+        } else {
+            println!("  Detected: {}", installed.join(", "));
+        }
+        installed
+    };
+
+    for acp_id in &acps {
+        match client()
+            .post(format!("{}/api/acp/configure", DAEMON_URL))
+            .json(&serde_json::json!({"acps": [acp_id]}))
+            .send()
+        {
+            Ok(r) if r.status().is_success() => println!("  ✓ {} — MCP registered", acp_id),
+            _ => eprintln!("  ✗ {} — configure failed", acp_id),
+        }
+    }
+
+    // 3. Install global commands
+    let global_commands = list_catalog_items(marketplace, "command", "global");
+    if !global_commands.is_empty() {
+        println!("\n  Global commands:");
+        for item in &global_commands {
+            println!("    • {} — {}", item.0, item.1);
+        }
+        if confirm("\n  Install these?", recommended) {
+            let dest = home().join(".claude/commands");
+            let cache = home().join(".sensei/cache/marketplace");
+            let count = install_items_from_marketplace(marketplace, &cache, &global_commands, &dest);
+            println!("  ✓ {} global commands installed", count);
+        }
+    }
+
+    mark_user_scope_configured();
+}
+
+// ── Project scope ───────────────────────────────────────────────────────────
+
+fn init_project_scope(recommended: bool, marketplace: &std::path::Path) {
+    let repo_root = std::env::current_dir().expect("Cannot determine current directory");
+    println!("[project scope] {}\n", repo_root.display());
+
+    // 1. .sensei/ directory — mindsets, personas, rules
+    let sensei_dir = repo_root.join(".sensei");
+    fs::create_dir_all(&sensei_dir).ok();
+
+    // Rules
+    let rules_file = sensei_dir.join("rules.md");
+    if !rules_file.exists() {
+        let project_name = repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+        let today = format_date();
+        fs::write(&rules_file, format!(
+            "---\nname: Project Rules — {}\nupdated: {}\nmindsets: .sensei/mindsets/\npersonas: .sensei/personas/\n---\n\n# Rules\n\n## Patterns\n\n<!-- Add project patterns here -->\n\n## Quality\n\n- **Zero errors** — test suite must pass before and after every change\n\n## Process\n\n- **Design before code** — analyst mindset first\n- **One issue at a time** — complete, verify, close, then next\n",
+            project_name, today,
+        )).ok();
+        println!("  [created] .sensei/rules.md");
+    } else {
+        println!("  [exists]  .sensei/rules.md");
+    }
+
+    // Personas
+    let personas_dir = sensei_dir.join("personas");
+    if !personas_dir.exists() {
+        fs::create_dir_all(&personas_dir).ok();
+        println!("  [created] .sensei/personas/");
+    } else {
+        let count = count_md_files(&personas_dir);
+        println!("  [exists]  .sensei/personas/ ({} personas)", count);
+    }
+
+    // Mindsets
+    let mindsets_src = marketplace.join("mindsets");
+    let mindsets_dst = sensei_dir.join("mindsets");
+    if mindsets_src.exists() {
+        let count = copy_md_files(&mindsets_src, &mindsets_dst);
+        println!("  [copied]  .sensei/mindsets/ ({} mindsets)", count);
+    }
+
+    // 2. Project commands
+    let project_commands = list_catalog_items(marketplace, "command", "project");
+    if !project_commands.is_empty() {
+        println!("\n  Project commands ({} available):", project_commands.len());
+        // Show summary, not full list
+        let names: Vec<&str> = project_commands.iter().map(|c| c.0.as_str()).collect();
+        for chunk in names.chunks(7) {
+            println!("    {}", chunk.join(", "));
+        }
+        if confirm("\n  Install recommended set?", recommended) {
+            let dest = repo_root.join(".claude/commands");
+            let cache = home().join(".sensei/cache/marketplace");
+            let count = install_items_from_marketplace(marketplace, &cache, &project_commands, &dest);
+            println!("  ✓ {} project commands installed", count);
+        }
+    }
+
+    // 3. Project skills
+    let project_skills = list_catalog_items(marketplace, "skill", "project");
+    if !project_skills.is_empty() {
+        println!("\n  Project skills ({} available):", project_skills.len());
+        for item in &project_skills {
+            println!("    • {} — {}", item.0, item.1);
+        }
+        if confirm("\n  Install recommended set?", recommended) {
+            let dest = repo_root.join(".claude/skills");
+            let cache = home().join(".sensei/cache/marketplace");
+            let count = install_items_from_marketplace(marketplace, &cache, &project_skills, &dest);
+            println!("  ✓ {} project skills installed", count);
+        }
+    }
+
+    // 4. Agents
+    let agents_src = marketplace.join("agents");
+    let agents_dst = repo_root.join(".claude/agents");
+    if agents_src.exists() {
+        let agent_count = count_md_files(&agents_src);
+        if agent_count > 0 {
+            println!("\n  Agents ({} available):", agent_count);
+            if let Ok(entries) = fs::read_dir(&agents_src) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |e| e == "md") {
+                        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+                        println!("    • {}", name);
+                    }
+                }
+            }
+            if confirm("\n  Install agents?", recommended) {
+                let count = copy_md_files(&agents_src, &agents_dst);
+                println!("  ✓ {} agents installed", count);
+            }
+        }
+    }
+
+    // 5. .mcp.json — upsert sensei entry (for non-plugin ACPs)
+    let mcp_file = repo_root.join(".mcp.json");
+    let mut mcp_config: serde_json::Value = mcp_file
+        .exists()
+        .then(|| fs::read_to_string(&mcp_file).ok())
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::json!({"mcpServers": {}}));
+
+    mcp_config
+        .as_object_mut()
+        .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
+        .map(|servers| servers.insert("sensei".into(), serde_json::json!({"command": "sensei-mcp"})));
+
+    fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
+    println!("\n  [ok] .mcp.json");
+
+    // 6. Gate check
+    println!("\n  --- gate check ---");
+    if which_exists("senseid") { println!("  ✓ senseid on PATH"); }
+    if which_exists("sensei-mcp") { println!("  ✓ sensei-mcp on PATH"); }
+    println!("  ✓ mindsets/ ({} files)", count_md_files(&mindsets_dst));
+    if rules_file.exists() { println!("  ✓ rules.md"); }
+    if agents_dst.exists() { println!("  ✓ agents/ ({} files)", count_md_files(&agents_dst)); }
+    if repo_root.join("CLAUDE.md").exists() { println!("  ✓ CLAUDE.md"); }
+}
+
+// ── Catalog helpers ─────────────────────────────────────────────────────────
+
+/// List items from the local marketplace catalog.json matching kind and scope.
+/// Returns Vec<(name, description, path)>.
+fn list_catalog_items(marketplace: &std::path::Path, kind: &str, scope: &str) -> Vec<(String, String, String)> {
+    let catalog_path = marketplace.join("catalog.json");
+    let content = match fs::read_to_string(&catalog_path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let catalog: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    catalog["items"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter(|item| {
+            item["kind"].as_str() == Some(kind) && item["scope"].as_str() == Some(scope)
+        })
+        .map(|item| {
+            (
+                item["name"].as_str().unwrap_or("").to_string(),
+                item["description"].as_str().unwrap_or("").to_string(),
+                item["path"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Install items by reading from the local marketplace directory.
+fn install_items_from_marketplace(
+    marketplace: &std::path::Path,
+    _cache: &std::path::Path,
+    items: &[(String, String, String)],
+    dest_dir: &std::path::Path,
+) -> u32 {
+    fs::create_dir_all(dest_dir).ok();
+    let mut count = 0u32;
+    for (name, _, path) in items {
+        let src = marketplace.join(path);
+        if src.exists() {
+            let content = fs::read_to_string(&src).unwrap_or_default();
+            let dest = dest_dir.join(format!("{}.md", name));
+            fs::write(&dest, &content).ok();
+            count += 1;
+        } else {
+            eprintln!("  ✗ {} — not found at {}", name, src.display());
+        }
+    }
+    count
+}
+
+fn count_md_files(dir: &std::path::Path) -> usize {
+    fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter(|e| {
+                e.as_ref()
+                    .map(|e| e.path().extension().map_or(false, |x| x == "md"))
+                    .unwrap_or(false)
+            })
+            .count()
+        })
+        .unwrap_or(0)
+}
+
+fn format_date() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = now / 86400;
+    let mut y = 1970i32;
+    let mut remaining = days as i32;
+    loop {
+        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if remaining < year_days { break; }
+        remaining -= year_days;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    while m < 12 && remaining >= mdays[m] { remaining -= mdays[m]; m += 1; }
+    format!("{}-{:02}-{:02}", y, m + 1, remaining + 1)
+}
+
+// ── Uninstall ───────────────────────────────────────────────────────────────
 
 fn uninstall() {
     if daemon_available() {
@@ -588,26 +545,31 @@ fn uninstall() {
         }
     }
 
-    // Clean up legacy plugin dir if it exists
-    let legacy_plugin = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".claude/plugins/sensei");
-    if legacy_plugin.exists() {
-        fs::remove_dir_all(&legacy_plugin).ok();
+    // Clean up legacy plugin dir
+    let legacy = home().join(".claude/plugins/sensei");
+    if legacy.exists() {
+        fs::remove_dir_all(&legacy).ok();
         println!("Removed legacy plugin directory");
+    }
+
+    // Reset user scope flag
+    let config_file = home().join(".sensei/config.json");
+    if config_file.exists() {
+        if let Ok(s) = fs::read_to_string(&config_file) {
+            if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&s) {
+                config["user_scope_configured"] = serde_json::json!(false);
+                fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+            }
+        }
     }
 
     println!("Sensei uninstalled.");
 }
 
-// ── Daemon / Scan / AddLib ───────────────────────────────────────────────────
+// ── Daemon / Scan / AddLib ──────────────────────────────────────────────────
 
 fn daemon_cmd(cmd: &str, port: Option<u16>) {
     let bin = daemon_bin();
-    if !bin.exists() {
-        eprintln!("senseid not found. Run: sensei install");
-        std::process::exit(1);
-    }
     let mut args = vec![cmd.to_string()];
     if let Some(p) = port {
         args.push("--port".into());
@@ -616,14 +578,14 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
     match std::process::Command::new(&bin).args(&args).status() {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
-            eprintln!("Failed: {}", e);
+            eprintln!("Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei", e);
             std::process::exit(1);
         }
     }
 }
 
 fn scan(path: &str) {
-    require_daemon();
+    ensure_daemon();
     match client()
         .post(format!("{}/api/scan", DAEMON_URL))
         .json(&serde_json::json!({"root": path, "max_depth": 4}))
@@ -635,7 +597,7 @@ fn scan(path: &str) {
 }
 
 fn add_lib(name: &str, url: Option<&str>) {
-    require_daemon();
+    ensure_daemon();
     let c = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(45))
         .build()
