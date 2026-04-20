@@ -6,11 +6,11 @@ Feature requests submitted to ACP providers that block or enhance sensei observa
 
 | FR | What | Canonical Issue | Our Issue | Status |
 |----|------|----------------|-----------|--------|
-| FR-1 | Token counts in session hooks | [#11008](https://github.com/anthropics/claude-code/issues/11008) | [#50863](https://github.com/anthropics/claude-code/issues/50863) | open — #11008 is the original, ours flagged as possible dup |
-| FR-2 | PostToolUse response preview | — | not submitted | **workaround**: MCP tools re-executable via daemon cache |
-| FR-3 | Quota/cost programmatic access | [#50926](https://github.com/anthropics/claude-code/issues/50926) | [#50926](https://github.com/anthropics/claude-code/issues/50926) | open — /cost and /usage data exists, needs --json |
-| FR-4 | Headless/batch session mode | [#50927](https://github.com/anthropics/claude-code/issues/50927) | [#50927](https://github.com/anthropics/claude-code/issues/50927) | open |
-| FR-5 | Task-level lifecycle hooks | [#50931](https://github.com/anthropics/claude-code/issues/50931) | [#50931](https://github.com/anthropics/claude-code/issues/50931) | open — SessionEnd workaround: SessionStart closes prev + PreCompact + Stop |
+| FR-1 | Token counts in session hooks | [#11008](https://github.com/anthropics/claude-code/issues/11008) | [#50863](https://github.com/anthropics/claude-code/issues/50863) | **open** — no hook access to token/cost data as of v2.1.98 |
+| FR-2 | PostToolUse response preview | — | not submitted | **resolved in v2.1.x** — `tool_response` now included in PostToolUse hook input |
+| FR-3 | Quota/cost programmatic access | [#50926](https://github.com/anthropics/claude-code/issues/50926) | [#50926](https://github.com/anthropics/claude-code/issues/50926) | **partial** — `/cost` exists but interactive only, no `--json` in `-p` mode |
+| FR-4 | Headless/batch session mode | [#50927](https://github.com/anthropics/claude-code/issues/50927) | [#50927](https://github.com/anthropics/claude-code/issues/50927) | **resolved in v2.1.x** — `claude -p`, bare mode, Agent SDK, `--output-format json` |
+| FR-5 | Task-level lifecycle hooks | [#50931](https://github.com/anthropics/claude-code/issues/50931) | [#50931](https://github.com/anthropics/claude-code/issues/50931) | **resolved in v2.1.x** — TaskCreated, TaskCompleted, SessionEnd, SubagentStart/Stop hooks added |
 
 ## OpenCode (anomalyco/opencode)
 
