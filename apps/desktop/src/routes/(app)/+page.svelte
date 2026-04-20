@@ -14,6 +14,6 @@
       return;
     }
 
-    goto('/home', { replaceState: true });
+    goto('/overview', { replaceState: true });
   });
 </script>

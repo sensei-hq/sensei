@@ -13,7 +13,71 @@ export interface MetricValue<T = number> {
   hint?: string;          // "Estimated from turn count"
 }
 
-// ─── Dashboard ──────────────────────────────────────────────────────────────
+// ─── Scope ──────────────────────────────────────────────────────────────────
+
+export type ProjectState = 'active' | 'recent' | 'inactive' | 'archived';
+export type SourceType = 'git' | 'unmanaged' | 'connector';
+
+export interface SolutionSummary {
+  id: string;
+  name: string;
+  description?: string;
+  projects: ProjectSummaryRef[];
+  state: ProjectState;
+  metrics: ScopeMetrics;
+}
+
+export interface ProjectSummaryRef {
+  id: string;
+  name: string;
+  role: string;
+  sourceType: SourceType;
+  state: ProjectState;
+  indexedAt?: string;
+  lastSessionAt?: string;
+}
+
+/** Metrics that exist at both solution and project scope */
+export interface ScopeMetrics {
+  period: { label: string; from: string; to: string };
+  ftr: MetricValue;
+  sessionCount: MetricValue;
+  reworkRate: MetricValue;
+  tokens: MetricValue;
+  cost: MetricValue;
+  toolAdherence: { mcp: number; fallback: number; total: number };
+}
+
+// ─── Global Overview ────────────────────────────────────────────────────────
+
+export interface OverviewData {
+  solutions: SolutionSummary[];
+  globalMetrics: ScopeMetrics;
+  quota: MetricValue<{ usedPct: number; daysRemaining: number | null }>;
+}
+
+// ─── Solution Dashboard ─────────────────────────────────────────────────────
+
+export interface SolutionDashboardData {
+  solution: SolutionSummary;
+  metrics: ScopeMetrics;
+  recentSessions: SessionSummary[];
+  perProjectMetrics: Array<{ project: ProjectSummaryRef; metrics: ScopeMetrics }>;
+}
+
+// ─── Project Dashboard ──────────────────────────────────────────────────────
+
+export interface ProjectDashboardData {
+  projectId: string;
+  projectName: string;
+  solutionId: string;
+  solutionName: string;
+  metrics: ScopeMetrics;
+  recentSessions: SessionSummary[];
+  activeTask: { issue?: string; task?: string; phase?: string } | null;
+}
+
+// ─── Legacy alias (used by existing home page, will migrate) ────────────────
 
 export interface DashboardData {
   period: { label: string; from: string; to: string };
