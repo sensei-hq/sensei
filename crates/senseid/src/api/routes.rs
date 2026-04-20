@@ -1536,8 +1536,11 @@ async fn list_installed_items() -> Json<Vec<crate::installer::InstalledItem>> {
     Json(crate::installer::list_installed())
 }
 
-async fn uninstall_all() -> Json<crate::installer::UninstallResult> {
-    match tokio::task::spawn_blocking(crate::installer::uninstall).await {
+async fn uninstall_all(
+    body: Option<Json<crate::installer::UninstallRequest>>,
+) -> Json<crate::installer::UninstallResult> {
+    let req = body.map(|b| b.0).unwrap_or_default();
+    match tokio::task::spawn_blocking(move || crate::installer::uninstall(&req)).await {
         Ok(result) => Json(result),
         Err(_) => Json(crate::installer::UninstallResult::default()),
     }
