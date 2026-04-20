@@ -3,3 +3,4 @@
 - [Project vs global scope](feedback_project_vs_global.md) — observatory pages must separate project-specific data from global data
 - [Solution model](project_solution_model.md) — three-level scope: Global > Solution > Project. Solutions are multi-repo logical groupings with future external source connectors.
 - [Overview = /all evolved](feedback_overview_is_all.md) — Overview must combine project management (add folders, scan, progress) with metrics — not be a separate read-only page
+- [Overview actions](feedback_overview_actions.md) — search, add, exclude/remove repos, live progress, exclude list in settings
