@@ -107,6 +107,48 @@
     }
   }
 
+  let scanComplete = $state(false);
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  function pollForProjects() {
+    scanComplete = false;
+    const api = senseiApi(getPort());
+    let lastCount = 0;
+    let stableRounds = 0;
+
+    pollTimer = setInterval(async () => {
+      const projs = await api.getProjects();
+      // Map daemon projects to discovered repos format
+      discovered = projs.map(p => ({
+        name: p.name,
+        path: p.path,
+        remote: null,
+        description: null,
+        categories: [],
+        status: (p.indexed_at ? 'active' : 'unknown') as any,
+        last_commit_days: null,
+        tech_stack: p.stack ?? [],
+        commit_count: 0,
+        duplicate_of: null,
+        variant_group: null,
+      }));
+      // Auto-select all
+      selectedRepos = new Set(discovered.map(r => r.path));
+
+      // Detect scan completion: project count stabilized for 3 polls
+      if (projs.length === lastCount && projs.length > 0) {
+        stableRounds++;
+        if (stableRounds >= 3) {
+          scanComplete = true;
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        }
+      } else {
+        stableRounds = 0;
+      }
+      lastCount = projs.length;
+    }, 2000);
+  }
+
   const selectedCount = $derived(selectedRepos.size);
 
   // Used in groups step rows
@@ -263,10 +305,12 @@
     const { setSetupComplete, getActiveSolutionId: getActive } = await import('$lib/appstate.svelte.js');
     await setSetupComplete();
     const activeSolution = getActive();
-    window.location.replace(activeSolution ? `/s/${activeSolution}` : '/all');
+    window.location.replace(activeSolution ? `/s/${activeSolution}` : '/overview');
   }
 
+  import { onDestroy } from 'svelte';
   onMount(() => { loadDetected(); });
+  onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
 </script>
 
 <div class="drag-region flex h-screen flex-col bg-surface-z1 select-none overflow-hidden">
@@ -410,10 +454,12 @@
         </button>
         <button
           onclick={async () => {
+            scanning = true;
             await scanAll();
-            const { setSetupComplete } = await import('$lib/appstate.svelte.js');
-            await setSetupComplete();
-            window.location.replace('/all');
+            // Move to repos step — it subscribes to SSE and shows progress
+            step = 'repos';
+            scanning = false;
+            pollForProjects();
           }}
           disabled={scanRoots.length === 0 || scanning}
           class="flex-1 rounded-xl py-2.5 text-sm font-semibold transition-colors
@@ -438,8 +484,28 @@
       <div class="flex items-center gap-3 border-b border-surface-z3 px-5 py-3 shrink-0">
         <div class="flex-1">
           <p class="text-xs text-surface-z4 mb-0.5">Step 3 of 4</p>
-          <h2 class="text-base font-bold text-surface-z9">Select projects to import</h2>
+          <h2 class="text-base font-bold text-surface-z9">
+            {#if !scanComplete}
+              Discovering projects...
+            {:else}
+              Select projects to import
+            {/if}
+          </h2>
+          <p class="text-xs text-surface-z4 mt-0.5">
+            {discovered.length} projects found
+            {#if !scanComplete}
+              <span class="i-solar-refresh-bold-duotone animate-spin text-[10px] ml-1 inline-block"></span>
+            {:else}
+              — scan complete
+            {/if}
+          </p>
         </div>
+        {#if scanComplete || discovered.length > 0}
+          <button onclick={continueToGroups}
+            class="rounded-xl bg-primary-z6 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-z7">
+            Continue →
+          </button>
+        {/if}
       </div>
 
       <!-- Repo list -->
