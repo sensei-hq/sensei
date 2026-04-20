@@ -23,56 +23,136 @@ The current desktop app is a code intelligence dashboard — graphs, communities
 
 The desktop is a **session observatory** — the place where AI-assisted developers understand, optimize, and debug their AI-powered workflow. Every screen answers a question. Every insight links to an action.
 
+## Scope Model
+
+Every piece of data in the observatory has a scope:
+
+**Project-scoped** — belongs to a specific repo/solution:
+- Sessions and session metrics (FTR, turns, rework, token usage)
+- Profiles: mindsets, personas, rules (each project has its own `.sensei/`)
+- Code intelligence: graph, complexity hotspots, duplicates, dead code, doc drift
+- Project-specific skills (opt-in per project)
+- Indexing status
+
+**Global** — shared across all projects:
+- Skills catalog (installed once, available everywhere)
+- Plugins and MCP configuration
+- Library docs (indexed once, queried from any project)
+- Tool catalog (MCP tools are daemon-wide)
+- Benchmarks (cross-project comparison)
+- ACP configuration
+- Quota and global cost tracking
+
+A user with 5 projects needs "how is project X doing?" — not "how is everything averaged together?"
+
 ## Information Architecture
 
 ### Navigation
 
 ```
 Sidebar:
-  Home (dashboard)
-  Sessions
-  Projects
-  Libraries
-  Tools
-  Profiles (mindsets, personas, rules)
-  Benchmarks
-  Community
+  ┌─ GLOBAL ──────────────┐
+  │ Overview (cross-project│
+  │   dashboard)           │
+  │ Libraries              │
+  │ Tools                  │
+  │ Skills & Plugins       │
+  │ Benchmarks             │
+  └────────────────────────┘
+  ┌─ PROJECTS ────────────┐
+  │ sensei-dev        ★   │  ← active project
+  │ acme-api              │
+  │ acme-frontend         │
+  └────────────────────────┘
   Settings
 
+Clicking a project opens project-scoped pages:
+  Project / Dashboard  (FTR, sessions, rework for THIS project)
+  Project / Sessions   (sessions for THIS project)
+  Project / Profiles   (mindsets, personas, rules for THIS project)
+  Project / Code       (graph, complexity, duplicates, doc drift)
+  Project / Indexer    (indexing status for THIS project)
+
 Header:
-  daemon status indicator
-  token/quota burn rate
+  [active project selector]  daemon status  token/quota burn rate
 ```
+
+### Key UX decisions
+
+1. **Project selector in header** — always visible, switches all project-scoped pages
+2. **Global pages have no project context** — Libraries, Tools, Skills are daemon-wide
+3. **Overview page** is global — shows cross-project summary (total sessions, aggregate FTR, per-project sparklines)
+4. **Project dashboard** is the landing page when a project is selected — answers "how is THIS project doing?"
+5. **Profiles page is project-scoped** — each project has different mindsets/personas/rules. The lever impact table shows impact for THIS project's sessions.
 
 ## Pages
 
-### 1. Home — "How am I doing?"
+### GLOBAL PAGES
 
-The daily landing page. Answers at a glance.
+### 1. Overview — "How am I doing across all projects?"
+
+The global landing page. Cross-project summary.
+
+**Per-project sparklines:**
+- Row per project: name, FTR trend, session count this week, rework rate
+- Click a project → opens project dashboard
+
+**Aggregate metrics:**
+- Total sessions across all projects
+- Global FTR (weighted by sessions)
+- Quota gauge with burn rate and projection
+
+**Quick actions:**
+- "Start session" (picks active project)
+- "View backlog"
+
+### 2. Libraries — "What docs does Claude have?" (GLOBAL)
+
+See section 4 below — unchanged, libraries are global.
+
+### 3. Tools — "What can sensei do?" (GLOBAL)
+
+See section 5 below — unchanged, MCP tools are daemon-wide.
+
+### 4. Skills & Plugins — "What's installed?" (GLOBAL)
+
+- Installed skills with enable/disable toggles
+- Installed plugins (MCP servers)
+- ACP configuration
+
+### 5. Benchmarks — "Is sensei helping?" (GLOBAL)
+
+Cross-project benchmark comparison. See section 7 below.
+
+---
+
+### PROJECT-SCOPED PAGES
+
+These pages show data for the **active project** (selected in header or sidebar).
+
+### 6. Project Dashboard — "How is THIS project doing?"
+
+The landing page when a project is selected. Answers at a glance for this project only.
 
 **Metrics cards:**
-- FTR (first-try-right) score with trend
-- Session count (this week / total)
-- Rework rate with trend
-- Token usage + cost + burn rate
+- FTR for THIS project
+- Session count for THIS project
+- Rework rate for THIS project
+- Token usage + cost for THIS project
 
 **Tool adherence bar:**
-- % MCP tools vs fallback (grep, manual file reading)
+- % MCP tools vs fallback in this project's sessions
 - Goal: 90%+ MCP usage
 
 **Recent sessions:**
-- Last 5-10 sessions: task, outcome badge, turns, cost
+- Last 5-10 sessions for THIS project
 - Click to drill into any session
-
-**Quota gauge:**
-- Remaining quota with projected days at current burn rate
-- Visual warning when < 20%
 
 **Active context:**
 - Current task/issue from workflow state
-- Quick actions: "Start session", "View backlog"
+- Quick actions
 
-### 2. Sessions — "What happened?"
+### 7. Project Sessions — "What happened in THIS project?"
 
 **List view:**
 Sortable table: date, task/issue, project, outcome, FTR, turns, corrections, tokens, cost, duration
@@ -101,163 +181,55 @@ Clicking on:
 - A profile → shows its questions and whether they were answered
 - A warning → explains the issue and suggests a fix
 
-### 3. Projects — "What am I working on?"
+### 8. Project Code — "What does THIS project's code look like?"
 
-**Solutions as collapsible groups:**
-- Solution name, repo count, roles
-- Indexed status, last session
-- Expand to see individual repos
+**Overview:**
+- Symbol count (functions, types), edge count
+- Stack and indexed status
 
-**Repo detail (drill-in):**
-- Symbol count (functions, types)
-- Graph visualization — how the code is organized
-- Complexity hotspots — functions with high cyclomatic complexity
-- Dead code candidates — exported but never called
-- Duplicates — identical functions across files
-- Doc drift — docs that reference changed code
+**Actionable insights (each with "Tell Claude" button):**
+- Complexity hotspots — functions with high cyclomatic complexity → "Investigate and decompose"
+- Dead code candidates — exported but never called → "Check if dead or used via HTTP"
+- Duplicates — identical functions across files → "Extract to shared util"
+- Doc drift — docs referencing changed code → "Review and update doc"
 
-**Actionable insights:**
-Every finding has a "Tell Claude" button that generates a prompt:
-- "Investigate this dead code cluster"
-- "Refactor these 3 duplicate functions into a shared util"
-- "Update this doc that references a renamed function"
+**Graph visualization:**
+- Interactive code structure graph (existing GraphCanvas)
+- Communities and architecture clusters
 
-The prompt is copied to clipboard or opened in Claude Code directly.
+### 9. Project Profiles — "What's helping THIS project?"
 
-### 4. Libraries — "What docs does Claude have?"
+Lever impact table ranked by FTR/token impact — but scoped to THIS project's sessions only.
 
-**Indexed libraries:**
-- Name, section count, last indexed date, freshness indicator
-- "Stale" badge if indexed > 30 days ago
-- "Used in N sessions" — is this library actively helping?
+Each project can have:
+- Custom mindsets (beyond the global defaults)
+- Custom personas specific to this project's users
+- Custom rules in this project's `.sensei/rules.md`
+- Project-specific skills (opted in per project)
 
-**Library detail:**
-- Sections / components with content preview
-- "Simulate: what would get_lib_docs('X') return?" — test the tool
-- Re-index button (refresh docs)
+Suggestions are derived from THIS project's correction patterns.
 
-**Add library:**
-- Name + optional URL
-- Auto-discovery from llms.txt
-- Preview what will be indexed before committing
+### 10. Project Indexer — "Is THIS project indexed?"
 
-**Maintenance dashboard:**
-- Which libraries are stale?
-- Which are unused (indexed but never queried)?
-- Recommended: libraries detected in your code but not yet indexed
+Indexing status, progress, errors, re-index controls for this project only.
 
-### 5. Tools — "What can sensei do?"
+---
 
-**MCP tool catalog:**
-Every available MCP tool with:
-- Name, description
-- Input parameters with types
-- Example input/output
-- "Try it" — simulate a call with custom params, see live response
-- Usage stats: how many times used across sessions
+### Scope Reference
 
-**Tool health:**
-- Which tools are returning useful data?
-- Which tools are never used?
-- Error rates per tool
-
-**Tool comparison:**
-- Side-by-side: "search('foo')" vs "grep foo" — what does each find?
-- Demonstrates why MCP is preferred
-
-### 6. Profiles — "What's helping and what's not?"
-
-The user doesn't care about profiles for their own sake. They care about outcomes. This page connects the dots: which levers (skills, mindsets, personas, rules, libraries) are improving quality/time/cost, and which are noise or actively hurting.
-
-**Impact view (default):**
-Every active lever ranked by impact on session outcomes:
-```
-Lever                    │ Sessions │ FTR Impact │ Token Impact │ Verdict
-─────────────────────────┼──────────┼────────────┼──────────────┼─────────
-Analyst mindset          │ 12       │ +15% FTR   │ +8% tokens   │ ✓ keep — worth the token cost
-BAT mindset              │ 10       │ +22% FTR   │ +12% tokens  │ ✓ keep — biggest quality gain
-Developer mindset        │ 12       │ +5% FTR    │ +3% tokens   │ ✓ keep — low cost, steady
-Security Reviewer        │ 0        │ n/a        │ n/a          │ ? unused — remove or needs trigger?
-get_lib_docs(rokkit)     │ 4        │ +10% FTR   │ −5% tokens   │ ✓ keep — saves rework
-Plugin Developer persona │ 3        │ +8% FTR    │ +6% tokens   │ ~ marginal — review questions
-TDD rule                 │ 12       │ +18% FTR   │ +15% tokens  │ ✓ keep — high quality lift
-```
-
-**What to look for:**
-- High token cost, low FTR impact → remove or simplify
-- Never applied → wrong trigger, irrelevant to project, or poorly described
-- High FTR impact, modest token cost → keep and possibly strengthen
-- Negative FTR impact → actively causing problems, investigate
-
-**Discovery: "How do I identify personas for my repo?"**
-- Sensei analyzes your session corrections and groups them by root cause
-- "60% of corrections were about missing user perspective" → suggests an end-user persona
-- "3 sessions failed because auth wasn't considered" → suggests a security reviewer mindset
-- Persona/mindset recommendations based on YOUR project's actual pain points, not generic templates
-
-**Actions:**
-- Toggle any lever on/off
-- Edit questions, rules, descriptions inline
-- "Suggest improvements" — analyzes recent sessions and recommends changes to profiles
-- "Create persona from session data" — extracts a persona from patterns in corrections
-
-**Personas (.sensei/personas/):**
-- List with usage stats
-- Click to view questions, journey, pain points
-- "This persona's validates were checked 2/5 times — coverage gap"
-
-**Rules (.sensei/rules.md):**
-- Rule-by-rule adherence stats
-- "TDD: 92% adherence" — click to see the 8% violations
-- Edit rules inline
-
-### 7. Benchmarks — "Is sensei helping?"
-
-**For evaluation:**
-- "I have a repo — will sensei benefit my case?"
-- Configure test tasks (e.g., "add a feature", "fix a bug", "refactor a module")
-- Run with sensei vs baseline
-- Compare: turns, accuracy, time, cost
-
-**Benchmark results:**
-- Score cards per task
-- Aggregate improvement metrics
-- Shareable report (export as markdown or link)
-
-**Corpus management:**
-- Test scenarios / tasks
-- Expected outcomes
-- Historical runs
-
-### 8. Community — "How do I participate?"
-
-**Share:**
-- Share benchmark results (anonymized)
-- Share a pattern that worked well
-- Share a mindset or persona
-
-**Report:**
-- Report a tool issue
-- Suggest an improvement
-- Report a finding that could help others
-
-**Support:**
-- GitHub stars / sponsor
-- Contribute skills, mindsets, personas
-- Plugin marketplace (future)
-
-**Discover:**
-- Browse shared patterns from other users
-- Browse shared personas/mindsets
-- See aggregate benchmark data ("sensei improves FTR by X% on average")
-
-### 9. Settings
-
-- Daemon status + health
-- ACP configuration
-- Workspace: scan folders, reset data
-- Display preferences
-- Global skills enable/disable
+| Page | Scope | What it shows |
+|------|-------|---------------|
+| Overview | global | Cross-project sparklines, aggregate FTR, quota |
+| Libraries | global | Indexed docs shared across all projects |
+| Tools | global | MCP tool catalog, usage stats, "Try it" |
+| Skills & Plugins | global | Installed skills, plugins, ACP config |
+| Benchmarks | global | Cross-project comparison runs |
+| Settings | global | Daemon, display, workspace |
+| Project Dashboard | project | FTR, sessions, rework for THIS project |
+| Project Sessions | project | Session list + detail for THIS project |
+| Project Code | project | Graph, complexity, duplicates, doc drift |
+| Project Profiles | project | Mindsets, personas, rules + impact for THIS project |
+| Project Indexer | project | Indexing status for THIS project |
 
 ## Design Principles
 
@@ -309,11 +281,10 @@ Test a tool call. Preview a library index. Run a benchmark on a subset. Reduce t
 
 | Persona | Primary pages | Key question |
 |---------|--------------|--------------|
-| AI Driven Developer | Home, Sessions, Profiles | "How efficient am I and how do I improve?" |
-| Plugin Developer | Tools, Profiles, Libraries | "Is my plugin/skill working and helping?" |
+| AI Driven Developer | Overview, Project Dashboard, Project Sessions, Project Profiles | "How efficient am I on THIS project and how do I improve?" |
+| Plugin Developer | Tools, Skills & Plugins, Libraries | "Is my plugin/skill working and helping?" |
 | API Consumer | Tools | "What tools exist and how do I use them?" |
-| Evaluator (new) | Benchmarks, Home | "Should I adopt sensei for my team?" |
-| Contributor (new) | Community, Profiles | "How do I share what I've learned?" |
+| Evaluator (new) | Benchmarks, Overview | "Should I adopt sensei for my team?" |
 
 ## What gets removed from current app
 
