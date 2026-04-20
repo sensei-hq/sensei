@@ -200,6 +200,9 @@ export function senseiApi(port: number) {
     getSessions: () =>
       get<SessionData>('/api/sessions', { stats: null, sessions: [], toolUsage: [], benchmarkPairs: [] }),
 
+    getMetrics: (project: string) =>
+      get<Record<string, unknown>>(`/api/metrics/${encodeURIComponent(project)}`, {}),
+
     // ── Scan ─────────────────────────────────────────────────────────────
     scanFolder: (root: string, maxDepth = 3) =>
       post<{ ok: boolean; scanning: boolean }>(

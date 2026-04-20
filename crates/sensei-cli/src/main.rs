@@ -108,10 +108,42 @@ fn daemon_available() -> bool {
 }
 
 fn require_daemon() {
-    if !daemon_available() {
-        eprintln!("Daemon not running. Start it first: sensei start");
-        std::process::exit(1);
+    if daemon_available() { return; }
+
+    // Try auto-start
+    eprintln!("Daemon not running — starting...");
+    let bin = daemon_bin();
+    if bin.exists() {
+        std::process::Command::new(&bin)
+            .args(["start", "--port", "7744"])
+            .spawn()
+            .ok();
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if daemon_available() {
+                eprintln!("Daemon started.");
+                return;
+            }
+        }
     }
+
+    // Also try senseid on PATH
+    if std::process::Command::new("senseid")
+        .args(["start", "--port", "7744"])
+        .spawn()
+        .is_ok()
+    {
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if daemon_available() {
+                eprintln!("Daemon started.");
+                return;
+            }
+        }
+    }
+
+    eprintln!("Could not start daemon. Run manually: senseid start");
+    std::process::exit(1);
 }
 
 // ── Init (per-repo, no daemon required) ─────────────────────────────────────
