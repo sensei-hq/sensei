@@ -25,25 +25,66 @@ The desktop is a **session observatory** — the place where AI-assisted develop
 
 ## Scope Model
 
-Every piece of data in the observatory has a scope:
+Three levels: **Global > Solution > Project**
 
-**Project-scoped** — belongs to a specific repo/solution:
-- Sessions and session metrics (FTR, turns, rework, token usage)
-- Profiles: mindsets, personas, rules (each project has its own `.sensei/`)
-- Code intelligence: graph, complexity hotspots, duplicates, dead code, doc drift
-- Project-specific skills (opt-in per project)
-- Indexing status
-
-**Global** — shared across all projects:
+### Global — shared across everything
 - Skills catalog (installed once, available everywhere)
 - Plugins and MCP configuration
-- Library docs (indexed once, queried from any project)
+- Library docs (indexed once, queried from any context)
 - Tool catalog (MCP tools are daemon-wide)
-- Benchmarks (cross-project comparison)
+- Benchmarks (cross-solution comparison)
 - ACP configuration
-- Quota and global cost tracking
+- Quota and total cost tracking
 
-A user with 5 projects needs "how is project X doing?" — not "how is everything averaged together?"
+### Solution — a logical product or system
+A solution groups related repositories into one unit. The developer thinks "Acme Platform" not "acme-api + acme-frontend + acme-docs."
+
+**How solutions form:**
+- Auto-detected from git subtrees (monorepo)
+- Manually created by selecting repos and assigning roles (backend, frontend, docs, infra, etc.)
+- Future: external sources plugged in (Confluence, Jira, wiki pages) as solution members alongside repos
+
+**What solutions enable:**
+- Cross-repo connections (API calls frontend, docs describe API)
+- Merged graph — see how repos interact
+- Aggregated metrics — FTR, sessions, rework across all repos in the solution
+- Shared profiles — solution-level mindsets/personas/rules that apply to all repos in the group
+- Traceability — requirements doc in repo A traces to implementation in repo B
+
+**Solution-scoped data:**
+- Aggregated session metrics across all repos in the solution
+- Cross-repo graph and architecture view
+- Solution-level profiles and rules
+- Shared libraries used across repos in the solution
+
+### Project — a single repository
+- Sessions and session metrics for this repo
+- Profiles: mindsets, personas, rules (this repo's `.sensei/`)
+- Code intelligence: graph, complexity, duplicates, dead code, doc drift
+- Indexing status
+
+### Data Source Connectors (future)
+
+Solutions today contain git repos. In the future, a solution can also include:
+
+| Source | What it provides | How it connects |
+|--------|-----------------|-----------------|
+| **Confluence** | Requirements, design docs, runbooks | TRACES_TO edges from docs to code |
+| **Jira** | Issues, epics, acceptance criteria | Links tasks to sessions, maps issues to code changes |
+| **Wiki** | Internal docs, architecture decisions | COVERS and MENTIONS edges to code |
+| **Notion** | Product specs, meeting notes | Same as Confluence |
+| **Figma** | Design files, component specs | Links designs to UI components |
+
+Design these as pluggable connectors — same interface as a repo (produces nodes + edges for the graph) but different data source. The graph doesn't care whether a node came from a git repo or Confluence — it's just a node with edges.
+
+```
+Solution "Acme Platform"
+├── repo: acme-api        (role: backend)
+├── repo: acme-frontend   (role: frontend)
+├── repo: acme-docs       (role: docs)
+├── connector: confluence  (space: ACME)      ← future
+└── connector: jira        (project: ACME)    ← future
+```
 
 ## Information Architecture
 
@@ -51,39 +92,49 @@ A user with 5 projects needs "how is project X doing?" — not "how is everythin
 
 ```
 Sidebar:
-  ┌─ GLOBAL ──────────────┐
-  │ Overview (cross-project│
-  │   dashboard)           │
-  │ Libraries              │
-  │ Tools                  │
-  │ Skills & Plugins       │
-  │ Benchmarks             │
-  └────────────────────────┘
-  ┌─ PROJECTS ────────────┐
-  │ sensei-dev        ★   │  ← active project
-  │ acme-api              │
-  │ acme-frontend         │
-  └────────────────────────┘
+  ┌─ GLOBAL ───────────────┐
+  │ Overview                │  cross-solution dashboard
+  │ Libraries               │
+  │ Tools                   │
+  │ Skills & Plugins        │
+  │ Benchmarks              │
+  └─────────────────────────┘
+  ┌─ SOLUTIONS ─────────────┐
+  │ Acme Platform     ★  3  │  ← active solution (3 repos)
+  │ sensei-dev           1  │
+  │ Side Project         2  │
+  └─────────────────────────┘
   Settings
 
-Clicking a project opens project-scoped pages:
-  Project / Dashboard  (FTR, sessions, rework for THIS project)
-  Project / Sessions   (sessions for THIS project)
-  Project / Profiles   (mindsets, personas, rules for THIS project)
-  Project / Code       (graph, complexity, duplicates, doc drift)
-  Project / Indexer    (indexing status for THIS project)
+Clicking a solution opens solution-scoped pages:
+
+  Solution / Dashboard    aggregate metrics across all repos
+  Solution / Sessions     sessions from all repos in solution
+  Solution / Architecture merged graph, cross-repo connections
+  Solution / Profiles     solution-level mindsets/personas/rules
+  Solution / Repos        list repos, assign roles, add/remove
+
+  Within Repos, clicking a repo opens project-scoped pages:
+
+    Project / Dashboard   metrics for THIS repo
+    Project / Sessions    sessions for THIS repo
+    Project / Code        graph, complexity, duplicates, doc drift
+    Project / Profiles    repo-specific overrides
+    Project / Indexer     indexing status
 
 Header:
-  [active project selector]  daemon status  token/quota burn rate
+  [solution selector] / [project selector]   daemon status   quota burn rate
 ```
 
 ### Key UX decisions
 
-1. **Project selector in header** — always visible, switches all project-scoped pages
-2. **Global pages have no project context** — Libraries, Tools, Skills are daemon-wide
-3. **Overview page** is global — shows cross-project summary (total sessions, aggregate FTR, per-project sparklines)
-4. **Project dashboard** is the landing page when a project is selected — answers "how is THIS project doing?"
-5. **Profiles page is project-scoped** — each project has different mindsets/personas/rules. The lever impact table shows impact for THIS project's sessions.
+1. **Solution is the primary unit** — users think "Acme Platform" not "acme-api." Sidebar lists solutions, not individual repos.
+2. **Solution context in header** — always visible, switches all solution/project pages. Format: `Acme Platform / acme-api` (breadcrumb).
+3. **Global pages have no solution/project context** — Libraries, Tools, Skills are daemon-wide.
+4. **Solution dashboard** is the landing page when a solution is selected — aggregate metrics across all its repos.
+5. **Project dashboard** is a drill-down from solution — click a repo to see repo-specific data.
+6. **Profiles cascade** — global mindsets apply everywhere, solution profiles apply to all repos in the solution, project profiles are repo-specific overrides.
+7. **Standalone projects** (not in any solution) appear as single-repo solutions in the sidebar — same pages, just with one repo.
 
 ## Pages
 
@@ -219,17 +270,32 @@ Indexing status, progress, errors, re-index controls for this project only.
 
 | Page | Scope | What it shows |
 |------|-------|---------------|
-| Overview | global | Cross-project sparklines, aggregate FTR, quota |
-| Libraries | global | Indexed docs shared across all projects |
+| Overview | global | Per-solution sparklines, aggregate FTR, quota |
+| Libraries | global | Indexed docs shared across everything |
 | Tools | global | MCP tool catalog, usage stats, "Try it" |
 | Skills & Plugins | global | Installed skills, plugins, ACP config |
-| Benchmarks | global | Cross-project comparison runs |
+| Benchmarks | global | Cross-solution comparison runs |
 | Settings | global | Daemon, display, workspace |
-| Project Dashboard | project | FTR, sessions, rework for THIS project |
-| Project Sessions | project | Session list + detail for THIS project |
+| Solution Dashboard | solution | Aggregate metrics across all repos in solution |
+| Solution Sessions | solution | Sessions from all repos in solution |
+| Solution Architecture | solution | Merged graph, cross-repo connections |
+| Solution Profiles | solution | Solution-level mindsets, personas, rules |
+| Solution Repos | solution | Repo list, roles, add/remove, connectors |
+| Project Dashboard | project | FTR, sessions, rework for THIS repo |
+| Project Sessions | project | Session list + detail for THIS repo |
 | Project Code | project | Graph, complexity, duplicates, doc drift |
-| Project Profiles | project | Mindsets, personas, rules + impact for THIS project |
-| Project Indexer | project | Indexing status for THIS project |
+| Project Profiles | project | Repo-specific profile overrides |
+| Project Indexer | project | Indexing status for THIS repo |
+
+### Profile Cascade
+
+```
+Global mindsets (shipped with sensei, .sensei/mindsets/)
+  └─ Solution profiles (shared across repos in solution)
+       └─ Project profiles (repo-specific .sensei/ overrides)
+```
+
+All three levels stack. A project inherits its solution's profiles, which inherit global mindsets. A project can override or add on top.
 
 ## Design Principles
 
