@@ -225,11 +225,12 @@ export class RepoStore {
     return { project: p, indexState, filesTotal, filesCompleted, filesFailed, currentFile, updatedAt };
   }
 
-  private onEvent(evt: { event: string; repo_id?: string; path?: string }) {
+  private onEvent(evt: { event: string; repo_id?: string; path?: string; files_total?: number }) {
     if (!evt.repo_id) return;
     const idx = this.all.findIndex(r => r.project.repo_id === evt.repo_id);
 
     if (idx === -1) {
+      // New repo — fetch all to pick it up
       this.fetchAll();
       return;
     }
@@ -237,7 +238,14 @@ export class RepoStore {
     const entry = { ...this.all[idx] };
     const now = Date.now();
 
-    if (evt.event === 'started') {
+    if (evt.event === 'repo_queued') {
+      // Repo's file tasks are queued — now we know the total
+      entry.filesTotal = evt.files_total ?? 0;
+      entry.filesCompleted = 0;
+      entry.filesFailed = 0;
+      entry.indexState = 'queued';
+      entry.updatedAt = now;
+    } else if (evt.event === 'started') {
       entry.indexState = 'indexing';
       if (evt.path) entry.currentFile = evt.path;
       entry.updatedAt = now;
