@@ -7,7 +7,8 @@ import type {
   ProjectOverview, ComplexityHotspot, DeadCodeCandidate, DuplicateGroup, DocDriftItem,
   LibraryOverview, ToolInfo, ProfilesData, ProfileLever, ProfileSuggestion,
   BenchmarkComparison, BenchmarkTask, BenchmarkRun,
-  MetricValue,
+  MetricValue, OverviewData, SolutionSummary, SolutionDashboardData,
+  ProjectDashboardData, ProjectSummaryRef, ScopeMetrics,
 } from './types.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -19,7 +20,111 @@ const unavailable = <T = number>(url: string): MetricValue<T> => ({ value: 0 as 
 const TOKEN_FR = 'https://github.com/anthropics/claude-code/issues/11008';
 const QUOTA_FR = 'https://github.com/anthropics/claude-code/issues/50926';
 
-// ─── Dashboard ──────────────────────────────────────────────────────────────
+// ─── Shared metrics helpers ──────────────────────────────────────────────────
+
+function scopeMetrics(ftr: number, sessions: number, rework: number, tokens: number, mcp: number, fallback: number): ScopeMetrics {
+  return {
+    period: { label: 'This Week', from: '2026-04-14', to: '2026-04-20' },
+    ftr: exact(ftr),
+    sessionCount: exact(sessions),
+    reworkRate: exact(rework),
+    tokens: estimated(tokens, 'Estimated from turn count'),
+    cost: unavailable(TOKEN_FR),
+    toolAdherence: { mcp, fallback, total: mcp + fallback },
+  };
+}
+
+// ─── Solutions & Projects ───────────────────────────────────────────────────
+
+const SOLUTIONS: SolutionSummary[] = [
+  {
+    id: 'sol-sensei', name: 'sensei', description: 'AI coding companion',
+    state: 'active',
+    projects: [
+      { id: 'sensei-dev', name: 'sensei-dev', role: 'monorepo', sourceType: 'git', state: 'active', indexedAt: '2026-04-19T08:00:00Z', lastSessionAt: '2026-04-19T09:12:00Z' },
+    ],
+    metrics: scopeMetrics(0.83, 12, 0.18, 142000, 34, 4),
+  },
+  {
+    id: 'sol-acme', name: 'Acme Platform', description: 'Client project — API + frontend + docs',
+    state: 'active',
+    projects: [
+      { id: 'acme-api', name: 'acme-api', role: 'backend', sourceType: 'git', state: 'active', indexedAt: '2026-04-18T14:00:00Z', lastSessionAt: '2026-04-18T16:00:00Z' },
+      { id: 'acme-frontend', name: 'acme-frontend', role: 'frontend', sourceType: 'git', state: 'active', indexedAt: '2026-04-18T14:00:00Z', lastSessionAt: '2026-04-18T15:00:00Z' },
+      { id: 'acme-docs', name: 'acme-docs', role: 'docs', sourceType: 'git', state: 'recent', indexedAt: '2026-04-10T10:00:00Z' },
+    ],
+    metrics: scopeMetrics(0.75, 8, 0.25, 98000, 22, 6),
+  },
+  {
+    id: 'sol-side', name: 'Side Project', description: 'Weekend experiment',
+    state: 'inactive',
+    projects: [
+      { id: 'side-app', name: 'side-app', role: 'monorepo', sourceType: 'git', state: 'inactive', indexedAt: '2026-03-15T10:00:00Z' },
+      { id: 'side-backup', name: 'old-prototype', role: 'reference', sourceType: 'unmanaged', state: 'archived' },
+    ],
+    metrics: scopeMetrics(0.60, 3, 0.33, 24000, 8, 4),
+  },
+];
+
+export function solutionsList(): SolutionSummary[] {
+  return SOLUTIONS;
+}
+
+export function solutionById(id: string): SolutionSummary | undefined {
+  return SOLUTIONS.find(s => s.id === id);
+}
+
+// ─── Global Overview ────────────────────────────────────────────────────────
+
+export function overviewDummy(): OverviewData {
+  return {
+    solutions: SOLUTIONS,
+    globalMetrics: scopeMetrics(0.78, 23, 0.21, 264000, 64, 14),
+    quota: unavailable(QUOTA_FR),
+  };
+}
+
+// ─── Solution Dashboard ─────────────────────────────────────────────────────
+
+export function solutionDashboardDummy(solutionId: string): SolutionDashboardData {
+  const solution = solutionById(solutionId) ?? SOLUTIONS[0];
+  return {
+    solution,
+    metrics: solution.metrics,
+    recentSessions: recentSessionsDummy().filter(s =>
+      solution.projects.some(p => p.id === s.project || p.name === s.project)
+    ),
+    perProjectMetrics: solution.projects.map(p => ({
+      project: p,
+      metrics: scopeMetrics(
+        p.id === 'acme-api' ? 0.80 : p.id === 'acme-frontend' ? 0.70 : solution.metrics.ftr.value as number,
+        p.id === 'acme-api' ? 5 : p.id === 'acme-frontend' ? 3 : (solution.metrics.sessionCount.value as number),
+        solution.metrics.reworkRate.value as number,
+        p.id === 'acme-api' ? 60000 : 38000,
+        p.id === 'acme-api' ? 14 : 8,
+        p.id === 'acme-api' ? 2 : 4,
+      ),
+    })),
+  };
+}
+
+// ─── Project Dashboard ──────────────────────────────────────────────────────
+
+export function projectDashboardDummy(solutionId: string, projectId: string): ProjectDashboardData {
+  const solution = solutionById(solutionId) ?? SOLUTIONS[0];
+  const project = solution.projects.find(p => p.id === projectId) ?? solution.projects[0];
+  return {
+    projectId: project.id,
+    projectName: project.name,
+    solutionId: solution.id,
+    solutionName: solution.name,
+    metrics: scopeMetrics(0.83, 12, 0.18, 142000, 34, 4),
+    recentSessions: recentSessionsDummy().filter(s => s.project === project.name || s.project === project.id),
+    activeTask: { issue: '#97', task: 'Daemon metrics computation', phase: 'build' },
+  };
+}
+
+// ─── Legacy Dashboard (alias for existing home page) ────────────────────────
 
 export function dashboardDummy(): DashboardData {
   return {
