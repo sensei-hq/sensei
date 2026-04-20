@@ -2,10 +2,11 @@
   import type { RepoEntry } from '$lib/repos.svelte.js';
   import StatusBadge from './StatusBadge.svelte';
 
-  let { repo, href, onexclude }: {
+  let { repo, href, onexclude, onadd }: {
     repo: RepoEntry;
     href?: string;
     onexclude?: (repoId: string) => void;
+    onadd?: (repoId: string) => void;
   } = $props();
 
   const pct = $derived(
@@ -51,12 +52,21 @@
   <!-- Status badge -->
   <StatusBadge status={repo.indexState} variant="index" />
 
-  <!-- Exclude button -->
-  {#if onexclude}
-    <button
-      onclick={() => onexclude?.(repo.project.repo_id)}
-      class="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-surface-z4 hover:text-error-z6 text-xs"
-      title="Exclude from indexing"
-    >✕</button>
-  {/if}
+  <!-- Actions (visible on hover) -->
+  <div class="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+    {#if onadd}
+      <button
+        onclick={() => onadd?.(repo.project.repo_id)}
+        class="text-surface-z4 hover:text-primary-z6 text-xs"
+        title="Add to solution"
+      ><span class="i-solar-add-circle-bold-duotone text-sm"></span></button>
+    {/if}
+    {#if onexclude}
+      <button
+        onclick={() => onexclude?.(repo.project.repo_id)}
+        class="text-surface-z4 hover:text-error-z6 text-xs"
+        title="Exclude from indexing"
+      >✕</button>
+    {/if}
+  </div>
 </div>
