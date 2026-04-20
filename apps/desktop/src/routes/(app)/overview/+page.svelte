@@ -8,21 +8,9 @@
   onMount(() => store.connect());
   onDestroy(() => store.disconnect());
 
-  let inputValue = $state('');
+  // Single input value — synced with store.search for filter mode
+  let inputValue = $state(store.search);
   let inputMode = $derived(inputValue.startsWith('/') || inputValue.startsWith('~') ? 'add' : 'search');
-
-  // Add-to-solution picker
-  let addingRepoId = $state<string | null>(null);
-
-  function startAddToSolution(repoId: string) {
-    addingRepoId = addingRepoId === repoId ? null : repoId;
-  }
-
-  async function confirmAddToSolution(solutionId: string) {
-    if (!addingRepoId) return;
-    await store.addToSolution(solutionId, addingRepoId);
-    addingRepoId = null;
-  }
 
   function handleInput() {
     if (inputMode === 'add') {
@@ -36,7 +24,26 @@
     if (inputMode === 'add' && inputValue.trim()) {
       store.scanFolder(inputValue.trim());
       inputValue = '';
+      store.search = '';
     }
+  }
+
+  function clearSearch() {
+    inputValue = '';
+    store.search = '';
+  }
+
+  // Add-to-solution picker
+  let addingRepoId = $state<string | null>(null);
+
+  function startAddToSolution(repoId: string) {
+    addingRepoId = addingRepoId === repoId ? null : repoId;
+  }
+
+  async function confirmAddToSolution(solutionId: string) {
+    if (!addingRepoId) return;
+    await store.addToSolution(solutionId, addingRepoId);
+    addingRepoId = null;
   }
 
   async function browse() {
@@ -81,10 +88,14 @@
         type="text"
         bind:value={inputValue}
         oninput={handleInput}
-        onkeydown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+        onkeydown={(e) => { if (e.key === 'Enter') handleSubmit(); if (e.key === 'Escape') clearSearch(); }}
         placeholder="Search or type a path to scan (~/...)"
-        class="w-full rounded-lg border bg-surface-z2 pl-8 pr-3 py-1.5 text-sm text-surface-z7 outline-none placeholder:text-surface-z4 {inputMode === 'add' ? 'border-primary-z4' : 'border-surface-z3 focus:border-primary-z4'}"
+        class="w-full rounded-lg border bg-surface-z2 pl-8 pr-8 py-1.5 text-sm text-surface-z7 outline-none placeholder:text-surface-z4 {inputMode === 'add' ? 'border-primary-z4' : 'border-surface-z3 focus:border-primary-z4'}"
       />
+      {#if inputValue}
+        <button onclick={clearSearch}
+          class="absolute right-2.5 top-1/2 -translate-y-1/2 text-surface-z4 hover:text-surface-z6 text-xs">✕</button>
+      {/if}
     </div>
     {#if inputMode === 'add'}
       <button onclick={handleSubmit}
