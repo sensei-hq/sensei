@@ -198,6 +198,49 @@ fn mark_user_scope_configured() {
     fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
 }
 
+/// Register a project in ~/.sensei/projects.json so uninstall can find it later.
+fn register_project(repo_path: &std::path::Path) {
+    let projects_file = home().join(".sensei/projects.json");
+    let mut projects: Vec<String> = projects_file
+        .exists()
+        .then(|| fs::read_to_string(&projects_file).ok())
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let path_str = repo_path.to_string_lossy().to_string();
+    if !projects.contains(&path_str) {
+        projects.push(path_str);
+        fs::create_dir_all(home().join(".sensei")).ok();
+        fs::write(&projects_file, serde_json::to_string_pretty(&projects).unwrap()).ok();
+    }
+}
+
+/// Unregister a project from ~/.sensei/projects.json.
+fn unregister_project(repo_path: &std::path::Path) {
+    let projects_file = home().join(".sensei/projects.json");
+    if !projects_file.exists() { return; }
+    let mut projects: Vec<String> = fs::read_to_string(&projects_file)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let path_str = repo_path.to_string_lossy().to_string();
+    projects.retain(|p| p != &path_str);
+    fs::write(&projects_file, serde_json::to_string_pretty(&projects).unwrap()).ok();
+}
+
+/// Load all registered project paths.
+fn list_registered_projects() -> Vec<String> {
+    let projects_file = home().join(".sensei/projects.json");
+    projects_file
+        .exists()
+        .then(|| fs::read_to_string(&projects_file).ok())
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 /// Copy .md files from src dir to dst dir, returns count.
 fn copy_md_files(src: &std::path::Path, dst: &std::path::Path) -> u32 {
     fs::create_dir_all(dst).ok();
@@ -326,8 +369,8 @@ fn init_project_scope(recommended: bool, marketplace: &std::path::Path) {
     let sensei_dir = repo_root.join(".sensei");
     fs::create_dir_all(&sensei_dir).ok();
 
-    // Ownership marker — so uninstall knows this .sensei/ is ours
-    fs::write(sensei_dir.join(".managed-by-sensei"), format_date()).ok();
+    // Register this project — so uninstall can find it across all repos
+    register_project(&repo_root);
 
     // Rules
     let rules_file = sensei_dir.join("rules.md");
@@ -642,67 +685,37 @@ fn uninstall(scope: &str) {
 
     // ── Project scope cleanup ───────────────────────────────────────────
     if do_project {
-        let repo_root = std::env::current_dir().unwrap_or_default();
-        println!("\n[project scope] {}", repo_root.display());
-
-        let sensei_dir = repo_root.join(".sensei");
-        if sensei_dir.exists() {
-            if sensei_dir.join(".managed-by-sensei").exists() {
-                fs::remove_dir_all(&sensei_dir).ok();
-                println!("  ✓ Removed .sensei/ (mindsets, personas, rules)");
-                cleaned.push(".sensei/ (mindsets, personas, rules)".into());
-            } else {
-                println!("  - Skipped .sensei/ (not managed by sensei — missing .managed-by-sensei marker)");
-                not_cleaned.push(".sensei/ (no ownership marker — may belong to another tool)".into());
-            }
+        // Collect all project paths to clean: registered projects + current dir
+        let registered = list_registered_projects();
+        let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
+        let mut project_paths: Vec<String> = registered.clone();
+        if !project_paths.contains(&cwd) {
+            project_paths.push(cwd);
         }
 
-        let cmds_dir = repo_root.join(".claude/commands");
-        if cmds_dir.exists() {
-            let count = remove_md_files(&cmds_dir);
-            if count > 0 {
-                println!("  ✓ Removed {} project commands", count);
-                cleaned.push(format!("{} project commands", count));
-            }
-        }
+        // Filter to projects that actually have a .sensei/ directory
+        let active_projects: Vec<&String> = project_paths
+            .iter()
+            .filter(|p| std::path::Path::new(p).join(".sensei").exists())
+            .collect();
 
-        let skills_dir = repo_root.join(".claude/skills");
-        if skills_dir.exists() {
-            let count = remove_md_files(&skills_dir);
-            if count > 0 {
-                println!("  ✓ Removed {} project skills", count);
-                cleaned.push(format!("{} project skills", count));
+        if active_projects.is_empty() {
+            println!("\n[project scope] No sensei-managed projects found.");
+        } else {
+            println!("\n[project scope] {} project(s) to clean:\n", active_projects.len());
+            for proj_path in &active_projects {
+                println!("  {}", proj_path);
             }
-        }
 
-        let agents_dir = repo_root.join(".claude/agents");
-        if agents_dir.exists() {
-            let count = remove_md_files(&agents_dir);
-            if count > 0 {
-                println!("  ✓ Removed {} agents", count);
-                cleaned.push(format!("{} agents", count));
-            }
-        }
-
-        // Remove sensei entry from .mcp.json (preserve other servers)
-        let mcp_file = repo_root.join(".mcp.json");
-        if mcp_file.exists() {
-            if let Ok(content) = fs::read_to_string(&mcp_file) {
-                if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
-                        if servers.remove("sensei").is_some() {
-                            if servers.is_empty() {
-                                fs::remove_file(&mcp_file).ok();
-                                println!("  ✓ Removed .mcp.json");
-                                cleaned.push(".mcp.json".into());
-                            } else {
-                                fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).ok();
-                                println!("  ✓ Removed sensei from .mcp.json (other servers preserved)");
-                                cleaned.push("sensei entry in .mcp.json".into());
-                            }
-                        }
-                    }
+            if confirm("\n  Clean all listed projects?", false) {
+                for proj_path in &active_projects {
+                    let root = std::path::PathBuf::from(proj_path);
+                    println!("\n  --- {} ---", proj_path);
+                    clean_project(&root, &mut cleaned, &mut not_cleaned);
+                    unregister_project(&root);
                 }
+            } else {
+                not_cleaned.push(format!("{} project(s) (user declined)", active_projects.len()));
             }
         }
     } else {
@@ -739,6 +752,52 @@ fn uninstall(scope: &str) {
     println!("  brew uninstall --cask sensei-app  # if desktop app installed");
 
     println!("\nSensei uninstalled.");
+}
+
+/// Clean a single project: remove .sensei/, .claude/{commands,skills,agents}, sensei from .mcp.json.
+fn clean_project(root: &std::path::Path, cleaned: &mut Vec<String>, not_cleaned: &mut Vec<String>) {
+    let display = root.display().to_string();
+
+    let sensei_dir = root.join(".sensei");
+    if sensei_dir.exists() {
+        fs::remove_dir_all(&sensei_dir).ok();
+        println!("  ✓ .sensei/");
+        cleaned.push(format!("{}: .sensei/", display));
+    }
+
+    for subdir in &["commands", "skills", "agents"] {
+        let dir = root.join(".claude").join(subdir);
+        if dir.exists() {
+            let count = remove_md_files(&dir);
+            if count > 0 {
+                println!("  ✓ {} {}", count, subdir);
+                cleaned.push(format!("{}: {} {}", display, count, subdir));
+            }
+        }
+    }
+
+    // Remove sensei from .mcp.json (preserve other servers)
+    let mcp_file = root.join(".mcp.json");
+    if mcp_file.exists() {
+        if let Ok(content) = fs::read_to_string(&mcp_file) {
+            if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(servers) = config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+                    if servers.remove("sensei").is_some() {
+                        if servers.is_empty() {
+                            fs::remove_file(&mcp_file).ok();
+                            println!("  ✓ .mcp.json removed");
+                        } else {
+                            fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+                            println!("  ✓ sensei removed from .mcp.json");
+                        }
+                        cleaned.push(format!("{}: .mcp.json", display));
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = not_cleaned; // suppress unused warning when everything succeeds
 }
 
 /// Remove all .md files from a directory, returns count.
