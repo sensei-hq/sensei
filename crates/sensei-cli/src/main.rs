@@ -117,10 +117,22 @@ fn daemon_bin() -> PathBuf {
     home().join(".claude/plugins/sensei/bin/senseid")
 }
 
+const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn ensure_daemon() {
-    if daemon_available() { return; }
+    if daemon_available() {
+        check_daemon_version(true);
+        return;
+    }
 
     eprintln!("Daemon not running — starting...");
+    start_daemon();
+
+    eprintln!("Could not start daemon. Run: brew services start sensei");
+    std::process::exit(1);
+}
+
+fn start_daemon() {
     let bin = daemon_bin();
     let _ = std::process::Command::new(&bin)
         .args(["start", "--port", "7744"])
@@ -133,9 +145,49 @@ fn ensure_daemon() {
             return;
         }
     }
+}
 
-    eprintln!("Could not start daemon. Run: brew services start sensei");
-    std::process::exit(1);
+/// Check if daemon version matches CLI. If mismatched, restart once.
+fn check_daemon_version(allow_restart: bool) {
+    let daemon_version = client()
+        .get(format!("{}/health", DAEMON_URL))
+        .send()
+        .ok()
+        .and_then(|r| r.json::<serde_json::Value>().ok())
+        .and_then(|v| v["version"].as_str().map(String::from))
+        .unwrap_or_default();
+
+    if daemon_version == CLI_VERSION {
+        return;
+    }
+
+    if daemon_version.is_empty() {
+        eprintln!("  Warning: daemon did not report version.");
+        return;
+    }
+
+    eprintln!(
+        "  Version mismatch — CLI: {}, daemon: {}",
+        CLI_VERSION, daemon_version
+    );
+
+    if allow_restart {
+        eprintln!("  Restarting daemon...");
+        // Stop the old daemon
+        let bin = daemon_bin();
+        let _ = std::process::Command::new(&bin).arg("stop").status();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // Start fresh
+        start_daemon();
+
+        // Check again (no restart loop)
+        check_daemon_version(false);
+    } else {
+        eprintln!("  Daemon still out of sync after restart.");
+        eprintln!("  Rebuild: bun run build:daemon && senseid stop && senseid start");
+        std::process::exit(1);
+    }
 }
 
 /// Prompt user with [Y/n] — returns true if accepted.

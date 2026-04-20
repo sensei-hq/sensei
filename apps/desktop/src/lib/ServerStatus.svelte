@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { senseiApi } from '$lib/api.js';
+  import { version as APP_VERSION } from '$app/environment';
 
   let { port = $bindable(7744) } = $props();
 
@@ -14,6 +15,7 @@
   let showDetail = $state(false);
   let hasTriggeredInit = $state(false);
   let starting = $state(false);
+  let versionMismatch = $state(false);
 
   type LogEntry = { time: string; text: string; kind: 'info' | 'success' | 'warn' };
   let activityLog = $state<LogEntry[]>([]);
@@ -70,6 +72,7 @@
         serverStatus = 'online';
         startError = null;
         healthDetail = { name: status.name, version: status.version, backend: status.backend, ollamaRunning: status.ollama_running, ollamaModel: status.ollama_model };
+        versionMismatch = !!status.version && status.version !== APP_VERSION;
         for (const id of newQueue) {
           if (!prevQueue.includes(id)) addLog(`Indexing: ${shortId(id)}…`, 'info');
         }
@@ -158,6 +161,11 @@
           <div class="flex justify-between">
             <span class="text-surface-z4">Server</span>
             <span class="text-surface-z7 font-mono">{healthDetail.name} {healthDetail.version ?? ''}</span>
+          </div>
+        {/if}
+        {#if versionMismatch}
+          <div class="rounded bg-warning-z2 px-2 py-1 text-warning-z7">
+            Version mismatch: app {APP_VERSION}, daemon {healthDetail?.version}. Restart daemon: senseid stop && senseid start
           </div>
         {/if}
         <div class="flex justify-between">
