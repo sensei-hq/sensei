@@ -1,6 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { RepoStore } from './repos.svelte.js';
 import { flushSync } from 'svelte';
+
+// Mock EventSource (not available in Node)
+class MockEventSource {
+  onmessage: ((e: any) => void) | null = null;
+  onerror: (() => void) | null = null;
+  readyState = 1;
+  close() {}
+}
+vi.stubGlobal('EventSource', MockEventSource);
 
 /**
  * Integration test for RepoStore.
