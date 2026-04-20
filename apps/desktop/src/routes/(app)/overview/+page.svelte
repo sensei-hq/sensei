@@ -1,263 +1,99 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { senseiApi } from '$lib/api.js';
   import { getPort } from '$lib/appstate.svelte.js';
-  import { getSolutions, loadSolutions } from '$lib/solutions.svelte.js';
-  import { connectSSE, disconnectSSE, onIndexChange, offIndexChange } from '$lib/indexer.svelte.js';
-  import type { ServerProject, Solution } from '$lib/types.js';
-  import type { OverviewData, SolutionSummary, ScopeMetrics } from '$lib/observatory/types.js';
+  import { getRepoStore } from '$lib/repos.svelte.js';
+  import { FolderInput, RepoListItem, StatusBadge } from '$lib/components/index.js';
+  import { ftrColorClass, ftrFormat } from '$lib/components/colors.js';
 
-  let loading = $state(true);
-  let projects = $state<ServerProject[]>([]);
-  let solutions = $state<Solution[]>([]);
-  let metrics = $state<Record<string, any>>({});
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  const store = getRepoStore(getPort());
+  onMount(() => store.connect());
+  onDestroy(() => store.disconnect());
 
-  async function refresh() {
-    const api = senseiApi(getPort());
-    const projs = await api.getProjects();
-    projects = projs;
-    await loadSolutions();
-    solutions = getSolutions();
-
-    // Fetch metrics for indexed projects
-    const newMetrics: Record<string, any> = {};
-    for (const p of projs.filter(p => p.indexed_at)) {
-      const m = await api.getMetrics(p.repo_id).catch(() => null);
-      if (m) newMetrics[p.repo_id] = m;
-    }
-    metrics = newMetrics;
-    loading = false;
-  }
-
-  // Debounced refresh — SSE events can fire rapidly
-  function scheduleRefresh() {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(refresh, 300);
-  }
-
-  onMount(async () => {
-    const port = getPort();
-
-    // Subscribe to indexing SSE events
-    connectSSE(port);
-    onIndexChange(scheduleRefresh);
-
-    // Initial load
-    await refresh();
-  });
-
-  onDestroy(() => {
-    offIndexChange();
-    if (refreshTimer) clearTimeout(refreshTimer);
-  });
-
-  // Group projects by solution (standalone projects become single-project solutions)
-  let solutionViews = $derived((): SolutionSummary[] => {
-    const solRepoIds = new Set(solutions.flatMap(s => s.repos.map((r: any) => r.repoId ?? r.repo_id)));
-    const result: SolutionSummary[] = [];
-
-    // Real solutions
-    for (const sol of solutions) {
-      // Solution repos use repo_id (daemon) or repoId (desktop alias)
-      const solProjects = sol.repos.map((r: any) => {
-        const rid = r.repoId ?? r.repo_id;
-        const proj = projects.find(p => p.repo_id === rid || p.repoId === rid);
-        return {
-          id: rid,
-          name: proj?.name ?? rid,
-          role: r.role ?? 'unknown',
-          sourceType: 'git' as const,
-          state: proj?.status === 'active' ? 'active' as const
-               : proj?.indexed_at ? 'recent' as const
-               : 'inactive' as const,
-          indexedAt: proj?.indexed_at ?? proj?.indexedAt,
-        };
-      });
-      result.push({
-        id: sol.id, name: sol.name, description: sol.description,
-        projects: solProjects,
-        state: solProjects.some(p => p.state === 'active') ? 'active' : 'inactive',
-        metrics: aggregateMetrics(solProjects.map(p => p.id)),
-      });
-    }
-
-    // Standalone projects (not in any solution)
-    for (const p of projects.filter(pr => !solRepoIds.has(pr.repo_id))) {
-      const state = p.status === 'active' ? 'active' as const
-                  : p.indexed_at ? 'recent' as const
-                  : 'inactive' as const;
-      result.push({
-        id: `p:${p.repo_id}`, name: p.name, description: p.path,
-        projects: [{ id: p.repo_id, name: p.name, role: 'monorepo', sourceType: 'git', state, indexedAt: p.indexed_at }],
-        state,
-        metrics: aggregateMetrics([p.repo_id]),
-      });
-    }
-
-    // Sort: solutions first, then standalone; active before inactive
-    const stateOrder: Record<string, number> = { active: 0, recent: 1, inactive: 2, archived: 3 };
-    result.sort((a, b) => {
-      const aIsSol = !a.id.startsWith('p:') ? 0 : 1;
-      const bIsSol = !b.id.startsWith('p:') ? 0 : 1;
-      if (aIsSol !== bIsSol) return aIsSol - bIsSol;
-      return (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9);
-    });
-    return result;
-  });
-
-  function aggregateMetrics(repoIds: string[]): ScopeMetrics {
-    let sessionCount = 0;
-    let ftrSum = 0; let ftrCount = 0;
-    let turnCount = 0; let revisionCount = 0;
-    for (const id of repoIds) {
-      const m = metrics[id];
-      if (!m) continue;
-      sessionCount += m.session_count ?? 0;
-      if (m.ftr != null) { ftrSum += m.ftr; ftrCount++; }
-      turnCount += m.turn_count ?? 0;
-      revisionCount += m.revision_count ?? 0;
-    }
-    const ftr = ftrCount > 0 ? ftrSum / ftrCount : 0;
-    const rework = turnCount > 0 ? revisionCount / turnCount : 0;
-    return {
-      period: { label: 'All time', from: '', to: '' },
-      ftr: { value: ftr, quality: ftrCount > 0 ? 'exact' : 'unavailable' },
-      sessionCount: { value: sessionCount, quality: 'exact' },
-      reworkRate: { value: rework, quality: turnCount > 0 ? 'exact' : 'unavailable' },
-      tokens: { value: 0, quality: 'unavailable', trackingUrl: 'https://github.com/anthropics/claude-code/issues/11008' },
-      cost: { value: 0, quality: 'unavailable', trackingUrl: 'https://github.com/anthropics/claude-code/issues/11008' },
-      toolAdherence: { mcp: 0, fallback: 0, total: 0 },
-    };
-  }
-
-  function stateCls(state: string): string {
-    if (state === 'active') return 'bg-success-z2 text-success-z7';
-    if (state === 'recent') return 'bg-info-z2 text-info-z7';
-    if (state === 'inactive') return 'bg-surface-z3 text-surface-z5';
-    return 'bg-surface-z3 text-surface-z4';
-  }
-
-  function ftrColor(v: number): string {
-    if (v >= 0.8) return 'text-success-z6';
-    if (v >= 0.5) return 'text-warning-z6';
-    return 'text-error-z6';
-  }
-
-  function pctFmt(v: number): string { return `${Math.round(v * 100)}%`; }
+  let showAddFolder = $state(false);
 </script>
 
-<div class="h-full overflow-y-auto px-6 py-5 space-y-6">
+<div class="h-full overflow-y-auto px-6 py-5 space-y-5">
 
-  <div>
-    <h2 class="text-lg font-semibold text-surface-z8">Overview</h2>
-    <p class="text-xs text-surface-z4">
-      {#if loading}Loading...
-      {:else}{projects.length} projects &middot; {solutions.length} solutions
-      {/if}
-    </p>
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h2 class="text-lg font-semibold text-surface-z8">Overview</h2>
+      <p class="text-xs text-surface-z4">
+        {store.totalCount} projects &middot; {store.indexedCount} indexed
+        {#if store.anyIndexing}
+          &middot; <span class="text-primary-z6">indexing in progress</span>
+        {/if}
+      </p>
+    </div>
+    <button onclick={() => showAddFolder = !showAddFolder}
+      class="rounded-lg bg-primary-z2 px-3 py-1.5 text-xs font-medium text-primary-z7 hover:bg-primary-z3">
+      {showAddFolder ? 'Done' : '+ Add folder'}
+    </button>
   </div>
 
-  {#if loading}
-    <div class="flex items-center justify-center py-12">
-      <p class="text-sm text-surface-z4">Loading projects...</p>
-    </div>
+  <!-- Add folder (toggle) -->
+  {#if showAddFolder}
+    <FolderInput onadd={(path) => store.scanFolder(path)} scanning={store.anyIndexing} />
+  {/if}
 
-  {:else if projects.length === 0}
-    <!-- Empty state: first time, no projects yet -->
+  <!-- Aggregate progress (when indexing) -->
+  {#if store.anyIndexing}
+    <div class="rounded-lg bg-surface-z2/50 border border-surface-z0/30 p-3 space-y-1.5">
+      <div class="flex items-center justify-between text-xs">
+        <span class="text-surface-z5">{store.indexingCount} repos indexing</span>
+        <span class="text-surface-z4">
+          {store.completedFiles.toLocaleString()} / {store.totalFiles.toLocaleString()} files
+        </span>
+      </div>
+      <div class="h-1.5 rounded-full bg-surface-z3 overflow-hidden">
+        <div class="h-full rounded-full bg-primary-z5 transition-all"
+          style="width: {store.totalFiles > 0 ? (store.completedFiles / store.totalFiles) * 100 : 0}%"></div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Search -->
+  {#if store.totalCount > 5}
+    <input
+      type="text"
+      bind:value={store.search}
+      placeholder="Filter projects..."
+      class="w-full rounded-lg border border-surface-z3 bg-surface-z2 px-3 py-1.5 text-sm text-surface-z7 outline-none placeholder:text-surface-z4 focus:border-primary-z4"
+    />
+  {/if}
+
+  <!-- Empty state -->
+  {#if store.totalCount === 0}
     <div class="rounded-lg border border-dashed border-surface-z3 p-8 text-center space-y-3">
       <p class="text-base font-medium text-surface-z7">No projects yet</p>
       <p class="text-xs text-surface-z4 max-w-sm mx-auto">
-        Scan a folder to discover your repositories, or the setup wizard will guide you through the process.
+        Add a folder to scan for repositories, or run the setup wizard.
       </p>
       <div class="flex items-center justify-center gap-3 pt-2">
-        <a href="/all" class="rounded-md bg-primary-z2 px-3 py-1.5 text-xs font-medium text-primary-z7 hover:bg-primary-z3">
-          Go to Projects
-        </a>
-        <a href="/setup" class="rounded-md bg-surface-z2 px-3 py-1.5 text-xs font-medium text-surface-z6 hover:bg-surface-z3">
-          Setup Wizard
+        <button onclick={() => showAddFolder = true}
+          class="rounded-lg bg-primary-z2 px-3 py-1.5 text-xs font-medium text-primary-z7 hover:bg-primary-z3">
+          Add folder
+        </button>
+        <a href="/setup" class="rounded-lg bg-surface-z2 px-3 py-1.5 text-xs font-medium text-surface-z6 hover:bg-surface-z3">
+          Setup wizard
         </a>
       </div>
     </div>
 
+  <!-- Project list -->
   {:else}
-    <!-- Global metrics (only if we have any sessions) -->
-    {@const globalMetrics = aggregateMetrics(projects.map(p => p.repo_id))}
-    {#if (globalMetrics.sessionCount.value as number) > 0}
-      <div class="grid grid-cols-4 gap-3">
-        {#each [
-          { label: 'FTR', value: globalMetrics.ftr.quality !== 'unavailable' ? pctFmt(globalMetrics.ftr.value as number) : '—' },
-          { label: 'Sessions', value: String(globalMetrics.sessionCount.value) },
-          { label: 'Rework', value: globalMetrics.reworkRate.quality !== 'unavailable' ? pctFmt(globalMetrics.reworkRate.value as number) : '—' },
-          { label: 'Projects', value: `${projects.filter(p => p.indexed_at).length} indexed` },
-        ] as card}
-          <div class="rounded-lg bg-surface-z2 p-3">
-            <p class="text-[10px] text-surface-z5 uppercase tracking-wide font-medium">{card.label}</p>
-            <p class="mt-1 text-xl font-semibold {card.value === '—' ? 'text-surface-z3' : 'text-primary-z6'}">{card.value}</p>
-          </div>
-        {/each}
-      </div>
-    {:else}
-      <!-- No sessions yet but projects exist -->
-      <div class="rounded-lg bg-surface-z2/50 border border-surface-z0/30 p-4">
-        <p class="text-xs text-surface-z5">
-          {projects.length} projects found &middot; {projects.filter(p => p.indexed_at).length} indexed &middot;
-          Start a Claude Code session in any project to begin tracking metrics.
-        </p>
-      </div>
-    {/if}
-
-    <!-- Solutions / project list -->
-    <div class="space-y-2">
-      <p class="text-xs font-semibold uppercase tracking-wide text-surface-z5">
-        {solutions.length > 0 ? 'Solutions & Projects' : 'Projects'}
-      </p>
-
-      {#each solutionViews() as sol (sol.id)}
-        {@const href = sol.id.startsWith('p:') ? `/p/${sol.id.slice(2)}` : `/s/${sol.id}`}
-        <a {href} class="block rounded-lg bg-surface-z2 px-4 py-3 hover:bg-surface-z3/60 transition-colors">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-z3 text-sm font-bold text-primary-z7">
-                {sol.name.charAt(0).toUpperCase()}
-              </div>
-              <div>
-                <p class="text-sm font-medium text-surface-z7">{sol.name}</p>
-                <p class="text-[10px] text-surface-z4">
-                  {sol.projects.length} {sol.projects.length === 1 ? 'project' : 'projects'}
-                  {#if sol.description} &middot; {sol.description}{/if}
-                </p>
-              </div>
-            </div>
-            <span class="rounded px-1.5 py-0.5 text-[10px] font-medium {stateCls(sol.state)}">{sol.state}</span>
-          </div>
-
-          {#if (sol.metrics.sessionCount.value as number) > 0}
-            <div class="mt-2 grid grid-cols-3 gap-4 text-[10px]">
-              <div>
-                <span class="text-surface-z4">FTR</span>
-                {#if sol.metrics.ftr.quality !== 'unavailable'}
-                  <span class="ml-1 font-medium {ftrColor(sol.metrics.ftr.value as number)}">{pctFmt(sol.metrics.ftr.value as number)}</span>
-                {:else}
-                  <span class="ml-1 text-surface-z3">&mdash;</span>
-                {/if}
-              </div>
-              <div>
-                <span class="text-surface-z4">Sessions</span>
-                <span class="ml-1 text-surface-z6">{sol.metrics.sessionCount.value}</span>
-              </div>
-              <div>
-                <span class="text-surface-z4">Rework</span>
-                {#if sol.metrics.reworkRate.quality !== 'unavailable'}
-                  <span class="ml-1 text-surface-z6">{pctFmt(sol.metrics.reworkRate.value as number)}</span>
-                {:else}
-                  <span class="ml-1 text-surface-z3">&mdash;</span>
-                {/if}
-              </div>
-            </div>
-          {/if}
-        </a>
+    <div class="space-y-1">
+      {#each store.repos as repo (repo.project.repo_id)}
+        <RepoListItem
+          {repo}
+          href="/p/{repo.project.repo_id}"
+          onexclude={(id) => store.excludeRepo(id)}
+        />
       {/each}
+
+      {#if store.repos.length === 0 && store.search}
+        <p class="text-xs text-surface-z4 text-center py-4">No projects match "{store.search}"</p>
+      {/if}
     </div>
   {/if}
 
