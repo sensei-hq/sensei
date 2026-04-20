@@ -1,6 +1,6 @@
 [package]
 name = "senseid"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Sensei indexer daemon — graph-based code intelligence"
 
