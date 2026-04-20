@@ -21,6 +21,8 @@ cask "sensei-app" do
   desc "AI development intelligence desktop app"
   homepage "https://github.com/#{GITHUB_ORG}/sensei-dev"
 
+  depends_on formula: "mizukisu/tap/sensei"
+
   app "Sensei.app"
 
   zap trash: [

@@ -33,6 +33,9 @@ class Sensei < Formula
     bin.install "sensei"
     bin.install "senseid"
     bin.install "sensei-mcp"
+
+    # Install marketplace alongside binaries for plugin install support
+    share.install "marketplace" if File.directory?("marketplace")
   end
 
   def post_install
@@ -40,7 +43,7 @@ class Sensei < Formula
   end
 
   service do
-    run [opt_bin/"senseid"]
+    run [opt_bin/"senseid", "start", "--port", "7744"]
     keep_alive true
     log_path var/"log/sensei.log"
     error_log_path var/"log/sensei.error.log"
@@ -50,22 +53,38 @@ class Sensei < Formula
 
   def caveats
     <<~EOS
-      After installing, configure sensei for your AI coding platform:
+      1. Start the daemon:
 
-        sensei install --acp claude-code   # or cursor, windsurf
-        sensei start                       # start the daemon
-        sensei scan ~/Developer            # scan and index your repos
+        brew services start sensei
+
+      2. Configure your AI coding platform:
+
+        sensei install --acp claude-code   # installs Claude Code plugin (agents, hooks, MCP)
+        sensei install --acp cursor        # or cursor, windsurf, zed, kiro, opencode
+
+      3. Initialize a repo:
+
+        cd ~/your-project
+        sensei init                        # sets up mindsets, personas, rules
+
+      4. Scan and index your repos:
+
+        sensei scan ~/Developer
+
+      Desktop app available separately:
+
+        brew install --cask mizukisu/tap/sensei-app
 
       Before uninstalling:
 
-        sensei stop
+        brew services stop sensei
         sensei uninstall
-
-      Note: Homebrew formulas have no uninstall hook, so this step is manual.
     EOS
   end
 
   test do
     system "#{bin}/sensei", "--version"
+    system "#{bin}/senseid", "--help"
+    system "#{bin}/sensei-mcp", "--help"
   end
 end
