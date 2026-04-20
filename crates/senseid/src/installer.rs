@@ -283,6 +283,7 @@ pub struct UninstallResult {
     pub hooks_removed: bool,
     pub skills_removed: u32,
     pub commands_removed: u32,
+    pub agents_removed: u32,
     pub plugin_removed: bool,
     pub cache_cleared: bool,
     pub projects_cleaned: Vec<String>,
@@ -337,14 +338,18 @@ fn uninstall_user_scope(result: &mut UninstallResult) {
     let commands_dir = h.join(".claude/commands");
     result.commands_removed += remove_md_files_in(&commands_dir);
 
-    // 5. Clear marketplace cache
+    // 5. Remove global agents (user-scoped, in ~/.claude/agents/)
+    let agents_dir = h.join(".claude/agents");
+    result.agents_removed += remove_md_files_in(&agents_dir);
+
+    // 6. Clear marketplace cache
     let cache = cache_dir();
     if cache.exists() {
         fs::remove_dir_all(&cache).ok();
         result.cache_cleared = true;
     }
 
-    // 6. Clear ~/.sensei/ (config, cache, indexes, projects registry)
+    // 7. Clear ~/.sensei/ (config, cache, indexes, projects registry)
     let sd = sensei_dir();
     if sd.exists() {
         fs::remove_dir_all(&sd).ok();
@@ -370,6 +375,7 @@ fn uninstall_project_scope(project_path: &str, result: &mut UninstallResult) {
             match *subdir {
                 "skills" => result.skills_removed += count,
                 "commands" => result.commands_removed += count,
+                "agents" => result.agents_removed += count,
                 _ => {}
             }
         }
@@ -816,6 +822,7 @@ mod tests {
         assert!(!result.cache_cleared);
         assert_eq!(result.skills_removed, 0);
         assert_eq!(result.commands_removed, 0);
+        assert_eq!(result.agents_removed, 0);
         assert!(result.acps_removed.is_empty());
         assert!(result.projects_cleaned.is_empty());
         assert!(result.errors.is_empty());
@@ -828,6 +835,7 @@ mod tests {
             hooks_removed: true,
             skills_removed: 5,
             commands_removed: 3,
+            agents_removed: 8,
             plugin_removed: true,
             cache_cleared: true,
             projects_cleaned: vec!["/tmp/proj".into()],
@@ -837,6 +845,7 @@ mod tests {
         assert_eq!(json["hooks_removed"], true);
         assert_eq!(json["skills_removed"], 5);
         assert_eq!(json["commands_removed"], 3);
+        assert_eq!(json["agents_removed"], 8);
         assert_eq!(json["plugin_removed"], true);
         assert_eq!(json["cache_cleared"], true);
         assert_eq!(json["projects_cleaned"][0], "/tmp/proj");
@@ -1044,6 +1053,7 @@ mod tests {
         assert!(!project.join(".mcp.json").exists());
         assert_eq!(result.skills_removed, 2);
         assert_eq!(result.commands_removed, 1);
+        assert_eq!(result.agents_removed, 1);
         assert_eq!(result.projects_cleaned, vec![project.to_str().unwrap()]);
     }
 

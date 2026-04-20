@@ -676,6 +676,7 @@ fn uninstall(scope: &str) {
             let acps = result["acps_removed"].as_array().map(|a| a.len()).unwrap_or(0);
             let skills = result["skills_removed"].as_u64().unwrap_or(0);
             let cmds = result["commands_removed"].as_u64().unwrap_or(0);
+            let agents = result["agents_removed"].as_u64().unwrap_or(0);
             let hooks = result["hooks_removed"].as_bool() == Some(true);
             let cache = result["cache_cleared"].as_bool() == Some(true);
             let plugin = result["plugin_removed"].as_bool() == Some(true);
@@ -683,7 +684,7 @@ fn uninstall(scope: &str) {
             let errors = result["errors"].as_array().map(|a| a.len()).unwrap_or(0);
 
             // Check if daemon actually did anything
-            let nothing_happened = acps == 0 && skills == 0 && cmds == 0
+            let nothing_happened = acps == 0 && skills == 0 && cmds == 0 && agents == 0
                 && !hooks && !cache && !plugin && projects_done == 0;
 
             if nothing_happened && errors == 0 && !projects.is_empty() {
@@ -698,6 +699,7 @@ fn uninstall(scope: &str) {
                 }
                 if skills > 0 { println!("  ✓ {} skills removed", skills); }
                 if cmds > 0 { println!("  ✓ {} commands removed", cmds); }
+                if agents > 0 { println!("  ✓ {} agents removed", agents); }
                 if hooks { println!("  ✓ Hooks removed"); }
                 if cache { println!("  ✓ Cache cleared"); }
                 if plugin { println!("  ✓ Legacy plugin removed"); }
