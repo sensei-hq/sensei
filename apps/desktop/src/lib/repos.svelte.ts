@@ -92,8 +92,9 @@ export class RepoStore {
   indexingCount = $derived(this.all.filter(r => r.indexState === 'indexing' || r.indexState === 'queued').length);
   failedCount = $derived(this.all.filter(r => r.indexState === 'failed').length);
   anyIndexing = $derived(this.all.some(r => r.indexState === 'indexing' || r.indexState === 'queued'));
-  totalFiles = $derived(this.all.reduce((s, r) => s + r.filesTotal, 0));
-  completedFiles = $derived(this.all.reduce((s, r) => s + r.filesCompleted, 0));
+  // Aggregate file counts — only repos with file-level tasks (not scan/repo meta-tasks)
+  totalFiles = $derived(this.all.filter(r => r.filesTotal > 0).reduce((s, r) => s + r.filesTotal, 0));
+  completedFiles = $derived(this.all.filter(r => r.filesTotal > 0).reduce((s, r) => s + r.filesCompleted, 0));
   solutionCount = $derived(this.solutions.length);
 
   // Private
