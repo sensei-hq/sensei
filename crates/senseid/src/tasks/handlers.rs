@@ -38,6 +38,12 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     )).ok();
 
     for (name, path) in &repos {
+        // Skip excluded paths
+        if store.is_excluded(path) {
+            tracing::debug!("scan_root: skipping excluded path {}", path);
+            continue;
+        }
+
         // Register project
         let repo_id = name.clone();
         store.upsert_project_basic(&repo_id, name, path).ok();
