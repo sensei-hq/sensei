@@ -7,7 +7,7 @@ import { senseiApi } from './api.js';
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface TaskQueueStatus {
-  queue: { pending: number; blocked: number; running: number; completed: number; repos_active: number };
+  queue: { pending: number; blocked: number; running: number; completed: number; repos_active?: number };
   repos: Record<string, { total: number; pending: number; running: number; completed?: number; failed?: number; current_file?: string }>;
 }
 
