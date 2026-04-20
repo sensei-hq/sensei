@@ -137,7 +137,6 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     // Discover directories and enqueue folder tasks
     let exclude = build_globset();
     let mut dirs = std::collections::HashSet::new();
-    let mut file_count = 0u64;
 
     // Walk all files to discover directories
     let walker = ignore::WalkBuilder::new(repo_path)
@@ -161,7 +160,6 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         if let Some(parent) = entry.path().parent() {
             dirs.insert(parent.to_path_buf());
         }
-        file_count += 1;
     }
 
     // Enqueue folder + file tasks first, collecting all file task IDs

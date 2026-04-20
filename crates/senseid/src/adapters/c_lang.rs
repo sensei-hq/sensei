@@ -1,5 +1,5 @@
 use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
-use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRConstant, IRParsedFile, ClassKind};
+use crate::ir::{IRBase, IRFunction, IRClass, IRParsedFile, ClassKind};
 use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
 

@@ -4,10 +4,14 @@
 //! Each detector is a pure function: graph connection + project → Vec<DetectedPattern>.
 //! Detectors can be composed and run independently (suitable for task workers).
 
+// All items below are test-only until wired into the pipeline (issue #90).
+#[cfg(test)]
 use rusqlite::{Connection, params};
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
 
 /// A detected pattern with its instances and metadata.
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectedPattern {
     pub name: String,
@@ -18,6 +22,7 @@ pub struct DetectedPattern {
     pub description: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatternInstance {
     pub name: String,
@@ -25,6 +30,7 @@ pub struct PatternInstance {
     pub kind: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PatternCategory {
@@ -35,10 +41,12 @@ pub enum PatternCategory {
 }
 
 /// Minimum instances required to consider something a pattern.
+#[cfg(test)]
 const MIN_INSTANCES: usize = 2;
 
 // ── Design Pattern Detector (type/class level) ──────────────────────────────
 
+#[cfg(test)]
 const DESIGN_SUFFIXES: &[(&str, &str, &str)] = &[
     ("Adapter", "adapter", "Wraps external interface behind a common API"),
     ("Factory", "factory", "Creates instances without exposing construction logic"),
@@ -62,6 +70,7 @@ const DESIGN_SUFFIXES: &[(&str, &str, &str)] = &[
     ("Serializer", "serializer", "Converts objects to/from wire format"),
 ];
 
+#[cfg(test)]
 pub fn detect_design_patterns(graph: &Connection, project: &str) -> Vec<DetectedPattern> {
     let mut results = Vec::new();
 
@@ -89,6 +98,7 @@ pub fn detect_design_patterns(graph: &Connection, project: &str) -> Vec<Detected
 
 // ── Naming Convention Detector (function level) ─────────────────────────────
 
+#[cfg(test)]
 const NAMING_PREFIXES: &[(&str, &str)] = &[
     ("get_", "Getter functions — read data without side effects"),
     ("set_", "Setter functions — mutate state"),
@@ -107,6 +117,7 @@ const NAMING_PREFIXES: &[(&str, &str)] = &[
     ("from_", "Constructor-from functions"),
 ];
 
+#[cfg(test)]
 pub fn detect_naming_conventions(graph: &Connection, project: &str) -> Vec<DetectedPattern> {
     let mut results = Vec::new();
 
@@ -147,6 +158,7 @@ pub fn detect_naming_conventions(graph: &Connection, project: &str) -> Vec<Detec
 
 // ── Directory Pattern Detector ──────────────────────────────────────────────
 
+#[cfg(test)]
 const DIRECTORY_PATTERNS: &[(&str, &str)] = &[
     ("adapter", "Adapter modules — wraps external interfaces"),
     ("handler", "Handler modules — processes requests/events"),
@@ -163,6 +175,7 @@ const DIRECTORY_PATTERNS: &[(&str, &str)] = &[
     ("db", "Database modules — data access"),
 ];
 
+#[cfg(test)]
 pub fn detect_directory_patterns(graph: &Connection, project: &str) -> Vec<DetectedPattern> {
     let mut results = Vec::new();
 
@@ -213,6 +226,7 @@ pub fn detect_directory_patterns(graph: &Connection, project: &str) -> Vec<Detec
 // ── Composite Detector ──────────────────────────────────────────────────────
 
 /// Run all detectors and return combined results.
+#[cfg(test)]
 pub fn detect_all_patterns(graph: &Connection, project: &str) -> Vec<DetectedPattern> {
     let mut all = Vec::new();
     all.extend(detect_design_patterns(graph, project));
@@ -223,6 +237,7 @@ pub fn detect_all_patterns(graph: &Connection, project: &str) -> Vec<DetectedPat
 
 // ── Helper ──────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
 fn query_instances(graph: &Connection, project: &str, like_pattern: &str, kinds: &[&str]) -> Vec<PatternInstance> {
     let kinds_sql = kinds.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(",");
     let sql = format!(
