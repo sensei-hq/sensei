@@ -179,8 +179,7 @@ fn check_daemon_version(allow_restart: bool) {
         check_daemon_version(false);
     } else {
         eprintln!("  ✗ Daemon still out of sync after restart.");
-        eprintln!("  The daemon binary on PATH is outdated.");
-        eprintln!("  Rebuild: bun run build:daemon && senseid stop && senseid start");
+        eprintln!("  Update: brew upgrade sensei && brew services restart sensei");
         std::process::exit(1);
     }
 }
@@ -690,7 +689,7 @@ fn uninstall(scope: &str) {
             if nothing_happened && errors == 0 && !projects.is_empty() {
                 eprintln!("\n  ✗ Daemon returned empty result.");
                 eprintln!("  This usually means the daemon is running an older version.");
-                eprintln!("  Rebuild and restart: bun run build:daemon && senseid stop && senseid start");
+                eprintln!("  Update: brew upgrade sensei && brew services restart sensei");
             } else {
                 println!("\n--- cleaned ---");
 
