@@ -9,7 +9,7 @@ personas: .sensei/personas/
 
 ## Mindsets and Personas (NON-NEGOTIABLE)
 
-**Mindsets** (`.sensei/mindsets/`) define HOW to think. Apply the core three — Analyst → Developer → BAT — in sequence on every task, no exceptions. If you find yourself writing code without an Analyst pass, stop. Apply specialist mindsets (UX, Security, Performance, DevOps) when the task touches their domain.
+**Mindsets** (`.sensei/mindsets/`) define HOW to think. Apply the core three — Analyst → Developer → Acceptance Tester — in sequence on every task, no exceptions. If you find yourself writing code without an Analyst pass, stop. Apply specialist mindsets (UX, Security, Performance, DevOps) when the task touches their domain.
 
 **Personas** (`.sensei/personas/`) define WHO we're building for. Each persona has questions, goals, and pain points. When designing or validating, put on each persona's hat and ask their questions. What's obvious to a developer may be opaque to an end-user. What's fine for a one-off script may be unacceptable for an API consumer.
 
@@ -39,15 +39,23 @@ Every mindset and persona file has a `## Questions` section. These questions are
 - **State.yaml is a cache** — daemon is source of truth, state.yaml synced for hook access
 - **File paths are repo-relative** in the graph, never absolute
 
-## Tools
+## Tools (MANDATORY — use MCP first, grep/glob as fallback only)
+
+**Before ANY implementation task**, you MUST call:
+1. `get_patterns()` — check existing patterns that apply to the change
+2. `search()` — find related code through the graph, not grep
+
+If MCP tools fail (server down), fall back to grep/glob and note the failure.
 
 Available today:
-- **Prefer sensei MCP `search()`** over grep/sed for symbol lookup
-- **Use `get_callers()`/`get_callees()`** for dependency analysis, not manual file reading
-- **Use `get_patterns()`** to find files by framework pattern (hook, middleware, route, component)
-- **Use `get_lib_docs()`** before writing code that uses a library — don't guess from training data
-- **Use `search_lib_docs()`** to search across all indexed library docs
-- **Use `add_library()`** to index a library's docs when not yet available
+- **`search(query)`** — symbol/function search via code graph (REPLACES grep for code nav)
+- **`get_callers(name)`/`get_callees(name)`** — dependency tracing (REPLACES manual file reading)
+- **`get_patterns(pattern)`** — find architectural patterns: adapter, worker, hook, route, component
+- **`get_project_summary()`** — codebase stats, stack, structure
+- **`get_communities()`** — architecture clusters
+- **`get_lib_docs(name)`** — library docs before writing code that uses a library
+- **`search_lib_docs(query)`** — search across all indexed library docs
+- **`add_library(name)`** — index a library's docs when not yet available
 
 Planned (not yet available):
 - `match_pattern()` — structural pattern matching (#83)

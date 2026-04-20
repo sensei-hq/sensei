@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn ir_populated_from_real_code_processor() {
-        // BAT: walk the full journey — process a real Rust file, verify IR flows through
+        // Acceptance: walk the full journey — process a real Rust file, verify IR flows through
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent().unwrap().parent().unwrap().to_path_buf();
         let rel = "crates/senseid/src/ir.rs";

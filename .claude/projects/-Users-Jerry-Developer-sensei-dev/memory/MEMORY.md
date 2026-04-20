@@ -1,5 +1,5 @@
 - [Reinstall after every issue](feedback_reinstall_after_issue.md) — run install-plugin.sh after completing each issue to verify continuity
-- [BAT must verify commands callable](feedback_bat_verify_commands.md) — after catalog changes, test that commands actually work, not just that files exist
+- [Acceptance testing must verify commands callable](feedback_bat_verify_commands.md) — after catalog changes, test that commands actually work, not just that files exist
 - [Project vs global scope](feedback_project_vs_global.md) — observatory pages must separate project-specific data from global data
 - [Solution model](project_solution_model.md) — three-level scope: Global > Solution > Project. Solutions are multi-repo logical groupings with future external source connectors.
 - [Overview = /all evolved](feedback_overview_is_all.md) — Overview must combine project management (add folders, scan, progress) with metrics — not be a separate read-only page

@@ -1733,7 +1733,7 @@ mod tests {
         ).unwrap();
         assert_eq!(count, 1);
 
-        // BAT: no extends → zero EXTENDS edges
+        // Acceptance: no extends → zero EXTENDS edges
         let extends_count: i64 = db.conn.query_row(
             "SELECT COUNT(*) FROM edges WHERE from_id='class:test-proj:src/adapters/rust_lang.rs:RustAdapter' AND edge_type='EXTENDS'",
             [], |row| row.get(0),
@@ -1865,7 +1865,7 @@ mod tests {
         assert_eq!(read.generic_params, vec!["T", "ID"]);
         assert_eq!(read.mixins, vec!["Cacheable", "Loggable"]);
 
-        // BAT: no implements/extends → zero hierarchy edges
+        // Acceptance: no implements/extends → zero hierarchy edges
         let edge_count: i64 = db.conn.query_row(
             "SELECT COUNT(*) FROM edges WHERE from_id='class:proj:src/repo.ts:Repository' AND edge_type IN ('IMPLEMENTS','EXTENDS')",
             [], |row| row.get(0),

@@ -186,7 +186,7 @@ export function sessionDetailDummy(id: string): SessionDetail {
     profilesApplied: [
       { name: 'Analyst', category: 'mindset', applied: true, appliedAt: '2026-04-19T09:00:30Z' },
       { name: 'Developer', category: 'mindset', applied: true, appliedAt: '2026-04-19T09:02:00Z' },
-      { name: 'BAT', category: 'mindset', applied: true, appliedAt: '2026-04-19T09:10:00Z' },
+      { name: 'Acceptance Tester', category: 'mindset', applied: true, appliedAt: '2026-04-19T09:10:00Z' },
       { name: 'Security Reviewer', category: 'mindset', applied: false },
       { name: 'AI Driven Developer', category: 'persona', applied: true, appliedAt: '2026-04-19T09:10:30Z' },
       { name: 'API Consumer', category: 'persona', applied: false },
@@ -275,7 +275,7 @@ export function profilesDummy(): ProfilesData {
   return {
     levers: [
       { name: 'Analyst', category: 'mindset', type: 'core', hasAgent: false, sessionsApplied: 12, ftrImpact: exact(0.15), tokenImpact: estimated(0.08, 'Estimated'), verdict: 'keep', verdictReason: 'Worth the token cost — catches scope issues early' },
-      { name: 'BAT', category: 'mindset', type: 'core', hasAgent: true, sessionsApplied: 10, ftrImpact: exact(0.22), tokenImpact: estimated(0.12, 'Estimated'), verdict: 'keep', verdictReason: 'Biggest quality gain — catches integration issues' },
+      { name: 'Acceptance Tester', category: 'mindset', type: 'core', hasAgent: true, sessionsApplied: 10, ftrImpact: exact(0.22), tokenImpact: estimated(0.12, 'Estimated'), verdict: 'keep', verdictReason: 'Biggest quality gain — catches integration issues' },
       { name: 'Developer', category: 'mindset', type: 'core', hasAgent: false, sessionsApplied: 12, ftrImpact: exact(0.05), tokenImpact: estimated(0.03, 'Estimated'), verdict: 'keep', verdictReason: 'Low cost, steady quality lift' },
       { name: 'UX Designer', category: 'mindset', type: 'specialist', hasAgent: false, sessionsApplied: 2, ftrImpact: exact(0.0), tokenImpact: estimated(0.04, 'Estimated'), verdict: 'review', verdictReason: 'Low usage — only relevant for UI tasks' },
       { name: 'Security Reviewer', category: 'mindset', type: 'specialist', hasAgent: false, sessionsApplied: 0, ftrImpact: exact(0.0), tokenImpact: estimated(0.0, 'Estimated'), verdict: 'unused', verdictReason: 'Never triggered — remove or lower threshold?' },
@@ -286,7 +286,7 @@ export function profilesDummy(): ProfilesData {
       { name: 'rokkit lib docs', category: 'library', hasAgent: false, sessionsApplied: 6, ftrImpact: exact(0.10), tokenImpact: estimated(-0.05, 'Estimated'), verdict: 'keep', verdictReason: 'Prevents incorrect API usage' },
     ],
     agents: [
-      { name: 'bat', description: 'BAT review — verify implementation from user perspective', source: 'promoted', basedOn: 'BAT', timesInvoked: 6, lastInvoked: '2026-04-19T09:10:00Z' },
+      { name: 'acceptance-tester', description: 'Acceptance testing — verify implementation from user perspective', source: 'promoted', basedOn: 'Acceptance Tester', timesInvoked: 6, lastInvoked: '2026-04-19T09:10:00Z' },
       { name: 'persona-reviewer', description: 'Review from any persona perspective on demand', source: 'plugin', timesInvoked: 3, lastInvoked: '2026-04-18T16:00:00Z' },
     ],
     suggestions: [
