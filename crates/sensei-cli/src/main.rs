@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::fs;
 
 const DAEMON_URL: &str = "http://127.0.0.1:7744";
@@ -83,11 +83,15 @@ fn main() {
 // ── Paths ────────────────────────────────────────────────────────────────────
 // Mirrors senseid::paths — CLI can't depend on senseid (heavy deps).
 
-fn plugin_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join(".claude/plugins/sensei")
-}
 fn daemon_bin() -> PathBuf {
-    plugin_dir().join("bin/senseid")
+    // Prefer senseid on PATH (installed via Homebrew)
+    if which_exists("senseid") {
+        return PathBuf::from("senseid");
+    }
+    // Fallback: legacy plugin dir
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".claude/plugins/sensei/bin/senseid")
 }
 
 /// Check if the sensei Claude Code plugin is installed (cache dir has our plugin).
@@ -482,9 +486,9 @@ fn configure() {
 fn install(specific_acp: Option<&str>, scope: &str) {
     println!("Installing sensei...\n");
 
-    // Step 1: Copy binaries (must happen before daemon starts)
-    println!("[1/2] Binaries...");
-    install_binaries();
+    // Step 1: Verify binaries are available
+    println!("[1/2] Checking binaries...");
+    verify_binaries();
 
     // Step 2: All ACP config goes through the daemon adapter
     println!("[2/2] ACP integration...");
@@ -537,26 +541,30 @@ fn install(specific_acp: Option<&str>, scope: &str) {
     println!("  Run: sensei scan ~/Developer");
 }
 
-fn install_binaries() {
-    let plugin = plugin_dir();
-    fs::create_dir_all(plugin.join("bin")).ok();
+/// Verify required binaries are on PATH. Does NOT copy — Homebrew manages binaries.
+fn verify_binaries() {
+    let bins = ["senseid", "sensei-mcp"];
+    let mut missing = vec![];
 
-    let self_path = std::env::current_exe().unwrap_or_default();
-    let self_dir = self_path.parent().unwrap_or(Path::new("."));
-
-    for bin_name in &["senseid", "sensei-mcp"] {
-        let src = self_dir.join(bin_name);
-        let dst = plugin.join("bin").join(bin_name);
-        if src.exists() {
-            fs::copy(&src, &dst).ok();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&dst, fs::Permissions::from_mode(0o755)).ok();
-            }
-            println!("  {}", bin_name);
+    for name in &bins {
+        if which_exists(name) {
+            println!("  ✓ {}", name);
+        } else {
+            println!("  ✗ {} — not found on PATH", name);
+            missing.push(*name);
         }
     }
+
+    if !missing.is_empty() {
+        eprintln!("\n  Missing binaries. Install via: brew install mizukisu/tap/sensei");
+    }
+}
+
+/// Check if a binary is on PATH.
+fn which_exists(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+        .unwrap_or(false)
 }
 
 // ── Uninstall ────────────────────────────────────────────────────────────────
@@ -580,10 +588,13 @@ fn uninstall() {
         }
     }
 
-    // Always clean up local plugin dir
-    if plugin_dir().exists() {
-        fs::remove_dir_all(plugin_dir()).ok();
-        println!("Removed plugin directory");
+    // Clean up legacy plugin dir if it exists
+    let legacy_plugin = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".claude/plugins/sensei");
+    if legacy_plugin.exists() {
+        fs::remove_dir_all(&legacy_plugin).ok();
+        println!("Removed legacy plugin directory");
     }
 
     println!("Sensei uninstalled.");
