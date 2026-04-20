@@ -535,6 +535,8 @@ fn uninstall(scope: &str) {
 
     let do_user = scope == "all" || scope == "user";
     let do_project = scope == "all" || scope == "project";
+    let mut cleaned: Vec<String> = vec![];
+    let mut not_cleaned: Vec<String> = vec![];
 
     // ── User scope cleanup ──────────────────────────────────────────────
     if do_user {
@@ -549,19 +551,33 @@ fn uninstall(scope: &str) {
                 Ok(r) if r.status().is_success() => {
                     let result: serde_json::Value = r.json().unwrap_or_default();
                     for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
-                        println!("  ✓ Removed MCP from {}", id.as_str().unwrap_or(""));
+                        let name = id.as_str().unwrap_or("unknown");
+                        println!("  ✓ Removed MCP from {}", name);
+                        cleaned.push(format!("MCP config ({})", name));
                     }
                 }
-                _ => eprintln!("  ✗ Daemon uninstall failed"),
+                _ => {
+                    eprintln!("  ✗ Daemon uninstall failed");
+                    not_cleaned.push("MCP config (daemon unavailable)".into());
+                }
             }
+        } else {
+            not_cleaned.push("MCP config (daemon not running)".into());
         }
 
         // Also try `claude mcp remove` for clean Claude Code removal
-        let _ = std::process::Command::new("claude")
+        match std::process::Command::new("claude")
             .args(["mcp", "remove", "-s", "user", "sensei"])
-            .status();
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                println!("  ✓ Removed sensei MCP from Claude Code (user scope)");
+                cleaned.push("Claude Code MCP (user)".into());
+            }
+            _ => {} // Not an error — may not have been registered
+        }
 
-        // Remove global commands installed by init --scope user
+        // Remove global commands
         let global_cmds = home().join(".claude/commands");
         let global_cmd_names = ["help", "commit", "checkpoint", "session", "get-api-docs"];
         let mut removed_cmds = 0;
@@ -574,9 +590,10 @@ fn uninstall(scope: &str) {
         }
         if removed_cmds > 0 {
             println!("  ✓ Removed {} global commands", removed_cmds);
+            cleaned.push(format!("{} global commands", removed_cmds));
         }
 
-        // Remove global skills (if any were installed globally)
+        // Remove global skills (only sensei-installed ones)
         let global_skills = home().join(".claude/skills");
         if global_skills.exists() {
             let mut removed_skills = 0;
@@ -584,7 +601,6 @@ fn uninstall(scope: &str) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.extension().map_or(false, |e| e == "md") {
-                        // Only remove sensei-installed skills (check for sensei marker in content)
                         if let Ok(content) = fs::read_to_string(&path) {
                             if content.contains("sensei") || content.contains("get_session_context")
                                 || content.contains("get_callers") || content.contains("search(")
@@ -598,6 +614,7 @@ fn uninstall(scope: &str) {
             }
             if removed_skills > 0 {
                 println!("  ✓ Removed {} global skills", removed_skills);
+                cleaned.push(format!("{} global skills", removed_skills));
             }
         }
 
@@ -606,47 +623,57 @@ fn uninstall(scope: &str) {
         if sensei_home.exists() {
             fs::remove_dir_all(&sensei_home).ok();
             println!("  ✓ Removed ~/.sensei/ (cache, config, indexes)");
+            cleaned.push("~/.sensei/ (cache, config, indexes)".into());
         }
 
         // Remove legacy plugin dir
         let legacy = home().join(".claude/plugins/sensei");
         if legacy.exists() {
             fs::remove_dir_all(&legacy).ok();
-            println!("  ✓ Removed legacy plugin directory");
+            println!("  ✓ Removed ~/.claude/plugins/sensei/");
+            cleaned.push("Legacy plugin directory".into());
         }
+    } else {
+        not_cleaned.push("User scope (use --scope user or --scope all)".into());
     }
 
     // ── Project scope cleanup ───────────────────────────────────────────
     if do_project {
         let repo_root = std::env::current_dir().unwrap_or_default();
-        println!("[project scope] {}", repo_root.display());
+        println!("\n[project scope] {}", repo_root.display());
 
-        // Remove .sensei/ directory
         let sensei_dir = repo_root.join(".sensei");
         if sensei_dir.exists() {
             fs::remove_dir_all(&sensei_dir).ok();
-            println!("  ✓ Removed .sensei/");
+            println!("  ✓ Removed .sensei/ (mindsets, personas, rules)");
+            cleaned.push(".sensei/ (mindsets, personas, rules)".into());
         }
 
-        // Remove sensei-installed project commands
         let cmds_dir = repo_root.join(".claude/commands");
         if cmds_dir.exists() {
             let count = remove_md_files(&cmds_dir);
-            if count > 0 { println!("  ✓ Removed {} project commands", count); }
+            if count > 0 {
+                println!("  ✓ Removed {} project commands", count);
+                cleaned.push(format!("{} project commands", count));
+            }
         }
 
-        // Remove sensei-installed project skills
         let skills_dir = repo_root.join(".claude/skills");
         if skills_dir.exists() {
             let count = remove_md_files(&skills_dir);
-            if count > 0 { println!("  ✓ Removed {} project skills", count); }
+            if count > 0 {
+                println!("  ✓ Removed {} project skills", count);
+                cleaned.push(format!("{} project skills", count));
+            }
         }
 
-        // Remove agents
         let agents_dir = repo_root.join(".claude/agents");
         if agents_dir.exists() {
             let count = remove_md_files(&agents_dir);
-            if count > 0 { println!("  ✓ Removed {} agents", count); }
+            if count > 0 {
+                println!("  ✓ Removed {} agents", count);
+                cleaned.push(format!("{} agents", count));
+            }
         }
 
         // Remove sensei entry from .mcp.json (preserve other servers)
@@ -658,17 +685,50 @@ fn uninstall(scope: &str) {
                         if servers.remove("sensei").is_some() {
                             if servers.is_empty() {
                                 fs::remove_file(&mcp_file).ok();
-                                println!("  ✓ Removed .mcp.json (was only sensei)");
+                                println!("  ✓ Removed .mcp.json");
+                                cleaned.push(".mcp.json".into());
                             } else {
                                 fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).ok();
                                 println!("  ✓ Removed sensei from .mcp.json (other servers preserved)");
+                                cleaned.push("sensei entry in .mcp.json".into());
                             }
                         }
                     }
                 }
             }
         }
+    } else {
+        not_cleaned.push("Project scope (use --scope project or --scope all)".into());
     }
+
+    // ── Summary ─────────────────────────────────────────────────────────
+    println!("\n--- summary ---");
+
+    if !cleaned.is_empty() {
+        println!("\nCleaned:");
+        for item in &cleaned {
+            println!("  ✓ {}", item);
+        }
+    }
+
+    if !not_cleaned.is_empty() {
+        println!("\nNot cleaned:");
+        for item in &not_cleaned {
+            println!("  - {}", item);
+        }
+    }
+
+    // Things we never touch
+    println!("\nNot managed by sensei uninstall:");
+    println!("  - Binaries (managed by Homebrew)");
+    println!("  - Daemon process (managed by brew services)");
+    println!("  - Desktop app (managed by Homebrew Cask)");
+    println!("  - Other projects' .sensei/ directories");
+
+    println!("\nTo fully remove sensei from this machine:");
+    println!("  brew services stop sensei");
+    println!("  brew uninstall sensei");
+    println!("  brew uninstall --cask sensei-app  # if desktop app installed");
 
     println!("\nSensei uninstalled.");
 }
