@@ -326,6 +326,9 @@ fn init_project_scope(recommended: bool, marketplace: &std::path::Path) {
     let sensei_dir = repo_root.join(".sensei");
     fs::create_dir_all(&sensei_dir).ok();
 
+    // Ownership marker — so uninstall knows this .sensei/ is ours
+    fs::write(sensei_dir.join(".managed-by-sensei"), format_date()).ok();
+
     // Rules
     let rules_file = sensei_dir.join("rules.md");
     if !rules_file.exists() {
@@ -644,9 +647,14 @@ fn uninstall(scope: &str) {
 
         let sensei_dir = repo_root.join(".sensei");
         if sensei_dir.exists() {
-            fs::remove_dir_all(&sensei_dir).ok();
-            println!("  ✓ Removed .sensei/ (mindsets, personas, rules)");
-            cleaned.push(".sensei/ (mindsets, personas, rules)".into());
+            if sensei_dir.join(".managed-by-sensei").exists() {
+                fs::remove_dir_all(&sensei_dir).ok();
+                println!("  ✓ Removed .sensei/ (mindsets, personas, rules)");
+                cleaned.push(".sensei/ (mindsets, personas, rules)".into());
+            } else {
+                println!("  - Skipped .sensei/ (not managed by sensei — missing .managed-by-sensei marker)");
+                not_cleaned.push(".sensei/ (no ownership marker — may belong to another tool)".into());
+            }
         }
 
         let cmds_dir = repo_root.join(".claude/commands");
