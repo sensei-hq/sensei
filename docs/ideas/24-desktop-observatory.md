@@ -79,12 +79,41 @@ Design these as pluggable connectors — same interface as a repo (produces node
 
 ```
 Solution "Acme Platform"
-├── repo: acme-api        (role: backend)
-├── repo: acme-frontend   (role: frontend)
-├── repo: acme-docs       (role: docs)
-├── connector: confluence  (space: ACME)      ← future
-└── connector: jira        (project: ACME)    ← future
+├── repo: acme-api        (role: backend)       ← git repo
+├── repo: acme-frontend   (role: frontend)      ← git repo
+├── repo: acme-docs       (role: docs)          ← git repo
+├── folder: old-api-backup (role: reference)    ← non-git folder
+├── connector: confluence  (space: ACME)        ← future
+└── connector: jira        (project: ACME)      ← future
 ```
+
+### Non-Git Folders
+
+Currently `scan_root` only discovers folders with `.git/`. This excludes:
+- Old backup copies of repos (no `.git/`)
+- Exported/archived codebases
+- Vendor/third-party source drops
+- Downloaded reference implementations
+
+These folders contain indexable code that the dedup detector could cross-reference against real repos.
+
+**Approach:**
+1. `scan_root` gains an `--include-folders` flag (or config) — if set, non-git directories with code files are registered as "unmanaged projects"
+2. Unmanaged projects get a distinct status (`unmanaged`) — no remote URL, no commit history
+3. Indexing works identically — adapters parse code, graph stores symbols
+4. Dedup detector runs across both managed and unmanaged — flags potential copies
+5. Desktop shows unmanaged projects with a different badge — user can tag as "backup of X" or "reference only"
+6. Unmanaged folders can be added to solutions with role `reference` or `archive`
+
+**What this enables:**
+- "This backup folder has 80% symbol overlap with acme-api → likely a copy"
+- "Old vendor code references patterns we still use — index it for search"
+- Developer adds a backup folder to a solution → graph shows cross-references
+
+**Implementation (daemon):**
+- `find_git_repos` becomes `find_code_folders` with a mode flag
+- `Project.status` gains `unmanaged` variant
+- No changes to indexing pipeline — it already works on any folder with code files
 
 ## Information Architecture
 
