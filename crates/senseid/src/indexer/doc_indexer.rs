@@ -14,8 +14,8 @@ pub struct DocFrontmatter {
     pub name: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
+    #[serde(default, rename = "description")]
+    pub _description: Option<String>,
 }
 
 /// Classification result for a doc/extension file.
@@ -235,9 +235,11 @@ fn create_traceability_edges(graph_db: &GraphDb, repo_id: &str) -> Result<(), St
 
 // ── IR Doc Parser ────────────────────────────────────────────────────────────
 // Pure function: content + metadata → IRDoc. No graph, no IO.
+// Currently test-only; will be wired into the processing pipeline (issue #90).
 
 /// Parse a markdown file into an IRDoc.
 /// This is the doc adapter's parse() implementation.
+#[cfg(test)]
 pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir::IRDoc {
     let fm = parse_frontmatter(content);
     let classification = classify_doc(rel_path, &fm);
@@ -256,7 +258,7 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
     if let Some(ref v) = fm.title { frontmatter.insert("title".into(), v.clone()); }
     if let Some(ref v) = fm.doc_type { frontmatter.insert("type".into(), v.clone()); }
     if let Some(ref v) = fm.category { frontmatter.insert("category".into(), v.clone()); }
-    if let Some(ref v) = fm.description { frontmatter.insert("description".into(), v.clone()); }
+    if let Some(ref v) = fm._description { frontmatter.insert("description".into(), v.clone()); }
     // Also extract additional frontmatter fields we haven't typed
     extract_raw_frontmatter(content, &mut frontmatter);
 
@@ -292,7 +294,7 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
             .and_then(|_| None) // status not in DocFrontmatter yet — use raw
             .or_else(|| extract_frontmatter_field(content, "status")),
         origin: extract_frontmatter_field(content, "origin"),
-        description: fm.description.clone(),
+        description: fm._description.clone(),
         date: extract_frontmatter_field(content, "date"),
         title,
         sections,
@@ -304,6 +306,7 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
 }
 
 /// Extract sections split by headings.
+#[cfg(test)]
 fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     let lines: Vec<&str> = content.lines().collect();
     let mut sections = Vec::new();
@@ -338,6 +341,7 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
     sections
 }
 
+#[cfg(test)]
 fn parse_heading(line: &str) -> Option<(u8, String)> {
     if line.starts_with("######") { Some((6, line[6..].trim().into())) }
     else if line.starts_with("#####") { Some((5, line[5..].trim().into())) }
@@ -348,6 +352,7 @@ fn parse_heading(line: &str) -> Option<(u8, String)> {
     else { None }
 }
 
+#[cfg(test)]
 fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
     let text: String = lines.get(start..end.min(lines.len()))
         .map(|s| s.join("\n"))
@@ -359,6 +364,7 @@ fn make_preview(lines: &[&str], start: usize, end: usize) -> Option<String> {
 }
 
 /// Extract code blocks with language tags.
+#[cfg(test)]
 fn extract_code_blocks(content: &str) -> Vec<crate::ir::IRCodeBlock> {
     let lines: Vec<&str> = content.lines().collect();
     let mut blocks = Vec::new();
@@ -394,6 +400,7 @@ fn extract_code_blocks(content: &str) -> Vec<crate::ir::IRCodeBlock> {
 }
 
 /// Extract doc-to-doc references from markdown links.
+#[cfg(test)]
 fn extract_doc_refs(content: &str) -> Vec<String> {
     let mut refs = HashSet::new();
     // Match [text](path.md) style links
@@ -421,6 +428,7 @@ fn extract_doc_refs(content: &str) -> Vec<String> {
 }
 
 /// Extract a specific frontmatter field by name from raw content.
+#[cfg(test)]
 fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") { return None; }
@@ -439,6 +447,7 @@ fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
 }
 
 /// Extract all raw frontmatter key-value pairs.
+#[cfg(test)]
 fn extract_raw_frontmatter(content: &str, map: &mut std::collections::HashMap<String, String>) {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") { return; }
@@ -459,6 +468,7 @@ fn extract_raw_frontmatter(content: &str, map: &mut std::collections::HashMap<St
 }
 
 /// Infer category from path.
+#[cfg(test)]
 fn infer_category_from_path(rel_path: &str) -> Option<String> {
     let lower = rel_path.to_lowercase();
     if lower.contains("/ideas/") { Some("idea".into()) }
@@ -597,7 +607,7 @@ mod tests {
         let content = "---\nname: test-gen\ndescription: Generate tests\n---\n# Skill";
         let fm = parse_frontmatter(content);
         assert_eq!(fm.name, Some("test-gen".into()));
-        assert_eq!(fm.description, Some("Generate tests".into()));
+        assert_eq!(fm._description, Some("Generate tests".into()));
     }
 
     #[test]

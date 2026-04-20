@@ -1,7 +1,7 @@
-use super::common::{field_text, make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
+use super::common::{make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use tree_sitter::{Language, Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
-use crate::ir::{IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
+use crate::ir::{IRImport, IRParsedFile, ClassKind, Visibility};
 use super::LanguageAdapter;
 
 unsafe extern "C" {
@@ -204,7 +204,7 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     let mut functions = Vec::new();
     let mut classes = Vec::new();
     let mut imports = Vec::new();
-    let mut constants = Vec::new();
+    let constants = Vec::new();
     // Kotlin top-level: functions, classes, objects, imports
     for i in 0..root.child_count() {
         let child = root.child(i).unwrap();

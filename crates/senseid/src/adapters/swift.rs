@@ -1,7 +1,7 @@
-use super::common::{field_text, make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text, has_child_kind};
+use super::common::{field_text, make_symbol, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use tree_sitter::{Language, Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, SymbolKind};
-use crate::ir::{IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
+use crate::ir::{IRFunction, IRClass, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
 use super::LanguageAdapter;
 
 unsafe extern "C" {
@@ -226,7 +226,7 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     ir_parsed_file(file_path, "swift", module, classes)
 }
 
-fn walk_ir_swift(node: &Node, src: &[u8], lines: &[&str], functions: &mut Vec<IRFunction>, classes: &mut Vec<IRClass>, imports: &mut Vec<IRImport>, constants: &mut Vec<IRConstant>, class_ctx: Option<&str>) {
+fn walk_ir_swift(node: &Node, src: &[u8], lines: &[&str], functions: &mut Vec<IRFunction>, classes: &mut Vec<IRClass>, imports: &mut Vec<IRImport>, _constants: &mut Vec<IRConstant>, class_ctx: Option<&str>) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {

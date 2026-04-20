@@ -348,7 +348,7 @@ fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> String {
     }
 
     // Check if it's a library name used by any project
-    if let Some(p) = projects.iter().find(|p| {
+    if let Some(_p) = projects.iter().find(|p| {
         p["libs"].as_array().map(|libs| {
             libs.iter().any(|l| l.as_str().map(|s| s.to_lowercase()) == Some(hint_lower.clone()))
         }).unwrap_or(false)

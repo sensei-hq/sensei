@@ -1,7 +1,7 @@
 use tree_sitter::{Parser, Node};
 use crate::types::{ParsedFile, ParsedSymbol, ParsedEdge, ParsedImport, SymbolKind};
-use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
-use super::common::{field_text, ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
+use crate::ir::{IRBase, IRFunction, IRClass, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
+use super::common::{ir_function, ir_method, ir_class, ir_module, ir_parsed_file, node_text};
 use super::LanguageAdapter;
 
 pub struct PythonAdapter;
