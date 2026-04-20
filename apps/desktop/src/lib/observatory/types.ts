@@ -237,6 +237,7 @@ export interface ProfileLever {
   name: string;
   category: 'mindset' | 'persona' | 'rule' | 'library';
   type?: string;                         // core, specialist (mindsets)
+  hasAgent: boolean;                     // promoted to agent?
   sessionsApplied: number;
   ftrImpact: MetricValue;               // +15% FTR
   tokenImpact: MetricValue;             // +8% tokens
@@ -244,14 +245,24 @@ export interface ProfileLever {
   verdictReason: string;
 }
 
+export interface AgentInfo {
+  name: string;
+  description: string;
+  source: 'promoted' | 'custom' | 'plugin';  // how it was created
+  basedOn?: string;                           // mindset/persona it was promoted from
+  timesInvoked: number;
+  lastInvoked?: string;
+}
+
 export interface ProfileSuggestion {
-  type: 'add_persona' | 'add_mindset' | 'remove_lever' | 'adjust_rule';
-  reason: string;                        // "60% of corrections about UX"
+  type: 'add_persona' | 'add_mindset' | 'remove_lever' | 'adjust_rule' | 'promote_agent';
+  reason: string;
   action: ActionRecipe;
 }
 
 export interface ProfilesData {
   levers: ProfileLever[];
+  agents: AgentInfo[];
   suggestions: ProfileSuggestion[];
 }
 

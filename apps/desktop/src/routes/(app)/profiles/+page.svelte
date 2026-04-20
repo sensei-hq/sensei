@@ -52,22 +52,28 @@
 
   <!-- Lever impact table -->
   <div class="space-y-2">
-    <div class="grid grid-cols-[24px_1fr_70px_60px_70px_70px_80px] gap-2 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-surface-z4">
+    <div class="grid grid-cols-[24px_1fr_70px_60px_70px_70px_60px_80px] gap-2 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-surface-z4">
       <span></span>
       <span>Lever</span>
       <span>Category</span>
       <span class="text-right">Applied</span>
       <span class="text-right">FTR</span>
       <span class="text-right">Tokens</span>
+      <span class="text-center">Agent</span>
       <span class="text-center">Verdict</span>
     </div>
 
     {#each data.levers as lever (lever.name)}
       {@const vb = verdictBadge(lever.verdict)}
-      <div class="grid grid-cols-[24px_1fr_70px_60px_70px_70px_80px] gap-2 items-center rounded-lg bg-surface-z2 px-3 py-2.5 text-sm">
+      <div class="grid grid-cols-[24px_1fr_70px_60px_70px_70px_60px_80px] gap-2 items-center rounded-lg bg-surface-z2 px-3 py-2.5 text-sm">
         <span class="text-center">{categoryIcon(lever.category)}</span>
         <div class="min-w-0">
-          <p class="font-medium text-surface-z7 truncate">{lever.name}</p>
+          <p class="font-medium text-surface-z7 truncate">
+            {lever.name}
+            {#if lever.hasAgent}
+              <span class="ml-1 text-[8px] rounded bg-primary-z2 px-1 py-0.5 text-primary-z7">agent</span>
+            {/if}
+          </p>
           <p class="text-[10px] text-surface-z4 truncate">{lever.verdictReason}</p>
         </div>
         <span class="text-[10px] text-surface-z5">{lever.category}{lever.type ? ` · ${lever.type}` : ''}</span>
@@ -81,10 +87,45 @@
             <span class="text-[8px]">~</span>
           {/if}
         </span>
+        <span class="text-center">
+          {#if lever.hasAgent}
+            <span class="text-[10px] text-success-z6">active</span>
+          {:else if lever.category === 'mindset' || lever.category === 'persona'}
+            <button onclick={() => copyPrompt(`Create .sensei/agents/${lever.name.toLowerCase().replace(/ /g, '-')}.md from ${lever.category}`)}
+              class="text-[10px] text-primary-z5 hover:text-primary-z7">promote</button>
+          {:else}
+            <span class="text-[10px] text-surface-z3">—</span>
+          {/if}
+        </span>
         <span class="text-center rounded px-1.5 py-0.5 text-[10px] font-medium {vb.cls}">{vb.label}</span>
       </div>
     {/each}
   </div>
+
+  <!-- Active agents -->
+  {#if data.agents.length > 0}
+    <div class="space-y-2">
+      <p class="text-xs font-semibold uppercase tracking-wide text-surface-z5">Active Agents</p>
+      {#each data.agents as agent (agent.name)}
+        <div class="flex items-center gap-3 rounded-lg bg-surface-z2 px-4 py-2.5">
+          <span class="flex h-7 w-7 items-center justify-center rounded-md bg-primary-z2 text-sm">🤖</span>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium text-surface-z7">@{agent.name}</span>
+              <span class="rounded bg-surface-z3 px-1 py-0.5 text-[8px] text-surface-z5">{agent.source}</span>
+              {#if agent.basedOn}
+                <span class="text-[10px] text-surface-z4">from {agent.basedOn}</span>
+              {/if}
+            </div>
+            <p class="text-[10px] text-surface-z4 truncate">{agent.description}</p>
+          </div>
+          <div class="text-right shrink-0">
+            <p class="text-xs text-surface-z6">{agent.timesInvoked}x invoked</p>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <!-- Suggestions -->
   {#if data.suggestions.length > 0}

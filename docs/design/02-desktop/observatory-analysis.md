@@ -383,9 +383,99 @@ This means:
 - `sensei init` can optionally install agents alongside mindsets
 - The Profiles page shows both: "Analyst mindset active, BAT agent available"
 
+### Creating and Promoting Agents
+
+**Three ways users get agents:**
+
+#### 1. Promote from mindset/persona (desktop UI)
+
+The Profiles page shows every mindset and persona. Each row has a status:
+
+```
+Analyst     mindset only    [Promote to agent]
+BAT         mindset + agent  ✓ agent active
+UX Designer mindset only    [Promote to agent]
+AI Driven Developer  persona only  [Promote to agent]
+```
+
+Clicking "Promote to agent" does:
+1. Creates `.sensei/agents/<name>.md` with the full mindset/persona content as the "what + why" section
+2. Adds a default "how" procedure template the user can customize
+3. Registers the agent so Claude Code discovers it on next session
+4. Profile page shows "mindset + agent" status
+
+The promotion is non-destructive — the mindset/persona stays. The agent augments it.
+
+#### 2. Generic persona agent (ships with sensei)
+
+A single agent `persona-reviewer` that dynamically loads any persona and validates from their perspective:
+
+```markdown
+# marketplace/agents/persona-reviewer.md
+---
+name: persona-reviewer
+description: Review work from a specific persona's perspective.
+  Invoke as @persona-reviewer or with a persona name.
+tools: Read, Glob, Grep
+model: sonnet
+---
+
+You are a persona-based reviewer. When invoked:
+
+1. Read all personas from .sensei/personas/*.md
+2. If a specific persona was mentioned in the prompt, focus on that one.
+   Otherwise, review from ALL personas.
+3. For each persona:
+   a. Read their questions, goals, pain points
+   b. Evaluate the current work against each question
+   c. Check if the validates criteria are met
+4. Report per persona: what passes, what fails, what actions to take.
+```
+
+Usage:
+- `@persona-reviewer check the new API endpoint` — reviews from all personas
+- `@persona-reviewer as API Consumer, is this endpoint intuitive?` — one persona
+- Desktop "Validate" button on Profiles page → runs this agent
+
+This means users don't need to promote every persona to a dedicated agent. The generic agent handles ad-hoc persona reviews. Dedicated agents are for personas/mindsets that need custom procedures.
+
+#### 3. Create from scratch (command or desktop)
+
+`/sensei:persona add` already creates persona files. A new flow:
+
+`/sensei:agent create` or the desktop Profiles page "Create agent" button:
+1. Pick a base: existing mindset, existing persona, or blank
+2. If from mindset/persona: auto-populates the what + why section
+3. User adds/edits the how section (procedures, tools, report format)
+4. Saves to `.sensei/agents/<name>.md`
+
+### Desktop UI: Profiles page additions
+
+The Profiles page gains an "Agents" section alongside the lever impact table:
+
+```
+ACTIVE AGENTS
+┌─────────────────────────────────────────────────────────┐
+│ 🤖 bat               mindset agent    applied 10x  keep │
+│ 🤖 persona-reviewer   generic agent    applied 3x  keep │
+└─────────────────────────────────────────────────────────┘
+
+AVAILABLE (not yet agents — promote to activate)
+┌─────────────────────────────────────────────────────────┐
+│ 🧠 Analyst            mindset only    [Promote]         │
+│ 🧠 UX Designer        mindset only    [Promote]         │
+│ 👤 AI Driven Dev       persona only   [Promote]         │
+│ 👤 Plugin Developer    persona only   [Promote]         │
+└─────────────────────────────────────────────────────────┘
+
++ Create custom agent
+```
+
+"Promote" generates the agent file with the mindset/persona content pre-filled. User reviews the "how" section and confirms.
+
 ### How agents are installed
 
-Agents live in `marketplace/agents/` as `.md` files. The `sensei init` command copies them to `.sensei/agents/` (project-level) or `.claude/agents/` (Claude Code discovers them). They appear as opt-in — user enables them per project.
+Agents live in `marketplace/agents/` (plugin-provided defaults) and `.sensei/agents/` (project-specific, user-created or promoted). The `sensei init` command can optionally install default agents. Claude Code discovers them from `.claude/agents/` or the plugin's `agents/` dir.
 
 ## 9. Open Questions
 
