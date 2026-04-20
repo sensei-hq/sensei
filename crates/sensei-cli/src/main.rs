@@ -617,30 +617,42 @@ fn uninstall(scope: &str) {
         Ok(r) if r.status().is_success() => {
             let result: serde_json::Value = r.json().unwrap_or_default();
 
-            println!("\n--- cleaned ---");
-
-            // ACP removals
-            for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
-                println!("  ✓ MCP removed from {}", id.as_str().unwrap_or("?"));
-            }
-
-            // Counts
+            let acps = result["acps_removed"].as_array().map(|a| a.len()).unwrap_or(0);
             let skills = result["skills_removed"].as_u64().unwrap_or(0);
             let cmds = result["commands_removed"].as_u64().unwrap_or(0);
-            if skills > 0 { println!("  ✓ {} skills removed", skills); }
-            if cmds > 0 { println!("  ✓ {} commands removed", cmds); }
-            if result["hooks_removed"].as_bool() == Some(true) { println!("  ✓ Hooks removed"); }
-            if result["cache_cleared"].as_bool() == Some(true) { println!("  ✓ Cache cleared"); }
-            if result["plugin_removed"].as_bool() == Some(true) { println!("  ✓ Legacy plugin removed"); }
+            let hooks = result["hooks_removed"].as_bool() == Some(true);
+            let cache = result["cache_cleared"].as_bool() == Some(true);
+            let plugin = result["plugin_removed"].as_bool() == Some(true);
+            let projects_done = result["projects_cleaned"].as_array().map(|a| a.len()).unwrap_or(0);
+            let errors = result["errors"].as_array().map(|a| a.len()).unwrap_or(0);
 
-            // Projects
-            for p in result["projects_cleaned"].as_array().unwrap_or(&vec![]) {
-                println!("  ✓ {}", p.as_str().unwrap_or("?"));
-            }
+            // Check if daemon actually did anything
+            let nothing_happened = acps == 0 && skills == 0 && cmds == 0
+                && !hooks && !cache && !plugin && projects_done == 0;
 
-            // Errors
-            for e in result["errors"].as_array().unwrap_or(&vec![]) {
-                eprintln!("  ✗ {}", e.as_str().unwrap_or("?"));
+            if nothing_happened && errors == 0 && !projects.is_empty() {
+                eprintln!("\n  ✗ Daemon returned empty result.");
+                eprintln!("  This usually means the daemon is running an older version.");
+                eprintln!("  Rebuild and restart: bun run build:daemon && senseid stop && senseid start");
+            } else {
+                println!("\n--- cleaned ---");
+
+                for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
+                    println!("  ✓ MCP removed from {}", id.as_str().unwrap_or("?"));
+                }
+                if skills > 0 { println!("  ✓ {} skills removed", skills); }
+                if cmds > 0 { println!("  ✓ {} commands removed", cmds); }
+                if hooks { println!("  ✓ Hooks removed"); }
+                if cache { println!("  ✓ Cache cleared"); }
+                if plugin { println!("  ✓ Legacy plugin removed"); }
+
+                for p in result["projects_cleaned"].as_array().unwrap_or(&vec![]) {
+                    println!("  ✓ {}", p.as_str().unwrap_or("?"));
+                }
+
+                for e in result["errors"].as_array().unwrap_or(&vec![]) {
+                    eprintln!("  ✗ {}", e.as_str().unwrap_or("?"));
+                }
             }
         }
         Ok(r) => eprintln!("Uninstall failed: HTTP {}", r.status()),
