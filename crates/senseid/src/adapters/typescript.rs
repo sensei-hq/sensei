@@ -1,5 +1,5 @@
 use crate::types::{ParsedFile, ParsedSymbol, ParsedImport, ParsedEdge, SymbolKind};
-use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRMethod, IRParam, IRImport, IRConstant, IRParsedFile, ClassKind, Visibility};
+use crate::ir::{IRBase, IRFunction, IRClass, IRMethod, IRImport, IRConstant, IRParsedFile, ClassKind};
 use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
 use oxc_allocator::Allocator;

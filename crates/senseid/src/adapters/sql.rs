@@ -1,7 +1,7 @@
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser as SqlParser;
 use crate::types::{ParsedFile, ParsedSymbol, SymbolKind};
-use crate::ir::{IRBase, IRModule, IRFunction, IRClass, IRConstant, IRParsedFile, ClassKind};
+use crate::ir::{IRBase, IRFunction, IRClass, IRParsedFile, ClassKind};
 use super::common::{ir_module, ir_parsed_file};
 use super::LanguageAdapter;
 
@@ -129,7 +129,7 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     let pf = SqlAdapter.parse(source, file_path);
     let mut functions = Vec::new();
     let mut classes = Vec::new();
-    let mut constants = Vec::new();
+    let constants = Vec::new();
 
     for sym in &pf.symbols {
         match sym.kind {

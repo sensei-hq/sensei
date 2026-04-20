@@ -407,12 +407,6 @@ pub struct TypeDetail {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphSummary {
-    pub total_symbols: u32,
-    pub total_edges: u32,
-    pub communities: u32,
-}
 
 #[cfg(test)]
 mod tests {

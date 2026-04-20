@@ -109,9 +109,9 @@ fn walk_ir(
                 let return_type = extract_return_type(&child, src);
                 let decorators = collect_attributes(&child, src);
                 let docstring = collect_doc_comments(&child, src);
-                let sig = line_at(lines, child.start_position().row);
+                let _sig = line_at(lines, child.start_position().row);
 
-                if let Some((type_name, _)) = impl_context {
+                if let Some((_type_name, _)) = impl_context {
                     // This is a method — will be added to the class by the caller
                     // For now, still add to functions but mark with parent
                     // The impl_item handler below attaches to the right class

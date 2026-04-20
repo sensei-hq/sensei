@@ -10,7 +10,7 @@ use super::handlers;
 pub struct TaskContext {
     pub queue: Arc<TaskQueue>,
     pub app_state: crate::api::routes::AppState,
-    pub graph_path: Option<std::path::PathBuf>,
+    pub _graph_path: Option<std::path::PathBuf>,
 }
 
 impl TaskContext {

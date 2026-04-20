@@ -14,6 +14,7 @@ pub fn field_text(node: &Node, field: &str, src: &[u8]) -> String {
 }
 
 /// Get a trimmed line from the source at a given row index.
+#[cfg(test)]
 pub fn line_at(lines: &[&str], row: usize) -> Option<String> {
     lines.get(row).map(|l| l.trim().to_string())
 }
@@ -71,7 +72,7 @@ pub fn extract_script_blocks(source: &str) -> Vec<(String, u32, bool)> {
 
 /// Build an IRFunction from common fields. Used by all adapters.
 pub fn ir_function(
-    name: String, node: &Node, lines: &[&str],
+    name: String, node: &Node, _lines: &[&str],
     is_exported: bool, is_async: bool,
     params: Vec<IRParam>, return_type: Option<String>,
     docstring: Option<String>, decorators: Vec<String>,
@@ -192,11 +193,6 @@ pub fn ir_module(
 /// Get full source text of a tree-sitter node.
 pub fn node_text(node: &Node, src: &[u8]) -> String {
     node.utf8_text(src).unwrap_or_default().to_string()
-}
-
-/// Check if a node has a child of a specific kind.
-pub fn has_child_kind(node: &Node, kind: &str) -> bool {
-    (0..node.child_count()).any(|i| node.child(i).map_or(false, |c| c.kind() == kind))
 }
 
 #[cfg(test)]

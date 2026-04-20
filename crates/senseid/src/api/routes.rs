@@ -737,7 +737,7 @@ struct IndexBody {
     #[serde(rename = "repoPath")]
     repo_path: String,
     #[serde(default)]
-    force: bool,
+    _force: bool,
 }
 
 async fn index_project(
@@ -1881,7 +1881,7 @@ async fn reset_all(
 struct ScanBody {
     root: String,
     #[serde(default = "default_depth")]
-    max_depth: u32,
+    _max_depth: u32,
 }
 
 fn default_depth() -> u32 { 4 }
