@@ -2,39 +2,81 @@
   import { onMount, onDestroy } from 'svelte';
   import { getPort } from '$lib/appstate.svelte.js';
   import { getRepoStore } from '$lib/repos.svelte.js';
-  import { FolderInput, RepoListItem } from '$lib/components/index.js';
+  import { RepoListItem } from '$lib/components/index.js';
 
   const store = getRepoStore(getPort());
   onMount(() => store.connect());
   onDestroy(() => store.disconnect());
 
-  let showAddFolder = $state(false);
+  let inputValue = $state('');
+  let inputMode = $derived(inputValue.startsWith('/') || inputValue.startsWith('~') ? 'add' : 'search');
+
+  function handleInput() {
+    if (inputMode === 'add') {
+      store.search = '';
+    } else {
+      store.search = inputValue;
+    }
+  }
+
+  function handleSubmit() {
+    if (inputMode === 'add' && inputValue.trim()) {
+      store.scanFolder(inputValue.trim());
+      inputValue = '';
+    }
+  }
+
+  async function browse() {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const picked = await invoke<string | null>('pick_folder');
+      if (picked) store.scanFolder(picked);
+    } catch { /* browser preview */ }
+  }
 </script>
 
 <div class="h-full overflow-y-auto px-6 py-5 space-y-5">
 
-  <!-- Header -->
-  <div class="flex items-center justify-between">
-    <div>
-      <h2 class="text-lg font-semibold text-surface-z8">Overview</h2>
-      <p class="text-xs text-surface-z4">
-        {store.totalCount} projects &middot; {store.indexedCount} indexed
-        {#if store.solutionCount > 0} &middot; {store.solutionCount} solutions{/if}
-        {#if store.anyIndexing}
-          &middot; <span class="text-primary-z6">indexing</span>
-        {/if}
-      </p>
+  <!-- Header + unified input -->
+  <div class="space-y-3">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-surface-z8">Overview</h2>
+        <p class="text-xs text-surface-z4">
+          {store.totalCount} projects &middot; {store.indexedCount} indexed
+          {#if store.solutionCount > 0} &middot; {store.solutionCount} solutions{/if}
+          {#if store.anyIndexing}
+            &middot; <span class="text-primary-z6">indexing</span>
+          {/if}
+        </p>
+      </div>
     </div>
-    <button onclick={() => showAddFolder = !showAddFolder}
-      class="rounded-lg bg-primary-z2 px-3 py-1.5 text-xs font-medium text-primary-z7 hover:bg-primary-z3">
-      {showAddFolder ? 'Done' : '+ Add folder'}
-    </button>
-  </div>
 
-  <!-- Add folder -->
-  {#if showAddFolder}
-    <FolderInput onadd={(path) => store.scanFolder(path)} scanning={store.anyIndexing} />
-  {/if}
+    <!-- Unified search / add bar -->
+    <div class="flex gap-2">
+      <div class="flex-1 relative">
+        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm {inputMode === 'add' ? 'i-solar-folder-add-bold-duotone text-primary-z5' : 'i-solar-magnifer-bold-duotone text-surface-z4'}"></span>
+        <input
+          type="text"
+          bind:value={inputValue}
+          oninput={handleInput}
+          onkeydown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+          placeholder="Search projects or type a path to add (~/...)"
+          class="w-full rounded-lg border bg-surface-z2 pl-8 pr-3 py-1.5 text-sm text-surface-z7 outline-none placeholder:text-surface-z4 {inputMode === 'add' ? 'border-primary-z4' : 'border-surface-z3 focus:border-primary-z4'}"
+        />
+      </div>
+      {#if inputMode === 'add'}
+        <button onclick={handleSubmit}
+          class="rounded-lg bg-primary-z2 px-3 py-1.5 text-xs font-medium text-primary-z7 hover:bg-primary-z3">
+          Scan
+        </button>
+      {/if}
+      <button onclick={browse} title="Browse folder"
+        class="rounded-lg border border-surface-z3 bg-surface-z2 px-2.5 text-surface-z5 hover:bg-surface-z3 transition-colors">
+        <span class="i-solar-folder-open-bold-duotone text-sm"></span>
+      </button>
+    </div>
+  </div>
 
   <!-- Aggregate progress -->
   {#if store.anyIndexing}
@@ -50,18 +92,12 @@
     </div>
   {/if}
 
-  <!-- Search -->
-  {#if store.totalCount > 5}
-    <input type="text" bind:value={store.search} placeholder="Filter projects..."
-      class="w-full rounded-lg border border-surface-z3 bg-surface-z2 px-3 py-1.5 text-sm text-surface-z7 outline-none placeholder:text-surface-z4 focus:border-primary-z4" />
-  {/if}
-
   <!-- Empty state -->
   {#if store.totalCount === 0}
     <div class="rounded-lg border border-dashed border-surface-z3 p-8 text-center space-y-3">
       <p class="text-base font-medium text-surface-z7">No projects yet</p>
       <p class="text-xs text-surface-z4 max-w-sm mx-auto">Add a folder to scan for repositories.</p>
-      <button onclick={() => showAddFolder = true}
+      <button onclick={() => { inputValue = '~/'; }}
         class="rounded-lg bg-primary-z2 px-3 py-1.5 text-xs font-medium text-primary-z7 hover:bg-primary-z3">
         Add folder
       </button>
