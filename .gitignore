@@ -46,3 +46,4 @@ firebase-debug.log
 .cocoindex_code
 
 target/
+*.png
