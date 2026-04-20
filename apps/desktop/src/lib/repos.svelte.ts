@@ -70,11 +70,14 @@ export class RepoStore {
 
   connect() {
     this.disconnect();
-    this.fetchAll();
 
+    // Subscribe to SSE first — don't miss events during initial fetch
     this.es = new EventSource(`http://127.0.0.1:${this.port}/api/tasks/progress`);
     this.es.onmessage = (e) => { try { this.onEvent(JSON.parse(e.data)); } catch {} };
     this.es.onerror = () => { this.disconnect(); setTimeout(() => this.connect(), 3000); };
+
+    // Then fetch current state
+    this.fetchAll();
 
     // Periodic full sync as backup
     this.pollTimer = setInterval(() => this.fetchAll(), 5000);
@@ -96,9 +99,8 @@ export class RepoStore {
   }
 
   async excludeRepo(repoId: string) {
-    // TODO: call daemon API to exclude + remove from index
-    // await senseiApi(this.port).excludeRepo(repoId);
-    // For now just remove locally — daemon exclusion API needed
+    await senseiApi(this.port).excludeRepo(repoId);
+    // Remove from local list immediately (daemon already excluded it)
     this.all = this.all.filter(r => r.project.repo_id !== repoId);
   }
 

@@ -168,6 +168,13 @@ impl Store {
                 created_at TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS excluded_paths(
+                path TEXT PRIMARY KEY,
+                repo_id TEXT,
+                reason TEXT,
+                excluded_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS detected_patterns(
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -273,6 +280,45 @@ impl Store {
     pub fn delete_project(&self, repo_id: &str) -> rusqlite::Result<()> {
         self.conn.execute("DELETE FROM projects WHERE repo_id = ?1", params![repo_id])?;
         self.conn.execute("DELETE FROM tags WHERE entity_type = 'project' AND entity_id = ?1", params![repo_id])?;
+        Ok(())
+    }
+
+    /// Exclude a project: delete from projects, clear indexed data, add to exclusion list.
+    pub fn exclude_project(&self, repo_id: &str, path: &str) -> rusqlite::Result<()> {
+        // Add to exclusion list
+        self.conn.execute(
+            "INSERT OR REPLACE INTO excluded_paths(path, repo_id, reason) VALUES(?1, ?2, 'user_excluded')",
+            params![path, repo_id],
+        )?;
+        // Remove from projects
+        self.delete_project(repo_id)?;
+        Ok(())
+    }
+
+    /// Check if a path is excluded.
+    pub fn is_excluded(&self, path: &str) -> bool {
+        // Check exact match or if path starts with any excluded path
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM excluded_paths WHERE ?1 LIKE path || '%'",
+            params![path],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) > 0
+    }
+
+    /// List all exclusions.
+    pub fn list_exclusions(&self) -> rusqlite::Result<Vec<(String, Option<String>, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, repo_id, excluded_at FROM excluded_paths ORDER BY excluded_at DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?))
+        })?;
+        rows.collect()
+    }
+
+    /// Remove an exclusion — path becomes discoverable again on next scan.
+    pub fn remove_exclusion(&self, path: &str) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM excluded_paths WHERE path = ?1", params![path])?;
         Ok(())
     }
 
@@ -1387,6 +1433,35 @@ mod tests {
         s.clear_index_errors("foo").unwrap();
         assert_eq!(s.get_index_errors(Some("foo")).unwrap().len(), 0);
         assert_eq!(s.get_index_errors(Some("bar")).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn exclude_and_list() {
+        let s = test_store();
+        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
+        s.upsert_project(&make_project("bar", "/tmp/bar")).unwrap();
+
+        // Exclude foo
+        s.exclude_project("foo", "/tmp/foo").unwrap();
+
+        // foo is gone from projects
+        assert_eq!(s.list_projects().unwrap().len(), 1);
+        assert!(s.get_project("foo").unwrap().is_none());
+
+        // foo is in exclusions
+        let excl = s.list_exclusions().unwrap();
+        assert_eq!(excl.len(), 1);
+        assert_eq!(excl[0].0, "/tmp/foo");
+
+        // is_excluded checks
+        assert!(s.is_excluded("/tmp/foo"));
+        assert!(s.is_excluded("/tmp/foo/src/main.rs")); // child path also excluded
+        assert!(!s.is_excluded("/tmp/bar"));
+
+        // Remove exclusion
+        s.remove_exclusion("/tmp/foo").unwrap();
+        assert!(!s.is_excluded("/tmp/foo"));
+        assert_eq!(s.list_exclusions().unwrap().len(), 0);
     }
 
     #[test]
