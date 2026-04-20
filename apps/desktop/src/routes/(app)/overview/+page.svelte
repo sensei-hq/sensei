@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { senseiApi } from '$lib/api.js';
   import { getPort } from '$lib/appstate.svelte.js';
-  import { getSolutions } from '$lib/solutions.svelte.js';
+  import { getSolutions, loadSolutions } from '$lib/solutions.svelte.js';
+  import { connectSSE, disconnectSSE, onIndexChange, offIndexChange } from '$lib/indexer.svelte.js';
   import type { ServerProject, Solution } from '$lib/types.js';
   import type { OverviewData, SolutionSummary, ScopeMetrics } from '$lib/observatory/types.js';
 
@@ -10,23 +11,45 @@
   let projects = $state<ServerProject[]>([]);
   let solutions = $state<Solution[]>([]);
   let metrics = $state<Record<string, any>>({});
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-  onMount(async () => {
+  async function refresh() {
     const api = senseiApi(getPort());
-    const [projs, sessions] = await Promise.all([
-      api.getProjects(),
-      api.getSessions(),
-    ]);
+    const projs = await api.getProjects();
     projects = projs;
+    await loadSolutions();
     solutions = getSolutions();
 
-    // Fetch metrics for each indexed project
+    // Fetch metrics for indexed projects
+    const newMetrics: Record<string, any> = {};
     for (const p of projs.filter(p => p.indexed_at)) {
       const m = await api.getMetrics(p.repo_id).catch(() => null);
-      if (m) metrics[p.repo_id] = m;
+      if (m) newMetrics[p.repo_id] = m;
     }
-
+    metrics = newMetrics;
     loading = false;
+  }
+
+  // Debounced refresh — SSE events can fire rapidly
+  function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refresh, 300);
+  }
+
+  onMount(async () => {
+    const port = getPort();
+
+    // Subscribe to indexing SSE events
+    connectSSE(port);
+    onIndexChange(scheduleRefresh);
+
+    // Initial load
+    await refresh();
+  });
+
+  onDestroy(() => {
+    offIndexChange();
+    if (refreshTimer) clearTimeout(refreshTimer);
   });
 
   // Group projects by solution (standalone projects become single-project solutions)
