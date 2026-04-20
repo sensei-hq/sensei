@@ -4,3 +4,7 @@
 - [Solution model](project_solution_model.md) — three-level scope: Global > Solution > Project. Solutions are multi-repo logical groupings with future external source connectors.
 - [Overview = /all evolved](feedback_overview_is_all.md) — Overview must combine project management (add folders, scan, progress) with metrics — not be a separate read-only page
 - [Overview actions](feedback_overview_actions.md) — search, add, exclude/remove repos, live progress, exclude list in settings
+- [Overview vs Workspace](feedback_overview_vs_workspace.md) — current /overview is workspace (repo mgmt), need separate metrics dashboard
+- [Shared components](feedback_shared_components.md) — extract shared parts before building, never duplicate
+- [State class first](feedback_state_first.md) — reactive state class → test → shared components → page
+- [Session state Apr 20](project_session_state_apr20.md) — full resume point: what's done, what's next, architecture decisions
