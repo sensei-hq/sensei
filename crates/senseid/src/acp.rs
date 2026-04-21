@@ -70,17 +70,8 @@ impl Acp for ClaudeCodeAcp {
             upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": mcp_cmd, "args": []}))?;
         }
 
-        // 4. Hooks
-        let hooks = hooks_dir();
-        let hooks_str = hooks.to_string_lossy();
-        let hooks_file = home().join(".claude/hooks.json");
-        let hooks_config = serde_json::json!({"hooks": {
-            "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd session-start", hooks_str)}]}],
-            "PreToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd pre-tool", hooks_str)}]}],
-            "PostToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd post-tool", hooks_str)}]}],
-        }});
-        std::fs::write(&hooks_file, serde_json::to_string_pretty(&hooks_config).unwrap())
-            .map_err(|e| e.to_string())?;
+        // Hooks are handled by `claude plugin install` (step 1).
+        // If that path failed, hooks won't be available — MCP-only is still functional.
 
         Ok(())
     }
@@ -373,10 +364,7 @@ fn find_mcp_binary() -> Option<PathBuf> {
     if which_exists("sensei-mcp") {
         return Some(PathBuf::from("sensei-mcp"));
     }
-    let h = home();
     let search = [
-        h.join(".claude/plugins/sensei/bin/sensei-mcp"),
-        h.join(".local/bin/sensei-mcp"),
         PathBuf::from("/opt/homebrew/bin/sensei-mcp"),
         PathBuf::from("/usr/local/bin/sensei-mcp"),
     ];
@@ -384,17 +372,11 @@ fn find_mcp_binary() -> Option<PathBuf> {
 }
 
 fn find_marketplace_plugin() -> Option<PathBuf> {
-    let h = home();
     let candidates = [
-        h.join(".sensei/marketplace"),
         PathBuf::from("/opt/homebrew/share/sensei/marketplace"),
         PathBuf::from("/usr/local/share/sensei/marketplace"),
     ];
     candidates.into_iter().find(|p| p.join(".claude-plugin/plugin.json").exists())
-}
-
-fn hooks_dir() -> PathBuf {
-    home().join(".claude/plugins/sensei/hooks")
 }
 
 /// Read a JSON file, remove "sensei" from the object at `mcp_key`, write back.
