@@ -49,6 +49,12 @@ enum Commands {
     /// Stop the sensei daemon
     Stop,
 
+    /// Restart the sensei daemon
+    Restart {
+        #[arg(long, default_value = "7744")]
+        port: u16,
+    },
+
     /// Show daemon status
     Status,
 
@@ -77,6 +83,7 @@ fn main() {
         Commands::Uninstall { scope } => uninstall(&scope),
         Commands::Start { port } => daemon_cmd("start", Some(port)),
         Commands::Stop => daemon_cmd("stop", None),
+        Commands::Restart { port } => restart_daemon(port),
         Commands::Status => daemon_cmd("status", None),
         Commands::Scan { path } => scan(&path),
         Commands::AddLib { name, url } => add_lib(&name, url.as_deref()),
@@ -389,6 +396,13 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::pat
                 } else {
                     println!("  ✓ {} — MCP registered", acp_id);
                 }
+                if let Some(errors) = body["errors"].as_array() {
+                    for err in errors {
+                        if let Some(msg) = err.as_str() {
+                            eprintln!("    {}", msg);
+                        }
+                    }
+                }
             }
             _ => eprintln!("  ✗ {} — configure failed", acp_id),
         }
@@ -617,6 +631,19 @@ fn uninstall(scope: &str) {
 }
 
 // ── Daemon / Scan / AddLib ──────────────────────────────────────────────────
+
+fn restart_daemon(port: u16) {
+    let bin = daemon_bin();
+    let _ = std::process::Command::new(&bin).arg("stop").status();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    match std::process::Command::new(&bin).args(["start", "--port", &port.to_string()]).status() {
+        Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+        Err(e) => {
+            eprintln!("Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei", e);
+            std::process::exit(1);
+        }
+    }
+}
 
 fn daemon_cmd(cmd: &str, port: Option<u16>) {
     let bin = daemon_bin();
