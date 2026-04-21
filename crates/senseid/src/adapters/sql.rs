@@ -39,12 +39,11 @@ impl LanguageAdapter for SqlAdapter {
                     let line = find_line(&lines, "INDEX", &name);
                     symbols.push(make_sym(name, SymbolKind::Const, &lines, line));
                 }
-            } else if upper.contains("FUNCTION") && upper.contains("CREATE") {
-                if let Some(name) = extract_name_after(&text, "FUNCTION") {
+            } else if upper.contains("FUNCTION") && upper.contains("CREATE")
+                && let Some(name) = extract_name_after(&text, "FUNCTION") {
                     let line = find_line(&lines, "FUNCTION", &name);
                     symbols.push(make_sym(name, SymbolKind::Function, &lines, line));
                 }
-            }
         }
 
         ParsedFile {
@@ -105,14 +104,10 @@ fn find_preceding_comment(lines: &[&str], line: u32) -> Option<String> {
     if line <= 1 { return None; }
     let mut comments = Vec::new();
     let mut idx = line as usize - 2;
-    loop {
-        if let Some(l) = lines.get(idx) {
-            let trimmed = l.trim();
-            if trimmed.starts_with("--") {
-                comments.push(trimmed.trim_start_matches("--").trim().to_string());
-            } else {
-                break;
-            }
+    while let Some(l) = lines.get(idx) {
+        let trimmed = l.trim();
+        if trimmed.starts_with("--") {
+            comments.push(trimmed.trim_start_matches("--").trim().to_string());
         } else {
             break;
         }

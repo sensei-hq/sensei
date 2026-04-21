@@ -49,7 +49,7 @@ pub fn start_root_watcher(
 
         // Sort projects by path length (longest first) for best prefix match
         let mut sorted_projects: Vec<(String, String)> = projects.into_iter().collect();
-        sorted_projects.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+        sorted_projects.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
 
         loop {
             match rx.recv_timeout(Duration::from_millis(DEBOUNCE_MS)) {
@@ -108,7 +108,7 @@ pub fn start_root_watcher(
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if !pending.is_empty() && last_event.elapsed() >= Duration::from_millis(DEBOUNCE_MS) {
-                        let batch: HashMap<PathBuf, ChangeKind> = pending.drain().collect();
+                        let batch: HashMap<PathBuf, ChangeKind> = std::mem::take(&mut pending);
                         let queue_clone = queue.clone();
                         let projects_ref = sorted_projects.clone();
 
@@ -155,14 +155,13 @@ async fn process_batch(
         // Check if any folder deletions
         let mut deleted_dirs: HashSet<PathBuf> = HashSet::new();
         for (path, kind) in &changes {
-            if *kind == ChangeKind::Delete {
-                if let Some(parent) = path.parent() {
+            if *kind == ChangeKind::Delete
+                && let Some(parent) = path.parent() {
                     // If the parent dir no longer exists, it's a folder deletion
                     if !parent.exists() && !deleted_dirs.contains(parent) {
                         deleted_dirs.insert(parent.to_path_buf());
                     }
                 }
-            }
         }
 
         // Enqueue folder deletions
@@ -173,9 +172,8 @@ async fn process_batch(
         // Enqueue file-level tasks
         for (path, kind) in &changes {
             // Skip if parent dir was already deleted
-            if let Some(parent) = path.parent() {
-                if deleted_dirs.contains(parent) { continue; }
-            }
+            if let Some(parent) = path.parent()
+                && deleted_dirs.contains(parent) { continue; }
 
             let abs_path = path.to_string_lossy().to_string();
             match kind {

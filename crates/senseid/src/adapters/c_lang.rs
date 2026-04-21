@@ -31,9 +31,8 @@ impl LanguageAdapter for CAdapter {
             if !trimmed.starts_with("//") && !trimmed.starts_with("/*") && !trimmed.starts_with("*")
                 && !trimmed.starts_with("#")
                 && trimmed.contains('(') && (trimmed.ends_with('{') || trimmed.ends_with(") {"))
-            {
-                if let Some(name) = extract_c_function_name(trimmed) {
-                    if !name.is_empty() && name.len() < 100 && !name.contains(' ') {
+                && let Some(name) = extract_c_function_name(trimmed)
+                    && !name.is_empty() && name.len() < 100 && !name.contains(' ') {
                         symbols.push(ParsedSymbol {
                             name,
                             kind: SymbolKind::Function,
@@ -45,8 +44,6 @@ impl LanguageAdapter for CAdapter {
                             parent: None,
                         });
                     }
-                }
-            }
 
             // Struct definitions: struct Name {
             if trimmed.starts_with("struct ") && trimmed.contains('{') {
@@ -71,8 +68,7 @@ impl LanguageAdapter for CAdapter {
                 if let Some(name) = trimmed.strip_prefix("typedef ")
                     .and_then(|s| s.trim_end_matches(';').rsplit_once(|c: char| c.is_whitespace()))
                     .map(|(_, name)| name.trim().to_string())
-                {
-                    if !name.is_empty() && !name.contains('{') {
+                    && !name.is_empty() && !name.contains('{') {
                         symbols.push(ParsedSymbol {
                             name, kind: SymbolKind::Type,
                             signature: Some(trimmed.to_string()),
@@ -81,7 +77,6 @@ impl LanguageAdapter for CAdapter {
                             is_exported: true, parent: None,
                         });
                     }
-                }
             }
 
             // #define constants
@@ -108,8 +103,8 @@ impl LanguageAdapter for CAdapter {
             .filter_map(|l| {
                 let path = l.trim().strip_prefix("#include")?
                     .trim()
-                    .trim_start_matches(|c| c == '<' || c == '"')
-                    .trim_end_matches(|c| c == '>' || c == '"')
+                    .trim_start_matches(['<', '"'])
+                    .trim_end_matches(['>', '"'])
                     .to_string();
                 Some(crate::types::ParsedImport { target_path: path.clone(), names: vec![path] })
             })

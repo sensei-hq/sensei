@@ -298,7 +298,7 @@ fn copy_md_files(src: &std::path::Path, dst: &std::path::Path) -> u32 {
     if let Ok(entries) = fs::read_dir(src) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "md") {
+            if path.extension().is_some_and(|e| e == "md") {
                 fs::copy(&path, dst.join(entry.file_name())).ok();
                 count += 1;
             }
@@ -380,6 +380,9 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::pat
     };
 
     let marketplace_str = marketplace.to_string_lossy().to_string();
+    let mut any_success = false;
+    let mut all_errors: Vec<String> = Vec::new();
+
     for acp_id in &acps {
         match client()
             .post(format!("{}/api/acp/configure", DAEMON_URL))
@@ -391,24 +394,54 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::pat
         {
             Ok(r) if r.status().is_success() => {
                 let body: serde_json::Value = r.json().unwrap_or_default();
-                if body["plugin_installed"].as_bool() == Some(true) {
-                    println!("  ✓ {} — plugin installed (commands, skills, hooks, MCP)", acp_id);
-                } else {
-                    println!("  ✓ {} — MCP registered", acp_id);
-                }
-                if let Some(errors) = body["errors"].as_array() {
-                    for err in errors {
-                        if let Some(msg) = err.as_str() {
-                            eprintln!("    {}", msg);
-                        }
+                let errors: Vec<String> = body["errors"]
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+
+                if errors.is_empty() {
+                    if body["plugin_installed"].as_bool() == Some(true) {
+                        println!("  ✓ {} — plugin installed (commands, skills, hooks, MCP)", acp_id);
+                    } else {
+                        println!("  ✓ {} — MCP registered", acp_id);
                     }
+                    any_success = true;
+                } else {
+                    // Partial success — configured but with warnings
+                    if body["plugin_installed"].as_bool() == Some(true) {
+                        println!("  ~ {} — plugin installed with warnings:", acp_id);
+                    } else {
+                        println!("  ~ {} — MCP registered with warnings:", acp_id);
+                    }
+                    for msg in &errors {
+                        eprintln!("    ⚠ {}", msg);
+                    }
+                    all_errors.extend(errors);
+                    any_success = true;
                 }
             }
-            _ => eprintln!("  ✗ {} — configure failed", acp_id),
+            Ok(r) => {
+                let status = r.status();
+                let body: String = r.text().unwrap_or_default();
+                eprintln!("  ✗ {} — configure failed (HTTP {}): {}", acp_id, status, body);
+                all_errors.push(format!("{}: HTTP {}", acp_id, status));
+            }
+            Err(e) => {
+                eprintln!("  ✗ {} — configure failed: {}", acp_id, e);
+                all_errors.push(format!("{}: {}", acp_id, e));
+            }
         }
     }
 
-    mark_user_scope_configured();
+    if !all_errors.is_empty() {
+        eprintln!("\n  {} error(s) during user scope init. Run with RUST_LOG=debug for details.", all_errors.len());
+    }
+
+    if any_success {
+        mark_user_scope_configured();
+    } else if !acps.is_empty() {
+        eprintln!("  ✗ No ACPs configured successfully. User scope NOT marked as configured.");
+    }
 }
 
 // ── Project scope ───────────────────────────────────────────────────────────
@@ -473,7 +506,21 @@ fn init_project_scope(_recommended: bool, marketplace: &std::path::Path) {
     fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
     println!("\n  [ok] .mcp.json");
 
-    // 3. Gate check
+    // 3. Clean up stale per-project hooks from .claude/settings.local.json
+    //    Global plugin hooks handle all hook events — per-project hooks are redundant.
+    let settings_local = repo_root.join(".claude/settings.local.json");
+    if settings_local.exists()
+        && let Ok(content) = fs::read_to_string(&settings_local)
+            && let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content)
+                && settings.get("hooks").is_some() {
+                    settings.as_object_mut().unwrap().remove("hooks");
+                    if let Ok(json) = serde_json::to_string_pretty(&settings) {
+                        fs::write(&settings_local, json).ok();
+                        println!("\n  [cleaned] .claude/settings.local.json — removed stale hooks (handled by global plugin)");
+                    }
+                }
+
+    // 4. Gate check
     println!("\n  --- gate check ---");
     if which_exists("senseid") { println!("  ✓ senseid on PATH"); }
     if which_exists("sensei-mcp") { println!("  ✓ sensei-mcp on PATH"); }
@@ -487,7 +534,7 @@ fn count_md_files(dir: &std::path::Path) -> usize {
         .map(|rd| {
             rd.filter(|e| {
                 e.as_ref()
-                    .map(|e| e.path().extension().map_or(false, |x| x == "md"))
+                    .map(|e| e.path().extension().is_some_and(|x| x == "md"))
                     .unwrap_or(false)
             })
             .count()

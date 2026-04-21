@@ -90,6 +90,7 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_ir(
     node: &Node, src: &[u8], lines: &[&str],
     functions: &mut Vec<IRFunction>,
@@ -183,8 +184,8 @@ fn walk_ir(
                     }));
                 if let Some(body) = body {
                     for j in 0..body.child_count() {
-                        if let Some(method_node) = body.child(j) {
-                            if method_node.kind() == "function_item" || method_node.kind() == "function_signature_item" {
+                        if let Some(method_node) = body.child(j)
+                            && (method_node.kind() == "function_item" || method_node.kind() == "function_signature_item") {
                                 let mname = field_text(&method_node, "name", src);
                                 methods.push(IRMethod {
                                     base: IRBase {
@@ -200,7 +201,6 @@ fn walk_ir(
                                     ..Default::default()
                                 });
                             }
-                        }
                     }
                 }
                 classes.push(IRClass {
@@ -229,8 +229,8 @@ fn walk_ir(
                 let mut methods = Vec::new();
                 if let Some(body) = child.child_by_field_name("body") {
                     for j in 0..body.child_count() {
-                        if let Some(method_node) = body.child(j) {
-                            if method_node.kind() == "function_item" {
+                        if let Some(method_node) = body.child(j)
+                            && method_node.kind() == "function_item" {
                                 let mname = field_text(&method_node, "name", src);
                                 let is_pub = has_child_kind(&method_node, "visibility_modifier");
                                 methods.push(IRMethod {
@@ -254,18 +254,16 @@ fn walk_ir(
                                     ..Default::default()
                                 });
                             }
-                        }
                     }
                 }
 
                 if let Some(idx) = class_idx {
                     // Append methods to existing class
                     classes[idx].methods.extend(methods);
-                    if let Some(ref tn) = trait_name {
-                        if !classes[idx].implements.contains(tn) {
+                    if let Some(ref tn) = trait_name
+                        && !classes[idx].implements.contains(tn) {
                             classes[idx].implements.push(tn.clone());
                         }
-                    }
                 } else if !type_name.is_empty() {
                     // Create class for this impl (struct not seen yet, or defined elsewhere)
                     let mut class = IRClass {
@@ -521,7 +519,7 @@ fn line_at(lines: &[&str], row: usize) -> Option<String> {
 }
 
 fn has_child_kind(node: &Node, kind: &str) -> bool {
-    (0..node.child_count()).any(|i| node.child(i).map_or(false, |c| c.kind() == kind))
+    (0..node.child_count()).any(|i| node.child(i).is_some_and(|c| c.kind() == kind))
 }
 
 fn collect_doc_comments(node: &Node, src: &[u8]) -> Option<String> {

@@ -212,18 +212,14 @@ fn extract_class_body(
     symbols: &mut Vec<ParsedSymbol>, class_name: &str,
 ) {
     for element in &body.body {
-        match element {
-            ClassElement::MethodDefinition(m) => {
-                if let Some(name) = method_name(&m.key) {
-                    let start = line_col(source, m.span.start);
-                    let end = line_col(source, m.span.end);
-                    let mut sym = make_sym(name, SymbolKind::Method, start, end, lines, true);
-                    sym.parent = Some(class_name.to_string());
-                    symbols.push(sym);
-                }
+        if let ClassElement::MethodDefinition(m) = element
+            && let Some(name) = method_name(&m.key) {
+                let start = line_col(source, m.span.start);
+                let end = line_col(source, m.span.end);
+                let mut sym = make_sym(name, SymbolKind::Method, start, end, lines, true);
+                sym.parent = Some(class_name.to_string());
+                symbols.push(sym);
             }
-            _ => {}
-        }
     }
 }
 

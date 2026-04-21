@@ -67,6 +67,7 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     ir_parsed_file(file_path, "python", module, classes)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_ir_py(
     node: &Node, src: &[u8], lines: &[&str],
     functions: &mut Vec<IRFunction>,
@@ -138,9 +139,9 @@ fn walk_ir_py(
                 classes.push(class);
             }
             "expression_statement" if class_ctx.is_none() => {
-                if let Some(expr) = child.child(0) {
-                    if expr.kind() == "assignment" {
-                        if let Some(left) = expr.child_by_field_name("left") {
+                if let Some(expr) = child.child(0)
+                    && expr.kind() == "assignment"
+                        && let Some(left) = expr.child_by_field_name("left") {
                             let name = left.utf8_text(src).unwrap_or_default().to_string();
                             if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1 {
                                 constants.push(IRConstant {
@@ -156,8 +157,6 @@ fn walk_ir_py(
                                 });
                             }
                         }
-                    }
-                }
             }
             "import_statement" | "import_from_statement" => {
                 extract_py_imports(&child, src, imports);
@@ -260,11 +259,10 @@ fn extract_py_base_class(node: &Node, src: &[u8]) -> Option<String> {
 fn collect_py_decorators(decorated_node: &Node, src: &[u8]) -> Vec<String> {
     let mut decos = Vec::new();
     for i in 0..decorated_node.child_count() {
-        if let Some(c) = decorated_node.child(i) {
-            if c.kind() == "decorator" {
+        if let Some(c) = decorated_node.child(i)
+            && c.kind() == "decorator" {
                 decos.push(c.utf8_text(src).unwrap_or_default().trim().to_string());
             }
-        }
     }
     decos
 }
@@ -273,13 +271,12 @@ fn extract_py_imports(node: &Node, src: &[u8], imports: &mut Vec<IRImport>) {
     match node.kind() {
         "import_statement" => {
             for j in 0..node.child_count() {
-                if let Some(c) = node.child(j) {
-                    if c.kind() == "dotted_name" {
+                if let Some(c) = node.child(j)
+                    && c.kind() == "dotted_name" {
                         let text = c.utf8_text(src).unwrap_or_default().to_string();
                         let name = text.rsplit('.').next().unwrap_or(&text).to_string();
                         imports.push(IRImport { source: text, names: vec![name], is_reexport: false });
                     }
-                }
             }
         }
         "import_from_statement" => {
@@ -366,9 +363,9 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
             }
             "expression_statement" if class_name.is_none() => {
                 // Top-level constant: FOO = ...
-                if let Some(expr) = child.child(0) {
-                    if expr.kind() == "assignment" {
-                        if let Some(left) = expr.child_by_field_name("left") {
+                if let Some(expr) = child.child(0)
+                    && expr.kind() == "assignment"
+                        && let Some(left) = expr.child_by_field_name("left") {
                             let src = lines.join("\n");
                             let name = left.utf8_text(src.as_bytes()).unwrap_or_default().to_string();
                             if left.kind() == "identifier" && name == name.to_uppercase() && name.len() > 1 {
@@ -384,8 +381,6 @@ fn extract_symbols(node: &Node, lines: &[&str], symbols: &mut Vec<ParsedSymbol>,
                                 });
                             }
                         }
-                    }
-                }
             }
             _ => {}
         }
@@ -471,14 +466,13 @@ fn extract_edges(root: &Node, symbols: &[ParsedSymbol]) -> Vec<ParsedEdge> {
     edges
 }
 
+#[allow(clippy::only_used_in_recursion)] // known and edges accumulate across recursive traversal
 fn find_calls(node: &Node, caller: &ParsedSymbol, known: &std::collections::HashSet<&str>, edges: &mut Vec<ParsedEdge>) {
-    if node.kind() == "call" {
-        if let Some(func) = node.child_by_field_name("function") {
-            if func.kind() == "identifier" {
+    if node.kind() == "call"
+        && let Some(func) = node.child_by_field_name("function")
+            && func.kind() == "identifier" {
                 // We need the text — for now skip (requires source bytes)
             }
-        }
-    }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             let row = child.start_position().row as u32 + 1;

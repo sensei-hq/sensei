@@ -294,38 +294,32 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
             confidence = 0.9;
             reasons.push("UI framework detected".into());
         }
-        if name.contains("ui") || name.contains("frontend") || name.contains("web")
-            || name.contains("app") || name.contains("client") || name.contains("site")
-        {
-            if role == "unknown" {
+        if (name.contains("ui") || name.contains("frontend") || name.contains("web")
+            || name.contains("app") || name.contains("client") || name.contains("site"))
+            && role == "unknown" {
                 role = "ui".into();
                 confidence = confidence.max(0.7_f64);
                 reasons.push(format!("Name suggests UI: {}", project.name));
             }
-        }
 
         // Shared library detection
-        if name.contains("lib") || name.contains("shared") || name.contains("common")
+        if (name.contains("lib") || name.contains("shared") || name.contains("common")
             || name.contains("core") || name.contains("utils") || name.contains("sdk")
-            || name.contains("config") || name.contains("packages")
-        {
-            if role == "unknown" {
+            || name.contains("config") || name.contains("packages"))
+            && role == "unknown" {
                 role = "shared-lib".into();
                 confidence = 0.7;
                 reasons.push(format!("Name suggests shared library: {}", project.name));
             }
-        }
 
         // Documentation repo detection
-        if name.contains("doc") || name.contains("wiki") || name.contains("spec")
-            || path.contains("/docs") || stack.contains("markdown")
-        {
-            if role == "unknown" {
+        if (name.contains("doc") || name.contains("wiki") || name.contains("spec")
+            || path.contains("/docs") || stack.contains("markdown"))
+            && role == "unknown" {
                 role = "docs".into();
                 confidence = 0.7;
                 reasons.push("Documentation patterns detected".into());
             }
-        }
 
         // Mobile
         if libs.contains("uikit") || libs.contains("swiftui") || libs.contains("android")
@@ -337,15 +331,13 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
         }
 
         // Infrastructure
-        if name.contains("infra") || name.contains("deploy") || name.contains("terraform")
-            || name.contains("k8s") || name.contains("docker")
-        {
-            if role == "unknown" {
+        if (name.contains("infra") || name.contains("deploy") || name.contains("terraform")
+            || name.contains("k8s") || name.contains("docker"))
+            && role == "unknown" {
                 role = "infra".into();
                 confidence = 0.7;
                 reasons.push("Infrastructure patterns detected".into());
             }
-        }
 
         if role == "unknown" && !project.stack.is_empty() {
             role = "service".into();

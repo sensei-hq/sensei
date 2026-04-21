@@ -141,7 +141,7 @@ fn generate_llms_from_graph(
     // Group functions by file (module)
     let mut modules: std::collections::HashMap<String, Vec<&crate::types::FunctionDetail>> = std::collections::HashMap::new();
     for f in &functions {
-        let module = f.file.split('/').last().unwrap_or(&f.file).to_string();
+        let module = f.file.split('/').next_back().unwrap_or(&f.file).to_string();
         modules.entry(module).or_default().push(f);
     }
 
@@ -156,7 +156,7 @@ fn generate_llms_from_graph(
     if !types.is_empty() {
         doc.push_str("## Types\n\n");
         for t in types.iter().take(30) {
-            let file_short = t.file.split('/').last().unwrap_or(&t.file);
+            let file_short = t.file.split('/').next_back().unwrap_or(&t.file);
             doc.push_str(&format!("- `{}` ({}) — {}\n", t.name, t.kind, file_short));
         }
         if types.len() > 30 {
@@ -168,7 +168,7 @@ fn generate_llms_from_graph(
     // Modules section (top functions per module)
     doc.push_str("## Modules\n\n");
     let mut sorted_modules: Vec<_> = modules.iter().collect();
-    sorted_modules.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted_modules.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
 
     for (module, fns) in sorted_modules.iter().take(20) {
         doc.push_str(&format!("### {}\n\n", module));
