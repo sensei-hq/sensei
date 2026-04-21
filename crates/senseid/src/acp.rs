@@ -1,54 +1,272 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Supported AI Coding Platforms
-const ACP_SPECS: &[AcpSpec] = &[
-    AcpSpec { id: "claude-desktop", name: "Claude Desktop", mcp_key: "mcpServers", config_rel: "Library/Application Support/Claude/claude_desktop_config.json", adapter: AcpAdapter::McpFile },
-    AcpSpec { id: "claude-code",    name: "Claude Code",    mcp_key: "mcpServers", config_rel: ".claude/settings.json", adapter: AcpAdapter::ClaudeCode },
-    AcpSpec { id: "cursor",         name: "Cursor",         mcp_key: "mcpServers", config_rel: ".cursor/mcp.json",      adapter: AcpAdapter::McpFile },
-    AcpSpec { id: "windsurf",       name: "Windsurf",       mcp_key: "mcpServers", config_rel: ".codeium/windsurf/mcp_config.json", adapter: AcpAdapter::McpFile },
-    AcpSpec { id: "zed",            name: "Zed",            mcp_key: "mcpServers", config_rel: ".config/zed/settings.json", adapter: AcpAdapter::McpFile },
-    AcpSpec { id: "kiro",           name: "Kiro",           mcp_key: "mcpServers", config_rel: ".kiro/settings/mcp.json",   adapter: AcpAdapter::McpFile },
-    AcpSpec { id: "opencode",       name: "OpenCode",       mcp_key: "mcp",        config_rel: ".config/opencode/opencode.json", adapter: AcpAdapter::OpenCode },
-    AcpSpec { id: "vscode",         name: "VS Code",        mcp_key: "mcpServers", config_rel: ".vscode/mcp.json",      adapter: AcpAdapter::McpFile },
-];
+// ── Trait ───────────────────────────────────────────────────────────────────
 
-struct AcpSpec {
+/// Each AI Coding Platform implements detect, configure, and unconfigure.
+trait Acp {
+    fn id(&self) -> &str;
+    fn name(&self) -> &str;
+    fn mcp_key(&self) -> &str;
+    fn config_path(&self) -> PathBuf;
+    fn detect(&self) -> bool;
+    fn configure(&self, mcp_cmd: &str) -> Result<(), String>;
+    fn unconfigure(&self) -> bool;
+
+    fn is_configured(&self) -> bool {
+        check_mcp_configured(&self.config_path(), self.mcp_key())
+    }
+
+    fn status(&self) -> AcpStatus {
+        AcpStatus {
+            id: self.id().to_string(),
+            name: self.name().to_string(),
+            installed: self.detect(),
+            mcp_configured: self.is_configured(),
+            config_path: self.config_path().to_string_lossy().into_owned(),
+        }
+    }
+}
+
+// ── Claude Code ACP ────────────────────────────────────────────────────────
+
+struct ClaudeCodeAcp;
+
+impl Acp for ClaudeCodeAcp {
+    fn id(&self) -> &str { "claude-code" }
+    fn name(&self) -> &str { "Claude Code" }
+    fn mcp_key(&self) -> &str { "mcpServers" }
+    fn config_path(&self) -> PathBuf { home().join(".claude/settings.json") }
+
+    fn detect(&self) -> bool {
+        let h = home();
+        h.join(".claude/settings.json").exists()
+            || h.join(".claude/CLAUDE.md").exists()
+            || h.join(".claude").exists()
+    }
+
+    fn configure(&self, mcp_cmd: &str) -> Result<(), String> {
+        // 1. Try plugin install (handles agents, hooks, MCP, commands, skills)
+        if let Some(plugin_path) = find_marketplace_plugin() {
+            let status = std::process::Command::new("claude")
+                .args(["plugin", "install", &plugin_path.to_string_lossy()])
+                .status();
+            match status {
+                Ok(s) if s.success() => return Ok(()),
+                _ => {} // fall through to manual
+            }
+        }
+
+        // 2. Try `claude mcp add`
+        let mcp_added = std::process::Command::new("claude")
+            .args(["mcp", "add", "-t", "stdio", "-s", "user", "sensei", "--", mcp_cmd])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        // 3. Fallback: write ~/.claude.json directly
+        if !mcp_added {
+            let claude_json = home().join(".claude.json");
+            upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": mcp_cmd, "args": []}))?;
+        }
+
+        // 4. Hooks
+        let hooks = hooks_dir();
+        let hooks_str = hooks.to_string_lossy();
+        let hooks_file = home().join(".claude/hooks.json");
+        let hooks_config = serde_json::json!({"hooks": {
+            "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd session-start", hooks_str)}]}],
+            "PreToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd pre-tool", hooks_str)}]}],
+            "PostToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd post-tool", hooks_str)}]}],
+        }});
+        std::fs::write(&hooks_file, serde_json::to_string_pretty(&hooks_config).unwrap())
+            .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    fn unconfigure(&self) -> bool {
+        let h = home();
+        let mut removed = false;
+
+        // 1. Try `claude plugin uninstall` (mirrors plugin install path)
+        if std::process::Command::new("claude")
+            .args(["plugin", "uninstall", "sensei"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            removed = true;
+        }
+
+        // 2. Try `claude mcp remove` (covers non-plugin install path)
+        if !removed {
+            if std::process::Command::new("claude")
+                .args(["mcp", "remove", "-s", "user", "sensei"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                removed = true;
+            }
+        }
+
+        // 3. Fallback: remove from ~/.claude.json
+        if !removed {
+            if remove_sensei_from_json(&h.join(".claude.json"), "mcpServers") {
+                removed = true;
+            }
+        }
+
+        // 4. Remove hooks (in case plugin uninstall didn't clean them)
+        let hooks_file = h.join(".claude/hooks.json");
+        if hooks_file.exists() {
+            std::fs::remove_file(&hooks_file).ok();
+        }
+
+        removed
+    }
+}
+
+// ── MCP File ACP ───────────────────────────────────────────────────────────
+
+/// Entry format written to the MCP config file.
+enum McpEntryFormat {
+    /// `{"command": mcp_cmd, "args": []}` — used by most ACPs
+    Standard,
+    /// `{"type": "local", "command": [mcp_cmd, ""], "enabled": true}` — OpenCode
+    OpenCode,
+}
+
+/// Generic ACP that reads/writes a JSON MCP config file.
+/// Covers Claude Desktop, Cursor, Windsurf, Zed, Kiro, VS Code, and OpenCode.
+struct McpFileAcp {
     id: &'static str,
     name: &'static str,
     mcp_key: &'static str,
     config_rel: &'static str,
-    adapter: AcpAdapter,
+    entry_format: McpEntryFormat,
+    /// App bundle names to check in /Applications and ~/Applications
+    app_names: &'static [&'static str],
+    /// Binary names to check on PATH
+    bin_names: &'static [&'static str],
+    /// Additional paths relative to $HOME to check for detection
+    home_paths: &'static [&'static str],
 }
 
-/// Each ACP has an adapter that knows how to configure and unconfigure.
-#[derive(Clone, Copy)]
-enum AcpAdapter {
-    /// Claude Code: uses `claude` CLI for plugin/mcp/hooks
-    ClaudeCode,
-    /// Generic: writes sensei entry to a JSON MCP config file
-    McpFile,
-    /// OpenCode: different MCP entry format
-    OpenCode,
-}
+impl Acp for McpFileAcp {
+    fn id(&self) -> &str { self.id }
+    fn name(&self) -> &str { self.name }
+    fn mcp_key(&self) -> &str { self.mcp_key }
+    fn config_path(&self) -> PathBuf { home().join(self.config_rel) }
 
-impl AcpAdapter {
-    fn configure(&self, spec: &AcpSpec, mcp_cmd: &str) -> Result<(), String> {
-        match self {
-            AcpAdapter::ClaudeCode => adapter_claude_code_configure(mcp_cmd),
-            AcpAdapter::McpFile => adapter_mcp_file_configure(spec, mcp_cmd),
-            AcpAdapter::OpenCode => adapter_opencode_configure(spec, mcp_cmd),
+    fn detect(&self) -> bool {
+        let h = home();
+        for app in self.app_names {
+            if std::path::Path::new("/Applications").join(app).exists()
+                || h.join("Applications").join(app).exists()
+            {
+                return true;
+            }
         }
+        for bin in self.bin_names {
+            if which_exists(bin) { return true; }
+        }
+        for path in self.home_paths {
+            if h.join(path).exists() { return true; }
+        }
+        false
     }
 
-    fn unconfigure(&self, spec: &AcpSpec) -> bool {
-        match self {
-            AcpAdapter::ClaudeCode => adapter_claude_code_unconfigure(),
-            AcpAdapter::McpFile => adapter_mcp_file_unconfigure(spec),
-            AcpAdapter::OpenCode => adapter_mcp_file_unconfigure(spec), // same removal logic
-        }
+    fn configure(&self, mcp_cmd: &str) -> Result<(), String> {
+        let entry = match self.entry_format {
+            McpEntryFormat::Standard => {
+                serde_json::json!({"command": mcp_cmd, "args": []})
+            }
+            McpEntryFormat::OpenCode => {
+                serde_json::json!({"type": "local", "command": [mcp_cmd, ""], "enabled": true})
+            }
+        };
+        upsert_sensei_in_json(&self.config_path(), self.mcp_key, entry)
+    }
+
+    fn unconfigure(&self) -> bool {
+        remove_sensei_from_json(&self.config_path(), self.mcp_key)
     }
 }
+
+// ── Registry ───────────────────────────────────────────────────────────────
+
+fn all_acps() -> Vec<Box<dyn Acp>> {
+    vec![
+        Box::new(McpFileAcp {
+            id: "claude-desktop", name: "Claude Desktop",
+            mcp_key: "mcpServers",
+            config_rel: "Library/Application Support/Claude/claude_desktop_config.json",
+            entry_format: McpEntryFormat::Standard,
+            app_names: &["Claude.app"],
+            bin_names: &[],
+            home_paths: &[],
+        }),
+        Box::new(ClaudeCodeAcp),
+        Box::new(McpFileAcp {
+            id: "cursor", name: "Cursor",
+            mcp_key: "mcpServers",
+            config_rel: ".cursor/mcp.json",
+            entry_format: McpEntryFormat::Standard,
+            app_names: &["Cursor.app"],
+            bin_names: &["cursor"],
+            home_paths: &[],
+        }),
+        Box::new(McpFileAcp {
+            id: "windsurf", name: "Windsurf",
+            mcp_key: "mcpServers",
+            config_rel: ".codeium/windsurf/mcp_config.json",
+            entry_format: McpEntryFormat::Standard,
+            app_names: &["Windsurf.app"],
+            bin_names: &["windsurf"],
+            home_paths: &[],
+        }),
+        Box::new(McpFileAcp {
+            id: "zed", name: "Zed",
+            mcp_key: "mcpServers",
+            config_rel: ".config/zed/settings.json",
+            entry_format: McpEntryFormat::Standard,
+            app_names: &["Zed.app"],
+            bin_names: &["zed"],
+            home_paths: &[".config/zed/settings.json"],
+        }),
+        Box::new(McpFileAcp {
+            id: "kiro", name: "Kiro",
+            mcp_key: "mcpServers",
+            config_rel: ".kiro/settings/mcp.json",
+            entry_format: McpEntryFormat::Standard,
+            app_names: &["Kiro.app"],
+            bin_names: &["kiro"],
+            home_paths: &[],
+        }),
+        Box::new(McpFileAcp {
+            id: "opencode", name: "OpenCode",
+            mcp_key: "mcp",
+            config_rel: ".config/opencode/opencode.json",
+            entry_format: McpEntryFormat::OpenCode,
+            app_names: &[],
+            bin_names: &["opencode"],
+            home_paths: &[".config/opencode/opencode.json", ".local/bin/opencode"],
+        }),
+        Box::new(McpFileAcp {
+            id: "vscode", name: "VS Code",
+            mcp_key: "mcpServers",
+            config_rel: ".vscode/mcp.json",
+            entry_format: McpEntryFormat::Standard,
+            app_names: &["Visual Studio Code.app"],
+            bin_names: &["code"],
+            home_paths: &[],
+        }),
+    ]
+}
+
+// ── Public types ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AcpStatus {
@@ -59,92 +277,6 @@ pub struct AcpStatus {
     pub config_path: String,
 }
 
-fn home() -> PathBuf { crate::paths::home() }
-
-fn which_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
-        .unwrap_or(false)
-}
-
-// ── Detection ───────────────────────────────────────────────────────────────
-
-pub fn detect() -> Vec<AcpStatus> {
-    let h = home();
-
-    let detectors: Vec<(&str, bool)> = vec![
-        ("claude-desktop", {
-            std::path::Path::new("/Applications/Claude.app").exists()
-                || h.join("Applications/Claude.app").exists()
-        }),
-        ("claude-code", {
-            h.join(".claude/settings.json").exists()
-                || h.join(".claude/CLAUDE.md").exists()
-                || h.join(".claude").exists()
-        }),
-        ("cursor", {
-            std::path::Path::new("/Applications/Cursor.app").exists()
-                || h.join("Applications/Cursor.app").exists()
-                || which_exists("cursor")
-        }),
-        ("windsurf", {
-            std::path::Path::new("/Applications/Windsurf.app").exists()
-                || h.join("Applications/Windsurf.app").exists()
-                || which_exists("windsurf")
-        }),
-        ("zed", {
-            std::path::Path::new("/Applications/Zed.app").exists()
-                || h.join("Applications/Zed.app").exists()
-                || h.join(".config/zed/settings.json").exists()
-                || which_exists("zed")
-        }),
-        ("kiro", {
-            std::path::Path::new("/Applications/Kiro.app").exists()
-                || h.join("Applications/Kiro.app").exists()
-                || which_exists("kiro")
-        }),
-        ("opencode", {
-            which_exists("opencode")
-                || h.join(".config/opencode/opencode.json").exists()
-                || h.join(".local/bin/opencode").is_file()
-        }),
-        ("vscode", {
-            std::path::Path::new("/Applications/Visual Studio Code.app").exists()
-                || h.join("Applications/Visual Studio Code.app").exists()
-                || which_exists("code")
-        }),
-    ];
-
-    let detected: std::collections::HashMap<&str, bool> = detectors.into_iter().collect();
-
-    ACP_SPECS
-        .iter()
-        .map(|spec| {
-            let installed = *detected.get(spec.id).unwrap_or(&false);
-            let config_path = h.join(spec.config_rel);
-            let mcp_configured = check_mcp_configured(&config_path, spec.mcp_key);
-            AcpStatus {
-                id: spec.id.to_string(),
-                name: spec.name.to_string(),
-                installed,
-                mcp_configured,
-                config_path: config_path.to_string_lossy().into_owned(),
-            }
-        })
-        .collect()
-}
-
-fn check_mcp_configured(config_path: &std::path::Path, mcp_key: &str) -> bool {
-    if !config_path.exists() { return false; }
-    std::fs::read_to_string(config_path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .map(|v| v[mcp_key]["sensei"].is_object())
-        .unwrap_or(false)
-}
-
-// ── Configure ───────────────────────────────────────────────────────────────
-
 #[derive(Debug, Serialize)]
 pub struct ConfigureResult {
     pub configured: Vec<String>,
@@ -152,8 +284,14 @@ pub struct ConfigureResult {
     pub errors: Vec<String>,
 }
 
+// ── Public API ─────────────────────────────────────────────────────────────
+
+pub fn detect() -> Vec<AcpStatus> {
+    all_acps().iter().map(|acp| acp.status()).collect()
+}
+
 pub fn configure(acp_ids: &[String]) -> ConfigureResult {
-    let all_status = detect();
+    let acps = all_acps();
     let h = home();
     let mut result = ConfigureResult {
         configured: vec![],
@@ -169,21 +307,16 @@ pub fn configure(acp_ids: &[String]) -> ConfigureResult {
         }
     };
 
-    let targets: Vec<&AcpStatus> = if acp_ids.is_empty() {
-        all_status.iter().filter(|s| s.installed).collect()
+    let targets: Vec<&Box<dyn Acp>> = if acp_ids.is_empty() {
+        acps.iter().filter(|a| a.detect()).collect()
     } else {
-        all_status.iter().filter(|s| acp_ids.contains(&s.id)).collect()
+        acps.iter().filter(|a| acp_ids.contains(&a.id().to_string())).collect()
     };
 
-    for status in &targets {
-        let spec = match ACP_SPECS.iter().find(|s| s.id == status.id) {
-            Some(s) => s,
-            None => { result.skipped.push(status.id.clone()); continue; }
-        };
-
-        match spec.adapter.configure(spec, &mcp_cmd) {
-            Ok(()) => result.configured.push(status.id.clone()),
-            Err(e) => result.errors.push(format!("{}: {}", status.id, e)),
+    for acp in &targets {
+        match acp.configure(&mcp_cmd) {
+            Ok(()) => result.configured.push(acp.id().to_string()),
+            Err(e) => result.errors.push(format!("{}: {}", acp.id(), e)),
         }
     }
 
@@ -198,28 +331,43 @@ pub fn configure(acp_ids: &[String]) -> ConfigureResult {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::json!({}));
     config["configured_acps"] = serde_json::json!(
-        targets.iter().filter(|s| result.configured.contains(&s.id)).map(|s| &s.id).collect::<Vec<_>>()
+        targets.iter()
+            .filter(|a| result.configured.contains(&a.id().to_string()))
+            .map(|a| a.id().to_string())
+            .collect::<Vec<_>>()
     );
     std::fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
 
     result
 }
 
-// ── Unconfigure ─────────────────────────────────────────────────────────────
-
 pub fn unconfigure() -> Vec<String> {
-    let mut removed = vec![];
-
-    for spec in ACP_SPECS {
-        if spec.adapter.unconfigure(spec) {
-            removed.push(spec.id.to_string());
-        }
-    }
-
-    removed
+    all_acps()
+        .iter()
+        .filter_map(|acp| {
+            if acp.unconfigure() { Some(acp.id().to_string()) } else { None }
+        })
+        .collect()
 }
 
-// ── Shared helpers ──────────────────────────────────────────────────────────
+// ── Shared helpers ─────────────────────────────────────────────────────────
+
+fn home() -> PathBuf { crate::paths::home() }
+
+fn which_exists(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+        .unwrap_or(false)
+}
+
+fn check_mcp_configured(config_path: &std::path::Path, mcp_key: &str) -> bool {
+    if !config_path.exists() { return false; }
+    std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map(|v| v[mcp_key]["sensei"].is_object())
+        .unwrap_or(false)
+}
 
 fn find_mcp_binary() -> Option<PathBuf> {
     if which_exists("sensei-mcp") {
@@ -292,119 +440,13 @@ fn upsert_sensei_in_json(
         .map_err(|e| e.to_string())
 }
 
-// ── Claude Code adapter ─────────────────────────────────────────────────────
-
-fn adapter_claude_code_configure(mcp_cmd: &str) -> Result<(), String> {
-    // 1. Try plugin install (handles agents, hooks, MCP, commands, skills)
-    if let Some(plugin_path) = find_marketplace_plugin() {
-        let status = std::process::Command::new("claude")
-            .args(["plugin", "install", &plugin_path.to_string_lossy()])
-            .status();
-        match status {
-            Ok(s) if s.success() => return Ok(()),
-            _ => {} // fall through to manual
-        }
-    }
-
-    // 2. Try `claude mcp add`
-    let mcp_added = std::process::Command::new("claude")
-        .args(["mcp", "add", "-t", "stdio", "-s", "user", "sensei", "--", mcp_cmd])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    // 3. Fallback: write ~/.claude.json directly
-    if !mcp_added {
-        let claude_json = home().join(".claude.json");
-        upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": mcp_cmd, "args": []}))?;
-    }
-
-    // 4. Hooks
-    let hooks = hooks_dir();
-    let hooks_str = hooks.to_string_lossy();
-    let hooks_file = home().join(".claude/hooks.json");
-    let hooks_config = serde_json::json!({"hooks": {
-        "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd session-start", hooks_str)}]}],
-        "PreToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd pre-tool", hooks_str)}]}],
-        "PostToolExecution": [{"matcher": "", "hooks": [{"type": "command", "command": format!("{}/run-hook.cmd post-tool", hooks_str)}]}],
-    }});
-    std::fs::write(&hooks_file, serde_json::to_string_pretty(&hooks_config).unwrap())
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-fn adapter_claude_code_unconfigure() -> bool {
-    let h = home();
-    let mut removed = false;
-
-    // 1. Try `claude plugin uninstall` (mirrors plugin install path)
-    //    This removes agents, hooks, MCP, commands, and skills installed by the plugin.
-    if std::process::Command::new("claude")
-        .args(["plugin", "uninstall", "sensei"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
-        removed = true;
-    }
-
-    // 2. Try `claude mcp remove` (covers non-plugin install path)
-    if !removed {
-        if std::process::Command::new("claude")
-            .args(["mcp", "remove", "-s", "user", "sensei"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            removed = true;
-        }
-    }
-
-    // 3. Fallback: remove from ~/.claude.json
-    if !removed {
-        if remove_sensei_from_json(&h.join(".claude.json"), "mcpServers") {
-            removed = true;
-        }
-    }
-
-    // 4. Remove hooks (in case plugin uninstall didn't clean them)
-    let hooks_file = h.join(".claude/hooks.json");
-    if hooks_file.exists() {
-        std::fs::remove_file(&hooks_file).ok();
-    }
-
-    removed
-}
-
-// ── Generic MCP file adapter ────────────────────────────────────────────────
-
-fn adapter_mcp_file_configure(spec: &AcpSpec, mcp_cmd: &str) -> Result<(), String> {
-    let config_path = home().join(spec.config_rel);
-    let entry = serde_json::json!({"command": mcp_cmd, "args": []});
-    upsert_sensei_in_json(&config_path, spec.mcp_key, entry)
-}
-
-fn adapter_mcp_file_unconfigure(spec: &AcpSpec) -> bool {
-    let config_path = home().join(spec.config_rel);
-    remove_sensei_from_json(&config_path, spec.mcp_key)
-}
-
-// ── OpenCode adapter ────────────────────────────────────────────────────────
-
-fn adapter_opencode_configure(spec: &AcpSpec, mcp_cmd: &str) -> Result<(), String> {
-    let config_path = home().join(spec.config_rel);
-    let entry = serde_json::json!({"type": "local", "command": [mcp_cmd, ""], "enabled": true});
-    upsert_sensei_in_json(&config_path, spec.mcp_key, entry)
-}
-
-// ── Tests ───────────────────────────────────────────────────────────────────
+// ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── upsert_sensei_in_json ───────────────────────────────────────────
+    // ── upsert_sensei_in_json ──────────────────────────────────────────
 
     #[test]
     fn upsert_creates_file_from_scratch() {
@@ -469,7 +511,7 @@ mod tests {
         assert_eq!(content["mcp"]["sensei"]["enabled"], true);
     }
 
-    // ── remove_sensei_from_json ─────────────────────────────────────────
+    // ── remove_sensei_from_json ────────────────────────────────────────
 
     #[test]
     fn remove_from_nonexistent_file_returns_false() {
@@ -485,7 +527,6 @@ mod tests {
         std::fs::write(&path, r#"{"mcpServers":{"svelte":{"command":"npx"}}}"#).unwrap();
 
         assert!(!remove_sensei_from_json(&path, "mcpServers"));
-        // File unchanged
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(content["mcpServers"]["svelte"].is_object());
     }
@@ -525,7 +566,7 @@ mod tests {
         assert!(remove_sensei_from_json(&path, "mcp"));
     }
 
-    // ── roundtrip: upsert then remove ───────────────────────────────────
+    // ── roundtrip: upsert then remove ──────────────────────────────────
 
     #[test]
     fn roundtrip_upsert_then_remove() {
@@ -533,7 +574,6 @@ mod tests {
         let path = dir.path().join("mcp.json");
         std::fs::write(&path, r#"{"mcpServers":{"svelte":{"command":"npx"}}}"#).unwrap();
 
-        // Install
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
@@ -541,7 +581,6 @@ mod tests {
         assert!(content["mcpServers"]["sensei"].is_object());
         assert!(content["mcpServers"]["svelte"].is_object());
 
-        // Uninstall
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -554,42 +593,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
 
-        // Install into new file
         upsert_sensei_in_json(&path, "mcpServers", serde_json::json!({"command": "sensei-mcp"})).unwrap();
         assert!(path.exists());
 
-        // Uninstall
         assert!(remove_sensei_from_json(&path, "mcpServers"));
     }
 
-    // ── AcpAdapter dispatch ─────────────────────────────────────────────
+    // ── McpFileAcp configure/unconfigure ───────────────────────────────
 
     #[test]
-    fn mcp_file_adapter_configure_creates_config() {
+    fn mcp_file_acp_configure_creates_config() {
         let dir = tempfile::tempdir().unwrap();
-        let config_rel = dir.path().join("test-acp/mcp.json");
-        let spec = AcpSpec {
-            id: "test-acp",
-            name: "Test ACP",
-            mcp_key: "mcpServers",
-            config_rel: "", // not used — we call the helper directly
-            adapter: AcpAdapter::McpFile,
-        };
+        let config_path = dir.path().join("test-acp/mcp.json");
 
         let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
-        upsert_sensei_in_json(&config_rel, spec.mcp_key, entry).unwrap();
+        upsert_sensei_in_json(&config_path, "mcpServers", entry).unwrap();
 
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_rel).unwrap()).unwrap();
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
 
-        // Unconfigure
-        assert!(remove_sensei_from_json(&config_rel, spec.mcp_key));
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_rel).unwrap()).unwrap();
+        assert!(remove_sensei_from_json(&config_path, "mcpServers"));
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
         assert!(content["mcpServers"]["sensei"].is_null());
     }
 
     #[test]
-    fn opencode_adapter_uses_different_entry_format() {
+    fn opencode_acp_uses_different_entry_format() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("opencode.json");
 
@@ -603,11 +632,12 @@ mod tests {
         assert_eq!(cmd[0], "sensei-mcp");
     }
 
-    // ── ACP_SPECS consistency ───────────────────────────────────────────
+    // ── Registry consistency ───────────────────────────────────────────
 
     #[test]
-    fn all_acp_specs_have_unique_ids() {
-        let mut ids: Vec<&str> = ACP_SPECS.iter().map(|s| s.id).collect();
+    fn all_acps_have_unique_ids() {
+        let acps = all_acps();
+        let mut ids: Vec<&str> = acps.iter().map(|a| a.id()).collect();
         let original_len = ids.len();
         ids.sort();
         ids.dedup();
@@ -615,37 +645,48 @@ mod tests {
     }
 
     #[test]
-    fn all_acp_specs_have_nonempty_fields() {
-        for spec in ACP_SPECS {
-            assert!(!spec.id.is_empty(), "empty id");
-            assert!(!spec.name.is_empty(), "empty name for {}", spec.id);
-            assert!(!spec.mcp_key.is_empty(), "empty mcp_key for {}", spec.id);
-            assert!(!spec.config_rel.is_empty(), "empty config_rel for {}", spec.id);
+    fn all_acps_have_nonempty_fields() {
+        for acp in all_acps() {
+            assert!(!acp.id().is_empty(), "empty id");
+            assert!(!acp.name().is_empty(), "empty name for {}", acp.id());
+            assert!(!acp.mcp_key().is_empty(), "empty mcp_key for {}", acp.id());
+            assert!(!acp.config_path().as_os_str().is_empty(), "empty config_path for {}", acp.id());
         }
     }
 
     #[test]
-    fn claude_code_spec_uses_claude_code_adapter() {
-        let spec = ACP_SPECS.iter().find(|s| s.id == "claude-code").unwrap();
-        assert!(matches!(spec.adapter, AcpAdapter::ClaudeCode));
+    fn claude_code_is_registered() {
+        let acps = all_acps();
+        assert!(acps.iter().any(|a| a.id() == "claude-code"));
     }
 
     #[test]
-    fn opencode_spec_uses_opencode_adapter() {
-        let spec = ACP_SPECS.iter().find(|s| s.id == "opencode").unwrap();
-        assert!(matches!(spec.adapter, AcpAdapter::OpenCode));
+    fn opencode_uses_mcp_key() {
+        let acps = all_acps();
+        let oc = acps.iter().find(|a| a.id() == "opencode").unwrap();
+        assert_eq!(oc.mcp_key(), "mcp");
     }
 
     #[test]
-    fn generic_acps_use_mcp_file_adapter() {
-        let generic = ["cursor", "windsurf", "zed", "kiro", "vscode", "claude-desktop"];
-        for id in generic {
-            let spec = ACP_SPECS.iter().find(|s| s.id == id).expect(id);
-            assert!(matches!(spec.adapter, AcpAdapter::McpFile), "{} should use McpFile adapter", id);
+    fn standard_acps_use_mcp_servers_key() {
+        let acps = all_acps();
+        for id in ["cursor", "windsurf", "zed", "kiro", "vscode", "claude-desktop", "claude-code"] {
+            let acp = acps.iter().find(|a| a.id() == id).expect(id);
+            assert_eq!(acp.mcp_key(), "mcpServers", "{} should use mcpServers key", id);
         }
     }
 
-    // ── Edge cases ──────────────────────────────────────────────────────
+    #[test]
+    fn expected_acps_are_registered() {
+        let acps = all_acps();
+        let ids: Vec<&str> = acps.iter().map(|a| a.id()).collect();
+        for expected in ["claude-desktop", "claude-code", "cursor", "windsurf", "zed", "kiro", "opencode", "vscode"] {
+            assert!(ids.contains(&expected), "missing ACP: {}", expected);
+        }
+        assert_eq!(ids.len(), 8, "unexpected number of ACPs");
+    }
+
+    // ── Edge cases ─────────────────────────────────────────────────────
 
     #[test]
     fn upsert_into_invalid_json_file_overwrites() {
@@ -653,7 +694,6 @@ mod tests {
         let path = dir.path().join("mcp.json");
         std::fs::write(&path, "not json at all").unwrap();
 
-        // serde_json::from_str fails → falls back to empty object
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
@@ -679,19 +719,17 @@ mod tests {
         assert!(!remove_sensei_from_json(&path, "mcpServers"));
     }
 
-    // Note: adapter_claude_code_configure/unconfigure call `claude` CLI which
+    // Note: ClaudeCodeAcp::configure/unconfigure call `claude` CLI which
     // can't be safely mocked in parallel unit tests (requires PATH mutation).
     // The CLI invocation behavior is tested via the integration/e2e path.
     // Here we test the fallback paths that operate on JSON files.
 
     #[test]
     fn claude_code_unconfigure_fallback_removes_from_claude_json() {
-        // Simulate the fallback path: claude CLI not available, remove from JSON
         let dir = tempfile::tempdir().unwrap();
         let claude_json = dir.path().join(".claude.json");
         std::fs::write(&claude_json, r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"},"svelte":{"command":"npx"}}}"#).unwrap();
 
-        // Direct test of the shared helper used by the fallback
         assert!(remove_sensei_from_json(&claude_json, "mcpServers"));
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
@@ -701,7 +739,6 @@ mod tests {
 
     #[test]
     fn claude_code_configure_fallback_writes_claude_json() {
-        // Simulate the fallback path: claude CLI not available, write JSON directly
         let dir = tempfile::tempdir().unwrap();
         let claude_json = dir.path().join(".claude.json");
 
