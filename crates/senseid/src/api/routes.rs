@@ -85,15 +85,15 @@ pub fn create_router(state: AppState) -> Router {
         // ACP (AI Coding Platform) detection & configuration
         .route("/api/acp/detect", get(acp_detect))
         .route("/api/acp/configure", post(acp_configure))
-        .route("/api/acp/unconfigure", post(acp_unconfigure))
-        // Installer — hooks, skills, commands, full install/uninstall
+        .route("/api/acp/remove", post(acp_remove))
+        // Installer — hooks, skills, commands, install/remove
         .route("/api/install", post(install_all))
         .route("/api/install/hooks", post(install_hooks))
         .route("/api/install/item", post(install_single_item))
-        .route("/api/install/item/remove", post(uninstall_single_item))
+        .route("/api/install/item/remove", post(remove_single_item))
         .route("/api/install/catalog", get(get_catalog))
         .route("/api/install/installed", get(list_installed_items))
-        .route("/api/uninstall", post(uninstall_all))
+        .route("/api/remove", post(remove_all))
         // Config (user preferences)
         .route("/api/config", get(get_config).put(set_config_handler))
         .route("/api/config/{key}", get(get_config_key).delete(delete_config_key))
@@ -1438,9 +1438,17 @@ async fn acp_configure(
     Json(crate::acp::configure(&body.acps, body.marketplace_path.as_deref()))
 }
 
-async fn acp_unconfigure() -> Json<serde_json::Value> {
-    let removed = crate::acp::unconfigure();
-    serde_json::json!({"ok": true, "removed": removed}).into()
+async fn acp_remove(
+    Json(body): Json<AcpRemoveBody>,
+) -> Json<serde_json::Value> {
+    let removed = crate::acp::remove_selected(&body.acps);
+    serde_json::json!({"acps_removed": removed, "errors": []}).into()
+}
+
+#[derive(Deserialize)]
+struct AcpRemoveBody {
+    #[serde(default)]
+    acps: Vec<String>,
 }
 
 // ── Installer ────────────────────────────────────────────────────────────────
@@ -1495,12 +1503,12 @@ async fn install_single_item(
     }
 }
 
-async fn uninstall_single_item(
+async fn remove_single_item(
     Json(body): Json<InstallItemBody>,
 ) -> Json<serde_json::Value> {
     let name = body.name;
     let kind = body.kind;
-    match tokio::task::spawn_blocking(move || crate::installer::uninstall_item(&name, &kind)).await {
+    match tokio::task::spawn_blocking(move || crate::installer::remove_item(&name, &kind)).await {
         Ok(Ok(())) => serde_json::json!({"ok": true}).into(),
         Ok(Err(e)) => serde_json::json!({"ok": false, "error": e}).into(),
         Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}).into(),
@@ -1538,13 +1546,13 @@ async fn list_installed_items() -> Json<Vec<crate::installer::InstalledItem>> {
     Json(crate::installer::list_installed())
 }
 
-async fn uninstall_all(
-    body: Option<Json<crate::installer::UninstallRequest>>,
-) -> Json<crate::installer::UninstallResult> {
+async fn remove_all(
+    body: Option<Json<crate::installer::RemoveRequest>>,
+) -> Json<crate::installer::RemoveResult> {
     let req = body.map(|b| b.0).unwrap_or_default();
-    match tokio::task::spawn_blocking(move || crate::installer::uninstall(&req)).await {
+    match tokio::task::spawn_blocking(move || crate::installer::remove(&req)).await {
         Ok(result) => Json(result),
-        Err(_) => Json(crate::installer::UninstallResult::default()),
+        Err(_) => Json(crate::installer::RemoveResult::default()),
     }
 }
 
