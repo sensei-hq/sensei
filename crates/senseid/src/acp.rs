@@ -1,7 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+const SENSEI_MARKETPLACE_REPO: &str = "mizukisu/sensei-marketplace";
+
 // ── Trait ───────────────────────────────────────────────────────────────────
+
+/// Result of configuring an ACP. `plugin` is true when `claude plugin install` succeeded.
+struct AcpConfigureOk {
+    plugin: bool,
+}
 
 /// Each AI Coding Platform implements detect, configure, and unconfigure.
 trait Acp {
@@ -10,7 +17,7 @@ trait Acp {
     fn mcp_key(&self) -> &str;
     fn config_path(&self) -> PathBuf;
     fn detect(&self) -> bool;
-    fn configure(&self, mcp_cmd: &str) -> Result<(), String>;
+    fn configure(&self, mcp_cmd: &str, marketplace_path: Option<&str>) -> Result<AcpConfigureOk, String>;
     fn unconfigure(&self) -> bool;
 
     fn is_configured(&self) -> bool {
@@ -45,23 +52,44 @@ impl Acp for ClaudeCodeAcp {
             || h.join(".claude").exists()
     }
 
-    fn configure(&self, mcp_cmd: &str) -> Result<(), String> {
-        // 1. Try plugin install (handles agents, hooks, MCP, commands, skills)
-        if let Some(plugin_path) = find_marketplace_plugin() {
-            let status = std::process::Command::new("claude")
-                .args(["plugin", "install", &plugin_path.to_string_lossy()])
-                .status();
-            match status {
-                Ok(s) if s.success() => return Ok(()),
-                _ => {} // fall through to manual
+    fn configure(&self, mcp_cmd: &str, marketplace_path: Option<&str>) -> Result<AcpConfigureOk, String> {
+        let claude_bin = find_claude_binary()
+            .ok_or_else(|| "claude binary not found on PATH".to_string())?;
+
+        // 1. Register marketplace + install plugin (handles commands, skills, hooks, MCP)
+        let marketplace_source = marketplace_path.unwrap_or(SENSEI_MARKETPLACE_REPO);
+
+        let add_out = std::process::Command::new(&claude_bin)
+            .args(["plugin", "marketplace", "add", marketplace_source, "--scope", "user"])
+            .output();
+        match &add_out {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                if !err.contains("already") {
+                    eprintln!("  marketplace add: {}", err.trim());
+                }
             }
+            Err(e) => return Err(format!("marketplace add: {}", e)),
         }
 
-        // 2. Try `claude mcp add`
-        let mcp_added = std::process::Command::new("claude")
+        let install_out = std::process::Command::new(&claude_bin)
+            .args(["plugin", "install", "sensei", "--scope", "user"])
+            .output();
+        match install_out {
+            Ok(o) if o.status.success() => return Ok(AcpConfigureOk { plugin: true }),
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                eprintln!("  plugin install: {}", err.trim());
+            }
+            Err(e) => eprintln!("  plugin install: {}", e),
+        }
+
+        // 2. Fallback: try `claude mcp add`
+        let mcp_added = std::process::Command::new(&claude_bin)
             .args(["mcp", "add", "-t", "stdio", "-s", "user", "sensei", "--", mcp_cmd])
-            .status()
-            .map(|s| s.success())
+            .output()
+            .map(|o| o.status.success())
             .unwrap_or(false);
 
         // 3. Fallback: write ~/.claude.json directly
@@ -70,10 +98,7 @@ impl Acp for ClaudeCodeAcp {
             upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": mcp_cmd, "args": []}))?;
         }
 
-        // Hooks are handled by `claude plugin install` (step 1).
-        // If that path failed, hooks won't be available — MCP-only is still functional.
-
-        Ok(())
+        Ok(AcpConfigureOk { plugin: false })
     }
 
     fn unconfigure(&self) -> bool {
@@ -169,7 +194,7 @@ impl Acp for McpFileAcp {
         false
     }
 
-    fn configure(&self, mcp_cmd: &str) -> Result<(), String> {
+    fn configure(&self, mcp_cmd: &str, _marketplace_path: Option<&str>) -> Result<AcpConfigureOk, String> {
         let entry = match self.entry_format {
             McpEntryFormat::Standard => {
                 serde_json::json!({"command": mcp_cmd, "args": []})
@@ -178,7 +203,8 @@ impl Acp for McpFileAcp {
                 serde_json::json!({"type": "local", "command": [mcp_cmd, ""], "enabled": true})
             }
         };
-        upsert_sensei_in_json(&self.config_path(), self.mcp_key, entry)
+        upsert_sensei_in_json(&self.config_path(), self.mcp_key, entry)?;
+        Ok(AcpConfigureOk { plugin: false })
     }
 
     fn unconfigure(&self) -> bool {
@@ -273,6 +299,8 @@ pub struct ConfigureResult {
     pub configured: Vec<String>,
     pub skipped: Vec<String>,
     pub errors: Vec<String>,
+    /// True if `claude plugin install` succeeded (commands are namespaced under the plugin).
+    pub plugin_installed: bool,
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -281,13 +309,14 @@ pub fn detect() -> Vec<AcpStatus> {
     all_acps().iter().map(|acp| acp.status()).collect()
 }
 
-pub fn configure(acp_ids: &[String]) -> ConfigureResult {
+pub fn configure(acp_ids: &[String], marketplace_path: Option<&str>) -> ConfigureResult {
     let acps = all_acps();
     let h = home();
     let mut result = ConfigureResult {
         configured: vec![],
         skipped: vec![],
         errors: vec![],
+        plugin_installed: false,
     };
 
     let mcp_cmd = match find_mcp_binary() {
@@ -305,8 +334,11 @@ pub fn configure(acp_ids: &[String]) -> ConfigureResult {
     };
 
     for acp in &targets {
-        match acp.configure(&mcp_cmd) {
-            Ok(()) => result.configured.push(acp.id().to_string()),
+        match acp.configure(&mcp_cmd, marketplace_path) {
+            Ok(ok) => {
+                result.configured.push(acp.id().to_string());
+                if ok.plugin { result.plugin_installed = true; }
+            }
             Err(e) => result.errors.push(format!("{}: {}", acp.id(), e)),
         }
     }
@@ -371,12 +403,16 @@ fn find_mcp_binary() -> Option<PathBuf> {
     search.into_iter().find(|p| p.exists())
 }
 
-fn find_marketplace_plugin() -> Option<PathBuf> {
-    let candidates = [
-        PathBuf::from("/opt/homebrew/share/sensei/marketplace"),
-        PathBuf::from("/usr/local/share/sensei/marketplace"),
+fn find_claude_binary() -> Option<PathBuf> {
+    if which_exists("claude") {
+        return Some(PathBuf::from("claude"));
+    }
+    let search = [
+        PathBuf::from("/opt/homebrew/bin/claude"),
+        PathBuf::from("/usr/local/bin/claude"),
+        home().join(".claude/bin/claude"),
     ];
-    candidates.into_iter().find(|p| p.join(".claude-plugin/plugin.json").exists())
+    search.into_iter().find(|p| p.exists())
 }
 
 /// Read a JSON file, remove "sensei" from the object at `mcp_key`, write back.

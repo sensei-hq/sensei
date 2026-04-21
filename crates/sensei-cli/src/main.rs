@@ -340,18 +340,17 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool, plugin_dir: O
 
 // ── User scope ──────────────────────────────────────────────────────────────
 
-fn init_user_scope(acp: Option<&str>, recommended: bool, marketplace: &std::path::Path) {
-    println!("[user scope] Global setup — MCP, daemon, global commands\n");
+fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::path::Path) {
+    println!("[user scope] Global setup — daemon, ACP registration\n");
 
     // 1. Daemon
     ensure_daemon();
     println!("  ✓ daemon running");
 
-    // 2. Register MCP with ACP(s)
+    // 2. Register with ACP(s) — handles plugin install (commands, skills, hooks, MCP)
     let acps: Vec<String> = if let Some(a) = acp {
         vec![a.to_string()]
     } else {
-        // Auto-detect via daemon
         let detected: Vec<serde_json::Value> = client()
             .get(format!("{}/api/acp/detect", DAEMON_URL))
             .send()
@@ -373,29 +372,25 @@ fn init_user_scope(acp: Option<&str>, recommended: bool, marketplace: &std::path
         installed
     };
 
+    let marketplace_str = marketplace.to_string_lossy().to_string();
     for acp_id in &acps {
         match client()
             .post(format!("{}/api/acp/configure", DAEMON_URL))
-            .json(&serde_json::json!({"acps": [acp_id]}))
+            .json(&serde_json::json!({
+                "acps": [acp_id],
+                "marketplace_path": marketplace_str,
+            }))
             .send()
         {
-            Ok(r) if r.status().is_success() => println!("  ✓ {} — MCP registered", acp_id),
+            Ok(r) if r.status().is_success() => {
+                let body: serde_json::Value = r.json().unwrap_or_default();
+                if body["plugin_installed"].as_bool() == Some(true) {
+                    println!("  ✓ {} — plugin installed (commands, skills, hooks, MCP)", acp_id);
+                } else {
+                    println!("  ✓ {} — MCP registered", acp_id);
+                }
+            }
             _ => eprintln!("  ✗ {} — configure failed", acp_id),
-        }
-    }
-
-    // 3. Install global commands
-    let global_commands = list_catalog_items(marketplace, "command", "global");
-    if !global_commands.is_empty() {
-        println!("\n  Global commands:");
-        for item in &global_commands {
-            println!("    • {} — {}", item.0, item.1);
-        }
-        if confirm("\n  Install these?", recommended) {
-            let dest = home().join(".claude/commands");
-            let cache = home().join(".sensei/cache/marketplace");
-            let count = install_items_from_marketplace(marketplace, &cache, &global_commands, &dest);
-            println!("  ✓ {} global commands installed", count);
         }
     }
 
@@ -404,7 +399,7 @@ fn init_user_scope(acp: Option<&str>, recommended: bool, marketplace: &std::path
 
 // ── Project scope ───────────────────────────────────────────────────────────
 
-fn init_project_scope(recommended: bool, marketplace: &std::path::Path) {
+fn init_project_scope(_recommended: bool, marketplace: &std::path::Path) {
     let repo_root = std::env::current_dir().expect("Cannot determine current directory");
     println!("[project scope] {}\n", repo_root.display());
 
@@ -447,62 +442,7 @@ fn init_project_scope(recommended: bool, marketplace: &std::path::Path) {
         println!("  [copied]  .sensei/mindsets/ ({} mindsets)", count);
     }
 
-    // 2. Project commands
-    let project_commands = list_catalog_items(marketplace, "command", "project");
-    if !project_commands.is_empty() {
-        println!("\n  Project commands ({} available):", project_commands.len());
-        // Show summary, not full list
-        let names: Vec<&str> = project_commands.iter().map(|c| c.0.as_str()).collect();
-        for chunk in names.chunks(7) {
-            println!("    {}", chunk.join(", "));
-        }
-        if confirm("\n  Install recommended set?", recommended) {
-            let dest = repo_root.join(".claude/commands");
-            let cache = home().join(".sensei/cache/marketplace");
-            let count = install_items_from_marketplace(marketplace, &cache, &project_commands, &dest);
-            println!("  ✓ {} project commands installed", count);
-        }
-    }
-
-    // 3. Project skills
-    let project_skills = list_catalog_items(marketplace, "skill", "project");
-    if !project_skills.is_empty() {
-        println!("\n  Project skills ({} available):", project_skills.len());
-        for item in &project_skills {
-            println!("    • {} — {}", item.0, item.1);
-        }
-        if confirm("\n  Install recommended set?", recommended) {
-            let dest = repo_root.join(".claude/skills");
-            let cache = home().join(".sensei/cache/marketplace");
-            let count = install_items_from_marketplace(marketplace, &cache, &project_skills, &dest);
-            println!("  ✓ {} project skills installed", count);
-        }
-    }
-
-    // 4. Agents
-    let agents_src = marketplace.join("agents");
-    let agents_dst = repo_root.join(".claude/agents");
-    if agents_src.exists() {
-        let agent_count = count_md_files(&agents_src);
-        if agent_count > 0 {
-            println!("\n  Agents ({} available):", agent_count);
-            if let Ok(entries) = fs::read_dir(&agents_src) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "md") {
-                        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
-                        println!("    • {}", name);
-                    }
-                }
-            }
-            if confirm("\n  Install agents?", recommended) {
-                let count = copy_md_files(&agents_src, &agents_dst);
-                println!("  ✓ {} agents installed", count);
-            }
-        }
-    }
-
-    // 5. .mcp.json — upsert sensei entry (for non-plugin ACPs)
+    // 2. .mcp.json — upsert sensei entry (for non-plugin ACPs)
     let mcp_file = repo_root.join(".mcp.json");
     let mut mcp_config: serde_json::Value = mcp_file
         .exists()
@@ -519,68 +459,13 @@ fn init_project_scope(recommended: bool, marketplace: &std::path::Path) {
     fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
     println!("\n  [ok] .mcp.json");
 
-    // 6. Gate check
+    // 3. Gate check
     println!("\n  --- gate check ---");
     if which_exists("senseid") { println!("  ✓ senseid on PATH"); }
     if which_exists("sensei-mcp") { println!("  ✓ sensei-mcp on PATH"); }
     println!("  ✓ mindsets/ ({} files)", count_md_files(&mindsets_dst));
     if rules_file.exists() { println!("  ✓ rules.md"); }
-    if agents_dst.exists() { println!("  ✓ agents/ ({} files)", count_md_files(&agents_dst)); }
     if repo_root.join("CLAUDE.md").exists() { println!("  ✓ CLAUDE.md"); }
-}
-
-// ── Catalog helpers ─────────────────────────────────────────────────────────
-
-/// List items from the local marketplace catalog.json matching kind and scope.
-/// Returns Vec<(name, description, path)>.
-fn list_catalog_items(marketplace: &std::path::Path, kind: &str, scope: &str) -> Vec<(String, String, String)> {
-    let catalog_path = marketplace.join("catalog.json");
-    let content = match fs::read_to_string(&catalog_path) {
-        Ok(c) => c,
-        Err(_) => return vec![],
-    };
-    let catalog: serde_json::Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    catalog["items"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter(|item| {
-            item["kind"].as_str() == Some(kind) && item["scope"].as_str() == Some(scope)
-        })
-        .map(|item| {
-            (
-                item["name"].as_str().unwrap_or("").to_string(),
-                item["description"].as_str().unwrap_or("").to_string(),
-                item["path"].as_str().unwrap_or("").to_string(),
-            )
-        })
-        .collect()
-}
-
-/// Install items by reading from the local marketplace directory.
-fn install_items_from_marketplace(
-    marketplace: &std::path::Path,
-    _cache: &std::path::Path,
-    items: &[(String, String, String)],
-    dest_dir: &std::path::Path,
-) -> u32 {
-    fs::create_dir_all(dest_dir).ok();
-    let mut count = 0u32;
-    for (name, _, path) in items {
-        let src = marketplace.join(path);
-        if src.exists() {
-            let content = fs::read_to_string(&src).unwrap_or_default();
-            let dest = dest_dir.join(format!("{}.md", name));
-            fs::write(&dest, &content).ok();
-            count += 1;
-        } else {
-            eprintln!("  ✗ {} — not found at {}", name, src.display());
-        }
-    }
-    count
 }
 
 fn count_md_files(dir: &std::path::Path) -> usize {
