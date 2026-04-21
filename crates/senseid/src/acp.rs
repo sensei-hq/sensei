@@ -8,6 +8,7 @@ const SENSEI_MARKETPLACE_REPO: &str = "mizukisu/sensei-marketplace";
 /// Result of configuring an ACP. `plugin` is true when `claude plugin install` succeeded.
 struct AcpConfigureOk {
     plugin: bool,
+    warnings: Vec<String>,
 }
 
 /// Each AI Coding Platform implements detect, configure, and unconfigure.
@@ -56,6 +57,8 @@ impl Acp for ClaudeCodeAcp {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
+        let mut warnings: Vec<String> = Vec::new();
+
         // 1. Register marketplace + install plugin (handles commands, skills, hooks, MCP)
         let marketplace_source = marketplace_path.unwrap_or(SENSEI_MARKETPLACE_REPO);
 
@@ -65,9 +68,9 @@ impl Acp for ClaudeCodeAcp {
         match &add_out {
             Ok(o) if o.status.success() => {}
             Ok(o) => {
-                let err = String::from_utf8_lossy(&o.stderr);
+                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
                 if !err.contains("already") {
-                    eprintln!("  marketplace add: {}", err.trim());
+                    warnings.push(format!("marketplace add: {}", err));
                 }
             }
             Err(e) => return Err(format!("marketplace add: {}", e)),
@@ -77,12 +80,14 @@ impl Acp for ClaudeCodeAcp {
             .args(["plugin", "install", "sensei", "--scope", "user"])
             .output();
         match install_out {
-            Ok(o) if o.status.success() => return Ok(AcpConfigureOk { plugin: true }),
-            Ok(o) => {
-                let err = String::from_utf8_lossy(&o.stderr);
-                eprintln!("  plugin install: {}", err.trim());
+            Ok(o) if o.status.success() => {
+                return Ok(AcpConfigureOk { plugin: true, warnings });
             }
-            Err(e) => eprintln!("  plugin install: {}", e),
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                warnings.push(format!("plugin install: {}", err));
+            }
+            Err(e) => warnings.push(format!("plugin install: {}", e)),
         }
 
         // 2. Fallback: try `claude mcp add`
@@ -98,7 +103,7 @@ impl Acp for ClaudeCodeAcp {
             upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": mcp_cmd, "args": []}))?;
         }
 
-        Ok(AcpConfigureOk { plugin: false })
+        Ok(AcpConfigureOk { plugin: false, warnings })
     }
 
     fn unconfigure(&self) -> bool {
@@ -204,7 +209,7 @@ impl Acp for McpFileAcp {
             }
         };
         upsert_sensei_in_json(&self.config_path(), self.mcp_key, entry)?;
-        Ok(AcpConfigureOk { plugin: false })
+        Ok(AcpConfigureOk { plugin: false, warnings: vec![] })
     }
 
     fn unconfigure(&self) -> bool {
@@ -338,6 +343,7 @@ pub fn configure(acp_ids: &[String], marketplace_path: Option<&str>) -> Configur
             Ok(ok) => {
                 result.configured.push(acp.id().to_string());
                 if ok.plugin { result.plugin_installed = true; }
+                result.errors.extend(ok.warnings);
             }
             Err(e) => result.errors.push(format!("{}: {}", acp.id(), e)),
         }
