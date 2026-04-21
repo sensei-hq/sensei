@@ -427,12 +427,11 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
                     let caller = fn_by_name.iter()
                         .find(|(_, id)| source_id.starts_with(id.as_str()) || id.starts_with(source_id.as_str()))
                         .or_else(|| fn_by_name.iter().find(|(name, _)| source_id.contains(name.as_str())));
-                    if let Some((_, caller_id)) = caller {
-                        if caller_id != callee_id {
+                    if let Some((_, caller_id)) = caller
+                        && caller_id != callee_id {
                             graph.merge_edge(caller_id, callee_id, "CALLS").ok();
                             edges_created += 1;
                         }
-                    }
                 }
             }
             "parent" => {

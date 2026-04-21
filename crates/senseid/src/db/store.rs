@@ -508,7 +508,7 @@ impl Store {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         let mut map = std::collections::HashMap::new();
-        for r in rows { if let Ok((k, v)) = r { map.insert(k, v); } }
+        for (k, v) in rows.flatten() { map.insert(k, v); }
         Ok(map)
     }
 
@@ -886,7 +886,7 @@ impl Store {
             let pname = p["name"].as_str().unwrap_or("");
             // Check if description mentions the pattern type or any instance name
             desc_lower.contains(ptype)
-                || p["instances"].as_array().map_or(false, |insts| {
+                || p["instances"].as_array().is_some_and(|insts| {
                     insts.iter().any(|i| {
                         let iname = i["name"].as_str().unwrap_or("").to_lowercase();
                         desc_lower.contains(&iname) || iname.contains(&desc_lower)
@@ -1001,6 +1001,7 @@ impl Store {
 
     // ── Workflow State ──────────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert_workflow_state(
         &self,
         project: &str,
@@ -1059,6 +1060,7 @@ impl Store {
 
     // ── Library Docs & Meta ────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert_lib_doc(
         &self, id: &str, lib_name: &str, title: &str, url: Option<&str>,
         summary: &str, content: Option<&str>, source_type: &str,

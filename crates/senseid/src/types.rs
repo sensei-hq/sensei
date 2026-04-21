@@ -197,6 +197,7 @@ impl HierarchyNode {
     }
 
     /// Create a function/method node.
+    #[allow(clippy::too_many_arguments)]
     pub fn function(
         id: String, name: String, kind: NodeKind, file: String, line: u32,
         sig: Option<String>, body: Option<String>, docstring: Option<String>,

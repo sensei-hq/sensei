@@ -217,7 +217,7 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
             }
             "class_declaration" | "object_declaration" => {
                 let name = find_name(&child, src);
-                let kind = if child.kind() == "object_declaration" { ClassKind::Class } else { ClassKind::Class };
+                let kind = ClassKind::Class;
                 let is_pub = !has_modifier(&child, src, "private");
                 let mut class = ir_class(name, &child, kind, is_pub, extract_kdoc(&child, src), Vec::new());
                 // Walk class body — Kotlin uses "class_body" child, not field name
@@ -225,12 +225,11 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                     let cc = child.child(c).unwrap();
                     if cc.kind() != "class_body" { continue; }
                     for j in 0..cc.child_count() {
-                        if let Some(m) = cc.child(j) {
-                            if m.kind() == "function_declaration" {
+                        if let Some(m) = cc.child(j)
+                            && m.kind() == "function_declaration" {
                                 let mname = find_name(&m, src);
                                 class.methods.push(ir_method(mname, &m, !has_modifier(&m, src, "private"), node_text(&m, src).contains("suspend "), false, Vec::new(), None, extract_kdoc(&m, src), Vec::new(), Visibility::Public, &node_text(&m, src)));
                             }
-                        }
                     }
                 }
                 classes.push(class);
@@ -244,14 +243,13 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
             _ => {
                 // Walk deeper for nested imports
                 for j in 0..child.child_count() {
-                    if let Some(c) = child.child(j) {
-                        if c.kind() == "import_header" {
+                    if let Some(c) = child.child(j)
+                        && c.kind() == "import_header" {
                             let text = node_text(&c, src);
                             let path = text.trim_start_matches("import ").trim();
                             let name = path.rsplit('.').next().unwrap_or(path).to_string();
                             imports.push(IRImport { source: path.into(), names: vec![name], is_reexport: false });
                         }
-                    }
                 }
             }
         }

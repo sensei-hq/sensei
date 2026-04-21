@@ -41,7 +41,7 @@ impl LanguageAdapter for VueAdapter {
                 // Detect Vue composables (useXxx pattern)
                 if (sym.kind == SymbolKind::Function || sym.kind == SymbolKind::Const)
                     && sym.name.starts_with("use") && sym.name.len() > 3
-                    && sym.name.chars().nth(3).map_or(false, |c| c.is_uppercase())
+                    && sym.name.chars().nth(3).is_some_and(|c| c.is_uppercase())
                 {
                     sym.kind = SymbolKind::Hook;
                 }
