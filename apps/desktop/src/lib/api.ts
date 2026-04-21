@@ -239,13 +239,14 @@ export function senseiApi(port: number) {
     configureAcps: (acps: string[]) =>
       post<import('./types').AcpConfigureResult>('/api/acp/configure', { acps }, { configured: [], skipped: [], errors: [] }),
 
-    unconfigureAcps: () =>
-      post<{ ok: boolean; removed: string[] }>('/api/acp/unconfigure', {}, { ok: false, removed: [] }),
+    removeAcps: (acps: string[] = []) =>
+      post<import('./types').AcpRemoveResult>('/api/acp/remove', { acps }, { acps_removed: [], errors: [] }),
 
     // ── Installer ───────────────────────────────────────────────────────
     installAll: (acps: string[], scope = 'global') =>
       post<import('./types').InstallResult>('/api/install', { acps, scope }, {
         hooks_installed: 0, skills_installed: 0, commands_installed: 0,
+        stale_commands_removed: 0, stale_skills_removed: 0,
         acps_configured: [], errors: [], marketplace_version: '',
       }),
 
@@ -255,7 +256,7 @@ export function senseiApi(port: number) {
     installItem: (name: string, kind: string) =>
       post<{ ok: boolean; path?: string; error?: string }>('/api/install/item', { name, kind }, { ok: false }),
 
-    uninstallItem: (name: string, kind: string) =>
+    removeItem: (name: string, kind: string) =>
       post<{ ok: boolean }>('/api/install/item/remove', { name, kind }, { ok: false }),
 
     getCatalog: () =>
@@ -264,10 +265,11 @@ export function senseiApi(port: number) {
     getInstalledItems: () =>
       get<import('./types').InstalledItem[]>('/api/install/installed', []),
 
-    uninstallAll: () =>
-      post<import('./types').UninstallResult>('/api/uninstall', {}, {
-        acps_removed: [], hooks_removed: false, skills_removed: 0,
-        plugin_removed: false, cache_cleared: false,
+    removeAll: (purge = false) =>
+      post<import('./types').RemoveResult>('/api/remove', { purge }, {
+        acps_removed: [], plugin_removed: false, commands_removed: 0,
+        skills_removed: 0, agents_removed: 0, hooks_removed: false,
+        cache_cleared: false, projects_cleaned: [], errors: [],
       }),
 
     // ── Lifecycle ────────────────────────────────────────────────────────

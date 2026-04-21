@@ -20,17 +20,28 @@ export interface InstallResult {
   hooks_installed: number;
   skills_installed: number;
   commands_installed: number;
+  stale_commands_removed: number;
+  stale_skills_removed: number;
   acps_configured: string[];
   errors: string[];
   marketplace_version: string;
 }
 
-export interface UninstallResult {
+export interface RemoveResult {
   acps_removed: string[];
-  hooks_removed: boolean;
-  skills_removed: number;
   plugin_removed: boolean;
+  commands_removed: number;
+  skills_removed: number;
+  agents_removed: number;
+  hooks_removed: boolean;
   cache_cleared: boolean;
+  projects_cleaned: string[];
+  errors: string[];
+}
+
+export interface AcpRemoveResult {
+  acps_removed: string[];
+  errors: string[];
 }
 
 export interface InstalledItem {
