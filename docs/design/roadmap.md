@@ -63,8 +63,8 @@ traces:
 | 1.7 | Phase doc templates (5 templates) | Markdown | Templates | Each template parseable, frontmatter valid |
 | 1.8 | Guardrails template | Markdown | Config | Template creates valid rules.md |
 | 1.9 | `/sensei:rules` command | Markdown | Marketplace | Eval: reads guardrails, outputs summary |
-| 1.10 | `/sensei:refocus` command | Markdown | Marketplace | Eval: reads state, outputs orientation |
-| 1.11 | `/sensei:status` command | Markdown | Marketplace | Eval: displays phase, task, issue, docs, tools |
+| 1.10 | `/sensei:session refocus` command | Markdown | Marketplace | Eval: reads state, outputs orientation |
+| 1.11 | `/sensei:session status` command | Markdown | Marketplace | Eval: displays phase, task, issue, docs, tools |
 | 1.12 | Pre-compact hook | Bash | Marketplace | Run script, JSON output contains guardrails + state |
 | 1.13 | User-prompt hook (turn counting + correction detection) | Bash | Marketplace | Run script with correction prompt, verify revision_requested event |
 | 1.14 | Wire pre-tool/post-tool hooks in hooks.json | JSON | Marketplace | Hooks fire on tool use |
@@ -73,7 +73,7 @@ traces:
 | 1.17 | Pattern detection Phase A (naming heuristics) | Rust | Daemon | `get_patterns("adapter")` returns detected patterns |
 | 1.18 | MCP: `get_patterns` tool | Rust | MCP | Returns pattern list from daemon |
 
-**Gate:** All tests pass. `/sensei:status` shows correct state. Pre-compact preserves context.
+**Gate:** All tests pass. `/sensei:session status` shows correct state. Pre-compact preserves context.
 
 ---
 

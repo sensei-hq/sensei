@@ -44,7 +44,7 @@ These apply across all phases and shape how the AI behaves throughout the workfl
 - Flush context from completed phases (keep the doc, not the working memory)
 - The graph DB provides focused lookups — use it instead of reading entire files
 - PreCompact hook auto-fires lightweight refocus to preserve critical context across compaction
-- `/sensei:refocus` available manually when the human notices drift
+- `/sensei:session refocus` available manually when the human notices drift
 
 ---
 

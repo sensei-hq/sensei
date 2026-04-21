@@ -90,7 +90,7 @@ Phase 01 ─── Phase 02 ─── Phase 03 ─── Phase 05 ─── Phas
    ▼              ▼
   ┌──────────────────────────────────────────────────────────────────────────────┐
   │  Cross-cutting: /sensei:brainstorm  /sensei:review                         │
-  │  Refocus:       /sensei:rules  /sensei:patterns  /sensei:refocus      │
+  │  Refocus:       /sensei:rules  /sensei:patterns  /sensei:session refocus    │
   │                 /sensei:tools                                               │
   │  Available at any phase. Do not advance the phase.                         │
   └──────────────────────────────────────────────────────────────────────────────┘

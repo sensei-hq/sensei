@@ -88,7 +88,7 @@ patterns:
 
 2. **From codebase usage**: The indexer sees how rokkit components are used in the project — which props are passed, which patterns repeat. Cross-reference with library API to derive conventions.
 
-3. **From user declaration**: User runs `/sensei:pattern-extract` and points to a rokkit component as the reference. AI extracts the pattern, asks clarifying questions, documents it.
+3. **From user declaration**: User points to a rokkit component as the reference and MCP auto-detects the pattern (note: `/sensei:pattern-extract` removed — MCP auto-detects patterns). AI extracts the pattern, asks clarifying questions, documents it.
 
 4. **From library author**: The library itself could ship a `patterns.yaml` or include patterns in its llms.txt. This is the ideal — patterns documented at the source.
 

@@ -17,7 +17,7 @@ The solution isn't just detection — it's a full lifecycle: **detect → surfac
 
 ## Current state
 
-- PATTERNS.md: manual, maintained by user via `/sensei:pattern-extract`
+- PATTERNS.md: manual, maintained by user (note: `/sensei:pattern-extract` removed — MCP auto-detects patterns)
 - Pattern-based development skill: exists in plugin (loads patterns before coding)
 - Auto-detection during indexing: planned, not implemented (see idea 08 for phased approach)
 - Pattern search/matching: not implemented
@@ -152,7 +152,7 @@ Patterns evolve from corrections and new discoveries:
 | Trigger | Action |
 |---------|--------|
 | User corrects AI: "you should have used the adapter pattern" | AI asks clarifying questions → adds to `.sensei/rules.md` AND indexes the correction as a pattern enforcement rule |
-| `/sensei:pattern-extract` discovers a new pattern | Adds to PATTERNS.md → next index pass picks it up → becomes enforceable |
+| MCP auto-detects a new pattern (formerly `/sensei:pattern-extract`, now removed) | Adds to PATTERNS.md → next index pass picks it up → becomes enforceable |
 | `/sensei:review` finds repeated violations | Suggests: "3 files violate the adapter pattern this week — should I add a guardrail?" |
 | Indexer detects a new recurring structure | Surfaces as candidate pattern during `/sensei:analyze` → user confirms or dismisses |
 
@@ -171,7 +171,7 @@ Guardrails (`.sensei/rules.md`) and patterns (PATTERNS.md + graph) are complemen
 |-------|------|------|
 | `pattern_checked` | `/sensei:build` locate step | pattern_name, matched (bool), followed (bool) |
 | `pattern_violation` | `/sensei:review` | pattern_name, file, violation_type, severity |
-| `pattern_extracted` | `/sensei:pattern-extract` | pattern_name, instances, source_files |
+| `pattern_extracted` | MCP auto-detection (formerly `/sensei:pattern-extract`, removed) | pattern_name, instances, source_files |
 | `duplicate_found` | `/sensei:review` | file_a, file_b, similarity_score, lines |
 
 **New metrics:**
