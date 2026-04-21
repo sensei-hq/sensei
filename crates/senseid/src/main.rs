@@ -78,9 +78,9 @@ async fn main() {
 fn start_daemon(port: u16) {
     // Check if already running
     let pid_path = sensei_dir().join("serve.pid");
-    if pid_path.exists() {
-        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-            if let Ok(pid) = pid_str.trim().parse::<u32>() {
+    if pid_path.exists()
+        && let Ok(pid_str) = std::fs::read_to_string(&pid_path)
+            && let Ok(pid) = pid_str.trim().parse::<u32>() {
                 // Check if process is alive
                 let alive = Command::new("kill")
                     .args(["-0", &pid.to_string()])
@@ -94,8 +94,6 @@ fn start_daemon(port: u16) {
                 // Stale PID file — clean up and continue
                 std::fs::remove_file(&pid_path).ok();
             }
-        }
-    }
 
     std::fs::create_dir_all(sensei_dir()).expect("senseid: cannot create ~/.sensei/");
     let log_path = sensei_dir().join("senseid.log");
@@ -107,7 +105,7 @@ fn start_daemon(port: u16) {
     let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
 
     let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
-    let child = Command::new(exe)
+    let mut child = Command::new(exe)
         .args(["--port", &port.to_string()])
         .stdout(log_file)
         .stderr(log_err)
@@ -115,7 +113,11 @@ fn start_daemon(port: u16) {
         .spawn()
         .expect("senseid: failed to spawn daemon");
 
-    println!("senseid: started (pid {})", child.id());
+    let pid = child.id();
+    // Detach: we don't wait — the daemon runs independently.
+    // Reap to avoid zombie; the daemon re-parents to init/launchd.
+    std::thread::spawn(move || { let _ = child.wait(); });
+    println!("senseid: started (pid {})", pid);
 }
 
 fn graph_path() -> PathBuf { paths::graph_dir() }
@@ -130,12 +132,9 @@ async fn run_foreground(port: u16) {
     let store = db::Store::open(&db_path()).expect("Failed to open SQLite");
 
     // Print project stats
-    match store.list_projects() {
-        Ok(projects) => {
-            let indexed = projects.iter().filter(|p| p.indexed_at.is_some()).count();
-            println!("[senseid] {} projects registered ({} indexed)", projects.len(), indexed);
-        }
-        Err(_) => {}
+    if let Ok(projects) = store.list_projects() {
+        let indexed = projects.iter().filter(|p| p.indexed_at.is_some()).count();
+        println!("[senseid] {} projects registered ({} indexed)", projects.len(), indexed);
     }
 
     let gp = graph_path();
@@ -163,15 +162,14 @@ async fn stop_daemon(port: u16) {
         _ => {}
     }
     let pid_path = sensei_dir().join("serve.pid");
-    if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-        if let Ok(_pid) = pid_str.trim().parse::<u32>() {
+    if let Ok(pid_str) = std::fs::read_to_string(&pid_path)
+        && let Ok(_pid) = pid_str.trim().parse::<u32>() {
             // Send SIGTERM via nix or command
-            let _ = std::process::Command::new("kill").arg(&pid_str.trim()).status();
+            let _ = std::process::Command::new("kill").arg(pid_str.trim()).status();
             println!("senseid: sent SIGTERM to pid {}", pid_str.trim());
             std::fs::remove_file(&pid_path).ok();
             return;
         }
-    }
     eprintln!("senseid: not running");
     std::process::exit(1);
 }

@@ -50,7 +50,7 @@ mod tests {
     #[test]
     fn hooks_json() {
         let root = repo_root();
-        let abs = root.join("marketplace/hooks/hooks.json");
+        let abs = root.join("marketplace/plugins/sensei/hooks/hooks.json");
         if abs.exists() {
             let r = process(&abs.to_string_lossy(), "hooks/hooks.json", "json");
             assert_eq!(r.tags, "config");

@@ -69,19 +69,16 @@ impl GraphDb {
                 DROP TABLE IF EXISTS schema_version;
             ").ok();
             // Clear all manifests so files are re-parsed on next index
-            if let Some(sensei_dir) = dirs::home_dir().map(|h| h.join(".sensei").join("projects")) {
-                if sensei_dir.exists() {
-                    for entry in std::fs::read_dir(&sensei_dir).into_iter().flatten() {
-                        if let Ok(entry) = entry {
-                            let manifest = entry.path().join("manifest.json");
-                            if manifest.exists() {
-                                std::fs::remove_file(&manifest).ok();
-                            }
+            if let Some(sensei_dir) = dirs::home_dir().map(|h| h.join(".sensei").join("projects"))
+                && sensei_dir.exists() {
+                    for entry in std::fs::read_dir(&sensei_dir).into_iter().flatten().flatten() {
+                        let manifest = entry.path().join("manifest.json");
+                        if manifest.exists() {
+                            std::fs::remove_file(&manifest).ok();
                         }
                     }
                     tracing::info!("Schema v{} → v{}: cleared all manifests for full re-index", version, SCHEMA_VERSION);
                 }
-            }
         }
 
         self.conn.execute_batch("

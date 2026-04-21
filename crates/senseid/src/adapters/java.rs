@@ -90,14 +90,13 @@ fn extract_members(body: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<Pa
                 }
             }
             "field_declaration" => {
-                if has_modifier(&child, src, "static") && has_modifier(&child, src, "final") {
-                    if let Some(declarator) = find_child_kind(&child, "variable_declarator") {
+                if has_modifier(&child, src, "static") && has_modifier(&child, src, "final")
+                    && let Some(declarator) = find_child_kind(&child, "variable_declarator") {
                         let name = field_text(&declarator, "name", src);
                         if !name.is_empty() {
                             symbols.push(make_sym(name, SymbolKind::Const, &child, lines, src, has_modifier(&child, src, "public")));
                         }
                     }
-                }
             }
             _ => {}
         }
@@ -182,8 +181,8 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                 // Extract methods from body
                 if let Some(body) = child.child_by_field_name("body") {
                     for j in 0..body.child_count() {
-                        if let Some(member) = body.child(j) {
-                            if member.kind() == "method_declaration" || member.kind() == "constructor_declaration" {
+                        if let Some(member) = body.child(j)
+                            && (member.kind() == "method_declaration" || member.kind() == "constructor_declaration") {
                                 let mname = field_text(&member, "name", src);
                                 let mparams = extract_java_params(&member, src);
                                 let ret = field_text(&member, "type", src);
@@ -199,7 +198,6 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
                                     collect_java_annotations(&member, src), vis, &node_text(&member, src),
                                 ));
                             }
-                        }
                     }
                 }
                 classes.push(class);
@@ -223,8 +221,8 @@ fn extract_java_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
     let mut params = Vec::new();
     if let Some(param_list) = node.child_by_field_name("parameters") {
         for i in 0..param_list.child_count() {
-            if let Some(p) = param_list.child(i) {
-                if p.kind() == "formal_parameter" || p.kind() == "spread_parameter" {
+            if let Some(p) = param_list.child(i)
+                && (p.kind() == "formal_parameter" || p.kind() == "spread_parameter") {
                     let ptype = field_text(&p, "type", src);
                     let pname = field_text(&p, "name", src);
                     params.push(IRParam {
@@ -233,7 +231,6 @@ fn extract_java_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
                         ..Default::default()
                     });
                 }
-            }
         }
     }
     params

@@ -196,8 +196,8 @@ fn create_traceability_edges(graph_db: &GraphDb, repo_id: &str) -> Result<(), St
                 .unwrap_or_default();
             // Match if names share significant words
             if !req_name.is_empty() && !design_name.is_empty() {
-                let req_words: HashSet<&str> = req_name.split(|c: char| c == '-' || c == '_').filter(|w| w.len() > 2).collect();
-                let design_words: HashSet<&str> = design_name.split(|c: char| c == '-' || c == '_').filter(|w| w.len() > 2).collect();
+                let req_words: HashSet<&str> = req_name.split(['-', '_']).filter(|w| w.len() > 2).collect();
+                let design_words: HashSet<&str> = design_name.split(['-', '_']).filter(|w| w.len() > 2).collect();
                 let overlap = req_words.intersection(&design_words).count();
                 if overlap >= 1 {
                     graph_db.merge_edge(req_id, design_id, "SPECIFIES").ok();
@@ -486,8 +486,8 @@ fn infer_category_from_path(rel_path: &str) -> Option<String> {
 pub fn extract_title(content: &str) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            return Some(trimmed[2..].trim().to_string());
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            return Some(title.trim().to_string());
         }
     }
     None

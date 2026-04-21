@@ -38,8 +38,8 @@ pub fn write_to_graph(
     }
 
     // For doc/extension: create category node + wire
-    if result.kind == "doc" || result.kind == "extension" {
-        if let Some(ref doc_type) = result.doc_type {
+    if (result.kind == "doc" || result.kind == "extension")
+        && let Some(ref doc_type) = result.doc_type {
             let cat_id = format!("doc:{}:{}", repo_id, doc_type);
             let repo_node_id = format!("repo:{}", repo_id);
             let mut cat_node = HierarchyNode::group(
@@ -59,7 +59,6 @@ pub fn write_to_graph(
             file_node.parent_id = Some(cat_id);
             graph.merge_node(&file_node).ok();
         }
-    }
 
     // Write symbol nodes
     for sym in &result.symbols {

@@ -42,13 +42,11 @@ impl LanguageAdapter for SvelteAdapter {
                 sym.line_start += offset;
                 sym.line_end += offset;
                 // Detect Svelte 5 runes
-                if sym.kind == SymbolKind::Const || sym.kind == SymbolKind::Function {
-                    if let Some(sig) = &sym.signature {
-                        if sig.contains("$state") || sig.contains("$derived") || sig.contains("$effect") {
+                if (sym.kind == SymbolKind::Const || sym.kind == SymbolKind::Function)
+                    && let Some(sig) = &sym.signature
+                        && (sig.contains("$state") || sig.contains("$derived") || sig.contains("$effect")) {
                             sym.kind = SymbolKind::Hook;
                         }
-                    }
-                }
                 all_symbols.push(sym);
             }
             all_imports.extend(parsed.imports);
@@ -63,8 +61,6 @@ impl LanguageAdapter for SvelteAdapter {
         }
     }
 }
-
-/// Extract script blocks from Svelte SFC. Returns (source, line_offset, is_typescript).
 
 /// Parse Svelte SFC into IR — delegates script blocks to TypeScript adapter.
 pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {

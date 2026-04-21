@@ -71,6 +71,7 @@ pub fn extract_script_blocks(source: &str) -> Vec<(String, u32, bool)> {
 // ── IR helpers ──────────────────────────────────────────────────────────────
 
 /// Build an IRFunction from common fields. Used by all adapters.
+#[allow(clippy::too_many_arguments)]
 pub fn ir_function(
     name: String, node: &Node, _lines: &[&str],
     is_exported: bool, is_async: bool,
@@ -98,6 +99,7 @@ pub fn ir_function(
 }
 
 /// Build an IRMethod from common fields. Used by all adapters.
+#[allow(clippy::too_many_arguments)]
 pub fn ir_method(
     name: String, node: &Node,
     is_exported: bool, is_async: bool, is_static: bool,

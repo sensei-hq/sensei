@@ -25,8 +25,8 @@ pub fn detect_stack(repo_path: &Path) -> Vec<String> {
         stack.push("python".into());
     }
 
-    if repo_path.join("package.json").exists() {
-        if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json")) {
+    if repo_path.join("package.json").exists()
+        && let Ok(content) = std::fs::read_to_string(repo_path.join("package.json")) {
             let frameworks = [
                 ("@sveltejs/kit", "sveltekit"),
                 ("svelte", "svelte"),
@@ -51,7 +51,6 @@ pub fn detect_stack(repo_path: &Path) -> Vec<String> {
             }
             if !found { stack.push("node".into()); }
         }
-    }
 
     stack
 }
@@ -62,8 +61,8 @@ pub fn detect_config_files(repo_path: &Path) -> Vec<ConfigFile> {
     let mut configs = Vec::new();
 
     // package.json
-    if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json")) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+    if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json"))
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             let extracted = serde_json::json!({
                 "name": json.get("name"),
                 "version": json.get("version"),
@@ -79,11 +78,10 @@ pub fn detect_config_files(repo_path: &Path) -> Vec<ConfigFile> {
                 data: extracted,
             });
         }
-    }
 
     // Cargo.toml
-    if let Ok(content) = std::fs::read_to_string(repo_path.join("Cargo.toml")) {
-        if let Ok(toml_val) = content.parse::<toml::Value>() {
+    if let Ok(content) = std::fs::read_to_string(repo_path.join("Cargo.toml"))
+        && let Ok(toml_val) = content.parse::<toml::Value>() {
             let extracted = serde_json::json!({
                 "name": toml_val.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()),
                 "version": toml_val.get("package").and_then(|p| p.get("version")).and_then(|v| v.as_str()),
@@ -96,11 +94,10 @@ pub fn detect_config_files(repo_path: &Path) -> Vec<ConfigFile> {
                 data: extracted,
             });
         }
-    }
 
     // pyproject.toml
-    if let Ok(content) = std::fs::read_to_string(repo_path.join("pyproject.toml")) {
-        if let Ok(toml_val) = content.parse::<toml::Value>() {
+    if let Ok(content) = std::fs::read_to_string(repo_path.join("pyproject.toml"))
+        && let Ok(toml_val) = content.parse::<toml::Value>() {
             let name = toml_val.get("project").and_then(|p| p.get("name")).and_then(|n| n.as_str())
                 .or_else(|| toml_val.get("tool").and_then(|t| t.get("poetry")).and_then(|p| p.get("name")).and_then(|n| n.as_str()));
             configs.push(ConfigFile {
@@ -109,11 +106,10 @@ pub fn detect_config_files(repo_path: &Path) -> Vec<ConfigFile> {
                 data: serde_json::json!({ "name": name }),
             });
         }
-    }
 
     // Dockerfile
-    if repo_path.join("Dockerfile").exists() {
-        if let Ok(content) = std::fs::read_to_string(repo_path.join("Dockerfile")) {
+    if repo_path.join("Dockerfile").exists()
+        && let Ok(content) = std::fs::read_to_string(repo_path.join("Dockerfile")) {
             let from = content.lines()
                 .find(|l| l.starts_with("FROM "))
                 .map(|l| l.trim_start_matches("FROM ").split_whitespace().next().unwrap_or(""))
@@ -128,7 +124,6 @@ pub fn detect_config_files(repo_path: &Path) -> Vec<ConfigFile> {
                 data: serde_json::json!({ "from": from, "expose": expose }),
             });
         }
-    }
 
     // docker-compose.yml
     for name in &["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
@@ -157,8 +152,8 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
     let mut members = Vec::new();
 
     // 1. package.json workspaces
-    if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json")) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+    if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json"))
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
             let patterns = extract_workspace_patterns(&json);
             for pattern in &patterns {
                 for entry in resolve_glob_members(repo_path, pattern) {
@@ -181,13 +176,12 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                 }
             }
         }
-    }
 
     // 2. pnpm-workspace.yaml
-    if members.is_empty() {
-        if let Ok(content) = std::fs::read_to_string(repo_path.join("pnpm-workspace.yaml")) {
-            if let Ok(yaml) = serde_yaml::from_str::<serde_json::Value>(&content) {
-                if let Some(packages) = yaml.get("packages").and_then(|p| p.as_array()) {
+    if members.is_empty()
+        && let Ok(content) = std::fs::read_to_string(repo_path.join("pnpm-workspace.yaml"))
+            && let Ok(yaml) = serde_yaml::from_str::<serde_json::Value>(&content)
+                && let Some(packages) = yaml.get("packages").and_then(|p| p.as_array()) {
                     for p in packages {
                         if let Some(pattern) = p.as_str() {
                             for entry in resolve_glob_members(repo_path, pattern) {
@@ -208,15 +202,12 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                         }
                     }
                 }
-            }
-        }
-    }
 
     // 3. Cargo.toml workspace members
-    if let Ok(content) = std::fs::read_to_string(repo_path.join("Cargo.toml")) {
-        if let Ok(toml_val) = content.parse::<toml::Value>() {
-            if let Some(workspace) = toml_val.get("workspace") {
-                if let Some(ws_members) = workspace.get("members").and_then(|m| m.as_array()) {
+    if let Ok(content) = std::fs::read_to_string(repo_path.join("Cargo.toml"))
+        && let Ok(toml_val) = content.parse::<toml::Value>()
+            && let Some(workspace) = toml_val.get("workspace")
+                && let Some(ws_members) = workspace.get("members").and_then(|m| m.as_array()) {
                     for m in ws_members {
                         if let Some(pattern) = m.as_str() {
                             for entry in resolve_glob_members(repo_path, pattern) {
@@ -240,9 +231,6 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                         }
                     }
                 }
-            }
-        }
-    }
 
     // 3b. Standalone crates: scan common dirs for Cargo.toml even without a workspace
     // This catches repos like sensei where crates/ has Rust packages but no root Cargo.toml
@@ -252,8 +240,8 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
         .collect();
     for dir_name in &["crates", "rust", "lib", "services"] {
         let dir = repo_path.join(dir_name);
-        if dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
+        if dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     if !entry.path().is_dir() { continue; }
                     let cargo_toml = entry.path().join("Cargo.toml");
@@ -276,7 +264,6 @@ pub fn detect_workspace_members(repo_path: &Path) -> Vec<crate::types::PackageIn
                     }
                 }
             }
-        }
     }
 
     // 4. go.work
@@ -315,11 +302,10 @@ fn extract_workspace_patterns(pkg: &serde_json::Value) -> Vec<String> {
         return arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
     }
     // Yarn-style: { workspaces: { packages: [...] } }
-    if let Some(obj) = ws.and_then(|w| w.as_object()) {
-        if let Some(packages) = obj.get("packages").and_then(|p| p.as_array()) {
+    if let Some(obj) = ws.and_then(|w| w.as_object())
+        && let Some(packages) = obj.get("packages").and_then(|p| p.as_array()) {
             return packages.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
         }
-    }
     vec![]
 }
 

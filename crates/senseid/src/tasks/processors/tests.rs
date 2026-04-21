@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn marketplace_skill_md() {
         let r = process_subtree(
-            "marketplace/skills/analyze/SKILL.md",
+            "marketplace/plugins/sensei/skills/analyze/SKILL.md",
             "marketplace",
         );
         assert_eq!(r.kind, "extension");
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn marketplace_hooks_json() {
         let root = repo_root();
-        let abs = root.join("marketplace/hooks/hooks.json");
+        let abs = root.join("marketplace/plugins/sensei/hooks/hooks.json");
         if abs.exists() {
             let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei:marketplace").unwrap();
             assert_eq!(r.kind, "file");

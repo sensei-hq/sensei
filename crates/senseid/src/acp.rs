@@ -90,17 +90,64 @@ impl Acp for ClaudeCodeAcp {
             Err(e) => warnings.push(format!("plugin install: {}", e)),
         }
 
-        // 2. Fallback: try `claude mcp add`
+        // 2. Fallback: install hooks + MCP manually
+        //    Plugin install failed, so set up hooks via the installer and MCP via CLI/JSON.
+        if let Err(e) = crate::installer::install_hooks_only() {
+            warnings.push(format!("hooks: {}", e));
+        }
+
+        // 3. Try `claude mcp add`
         let mcp_added = std::process::Command::new(&claude_bin)
             .args(["mcp", "add", "-t", "stdio", "-s", "user", "sensei", "--", mcp_cmd])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
 
-        // 3. Fallback: write ~/.claude.json directly
+        // 4. Fallback: write ~/.claude.json directly
         if !mcp_added {
             let claude_json = home().join(".claude.json");
             upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": mcp_cmd, "args": []}))?;
+        }
+
+        // 5. Write hook config to ~/.claude/settings.json so hooks run even without the plugin
+        let hooks_dir = crate::paths::plugin_dir().join("hooks");
+        let run_hook = hooks_dir.join("run-hook.cmd");
+        if run_hook.exists() {
+            let rh = run_hook.to_string_lossy().to_string();
+            let hook_entry = |script: &str| -> serde_json::Value {
+                serde_json::json!([{
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("{} {}", rh, script)
+                    }]
+                }])
+            };
+
+            let settings_path = home().join(".claude/settings.json");
+            let mut settings: serde_json::Value = settings_path
+                .exists()
+                .then(|| std::fs::read_to_string(&settings_path).ok())
+                .flatten()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::json!({}));
+
+            let hooks = settings
+                .as_object_mut()
+                .ok_or("invalid settings")?
+                .entry("hooks")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .ok_or("invalid hooks section")?;
+
+            hooks.insert("SessionStart".into(), hook_entry("session-start"));
+            hooks.insert("UserPromptSubmit".into(), hook_entry("user-prompt"));
+            hooks.insert("PreCompact".into(), hook_entry("pre-compact"));
+
+            if let Some(parent) = settings_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap())
+                .map_err(|e| format!("settings.json: {}", e))?;
         }
 
         Ok(AcpConfigureOk { plugin: false, warnings })
@@ -121,8 +168,8 @@ impl Acp for ClaudeCodeAcp {
         }
 
         // 2. Try `claude mcp remove` (covers non-plugin install path)
-        if !removed {
-            if std::process::Command::new("claude")
+        if !removed
+            && std::process::Command::new("claude")
                 .args(["mcp", "remove", "-s", "user", "sensei"])
                 .output()
                 .map(|o| o.status.success())
@@ -130,14 +177,12 @@ impl Acp for ClaudeCodeAcp {
             {
                 removed = true;
             }
-        }
 
         // 3. Fallback: remove from ~/.claude.json
-        if !removed {
-            if remove_sensei_from_json(&h.join(".claude.json"), "mcpServers") {
+        if !removed
+            && remove_sensei_from_json(&h.join(".claude.json"), "mcpServers") {
                 removed = true;
             }
-        }
 
         // 4. Remove hooks (in case plugin uninstall didn't clean them)
         let hooks_file = h.join(".claude/hooks.json");
@@ -426,12 +471,11 @@ fn remove_sensei_from_json(path: &std::path::Path, mcp_key: &str) -> bool {
     if !path.exists() { return false; }
     let s = match std::fs::read_to_string(path) { Ok(s) => s, Err(_) => return false };
     let mut v: serde_json::Value = match serde_json::from_str(&s) { Ok(v) => v, Err(_) => return false };
-    if let Some(servers) = v.get_mut(mcp_key).and_then(|s| s.as_object_mut()) {
-        if servers.remove("sensei").is_some() {
+    if let Some(servers) = v.get_mut(mcp_key).and_then(|s| s.as_object_mut())
+        && servers.remove("sensei").is_some() {
             std::fs::write(path, serde_json::to_string_pretty(&v).unwrap()).ok();
             return true;
         }
-    }
     false
 }
 
