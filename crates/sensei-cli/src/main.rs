@@ -34,10 +34,14 @@ enum Commands {
     },
 
     /// Remove sensei configuration
-    Uninstall {
-        /// Scope: user (global), project (current repo), or all (default)
-        #[arg(long, default_value = "all")]
-        scope: String,
+    Remove {
+        /// What to remove: "acp" or "all"
+        target: String,
+        /// For "acp" target: claude, cursor, windsurf, zed, kiro, opencode, vscode, desktop, all
+        name: Option<String>,
+        /// Also remove data (sessions, indexes, project artifacts)
+        #[arg(long)]
+        purge: bool,
     },
 
     /// Start the sensei daemon
@@ -80,7 +84,7 @@ fn main() {
         Commands::Init { scope, acp, recommended, plugin_dir } => {
             init(scope.as_deref(), acp.as_deref(), recommended, plugin_dir.as_deref());
         }
-        Commands::Uninstall { scope } => uninstall(&scope),
+        Commands::Remove { target, name, purge } => remove_cmd(&target, name.as_deref(), purge),
         Commands::Start { port } => daemon_cmd("start", Some(port)),
         Commands::Stop => daemon_cmd("stop", None),
         Commands::Restart { port } => restart_daemon(port),
@@ -279,17 +283,6 @@ fn register_project(repo_path: &std::path::Path) {
     }
 }
 
-
-/// Load all registered project paths.
-fn list_registered_projects() -> Vec<String> {
-    let projects_file = home().join(".sensei/projects.json");
-    projects_file
-        .exists()
-        .then(|| fs::read_to_string(&projects_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
 
 /// Copy .md files from src dir to dst dir, returns count.
 fn copy_md_files(src: &std::path::Path, dst: &std::path::Path) -> u32 {
@@ -563,118 +556,144 @@ fn format_date() -> String {
     format!("{}-{:02}-{:02}", y, m + 1, remaining + 1)
 }
 
-// ── Uninstall ───────────────────────────────────────────────────────────────
+// ── Remove ──────────────────────────────────────────────────────────────────
 
-fn uninstall(scope: &str) {
-    println!("=== sensei uninstall (scope: {}) ===\n", scope);
-
-    let do_project = scope == "all" || scope == "project";
-
-    // Collect project paths for project-scope cleanup
-    let projects: Vec<String> = if do_project {
-        let registered = list_registered_projects();
-        let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
-        let mut paths = registered;
-        if !paths.contains(&cwd) {
-            paths.push(cwd);
+/// Map friendly CLI name to ACP ID.
+fn acp_name_to_id(name: &str) -> Option<String> {
+    match name {
+        "claude" => Some("claude-code".into()),
+        "desktop" => Some("claude-desktop".into()),
+        "cursor" => Some("cursor".into()),
+        "windsurf" => Some("windsurf".into()),
+        "zed" => Some("zed".into()),
+        "kiro" => Some("kiro".into()),
+        "opencode" => Some("opencode".into()),
+        "vscode" => Some("vscode".into()),
+        "all" => None, // None means all
+        _ => {
+            eprintln!("Unknown ACP: {}. Available: claude, desktop, cursor, windsurf, zed, kiro, opencode, vscode, all", name);
+            std::process::exit(1);
         }
-        // Filter to projects that actually have sensei artifacts
-        let active: Vec<String> = paths
-            .into_iter()
-            .filter(|p| {
-                let root = std::path::Path::new(p);
-                root.join(".sensei").exists()
-                    || root.join(".claude/commands").exists()
-                    || root.join(".claude/agents").exists()
-            })
-            .collect();
+    }
+}
 
-        if !active.is_empty() {
-            println!("[project scope] {} project(s) found:", active.len());
-            for p in &active {
-                println!("  {}", p);
-            }
-            if !confirm("\nClean all listed projects?", false) {
-                println!("  Skipped project cleanup.\n");
-                vec![] // user declined
-            } else {
-                active
-            }
-        } else {
-            println!("[project scope] No sensei-managed projects found.\n");
-            vec![]
+fn remove_cmd(target: &str, name: Option<&str>, purge: bool) {
+    match target {
+        "acp" => remove_acp(name.unwrap_or("all")),
+        "all" => remove_all(purge),
+        _ => {
+            eprintln!("Unknown target: {}. Usage:", target);
+            eprintln!("  sensei remove acp <claude|cursor|...>");
+            eprintln!("  sensei remove all [--purge]");
+            std::process::exit(1);
         }
-    } else {
-        vec![]
+    }
+}
+
+fn remove_acp(name: &str) {
+    println!("=== sensei remove acp {} ===\n", name);
+
+    let acps: Vec<String> = match acp_name_to_id(name) {
+        Some(id) => vec![id],
+        None => vec![], // empty = all
     };
 
-    // Delegate everything to the daemon
     ensure_daemon();
 
     match client()
-        .post(format!("{}/api/uninstall", DAEMON_URL))
-        .json(&serde_json::json!({"scope": scope, "projects": projects}))
+        .post(format!("{}/api/acp/remove", DAEMON_URL))
+        .json(&serde_json::json!({"acps": acps}))
+        .send()
+    {
+        Ok(r) if r.status().is_success() => {
+            let result: serde_json::Value = r.json().unwrap_or_default();
+            let removed = result["acps_removed"].as_array().cloned().unwrap_or_default();
+
+            if removed.is_empty() {
+                println!("  No ACPs to remove.");
+            } else {
+                for id in &removed {
+                    println!("  ✓ Removed {}", id.as_str().unwrap_or("?"));
+                }
+            }
+
+            for e in result["errors"].as_array().unwrap_or(&vec![]) {
+                eprintln!("  ✗ {}", e.as_str().unwrap_or("?"));
+            }
+        }
+        Ok(r) => eprintln!("Remove failed: HTTP {}", r.status()),
+        Err(e) => eprintln!("Remove failed: {}", e),
+    }
+
+    println!("\nRe-add with: sensei init --acp {}", name);
+}
+
+fn remove_all(purge: bool) {
+    if purge {
+        println!("=== sensei remove all --purge ===\n");
+        println!("This will remove ALL sensei data including sessions, indexes, and project artifacts.");
+        if !confirm("Continue?", false) {
+            println!("Cancelled.");
+            return;
+        }
+    } else {
+        println!("=== sensei remove all ===\n");
+        println!("Removing ACPs and plugin artifacts. Data (sessions, indexes) will be preserved.");
+    }
+
+    ensure_daemon();
+
+    match client()
+        .post(format!("{}/api/remove", DAEMON_URL))
+        .json(&serde_json::json!({"purge": purge}))
         .send()
     {
         Ok(r) if r.status().is_success() => {
             let result: serde_json::Value = r.json().unwrap_or_default();
 
-            let acps = result["acps_removed"].as_array().map(|a| a.len()).unwrap_or(0);
+            println!("\n--- removed ---");
+
+            for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
+                println!("  ✓ ACP removed: {}", id.as_str().unwrap_or("?"));
+            }
             let skills = result["skills_removed"].as_u64().unwrap_or(0);
             let cmds = result["commands_removed"].as_u64().unwrap_or(0);
             let agents = result["agents_removed"].as_u64().unwrap_or(0);
-            let hooks = result["hooks_removed"].as_bool() == Some(true);
-            let cache = result["cache_cleared"].as_bool() == Some(true);
-            let plugin = result["plugin_removed"].as_bool() == Some(true);
-            let projects_done = result["projects_cleaned"].as_array().map(|a| a.len()).unwrap_or(0);
-            let errors = result["errors"].as_array().map(|a| a.len()).unwrap_or(0);
+            if skills > 0 { println!("  ✓ {} skills removed", skills); }
+            if cmds > 0 { println!("  ✓ {} commands removed", cmds); }
+            if agents > 0 { println!("  ✓ {} agents removed", agents); }
+            if result["hooks_removed"].as_bool() == Some(true) { println!("  ✓ Hooks removed"); }
+            if result["plugin_removed"].as_bool() == Some(true) { println!("  ✓ Plugin removed"); }
+            if result["cache_cleared"].as_bool() == Some(true) { println!("  ✓ Cache cleared"); }
 
-            // Check if daemon actually did anything
-            let nothing_happened = acps == 0 && skills == 0 && cmds == 0 && agents == 0
-                && !hooks && !cache && !plugin && projects_done == 0;
+            for p in result["projects_cleaned"].as_array().unwrap_or(&vec![]) {
+                println!("  ✓ Project cleaned: {}", p.as_str().unwrap_or("?"));
+            }
 
-            if nothing_happened && errors == 0 && !projects.is_empty() {
-                eprintln!("\n  ✗ Daemon returned empty result.");
-                eprintln!("  This usually means the daemon is running an older version.");
-                eprintln!("  Update: brew upgrade sensei && brew services restart sensei");
-            } else {
-                println!("\n--- cleaned ---");
-
-                for id in result["acps_removed"].as_array().unwrap_or(&vec![]) {
-                    println!("  ✓ MCP removed from {}", id.as_str().unwrap_or("?"));
-                }
-                if skills > 0 { println!("  ✓ {} skills removed", skills); }
-                if cmds > 0 { println!("  ✓ {} commands removed", cmds); }
-                if agents > 0 { println!("  ✓ {} agents removed", agents); }
-                if hooks { println!("  ✓ Hooks removed"); }
-                if cache { println!("  ✓ Cache cleared"); }
-                if plugin { println!("  ✓ Legacy plugin removed"); }
-
-                for p in result["projects_cleaned"].as_array().unwrap_or(&vec![]) {
-                    println!("  ✓ {}", p.as_str().unwrap_or("?"));
-                }
-
-                for e in result["errors"].as_array().unwrap_or(&vec![]) {
-                    eprintln!("  ✗ {}", e.as_str().unwrap_or("?"));
-                }
+            for e in result["errors"].as_array().unwrap_or(&vec![]) {
+                eprintln!("  ✗ {}", e.as_str().unwrap_or("?"));
             }
         }
-        Ok(r) => eprintln!("Uninstall failed: HTTP {}", r.status()),
-        Err(e) => eprintln!("Uninstall failed: {}", e),
+        Ok(r) => eprintln!("Remove failed: HTTP {}", r.status()),
+        Err(e) => eprintln!("Remove failed: {}", e),
     }
 
-    // Not managed by sensei
-    println!("\nNot managed by sensei uninstall:");
-    println!("  - Binaries (managed by Homebrew)");
-    println!("  - Daemon process (managed by brew services)");
-    println!("  - Desktop app (managed by Homebrew Cask)");
+    // Purge: stop daemon and delete data directory
+    if purge {
+        println!("\nStopping daemon...");
+        let bin = daemon_bin();
+        let _ = std::process::Command::new(&bin).arg("stop").status();
 
-    println!("\nTo fully remove sensei:");
-    println!("  brew services stop sensei");
-    println!("  brew uninstall sensei");
-    println!("  brew uninstall --cask sensei-app  # if desktop app installed");
+        let sensei_dir = home().join(".sensei");
+        if sensei_dir.exists() {
+            fs::remove_dir_all(&sensei_dir).ok();
+            println!("  ✓ Data directory removed (~/.sensei/)");
+        }
 
-    println!("\nSensei uninstalled.");
+        println!("\nSensei fully removed. To reinstall: brew install mizukisu/tap/sensei && sensei init");
+    } else {
+        println!("\nData preserved. To reinstall: sensei init");
+    }
 }
 
 // ── Daemon / Scan / AddLib ──────────────────────────────────────────────────

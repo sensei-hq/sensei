@@ -307,65 +307,54 @@ fn save_marketplace_version(version: &str) {
     fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
 }
 
-// ── Uninstall ────────────────────────────────────────────────────────────────
-
-// ── Uninstall request/result ────────────────────────────────────────────────
+// ── Remove ──────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize, Default)]
-pub struct UninstallRequest {
-    #[serde(default = "default_scope")]
-    pub scope: String,
+pub struct RemoveRequest {
     #[serde(default)]
-    pub projects: Vec<String>,
+    pub purge: bool,
 }
-fn default_scope() -> String { "all".into() }
 
 #[derive(Serialize, Default)]
-pub struct UninstallResult {
+pub struct RemoveResult {
     pub acps_removed: Vec<String>,
-    pub hooks_removed: bool,
-    pub skills_removed: u32,
-    pub commands_removed: u32,
-    pub agents_removed: u32,
     pub plugin_removed: bool,
+    pub commands_removed: u32,
+    pub skills_removed: u32,
+    pub agents_removed: u32,
+    pub hooks_removed: bool,
     pub cache_cleared: bool,
     pub projects_cleaned: Vec<String>,
     pub errors: Vec<String>,
 }
 
-/// Scoped uninstall — handles user scope, project scope, or both.
-pub fn uninstall(req: &UninstallRequest) -> UninstallResult {
-    let mut result = UninstallResult::default();
-    let do_user = req.scope == "all" || req.scope == "user";
-    let do_project = req.scope == "all" || req.scope == "project";
+/// Remove sensei artifacts. With purge=true, also removes project data.
+/// Data directory (~/.sensei/) deletion is handled by the CLI after stopping the daemon.
+pub fn remove(req: &RemoveRequest) -> RemoveResult {
+    let mut result = RemoveResult {
+        acps_removed: crate::acp::remove_selected(&[]),
+        ..Default::default()
+    };
 
-    if do_user {
-        uninstall_user_scope(&mut result);
-    }
+    // 2. Remove plugin artifacts (commands, skills, agents, hooks)
+    remove_plugin_artifacts(&mut result);
 
-    if do_project {
-        for path in &req.projects {
-            uninstall_project_scope(path, &mut result);
-        }
+    // 3. Clear marketplace cache
+    remove_cache(&mut result);
+
+    // 4. If purge: remove project .sensei/ dirs
+    if req.purge {
+        remove_registered_projects(&mut result);
     }
 
     result
 }
 
-/// Legacy uninstall — backward compat for old API callers.
-pub fn uninstall_legacy() -> UninstallResult {
-    let req = UninstallRequest { scope: "user".into(), projects: vec![] };
-    uninstall(&req)
-}
-
-/// User scope: remove ACP configs, global commands/skills, cache, config.
-fn uninstall_user_scope(result: &mut UninstallResult) {
+/// Remove plugin directory, commands, skills, agents, hooks config.
+fn remove_plugin_artifacts(result: &mut RemoveResult) {
     let h = home();
 
-    // 1. Remove ACP configurations (each adapter handles its own cleanup)
-    result.acps_removed = crate::acp::unconfigure();
-
-    // 2. Remove legacy plugin directory (hooks + binaries)
+    // Plugin directory (hooks + binaries)
     let plugin = plugin_dir();
     if plugin.exists() {
         fs::remove_dir_all(&plugin).ok();
@@ -373,34 +362,60 @@ fn uninstall_user_scope(result: &mut UninstallResult) {
         result.hooks_removed = true;
     }
 
-    // 3. Remove global skills (user-scoped, in ~/.claude/skills/)
-    let skills_dir = h.join(".claude/skills");
-    result.skills_removed += remove_md_files_in(&skills_dir);
-
-    // 4. Remove global commands (user-scoped, in ~/.claude/commands/)
+    // Global commands
     let commands_dir = h.join(".claude/commands");
     result.commands_removed += remove_md_files_in(&commands_dir);
 
-    // 5. Remove global agents (user-scoped, in ~/.claude/agents/)
+    // Global skills
+    let skills_dir = h.join(".claude/skills");
+    result.skills_removed += remove_md_files_in(&skills_dir);
+
+    // Global agents
     let agents_dir = h.join(".claude/agents");
     result.agents_removed += remove_md_files_in(&agents_dir);
 
-    // 6. Clear marketplace cache
+    // Hook config in ~/.claude/settings.json (fallback path hooks)
+    let settings_path = h.join(".claude/settings.json");
+    if settings_path.exists()
+        && let Ok(content) = fs::read_to_string(&settings_path)
+            && let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content)
+                && settings.get("hooks").is_some() {
+                    settings.as_object_mut().unwrap().remove("hooks");
+                    fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap()).ok();
+                    result.hooks_removed = true;
+                }
+}
+
+/// Clear marketplace cache.
+fn remove_cache(result: &mut RemoveResult) {
     let cache = cache_dir();
     if cache.exists() {
         fs::remove_dir_all(&cache).ok();
         result.cache_cleared = true;
     }
+}
 
-    // 7. Clear ~/.sensei/ (config, cache, indexes, projects registry)
-    let sd = sensei_dir();
-    if sd.exists() {
-        fs::remove_dir_all(&sd).ok();
+/// Remove .sensei/ dirs from all registered projects.
+fn remove_registered_projects(result: &mut RemoveResult) {
+    let projects_file = sensei_dir().join("projects.json");
+    let projects: Vec<String> = projects_file
+        .exists()
+        .then(|| fs::read_to_string(&projects_file).ok())
+        .flatten()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["projects"].as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+
+    for path in &projects {
+        remove_project_scope(path, result);
     }
 }
 
-/// Project scope: remove .sensei/, .claude/{commands,skills,agents}, sensei from .mcp.json.
-fn uninstall_project_scope(project_path: &str, result: &mut UninstallResult) {
+/// Remove sensei artifacts from a single project directory.
+fn remove_project_scope(project_path: &str, result: &mut RemoveResult) {
     let root = std::path::PathBuf::from(project_path);
     if !root.exists() { return; }
 
@@ -490,7 +505,7 @@ pub fn install_item(name: &str, kind: &str) -> Result<String, String> {
 }
 
 /// Remove a single installed item.
-pub fn uninstall_item(name: &str, kind: &str) -> Result<(), String> {
+pub fn remove_item(name: &str, kind: &str) -> Result<(), String> {
     let h = home();
     let path = match kind {
         "skill" => h.join(".claude/skills").join(format!("{}.md", name)),
@@ -597,35 +612,35 @@ mod tests {
         assert!(!dir.exists());
     }
 
-    // ── uninstall_project_scope ────────────────────────────────────────
+    // ── remove_project_scope ────────────────────────────────────────
 
     #[test]
-    fn uninstall_project_scope_nonexistent_path_is_noop() {
+    fn remove_project_scope_nonexistent_path_is_noop() {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("no_such_project");
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(missing.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(missing.to_str().unwrap(), &mut result);
         // Should not be added to projects_cleaned because path doesn't exist
         assert!(result.projects_cleaned.is_empty());
     }
 
     #[test]
-    fn uninstall_project_scope_removes_sensei_dir() {
+    fn remove_project_scope_removes_sensei_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("my_project");
         let sensei = project.join(".sensei");
         fs::create_dir_all(sensei.join("indexes")).unwrap();
         fs::write(sensei.join("config.json"), "{}").unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         assert!(!sensei.exists());
         assert_eq!(result.projects_cleaned, vec![project.to_str().unwrap()]);
     }
 
     #[test]
-    fn uninstall_project_scope_removes_claude_subdirs_md_files() {
+    fn remove_project_scope_removes_claude_subdirs_md_files() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("proj");
         let claude = project.join(".claude");
@@ -647,8 +662,8 @@ mod tests {
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("d.md"), "agent d").unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         assert_eq!(result.skills_removed, 2);
         assert_eq!(result.commands_removed, 1);
@@ -661,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_project_scope_removes_sensei_from_mcp_json() {
+    fn remove_project_scope_removes_sensei_from_mcp_json() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("proj");
         fs::create_dir_all(&project).unwrap();
@@ -675,8 +690,8 @@ mod tests {
         });
         fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         // File should still exist with 'other' server preserved
         assert!(mcp_file.exists());
@@ -687,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_project_scope_deletes_mcp_json_when_sensei_is_only_server() {
+    fn remove_project_scope_deletes_mcp_json_when_sensei_is_only_server() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("proj");
         fs::create_dir_all(&project).unwrap();
@@ -700,15 +715,15 @@ mod tests {
         });
         fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         // File should be deleted when sensei was the only server
         assert!(!mcp_file.exists());
     }
 
     #[test]
-    fn uninstall_project_scope_preserves_mcp_json_without_sensei_key() {
+    fn remove_project_scope_preserves_mcp_json_without_sensei_key() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("proj");
         fs::create_dir_all(&project).unwrap();
@@ -722,8 +737,8 @@ mod tests {
         let original_str = serde_json::to_string_pretty(&original).unwrap();
         fs::write(&mcp_file, &original_str).unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         // File should be untouched — no sensei key to remove
         assert!(mcp_file.exists());
@@ -731,93 +746,27 @@ mod tests {
         assert_eq!(content, original_str);
     }
 
-    // ── uninstall (integration-level) ─────────────────────────────────
+    // ── remove (integration-level) ──────────────────────────────────
 
     #[test]
-    fn uninstall_project_scope_via_uninstall_fn() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        let sensei = project.join(".sensei");
-        fs::create_dir_all(&sensei).unwrap();
-        fs::write(sensei.join("config.json"), "{}").unwrap();
-
-        let req = UninstallRequest {
-            scope: "project".into(),
-            projects: vec![project.to_str().unwrap().to_string()],
-        };
-        let result = uninstall(&req);
-
-        assert!(!sensei.exists());
-        assert_eq!(result.projects_cleaned.len(), 1);
-    }
-
-    #[test]
-    fn uninstall_with_scope_project_does_not_touch_user() {
-        // With scope="project", hooks_removed and cache_cleared should be false
-        let tmp = tempfile::tempdir().unwrap();
-        let project = tmp.path().join("proj");
-        fs::create_dir_all(&project).unwrap();
-
-        let req = UninstallRequest {
-            scope: "project".into(),
-            projects: vec![project.to_str().unwrap().to_string()],
-        };
-        let result = uninstall(&req);
-
-        assert!(!result.hooks_removed);
-        assert!(!result.cache_cleared);
-        assert!(!result.plugin_removed);
-    }
-
-    #[test]
-    fn uninstall_multiple_projects() {
-        let tmp = tempfile::tempdir().unwrap();
-
-        let p1 = tmp.path().join("proj1");
-        let p2 = tmp.path().join("proj2");
-        fs::create_dir_all(p1.join(".sensei")).unwrap();
-        fs::create_dir_all(p2.join(".sensei")).unwrap();
-
-        let req = UninstallRequest {
-            scope: "project".into(),
-            projects: vec![
-                p1.to_str().unwrap().to_string(),
-                p2.to_str().unwrap().to_string(),
-            ],
-        };
-        let result = uninstall(&req);
-
-        assert!(!p1.join(".sensei").exists());
-        assert!(!p2.join(".sensei").exists());
-        assert_eq!(result.projects_cleaned.len(), 2);
-    }
-
-    // ── uninstall_legacy ──────────────────────────────────────────────
-
-    #[test]
-    fn uninstall_legacy_returns_result_with_user_scope() {
-        // Mainly verifies it doesn't panic and uses user scope
-        // (project-specific assertions can't be validated without real home)
-        let result = uninstall_legacy();
-        // projects_cleaned is always empty because legacy has no projects
+    fn remove_without_purge_does_not_clean_projects() {
+        let req = RemoveRequest { purge: false };
+        let result = remove(&req);
         assert!(result.projects_cleaned.is_empty());
     }
 
-    // ── UninstallRequest deserialization ───────────────────────────────
+    // ── RemoveRequest deserialization ───────────────────────────────
 
     #[test]
-    fn uninstall_request_default_scope_is_all() {
-        let req: UninstallRequest = serde_json::from_str("{}").unwrap();
-        assert_eq!(req.scope, "all");
-        assert!(req.projects.is_empty());
+    fn remove_request_default_purge_is_false() {
+        let req: RemoveRequest = serde_json::from_str("{}").unwrap();
+        assert!(!req.purge);
     }
 
     #[test]
-    fn uninstall_request_parses_full_json() {
-        let json = r#"{"scope": "project", "projects": ["/tmp/a", "/tmp/b"]}"#;
-        let req: UninstallRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.scope, "project");
-        assert_eq!(req.projects, vec!["/tmp/a", "/tmp/b"]);
+    fn remove_request_parses_purge_true() {
+        let req: RemoveRequest = serde_json::from_str(r#"{"purge": true}"#).unwrap();
+        assert!(req.purge);
     }
 
     // ── InstallResult serialization ───────────────────────────────────
@@ -881,11 +830,11 @@ mod tests {
         assert_eq!(remove_stale_in(&missing, &keep), 0);
     }
 
-    // ── UninstallResult serialization ─────────────────────────────────
+    // ── RemoveResult serialization ─────────────────────────────────
 
     #[test]
-    fn uninstall_result_default_is_empty() {
-        let result = UninstallResult::default();
+    fn remove_result_default_is_empty() {
+        let result = RemoveResult::default();
         assert!(!result.hooks_removed);
         assert!(!result.plugin_removed);
         assert!(!result.cache_cleared);
@@ -898,8 +847,8 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_result_serializes_to_json() {
-        let result = UninstallResult {
+    fn remove_result_serializes_to_json() {
+        let result = RemoveResult {
             acps_removed: vec!["claude-code".into()],
             hooks_removed: true,
             skills_removed: 5,
@@ -1048,10 +997,10 @@ mod tests {
         }
     }
 
-    // ── uninstall_project_scope edge cases ────────────────────────────
+    // ── remove_project_scope edge cases ────────────────────────────
 
     #[test]
-    fn uninstall_project_scope_handles_invalid_mcp_json() {
+    fn remove_project_scope_handles_invalid_mcp_json() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("proj");
         fs::create_dir_all(&project).unwrap();
@@ -1060,8 +1009,8 @@ mod tests {
         let mcp_file = project.join(".mcp.json");
         fs::write(&mcp_file, "not valid json!!!").unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         // Should not panic, file should still exist (couldn't parse it)
         assert!(mcp_file.exists());
@@ -1069,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_project_scope_handles_mcp_json_without_mcp_servers() {
+    fn remove_project_scope_handles_mcp_json_without_mcp_servers() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("proj");
         fs::create_dir_all(&project).unwrap();
@@ -1077,8 +1026,8 @@ mod tests {
         let mcp_file = project.join(".mcp.json");
         fs::write(&mcp_file, r#"{"other_key": "value"}"#).unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         // File untouched, no panic
         assert!(mcp_file.exists());
@@ -1087,7 +1036,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_project_scope_full_cleanup() {
+    fn remove_project_scope_full_cleanup() {
         // Test a project with .sensei, all .claude subdirs, and .mcp.json
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("proj");
@@ -1112,8 +1061,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut result = UninstallResult::default();
-        uninstall_project_scope(project.to_str().unwrap(), &mut result);
+        let mut result = RemoveResult::default();
+        remove_project_scope(project.to_str().unwrap(), &mut result);
 
         assert!(!project.join(".sensei").exists());
         assert!(!project.join(".claude/skills").exists());
@@ -1165,13 +1114,12 @@ mod tests {
         assert!(dir.join("no_ext").exists());
     }
 
-    // ── Accumulation across multiple project uninstalls ───────────────
+    // ── remove_project_scope accumulation ────────────────────────────
 
     #[test]
-    fn uninstall_accumulates_counts_across_projects() {
+    fn remove_project_scope_accumulates_counts() {
         let tmp = tempfile::tempdir().unwrap();
 
-        // Project 1: 2 skills, 1 command
         let p1 = tmp.path().join("p1");
         fs::create_dir_all(p1.join(".claude/skills")).unwrap();
         fs::write(p1.join(".claude/skills/a.md"), "a").unwrap();
@@ -1179,7 +1127,6 @@ mod tests {
         fs::create_dir_all(p1.join(".claude/commands")).unwrap();
         fs::write(p1.join(".claude/commands/c.md"), "c").unwrap();
 
-        // Project 2: 1 skill, 2 commands
         let p2 = tmp.path().join("p2");
         fs::create_dir_all(p2.join(".claude/skills")).unwrap();
         fs::write(p2.join(".claude/skills/d.md"), "d").unwrap();
@@ -1187,24 +1134,12 @@ mod tests {
         fs::write(p2.join(".claude/commands/e.md"), "e").unwrap();
         fs::write(p2.join(".claude/commands/f.md"), "f").unwrap();
 
-        let req = UninstallRequest {
-            scope: "project".into(),
-            projects: vec![
-                p1.to_str().unwrap().to_string(),
-                p2.to_str().unwrap().to_string(),
-            ],
-        };
-        let result = uninstall(&req);
+        let mut result = RemoveResult::default();
+        remove_project_scope(p1.to_str().unwrap(), &mut result);
+        remove_project_scope(p2.to_str().unwrap(), &mut result);
 
         assert_eq!(result.skills_removed, 3);   // 2 + 1
         assert_eq!(result.commands_removed, 3);  // 1 + 2
         assert_eq!(result.projects_cleaned.len(), 2);
-    }
-
-    // ── default_scope helper ──────────────────────────────────────────
-
-    #[test]
-    fn default_scope_returns_all() {
-        assert_eq!(default_scope(), "all");
     }
 }
