@@ -45,7 +45,7 @@ Feature: Refocus
 
   Scenario: Manual refocus after drift
     Given the AI has drifted from the current task
-    When the user types /sensei:refocus
+    When the user types /sensei:session refocus
     Then the AI re-reads state.yaml, the active plan, and current task
     And outputs: current phase, task, issue, and what's left
     And returns to focused work on the correct task
@@ -58,7 +58,7 @@ Feature: Refocus
 
   Scenario: Status check
     Given a session in progress
-    When the user types /sensei:status
+    When the user types /sensei:session status
     Then the AI displays: phase, plan, task, issue, rules count, pattern count, doc counts, tool status
 ```
 
@@ -70,6 +70,6 @@ Feature: Refocus
 | Session-start rules injection | Planned |
 | Pre-compact hook | Planned |
 | /sensei:rules command | Planned |
-| /sensei:refocus command | Planned |
+| /sensei:session refocus command | Planned |
 | /sensei:tools command | Planned |
-| /sensei:status command | Planned |
+| /sensei:session status command | Planned |

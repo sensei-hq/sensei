@@ -50,6 +50,8 @@ pub struct InstallResult {
     pub hooks_installed: u32,
     pub skills_installed: u32,
     pub commands_installed: u32,
+    pub stale_commands_removed: u32,
+    pub stale_skills_removed: u32,
     pub acps_configured: Vec<String>,
     pub errors: Vec<String>,
     pub marketplace_version: String,
@@ -70,9 +72,11 @@ pub fn install(acps: &[String], scope: &str) -> InstallResult {
 
     // 2. Fetch & install marketplace items (skills, commands)
     match install_marketplace(scope, acps) {
-        Ok((skills, commands, version)) => {
+        Ok((skills, commands, stale_cmds, stale_skills, version)) => {
             result.skills_installed = skills;
             result.commands_installed = commands;
+            result.stale_commands_removed = stale_cmds;
+            result.stale_skills_removed = stale_skills;
             result.marketplace_version = version;
         }
         Err(e) => result.errors.push(format!("marketplace: {}", e)),
@@ -100,6 +104,8 @@ fn install_hooks() -> Result<u32, String> {
 
     let hooks: &[(&str, &str)] = &[
         ("session-start", include_str!("../../../marketplace/plugins/sensei/hooks/session-start")),
+        ("user-prompt", include_str!("../../../marketplace/plugins/sensei/hooks/user-prompt")),
+        ("pre-compact", include_str!("../../../marketplace/plugins/sensei/hooks/pre-compact")),
         ("pre-tool", include_str!("../../../marketplace/plugins/sensei/hooks/pre-tool")),
         ("post-tool", include_str!("../../../marketplace/plugins/sensei/hooks/post-tool")),
         ("run-hook.cmd", include_str!("../../../marketplace/plugins/sensei/hooks/run-hook.cmd")),
@@ -121,12 +127,12 @@ fn install_hooks() -> Result<u32, String> {
 
 // ── Marketplace ──────────────────────────────────────────────────────────────
 
-/// Fetch catalog, download items, install skills & commands.
-/// Returns (skills_count, commands_count, version).
+/// Fetch catalog, download items, install skills & commands, clean up stale items.
+/// Returns (skills_count, commands_count, stale_commands, stale_skills, version).
 fn install_marketplace(
     scope: &str,
     acps: &[String],
-) -> Result<(u32, u32, String), String> {
+) -> Result<(u32, u32, u32, u32, String), String> {
     let catalog = fetch_catalog()?;
     let version = catalog.version.clone().unwrap_or_default();
 
@@ -166,10 +172,49 @@ fn install_marketplace(
         fs::write(&dest, &content).map_err(|e| e.to_string())?;
     }
 
+    // Clean up stale items from previous versions
+    let (stale_cmds, stale_skills) = cleanup_stale_items(&catalog);
+
     // Save version to ~/.sensei/config.json
     save_marketplace_version(&version);
 
-    Ok((skills, commands, version))
+    Ok((skills, commands, stale_cmds, stale_skills, version))
+}
+
+/// Remove command/skill files that are no longer in the catalog.
+fn cleanup_stale_items(catalog: &Catalog) -> (u32, u32) {
+    let h = home();
+    let command_names: std::collections::HashSet<String> = catalog
+        .items
+        .iter()
+        .filter(|i| i.kind == "command")
+        .map(|i| format!("{}.md", i.name))
+        .collect();
+    let skill_names: std::collections::HashSet<String> = catalog
+        .items
+        .iter()
+        .filter(|i| i.kind == "skill")
+        .map(|i| format!("{}.md", i.name))
+        .collect();
+
+    let commands_removed = remove_stale_in(&h.join(".claude/commands"), &command_names);
+    let skills_removed = remove_stale_in(&h.join(".claude/skills"), &skill_names);
+    (commands_removed, skills_removed)
+}
+
+/// Remove .md files in `dir` whose names are not in `keep`.
+fn remove_stale_in(dir: &std::path::Path, keep: &std::collections::HashSet<String>) -> u32 {
+    let mut removed = 0u32;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && !keep.contains(&name)
+                && fs::remove_file(entry.path()).is_ok() {
+                    removed += 1;
+                }
+        }
+    }
+    removed
 }
 
 // ── Catalog fetch/cache ──────────────────────────────────────────────────────
@@ -180,17 +225,15 @@ pub fn fetch_catalog() -> Result<Catalog, String> {
     let cached_path = cache.join(MARKETPLACE_CATALOG);
 
     // Check cache
-    if cached_path.exists() {
-        if let Ok(content) = fs::read_to_string(&cached_path) {
-            if let Ok(catalog) = serde_json::from_str::<Catalog>(&content) {
+    if cached_path.exists()
+        && let Ok(content) = fs::read_to_string(&cached_path)
+            && let Ok(catalog) = serde_json::from_str::<Catalog>(&content) {
                 let cached_ver = catalog.version.as_deref().unwrap_or("");
                 let saved_ver = load_marketplace_version();
                 if !cached_ver.is_empty() && cached_ver == saved_ver {
                     return Ok(catalog);
                 }
             }
-        }
-    }
 
     // Download fresh
     let url = format!("{}/{}", MARKETPLACE_REPO, MARKETPLACE_CATALOG);
@@ -383,24 +426,19 @@ fn uninstall_project_scope(project_path: &str, result: &mut UninstallResult) {
 
     // Remove sensei entry from .mcp.json (preserve other servers)
     let mcp_file = root.join(".mcp.json");
-    if mcp_file.exists() {
-        if let Ok(content) = fs::read_to_string(&mcp_file) {
-            if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(servers) = config
+    if mcp_file.exists()
+        && let Ok(content) = fs::read_to_string(&mcp_file)
+            && let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&content)
+                && let Some(servers) = config
                     .get_mut("mcpServers")
                     .and_then(|s| s.as_object_mut())
-                {
-                    if servers.remove("sensei").is_some() {
+                    && servers.remove("sensei").is_some() {
                         if servers.is_empty() {
                             fs::remove_file(&mcp_file).ok();
                         } else {
                             fs::write(&mcp_file, serde_json::to_string_pretty(&config).unwrap()).ok();
                         }
                     }
-                }
-            }
-        }
-    }
 
     result.projects_cleaned.push(project_path.to_string());
 }
@@ -790,6 +828,8 @@ mod tests {
         assert_eq!(result.hooks_installed, 0);
         assert_eq!(result.skills_installed, 0);
         assert_eq!(result.commands_installed, 0);
+        assert_eq!(result.stale_commands_removed, 0);
+        assert_eq!(result.stale_skills_removed, 0);
         assert!(result.acps_configured.is_empty());
         assert!(result.errors.is_empty());
         assert!(result.marketplace_version.is_empty());
@@ -801,6 +841,8 @@ mod tests {
             hooks_installed: 4,
             skills_installed: 3,
             commands_installed: 2,
+            stale_commands_removed: 1,
+            stale_skills_removed: 0,
             acps_configured: vec!["claude-code".into()],
             errors: vec![],
             marketplace_version: "1.0.0".into(),
@@ -809,7 +851,34 @@ mod tests {
         assert_eq!(json["hooks_installed"], 4);
         assert_eq!(json["skills_installed"], 3);
         assert_eq!(json["commands_installed"], 2);
+        assert_eq!(json["stale_commands_removed"], 1);
         assert_eq!(json["marketplace_version"], "1.0.0");
+    }
+
+    #[test]
+    fn remove_stale_in_removes_unlisted_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        fs::write(path.join("keep.md"), "keep").unwrap();
+        fs::write(path.join("stale.md"), "stale").unwrap();
+        fs::write(path.join("also-stale.md"), "stale").unwrap();
+        fs::write(path.join("not-md.txt"), "skip").unwrap();
+
+        let keep: std::collections::HashSet<String> = ["keep.md".to_string()].into();
+        let removed = remove_stale_in(path, &keep);
+        assert_eq!(removed, 2);
+        assert!(path.join("keep.md").exists());
+        assert!(!path.join("stale.md").exists());
+        assert!(!path.join("also-stale.md").exists());
+        assert!(path.join("not-md.txt").exists());
+    }
+
+    #[test]
+    fn remove_stale_in_nonexistent_dir_returns_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let keep: std::collections::HashSet<String> = std::collections::HashSet::new();
+        assert_eq!(remove_stale_in(&missing, &keep), 0);
     }
 
     // ── UninstallResult serialization ─────────────────────────────────
@@ -958,7 +1027,7 @@ mod tests {
         let result = install_hooks();
         assert!(result.is_ok());
         let count = result.unwrap();
-        assert_eq!(count, 4); // session-start, pre-tool, post-tool, run-hook.cmd
+        assert_eq!(count, 6); // session-start, user-prompt, pre-compact, pre-tool, post-tool, run-hook.cmd
     }
 
     #[cfg(unix)]
@@ -970,7 +1039,7 @@ mod tests {
         install_hooks().unwrap();
 
         let hooks_dir = plugin_dir().join("hooks");
-        for name in &["session-start", "pre-tool", "post-tool"] {
+        for name in &["session-start", "user-prompt", "pre-compact", "pre-tool", "post-tool"] {
             let path = hooks_dir.join(name);
             assert!(path.exists(), "hook {} should exist", name);
             let perms = fs::metadata(&path).unwrap().permissions();

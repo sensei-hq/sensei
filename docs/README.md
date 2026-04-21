@@ -71,7 +71,7 @@ AI writes monolithic functions. TDD is stated but not enforced. Tests written af
 Guardrails, tool awareness, and task focus disappear after compaction. The AI forgets constraints, uses grep instead of MCP, ignores guardrails it was given 50 turns ago.
 
 - PreCompact hook auto-reloads guardrails and state before context compression
-- Refocus commands (`/sensei:refocus`, `/sensei:rules`, `/sensei:tools`) re-anchor manually
+- Refocus commands (`/sensei:session refocus`, `/sensei:rules`, `/sensei:tools`) re-anchor manually
 - State file persists across compaction — phase, task, issue survive
 - UserPromptSubmit hook tracks turns and detects corrections automatically
 
@@ -125,7 +125,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[/sensei:session<br/>loads last checkpoint,<br/>open decisions] --> B[/sensei:status<br/>current phase, active issue,<br/>guardrails loaded]
+    A[/sensei:session<br/>loads last checkpoint,<br/>open decisions] --> B[/sensei:session status<br/>current phase, active issue,<br/>guardrails loaded]
     B --> C[Pick next issue<br/>or /sensei:build picks<br/>highest priority]
     C --> D[Locate step<br/>search, get_patterns,<br/>get_callers via MCP]
     D --> E[Propose decomposition<br/>pure functions +<br/>orchestrator]
@@ -143,7 +143,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[AI implementing feature<br/>going off track] --> B{How detected?}
-    B -->|User notices| C[/sensei:refocus<br/>re-reads state, plan,<br/>task, guardrails]
+    B -->|User notices| C[/sensei:session refocus<br/>re-reads state, plan,<br/>task, guardrails]
     B -->|Context compacts| D[PreCompact hook fires<br/>saves guardrails + state<br/>auto-refocus]
     C --> E[AI re-anchors:<br/>current task, constraints,<br/>tool preferences]
     D --> E
@@ -171,7 +171,7 @@ flowchart TD
 flowchart TD
     A[Developer notices<br/>AI creating similar files<br/>differently] --> B[/sensei:patterns<br/>shows detected patterns<br/>+ coverage]
     B --> C[4 adapters follow pattern<br/>2 parsers don't conform]
-    C --> D[/sensei:pattern-extract<br/>on best adapter implementation]
+    C --> D[pattern-extract<br/>(removed — MCP auto-detects patterns)<br/>on best adapter implementation]
     D --> E[AI extracts:<br/>interface, invariants,<br/>registration, file structure]
     E --> F[Added to PATTERNS.md]
     F --> G[/sensei:rules<br/>all new parsers must<br/>follow adapter pattern]
@@ -199,7 +199,7 @@ flowchart TD
     B --> C{Delivery method}
     C -->|Desktop| D[Dashboard shows:<br/>40% rework rate in api routes.<br/>Suggests: extract validation<br/>pattern + add guardrail]
     C -->|In-session| E[AI proactively says:<br/>This is an api route.<br/>Your routes sometimes miss<br/>validation. Include it?]
-    D --> F[User runs<br/>/sensei:pattern-extract<br/>on well-validated route]
+    D --> F[User runs<br/>pattern discovery<br/>(MCP auto-detects patterns)<br/>on well-validated route]
     E --> G[AI includes validation<br/>based on coaching insight]
     F --> H[Pattern established<br/>+ guardrail added]
     G --> H

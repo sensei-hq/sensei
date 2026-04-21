@@ -59,7 +59,7 @@ sensei-plugin/
     detecting-doc-drift.md             ← doc drift detection
   commands/
     reverse-engineer.md                ← /sensei:reverse-engineer
-    sensei-status.md                   ← /sensei:status (shows index age, session info)
+    sensei-status.md                   ← /sensei:session status (shows index age, session info)
   hooks/
     session-start.sh                   ← injects get_session_context reminder
   agents/
@@ -130,7 +130,7 @@ Two commands make sense as plugin slash commands:
 
 Given a file or URL, reverse engineer it into a structured spec. Already documented in `docs/reverse-engineer.md`. Move to `commands/reverse-engineer.md` with `$ARGUMENTS` for the target.
 
-### `/sensei:status`
+### `/sensei:session status`
 
 Quick health check:
 - Is the MCP server running? (checks if `get_session_context` tool is available)
@@ -182,4 +182,4 @@ Users who ran `sensei init` before the plugin existed have hooks + skills instal
 | Update skills | Re-run `sensei init --agent` or copy files | `claude plugin update sensei` |
 | Zero-errors skill | Manually ensure it's in `.claude/skills/` | Ships in plugin |
 | SessionStart reminder | Per-project `.claude/settings.local.json` | Plugin hook (global, repo-aware) |
-| Slash commands | Not available | `/sensei:reverse-engineer`, `/sensei:status` |
+| Slash commands | Not available | `/sensei:reverse-engineer`, `/sensei:session status` |
