@@ -97,6 +97,7 @@ fn start_daemon(port: u16) {
         }
     }
 
+    std::fs::create_dir_all(sensei_dir()).expect("senseid: cannot create ~/.sensei/");
     let log_path = sensei_dir().join("senseid.log");
     let log_file = std::fs::OpenOptions::new()
         .create(true)
