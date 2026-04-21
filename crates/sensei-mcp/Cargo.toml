@@ -1,6 +1,6 @@
 [package]
 name = "sensei-mcp"
-version = "0.2.9"
+version = "0.2.10"
 edition = "2024"
 description = "Sensei MCP server — wraps senseid daemon for Claude Code integration"
 
