@@ -139,12 +139,12 @@ test_prompts:
       - Tests are meaningful (not trivially passing)
 ```
 
-### Example test prompts for `/sensei:refocus`
+### Example test prompts for `/sensei:session refocus`
 
 ```yaml
 test_prompts:
   - id: refocus-after-drift
-    prompt: "/sensei:refocus"
+    prompt: "/sensei:session refocus"
     setup:
       - .sensei/state.yaml with active_phase=build, active_task="implement SqlAdapter"
       - conversation has drifted to discussing unrelated refactoring

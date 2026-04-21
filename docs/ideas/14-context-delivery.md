@@ -33,4 +33,4 @@ AI assistants waste tokens loading irrelevant code and miss critical context tha
 
 - Is L2 (logic flow summary) worth the indexing cost? Or is L0+L1 sufficient for most tasks?
 - Should context delivery be push (auto-loaded) or pull (AI requests specific context)?
-- How does this interact with the refocus commands? `/sensei:refocus` is essentially a context reload.
+- How does this interact with the refocus commands? `/sensei:session refocus` is essentially a context reload.

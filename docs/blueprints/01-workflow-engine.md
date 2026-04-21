@@ -20,7 +20,7 @@ The workflow engine is not a runtime — it's a set of **markdown commands, temp
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  User                                                               │
-│  Types: /sensei:brainstorm, /sensei:build, /sensei:refocus, etc.   │
+│  Types: /sensei:brainstorm, /sensei:build, /sensei:session refocus, etc.   │
 └──────────────────┬──────────────────────────────────────────────────┘
                    │
                    ▼
@@ -188,7 +188,7 @@ cat <<EOF
 EOF
 ```
 
-**Key:** This is lightweight — just guardrails + tool reminder. Full refocus (phase doc, plan, task) is the manual `/sensei:refocus` command.
+**Key:** This is lightweight — just guardrails + tool reminder. Full refocus (phase doc, plan, task) is the manual `/sensei:session refocus` command.
 
 #### pre-tool / post-tool (wire existing)
 
@@ -324,16 +324,16 @@ rules_hash: "a3f2..."         # quick check if guardrails changed since last loa
 3. `/sensei:checkpoint` updates `last_checkpoint`
 4. Session-start hook reads this to orient the AI
 5. Pre-compact hook reads this to preserve state across compaction
-6. `/sensei:refocus` reads this to re-anchor
+6. `/sensei:session refocus` reads this to re-anchor
 
 **Testability:** After any command, you can `cat .sensei/state.yaml` and verify the state is correct. Hooks can be tested by running the script and checking JSON output against state.yaml contents.
 
-### 8. `/sensei:status` command
+### 8. `/sensei:session status` command
 
 The "where am I" query. Reads state file + project structure and returns full orientation:
 
 ```
-/sensei:status
+/sensei:session status
 
 Phase:      build
 Plan:       docs/plans/workflow-engine.md
@@ -353,7 +353,7 @@ Docs:
 Tools: sensei-mcp connected (14 tools)
 ```
 
-This is also callable by the AI internally when it feels lost — not just a user-facing command. The pre-compact hook can remind the AI: "call `/sensei:status` if you need orientation after compaction."
+This is also callable by the AI internally when it feels lost — not just a user-facing command. The pre-compact hook can remind the AI: "call `/sensei:session status` if you need orientation after compaction."
 
 ### 9. Backlog management — GitHub issues as source of truth
 
@@ -415,8 +415,8 @@ labels: type:feature
 |---------|-------------------|
 | `/sensei:plan` | Reads approved blueprint → creates GitHub issues for each feature (or links to existing ones) |
 | `/sensei:build` | Reads open issues → picks highest priority → sets `active_issue` in state.yaml → works on it |
-| `/sensei:refocus` | Shows current issue, remaining issues in milestone |
-| `/sensei:status` | Shows active issue number and title |
+| `/sensei:session refocus` | Shows current issue, remaining issues in milestone |
+| `/sensei:session status` | Shows active issue number and title |
 | `/sensei:commit` | Includes `Closes #42` or `Refs #42` in commit message |
 | `/sensei:validate` | Verifies acceptance criteria from issue are met before closing |
 
@@ -491,7 +491,7 @@ The entire roadmap (all 3 waves, 22 components) should be pushed as GitHub issue
 │  State file (.sensei/state.yaml) — local fast-read for hooks        │
 │                                                                     │
 │  Written by: commands (via MCP or directly)                         │
-│  Read by: hooks (bash — no MCP access), /sensei:status              │
+│  Read by: hooks (bash — no MCP access), /sensei:session status      │
 │                                                                     │
 │  This is a CACHE of daemon state, not the source of truth.          │
 │  If state.yaml is missing, commands recreate it from daemon.        │
@@ -519,7 +519,7 @@ The daemon's event log captures everything needed for analysis. Events are appen
 | `turn` | UserPromptSubmit hook | turn_number, phase, active_task | Turn count per task |
 | `locate` | `/sensei:build` (locate step) | task, mcp_tools_used, symbols_found, files_identified | Task accuracy, locate efficiency |
 | `revision_requested` | User correction or issue re-open | issue, reason, files_affected | FTR accuracy (not just AI self-report) |
-| `context_loaded` | Phase commands, `/sensei:refocus` | files_loaded, token_count, resolution_level | Context efficiency |
+| `context_loaded` | Phase commands, `/sensei:session refocus` | files_loaded, token_count, resolution_level | Context efficiency |
 | `files_modified` | `/sensei:commit` | files[], issue, lines_added, lines_removed | Task scope, change tracking |
 
 ### How capture happens
@@ -723,7 +723,7 @@ The desktop app reads computed metrics from the daemon HTTP API. It does NOT pro
 | Tool | Purpose | Called by |
 |------|---------|----------|
 | `log_event(type, data)` | Record a workflow event | Commands (AI instructions say "call this tool") |
-| `get_workflow_state()` | Return current phase, task, issue, guardrails status | `/sensei:status`, `/sensei:refocus`, AI when lost |
+| `get_workflow_state()` | Return current phase, task, issue, guardrails status | `/sensei:session status`, `/sensei:session refocus`, AI when lost |
 | `get_metrics(range?)` | Return computed FTR, turn count, rework rate | `/sensei:analyze` when reviewing interaction quality |
 | `update_phase(phase, task?, issue?)` | Transition phase, update state.yaml + daemon | Phase commands |
 
@@ -751,7 +751,7 @@ How each component type can be tested:
 | **Hooks** (bash scripts) | Run script, check JSON output | Output contains expected context, state.yaml values, guardrails |
 | **State file** | `cat .sensei/state.yaml` after command | Phase, task, issue, checkpoint updated correctly |
 | **Commands** (markdown) | E2E conversation test OR manual walkthrough | Correct artifact created in correct folder with correct frontmatter |
-| **Guardrails** | `/sensei:status` shows loaded count | File exists, rules parsed, hash matches |
+| **Guardrails** | `/sensei:session status` shows loaded count | File exists, rules parsed, hash matches |
 | **GitHub issues** | `gh issue list --label "wave:1"` | Issues exist, labels correct, milestone set |
 | **Pre-compact hook** | Trigger compaction, check if AI retains guardrails | AI can still reference guardrails and current task after compaction |
 | **Content routing** | Check file location after brainstorm | Design-depth content in blueprints/, idea-depth in ideas/ |
@@ -759,9 +759,9 @@ How each component type can be tested:
 **E2E test approach (using Playwright MCP or scripted sessions):**
 1. Start a session → verify session-start hook injected context
 2. Run `/sensei:idea "test concept"` → verify file created in `docs/ideas/` with correct template
-3. Run `/sensei:status` → verify state shows phase: ideate
+3. Run `/sensei:session status` → verify state shows phase: ideate
 4. Trigger compaction → verify pre-compact hook fires, AI retains context
-5. Run `/sensei:refocus` → verify AI re-anchors to current task
+5. Run `/sensei:session refocus` → verify AI re-anchors to current task
 6. Run `/sensei:build` on an issue → verify state.yaml updates, tests written first, issue closed on completion
 
 ---
@@ -780,8 +780,8 @@ Based on analysis priority actions and dependency chain:
 | 4 | Daemon: event log + workflow state endpoints | Rust (senseid) | Nothing |
 | 5 | MCP: `log_event`, `get_workflow_state`, `update_phase` tools | Rust (sensei-mcp) | Daemon endpoints |
 | 6 | `/sensei:rules` command | Command | Guardrails template |
-| 7 | `/sensei:refocus` command | Command | State file, MCP tools |
-| 8 | `/sensei:status` command | Command | State file, MCP tools |
+| 7 | `/sensei:session refocus` command | Command | State file, MCP tools |
+| 8 | `/sensei:session status` command | Command | State file, MCP tools |
 | 9 | Pre-compact hook | Hook | Guardrails template, state file |
 | 10 | Wire pre-tool/post-tool hooks (add phase context) | Hook config | State file |
 | 11 | Update session-start hook | Hook | Guardrails template, state file |
