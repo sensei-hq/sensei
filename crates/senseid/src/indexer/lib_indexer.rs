@@ -16,9 +16,9 @@ pub fn index_lib_content(
     let source_type = detect_source_type(url, content);
 
     let docs = match source_type.as_str() {
-        "llms-txt" => parse_llms_txt(&content, lib_name),
-        "markdown" => parse_markdown(&content, lib_name, url),
-        _ => parse_markdown(&content, lib_name, url),
+        "llms-txt" => parse_llms_txt(content, lib_name),
+        "markdown" => parse_markdown(content, lib_name, url),
+        _ => parse_markdown(content, lib_name, url),
     };
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -55,8 +55,8 @@ pub fn extract_dep_versions(
     let mut deps = Vec::new();
 
     // package.json
-    if let Ok(content) = std::fs::read_to_string(repo.join("package.json")) {
-        if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+    if let Ok(content) = std::fs::read_to_string(repo.join("package.json"))
+        && let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
             for section in &["dependencies", "devDependencies", "peerDependencies"] {
                 if let Some(obj) = pkg.get(section).and_then(|v| v.as_object()) {
                     for (name, ver) in obj {
@@ -72,11 +72,10 @@ pub fn extract_dep_versions(
                 }
             }
         }
-    }
 
     // Cargo.toml
-    if let Ok(content) = std::fs::read_to_string(repo.join("Cargo.toml")) {
-        if let Ok(cargo) = content.parse::<toml::Value>() {
+    if let Ok(content) = std::fs::read_to_string(repo.join("Cargo.toml"))
+        && let Ok(cargo) = content.parse::<toml::Value>() {
             for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
                 if let Some(obj) = cargo.get(section).and_then(|v| v.as_table()) {
                     for (name, ver) in obj {
@@ -98,12 +97,11 @@ pub fn extract_dep_versions(
                 }
             }
         }
-    }
 
     // pyproject.toml
-    if let Ok(content) = std::fs::read_to_string(repo.join("pyproject.toml")) {
-        if let Ok(pyp) = content.parse::<toml::Value>() {
-            if let Some(deps_arr) = pyp.get("project").and_then(|v| v.get("dependencies")).and_then(|v| v.as_array()) {
+    if let Ok(content) = std::fs::read_to_string(repo.join("pyproject.toml"))
+        && let Ok(pyp) = content.parse::<toml::Value>()
+            && let Some(deps_arr) = pyp.get("project").and_then(|v| v.get("dependencies")).and_then(|v| v.as_array()) {
                 for dep in deps_arr {
                     if let Some(s) = dep.as_str() {
                         let (name, ver) = parse_pep508(s);
@@ -117,8 +115,6 @@ pub fn extract_dep_versions(
                     }
                 }
             }
-        }
-    }
 
     // Store versions in lib_meta
     let now = chrono::Utc::now().to_rfc3339();
@@ -212,7 +208,7 @@ fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
     let mut current_content = String::new();
 
     for line in content.lines() {
-        if line.starts_with("# ") {
+        if let Some(title) = line.strip_prefix("# ") {
             // Flush previous section
             if !current_title.is_empty() && !current_content.trim().is_empty() {
                 let summary = current_content.lines().take(3).collect::<Vec<_>>().join(" ");
@@ -223,9 +219,9 @@ fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
                     component: None,
                 });
             }
-            current_title = line[2..].trim().to_string();
+            current_title = title.trim().to_string();
             current_content.clear();
-        } else if line.starts_with("## ") {
+        } else if let Some(title) = line.strip_prefix("## ") {
             // Sub-section becomes component
             if !current_title.is_empty() && !current_content.trim().is_empty() {
                 let summary = current_content.lines().take(3).collect::<Vec<_>>().join(" ");
@@ -236,7 +232,7 @@ fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
                     component: None,
                 });
             }
-            current_title = line[3..].trim().to_string();
+            current_title = title.trim().to_string();
             current_content.clear();
         } else {
             current_content.push_str(line);
@@ -288,7 +284,7 @@ fn clean_version(v: &str) -> String {
 
 fn parse_pep508(spec: &str) -> (String, String) {
     // "requests>=2.28" → ("requests", "2.28")
-    let parts: Vec<&str> = spec.splitn(2, |c: char| c == '>' || c == '<' || c == '=' || c == '!' || c == '[').collect();
+    let parts: Vec<&str> = spec.splitn(2, ['>', '<', '=', '!', '[']).collect();
     let name = parts[0].trim().to_string();
     let version = if parts.len() > 1 {
         clean_version(parts[1].trim_start_matches('='))

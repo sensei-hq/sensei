@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn marketplace_skill_is_extension() {
         let r = process_subtree_doc(
-            "marketplace/skills/analyze/SKILL.md",
+            "marketplace/plugins/sensei/skills/analyze/SKILL.md",
             "marketplace",
         );
         assert_eq!(r.kind, "extension", "marketplace skill should be extension, not doc");

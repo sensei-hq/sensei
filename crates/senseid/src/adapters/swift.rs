@@ -98,14 +98,13 @@ fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<P
                     imports.push(ParsedImport { target_path: module, names: vec![] });
                 }
             }
-            "property_declaration" => {
-                if class_name.is_none() {
+            "property_declaration"
+                if class_name.is_none() => {
                     let name = find_pattern_name(&child, src);
                     if !name.is_empty() {
                         symbols.push(make_sym(name, SymbolKind::Const, &child, lines, src, has_access_modifier(&child, src, "public")));
                     }
                 }
-            }
             "init_declaration" => {
                 let mut sym = make_sym("init".into(), SymbolKind::Method, &child, lines, src, true);
                 sym.parent = class_name.map(|s| s.to_string());
@@ -135,9 +134,8 @@ fn walk_with_parent(node: &Node, src: &[u8], lines: &[&str], symbols: &mut Vec<P
 fn has_keyword(node: &Node, keyword: &str) -> bool {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
-        if !child.is_named() {
-            if child.kind() == keyword { return true; }
-        }
+        if !child.is_named()
+            && child.kind() == keyword { return true; }
     }
     false
 }
@@ -226,6 +224,7 @@ pub fn parse_to_ir(source: &str, file_path: &str) -> IRParsedFile {
     ir_parsed_file(file_path, "swift", module, classes)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_ir_swift(node: &Node, src: &[u8], lines: &[&str], functions: &mut Vec<IRFunction>, classes: &mut Vec<IRClass>, imports: &mut Vec<IRImport>, _constants: &mut Vec<IRConstant>, class_ctx: Option<&str>) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
@@ -248,12 +247,11 @@ fn walk_ir_swift(node: &Node, src: &[u8], lines: &[&str], functions: &mut Vec<IR
                 // Extract methods from body
                 if let Some(body) = child.child_by_field_name("body") {
                     for j in 0..body.child_count() {
-                        if let Some(m) = body.child(j) {
-                            if m.kind() == "function_declaration" {
+                        if let Some(m) = body.child(j)
+                            && m.kind() == "function_declaration" {
                                 let mname = field_text(&m, "name", src);
                                 class.methods.push(ir_method(mname, &m, true, node_text(&m, src).contains("async"), node_text(&m, src).contains("static"), extract_swift_params(&m, src), extract_swift_return(&m, src), extract_doc_comment(&m, src), Vec::new(), Visibility::Public, &node_text(&m, src)));
                             }
-                        }
                     }
                 }
                 classes.push(class);
@@ -272,15 +270,14 @@ fn extract_swift_params(node: &Node, src: &[u8]) -> Vec<IRParam> {
     let mut params = Vec::new();
     if let Some(pl) = node.child_by_field_name("parameters") {
         for i in 0..pl.child_count() {
-            if let Some(p) = pl.child(i) {
-                if p.kind() == "parameter" {
+            if let Some(p) = pl.child(i)
+                && p.kind() == "parameter" {
                     let name = field_text(&p, "name", src);
                     let type_ = field_text(&p, "type", src);
                     if !name.is_empty() {
                         params.push(IRParam { name, type_: if type_.is_empty() { None } else { Some(type_) }, ..Default::default() });
                     }
                 }
-            }
         }
     }
     params

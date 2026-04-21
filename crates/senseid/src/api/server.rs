@@ -13,11 +13,10 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
     let task_queue = Arc::new(TaskQueue::new());
 
     // Read max concurrent repos from config
-    if let Ok(Some(max_str)) = store.get_config("max_concurrent_repos") {
-        if let Ok(max) = max_str.parse::<usize>() {
+    if let Ok(Some(max_str)) = store.get_config("max_concurrent_repos")
+        && let Ok(max) = max_str.parse::<usize>() {
             task_queue.set_max_concurrent_repos(max);
         }
-    }
 
     let graph_path = graph.db_path().map(|p| p.parent().unwrap_or(p).to_path_buf());
 

@@ -164,7 +164,7 @@ async fn create_project(
     let s = state.store.lock().await;
     let project = Project {
         repo_id: body.repo_id,
-        name: body.name.unwrap_or_else(|| body.path.split('/').last().unwrap_or("unknown").to_string()),
+        name: body.name.unwrap_or_else(|| body.path.split('/').next_back().unwrap_or("unknown").to_string()),
         path: body.path,
         remote_url: None,
         indexed_at: None,
@@ -1470,7 +1470,7 @@ async fn install_all(
 }
 
 async fn install_hooks() -> Json<serde_json::Value> {
-    match tokio::task::spawn_blocking(|| crate::installer::install_hooks_only()).await {
+    match tokio::task::spawn_blocking(crate::installer::install_hooks_only).await {
         Ok(Ok(n)) => serde_json::json!({"ok": true, "count": n}).into(),
         Ok(Err(e)) => serde_json::json!({"ok": false, "error": e}).into(),
         Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}).into(),
