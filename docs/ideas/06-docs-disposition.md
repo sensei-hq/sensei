@@ -13,7 +13,7 @@ The current `docs/` folder has accumulated artifacts from multiple architectural
 |-----------------|--------|-------|
 | `docs/superpowers/plans/` | Archive to `docs/_archive/superpowers/plans/` | 20 date-prefixed plan files from prior plugin-building phase |
 | `docs/superpowers/specs/` | Archive to `docs/_archive/superpowers/specs/` | 23 date-prefixed spec files from prior plugin-building phase |
-| `docs/superpowers/backlog.md` | Archive | Superseded by `/sensei:refocus` |
+| `docs/superpowers/backlog.md` | Archive | Superseded by `/sensei:session refocus` |
 | `docs/design/` | Reorganize | Remove stale Supabase references. Keep architectural decisions that are still valid. Add note about evolution. |
 | `docs/features/` | Reorganize | Good Gherkin-based template. Update to reflect current capabilities. |
 | `docs/roadmap/` | Reorganize | Some docs still valid (Rust daemon plan), others stale (Supabase references). |

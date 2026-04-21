@@ -54,7 +54,7 @@ Skills that provide precision assistance — indexing, patterns, context, librar
 |-------|------|-------------|--------|
 | `codebase-indexing` | 08 Codebase Intelligence | **Keep** (revise) | Still needed for initial repo setup. Revise to work with the Rust daemon indexer instead of the old JS pipeline. Update to use `senseid` commands. |
 | `pattern-based-development` | 15 Pattern Store | **Absorb** into `/sensei:patterns` | Pattern lookup before coding becomes the refocus command's job. |
-| `identifying-patterns` | 15 Pattern Store | **Absorb** into `/sensei:pattern-extract` | Pattern discovery (find 2+ implementations → extract recipe) stays as the extract command. |
+| `identifying-patterns` | 15 Pattern Store | **Absorb** into MCP auto-detection | Pattern discovery (find 2+ implementations → extract recipe) — `/sensei:pattern-extract` removed, MCP auto-detects patterns. |
 | `identify-unknown-libs` | 09 Library Intelligence | **Keep** (revise) | Still needed — detects missing library docs and prompts for source. Revise to work with Rust daemon's `add_library` endpoint. |
 | `refactor` | 08 Codebase Intelligence | **Keep** (revise) | Refactoring workflow is orthogonal to phases. Keep as utility. Update MCP tool calls to match current daemon API. |
 | `test-gen` | 08 Codebase Intelligence | **Keep** (revise) | Test generation is orthogonal to phases. Integrates with `/sensei:build` (TDD cycle). Update MCP calls. |
@@ -75,7 +75,7 @@ Skills for reverse-engineering and multi-coordinator support.
 
 | Skill | Idea | Disposition | Action |
 |-------|------|-------------|--------|
-| `reverse-engineering` | 12 Multi-Coordinator | **Absorb** into `/sensei:analyze` | The three modes (product, feature, audit) become modes of analyze. Product and feature analysis feed into blueprint. Audit feeds into review. |
+| `reverse-engineering` | 12 Multi-Coordinator | **Absorb** into `/sensei:spec` | The three modes (product, feature, audit) become subcommands of spec (`/sensei:spec product`, `/sensei:spec feature`, `/sensei:spec audit`). Product and feature analysis feed into blueprint. Audit feeds into review. |
 | `building-app-mockups` | N/A (UI tooling) | **Absorb** into `/sensei:mockup` | Mockup workflow (framework-native, two alternatives, promote winner) moves into the mockup utility command. |
 
 ---
@@ -88,16 +88,16 @@ Skills for reverse-engineering and multi-coordinator support.
 | `/sensei:checkpoint` | `/sensei:checkpoint` | **Keep** — mid-session snapshots |
 | `/sensei:commit` | `/sensei:commit` | **Keep** — zero-errors commit gate |
 | `/sensei:help` | `/sensei:help` | **Keep** — update to show new command surface |
-| `/sensei:enable` | `/sensei:enable` | **Keep** — may evolve into config model |
-| `/sensei:disable` | `/sensei:disable` | **Keep** — may evolve into config model |
-| `/sensei:get-api-docs` | `/sensei:get-api-docs` | **Keep** — library doc fetching |
+| `/sensei:enable` | removed | **Remove** — may evolve into config model |
+| `/sensei:disable` | removed | **Remove** — may evolve into config model |
+| `/sensei:get-api-docs` | `/sensei:docs` | **Rename** — library doc fetching |
 | `/sensei:mockup` | `/sensei:mockup` | **Keep** — absorbs `building-app-mockups` and `working-smarter` mockup rules |
-| `/sensei:pattern-extract` | `/sensei:pattern-extract` | **Keep** — absorbs `identifying-patterns` |
+| `/sensei:pattern-extract` | removed — MCP auto-detects patterns | **Remove** — absorbed into MCP |
 | `/sensei:pattern-use` | `/sensei:patterns` | **Rename** — becomes refocus command |
-| `/sensei:product` | `/sensei:analyze` | **Absorb** — product mode of analyze |
-| `/sensei:feature` | `/sensei:analyze` | **Absorb** — feature mode of analyze |
-| `/sensei:audit` | `/sensei:review` | **Absorb** — audit mode of review |
-| `/sensei:backlog` | `/sensei:refocus` | **Absorb** — part of re-anchoring |
+| `/sensei:product` | `/sensei:spec product` | **Rename** — product mode of spec |
+| `/sensei:feature` | `/sensei:spec feature` | **Rename** — feature mode of spec |
+| `/sensei:audit` | `/sensei:spec audit` | **Rename** — audit mode of spec |
+| `/sensei:backlog` | `/sensei:session backlog` | **Rename** — part of session subcommands |
 
 ---
 
@@ -139,7 +139,7 @@ Skills for reverse-engineering and multi-coordinator support.
 | `/sensei:review` | Command | 1 Workflow | 01 | High — absorbs audit |
 | `/sensei:rules` | Command | 1 Workflow | 01 | High — context decay mitigation |
 | `/sensei:patterns` | Command | 1 Workflow | 01 | Medium — replaces pattern-use |
-| `/sensei:refocus` | Command | 1 Workflow | 01 | High — context decay mitigation |
+| `/sensei:session refocus` | Command | 1 Workflow | 01 | High — context decay mitigation |
 | `/sensei:tools` | Command | 1 Workflow | 01 | Medium — tool amnesia mitigation |
 | PreCompact hook | Hook | 1 Workflow | 01 | High — auto-refocus on compaction |
 | Rules file template | Template | 1 Workflow | 01 | High — living document for project rules |
@@ -211,7 +211,7 @@ These skills call MCP tools from the old JS server. References are **stale** and
 
 ### Priority 3: Build incrementally (do during build phase)
 
-9. **Implement commands one at a time** — Start with `/sensei:refocus` and `/sensei:rules` (highest immediate value — solve context decay). Then `/sensei:build` (absorbs most skills). Then remaining phase commands.
+9. **Implement commands one at a time** — Start with `/sensei:session refocus` and `/sensei:rules` (highest immediate value — solve context decay). Then `/sensei:build` (absorbs most skills). Then remaining phase commands.
 
 10. **Retire absorbed skills** — Only after their replacement commands are tested and working.
 
