@@ -11,7 +11,7 @@ struct AcpConfigureOk {
     warnings: Vec<String>,
 }
 
-/// Each AI Coding Platform implements detect, configure, and unconfigure.
+/// Each AI Coding Platform implements detect, configure, and remove.
 trait Acp {
     fn id(&self) -> &str;
     fn name(&self) -> &str;
@@ -19,7 +19,7 @@ trait Acp {
     fn config_path(&self) -> PathBuf;
     fn detect(&self) -> bool;
     fn configure(&self, mcp_cmd: &str, marketplace_path: Option<&str>) -> Result<AcpConfigureOk, String>;
-    fn unconfigure(&self) -> bool;
+    fn remove(&self) -> bool;
 
     fn is_configured(&self) -> bool {
         check_mcp_configured(&self.config_path(), self.mcp_key())
@@ -153,7 +153,7 @@ impl Acp for ClaudeCodeAcp {
         Ok(AcpConfigureOk { plugin: false, warnings })
     }
 
-    fn unconfigure(&self) -> bool {
+    fn remove(&self) -> bool {
         let h = home();
         let mut removed = false;
 
@@ -257,7 +257,7 @@ impl Acp for McpFileAcp {
         Ok(AcpConfigureOk { plugin: false, warnings: vec![] })
     }
 
-    fn unconfigure(&self) -> bool {
+    fn remove(&self) -> bool {
         remove_sensei_from_json(&self.config_path(), self.mcp_key)
     }
 }
@@ -415,11 +415,18 @@ pub fn configure(acp_ids: &[String], marketplace_path: Option<&str>) -> Configur
     result
 }
 
-pub fn unconfigure() -> Vec<String> {
-    all_acps()
+/// Remove specific ACP configs by ID. Empty slice = remove all.
+pub fn remove_selected(ids: &[String]) -> Vec<String> {
+    let acps = all_acps();
+    let targets: Vec<&Box<dyn Acp>> = if ids.is_empty() {
+        acps.iter().collect()
+    } else {
+        acps.iter().filter(|a| ids.contains(&a.id().to_string())).collect()
+    };
+    targets
         .iter()
         .filter_map(|acp| {
-            if acp.unconfigure() { Some(acp.id().to_string()) } else { None }
+            if acp.remove() { Some(acp.id().to_string()) } else { None }
         })
         .collect()
 }
