@@ -99,10 +99,10 @@ fn install_hooks() -> Result<u32, String> {
     fs::create_dir_all(&hooks_dir).map_err(|e| e.to_string())?;
 
     let hooks: &[(&str, &str)] = &[
-        ("session-start", include_str!("../../../marketplace/hooks/session-start")),
-        ("pre-tool", include_str!("../../../marketplace/hooks/pre-tool")),
-        ("post-tool", include_str!("../../../marketplace/hooks/post-tool")),
-        ("run-hook.cmd", include_str!("../../../marketplace/hooks/run-hook.cmd")),
+        ("session-start", include_str!("../../../marketplace/plugins/sensei/hooks/session-start")),
+        ("pre-tool", include_str!("../../../marketplace/plugins/sensei/hooks/pre-tool")),
+        ("post-tool", include_str!("../../../marketplace/plugins/sensei/hooks/post-tool")),
+        ("run-hook.cmd", include_str!("../../../marketplace/plugins/sensei/hooks/run-hook.cmd")),
     ];
 
     let mut count = 0u32;
