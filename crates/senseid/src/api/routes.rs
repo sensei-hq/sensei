@@ -1428,12 +1428,14 @@ async fn acp_detect() -> Json<Vec<crate::acp::AcpStatus>> {
 struct AcpConfigureBody {
     #[serde(default)]
     acps: Vec<String>,
+    #[serde(default)]
+    marketplace_path: Option<String>,
 }
 
 async fn acp_configure(
     Json(body): Json<AcpConfigureBody>,
 ) -> Json<crate::acp::ConfigureResult> {
-    Json(crate::acp::configure(&body.acps))
+    Json(crate::acp::configure(&body.acps, body.marketplace_path.as_deref()))
 }
 
 async fn acp_unconfigure() -> Json<serde_json::Value> {
