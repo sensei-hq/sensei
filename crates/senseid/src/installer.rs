@@ -83,7 +83,7 @@ pub fn install(acps: &[String], scope: &str) -> InstallResult {
     }
 
     // 3. Configure ACPs
-    let acp_result = crate::acp::configure(acps, None);
+    let acp_result = crate::acp::configure(acps);
     result.acps_configured = acp_result.configured;
     result.errors.extend(acp_result.errors);
 

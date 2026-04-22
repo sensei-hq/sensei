@@ -71,7 +71,7 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
 
     if roots.is_empty() { return; }
 
-    let projects: std::collections::HashMap<String, String> = store.list_projects()
+    let projects: std::collections::HashMap<String, String> = store.list_repos()
         .unwrap_or_default()
         .into_iter()
         .map(|p| (p.repo_id, p.path))

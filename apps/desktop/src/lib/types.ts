@@ -137,31 +137,38 @@ export interface DirtyStatus {
   total: number;
 }
 
-// ─── Solution Model ──────────────────────────────────────────────────────────
+// ─── Project Model (group of 1+ repos) ──────────────────────────────────────
 
 export type RepoRole =
   | 'backend' | 'frontend' | 'mobile' | 'middleware'
   | 'infra' | 'docs' | 'library' | 'shared' | 'unknown';
 
-export type SolutionCategory = 'active' | 'side' | 'idea';
+export type ProjectCategory = 'active' | 'side' | 'idea';
 
-export interface SolutionRepo {
+export interface ProjectRepo {
   repoId: string;
   path: string;
   role: RepoRole;
   label?: string;
 }
 
-export interface Solution {
+export interface Project {
   id: string;
   name: string;
   description?: string;
   client?: string;
-  category: SolutionCategory;
-  repos: SolutionRepo[];
+  category: ProjectCategory;
+  repos: ProjectRepo[];
   createdAt: string;
   updatedAt: string;
 }
+
+/** @deprecated Use Project instead */
+export type Solution = Project;
+/** @deprecated Use ProjectRepo instead */
+export type SolutionRepo = ProjectRepo;
+/** @deprecated Use ProjectCategory instead */
+export type SolutionCategory = ProjectCategory;
 
 // ─── Server API response shapes ──────────────────────────────────────────────
 
@@ -235,8 +242,8 @@ export interface GraphData {
   }>;
 }
 
-export interface SolutionGraphResponse {
-  solutionId: string;
+export interface ProjectGraphResponse {
+  projectId: string;
   name: string;
   nodes: number;
   edges: number;
@@ -244,8 +251,8 @@ export interface SolutionGraphResponse {
   graph: { nodes: GraphNode[]; edges: GraphEdge[] };
 }
 
-export interface SolutionAnalysis {
-  solution_id: string;
+export interface ProjectAnalysis {
+  project_id: string;
   links: Array<{
     from_repo: string; to_repo: string; link_type: string;
     details: string[]; strength: number;
@@ -253,6 +260,11 @@ export interface SolutionAnalysis {
   inferred_roles: InferredRole[];
   shared_libs: Array<{ name: string; repos: string[] }>;
 }
+
+/** @deprecated Use ProjectGraphResponse instead */
+export type SolutionGraphResponse = ProjectGraphResponse;
+/** @deprecated Use ProjectAnalysis instead */
+export type SolutionAnalysis = ProjectAnalysis;
 
 export interface InferredRole {
   repo_id: string;

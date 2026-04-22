@@ -15,9 +15,9 @@ Architecture, implementation details, and recorded decisions for the sensei proj
 | | [├── intelligence/](./01-daemon/intelligence/) | Compression, context delivery, pattern store, metadata model, response cache |
 | | [├── traceability/](./01-daemon/traceability/) | Drift detection, doc tools, traceability matrix |
 | | [└── analytics/](./01-daemon/analytics/) | Benchmarking, telemetry resilience, project memory |
+| 02 | [Desktop](./02-desktop/) | Observatory app — onboarding, workspace, metrics, sessions, codebase, coaching, configuration |
 | 02 | [MCP](./02-mcp/) | Tool contracts and workflow tools — the AI's interface to the daemon |
 | 03 | [Marketplace](./03-marketplace/) | Commands, skills, hooks, plugin packaging — the Claude Code integration layer |
-| 04 | [Desktop](./04-desktop/) | UX design, dashboard views, SSE event patterns |
 | 05 | [Platform](./05-platform/) | Architecture overview, multi-coordinator support |
 | 06 | [CLI](./06-cli/) | Command-line interface |
 | 07 | [Configuration](./07-configuration/) | Templates, config schemas |
