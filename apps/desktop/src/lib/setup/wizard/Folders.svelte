@@ -1,5 +1,8 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { WizardState, WizUpdate, ScanFolder } from '../types.js';
+  import { senseiApi } from '$lib/api.js';
+  import { getPort } from '$lib/appstate.svelte.js';
 
   let { wizState, update }: {
     wizState: WizardState;
@@ -8,10 +11,32 @@
 
   let inputValue = $state('');
 
+  // Track which folders were loaded from daemon (already scanned)
+  let scannedPaths = $state<Set<string>>(new Set());
+
+  // Load existing scan roots from daemon
+  onMount(async () => {
+    try {
+      const api = senseiApi(getPort());
+      const roots = await api.getScanRoots();
+      if (roots.length > 0) {
+        const existing: ScanFolder[] = roots.map((r, i) => ({
+          id: `existing-${i}`,
+          path: r.path,
+          note: r.scanned ? `${r.repos_found} repos found` : '',
+        }));
+        // Merge with any folders already in state (don't duplicate)
+        const existingPaths = new Set(existing.map(f => f.path));
+        const newFolders = wizState.folders.filter(f => !existingPaths.has(f.path));
+        update({ folders: [...existing, ...newFolders] });
+        scannedPaths = new Set(roots.filter(r => r.scanned).map(r => r.path));
+      }
+    } catch { /* daemon not available */ }
+  });
+
   function addFolder() {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-    // Avoid duplicates
     if (wizState.folders.some(f => f.path === trimmed)) return;
     const newFolder: ScanFolder = {
       id: `f${Date.now()}`,
@@ -58,7 +83,11 @@
             <div class="folder-note">{folder.note}</div>
           {/if}
         </div>
-        <span class="chip-recursive">recursive</span>
+        {#if scannedPaths.has(folder.path)}
+          <span class="chip-watching">watching</span>
+        {:else}
+          <span class="chip-recursive">recursive</span>
+        {/if}
         <button class="btn-remove" onclick={() => removeFolder(folder.id)} title="Remove folder">×</button>
       </div>
     {/each}
@@ -207,7 +236,18 @@
   .chip-recursive {
     font-size: 11px;
     color: var(--sumi-3);
-    border: var(--hairline);
+    border: var(--border-card);
+    border-radius: var(--radius);
+    padding: 2px 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .chip-watching {
+    font-size: 11px;
+    color: var(--jade);
+    border: 1px solid var(--jade-soft);
+    background: var(--jade-soft);
     border-radius: var(--radius);
     padding: 2px 8px;
     white-space: nowrap;
