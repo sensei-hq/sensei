@@ -1,15 +1,32 @@
 <script lang="ts">
-  import { MOCK_ACPS } from '../mock.js';
+  import { onMount } from 'svelte';
   import type { WizardState, WizUpdate, AcpEntry } from '../types.js';
+  import { senseiApi } from '$lib/api.js';
+  import { getPort } from '$lib/appstate.svelte.js';
 
-  let { wizState, update, acpList }: {
+  let { wizState, update }: {
     wizState: WizardState;
     update: WizUpdate;
-    acpList?: AcpEntry[];
   } = $props();
 
-  // Use real ACP data if provided, else fall back to mock
-  const acps = $derived(acpList ?? MOCK_ACPS);
+  let acps = $state<AcpEntry[]>(wizState.acpList);
+
+  onMount(async () => {
+    try {
+      const api = senseiApi(getPort());
+      const detected = await api.detectAcps();
+      if (detected.length > 0) {
+        acps = detected.map(a => ({
+          id: a.id, name: a.name, version: null,
+          found: a.installed, path: a.config_path ?? null,
+        }));
+        update({
+          acps: Object.fromEntries(detected.map(a => [a.id, a.installed])),
+          acpList: acps,
+        });
+      }
+    } catch { /* keep whatever was passed */ }
+  });
 
   function toggle(id: string) {
     update({ acps: { ...wizState.acps, [id]: !wizState.acps[id] } });
