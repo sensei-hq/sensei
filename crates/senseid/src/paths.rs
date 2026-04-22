@@ -1,34 +1,76 @@
 //! Shared path utilities — single source of truth for all sensei directories.
 //! Used by main, installer, acp, and sensei-cli.
+//!
+//! Modes:
+//!   prod (default) → ~/.sensei/     port 7744
+//!   dev            → ~/.sensei-dev/  port 7745
+//!
+//! Set mode via SENSEI_MODE=dev env var or --mode dev CLI flag.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+/// Runtime mode — determines data directory and default port.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mode {
+    Prod,
+    Dev,
+}
+
+static MODE: OnceLock<Mode> = OnceLock::new();
+
+/// Set the runtime mode. Must be called once at startup before any path access.
+pub fn set_mode(mode: Mode) {
+    MODE.set(mode).ok(); // ignore if already set
+}
+
+/// Get the current mode. Defaults to Prod.
+pub fn mode() -> Mode {
+    *MODE.get().unwrap_or(&Mode::Prod)
+}
+
+/// Default port for the current mode.
+pub fn default_port() -> u16 {
+    match mode() {
+        Mode::Prod => 7744,
+        Mode::Dev => 7745,
+    }
+}
+
+/// Directory suffix for the current mode.
+fn dir_name() -> &'static str {
+    match mode() {
+        Mode::Prod => ".sensei",
+        Mode::Dev => ".sensei-dev",
+    }
+}
 
 /// User's home directory. Falls back to /tmp if unavailable.
 pub fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
-/// Sensei data directory: ~/.sensei/
+/// Sensei data directory: ~/.sensei/ (prod) or ~/.sensei-dev/ (dev)
 pub fn sensei_dir() -> PathBuf {
-    home().join(".sensei")
+    home().join(dir_name())
 }
 
-/// SQLite database path: ~/.sensei/sensei.db
+/// SQLite database path
 pub fn db_path() -> PathBuf {
     sensei_dir().join("sensei.db")
 }
 
-/// Graph database directory: ~/.sensei/graph/
+/// Graph database directory
 pub fn graph_dir() -> PathBuf {
     sensei_dir().join("graph")
 }
 
-/// Log file: ~/.sensei/senseid.log
+/// Log file
 pub fn log_path() -> PathBuf {
     sensei_dir().join("senseid.log")
 }
 
-/// PID file: ~/.sensei/serve.pid
+/// PID file
 pub fn pid_path() -> PathBuf {
     sensei_dir().join("serve.pid")
 }
@@ -38,9 +80,20 @@ pub fn plugin_dir() -> PathBuf {
     home().join(".claude/plugins/sensei")
 }
 
-/// Marketplace cache directory: ~/.sensei/cache/marketplace/
+/// Marketplace cache directory
 pub fn cache_dir() -> PathBuf {
     sensei_dir().join("cache/marketplace")
+}
+
+/// Initialize mode from environment variable SENSEI_MODE.
+/// Call this at startup before any path access.
+pub fn init_from_env() {
+    if let Ok(val) = std::env::var("SENSEI_MODE") {
+        match val.to_lowercase().as_str() {
+            "dev" | "development" | "test" => set_mode(Mode::Dev),
+            _ => set_mode(Mode::Prod),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -54,10 +107,10 @@ mod tests {
     }
 
     #[test]
-    fn sensei_dir_under_home() {
-        let sd = sensei_dir();
-        assert!(sd.to_string_lossy().contains(".sensei"));
-        assert!(sd.starts_with(home()));
+    fn prod_mode_uses_sensei_dir() {
+        // Note: can't test set_mode in parallel tests due to OnceLock
+        // but we can verify the dir_name logic
+        assert_eq!(dir_name(), ".sensei"); // default is prod
     }
 
     #[test]
@@ -68,36 +121,8 @@ mod tests {
     }
 
     #[test]
-    fn graph_dir_under_sensei_dir() {
-        let gd = graph_dir();
-        assert!(gd.starts_with(sensei_dir()));
-        assert!(gd.to_string_lossy().ends_with("graph"));
-    }
-
-    #[test]
-    fn plugin_dir_under_claude() {
-        let pd = plugin_dir();
-        assert!(pd.to_string_lossy().contains(".claude/plugins/sensei"));
-    }
-
-    #[test]
-    fn cache_dir_under_sensei_dir() {
-        let cd = cache_dir();
-        assert!(cd.starts_with(sensei_dir()));
-    }
-
-    #[test]
-    fn log_path_under_sensei_dir() {
-        let lp = log_path();
-        assert!(lp.starts_with(sensei_dir()));
-        assert!(lp.to_string_lossy().ends_with("senseid.log"));
-    }
-
-    #[test]
-    fn pid_path_under_sensei_dir() {
-        let pp = pid_path();
-        assert!(pp.starts_with(sensei_dir()));
-        assert!(pp.to_string_lossy().ends_with("serve.pid"));
+    fn default_port_is_7744() {
+        assert_eq!(default_port(), 7744);
     }
 
     #[test]

@@ -21,18 +21,25 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Port to listen on
-    #[arg(long, default_value = "7744")]
-    port: u16,
+    /// Port to listen on (default: 7744 prod, 7745 dev)
+    #[arg(long)]
+    port: Option<u16>,
 
+    /// Runtime mode: prod (default) or dev (uses .sensei-dev/ and port 7745)
+    #[arg(long, default_value = "prod")]
+    mode: String,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// Start daemon in background
     Start {
-        #[arg(long, default_value = "7744")]
-        port: u16,
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Runtime mode: prod or dev
+        #[arg(long, default_value = "prod")]
+        mode: String,
     },
     /// Stop the running daemon
     Stop,
@@ -53,15 +60,22 @@ async fn main() {
 
     let cli = Cli::parse();
 
+    // Initialize mode from CLI flag or env var
+    let mode_str = cli.mode.clone();
+    init_mode(&mode_str);
+    let default_port = paths::default_port();
+
     match cli.command {
-        Some(Commands::Start { port }) => {
-            start_daemon(port);
+        Some(Commands::Start { port, mode }) => {
+            init_mode(&mode);
+            let p = port.unwrap_or(paths::default_port());
+            start_daemon(p);
         }
         Some(Commands::Stop) => {
-            stop_daemon(cli.port).await;
+            stop_daemon(cli.port.unwrap_or(default_port)).await;
         }
         Some(Commands::Status) => {
-            check_status(cli.port).await;
+            check_status(cli.port.unwrap_or(default_port)).await;
         }
         Some(Commands::Logs) => {
             tail_logs();
@@ -70,8 +84,17 @@ async fn main() {
             clear_logs();
         }
         None => {
-            run_foreground(cli.port).await;
+            run_foreground(cli.port.unwrap_or(default_port)).await;
         }
+    }
+}
+
+fn init_mode(mode_str: &str) {
+    // Init from env first, then CLI override
+    paths::init_from_env();
+    match mode_str.to_lowercase().as_str() {
+        "dev" | "development" | "test" => paths::set_mode(paths::Mode::Dev),
+        _ => {} // keep default (prod or from env)
     }
 }
 

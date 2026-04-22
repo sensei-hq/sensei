@@ -15,7 +15,7 @@
 <aside class="rail">
   <!-- Logo + ESC -->
   <div class="rail-header">
-    <span class="kanji logo-kanji">先</span>
+    <span class="kanji logo-kanji">先生</span>
     <span class="display logo-text">Sensei</span>
     <span class="spacer"></span>
     <button class="esc-btn" onclick={onExit} title="Exit setup">ESC</button>
