@@ -130,7 +130,7 @@
   }
 
   .chip-active {
-    border-color: var(--sumi);
+    border-color: var(--sumi-4);
     color: var(--sumi);
   }
 
@@ -178,7 +178,7 @@
     width: 20px;
     height: 20px;
     border-radius: 4px;
-    border: 2px solid var(--sumi-4);
+    border: 2px solid var(--paper-edge);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -271,7 +271,7 @@
 
   .doc-faded {
     color: var(--sumi-4);
-    border: 1px solid var(--paper-edge);
+    border: var(--border-card);
   }
 
   /* ── Add button ─────────────────────────────────────────── */
@@ -289,7 +289,7 @@
   }
 
   .add-btn:hover {
-    border-color: var(--sumi-3);
+    border-color: var(--sumi-4);
     color: var(--sumi);
   }
 </style>

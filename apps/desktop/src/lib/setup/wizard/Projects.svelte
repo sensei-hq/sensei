@@ -173,7 +173,7 @@
   .card {
     background: var(--paper-2);
     border-radius: var(--radius-lg);
-    border: 1px solid var(--paper-edge);
+    border: var(--border-card);
     overflow: hidden;
     transition: border-color 0.14s;
   }
@@ -268,7 +268,7 @@
 
   .confirm-check.checked {
     background: var(--sumi);
-    border-color: var(--sumi);
+    border-color: var(--sumi-4);
   }
 
   .check-icon {
