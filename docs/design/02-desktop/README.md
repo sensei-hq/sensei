@@ -163,4 +163,6 @@ Each page is documented in its own file with: purpose, what the user sees, insig
 
 | Doc | Description |
 |-----|-------------|
+| [design-requirements.md](./design-requirements.md) | Extracted requirements from Claude Design session — design tokens, wizard steps, observatory, patterns, daemon gaps |
+| [setup/](./setup/) | Design artifacts — JSX components, data files, screenshots (01-11), design transcript |
 | [archive/](./archive/) | Previous design explorations (observatory-analysis, ux-redesign, views, gap-analysis) |
