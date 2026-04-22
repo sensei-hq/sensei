@@ -123,7 +123,7 @@
   }
 
   .folder-input:focus {
-    border-color: var(--sumi-3);
+    border-color: var(--sumi-4);
   }
 
   .btn-add {
