@@ -34,7 +34,7 @@
   --paper:      oklch(0.975 0.008 85);
   --paper-2:    oklch(0.955 0.010 85);
   --paper-3:    oklch(0.92 0.012 85);
-  --paper-edge: oklch(0.93 0.008 85);
+  --paper-edge: oklch(0.22 0.012 50 / 0.08);
 
   /* ── Sumi (ink) ─────────────────────────────────────────── */
   --sumi:   oklch(0.22 0.012 50);
@@ -51,8 +51,12 @@
   --amber-soft: oklch(0.72 0.12 75 / 0.15);
 
   /* ── Borders ────────────────────────────────────────────── */
-  --hairline: 1px solid var(--paper-edge);
-  --ink-line: 1px solid oklch(0.22 0.012 50 / 0.12);
+  --hairline:     1px solid var(--paper-edge);       /* subtle separator */
+  --border-card:  1px solid var(--paper-edge);       /* card/panel edges */
+  --border-input: 1px solid oklch(0.22 0.012 50 / 0.12);  /* form inputs */
+  --border-focus: 1px solid var(--sumi-3);           /* focused inputs */
+  --border-active: 1px solid var(--sumi);            /* selected/active cards */
+  --ink-line:     1px solid oklch(0.22 0.012 50 / 0.06);  /* very faint divider */
 
   /* ── Radii ──────────────────────────────────────────────── */
   --radius:    6px;
@@ -76,7 +80,7 @@
   --paper:      oklch(0.17 0.010 50);
   --paper-2:    oklch(0.21 0.012 50);
   --paper-3:    oklch(0.25 0.012 50);
-  --paper-edge: oklch(0.24 0.008 50);
+  --paper-edge: oklch(0.94 0.008 85 / 0.08);
 
   --sumi:   oklch(0.94 0.008 85);
   --sumi-2: oklch(0.78 0.008 85);

@@ -98,17 +98,17 @@
     cursor: pointer;
     text-align: left;
     background: var(--paper);
-    border: 1px solid var(--paper-edge);
+    border: var(--border-card);
     transition: border-color 0.14s, opacity 0.14s;
     font-family: var(--font-ui);
   }
 
   .card-found {
-    border-color: var(--sumi);
+    border-color: var(--sumi-4);
   }
 
   .card-found:hover {
-    border-color: var(--sumi-2);
+    border-color: var(--sumi-4);
   }
 
   .card-missing {
@@ -176,7 +176,7 @@
   }
 
   .checkbox-checked {
-    border-color: var(--sumi);
+    border-color: var(--sumi-4);
     background: var(--sumi);
   }
 
