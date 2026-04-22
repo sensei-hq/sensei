@@ -90,57 +90,78 @@
   }
 
   // ── Start scan: animate through MOCK_SCAN_EVENTS ─────────────
+  // Accumulated events — kept outside of wizState to avoid stale closure issues
+  let localEvents = $state<ScanEvent[]>([]);
+
+  // Sync local events to wizard state
+  $effect(() => {
+    if (localEvents.length > 0) {
+      update({ scanEvents: localEvents });
+    }
+  });
+
+  function addEvent(level: ScanEvent['level'], msg: string) {
+    localEvents = [...localEvents, { t: Date.now(), level, msg }];
+  }
+
   async function startScan() {
+    localEvents = [];
     update({ scanStarted: true, scanEvents: [] });
 
-    if (daemonReady && onScan) {
-      // Real scan: call daemon API for each folder
-      const { senseiApi } = await import('$lib/api.js');
-      const { getPort } = await import('$lib/appstate.svelte.js');
-      const api = senseiApi(getPort());
+    if (!daemonReady) return;
 
-      const addEvent = (level: ScanEvent['level'], msg: string) => {
-        const evt: ScanEvent = { t: Date.now(), level, msg };
-        update({ scanEvents: [...wizState.scanEvents, evt] });
-      };
+    const { senseiApi } = await import('$lib/api.js');
+    const { getPort } = await import('$lib/appstate.svelte.js');
+    const port = getPort();
+    const api = senseiApi(port);
 
-      addEvent('info', `scan started · ${wizState.folders.length} roots`);
+    addEvent('info', `scan started · ${wizState.folders.length} roots`);
 
-      // Subscribe to SSE progress before triggering scan
-      const base = `http://127.0.0.1:${getPort()}`;
-      const es = new EventSource(`${base}/api/index/progress`);
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.kind === 'ScanRoot' && data.status === 'completed') {
-            addEvent('success', `scan complete`);
-          } else if (data.kind === 'ProcessRepo' && data.status === 'running') {
-            addEvent('discover', `${data.repo_id} · indexing`);
-          } else if (data.kind === 'ProcessRepo' && data.status === 'completed') {
-            addEvent('process', `${data.repo_id} · indexed`);
-          } else if (data.kind === 'ProcessFile' && data.status === 'completed') {
-            // Don't log every file — too noisy
+    // Subscribe to SSE progress before triggering scan
+    const es = new EventSource(`http://127.0.0.1:${port}/api/index/progress`);
+    let scanRootsCompleted = 0;
+    const totalRoots = wizState.folders.length;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const kind = data.kind ?? '';
+        const status = data.status ?? '';
+        const repoId = data.repo_id ?? '';
+
+        if (kind === 'ScanRoot' && status === 'completed') {
+          scanRootsCompleted++;
+          addEvent('success', `root scan complete (${scanRootsCompleted}/${totalRoots})`);
+
+          // All roots done — load results
+          if (scanRootsCompleted >= totalRoots) {
+            setTimeout(async () => {
+              es.close();
+              if (onScan) await onScan();
+              update({ scanDone: true });
+              addEvent('success', 'all scans complete');
+            }, 1000);
           }
-        } catch { /* ignore parse errors */ }
-      };
+        } else if (kind === 'ProcessRepo' && status === 'running') {
+          addEvent('discover', `${repoId} · found`);
+        } else if (kind === 'ProcessRepo' && status === 'completed') {
+          addEvent('process', `${repoId} · indexed`);
+        } else if (kind === 'RepoQueued') {
+          addEvent('queue', `${repoId} · ${data.files_total ?? 0} files queued`);
+        }
+      } catch { /* ignore parse errors */ }
+    };
 
-      // Trigger scan for each folder
-      for (const folder of wizState.folders) {
-        addEvent('info', `scanning ${folder.path}`);
-        await api.scanFolder(folder.path);
-      }
+    es.onerror = () => {
+      // SSE connection lost — close and finish
+      es.close();
+      addEvent('info', 'connection to daemon lost');
+    };
 
-      // Wait for scan to settle, then load results
-      setTimeout(async () => {
-        es.close();
-        if (onScan) await onScan();
-        update({ scanDone: true });
-        addEvent('success', 'all scans complete');
-      }, 3000);
-    } else {
-      // Mock scan: animate through mock events
-      eventIndex = 0;
-      timerActive = true;
+    // Trigger scan for each folder
+    for (const folder of wizState.folders) {
+      addEvent('info', `scanning ${folder.path}`);
+      await api.scanFolder(folder.path);
     }
   }
 
