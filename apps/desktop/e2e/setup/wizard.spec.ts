@@ -83,19 +83,24 @@ test.describe('Setup Wizard', () => {
     await expect(page.getByText('01 / 9')).toBeVisible();
   });
 
-  test('Step 2: Components — real daemon data', async ({ page }) => {
+  test('Step 2: Components — 3 cards with READY badges', async ({ page }) => {
     await navigateToStep(page, 2);
 
     await expect(page.locator('h1')).toContainText('Components');
-    await expect(page.getByText('sensei-cli')).toBeVisible();
+
+    // Must show exactly 3 component cards with real names
+    await expect(page.getByText('sensei-cli')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('MCP bridge')).toBeVisible();
     await expect(page.getByText('sensei-daemon')).toBeVisible();
 
-    // Count READY badges within the component cards only
-    const cards = page.locator('.card');
-    await expect(cards).toHaveCount(3);
+    // Each card must show a version or "ready" status
+    const cardTexts = await page.locator('.card').allInnerTexts();
+    expect(cardTexts.length).toBe(3);
+    for (const text of cardTexts) {
+      expect(text.toLowerCase()).toContain('ready');
+    }
 
-    // Correct port
+    // Correct port from daemon
     await expect(page.getByText(`localhost:${PORT}`)).toBeVisible();
   });
 

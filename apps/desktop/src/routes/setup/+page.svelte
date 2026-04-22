@@ -48,8 +48,10 @@
 
       // Step 2: Component health
       const compData = await api.getComponents();
+      console.log('[setup] components from daemon:', compData);
       if (compData.components?.length > 0) {
         update({ components: compData.components as any });
+        console.log('[setup] state after update:', wizardState.components.length);
       }
 
       // Step 3: ACP detection
