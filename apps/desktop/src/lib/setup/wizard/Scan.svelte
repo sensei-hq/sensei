@@ -2,9 +2,11 @@
   import type { WizardState, WizUpdate, ScanEvent } from '../types.js';
   import { MOCK_SCAN_EVENTS } from '../mock.js';
 
-  let { wizState, update }: {
+  let { wizState, update, onScan, daemonReady = false }: {
     wizState: WizardState;
     update: WizUpdate;
+    onScan?: () => Promise<void>;
+    daemonReady?: boolean;
   } = $props();
 
   let eventIndex = $state(0);
@@ -88,12 +90,61 @@
   }
 
   // ── Start scan: animate through MOCK_SCAN_EVENTS ─────────────
-  function startScan() {
+  async function startScan() {
     update({ scanStarted: true, scanEvents: [] });
-    eventIndex = 0;
-    timerActive = true;
+
+    if (daemonReady && onScan) {
+      // Real scan: call daemon API for each folder
+      const { senseiApi } = await import('$lib/api.js');
+      const { getPort } = await import('$lib/appstate.svelte.js');
+      const api = senseiApi(getPort());
+
+      const addEvent = (level: ScanEvent['level'], msg: string) => {
+        const evt: ScanEvent = { t: Date.now(), level, msg };
+        update({ scanEvents: [...wizState.scanEvents, evt] });
+      };
+
+      addEvent('info', `scan started · ${wizState.folders.length} roots`);
+
+      // Subscribe to SSE progress before triggering scan
+      const base = `http://127.0.0.1:${getPort()}`;
+      const es = new EventSource(`${base}/api/index/progress`);
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.kind === 'ScanRoot' && data.status === 'completed') {
+            addEvent('success', `scan complete`);
+          } else if (data.kind === 'ProcessRepo' && data.status === 'running') {
+            addEvent('discover', `${data.repo_id} · indexing`);
+          } else if (data.kind === 'ProcessRepo' && data.status === 'completed') {
+            addEvent('process', `${data.repo_id} · indexed`);
+          } else if (data.kind === 'ProcessFile' && data.status === 'completed') {
+            // Don't log every file — too noisy
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      // Trigger scan for each folder
+      for (const folder of wizState.folders) {
+        addEvent('info', `scanning ${folder.path}`);
+        await api.scanFolder(folder.path);
+      }
+
+      // Wait for scan to settle, then load results
+      setTimeout(async () => {
+        es.close();
+        if (onScan) await onScan();
+        update({ scanDone: true });
+        addEvent('success', 'all scans complete');
+      }, 3000);
+    } else {
+      // Mock scan: animate through mock events
+      eventIndex = 0;
+      timerActive = true;
+    }
   }
 
+  // Mock animation effect (only when not using real daemon)
   $effect(() => {
     if (!timerActive) return;
     if (eventIndex >= MOCK_SCAN_EVENTS.length) {
@@ -103,7 +154,7 @@
 
     const current = MOCK_SCAN_EVENTS[eventIndex];
     const prevT = eventIndex > 0 ? MOCK_SCAN_EVENTS[eventIndex - 1].t : 0;
-    const delay = eventIndex === 0 ? 0 : (current.t - prevT) / 2; // 2x speed
+    const delay = eventIndex === 0 ? 0 : (current.t - prevT) / 2;
 
     const timer = setTimeout(() => {
       const next = [...wizState.scanEvents, current];

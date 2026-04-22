@@ -1,11 +1,15 @@
 <script lang="ts">
   import { MOCK_ACPS } from '../mock.js';
-  import type { WizardState, WizUpdate } from '../types.js';
+  import type { WizardState, WizUpdate, AcpEntry } from '../types.js';
 
-  let { wizState, update }: {
+  let { wizState, update, acpList }: {
     wizState: WizardState;
     update: WizUpdate;
+    acpList?: AcpEntry[];
   } = $props();
+
+  // Use real ACP data if provided, else fall back to mock
+  const acps = $derived(acpList ?? MOCK_ACPS);
 
   function toggle(id: string) {
     update({ acps: { ...wizState.acps, [id]: !wizState.acps[id] } });
@@ -18,7 +22,7 @@
   <p class="subtitle">Registers plugins, skills, commands, agents, logging and metrics.</p>
 
   <div class="grid">
-    {#each MOCK_ACPS as acp}
+    {#each acps as acp}
       {@const checked = !!wizState.acps[acp.id]}
       {@const found = acp.found}
       <button
