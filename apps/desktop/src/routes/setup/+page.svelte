@@ -140,7 +140,7 @@
       <div class="landing-content">
         <div class="landing-left">
           <div class="logo">
-            <span class="kanji" style="font-size: 28px; color: var(--shu);">先</span>
+            <span class="kanji" style="font-size: 24px; color: var(--shu);">先生</span>
             <span class="display" style="font-size: 18px;">Sensei</span>
           </div>
 
