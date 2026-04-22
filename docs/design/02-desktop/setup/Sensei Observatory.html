@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Sensei — observatory, three directions</title>
+  <meta name="viewport" content="width=1600"/>
+  <link rel="stylesheet" href="lib/tokens.css"/>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: 'Inter', system-ui, sans-serif; }
+    #root { height: 100vh; }
+    /* a subtle paper texture for the canvas itself */
+    .artboard-shell {
+      width: 100%; height: 100%;
+      border-radius: 8px; overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 12px 32px rgba(40,30,20,0.08);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script src="lib/data.js"></script>
+  <script src="lib/setup-data.js"></script>
+  <script src="lib/project-data.js"></script>
+  <script type="text/babel" src="lib/design-canvas.jsx"></script>
+  <script type="text/babel" src="lib/primitives.jsx"></script>
+  <script type="text/babel" src="lib/direction-ma.jsx"></script>
+  <script type="text/babel" src="lib/direction-enso.jsx"></script>
+  <script type="text/babel" src="lib/direction-shoji.jsx"></script>
+  <script type="text/babel" src="lib/direction-merged.jsx"></script>
+  <script type="text/babel" src="lib/setup-wizard.jsx"></script>
+  <script type="text/babel" src="lib/observatory.jsx"></script>
+  <script type="text/babel" src="lib/project-shared.jsx"></script>
+  <script type="text/babel" src="lib/project-pages.jsx"></script>
+  <script type="text/babel" src="lib/libraries.jsx"></script>
+  <script type="text/babel" src="lib/navigation.jsx"></script>
+
+  <script type="text/babel" data-presets="env,react">
+    // Tweaks — dark/light mode
+    const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+      "theme": "light"
+    }/*EDITMODE-END*/;
+
+    const App = () => {
+      const [editMode, setEditMode] = React.useState(false);
+      const [tweaks, setTweaks] = React.useState(TWEAK_DEFAULTS);
+
+      // Apply theme to the document for tokens to cascade
+      React.useEffect(() => {
+        document.documentElement.setAttribute('data-theme', tweaks.theme);
+      }, [tweaks.theme]);
+
+      // Edit mode protocol
+      React.useEffect(() => {
+        const onMsg = (e) => {
+          const d = e.data || {};
+          if (d.type === '__activate_edit_mode') setEditMode(true);
+          if (d.type === '__deactivate_edit_mode') setEditMode(false);
+        };
+        window.addEventListener('message', onMsg);
+        window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+        return () => window.removeEventListener('message', onMsg);
+      }, []);
+
+      const setTweak = (k, v) => {
+        const next = { ...tweaks, [k]: v };
+        setTweaks(next);
+        window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [k]: v } }, '*');
+      };
+
+      return (
+        <>
+          <DesignCanvas initialZoom={0.5}>
+            <DCSection id="project"
+                       title="Project page"
+                       subtitle="Settings · graph lens (3 modes) · patterns · sessions · recommendations with quick-send + prompt palette">
+              <DCArtboard id="proj-tabs"   label="Top tabs"       width={1280} height={860}>
+                <div className="artboard-shell"><ProjectPageTopTabs/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="proj-settings"
+                       title="Project settings"
+                       subtitle="A · card grid (dense) · B · document layout with summary rail. Both drop the 'paid tier' line, compact identity, add stack, rename links.">
+              <DCArtboard id="pset-a" label="A · card grid" width={1280} height={860}>
+                <div className="artboard-shell"><ProjectSettingsV1Page/></div>
+              </DCArtboard>
+              <DCArtboard id="pset-b" label="★ B · document + summary rail" width={1280} height={860}>
+                <div className="artboard-shell"><ProjectSettingsV2Page/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="libraries"
+                       title="Libraries"
+                       subtitle="A library is a library — regardless of how it arrived. Searchable, filterable by kind and language.">
+              <DCArtboard id="lib-a" label="Unified list + detail" width={1280} height={860}>
+                <div className="artboard-shell"><LibrariesVariantA/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="mcp"
+                       title="MCP Playground"
+                       subtitle="Every library is a tool. Pick one, see what sensei exposes, try it.">
+              <DCArtboard id="mcp-pg" label="MCP Playground" width={1280} height={860}>
+                <div className="artboard-shell"><MCPPlayground/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="nav"
+                       title="Navigation"
+                       subtitle="How you find projects. Grid with search + status filter; denser cards; dormant and archived still show up.">
+              <DCArtboard id="nav-a" label="Cards grid + search"     width={1280} height={860}>
+                <div className="artboard-shell"><ProjectsIndexA/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="setup"
+                       title="Setup + empty state"
+                       subtitle="Day 1 · seven-stage wizard · empty observatory invites setup · scan materializes projects as they're discovered">
+              <DCArtboard id="empty"  label="Empty observatory → begin setup" width={1280} height={820}>
+                <div className="artboard-shell"><EmptyToWizardApp/></div>
+              </DCArtboard>
+              <DCArtboard id="wizard" label="Setup wizard · 7 stages (click through)" width={1280} height={820}>
+                <div className="artboard-shell"><SetupWizard onExit={()=>{}} onDone={()=>{}}/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="observatory"
+                       title="Observatory · daily view"
+                       subtitle="What you see every morning and when stepping in from setup. One focal teaching + signals the system has acted on.">
+              <DCArtboard id="obs-mature"  label="★ Mature state (default)"        width={1280} height={860}>
+                <div className="artboard-shell"><ObservatoryDailyApp/></div>
+              </DCArtboard>
+              <DCArtboard id="obs-entry"   label="First entry from configure"       width={1280} height={860}>
+                <div className="artboard-shell"><ObservatoryEntryApp/></div>
+              </DCArtboard>
+              <DCArtboard id="obs-early"   label="Early state · still listening"   width={1280} height={860}>
+                <div className="artboard-shell"><ObservatoryEarlyApp/></div>
+              </DCArtboard>
+            </DCSection>
+            <DCSection id="refined"
+                       title="Refined direction"
+                       subtitle="Ma's trendline + wider sidebar · Enso's layout + icon-only collapsed state">
+              <DCArtboard id="merged" label="★ Merged · collapsible sidebar + trendline" width={1280} height={820}>
+                <div className="artboard-shell"><MergedApp/></div>
+              </DCArtboard>
+            </DCSection>
+            <DCSection id="sensei"
+                       title="Original three directions (for reference)"
+                       subtitle="Ma · Enso · Shoji — side by side">
+              <DCArtboard id="ma"    label="01 · 間 Ma — negative space"  width={1280} height={820}>
+                <div className="artboard-shell"><MaApp/></div>
+              </DCArtboard>
+              <DCArtboard id="enso"  label="02 · 円 Enso — brushstroke ring" width={1280} height={820}>
+                <div className="artboard-shell"><EnsoApp/></div>
+              </DCArtboard>
+              <DCArtboard id="shoji" label="03 · 障子 Shoji — panes"       width={1280} height={820}>
+                <div className="artboard-shell"><ShojiApp/></div>
+              </DCArtboard>
+            </DCSection>
+          </DesignCanvas>
+
+          {editMode && (
+            <div style={{
+              position: 'fixed', right: 20, bottom: 20, zIndex: 999,
+              background: 'var(--paper)', border: '1px solid var(--paper-edge)',
+              borderRadius: 10, padding: 16, width: 240,
+              boxShadow: '0 8px 24px rgba(0,0,0,.15)',
+              fontFamily: 'Inter, sans-serif'
+            }}>
+              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                            color: 'var(--sumi-3)', marginBottom: 12, fontWeight: 500 }}>Tweaks</div>
+              <div style={{ fontSize: 12, color: 'var(--sumi-2)', marginBottom: 6 }}>Theme</div>
+              <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--paper-3)',
+                            borderRadius: 6 }}>
+                {['light','dark'].map(t => (
+                  <button key={t} onClick={() => setTweak('theme', t)}
+                          style={{ flex: 1, padding: '6px 10px', fontSize: 12, border: 'none',
+                                    borderRadius: 4, background: tweaks.theme === t ? 'var(--paper)' : 'transparent',
+                                    color: tweaks.theme === t ? 'var(--sumi)' : 'var(--sumi-3)',
+                                    cursor: 'pointer' }}>
+                    {t === 'light' ? '日 light' : '夜 dark'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 12, lineHeight: 1.5 }}>
+                All three directions share the token system. Switching recolours washi paper + sumi ink together.
+              </div>
+            </div>
+          )}
+        </>
+      );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+</body>
+</html>
