@@ -20,9 +20,11 @@ export function getConfigValue(key: string, fallback = ''): string {
   return _config[key] ?? fallback;
 }
 
-export function getActiveSolutionId(): string | null {
-  return _config['active_solution'] || null;
+export function getActiveProjectId(): string | null {
+  return _config['active_project'] || _config['active_solution'] || null;
 }
+/** @deprecated Use getActiveProjectId */
+export function getActiveSolutionId(): string | null { return getActiveProjectId(); }
 
 export function getSidebarMaxItems(): number {
   return parseInt(_config['sidebar_max_items'] ?? '5', 10);
@@ -61,16 +63,18 @@ export async function setConfigValue(key: string, value: string) {
   await api.setConfig({ [key]: value });
 }
 
-export async function setActiveSolutionId(id: string | null) {
+export async function setActiveProjectId(id: string | null) {
   if (id) {
-    await setConfigValue('active_solution', id);
+    await setConfigValue('active_project', id);
   } else {
-    delete _config['active_solution'];
+    delete _config['active_project'];
     _config = { ..._config };
     const api = senseiApi(_port);
-    await api.deleteConfig('active_solution');
+    await api.deleteConfig('active_project');
   }
 }
+/** @deprecated Use setActiveProjectId */
+export async function setActiveSolutionId(id: string | null) { return setActiveProjectId(id); }
 
 export async function setSidebarMaxItems(val: number) {
   await setConfigValue('sidebar_max_items', String(Math.max(1, Math.min(20, val))));

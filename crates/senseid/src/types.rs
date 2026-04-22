@@ -262,10 +262,11 @@ pub struct ParsedImport {
     pub names: Vec<String>,
 }
 
-// ── Project & Solution ───────────────────────────────────────────────────────
+// ── Repo & Project ──────────────────────────────────────────────────────────
 
+/// A single git repository tracked by sensei.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Project {
+pub struct Repo {
     pub repo_id: String,
     pub name: String,
     pub path: String,
@@ -285,14 +286,28 @@ pub struct Project {
     pub tags: Vec<String>,
     #[serde(default = "default_status")]
     pub status: String,
+    /// Which project this repo belongs to (None = standalone).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Role within its project (backend, frontend, library, etc.).
+    #[serde(default = "default_role")]
+    pub role: String,
+    /// Display label override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 fn default_status() -> String {
     "active".to_string()
 }
 
+fn default_role() -> String {
+    "unknown".to_string()
+}
+
+/// A project — one or more repos that evolve together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Solution {
+pub struct Project {
     pub id: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,8 +316,6 @@ pub struct Solution {
     pub client: Option<String>,
     #[serde(default = "default_category")]
     pub category: String,
-    #[serde(default)]
-    pub repos: Vec<SolutionRepo>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -313,21 +326,6 @@ pub struct Solution {
 
 fn default_category() -> String {
     "active".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SolutionRepo {
-    pub repo_id: String,
-    #[serde(default = "default_role")]
-    pub role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-}
-
-fn default_role() -> String {
-    "unknown".to_string()
 }
 
 // ── Package / Module info ────────────────────────────────────────────────────
@@ -421,8 +419,8 @@ mod tests {
     }
 
     #[test]
-    fn project_serialization() {
-        let p = Project {
+    fn repo_serialization() {
+        let p = Repo {
             repo_id: "test".into(),
             name: "test".into(),
             path: "/tmp/test".into(),
@@ -434,6 +432,9 @@ mod tests {
             libs: vec![],
             tags: vec![],
             status: "active".into(),
+            project_id: None,
+            role: "unknown".into(),
+            label: None,
         };
         let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("\"repo_id\":\"test\""));
@@ -442,9 +443,9 @@ mod tests {
     }
 
     #[test]
-    fn solution_defaults() {
+    fn project_defaults() {
         let json = r#"{"id":"1","name":"Test","repos":[]}"#;
-        let s: Solution = serde_json::from_str(json).unwrap();
+        let s: Project = serde_json::from_str(json).unwrap();
         assert_eq!(s.category, "active");
         assert!(s.client.is_none());
         assert!(s.tags.is_empty());

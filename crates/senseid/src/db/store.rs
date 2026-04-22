@@ -1,6 +1,6 @@
 use rusqlite::{Connection, params, OptionalExtension, Row};
 use std::path::Path;
-use crate::types::{Project, Solution, SolutionRepo, IndexError};
+use crate::types::{Repo, Project, IndexError};
 
 /// Central SQLite store — single database for all sensei state.
 pub struct Store {
@@ -38,6 +38,7 @@ impl Store {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
         let store = Self { conn };
         store.init_schema()?;
+        store.migrate()?;
         Ok(store)
     }
 
@@ -47,13 +48,14 @@ impl Store {
         let conn = Connection::open_in_memory()?;
         let store = Self { conn };
         store.init_schema()?;
+        store.migrate()?;
         Ok(store)
     }
 
     fn init_schema(&self) -> rusqlite::Result<()> {
         self.conn.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS projects(
+            CREATE TABLE IF NOT EXISTS repos(
                 repo_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 path TEXT NOT NULL UNIQUE,
@@ -66,10 +68,14 @@ impl Store {
                 status TEXT DEFAULT 'active',
                 last_commit_days INTEGER,
                 commit_count INTEGER DEFAULT 0,
+                project_id TEXT,
+                role TEXT NOT NULL DEFAULT 'unknown',
+                label TEXT,
+                metadata TEXT DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
-            CREATE TABLE IF NOT EXISTS solutions(
+            CREATE TABLE IF NOT EXISTS projects(
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT,
@@ -77,14 +83,6 @@ impl Store {
                 category TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS solution_repos(
-                solution_id TEXT NOT NULL REFERENCES solutions(id) ON DELETE CASCADE,
-                repo_id TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'unknown',
-                label TEXT,
-                PRIMARY KEY(solution_id, repo_id)
             );
 
             CREATE TABLE IF NOT EXISTS tags(
@@ -212,16 +210,71 @@ impl Store {
         )
     }
 
-    // ── Projects ─────────────────────────────────────────────────────────────
+    /// Add columns that don't exist yet. Safe to run on every open.
+    /// Migrate from old schema (projects→repos, solutions→projects, drop solution_repos).
+    fn migrate(&self) -> rusqlite::Result<()> {
+        // Check if old 'projects' table exists (has repo_id PK but no project_id column)
+        // and new 'repos' table doesn't exist yet — need to rename.
+        let has_old_projects: bool = self.conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='projects' AND sql LIKE '%repo_id TEXT PRIMARY KEY%'",
+            [], |row| row.get(0),
+        )?;
+        let has_repos_table: bool = self.conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='repos'",
+            [], |row| row.get(0),
+        )?;
 
-    pub fn list_projects(&self) -> rusqlite::Result<Vec<Project>> {
+        if has_old_projects && !has_repos_table {
+            self.conn.execute_batch("
+                ALTER TABLE projects RENAME TO repos;
+                ALTER TABLE repos ADD COLUMN project_id TEXT;
+                ALTER TABLE repos ADD COLUMN role TEXT NOT NULL DEFAULT 'unknown';
+                ALTER TABLE repos ADD COLUMN label TEXT;
+                ALTER TABLE repos ADD COLUMN metadata TEXT DEFAULT '{}';
+            ")?;
+
+            // Migrate data from solution_repos join table into repos
+            let has_solution_repos: bool = self.conn.query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='solution_repos'",
+                [], |row| row.get(0),
+            )?;
+            if has_solution_repos {
+                self.conn.execute_batch("
+                    UPDATE repos SET
+                        project_id = (SELECT sr.solution_id FROM solution_repos sr WHERE sr.repo_id = repos.repo_id LIMIT 1),
+                        role = COALESCE((SELECT sr.role FROM solution_repos sr WHERE sr.repo_id = repos.repo_id LIMIT 1), 'unknown'),
+                        label = (SELECT sr.label FROM solution_repos sr WHERE sr.repo_id = repos.repo_id LIMIT 1);
+                    DROP TABLE IF EXISTS solution_repos;
+                ")?;
+            }
+
+            // Rename solutions → projects (if not already done)
+            let has_old_solutions: bool = self.conn.query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='solutions'",
+                [], |row| row.get(0),
+            )?;
+            let has_new_projects: bool = self.conn.query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='projects'",
+                [], |row| row.get(0),
+            )?;
+            if has_old_solutions && !has_new_projects {
+                self.conn.execute_batch("ALTER TABLE solutions RENAME TO projects;")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    // ── Repos ────────────────────────────────────────────────────────────────
+
+    pub fn list_repos(&self) -> rusqlite::Result<Vec<Repo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT repo_id, name, path, remote_url, indexed_at, last_error, duplicate_of, stack, libs, status FROM projects ORDER BY name"
+            "SELECT repo_id, name, path, remote_url, indexed_at, last_error, duplicate_of, stack, libs, status, project_id, role, label FROM repos ORDER BY name"
         )?;
         let rows = stmt.query_map([], |row| {
             let stack_json: String = row.get(7)?;
             let libs_json: String = row.get(8)?;
-            Ok(Project {
+            Ok(Repo {
                 repo_id: row.get(0)?,
                 name: row.get(1)?,
                 path: row.get(2)?,
@@ -231,40 +284,44 @@ impl Store {
                 duplicate_of: row.get(6)?,
                 stack: serde_json::from_str(&stack_json).unwrap_or_default(),
                 libs: serde_json::from_str(&libs_json).unwrap_or_default(),
-                tags: vec![], // loaded separately
+                tags: vec![],
                 status: row.get(9)?,
+                project_id: row.get(10)?,
+                role: row.get::<_, String>(11).unwrap_or_else(|_| "unknown".into()),
+                label: row.get(12)?,
             })
         })?;
-        let mut projects: Vec<Project> = rows.collect::<Result<_, _>>()?;
-        // Load tags
-        for p in &mut projects {
-            p.tags = self.get_tags("project", &p.repo_id)?;
+        let mut repos: Vec<Repo> = rows.collect::<Result<_, _>>()?;
+        for p in &mut repos {
+            p.tags = self.get_tags("repo", &p.repo_id)?;
         }
-        Ok(projects)
+        Ok(repos)
     }
 
-    pub fn upsert_project(&self, p: &Project) -> rusqlite::Result<()> {
+    pub fn upsert_repo(&self, p: &Repo) -> rusqlite::Result<()> {
         self.conn.execute(
-            "INSERT INTO projects(repo_id, name, path, remote_url, indexed_at, last_error, duplicate_of, stack, libs, status)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO repos(repo_id, name, path, remote_url, indexed_at, last_error, duplicate_of, stack, libs, status, project_id, role, label)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(repo_id) DO UPDATE SET
                name=excluded.name, path=excluded.path, remote_url=excluded.remote_url,
                indexed_at=excluded.indexed_at, last_error=excluded.last_error,
                duplicate_of=excluded.duplicate_of, stack=excluded.stack,
-               libs=excluded.libs, status=excluded.status",
+               libs=excluded.libs, status=excluded.status,
+               project_id=excluded.project_id, role=excluded.role, label=excluded.label",
             params![
                 p.repo_id, p.name, p.path, p.remote_url, p.indexed_at, p.last_error,
                 p.duplicate_of, serde_json::to_string(&p.stack).unwrap(),
-                serde_json::to_string(&p.libs).unwrap(), p.status
+                serde_json::to_string(&p.libs).unwrap(), p.status,
+                p.project_id, p.role, p.label
             ],
         )?;
         Ok(())
     }
 
-    /// Quick project registration with just id, name, path.
-    pub fn upsert_project_basic(&self, repo_id: &str, name: &str, path: &str) -> rusqlite::Result<()> {
+    /// Quick repo registration with just id, name, path.
+    pub fn upsert_repo_basic(&self, repo_id: &str, name: &str, path: &str) -> rusqlite::Result<()> {
         self.conn.execute(
-            "INSERT INTO projects(repo_id, name, path, status, stack, libs)
+            "INSERT INTO repos(repo_id, name, path, status, stack, libs)
              VALUES(?1, ?2, ?3, 'active', '[]', '[]')
              ON CONFLICT(repo_id) DO UPDATE SET name=excluded.name, path=excluded.path",
             rusqlite::params![repo_id, name, path],
@@ -272,26 +329,52 @@ impl Store {
         Ok(())
     }
 
-    pub fn get_project(&self, repo_id: &str) -> rusqlite::Result<Option<Project>> {
-        let projects = self.list_projects()?;
-        Ok(projects.into_iter().find(|p| p.repo_id == repo_id))
+    pub fn get_repo(&self, repo_id: &str) -> rusqlite::Result<Option<Repo>> {
+        let repos = self.list_repos()?;
+        Ok(repos.into_iter().find(|p| p.repo_id == repo_id))
     }
 
-    pub fn delete_project(&self, repo_id: &str) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM projects WHERE repo_id = ?1", params![repo_id])?;
-        self.conn.execute("DELETE FROM tags WHERE entity_type = 'project' AND entity_id = ?1", params![repo_id])?;
+    /// Store repo-level metadata (icon, external links, summary).
+    pub fn set_repo_metadata(&self, repo_id: &str, metadata: &serde_json::Value) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE repos SET metadata = ?1 WHERE repo_id = ?2",
+            params![serde_json::to_string(metadata).unwrap_or_default(), repo_id],
+        )?;
         Ok(())
     }
 
-    /// Exclude a project: delete from projects, clear indexed data, add to exclusion list.
-    pub fn exclude_project(&self, repo_id: &str, path: &str) -> rusqlite::Result<()> {
-        // Add to exclusion list
+    /// Assign a repo to a project with a role.
+    pub fn set_repo_project(&self, repo_id: &str, project_id: &str, role: &str, label: Option<&str>) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE repos SET project_id = ?1, role = ?2, label = ?3 WHERE repo_id = ?4",
+            params![project_id, role, label, repo_id],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a repo from its project (make standalone).
+    pub fn clear_repo_project(&self, repo_id: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE repos SET project_id = NULL, role = 'unknown', label = NULL WHERE repo_id = ?1",
+            params![repo_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_repo(&self, repo_id: &str) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM repos WHERE repo_id = ?1", params![repo_id])?;
+        self.conn.execute("DELETE FROM tags WHERE entity_type = 'repo' AND entity_id = ?1", params![repo_id])?;
+        Ok(())
+    }
+
+    /// Exclude a repo: delete from repos table, clear indexed data, add to exclusion list.
+    pub fn exclude_repo(&self, repo_id: &str, path: &str) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO excluded_paths(path, repo_id, reason) VALUES(?1, ?2, 'user_excluded')",
             params![path, repo_id],
         )?;
-        // Remove from projects
-        self.delete_project(repo_id)?;
+        // Remove from repos table
+        self.delete_repo(repo_id)?;
         Ok(())
     }
 
@@ -327,7 +410,7 @@ impl Store {
 
         // Merge new libs with existing (don't overwrite with smaller set from partial re-index)
         let existing_libs: Vec<String> = self.conn.query_row(
-            "SELECT libs FROM projects WHERE repo_id = ?1",
+            "SELECT libs FROM repos WHERE repo_id = ?1",
             params![repo_id],
             |row| {
                 let json: String = row.get(0)?;
@@ -340,7 +423,7 @@ impl Store {
         let merged_vec: Vec<String> = merged.into_iter().collect();
 
         self.conn.execute(
-            "UPDATE projects SET indexed_at = ?1, last_error = NULL, libs = ?2 WHERE repo_id = ?3",
+            "UPDATE repos SET indexed_at = ?1, last_error = NULL, libs = ?2 WHERE repo_id = ?3",
             params![now, serde_json::to_string(&merged_vec).unwrap(), repo_id],
         )?;
         Ok(())
@@ -350,7 +433,7 @@ impl Store {
     pub fn mark_indexed_timestamp(&self, repo_id: &str) -> rusqlite::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
-            "UPDATE projects SET indexed_at = ?1, last_error = NULL WHERE repo_id = ?2",
+            "UPDATE repos SET indexed_at = ?1, last_error = NULL WHERE repo_id = ?2",
             params![now, repo_id],
         )?;
         Ok(())
@@ -359,7 +442,7 @@ impl Store {
     #[allow(dead_code)]
     pub fn mark_index_failed(&self, repo_id: &str, error: &str) -> rusqlite::Result<()> {
         self.conn.execute(
-            "UPDATE projects SET last_error = ?1 WHERE repo_id = ?2",
+            "UPDATE repos SET last_error = ?1 WHERE repo_id = ?2",
             params![error, repo_id],
         )?;
         Ok(())
@@ -391,86 +474,51 @@ impl Store {
         Ok(())
     }
 
-    // ── Solutions ────────────────────────────────────────────────────────────
+    // ── Projects (groups of repos) ─────────────────────────────────────────
 
-    pub fn list_solutions(&self) -> rusqlite::Result<Vec<Solution>> {
+    pub fn list_projects(&self) -> rusqlite::Result<Vec<Project>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, description, client, category, created_at, updated_at FROM solutions ORDER BY name"
+            "SELECT id, name, description, client, category, created_at, updated_at FROM projects ORDER BY name"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok(Solution {
+            Ok(Project {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 description: row.get(2)?,
                 client: row.get(3)?,
                 category: row.get(4)?,
-                repos: vec![],
                 tags: vec![],
                 created_at: row.get(5)?,
                 updated_at: row.get(6)?,
             })
         })?;
-        let mut solutions: Vec<Solution> = rows.collect::<Result<_, _>>()?;
-        for s in &mut solutions {
-            s.repos = self.get_solution_repos(&s.id)?;
-            s.tags = self.get_tags("solution", &s.id)?;
+        let mut projects: Vec<Project> = rows.collect::<Result<_, _>>()?;
+        for p in &mut projects {
+            p.tags = self.get_tags("project", &p.id)?;
         }
-        Ok(solutions)
+        Ok(projects)
     }
 
-    pub fn create_solution(&self, s: &Solution) -> rusqlite::Result<()> {
+    /// Get repos belonging to a project.
+    pub fn get_project_repos(&self, project_id: &str) -> rusqlite::Result<Vec<Repo>> {
+        let all = self.list_repos()?;
+        Ok(all.into_iter().filter(|r| r.project_id.as_deref() == Some(project_id)).collect())
+    }
+
+    pub fn create_project(&self, p: &Project) -> rusqlite::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
-        // Use OR IGNORE to prevent duplicate creation
         self.conn.execute(
-            "INSERT OR IGNORE INTO solutions(id, name, description, client, category, created_at, updated_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![s.id, s.name, s.description, s.client, s.category, now, now],
-        )?;
-        for r in &s.repos {
-            self.conn.execute(
-                "INSERT OR REPLACE INTO solution_repos(solution_id, repo_id, role, label) VALUES(?1, ?2, ?3, ?4)",
-                params![s.id, r.repo_id, r.role, r.label],
-            )?;
-        }
-        Ok(())
-    }
-
-    pub fn delete_solution(&self, id: &str) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM solutions WHERE id = ?1", params![id])?;
-        self.conn.execute("DELETE FROM tags WHERE entity_type = 'solution' AND entity_id = ?1", params![id])?;
-        Ok(())
-    }
-
-    fn get_solution_repos(&self, solution_id: &str) -> rusqlite::Result<Vec<SolutionRepo>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT sr.repo_id, sr.role, sr.label, p.path
-             FROM solution_repos sr
-             LEFT JOIN projects p ON p.repo_id = sr.repo_id
-             WHERE sr.solution_id = ?1"
-        )?;
-        let rows = stmt.query_map(params![solution_id], |row| {
-            Ok(SolutionRepo {
-                repo_id: row.get(0)?,
-                role: row.get(1)?,
-                label: row.get(2)?,
-                path: row.get(3)?,
-            })
-        })?;
-        rows.collect()
-    }
-
-    pub fn add_repo_to_solution(&self, solution_id: &str, repo: &SolutionRepo) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO solution_repos(solution_id, repo_id, role, label) VALUES(?1, ?2, ?3, ?4)",
-            params![solution_id, repo.repo_id, repo.role, repo.label],
+            "INSERT OR IGNORE INTO projects(id, name, description, client, category, created_at, updated_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![p.id, p.name, p.description, p.client, p.category, now, now],
         )?;
         Ok(())
     }
 
-    pub fn remove_repo_from_solution(&self, solution_id: &str, repo_id: &str) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "DELETE FROM solution_repos WHERE solution_id = ?1 AND repo_id = ?2",
-            params![solution_id, repo_id],
-        )?;
+    pub fn delete_project(&self, id: &str) -> rusqlite::Result<()> {
+        // Unassign repos from this project
+        self.conn.execute("UPDATE repos SET project_id = NULL, role = 'unknown' WHERE project_id = ?1", params![id])?;
+        self.conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+        self.conn.execute("DELETE FROM tags WHERE entity_type = 'project' AND entity_id = ?1", params![id])?;
         Ok(())
     }
 
@@ -1049,11 +1097,11 @@ impl Store {
         ).optional()
     }
 
-    /// Get the file path for a project (needed for state.yaml sync)
-    pub fn get_project_path(&self, project: &str) -> rusqlite::Result<Option<String>> {
+    /// Get the file path for a repo (needed for state.yaml sync).
+    pub fn get_repo_path(&self, repo_id_or_name: &str) -> rusqlite::Result<Option<String>> {
         self.conn.query_row(
-            "SELECT path FROM projects WHERE name=?1 OR repo_id=?1",
-            params![project],
+            "SELECT path FROM repos WHERE name=?1 OR repo_id=?1",
+            params![repo_id_or_name],
             |row| row.get(0),
         ).optional()
     }
@@ -1245,8 +1293,8 @@ mod tests {
         Store::open_memory().unwrap()
     }
 
-    fn make_project(id: &str, path: &str) -> Project {
-        Project {
+    fn make_repo(id: &str, path: &str) -> Repo {
+        Repo {
             repo_id: id.into(),
             name: id.into(),
             path: path.into(),
@@ -1258,47 +1306,50 @@ mod tests {
             libs: vec![],
             tags: vec![],
             status: "active".into(),
+            project_id: None,
+            role: "unknown".into(),
+            label: None,
         }
     }
 
     #[test]
-    fn create_and_list_projects() {
+    fn create_and_list_repos() {
         let s = test_store();
-        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
-        s.upsert_project(&make_project("bar", "/tmp/bar")).unwrap();
-        let projects = s.list_projects().unwrap();
-        assert_eq!(projects.len(), 2);
-        assert_eq!(projects[0].repo_id, "bar"); // sorted by name
+        s.upsert_repo(&make_repo("foo", "/tmp/foo")).unwrap();
+        s.upsert_repo(&make_repo("bar", "/tmp/bar")).unwrap();
+        let repos = s.list_repos().unwrap();
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0].repo_id, "bar"); // sorted by name
     }
 
     #[test]
     fn upsert_updates_existing() {
         let s = test_store();
-        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
-        let mut p2 = make_project("foo", "/tmp/foo");
+        s.upsert_repo(&make_repo("foo", "/tmp/foo")).unwrap();
+        let mut p2 = make_repo("foo", "/tmp/foo");
         p2.indexed_at = Some("2026-04-12".into());
-        s.upsert_project(&p2).unwrap();
-        let projects = s.list_projects().unwrap();
-        assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].indexed_at.as_deref(), Some("2026-04-12"));
+        s.upsert_repo(&p2).unwrap();
+        let repos = s.list_repos().unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].indexed_at.as_deref(), Some("2026-04-12"));
     }
 
     #[test]
-    fn delete_project() {
+    fn delete_repo() {
         let s = test_store();
-        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
-        s.add_tag("project", "foo", "test").unwrap();
-        s.delete_project("foo").unwrap();
-        assert_eq!(s.list_projects().unwrap().len(), 0);
-        assert_eq!(s.get_tags("project", "foo").unwrap().len(), 0);
+        s.upsert_repo(&make_repo("foo", "/tmp/foo")).unwrap();
+        s.add_tag("repo", "foo", "test").unwrap();
+        s.delete_repo("foo").unwrap();
+        assert_eq!(s.list_repos().unwrap().len(), 0);
+        assert_eq!(s.get_tags("repo", "foo").unwrap().len(), 0);
     }
 
     #[test]
     fn mark_indexed() {
         let s = test_store();
-        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
+        s.upsert_repo(&make_repo("foo", "/tmp/foo")).unwrap();
         s.mark_indexed("foo", &["zod".into(), "hono".into()]).unwrap();
-        let p = s.get_project("foo").unwrap().unwrap();
+        let p = s.get_repo("foo").unwrap().unwrap();
         assert!(p.indexed_at.is_some());
         assert_eq!(p.libs, vec!["hono", "zod"]); // sorted (BTreeSet merge)
         assert!(p.last_error.is_none());
@@ -1307,7 +1358,7 @@ mod tests {
     #[test]
     fn tags_crud() {
         let s = test_store();
-        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
+        s.upsert_repo(&make_repo("foo", "/tmp/foo")).unwrap();
         s.add_tag("project", "foo", "typescript").unwrap();
         s.add_tag("project", "foo", "backend").unwrap();
         s.add_tag("project", "foo", "typescript").unwrap(); // duplicate — ignored
@@ -1318,84 +1369,82 @@ mod tests {
     }
 
     #[test]
-    fn solution_crud() {
+    fn project_crud() {
         let s = test_store();
-        s.upsert_project(&make_project("api", "/tmp/api")).unwrap();
-        s.upsert_project(&make_project("ui", "/tmp/ui")).unwrap();
+        s.upsert_repo(&make_repo("api", "/tmp/api")).unwrap();
+        s.upsert_repo(&make_repo("ui", "/tmp/ui")).unwrap();
 
-        let sol = Solution {
-            id: "sol-1".into(),
+        let proj = Project {
+            id: "proj-1".into(),
             name: "Acme Platform".into(),
             description: Some("Main product".into()),
             client: Some("Acme Corp".into()),
             category: "active".into(),
-            repos: vec![
-                SolutionRepo { path: None, repo_id: "api".into(), role: "backend".into(), label: Some("API".into()) },
-                SolutionRepo { path: None, repo_id: "ui".into(), role: "frontend".into(), label: None },
-            ],
             tags: vec![],
             created_at: None,
             updated_at: None,
         };
-        s.create_solution(&sol).unwrap();
+        s.create_project(&proj).unwrap();
+        s.set_repo_project("api", "proj-1", "backend", Some("API")).unwrap();
+        s.set_repo_project("ui", "proj-1", "frontend", None).unwrap();
 
-        let solutions = s.list_solutions().unwrap();
-        assert_eq!(solutions.len(), 1);
-        assert_eq!(solutions[0].name, "Acme Platform");
-        assert_eq!(solutions[0].client, Some("Acme Corp".into()));
-        assert_eq!(solutions[0].repos.len(), 2);
-        assert_eq!(solutions[0].repos[0].role, "backend");
+        let projects = s.list_projects().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "Acme Platform");
+        assert_eq!(projects[0].client, Some("Acme Corp".into()));
+        let repos = s.get_project_repos("proj-1").unwrap();
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos.iter().find(|r| r.repo_id == "api").unwrap().role, "backend");
     }
 
     #[test]
-    fn solution_add_remove_repo() {
+    fn project_set_clear_repo() {
         let s = test_store();
-        s.upsert_project(&make_project("api", "/tmp/api")).unwrap();
-        let sol = Solution {
-            id: "sol-1".into(), name: "Test".into(), description: None,
-            client: None, category: "active".into(), repos: vec![],
-            tags: vec![], created_at: None, updated_at: None,
-        };
-        s.create_solution(&sol).unwrap();
-        s.add_repo_to_solution("sol-1", &SolutionRepo {
-            repo_id: "api".into(), role: "backend".into(), label: None, path: None,
-        }).unwrap();
-        let solutions = s.list_solutions().unwrap();
-        assert_eq!(solutions[0].repos.len(), 1);
-        s.remove_repo_from_solution("sol-1", "api").unwrap();
-        let solutions = s.list_solutions().unwrap();
-        assert_eq!(solutions[0].repos.len(), 0);
-    }
-
-    #[test]
-    fn solution_tags() {
-        let s = test_store();
-        let sol = Solution {
-            id: "sol-1".into(), name: "Test".into(), description: None,
-            client: None, category: "active".into(), repos: vec![],
-            tags: vec![], created_at: None, updated_at: None,
-        };
-        s.create_solution(&sol).unwrap();
-        s.add_tag("solution", "sol-1", "production").unwrap();
-        let solutions = s.list_solutions().unwrap();
-        assert_eq!(solutions[0].tags, vec!["production"]);
-    }
-
-    #[test]
-    fn delete_solution_cascades() {
-        let s = test_store();
-        s.upsert_project(&make_project("api", "/tmp/api")).unwrap();
-        let sol = Solution {
-            id: "sol-1".into(), name: "Test".into(), description: None,
+        s.upsert_repo(&make_repo("api", "/tmp/api")).unwrap();
+        let proj = Project {
+            id: "proj-1".into(), name: "Test".into(), description: None,
             client: None, category: "active".into(),
-            repos: vec![SolutionRepo { path: None, repo_id: "api".into(), role: "backend".into(), label: None }],
             tags: vec![], created_at: None, updated_at: None,
         };
-        s.create_solution(&sol).unwrap();
-        s.add_tag("solution", "sol-1", "test").unwrap();
-        s.delete_solution("sol-1").unwrap();
-        assert_eq!(s.list_solutions().unwrap().len(), 0);
-        assert_eq!(s.get_tags("solution", "sol-1").unwrap().len(), 0);
+        s.create_project(&proj).unwrap();
+        s.set_repo_project("api", "proj-1", "backend", None).unwrap();
+        assert_eq!(s.get_project_repos("proj-1").unwrap().len(), 1);
+        s.clear_repo_project("api").unwrap();
+        assert_eq!(s.get_project_repos("proj-1").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn project_tags() {
+        let s = test_store();
+        let proj = Project {
+            id: "proj-1".into(), name: "Test".into(), description: None,
+            client: None, category: "active".into(),
+            tags: vec![], created_at: None, updated_at: None,
+        };
+        s.create_project(&proj).unwrap();
+        s.add_tag("project", "proj-1", "production").unwrap();
+        let projects = s.list_projects().unwrap();
+        assert_eq!(projects[0].tags, vec!["production"]);
+    }
+
+    #[test]
+    fn delete_project_unassigns_repos() {
+        let s = test_store();
+        s.upsert_repo(&make_repo("api", "/tmp/api")).unwrap();
+        let proj = Project {
+            id: "proj-1".into(), name: "Test".into(), description: None,
+            client: None, category: "active".into(),
+            tags: vec![], created_at: None, updated_at: None,
+        };
+        s.create_project(&proj).unwrap();
+        s.set_repo_project("api", "proj-1", "backend", None).unwrap();
+        s.add_tag("project", "proj-1", "test").unwrap();
+        s.delete_project("proj-1").unwrap();
+        assert_eq!(s.list_projects().unwrap().len(), 0);
+        assert_eq!(s.get_tags("project", "proj-1").unwrap().len(), 0);
+        // Repo still exists but is unassigned
+        let repo = s.get_repo("api").unwrap().unwrap();
+        assert!(repo.project_id.is_none());
     }
 
     #[test]
@@ -1440,15 +1489,15 @@ mod tests {
     #[test]
     fn exclude_and_list() {
         let s = test_store();
-        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
-        s.upsert_project(&make_project("bar", "/tmp/bar")).unwrap();
+        s.upsert_repo(&make_repo("foo", "/tmp/foo")).unwrap();
+        s.upsert_repo(&make_repo("bar", "/tmp/bar")).unwrap();
 
         // Exclude foo
-        s.exclude_project("foo", "/tmp/foo").unwrap();
+        s.exclude_repo("foo", "/tmp/foo").unwrap();
 
-        // foo is gone from projects
-        assert_eq!(s.list_projects().unwrap().len(), 1);
-        assert!(s.get_project("foo").unwrap().is_none());
+        // foo is gone from repos
+        assert_eq!(s.list_repos().unwrap().len(), 1);
+        assert!(s.get_repo("foo").unwrap().is_none());
 
         // foo is in exclusions
         let excl = s.list_exclusions().unwrap();
@@ -1469,9 +1518,9 @@ mod tests {
     #[test]
     fn mark_index_failed() {
         let s = test_store();
-        s.upsert_project(&make_project("foo", "/tmp/foo")).unwrap();
+        s.upsert_repo(&make_repo("foo", "/tmp/foo")).unwrap();
         s.mark_index_failed("foo", "Kuzu connection error").unwrap();
-        let p = s.get_project("foo").unwrap().unwrap();
+        let p = s.get_repo("foo").unwrap().unwrap();
         assert_eq!(p.last_error.as_deref(), Some("Kuzu connection error"));
     }
 

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::db::Store;
-use crate::types::{Project, Solution, SolutionRepo};
+use crate::types::{Repo, Project};
 use super::graph::GraphDb;
 
 /// Cross-repo relationship detected within a solution.
@@ -22,10 +22,10 @@ pub struct InferredRole {
     pub reasons: Vec<String>,
 }
 
-/// Result of cross-repo analysis for a solution.
+/// Result of cross-repo analysis for a project.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct SolutionAnalysis {
-    pub solution_id: String,
+pub struct ProjectAnalysis {
+    pub project_id: String,
     pub links: Vec<CrossRepoLink>,
     pub inferred_roles: Vec<InferredRole>,
     pub shared_libs: Vec<SharedLib>,
@@ -37,23 +37,21 @@ pub struct SharedLib {
     pub repos: Vec<String>,
 }
 
-/// Analyze cross-repo relationships within a solution.
-pub fn analyze_solution(
+/// Analyze cross-repo relationships within a project.
+pub fn analyze_project(
     store: &Store,
     graph_db: &GraphDb,
-    solution: &Solution,
-) -> Result<SolutionAnalysis, String> {
-    // Load all projects in the solution
-    let mut projects: HashMap<String, Project> = HashMap::new();
-    for sr in &solution.repos {
-        if let Ok(Some(p)) = store.get_project(&sr.repo_id) {
-            projects.insert(sr.repo_id.clone(), p);
-        }
+    project: &Project,
+) -> Result<ProjectAnalysis, String> {
+    // Load all repos in the project
+    let mut repos: HashMap<String, Repo> = HashMap::new();
+    for r in store.get_project_repos(&project.id).unwrap_or_default() {
+        repos.insert(r.repo_id.clone(), r);
     }
 
-    if projects.len() < 2 {
-        return Ok(SolutionAnalysis {
-            solution_id: solution.id.clone(),
+    if repos.len() < 2 {
+        return Ok(ProjectAnalysis {
+            project_id: project.id.clone(),
             links: vec![],
             inferred_roles: vec![],
             shared_libs: vec![],
@@ -61,36 +59,36 @@ pub fn analyze_solution(
     }
 
     // 1. Detect shared libraries
-    let shared_libs = detect_shared_libs(&projects);
+    let shared_libs = detect_shared_libs(&repos);
 
     // 2. Detect cross-repo type/function references
-    let mut links = detect_cross_imports(graph_db, &projects);
+    let mut links = detect_cross_imports(graph_db, &repos);
 
     // 3. Detect doc→code coverage across repos
-    links.extend(detect_cross_doc_coverage(graph_db, &projects));
+    links.extend(detect_cross_doc_coverage(graph_db, &repos));
 
     // 4. Detect shared lib coupling (repos using same libs = likely related)
     links.extend(detect_lib_coupling(&shared_libs));
 
     // 5. Infer roles based on stack, libs, and file patterns
-    let inferred_roles = infer_roles(&projects);
+    let inferred_roles = infer_roles(&repos);
 
     // 6. Store cross-repo edges in graph
-    store_cross_repo_edges(graph_db, &solution.id, &links)?;
+    store_cross_repo_edges(graph_db, &project.id, &links)?;
 
-    Ok(SolutionAnalysis {
-        solution_id: solution.id.clone(),
+    Ok(ProjectAnalysis {
+        project_id: project.id.clone(),
         links,
         inferred_roles,
         shared_libs,
     })
 }
 
-fn detect_shared_libs(projects: &HashMap<String, Project>) -> Vec<SharedLib> {
+fn detect_shared_libs(repos: &HashMap<String, Repo>) -> Vec<SharedLib> {
     // lib_name → [repo_ids that use it]
     let mut lib_repos: HashMap<String, Vec<String>> = HashMap::new();
-    for (repo_id, project) in projects {
-        for lib in &project.libs {
+    for (repo_id, repo) in repos {
+        for lib in &repo.libs {
             lib_repos.entry(lib.clone()).or_default().push(repo_id.clone());
         }
     }
@@ -103,7 +101,7 @@ fn detect_shared_libs(projects: &HashMap<String, Project>) -> Vec<SharedLib> {
 
 fn detect_cross_imports(
     graph_db: &GraphDb,
-    projects: &HashMap<String, Project>,
+    repos: &HashMap<String, Repo>,
 ) -> Vec<CrossRepoLink> {
     let mut links = Vec::new();
 
@@ -111,7 +109,7 @@ fn detect_cross_imports(
     let mut exports: HashMap<String, HashSet<String>> = HashMap::new(); // repo_id → set of symbol names
     let mut export_files: HashMap<String, HashSet<String>> = HashMap::new(); // repo_id → set of module names
 
-    for repo_id in projects.keys() {
+    for repo_id in repos.keys() {
         let (fns, _) = graph_db.count_symbols(repo_id).unwrap_or((0, 0));
         if fns == 0 { continue; }
 
@@ -132,7 +130,7 @@ fn detect_cross_imports(
     }
 
     // Cross-match: for each pair of repos, find overlapping symbol names
-    let repo_ids: Vec<&String> = projects.keys().collect();
+    let repo_ids: Vec<&String> = repos.keys().collect();
     for i in 0..repo_ids.len() {
         for j in (i+1)..repo_ids.len() {
             let a = repo_ids[i];
@@ -162,7 +160,7 @@ fn detect_cross_imports(
 
 fn detect_cross_doc_coverage(
     graph_db: &GraphDb,
-    projects: &HashMap<String, Project>,
+    repos: &HashMap<String, Repo>,
 ) -> Vec<CrossRepoLink> {
     let mut links = Vec::new();
 
@@ -170,9 +168,9 @@ fn detect_cross_doc_coverage(
     let mut doc_repos: Vec<String> = Vec::new();
     let mut code_repos: Vec<String> = Vec::new();
 
-    for (repo_id, project) in projects {
-        let stack = project.stack.join(",").to_lowercase();
-        let has_docs = stack.contains("markdown") || project.path.to_lowercase().contains("doc");
+    for (repo_id, repo) in repos {
+        let stack = repo.stack.join(",").to_lowercase();
+        let has_docs = stack.contains("markdown") || repo.path.to_lowercase().contains("doc");
 
         // Check if repo has doc nodes
         if let Ok(nodes) = graph_db.get_nodes(repo_id) {
@@ -253,18 +251,18 @@ fn detect_lib_coupling(shared_libs: &[SharedLib]) -> Vec<CrossRepoLink> {
 }
 
 /// Public wrapper for role inference (used by API).
-pub fn infer_roles_pub(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
-    infer_roles(projects)
+pub fn infer_roles_pub(repos: &HashMap<String, Repo>) -> Vec<InferredRole> {
+    infer_roles(repos)
 }
 
-fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
+fn infer_roles(repos: &HashMap<String, Repo>) -> Vec<InferredRole> {
     let mut roles = Vec::new();
 
-    for (repo_id, project) in projects {
-        let stack = project.stack.join(",").to_lowercase();
-        let libs = project.libs.join(",").to_lowercase();
-        let name = project.name.to_lowercase();
-        let path = project.path.to_lowercase();
+    for (repo_id, repo) in repos {
+        let stack = repo.stack.join(",").to_lowercase();
+        let libs = repo.libs.join(",").to_lowercase();
+        let name = repo.name.to_lowercase();
+        let path = repo.path.to_lowercase();
 
         let mut role = "unknown".to_string();
         let mut confidence: f64 = 0.0;
@@ -283,7 +281,7 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
         if name.contains("api") || name.contains("backend") || name.contains("server") {
             role = "api".into();
             confidence = confidence.max(0.8_f64);
-            reasons.push(format!("Name suggests API: {}", project.name));
+            reasons.push(format!("Name suggests API: {}", repo.name));
         }
 
         // UI / Frontend detection
@@ -299,7 +297,7 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
             && role == "unknown" {
                 role = "ui".into();
                 confidence = confidence.max(0.7_f64);
-                reasons.push(format!("Name suggests UI: {}", project.name));
+                reasons.push(format!("Name suggests UI: {}", repo.name));
             }
 
         // Shared library detection
@@ -309,7 +307,7 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
             && role == "unknown" {
                 role = "shared-lib".into();
                 confidence = 0.7;
-                reasons.push(format!("Name suggests shared library: {}", project.name));
+                reasons.push(format!("Name suggests shared library: {}", repo.name));
             }
 
         // Documentation repo detection
@@ -339,10 +337,10 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
                 reasons.push("Infrastructure patterns detected".into());
             }
 
-        if role == "unknown" && !project.stack.is_empty() {
+        if role == "unknown" && !repo.stack.is_empty() {
             role = "service".into();
             confidence = 0.3;
-            reasons.push(format!("Fallback: stack is {:?}", project.stack));
+            reasons.push(format!("Fallback: stack is {:?}", repo.stack));
         }
 
         roles.push(InferredRole {
@@ -356,84 +354,67 @@ fn infer_roles(projects: &HashMap<String, Project>) -> Vec<InferredRole> {
     roles
 }
 
-/// Auto-create a Solution for a monorepo.
+/// Auto-create a Project for a monorepo.
 /// Only registers actual git repos (parent + subtrees) — NOT workspace packages.
 /// Workspace packages are already tracked in the graph's `packages` table.
-/// Returns Some(solution_id) if a solution was created/updated, None otherwise.
-pub fn auto_solution_for_monorepo(
+/// Returns Some(project_id) if a project was created/updated, None otherwise.
+pub fn auto_project_for_monorepo(
     store: &Store,
-    project: &Project,
+    repo: &Repo,
 ) -> Result<Option<String>, String> {
-    let repo_path = std::path::Path::new(&project.path);
+    let repo_path = std::path::Path::new(&repo.path);
 
     // Detect git subtrees by looking for directories with their own git history
     // (merged via `git subtree add`). These show up as dirs that were squash-merged.
     let subtrees = detect_git_subtrees(repo_path);
 
-    // Check if solution already exists for this project
-    let solutions = store.list_solutions().map_err(|e| e.to_string())?;
-    for sol in &solutions {
-        if sol.repos.iter().any(|r| r.repo_id == project.repo_id) {
-            // Already in a solution — add any missing subtree repos
-            for (name, path) in &subtrees {
-                let sub_id = format!("{}:{}", project.repo_id, name);
-                if !sol.repos.iter().any(|r| r.repo_id == sub_id) {
-                    store.add_repo_to_solution(&sol.id, &SolutionRepo {
-                        repo_id: sub_id,
-                        role: "subtree".to_string(),
-                        label: Some(name.clone()),
-                        path: Some(path.clone()),
-                    }).ok();
+    // Check if this repo already belongs to a project
+    if repo.project_id.is_some() {
+        let project_id = repo.project_id.as_ref().unwrap();
+        // Add any missing subtree repos to the same project
+        for (name, _path) in &subtrees {
+            let sub_id = format!("{}:{}", repo.repo_id, name);
+            if let Ok(Some(sub_repo)) = store.get_repo(&sub_id) {
+                if sub_repo.project_id.is_none() {
+                    store.set_repo_project(&sub_id, project_id, "subtree", Some(name)).ok();
                 }
             }
-            return Ok(Some(sol.id.clone()));
         }
+        return Ok(Some(project_id.clone()));
     }
 
-    // Nothing to create a solution for if no subtrees found
-    // (a monorepo with only workspaces doesn't need a solution — workspaces are packages)
+    // Nothing to create a project for if no subtrees found
     if subtrees.is_empty() {
         return Ok(None);
     }
 
-    // Create new solution
-    let solution_id = format!("auto:{}", project.repo_id);
-    let solution = Solution {
-        id: solution_id.clone(),
-        name: project.name.clone(),
+    // Create new project
+    let project_id = format!("auto:{}", repo.repo_id);
+    let project = Project {
+        id: project_id.clone(),
+        name: repo.name.clone(),
         description: Some(format!(
             "Monorepo with {} subtree repo(s)",
             subtrees.len()
         )),
         client: None,
         category: "active".to_string(),
-        repos: Vec::new(),
         tags: vec!["monorepo".to_string(), "auto-detected".to_string()],
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: Some(chrono::Utc::now().to_rfc3339()),
     };
-    store.create_solution(&solution).map_err(|e| e.to_string())?;
+    store.create_project(&project).map_err(|e| e.to_string())?;
 
-    // Add parent repo
-    store.add_repo_to_solution(&solution_id, &SolutionRepo {
-        repo_id: project.repo_id.clone(),
-        role: "parent".to_string(),
-        label: Some(project.name.clone()),
-        path: Some(project.path.clone()),
-    }).ok();
+    // Assign parent repo to the project
+    store.set_repo_project(&repo.repo_id, &project_id, "parent", Some(&repo.name)).ok();
 
-    // Add subtree repos only (NOT workspace packages)
-    for (name, path) in &subtrees {
-        let sub_id = format!("{}:{}", project.repo_id, name);
-        store.add_repo_to_solution(&solution_id, &SolutionRepo {
-            repo_id: sub_id,
-            role: "subtree".to_string(),
-            label: Some(name.clone()),
-            path: Some(path.clone()),
-        }).ok();
+    // Assign subtree repos
+    for (name, _path) in &subtrees {
+        let sub_id = format!("{}:{}", repo.repo_id, name);
+        store.set_repo_project(&sub_id, &project_id, "subtree", Some(name)).ok();
     }
 
-    Ok(Some(solution_id))
+    Ok(Some(project_id))
 }
 
 /// Detect git subtrees by finding directories that were merged via `git subtree add`.
@@ -500,13 +481,13 @@ fn detect_git_subtrees(repo_path: &std::path::Path) -> Vec<(String, String)> {
 
 fn store_cross_repo_edges(
     graph_db: &GraphDb,
-    solution_id: &str,
+    project_id: &str,
     links: &[CrossRepoLink],
 ) -> Result<(), String> {
     for link in links {
-        // Create solution-level edges: solution:X:repoA → solution:X:repoB
-        let from = format!("solution:{}:{}", solution_id, link.from_repo);
-        let to = format!("solution:{}:{}", solution_id, link.to_repo);
+        // Create project-level edges: solution:X:repoA → solution:X:repoB
+        let from = format!("solution:{}:{}", project_id, link.from_repo);
+        let to = format!("solution:{}:{}", project_id, link.to_repo);
         graph_db.merge_edge(&from, &to, &link.link_type).ok();
     }
     Ok(())
@@ -518,48 +499,48 @@ mod tests {
 
     #[test]
     fn infer_role_api() {
-        let mut projects = HashMap::new();
-        projects.insert("api".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("api".into(), Repo {
             repo_id: "api".into(), name: "my-api".into(), path: "/api".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec!["typescript".into()], libs: vec!["express".into(), "prisma".into()],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        let roles = infer_roles(&projects);
+        let roles = infer_roles(&repos);
         assert_eq!(roles[0].role, "api");
         assert!(roles[0].confidence > 0.8);
     }
 
     #[test]
     fn infer_role_ui() {
-        let mut projects = HashMap::new();
-        projects.insert("ui".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("ui".into(), Repo {
             repo_id: "ui".into(), name: "dashboard".into(), path: "/ui".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec!["typescript".into()], libs: vec!["svelte".into(), "d3".into()],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        let roles = infer_roles(&projects);
+        let roles = infer_roles(&repos);
         assert_eq!(roles[0].role, "ui");
     }
 
     #[test]
     fn shared_libs_detection() {
-        let mut projects = HashMap::new();
-        projects.insert("a".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("a".into(), Repo {
             repo_id: "a".into(), name: "svc-a".into(), path: "/a".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec![], libs: vec!["axios".into(), "lodash".into(), "zod".into()],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        projects.insert("b".into(), Project {
+        repos.insert("b".into(), Repo {
             repo_id: "b".into(), name: "svc-b".into(), path: "/b".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec![], libs: vec!["axios".into(), "zod".into(), "express".into()],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
 
-        let shared = detect_shared_libs(&projects);
+        let shared = detect_shared_libs(&repos);
         let shared_names: HashSet<&str> = shared.iter().map(|s| s.name.as_str()).collect();
         assert!(shared_names.contains("axios"));
         assert!(shared_names.contains("zod"));
@@ -581,67 +562,67 @@ mod tests {
 
     #[test]
     fn infer_roles_pub_wrapper() {
-        let mut projects = HashMap::new();
-        projects.insert("lib".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("lib".into(), Repo {
             repo_id: "lib".into(), name: "shared-utils".into(), path: "/lib".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec!["typescript".into()], libs: vec![],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        let roles = infer_roles_pub(&projects);
+        let roles = infer_roles_pub(&repos);
         assert_eq!(roles.len(), 1);
         assert_eq!(roles[0].role, "shared-lib");
     }
 
     #[test]
     fn infer_role_mobile() {
-        let mut projects = HashMap::new();
-        projects.insert("app".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("app".into(), Repo {
             repo_id: "app".into(), name: "myapp".into(), path: "/app".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec!["swift".into()], libs: vec!["swiftui".into()],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        let roles = infer_roles(&projects);
+        let roles = infer_roles(&repos);
         assert_eq!(roles[0].role, "mobile");
     }
 
     #[test]
     fn infer_role_infra() {
-        let mut projects = HashMap::new();
-        projects.insert("infra".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("infra".into(), Repo {
             repo_id: "infra".into(), name: "deploy-infra".into(), path: "/infra".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec![], libs: vec![],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        let roles = infer_roles(&projects);
+        let roles = infer_roles(&repos);
         assert_eq!(roles[0].role, "infra");
     }
 
     #[test]
     fn infer_role_docs() {
-        let mut projects = HashMap::new();
-        projects.insert("docs".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("docs".into(), Repo {
             repo_id: "docs".into(), name: "project-docs".into(), path: "/docs".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec![], libs: vec![],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        let roles = infer_roles(&projects);
+        let roles = infer_roles(&repos);
         assert_eq!(roles[0].role, "docs");
     }
 
     #[test]
     fn infer_role_fallback_service() {
-        let mut projects = HashMap::new();
-        projects.insert("x".into(), Project {
+        let mut repos = HashMap::new();
+        repos.insert("x".into(), Repo {
             repo_id: "x".into(), name: "unknown-thing".into(), path: "/x".into(),
             remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
             stack: vec!["rust".into()], libs: vec![],
-            tags: vec![], status: "active".into(),
+            tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
         });
-        let roles = infer_roles(&projects);
+        let roles = infer_roles(&repos);
         assert_eq!(roles[0].role, "service");
         assert!(roles[0].confidence < 0.5);
     }

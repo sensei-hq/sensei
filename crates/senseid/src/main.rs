@@ -131,10 +131,10 @@ async fn run_foreground(port: u16) {
 
     let store = db::Store::open(&db_path()).expect("Failed to open SQLite");
 
-    // Print project stats
-    if let Ok(projects) = store.list_projects() {
-        let indexed = projects.iter().filter(|p| p.indexed_at.is_some()).count();
-        println!("[senseid] {} projects registered ({} indexed)", projects.len(), indexed);
+    // Print repo stats
+    if let Ok(repos) = store.list_repos() {
+        let indexed = repos.iter().filter(|p| p.indexed_at.is_some()).count();
+        println!("[senseid] {} repos registered ({} indexed)", repos.len(), indexed);
     }
 
     let gp = graph_path();
@@ -363,23 +363,23 @@ mod integration_tests {
     }
 
     #[test]
-    fn get_project_path_found() {
+    fn get_repo_path_found() {
         let store = db::Store::open_memory().unwrap();
-        store.upsert_project_basic("test-repo", "test-project", "/home/user/project").unwrap();
+        store.upsert_repo_basic("test-repo", "test-project", "/home/user/project").unwrap();
 
         // Match by name
-        let path = store.get_project_path("test-project").unwrap();
+        let path = store.get_repo_path("test-project").unwrap();
         assert_eq!(path, Some("/home/user/project".to_string()));
 
         // Match by repo_id
-        let path = store.get_project_path("test-repo").unwrap();
+        let path = store.get_repo_path("test-repo").unwrap();
         assert_eq!(path, Some("/home/user/project".to_string()));
     }
 
     #[test]
-    fn get_project_path_not_found() {
+    fn get_repo_path_not_found() {
         let store = db::Store::open_memory().unwrap();
-        let path = store.get_project_path("nonexistent").unwrap();
+        let path = store.get_repo_path("nonexistent").unwrap();
         assert!(path.is_none());
     }
 
