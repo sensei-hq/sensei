@@ -125,7 +125,7 @@ mod tests {
         let ctx = make_ctx();
         {
             let store = ctx.store().await;
-            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
         }
         let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
         let result = execute_task(&ctx, &task).await;
@@ -137,7 +137,7 @@ mod tests {
         let ctx = make_ctx();
         {
             let store = ctx.store().await;
-            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
         }
         let task = Task::new(TaskKind::ResolveEdges, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -149,7 +149,7 @@ mod tests {
         let ctx = make_ctx();
         {
             let store = ctx.store().await;
-            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
         }
         let task = Task::new(TaskKind::ResolveLibs, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -161,7 +161,7 @@ mod tests {
         let ctx = make_ctx();
         {
             let store = ctx.store().await;
-            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
         }
         let task = Task::new(TaskKind::BuildConnections, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -197,7 +197,7 @@ mod tests {
         let ctx = make_ctx();
         {
             let store = ctx.store().await;
-            store.upsert_project_basic("repo", "repo", &tmp.path().to_string_lossy()).unwrap();
+            store.upsert_repo_basic("repo", "repo", &tmp.path().to_string_lossy()).unwrap();
         }
 
         let mut task = Task::new(TaskKind::ProcessFolder, "repo", &src_dir.to_string_lossy());
@@ -217,7 +217,7 @@ mod tests {
         let ctx = make_ctx();
         {
             let store = ctx.store().await;
-            store.upsert_project_basic("repo", "repo", "/tmp/repo").unwrap();
+            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
         }
         // ReconcileConnections with no solutions should succeed (no-op)
         let task = Task::new(TaskKind::ReconcileConnections, "repo", "");
@@ -231,8 +231,8 @@ mod tests {
         // Verify we can access both store and graph
         {
             let store = ctx.store().await;
-            store.upsert_project_basic("test", "test", "/tmp/test").unwrap();
-            let p = store.get_project("test").unwrap();
+            store.upsert_repo_basic("test", "test", "/tmp/test").unwrap();
+            let p = store.get_repo("test").unwrap();
             assert!(p.is_some());
         }
         {

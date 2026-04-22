@@ -9,6 +9,7 @@ pub mod code;
 pub mod doc;
 pub mod config;
 pub mod graph_writer;
+pub mod metadata;
 
 #[cfg(test)]
 mod tests;

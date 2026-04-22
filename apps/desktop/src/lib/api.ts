@@ -46,10 +46,10 @@ export function senseiApi(port: number) {
     // ── Health ────────────────────────────────────────────────────────────
     getHealth: () => get<Record<string, unknown>>('/health', {}),
 
-    // ── Projects ─────────────────────────────────────────────────────────
-    getProjects: async () => {
-      const projects = await get<ServerProject[]>('/api/projects', []);
-      return projects.map(p => ({
+    // ── Repos (individual git repos) ────────────────────────────────────
+    getRepos: async () => {
+      const repos = await get<ServerProject[]>('/api/repos', []);
+      return repos.map(p => ({
         ...p,
         repoId: p.repo_id,
         indexedAt: p.indexed_at,
@@ -58,51 +58,51 @@ export function senseiApi(port: number) {
       }));
     },
 
-    getProjectSummary: (repoId: string) =>
-      get<ProjectSummary>(`/api/projects/${enc(repoId)}/summary`, null as any),
+    getRepoSummary: (repoId: string) =>
+      get<ProjectSummary>(`/api/repos/${enc(repoId)}/summary`, null as any),
 
-    registerProject: (repoId: string, name: string, path: string) =>
-      post('/api/projects', { repoId, name, path }, { ok: false }),
+    registerRepo: (repoId: string, name: string, path: string) =>
+      post('/api/repos', { repoId, name, path }, { ok: false }),
 
-    updateProject: (repoId: string, patch: Partial<ServerProject>) =>
-      put(`/api/projects/${enc(repoId)}`, patch),
+    updateRepo: (repoId: string, patch: Partial<ServerProject>) =>
+      put(`/api/repos/${enc(repoId)}`, patch),
 
-    deleteProject: (repoId: string) => del(`/api/projects/${enc(repoId)}`),
+    deleteRepo: (repoId: string) => del(`/api/repos/${enc(repoId)}`),
 
     excludeRepo: (repoId: string) =>
-      post(`/api/projects/${enc(repoId)}/exclude`, {}, { ok: false }),
+      post(`/api/repos/${enc(repoId)}/exclude`, {}, { ok: false }),
 
-    addProjectTag: (repoId: string, tag: string) =>
-      post(`/api/projects/${enc(repoId)}/tags`, { tag }, { ok: false }),
+    addRepoTag: (repoId: string, tag: string) =>
+      post(`/api/repos/${enc(repoId)}/tags`, { tag }, { ok: false }),
 
-    removeProjectTag: (repoId: string, tag: string) =>
-      del(`/api/projects/${enc(repoId)}/tags/${enc(tag)}`),
+    removeRepoTag: (repoId: string, tag: string) =>
+      del(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
 
-    // ── Solutions ────────────────────────────────────────────────────────
-    listSolutions: () => get<any[]>('/api/solutions', []),
+    // ── Projects (groups of 1+ repos) ───────────────────────────────────
+    listProjects: () => get<any[]>('/api/projects', []),
 
-    createSolution: (solution: any) =>
-      post<{ ok: boolean; id?: string }>('/api/solutions', solution, { ok: false }),
+    createProject: (project: any) =>
+      post<{ ok: boolean; id?: string }>('/api/projects', project, { ok: false }),
 
-    updateSolution: (id: string, patch: any) =>
-      put(`/api/solutions/${enc(id)}`, patch),
+    updateProject: (id: string, patch: any) =>
+      put(`/api/projects/${enc(id)}`, patch),
 
-    deleteSolution: (id: string) => del(`/api/solutions/${enc(id)}`),
+    deleteProject: (id: string) => del(`/api/projects/${enc(id)}`),
 
-    addSolutionRepo: (solutionId: string, repo: { repoId: string; role?: string }) =>
-      post(`/api/solutions/${enc(solutionId)}/repos`, repo, { ok: false }),
+    addProjectRepo: (projectId: string, repo: { repoId: string; role?: string }) =>
+      post(`/api/projects/${enc(projectId)}/repos`, repo, { ok: false }),
 
-    removeSolutionRepo: (solutionId: string, repoId: string) =>
-      del(`/api/solutions/${enc(solutionId)}/repos/${enc(repoId)}`),
+    removeProjectRepo: (projectId: string, repoId: string) =>
+      del(`/api/projects/${enc(projectId)}/repos/${enc(repoId)}`),
 
-    getSolutionGraph: (id: string) =>
-      get<SolutionGraphResponse>(`/api/solutions/${enc(id)}/graph`, null as any),
+    getProjectGraph: (id: string) =>
+      get<SolutionGraphResponse>(`/api/projects/${enc(id)}/graph`, null as any),
 
-    getSolutionRoles: (id: string) =>
-      get<InferredRole[]>(`/api/solutions/${enc(id)}/roles`, []),
+    getProjectRoles: (id: string) =>
+      get<InferredRole[]>(`/api/projects/${enc(id)}/roles`, []),
 
-    analyzeSolution: (id: string) =>
-      post<SolutionAnalysis>(`/api/solutions/${enc(id)}/analyze`, {}, null as any),
+    analyzeProject: (id: string) =>
+      post<SolutionAnalysis>(`/api/projects/${enc(id)}/analyze`, {}, null as any),
 
     // ── Indexing ─────────────────────────────────────────────────────────
     indexRepo: (repoId: string, repoPath: string, force = false) =>
@@ -175,10 +175,10 @@ export function senseiApi(port: number) {
       get<DocDrift[]>(`/api/graph/doc-drift?repoId=${enc(repoId)}`, []),
 
     // ── Libraries ────────────────────────────────────────────────────────
-    getLibs: (params?: { repoId?: string; solutionId?: string; shared?: boolean }) => {
+    getLibs: (params?: { repoId?: string; projectId?: string; shared?: boolean }) => {
       const qs = new URLSearchParams();
       if (params?.repoId) qs.set('repoId', params.repoId);
-      if (params?.solutionId) qs.set('solutionId', params.solutionId);
+      if (params?.projectId) qs.set('projectId', params.projectId);
       if (params?.shared) qs.set('shared', 'true');
       return get<{ total: number; libs: LibEntry[] }>(`/api/libs?${qs}`, { total: 0, libs: [] });
     },
@@ -196,8 +196,8 @@ export function senseiApi(port: number) {
       get<DepVersion[]>(`/api/libs/versions?repoId=${enc(repoId)}`, []),
 
     // ── Unified Query ────────────────────────────────────────────────────
-    query: (q: string, repoId?: string, solutionId?: string) =>
-      post<Record<string, unknown>>('/api/query', { q, repoId, solutionId }, {}),
+    query: (q: string, repoId?: string, projectId?: string) =>
+      post<Record<string, unknown>>('/api/query', { q, repoId, projectId }, {}),
 
     // ── Sessions ─────────────────────────────────────────────────────────
     getSessions: () =>
@@ -274,6 +274,36 @@ export function senseiApi(port: number) {
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
+
+    // ── Deprecated aliases (migration: solution→project, project→repo) ──
+    /** @deprecated Use getRepos */
+    get getProjects() { return this.getRepos; },
+    /** @deprecated Use getRepoSummary */
+    get getProjectSummary() { return this.getRepoSummary; },
+    /** @deprecated Use registerRepo */
+    get registerProject() { return this.registerRepo; },
+    /** @deprecated Use addRepoTag */
+    get addProjectTag() { return this.addRepoTag; },
+    /** @deprecated Use removeRepoTag */
+    get removeProjectTag() { return this.removeRepoTag; },
+    /** @deprecated Use listProjects */
+    get listSolutions() { return this.listProjects; },
+    /** @deprecated Use createProject */
+    get createSolution() { return this.createProject; },
+    /** @deprecated Use updateProject */
+    get updateSolution() { return this.updateProject; },
+    /** @deprecated Use deleteProject */
+    get deleteSolution() { return this.deleteProject; },
+    /** @deprecated Use addProjectRepo */
+    get addSolutionRepo() { return this.addProjectRepo; },
+    /** @deprecated Use removeProjectRepo */
+    get removeSolutionRepo() { return this.removeProjectRepo; },
+    /** @deprecated Use getProjectGraph */
+    get getSolutionGraph() { return this.getProjectGraph; },
+    /** @deprecated Use getProjectRoles */
+    get getSolutionRoles() { return this.getProjectRoles; },
+    /** @deprecated Use analyzeProject */
+    get analyzeSolution() { return this.analyzeProject; },
   };
 }
 

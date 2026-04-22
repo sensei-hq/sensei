@@ -13,7 +13,7 @@ use tokio_stream::StreamExt;
 use crate::db::Store;
 use crate::indexer::graph::GraphDb;
 use crate::tasks::queue::TaskQueue;
-use crate::types::{Project, Solution, SolutionRepo, IndexError};
+use crate::types::{Repo, Project, IndexError};
 
 pub struct SharedState {
     pub store: Mutex<Store>,
@@ -27,23 +27,23 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health
         .route("/health", get(health))
-        // Projects
-        .route("/api/projects", get(list_projects).post(create_project))
-        .route("/api/projects/{repo_id}", put(update_project).delete(delete_project))
-        .route("/api/projects/{repo_id}/tags", post(add_project_tag))
-        .route("/api/projects/{repo_id}/tags/{tag}", delete(remove_project_tag))
-        .route("/api/projects/{repo_id}/summary", get(project_summary))
-        .route("/api/projects/{repo_id}/exclude", post(exclude_project))
+        // Repos (individual git repos)
+        .route("/api/repos", get(list_projects).post(create_project))
+        .route("/api/repos/{repo_id}", put(update_project).delete(delete_project))
+        .route("/api/repos/{repo_id}/tags", post(add_project_tag))
+        .route("/api/repos/{repo_id}/tags/{tag}", delete(remove_project_tag))
+        .route("/api/repos/{repo_id}/summary", get(project_summary))
+        .route("/api/repos/{repo_id}/exclude", post(exclude_project))
         // Exclusions
         .route("/api/exclusions", get(list_exclusions))
         .route("/api/exclusions/{path}", delete(remove_exclusion))
-        // Solutions
-        .route("/api/solutions", get(list_solutions).post(create_solution))
-        .route("/api/solutions/{id}", put(update_solution).delete(delete_solution))
-        .route("/api/solutions/{id}/repos", post(add_solution_repo))
-        .route("/api/solutions/{id}/repos/{repo_id}", delete(remove_solution_repo))
-        .route("/api/solutions/{id}/tags", post(add_solution_tag))
-        .route("/api/solutions/{id}/tags/{tag}", delete(remove_solution_tag))
+        // Projects (groups of 1+ repos)
+        .route("/api/projects", get(list_solutions).post(create_solution))
+        .route("/api/projects/{id}", put(update_solution).delete(delete_solution))
+        .route("/api/projects/{id}/repos", post(add_solution_repo))
+        .route("/api/projects/{id}/repos/{repo_id}", delete(remove_solution_repo))
+        .route("/api/projects/{id}/tags", post(add_solution_tag))
+        .route("/api/projects/{id}/tags/{tag}", delete(remove_solution_tag))
         // Indexing
         .route("/api/index", post(index_project))
         .route("/api/index/status", get(task_status))
@@ -65,10 +65,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/graph/communities/info", get(community_info))
         .route("/api/graph/doc-drift", get(doc_drift))
         .route("/api/graph/call-flow", get(call_flow))
-        // Solution analysis
-        .route("/api/solutions/{id}/analyze", post(analyze_solution))
-        .route("/api/solutions/{id}/graph", get(solution_graph))
-        .route("/api/solutions/{id}/roles", get(solution_roles))
+        // Project analysis
+        .route("/api/projects/{id}/analyze", post(analyze_solution))
+        .route("/api/projects/{id}/graph", get(solution_graph))
+        .route("/api/projects/{id}/roles", get(solution_roles))
         // Libraries
         .route("/api/libs", get(list_libs))
         .route("/api/libs/index", post(index_lib))
@@ -142,9 +142,9 @@ async fn health() -> Json<HealthResponse> {
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
-async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<Project>>, StatusCode> {
+async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<Repo>>, StatusCode> {
     let s = state.store.lock().await;
-    s.list_projects()
+    s.list_repos()
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -162,7 +162,7 @@ async fn create_project(
     Json(body): Json<CreateProjectBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    let project = Project {
+    let repo = Repo {
         repo_id: body.repo_id,
         name: body.name.unwrap_or_else(|| body.path.split('/').next_back().unwrap_or("unknown").to_string()),
         path: body.path,
@@ -174,8 +174,11 @@ async fn create_project(
         libs: vec![],
         tags: vec![],
         status: "active".to_string(),
+        project_id: None,
+        role: "unknown".to_string(),
+        label: None,
     };
-    s.upsert_project(&project)
+    s.upsert_repo(&repo)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -186,18 +189,18 @@ async fn update_project(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    let mut project = s.get_project(&repo_id)
+    let mut repo = s.get_repo(&repo_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     if let Some(name) = body.get("name").and_then(|v| v.as_str()) {
-        project.name = name.to_string();
+        repo.name = name.to_string();
     }
     if let Some(status) = body.get("status").and_then(|v| v.as_str()) {
-        project.status = status.to_string();
+        repo.status = status.to_string();
     }
 
-    s.upsert_project(&project)
+    s.upsert_repo(&repo)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -207,7 +210,7 @@ async fn delete_project(
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    s.delete_project(&repo_id)
+    s.delete_repo(&repo_id)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -219,8 +222,8 @@ async fn exclude_project(
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = state.store.lock().await;
-    // Look up project path before deleting
-    let path = store.get_project(&repo_id)
+    // Look up repo path before deleting
+    let path = store.get_repo(&repo_id)
         .ok().flatten()
         .map(|p| p.path.clone())
         .unwrap_or_default();
@@ -232,7 +235,7 @@ async fn exclude_project(
     }
 
     // Exclude in store (adds to excluded_paths, deletes project)
-    store.exclude_project(&repo_id, &path)
+    store.exclude_repo(&repo_id, &path)
         .map(|_| Json(serde_json::json!({"ok": true, "excluded": path})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -293,11 +296,36 @@ async fn remove_project_tag(
 
 // ── Solutions ────────────────────────────────────────────────────────────────
 
-async fn list_solutions(State(state): State<AppState>) -> Result<Json<Vec<Solution>>, StatusCode> {
+async fn list_solutions(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    s.list_solutions()
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    let projects = s.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let all_repos = s.list_repos().unwrap_or_default();
+
+    // Enrich each project with its repos for the API response
+    let enriched: Vec<serde_json::Value> = projects.iter().map(|p| {
+        let repos: Vec<serde_json::Value> = all_repos.iter()
+            .filter(|r| r.project_id.as_deref() == Some(&p.id))
+            .map(|r| serde_json::json!({
+                "repo_id": r.repo_id,
+                "role": r.role,
+                "label": r.label,
+                "path": r.path,
+            }))
+            .collect();
+        serde_json::json!({
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "client": p.client,
+            "category": p.category,
+            "repos": repos,
+            "tags": p.tags,
+            "created_at": p.created_at,
+            "updated_at": p.updated_at,
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!(enriched)))
 }
 
 #[derive(Deserialize)]
@@ -310,10 +338,19 @@ struct CreateSolutionBody {
     #[serde(default = "default_category")]
     category: String,
     #[serde(default)]
-    repos: Vec<SolutionRepo>,
+    repos: Vec<CreateProjectRepo>,
+}
+
+#[derive(Deserialize)]
+struct CreateProjectRepo {
+    repo_id: String,
+    #[serde(default = "default_role")]
+    role: String,
+    label: Option<String>,
 }
 
 fn default_category() -> String { "active".to_string() }
+fn default_role() -> String { "unknown".to_string() }
 
 async fn create_solution(
     State(state): State<AppState>,
@@ -321,20 +358,22 @@ async fn create_solution(
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
     let s = state.store.lock().await;
     let id = uuid::Uuid::new_v4().to_string();
-    let solution = Solution {
+    let project = Project {
         id: id.clone(),
         name: body.name,
         description: body.description,
         client: body.client,
         category: body.category,
-        repos: body.repos,
         tags: vec![],
         created_at: None,
         updated_at: None,
     };
-    s.create_solution(&solution)
-        .map(|_| (StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    s.create_project(&project).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Assign repos to this project
+    for r in &body.repos {
+        s.set_repo_project(&r.repo_id, &id, &r.role, r.label.as_deref()).ok();
+    }
+    Ok((StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))))
 }
 
 async fn update_solution(
@@ -351,7 +390,7 @@ async fn delete_solution(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    s.delete_solution(&id)
+    s.delete_project(&id)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -359,20 +398,20 @@ async fn delete_solution(
 async fn add_solution_repo(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(body): Json<SolutionRepo>,
+    Json(body): Json<CreateProjectRepo>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    s.add_repo_to_solution(&id, &body)
+    s.set_repo_project(&body.repo_id, &id, &body.role, body.label.as_deref())
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn remove_solution_repo(
     State(state): State<AppState>,
-    Path((id, repo_id)): Path<(String, String)>,
+    Path((_id, repo_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    s.remove_repo_from_solution(&id, &repo_id)
+    s.clear_repo_project(&repo_id)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -403,13 +442,13 @@ async fn remove_solution_tag(
 async fn analyze_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<crate::indexer::cross_repo::SolutionAnalysis>, StatusCode> {
+) -> Result<Json<crate::indexer::cross_repo::ProjectAnalysis>, StatusCode> {
     let store = state.store.lock().await;
-    let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let solution = solutions.into_iter().find(|s| s.id == id)
+    let projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project = projects.into_iter().find(|s| s.id == id)
         .ok_or(StatusCode::NOT_FOUND)?;
     let graph = state.graph.lock().await;
-    crate::indexer::cross_repo::analyze_solution(&store, &graph, &solution)
+    crate::indexer::cross_repo::analyze_project(&store, &graph, &project)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -421,7 +460,7 @@ async fn project_summary(
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = state.store.lock().await;
-    let project = store.get_project(&repo_id)
+    let repo = store.get_repo(&repo_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
@@ -431,26 +470,26 @@ async fn project_summary(
     let pkg_count = graph.count_packages(&repo_id).unwrap_or(0);
     let mod_count = graph.count_modules(&repo_id).unwrap_or(0);
 
-    // Find which solutions contain this repo
-    let solutions = store.list_solutions().unwrap_or_default();
-    let memberships: Vec<serde_json::Value> = solutions.iter()
-        .filter(|s| s.repos.iter().any(|r| r.repo_id == repo_id))
-        .map(|s| {
-            let role = s.repos.iter().find(|r| r.repo_id == repo_id)
-                .map(|r| r.role.as_str()).unwrap_or("unknown");
-            serde_json::json!({"solutionId": s.id, "solutionName": s.name, "role": role})
-        })
-        .collect();
+    // Find which project this repo belongs to
+    let memberships: Vec<serde_json::Value> = if let Some(pid) = &repo.project_id {
+        let projects = store.list_projects().unwrap_or_default();
+        projects.iter()
+            .filter(|p| p.id == *pid)
+            .map(|p| serde_json::json!({"projectId": p.id, "projectName": p.name, "role": repo.role}))
+            .collect()
+    } else {
+        vec![]
+    };
 
     Ok(Json(serde_json::json!({
-        "repoId": project.repo_id,
-        "name": project.name,
-        "path": project.path,
-        "stack": project.stack,
-        "libs": project.libs,
-        "tags": project.tags,
-        "status": project.status,
-        "indexedAt": project.indexed_at,
+        "repoId": repo.repo_id,
+        "name": repo.name,
+        "path": repo.path,
+        "stack": repo.stack,
+        "libs": repo.libs,
+        "tags": repo.tags,
+        "status": repo.status,
+        "indexedAt": repo.indexed_at,
         "functions": fn_count,
         "types": type_count,
         "packages": pkg_count,
@@ -467,60 +506,54 @@ async fn solution_graph(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = state.store.lock().await;
-    let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let solution = solutions.into_iter().find(|s| s.id == id)
+    let projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project = projects.into_iter().find(|s| s.id == id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let project_repos = store.get_project_repos(&project.id).unwrap_or_default();
     let graph = state.graph.lock().await;
 
-    // Merge nodes and edges from all repos in the solution.
-    // For subtree repos, their data lives under the parent repo's graph.
+    // Merge nodes and edges from all repos in the project.
     let mut all_nodes = Vec::new();
     let mut all_edges = Vec::new();
     let mut seen_repo_ids = std::collections::HashSet::new();
 
-    for sr in &solution.repos {
-        // Each repo (including subtrees) is indexed under its own repo_id
-        let graph_repo_id = &sr.repo_id;
-
-        if !seen_repo_ids.insert(graph_repo_id.clone()) {
+    for repo in &project_repos {
+        if !seen_repo_ids.insert(repo.repo_id.clone()) {
             continue;
         }
 
-        let nodes = graph.get_nodes(graph_repo_id).unwrap_or_default();
-        let edges = graph.get_edges(graph_repo_id).unwrap_or_default();
+        let nodes = graph.get_nodes(&repo.repo_id).unwrap_or_default();
+        let edges = graph.get_edges(&repo.repo_id).unwrap_or_default();
         for node in nodes {
             all_nodes.push(serde_json::json!({
                 "id": node.id, "name": node.name, "kind": node.kind,
                 "file": node.file, "line": node.line, "complexity": node.complexity,
                 "doc_type": node.doc_type, "level": node.level, "parent_id": node.parent_id,
-                "repoId": graph_repo_id, "role": sr.role,
+                "repoId": repo.repo_id, "role": repo.role,
             }));
         }
         for edge in edges {
             all_edges.push(serde_json::json!({
                 "source": edge.source, "target": edge.target,
-                "type": edge.edge_type, "repoId": graph_repo_id,
+                "type": edge.edge_type, "repoId": repo.repo_id,
             }));
         }
     }
 
-    // Inject solution-level hierarchy: soln → repo nodes for each member
-    let soln_node_id = format!("soln:{}", solution.id);
+    // Inject project-level hierarchy: soln → repo nodes for each member
+    let soln_node_id = format!("soln:{}", project.id);
     all_nodes.push(serde_json::json!({
-        "id": &soln_node_id, "name": &solution.name, "kind": "solution",
+        "id": &soln_node_id, "name": &project.name, "kind": "solution",
         "file": "", "line": 0, "complexity": null,
     }));
-    for sr in &solution.repos {
+    for sr in &project_repos {
         let repo_node_id = format!("repo:{}", sr.repo_id);
         // Only add if not already present from graph data
         if !all_nodes.iter().any(|n| n.get("id").and_then(|v| v.as_str()) == Some(&repo_node_id)) {
             let label = sr.label.as_deref().unwrap_or(&sr.repo_id);
-            // Look up remote_url from the project store
-            let project = store.get_project(&sr.repo_id).ok().flatten();
-            let remote_url = project.as_ref().and_then(|p| p.remote_url.as_deref());
-            let local_path = sr.path.as_deref()
-                .or(project.as_ref().map(|p| p.path.as_str()));
+            let remote_url = sr.remote_url.as_deref();
+            let local_path = Some(sr.path.as_str());
             all_nodes.push(serde_json::json!({
                 "id": &repo_node_id, "name": label, "kind": "repo",
                 "file": local_path.unwrap_or(""), "line": 0, "complexity": null,
@@ -537,11 +570,11 @@ async fn solution_graph(
     }
 
     Ok(Json(serde_json::json!({
-        "solutionId": solution.id,
-        "name": solution.name,
+        "solutionId": project.id,
+        "name": project.name,
         "nodes": all_nodes.len(),
         "edges": all_edges.len(),
-        "repos": solution.repos.len(),
+        "repos": project_repos.len(),
         "graph": {"nodes": all_nodes, "edges": all_edges},
     })))
 }
@@ -551,18 +584,17 @@ async fn solution_roles(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::indexer::cross_repo::InferredRole>>, StatusCode> {
     let store = state.store.lock().await;
-    let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let solution = solutions.into_iter().find(|s| s.id == id)
+    let projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let _project = projects.into_iter().find(|s| s.id == id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let mut projects = std::collections::HashMap::new();
-    for sr in &solution.repos {
-        if let Ok(Some(p)) = store.get_project(&sr.repo_id) {
-            projects.insert(sr.repo_id.clone(), p);
-        }
+    let project_repos = store.get_project_repos(&id).unwrap_or_default();
+    let mut repos_map = std::collections::HashMap::new();
+    for r in &project_repos {
+        repos_map.insert(r.repo_id.clone(), r.clone());
     }
 
-    Ok(Json(crate::indexer::cross_repo::infer_roles_pub(&projects)))
+    Ok(Json(crate::indexer::cross_repo::infer_roles_pub(&repos_map)))
 }
 
 // ── Libraries ────────────────────────────────────────────────────────────────
@@ -589,25 +621,20 @@ async fn list_libs(
     Query(q): Query<LibsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let store = state.store.lock().await;
-    let all_projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let all_repos = store.list_repos().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Scope: repoId > solutionId > all
-    let projects: Vec<_> = if let Some(rid) = &q.repo_id {
-        all_projects.into_iter().filter(|p| p.repo_id == *rid).collect()
-    } else if let Some(sid) = &q.solution_id {
-        let solutions = store.list_solutions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let repo_ids: std::collections::HashSet<String> = solutions.into_iter()
-            .find(|s| s.id == *sid)
-            .map(|s| s.repos.iter().map(|r| r.repo_id.clone()).collect())
-            .unwrap_or_default();
-        all_projects.into_iter().filter(|p| repo_ids.contains(&p.repo_id)).collect()
+    let repos: Vec<_> = if let Some(rid) = &q.repo_id {
+        all_repos.into_iter().filter(|p| p.repo_id == *rid).collect()
+    } else if let Some(pid) = &q.solution_id {
+        all_repos.into_iter().filter(|r| r.project_id.as_deref() == Some(pid.as_str())).collect()
     } else {
-        all_projects
+        all_repos
     };
 
     // lib_name → [repo_ids]
     let mut lib_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for p in &projects {
+    for p in &repos {
         for lib in &p.libs {
             lib_map.entry(lib.clone()).or_default().push(p.repo_id.clone());
         }
@@ -700,11 +727,11 @@ async fn get_dep_versions(
     Query(q): Query<DepVersionsQuery>,
 ) -> Result<Json<Vec<crate::indexer::lib_indexer::DepVersion>>, StatusCode> {
     let store = state.store.lock().await;
-    let project = store.get_project(&q.repo_id)
+    let repo = store.get_repo(&q.repo_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    crate::indexer::lib_indexer::extract_dep_versions(&store, &q.repo_id, &project.path)
+    crate::indexer::lib_indexer::extract_dep_versions(&store, &q.repo_id, &repo.path)
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -1021,12 +1048,12 @@ async fn unified_query(
 
 async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> serde_json::Value {
     let store = state.store.lock().await;
-    let projects = store.list_projects().unwrap_or_default();
+    let repos = store.list_repos().unwrap_or_default();
 
     let filtered: Vec<_> = if !repo_id.is_empty() {
-        projects.into_iter().filter(|p| p.repo_id == repo_id).collect()
+        repos.into_iter().filter(|p| p.repo_id == repo_id).collect()
     } else {
-        projects
+        repos
     };
 
     let mut all_libs: Vec<serde_json::Value> = Vec::new();
@@ -1279,8 +1306,8 @@ async fn mcp_call_tool(
         }
         "list_projects" => {
             let store = state.store.lock().await;
-            let projects = store.list_projects().unwrap_or_default();
-            serde_json::json!({"projects": projects})
+            let repos = store.list_repos().unwrap_or_default();
+            serde_json::json!({"projects": repos})
         }
         "create_session" => {
             let repo_id = params["repoId"].as_str().unwrap_or(query);
@@ -1370,11 +1397,11 @@ async fn mcp_call_tool(
         }
         "get_project_summary" => {
             let store = state.store.lock().await;
-            let project = store.get_project(repo_id).ok().flatten();
+            let repo = store.get_repo(repo_id).ok().flatten();
             let graph = state.graph.lock().await;
             let (fns, types) = graph.count_symbols(repo_id).unwrap_or((0, 0));
             serde_json::json!({
-                "project": project,
+                "project": repo,
                 "functions": fns,
                 "types": types,
             })
@@ -1428,14 +1455,12 @@ async fn acp_detect() -> Json<Vec<crate::acp::AcpStatus>> {
 struct AcpConfigureBody {
     #[serde(default)]
     acps: Vec<String>,
-    #[serde(default)]
-    marketplace_path: Option<String>,
 }
 
 async fn acp_configure(
     Json(body): Json<AcpConfigureBody>,
 ) -> Json<crate::acp::ConfigureResult> {
-    Json(crate::acp::configure(&body.acps, body.marketplace_path.as_deref()))
+    Json(crate::acp::configure(&body.acps))
 }
 
 async fn acp_remove(
@@ -1831,7 +1856,7 @@ async fn update_workflow_state(
     // Sync to .sensei/state.yaml
     // Use explicit project_path from body, or look up from projects table
     let project_path = body["project_path"].as_str().map(String::from)
-        .or_else(|| store.get_project_path(&project).ok().flatten());
+        .or_else(|| store.get_repo_path(&project).ok().flatten());
     if let Some(project_path) = project_path {
         let sensei_dir = std::path::Path::new(&project_path).join(".sensei");
         std::fs::create_dir_all(&sensei_dir).ok();
@@ -1863,9 +1888,8 @@ async fn reset_all(
     // Clear store: projects, solutions, config, errors
     {
         let store = state.store.lock().await;
+        store.execute_raw("DELETE FROM repos").ok();
         store.execute_raw("DELETE FROM projects").ok();
-        store.execute_raw("DELETE FROM solutions").ok();
-        store.execute_raw("DELETE FROM solution_repos").ok();
         store.execute_raw("DELETE FROM config").ok();
         store.execute_raw("DELETE FROM index_errors").ok();
         store.execute_raw("DELETE FROM lib_docs").ok();
@@ -1998,10 +2022,10 @@ mod tests {
         let (app, state) = test_app();
         {
             let s = state.store.lock().await;
-            s.upsert_project(&Project {
+            s.upsert_repo(&Repo {
                 repo_id: "x".into(), name: "x".into(), path: "/x".into(),
                 remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
-                stack: vec![], libs: vec![], tags: vec![], status: "active".into(),
+                stack: vec![], libs: vec![], tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
             }).unwrap();
         }
         let resp = app.oneshot(
@@ -2041,10 +2065,10 @@ mod tests {
         let (app, state) = test_app();
         {
             let s = state.store.lock().await;
-            s.upsert_project(&Project {
+            s.upsert_repo(&Repo {
                 repo_id: "r".into(), name: "r".into(), path: "/r".into(),
                 remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
-                stack: vec![], libs: vec![], tags: vec![], status: "active".into(),
+                stack: vec![], libs: vec![], tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
             }).unwrap();
         }
 
