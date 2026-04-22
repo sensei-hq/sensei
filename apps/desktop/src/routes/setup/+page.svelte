@@ -2,9 +2,9 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { WIZ_STAGES, type WizardState, type WizUpdate } from '$lib/setup/types.js';
-  import { createMockState, MOCK_LIBRARIES, MOCK_MCPS, MOCK_STACK } from '$lib/setup/mock.js';
+  import { createEmptyState, MOCK_LIBRARIES, MOCK_MCPS, MOCK_STACK } from '$lib/setup/mock.js';
   import { senseiApi } from '$lib/api.js';
-  import { getPort, setConfigValue } from '$lib/appstate.svelte.js';
+  import { getPort, setConfigValue, loadAppState } from '$lib/appstate.svelte.js';
   import {
     Rail, Bottom, Welcome, Components, Assistants,
     Folders, Scan, Projects, Libraries, Registry, Done
@@ -13,17 +13,17 @@
   // Landing vs wizard state
   let started = $state(false);
   let daemonReady = $state(false);
+  let daemonPort = $state(7744);
 
   let stageIdx = $state(0);
   let stage = $derived(WIZ_STAGES[stageIdx]);
 
-  let wizardState = $state<WizardState>(createMockState());
+  // Start empty — daemon populates on mount
+  let wizardState = $state<WizardState>(createEmptyState());
 
   const update: WizUpdate = (patch) => {
     wizardState = { ...wizardState, ...patch };
   };
-
-  const api = $derived(senseiApi(getPort()));
 
   const next = () => { stageIdx = Math.min(stageIdx + 1, WIZ_STAGES.length - 1); };
   const back = () => { stageIdx = Math.max(stageIdx - 1, 0); };
@@ -37,9 +37,13 @@
 
   // Hydrate from daemon on mount
   onMount(async () => {
+    await loadAppState();
+    daemonPort = getPort();
+    const api = senseiApi(daemonPort);
+
     try {
       const health = await api.getHealth();
-      if (!health?.ok) return;
+      if (!health?.ok) throw new Error('daemon not ready');
       daemonReady = true;
 
       // Step 2: Component health
@@ -68,7 +72,8 @@
         detectedStack: MOCK_STACK,
       });
     } catch {
-      // Daemon not running — keep mock data
+      // Daemon not running — show empty state, user needs to start daemon
+      daemonReady = false;
     }
   });
 

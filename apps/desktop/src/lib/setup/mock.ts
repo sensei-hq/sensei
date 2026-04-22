@@ -82,6 +82,27 @@ export const MOCK_STACK = {
   services:   ['PostgreSQL', 'Redis', 'Stripe', 'GitHub'],
 };
 
+/** Empty state for production — populated from daemon on mount. */
+export function createEmptyState(): WizardState {
+  return {
+    components: [],
+    acps: {},
+    acpList: [],
+    folders: [],
+    scanStarted: false,
+    scanDone: false,
+    scanTick: 0,
+    scanEvents: [],
+    projects: [],
+    roles: {},
+    libraries: {},
+    libExtras: [],
+    mcps: {},
+    detectedStack: { languages: [], frameworks: [], runtimes: [], services: [] },
+  };
+}
+
+/** Full mock state for when daemon is unreachable. */
 export function createMockState(): WizardState {
   return {
     components: MOCK_COMPONENTS,
