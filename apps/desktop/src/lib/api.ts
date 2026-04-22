@@ -46,6 +46,17 @@ export function senseiApi(port: number) {
     // ── Health ────────────────────────────────────────────────────────────
     getHealth: () => get<Record<string, unknown>>('/health', {}),
 
+    getComponents: () =>
+      get<{ components: Array<{ id: string; name: string; version: string | null; status: string; icon: string }> }>(
+        '/api/health/components', { components: [] },
+      ),
+
+    // ── Scan suggestions ─────────────────────────────────────────────────
+    getScanSuggestions: () =>
+      get<Array<{ name: string; strategy: string; repo_ids: string[] }>>(
+        '/api/scan/suggestions', [],
+      ),
+
     // ── Repos (individual git repos) ────────────────────────────────────
     getRepos: async () => {
       const repos = await get<ServerProject[]>('/api/repos', []);

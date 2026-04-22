@@ -86,6 +86,7 @@ export function createMockState(): WizardState {
   return {
     components: MOCK_COMPONENTS,
     acps: Object.fromEntries(MOCK_ACPS.map(a => [a.id, a.found])),
+    acpList: MOCK_ACPS,
     folders: [...MOCK_FOLDERS],
     scanStarted: false,
     scanDone: false,
