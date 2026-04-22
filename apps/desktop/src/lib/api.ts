@@ -57,6 +57,11 @@ export function senseiApi(port: number) {
         '/api/scan/suggestions', [],
       ),
 
+    getScanRoots: () =>
+      get<Array<{ path: string; created_at: string | null; repos_found: number; scanned: boolean }>>(
+        '/api/scan/roots', [],
+      ),
+
     // ── Repos (individual git repos) ────────────────────────────────────
     getRepos: async () => {
       const repos = await get<ServerProject[]>('/api/repos', []);
