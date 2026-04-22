@@ -130,6 +130,7 @@ fn daemon_bin() -> PathBuf {
 
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+
 fn ensure_daemon() {
     if daemon_available() {
         check_daemon_version(true);
@@ -340,7 +341,7 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool, plugin_dir: O
 
 // ── User scope ──────────────────────────────────────────────────────────────
 
-fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::path::Path) {
+fn init_user_scope(acp: Option<&str>, _recommended: bool, _marketplace: &std::path::Path) {
     println!("[user scope] Global setup — daemon, ACP registration\n");
 
     // 1. Daemon
@@ -372,16 +373,17 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::pat
         installed
     };
 
-    let marketplace_str = marketplace.to_string_lossy().to_string();
     let mut any_success = false;
     let mut all_errors: Vec<String> = Vec::new();
 
     for acp_id in &acps {
+        // Don't pass local marketplace_path — the daemon uses the GitHub repo
+        // by default (SENSEI_MARKETPLACE_REPO). Passing a local dev path causes
+        // Claude Code to register a directory source that breaks on other machines.
         match client()
             .post(format!("{}/api/acp/configure", DAEMON_URL))
             .json(&serde_json::json!({
                 "acps": [acp_id],
-                "marketplace_path": marketplace_str,
             }))
             .send()
         {
@@ -392,8 +394,10 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::pat
                     .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
+                let plugin_ok = body["plugin_installed"].as_bool() == Some(true);
+
                 if errors.is_empty() {
-                    if body["plugin_installed"].as_bool() == Some(true) {
+                    if plugin_ok {
                         println!("  ✓ {} — plugin installed (commands, skills, hooks, MCP)", acp_id);
                     } else {
                         println!("  ✓ {} — MCP registered", acp_id);
@@ -401,7 +405,7 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, marketplace: &std::pat
                     any_success = true;
                 } else {
                     // Partial success — configured but with warnings
-                    if body["plugin_installed"].as_bool() == Some(true) {
+                    if plugin_ok {
                         println!("  ~ {} — plugin installed with warnings:", acp_id);
                     } else {
                         println!("  ~ {} — MCP registered with warnings:", acp_id);

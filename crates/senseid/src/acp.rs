@@ -18,7 +18,7 @@ trait Acp {
     fn mcp_key(&self) -> &str;
     fn config_path(&self) -> PathBuf;
     fn detect(&self) -> bool;
-    fn configure(&self, mcp_cmd: &str, marketplace_path: Option<&str>) -> Result<AcpConfigureOk, String>;
+    fn configure(&self, mcp_cmd: &str) -> Result<AcpConfigureOk, String>;
     fn remove(&self) -> bool;
 
     fn is_configured(&self) -> bool {
@@ -53,144 +53,55 @@ impl Acp for ClaudeCodeAcp {
             || h.join(".claude").exists()
     }
 
-    fn configure(&self, mcp_cmd: &str, marketplace_path: Option<&str>) -> Result<AcpConfigureOk, String> {
+    fn configure(&self, _mcp_cmd: &str) -> Result<AcpConfigureOk, String> {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
-        let mut warnings: Vec<String> = Vec::new();
-
-        // 1. Register marketplace + install plugin (handles commands, skills, hooks, MCP)
-        let marketplace_source = marketplace_path.unwrap_or(SENSEI_MARKETPLACE_REPO);
-
+        // 1. Register marketplace
         let add_out = std::process::Command::new(&claude_bin)
-            .args(["plugin", "marketplace", "add", marketplace_source, "--scope", "user"])
-            .output();
-        match &add_out {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                if !err.contains("already") {
-                    warnings.push(format!("marketplace add: {}", err));
-                }
+            .args(["plugin", "marketplace", "add", SENSEI_MARKETPLACE_REPO, "--scope", "user"])
+            .output()
+            .map_err(|e| format!("marketplace add: {}", e))?;
+
+        if !add_out.status.success() {
+            let err = String::from_utf8_lossy(&add_out.stderr).trim().to_string();
+            if !err.contains("already") {
+                return Err(format!("marketplace add: {}", err));
             }
-            Err(e) => return Err(format!("marketplace add: {}", e)),
         }
 
+        // 2. Install plugin (handles commands, skills, hooks, MCP)
         let install_out = std::process::Command::new(&claude_bin)
             .args(["plugin", "install", "sensei", "--scope", "user"])
-            .output();
-        match install_out {
-            Ok(o) if o.status.success() => {
-                return Ok(AcpConfigureOk { plugin: true, warnings });
-            }
-            Ok(o) => {
-                let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                warnings.push(format!("plugin install: {}", err));
-            }
-            Err(e) => warnings.push(format!("plugin install: {}", e)),
+            .output()
+            .map_err(|e| format!("plugin install: {}", e))?;
+
+        if !install_out.status.success() {
+            let err = String::from_utf8_lossy(&install_out.stderr).trim().to_string();
+            return Err(format!("plugin install: {}", err));
         }
 
-        // 2. Fallback: install hooks + MCP manually
-        //    Plugin install failed, so set up hooks via the installer and MCP via CLI/JSON.
-        if let Err(e) = crate::installer::install_hooks_only() {
-            warnings.push(format!("hooks: {}", e));
-        }
+        Ok(AcpConfigureOk { plugin: true, warnings: vec![] })
+    }
 
-        // 3. Try `claude mcp add`
-        let mcp_added = std::process::Command::new(&claude_bin)
-            .args(["mcp", "add", "-t", "stdio", "-s", "user", "sensei", "--", mcp_cmd])
+    fn remove(&self) -> bool {
+        let claude_bin = match find_claude_binary() {
+            Some(b) => b,
+            None => return false,
+        };
+
+        let plugin_removed = std::process::Command::new(&claude_bin)
+            .args(["plugin", "uninstall", "sensei"])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
 
-        // 4. Fallback: write ~/.claude.json directly
-        if !mcp_added {
-            let claude_json = home().join(".claude.json");
-            upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": mcp_cmd, "args": []}))?;
-        }
+        // Also remove the marketplace registration
+        let _ = std::process::Command::new(&claude_bin)
+            .args(["plugin", "marketplace", "remove", "sensei-marketplace"])
+            .output();
 
-        // 5. Write hook config to ~/.claude/settings.json so hooks run even without the plugin
-        let hooks_dir = crate::paths::plugin_dir().join("hooks");
-        let run_hook = hooks_dir.join("run-hook.cmd");
-        if run_hook.exists() {
-            let rh = run_hook.to_string_lossy().to_string();
-            let hook_entry = |script: &str| -> serde_json::Value {
-                serde_json::json!([{
-                    "hooks": [{
-                        "type": "command",
-                        "command": format!("{} {}", rh, script)
-                    }]
-                }])
-            };
-
-            let settings_path = home().join(".claude/settings.json");
-            let mut settings: serde_json::Value = settings_path
-                .exists()
-                .then(|| std::fs::read_to_string(&settings_path).ok())
-                .flatten()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(serde_json::json!({}));
-
-            let hooks = settings
-                .as_object_mut()
-                .ok_or("invalid settings")?
-                .entry("hooks")
-                .or_insert(serde_json::json!({}))
-                .as_object_mut()
-                .ok_or("invalid hooks section")?;
-
-            hooks.insert("SessionStart".into(), hook_entry("session-start"));
-            hooks.insert("UserPromptSubmit".into(), hook_entry("user-prompt"));
-            hooks.insert("PreCompact".into(), hook_entry("pre-compact"));
-
-            if let Some(parent) = settings_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap())
-                .map_err(|e| format!("settings.json: {}", e))?;
-        }
-
-        Ok(AcpConfigureOk { plugin: false, warnings })
-    }
-
-    fn remove(&self) -> bool {
-        let h = home();
-        let mut removed = false;
-
-        // 1. Try `claude plugin uninstall` (mirrors plugin install path)
-        if std::process::Command::new("claude")
-            .args(["plugin", "uninstall", "sensei"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            removed = true;
-        }
-
-        // 2. Try `claude mcp remove` (covers non-plugin install path)
-        if !removed
-            && std::process::Command::new("claude")
-                .args(["mcp", "remove", "-s", "user", "sensei"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-            {
-                removed = true;
-            }
-
-        // 3. Fallback: remove from ~/.claude.json
-        if !removed
-            && remove_sensei_from_json(&h.join(".claude.json"), "mcpServers") {
-                removed = true;
-            }
-
-        // 4. Remove hooks (in case plugin uninstall didn't clean them)
-        let hooks_file = h.join(".claude/hooks.json");
-        if hooks_file.exists() {
-            std::fs::remove_file(&hooks_file).ok();
-        }
-
-        removed
+        plugin_removed
     }
 }
 
@@ -244,7 +155,7 @@ impl Acp for McpFileAcp {
         false
     }
 
-    fn configure(&self, mcp_cmd: &str, _marketplace_path: Option<&str>) -> Result<AcpConfigureOk, String> {
+    fn configure(&self, mcp_cmd: &str) -> Result<AcpConfigureOk, String> {
         let entry = match self.entry_format {
             McpEntryFormat::Standard => {
                 serde_json::json!({"command": mcp_cmd, "args": []})
@@ -359,7 +270,7 @@ pub fn detect() -> Vec<AcpStatus> {
     all_acps().iter().map(|acp| acp.status()).collect()
 }
 
-pub fn configure(acp_ids: &[String], marketplace_path: Option<&str>) -> ConfigureResult {
+pub fn configure(acp_ids: &[String]) -> ConfigureResult {
     let acps = all_acps();
     let h = home();
     let mut result = ConfigureResult {
@@ -384,7 +295,7 @@ pub fn configure(acp_ids: &[String], marketplace_path: Option<&str>) -> Configur
     };
 
     for acp in &targets {
-        match acp.configure(&mcp_cmd, marketplace_path) {
+        match acp.configure(&mcp_cmd) {
             Ok(ok) => {
                 result.configured.push(acp.id().to_string());
                 if ok.plugin { result.plugin_installed = true; }
@@ -794,46 +705,7 @@ mod tests {
         assert!(!remove_sensei_from_json(&path, "mcpServers"));
     }
 
-    // Note: ClaudeCodeAcp::configure/unconfigure call `claude` CLI which
+    // Note: ClaudeCodeAcp::configure/remove call `claude` CLI which
     // can't be safely mocked in parallel unit tests (requires PATH mutation).
     // The CLI invocation behavior is tested via the integration/e2e path.
-    // Here we test the fallback paths that operate on JSON files.
-
-    #[test]
-    fn claude_code_unconfigure_fallback_removes_from_claude_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let claude_json = dir.path().join(".claude.json");
-        std::fs::write(&claude_json, r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"},"svelte":{"command":"npx"}}}"#).unwrap();
-
-        assert!(remove_sensei_from_json(&claude_json, "mcpServers"));
-
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_null());
-        assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
-    }
-
-    #[test]
-    fn claude_code_configure_fallback_writes_claude_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let claude_json = dir.path().join(".claude.json");
-
-        upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": "sensei-mcp", "args": []})).unwrap();
-
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
-    }
-
-    #[test]
-    fn claude_code_configure_fallback_preserves_existing_claude_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let claude_json = dir.path().join(".claude.json");
-        std::fs::write(&claude_json, r#"{"mcpServers":{"svelte":{"command":"npx"}},"other":"data"}"#).unwrap();
-
-        upsert_sensei_in_json(&claude_json, "mcpServers", serde_json::json!({"command": "sensei-mcp"})).unwrap();
-
-        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
-        assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
-        assert_eq!(content["other"], "data");
-    }
 }

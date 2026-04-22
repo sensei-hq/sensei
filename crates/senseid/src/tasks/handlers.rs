@@ -3,7 +3,7 @@
 use std::path::Path;
 use super::executor::TaskContext;
 use super::{Task, TaskKind};
-use crate::types::{NodeKind, HierarchyNode};
+use crate::types::{NodeKind, HierarchyNode, Project};
 use crate::adapters;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 
         // Register project
         let repo_id = name.clone();
-        store.upsert_project_basic(&repo_id, name, path).ok();
+        store.upsert_repo_basic(&repo_id, name, path).ok();
 
         // Enqueue process_repo
         let repo_task = Task::new(TaskKind::ProcessRepo, &repo_id, path)
@@ -63,6 +63,22 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         ctx.queue.clone(),
         projects_map,
     ).ok();
+
+    // Suggest solution groupings for discovered repos (parent-folder + name-prefix)
+    if repos.len() >= 2 {
+        let suggestions = crate::tasks::processors::metadata::suggest_solutions(&repos);
+        for suggestion in &suggestions {
+            tracing::info!(
+                "scan_root: solution suggestion '{}' ({}) — {} repos",
+                suggestion.name, suggestion.strategy, suggestion.repo_ids.len()
+            );
+        }
+        // Store suggestions so the desktop setup wizard can present them
+        if !suggestions.is_empty() {
+            let store = ctx.store().await;
+            store.set_config("solution_suggestions", &serde_json::to_string(&suggestions).unwrap_or_default()).ok();
+        }
+    }
 
     tracing::info!("scan_root: {} repos found in {}", repos.len(), task.path);
     Ok(())
@@ -238,20 +254,20 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
             .blocked_by(vec![libs_id])
     ).await;
 
-    // Detect subtrees → register as separate repos, create solution
+    // Detect subtrees → register as separate repos, create project
     {
         let store = ctx.store().await;
-        if let Ok(Some(project)) = store.get_project(repo_id) {
+        if let Ok(Some(repo)) = store.get_repo(repo_id) {
             // Detect git subtrees
             let subtrees = crate::indexer::cross_repo::detect_git_subtrees_pub(repo_path);
             if !subtrees.is_empty() {
-                // Create solution
-                crate::indexer::cross_repo::auto_solution_for_monorepo(&store, &project).ok();
+                // Create project for monorepo
+                crate::indexer::cross_repo::auto_project_for_monorepo(&store, &repo).ok();
 
                 // Register and index each subtree as a separate repo
                 for (name, subtree_path) in &subtrees {
                     let subtree_repo_id = format!("{}:{}", repo_id, name);
-                    store.upsert_project_basic(&subtree_repo_id, name, subtree_path).ok();
+                    store.upsert_repo_basic(&subtree_repo_id, name, subtree_path).ok();
                 }
                 drop(store); // release lock before enqueuing
 
@@ -266,6 +282,24 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         }
     }
 
+    // ── Repo-level metadata scanners (fast, filesystem-only) ──────────
+    {
+        use crate::tasks::processors::metadata;
+
+        let icon = metadata::scan_icons(repo_path);
+        let links = metadata::scan_external_links(repo_path);
+        let summary = metadata::extract_summary(repo_path);
+
+        // Persist metadata on the project record
+        let store = ctx.store().await;
+        let meta = serde_json::json!({
+            "icon": icon,
+            "external_links": links.links,
+            "summary": summary,
+        });
+        store.set_repo_metadata(repo_id, &meta).ok();
+    }
+
     tracing::info!("process_repo: {} — {} dirs, {} file tasks, barrier=#{}", repo_id, dirs.len(), all_file_task_ids.len(), resolve_id);
     Ok(())
 }
@@ -277,7 +311,7 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
     let repo_id = &task.repo_id;
     let repo_path_str = {
         let store = ctx.store().await;
-        store.get_project(repo_id).ok().flatten()
+        store.get_repo(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
     };
@@ -313,7 +347,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 
     let repo_path_str = {
         let store = ctx.store().await;
-        store.get_project(repo_id).ok().flatten()
+        store.get_repo(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
     };
@@ -350,7 +384,7 @@ pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String>
     // Delete the module node
     let repo_path_str = {
         let store = ctx.store().await;
-        store.get_project(&task.repo_id).ok().flatten()
+        store.get_repo(&task.repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
     };
@@ -391,7 +425,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
 
     let _repo_path_str = {
         let store = ctx.store().await;
-        store.get_project(repo_id).ok().flatten()
+        store.get_repo(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
     };
@@ -540,7 +574,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     // This is expensive but accurate. TODO: store raw imports in a metadata field.
     let repo_path_str = {
         let store = ctx.store().await;
-        store.get_project(repo_id).ok().flatten()
+        store.get_repo(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .unwrap_or_default()
     };
@@ -596,14 +630,14 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     let mut libs: Vec<String> = lib_set.into_iter().collect();
     libs.sort();
 
-    // Check which libs are internal (match another repo in a solution)
+    // Check which libs are internal (match another repo in a project)
     let store = ctx.store().await;
-    let all_projects = store.list_projects().unwrap_or_default();
-    let _internal_repos: std::collections::HashSet<String> = all_projects.iter()
+    let all_repos = store.list_repos().unwrap_or_default();
+    let _internal_repos: std::collections::HashSet<String> = all_repos.iter()
         .map(|p| p.name.to_lowercase())
         .collect();
 
-    // Update project libs
+    // Update repo libs
     store.mark_indexed(repo_id, &libs).ok();
 
     tracing::info!("resolve_libs: {} — {} external libs detected", repo_id, libs.len());
@@ -647,7 +681,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
     // Detect current branch from git
     let repo_path = {
         let store = ctx.store().await;
-        store.get_project(repo_id).ok().flatten()
+        store.get_repo(repo_id).ok().flatten()
             .map(|p| p.path.clone())
             .ok_or("Project not found")?
     };
@@ -726,33 +760,35 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
     let store = ctx.store().await;
     let graph = ctx.graph().await;
 
-    // Find solutions containing this repo
-    let solutions = store.list_solutions().map_err(|e| e.to_string())?;
-    let my_solutions: Vec<_> = solutions.iter()
-        .filter(|s| s.repos.iter().any(|r| r.repo_id == *repo_id))
-        .collect();
+    // Find the project this repo belongs to
+    let repo_data = store.get_repo(repo_id).ok().flatten();
+    let my_projects: Vec<Project> = if let Some(pid) = repo_data.as_ref().and_then(|r| r.project_id.as_ref()) {
+        store.list_projects().unwrap_or_default().into_iter().filter(|p| p.id == *pid).collect()
+    } else {
+        vec![]
+    };
 
-    if my_solutions.is_empty() {
-        tracing::info!("reconcile_connections: {} not in any solution", repo_id);
+    if my_projects.is_empty() {
+        tracing::info!("reconcile_connections: {} not in any project", repo_id);
         return Ok(());
     }
 
-    for solution in &my_solutions {
-        match crate::indexer::cross_repo::analyze_solution(&store, &graph, solution) {
+    for proj in &my_projects {
+        match crate::indexer::cross_repo::analyze_project(&store, &graph, proj) {
             Ok(analysis) => {
                 tracing::info!(
-                    "reconcile_connections: solution {} — {} links, {} shared libs",
-                    solution.id, analysis.links.len(), analysis.shared_libs.len()
+                    "reconcile_connections: project {} — {} links, {} shared libs",
+                    proj.id, analysis.links.len(), analysis.shared_libs.len()
                 );
             }
-            Err(e) => tracing::warn!("reconcile failed for {}: {}", solution.id, e),
+            Err(e) => tracing::warn!("reconcile failed for {}: {}", proj.id, e),
         }
     }
 
     // Rebuild doc↔code traceability
     crate::indexer::doc_indexer::create_traceability_edges_pub(&graph, repo_id)?;
 
-    tracing::info!("reconcile_connections: {} — {} solutions", repo_id, my_solutions.len());
+    tracing::info!("reconcile_connections: {} — {} projects", repo_id, my_projects.len());
     Ok(())
 }
 
@@ -944,10 +980,10 @@ mod tests {
         let status = ctx.queue.status().await;
         assert_eq!(status.pending, 2, "expected 2 process_repo tasks enqueued");
 
-        // Verify projects were registered in store
+        // Verify repos were registered in store
         let store = ctx.store().await;
-        let projects = store.list_projects().unwrap();
-        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        let repos = store.list_repos().unwrap();
+        let names: Vec<&str> = repos.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"alpha"));
         assert!(names.contains(&"beta"));
     }
@@ -988,7 +1024,7 @@ mod tests {
         // Register the project so process_folder can look up its path
         {
             let store = ctx.store().await;
-            store.upsert_project_basic(repo_id, repo_id, &repo_path).unwrap();
+            store.upsert_repo_basic(repo_id, repo_id, &repo_path).unwrap();
         }
 
         let pkg_id = format!("pkg:{}:(root)", repo_id);
@@ -1058,7 +1094,7 @@ mod tests {
         // Register project
         {
             let store = ctx.store().await;
-            store.upsert_project_basic(repo_id, repo_id, repo_path).unwrap();
+            store.upsert_repo_basic(repo_id, repo_id, repo_path).unwrap();
         }
 
         // Seed graph: module node + file node under /tmp/myrepo/src/
@@ -1100,7 +1136,7 @@ mod tests {
         // Register project (resolve_edges reads project path)
         {
             let store = ctx.store().await;
-            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -1132,7 +1168,7 @@ mod tests {
 
         {
             let store = ctx.store().await;
-            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -1160,7 +1196,7 @@ mod tests {
 
         {
             let store = ctx.store().await;
-            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -1187,7 +1223,7 @@ mod tests {
 
         {
             let store = ctx.store().await;
-            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -1210,7 +1246,7 @@ mod tests {
         }
         {
             let store = ctx.store().await;
-            store.upsert_project_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
