@@ -113,6 +113,7 @@ export const ROLES: RoleOption[] = [
 export interface WizardState {
   components: ComponentStatus[];
   acps: Record<string, boolean>;
+  acpList: AcpEntry[];
   folders: ScanFolder[];
   scanStarted: boolean;
   scanDone: boolean;

@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { WIZ_STAGES, type WizardState, type WizUpdate } from '$lib/setup/types.js';
-  import { createMockState } from '$lib/setup/mock.js';
+  import { createMockState, MOCK_LIBRARIES, MOCK_MCPS, MOCK_STACK } from '$lib/setup/mock.js';
   import { senseiApi } from '$lib/api.js';
   import { getPort, setConfigValue } from '$lib/appstate.svelte.js';
   import {
@@ -12,6 +12,7 @@
 
   // Landing vs wizard state
   let started = $state(false);
+  let daemonReady = $state(false);
 
   let stageIdx = $state(0);
   let stage = $derived(WIZ_STAGES[stageIdx]);
@@ -21,6 +22,8 @@
   const update: WizUpdate = (patch) => {
     wizardState = { ...wizardState, ...patch };
   };
+
+  const api = $derived(senseiApi(getPort()));
 
   const next = () => { stageIdx = Math.min(stageIdx + 1, WIZ_STAGES.length - 1); };
   const back = () => { stageIdx = Math.max(stageIdx - 1, 0); };
@@ -32,25 +35,94 @@
 
   const exit = () => { goto('/overview'); };
 
+  // Hydrate from daemon on mount
   onMount(async () => {
     try {
-      const api = senseiApi(getPort());
       const health = await api.getHealth();
-      if (health?.ok) {
-        const acps = await api.detectAcps();
-        if (acps.length > 0) {
-          update({
-            acps: Object.fromEntries(acps.map(a => [a.id, a.installed])),
-            components: [
-              { id: 'cli', name: 'sensei-cli', version: String(health.version ?? ''), status: 'ready', icon: '$' },
-              { id: 'mcp', name: 'MCP bridge', version: String(health.version ?? ''), status: 'ready', icon: '↔' },
-              { id: 'daemon', name: 'sensei-daemon', version: String(health.version ?? ''), status: 'ready', icon: '◇' },
-            ],
+      if (!health?.ok) return;
+      daemonReady = true;
+
+      // Step 2: Component health
+      const compData = await api.getComponents();
+      if (compData.components?.length > 0) {
+        update({ components: compData.components as any });
+      }
+
+      // Step 3: ACP detection
+      const acps = await api.detectAcps();
+      if (acps.length > 0) {
+        const acpList = acps.map(a => ({
+          id: a.id, name: a.name, version: null,
+          found: a.installed, path: a.config_path ?? null,
+        }));
+        update({
+          acps: Object.fromEntries(acps.map(a => [a.id, a.installed])),
+          acpList,
+        });
+      }
+
+      // Step 7-8: Libraries and MCP Registry (mock for now — daemon doesn't have these yet)
+      update({
+        libraries: Object.fromEntries(MOCK_LIBRARIES.map(l => [l.id, true])),
+        mcps: Object.fromEntries(MOCK_MCPS.map(m => [m.id, m.installed || m.recommended])),
+        detectedStack: MOCK_STACK,
+      });
+    } catch {
+      // Daemon not running — keep mock data
+    }
+  });
+
+  // When scan completes (step 5), load discovered repos and build project suggestions
+  async function onScanComplete() {
+    if (!daemonReady) return;
+    try {
+      // Fetch discovered repos
+      const repos = await api.getRepos();
+      if (repos.length === 0) return;
+
+      // Fetch project grouping suggestions
+      const suggestions = await api.getScanSuggestions();
+
+      // Build project cards from suggestions + standalone repos
+      const assignedRepoIds = new Set(suggestions.flatMap((s: any) => s.repo_ids));
+      const projects: any[] = [];
+
+      for (const s of suggestions) {
+        const projRepos = repos
+          .filter(r => s.repo_ids.includes(r.repoId))
+          .map(r => ({
+            id: r.repoId, name: r.name, path: r.path,
+            files: 0, lang: (r as any).stack?.join(', ') || '',
+            suggestedRole: (r as any).role || 'unknown',
+          }));
+        projects.push({
+          id: `auto:${s.name}`, name: s.name, kanji: '工',
+          path: '', autoDetected: true, confidence: 'high' as const,
+          repos: projRepos, confirmed: true,
+        });
+      }
+
+      // Standalone repos (not in any suggestion)
+      for (const r of repos) {
+        if (!assignedRepoIds.has(r.repoId)) {
+          projects.push({
+            id: `auto:${r.repoId}`, name: r.name, kanji: '一',
+            path: r.path, autoDetected: true, confidence: 'medium' as const,
+            repos: [{ id: r.repoId, name: r.name, path: r.path, files: 0, lang: '', suggestedRole: 'unknown' }],
+            confirmed: true,
           });
         }
       }
-    } catch { /* daemon not running */ }
-  });
+
+      update({
+        projects,
+        roles: Object.fromEntries(
+          projects.flatMap((p: any) => p.repos.map((r: any) => [r.id, r.suggestedRole]))
+        ),
+        scanDone: true,
+      });
+    } catch { /* non-fatal */ }
+  }
 </script>
 
 {#if !started}
@@ -137,9 +209,9 @@
         <div class="content">
           {#if stage.id === 'welcome'}<Welcome />
           {:else if stage.id === 'components'}<Components wizState={wizardState} {update} />
-          {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} />
+          {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} acpList={wizardState.acpList} />
           {:else if stage.id === 'folders'}<Folders wizState={wizardState} {update} />
-          {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} />
+          {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} onScan={onScanComplete} {daemonReady} />
           {:else if stage.id === 'projects'}<Projects wizState={wizardState} {update} />
           {:else if stage.id === 'libraries'}<Libraries wizState={wizardState} {update} />
           {:else if stage.id === 'registry'}<Registry wizState={wizardState} {update} />

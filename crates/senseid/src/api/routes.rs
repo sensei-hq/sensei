@@ -27,6 +27,7 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health
         .route("/health", get(health))
+        .route("/api/health/components", get(health_components))
         // Repos (individual git repos)
         .route("/api/repos", get(list_projects).post(create_project))
         .route("/api/repos/{repo_id}", put(update_project).delete(delete_project))
@@ -118,6 +119,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/reset", post(reset_all))
         // Scan
         .route("/api/scan", post(scan_folder))
+        .route("/api/scan/suggestions", get(scan_suggestions))
         // Stop
         .route("/stop", post(stop))
         .with_state(state)
@@ -138,6 +140,65 @@ async fn health() -> Json<HealthResponse> {
         name: "senseid",
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// Component health — checks if CLI, MCP bridge, and daemon binaries are available.
+async fn health_components() -> Json<serde_json::Value> {
+    let version = env!("CARGO_PKG_VERSION");
+
+    let cli_status = check_binary("sensei");
+    let mcp_status = check_binary("sensei-mcp");
+
+    Json(serde_json::json!({
+        "components": [
+            { "id": "cli",    "name": "sensei-cli",    "version": cli_status.1, "status": cli_status.0, "icon": "令" },
+            { "id": "mcp",    "name": "MCP bridge",    "version": mcp_status.1, "status": mcp_status.0, "icon": "橋" },
+            { "id": "daemon", "name": "sensei-daemon", "version": version,      "status": "ready",       "icon": "守" },
+        ]
+    }))
+}
+
+fn check_binary(name: &str) -> (&'static str, Option<String>) {
+    // Check if binary exists on PATH or in known locations
+    let paths = [
+        std::path::PathBuf::from(format!("/opt/homebrew/bin/{}", name)),
+        std::path::PathBuf::from(format!("/usr/local/bin/{}", name)),
+    ];
+
+    // Check PATH first
+    if std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|dir| dir.join(name).is_file()))
+        .unwrap_or(false)
+    {
+        // Try to get version
+        let version = std::process::Command::new(name)
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string());
+        return ("ready", version);
+    }
+
+    // Check known paths
+    for path in &paths {
+        if path.is_file() {
+            return ("ready", None);
+        }
+    }
+
+    ("missing", None)
+}
+
+/// Return project grouping suggestions from the last scan.
+async fn scan_suggestions(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    let suggestions = store.get_config("solution_suggestions")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or(serde_json::json!([]));
+    Json(suggestions)
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
