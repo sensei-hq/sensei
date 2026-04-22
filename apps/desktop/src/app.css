@@ -1,11 +1,11 @@
 @import '@unocss/reset/tailwind.css';
 @import '@rokkit/themes/base.css';
 @import '@rokkit/themes/frosted.css';
+@import '$lib/tokens.css';
 
-/* Follow OS dark/light and expose system colors to native controls */
+/* Follow OS dark/light */
 :root {
   color-scheme: light dark;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -13,47 +13,29 @@
 html, body {
   height: 100%;
   overflow: hidden;
-  /* Solid fallback; vibrancy in Rust makes the window glass when supported */
-  background: rgb(var(--color-surface-z1));
+  font-family: var(--font-ui);
+  color: var(--sumi);
+  background: var(--paper);
 }
 
-/* Traffic light safe area — macOS overlay title bar adds ~28px of buttons */
-.titlebar-area {
-  height: env(titlebar-area-height, 28px);
-  -webkit-app-region: drag;
-  app-region: drag;
-}
+/* Tauri drag regions */
+.drag-region { -webkit-app-region: drag; app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
 
-/* Draggable region for window movement */
-.drag-region {
-  -webkit-app-region: drag;
-  app-region: drag;
-}
-
-/* No-drag for interactive elements inside drag regions */
-.no-drag {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
-
-/* Subtle sidebar vibrancy overlay */
+/* Sidebar vibrancy */
 .sidebar-vibrancy {
-  background: color-mix(in srgb, var(--color-surface-z2) 85%, transparent);
+  background: color-mix(in srgb, var(--paper-2) 85%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
-/* Scrollbar styling — macOS-native thin scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-surface-z4, #64748b) transparent;
+/* Ink dot — small decorative accent dot */
+.ink-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--shu);
 }
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-surface-z4, #64748b); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-surface-z5, #94a3b8); }
 
-/* Selection color */
-::selection {
-  background: color-mix(in srgb, var(--color-primary-z6, #7c3aed) 30%, transparent);
-}
+/* Selection */
+::selection { background: var(--shu-soft); }
