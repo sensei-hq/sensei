@@ -34,7 +34,7 @@
   --paper:      oklch(0.975 0.008 85);
   --paper-2:    oklch(0.955 0.010 85);
   --paper-3:    oklch(0.92 0.012 85);
-  --paper-edge: oklch(0.88 0.015 85);
+  --paper-edge: oklch(0.93 0.008 85);
 
   /* ── Sumi (ink) ─────────────────────────────────────────── */
   --sumi:   oklch(0.22 0.012 50);
@@ -76,7 +76,7 @@
   --paper:      oklch(0.17 0.010 50);
   --paper-2:    oklch(0.21 0.012 50);
   --paper-3:    oklch(0.25 0.012 50);
-  --paper-edge: oklch(0.32 0.012 50);
+  --paper-edge: oklch(0.24 0.008 50);
 
   --sumi:   oklch(0.94 0.008 85);
   --sumi-2: oklch(0.78 0.008 85);
