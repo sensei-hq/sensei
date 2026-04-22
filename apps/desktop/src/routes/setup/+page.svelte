@@ -56,14 +56,8 @@
 {#if !started}
   <!-- ═══ Landing: "A quiet empty room" ═══════════════════════════ -->
   <div class="landing">
-    <header class="chrome drag-region">
-      <div class="traffic no-drag">
-        <span class="dot close"></span>
-        <span class="dot minimize"></span>
-        <span class="dot zoom"></span>
-      </div>
-      <span class="chrome-title">Sensei 先生</span>
-    </header>
+    <!-- Drag spacer for macOS traffic lights — no rendered chrome -->
+    <div class="drag-spacer drag-region"></div>
 
     <main class="landing-body">
       <div class="landing-content">
@@ -133,14 +127,8 @@
 {:else}
   <!-- ═══ Wizard ══════════════════════════════════════════════════ -->
   <div class="wizard">
-    <header class="chrome drag-region">
-      <div class="traffic no-drag">
-        <span class="dot close"></span>
-        <span class="dot minimize"></span>
-        <span class="dot zoom"></span>
-      </div>
-      <span class="chrome-title">Sensei 先生 · setup</span>
-    </header>
+    <!-- Drag spacer for macOS traffic lights -->
+    <div class="drag-spacer drag-region"></div>
 
     <div class="body">
       <Rail stages={WIZ_STAGES} currentIndex={stageIdx} onNavigate={(i) => stageIdx = i} onExit={exit} />
@@ -167,29 +155,10 @@
 {/if}
 
 <style>
-  /* ── Shared chrome ──────────────────────────────────────── */
-  .chrome {
-    height: 38px;
-    display: flex;
-    align-items: center;
-    padding: 0 14px;
-    border-bottom: var(--hairline);
-    background: var(--paper);
-    gap: 8px;
+  /* ── Drag spacer (macOS traffic light safe area) ─────────── */
+  .drag-spacer {
+    height: 32px;
     flex-shrink: 0;
-  }
-  .traffic { display: flex; gap: 7px; }
-  .dot {
-    width: 12px; height: 12px; border-radius: 50%;
-    display: block; background: var(--paper-edge);
-  }
-  .dot.close { background: oklch(0.72 0.14 28); }
-  .dot.minimize { background: oklch(0.82 0.13 85); }
-  .dot.zoom { background: oklch(0.72 0.11 145); }
-  .chrome-title {
-    flex: 1; text-align: center;
-    font-size: 12px; color: var(--sumi-3);
-    letter-spacing: 0.02em;
   }
 
   /* ── Landing page ───────────────────────────────────────── */
@@ -249,11 +218,11 @@
     padding: 14px 28px;
     font-size: 14px;
     font-weight: 500;
-    background: var(--sumi);
-    color: var(--paper);
+    background: var(--paper-3);
+    color: var(--sumi);
     border-radius: var(--radius);
     cursor: pointer;
-    border: none;
+    border: var(--border-card);
     transition: opacity 0.15s;
   }
   .begin-btn:hover { opacity: 0.85; }
@@ -269,7 +238,7 @@
     background: var(--paper-2);
     border-radius: var(--radius-lg);
     padding: 28px 28px 20px;
-    border: var(--hairline);
+    border: var(--border-card);
   }
   .info-label {
     font-size: 9px;
@@ -303,7 +272,7 @@
   .info-footer {
     margin-top: 20px;
     padding-top: 16px;
-    border-top: var(--hairline);
+    border-top: var(--ink-line);
     font-size: 11px;
     color: var(--sumi-3);
   }
