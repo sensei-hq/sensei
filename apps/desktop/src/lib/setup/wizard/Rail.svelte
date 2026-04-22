@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WizStage } from '../types.js';
+  import { getPort } from '$lib/appstate.svelte.js';
 
   let { stages, currentIndex, onNavigate, onExit }: {
     stages: WizStage[];
@@ -7,6 +8,8 @@
     onNavigate: (i: number) => void;
     onExit: () => void;
   } = $props();
+
+  const port = $derived(getPort());
 </script>
 
 <aside class="rail">
@@ -56,7 +59,7 @@
 
   <!-- Footer -->
   <div class="rail-footer">
-    <div class="footer-daemon">daemon &middot; 9823</div>
+    <div class="footer-daemon">daemon &middot; {port}</div>
     <div class="footer-note">setup can be resumed at any time from <span class="footer-mono">Settings</span></div>
   </div>
 </aside>

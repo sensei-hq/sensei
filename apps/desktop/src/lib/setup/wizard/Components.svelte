@@ -1,10 +1,13 @@
 <script lang="ts">
   import type { WizardState, WizUpdate } from '../types.js';
+  import { getPort } from '$lib/appstate.svelte.js';
 
   let { wizState, update }: {
     wizState: WizardState;
     update: WizUpdate;
   } = $props();
+
+  const port = $derived(getPort());
 </script>
 
 <section class="step">
@@ -38,7 +41,7 @@
     {/each}
   </div>
 
-  <p class="footer-note">Nothing leaves <code>localhost:9823</code>.</p>
+  <p class="footer-note">Nothing leaves <code>localhost:{port}</code>.</p>
 </section>
 
 <style>
