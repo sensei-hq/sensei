@@ -7,9 +7,9 @@ import type {
 } from './types.js';
 
 export const MOCK_COMPONENTS: ComponentStatus[] = [
-  { id: 'cli',    name: 'sensei-cli',    version: '0.2.13', status: 'ready', icon: '$' },
-  { id: 'mcp',    name: 'MCP bridge',    version: '0.2.13', status: 'ready', icon: '↔' },
-  { id: 'daemon', name: 'sensei-daemon', version: '0.2.13', status: 'ready', icon: '◇' },
+  { id: 'cli',    name: 'sensei-cli',    version: '0.2.13', status: 'ready', icon: '令' },
+  { id: 'mcp',    name: 'MCP bridge',    version: '0.2.13', status: 'ready', icon: '橋' },
+  { id: 'daemon', name: 'sensei-daemon', version: '0.2.13', status: 'ready', icon: '守' },
 ];
 
 export const MOCK_ACPS: AcpEntry[] = [

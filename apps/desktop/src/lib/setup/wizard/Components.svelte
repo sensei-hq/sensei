@@ -15,7 +15,7 @@
   <div class="cards">
     {#each wizState.components as comp}
       <div class="card">
-        <div class="card-icon">{comp.icon}</div>
+        <div class="card-icon kanji">{comp.icon}</div>
         <div class="card-info">
           <div class="card-name">{comp.name}</div>
           <div class="card-meta">
