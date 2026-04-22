@@ -120,6 +120,7 @@ pub fn create_router(state: AppState) -> Router {
         // Scan
         .route("/api/scan", post(scan_folder))
         .route("/api/scan/suggestions", get(scan_suggestions))
+        .route("/api/scan/roots", get(scan_roots))
         // Stop
         .route("/stop", post(stop))
         .with_state(state)
@@ -199,6 +200,39 @@ async fn scan_suggestions(State(state): State<AppState>) -> Json<serde_json::Val
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .unwrap_or(serde_json::json!([]));
     Json(suggestions)
+}
+
+/// List configured scan roots with their scan status.
+async fn scan_roots(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let store = state.store.lock().await;
+    let mut roots: Vec<serde_json::Value> = Vec::new();
+
+    if let Ok(mut stmt) = store.conn_ref().prepare(
+        "SELECT path, created_at FROM scanned_roots ORDER BY created_at DESC"
+    ) {
+        let rows = stmt.query_map([], |row| {
+            Ok(serde_json::json!({
+                "path": row.get::<_, String>(0)?,
+                "created_at": row.get::<_, Option<String>>(1)?,
+            }))
+        });
+        if let Ok(rows) = rows {
+            for row in rows.flatten() {
+                roots.push(row);
+            }
+        }
+    }
+
+    // Enrich with repo count per root
+    let repos = store.list_repos().unwrap_or_default();
+    for root in &mut roots {
+        let root_path = root["path"].as_str().unwrap_or("");
+        let count = repos.iter().filter(|r| r.path.starts_with(root_path)).count();
+        root["repos_found"] = serde_json::json!(count);
+        root["scanned"] = serde_json::json!(count > 0);
+    }
+
+    Json(serde_json::json!(roots))
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
