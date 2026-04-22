@@ -44,8 +44,8 @@
       onkeydown={onKeydown}
       placeholder="~/code/my-project"
     />
-    <button class="btn-add" onclick={addFolder}>Add</button>
-    <button class="btn-browse" onclick={addFolder}>Browse...</button>
+    <button class="btn-solid" onclick={addFolder}>Add</button>
+    <button class="btn-outline" onclick={addFolder}>Browse...</button>
   </div>
 
   <div class="folder-list">
@@ -59,7 +59,7 @@
           {/if}
         </div>
         <span class="chip-recursive">recursive</span>
-        <button class="link-remove" onclick={() => removeFolder(folder.id)}>remove</button>
+        <button class="btn-remove" onclick={() => removeFolder(folder.id)} title="Remove folder">×</button>
       </div>
     {/each}
   </div>
@@ -107,13 +107,13 @@
   .folder-input {
     flex: 1;
     min-width: 0;
-    padding: var(--space-3) var(--space-4);
-    font-size: 14px;
+    padding: 8px 12px;
+    font-size: 13px;
     font-family: var(--font-mono);
     color: var(--sumi);
-    background: var(--paper);
-    border: var(--hairline);
-    border-radius: var(--radius-lg);
+    background: var(--paper-2);
+    border: var(--border-card);
+    border-radius: var(--radius);
     outline: none;
     transition: border-color 0.14s;
   }
@@ -123,42 +123,42 @@
   }
 
   .folder-input:focus {
-    border-color: var(--sumi-4);
+    border-color: var(--sumi-3);
   }
 
-  .btn-add {
-    padding: var(--space-3) var(--space-5);
-    font-size: 14px;
+  .btn-solid {
+    padding: 8px 16px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--paper);
     background: var(--sumi);
     border: none;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     cursor: pointer;
     font-family: var(--font-ui);
     transition: opacity 0.14s;
     white-space: nowrap;
   }
 
-  .btn-add:hover {
+  .btn-solid:hover {
     opacity: 0.85;
   }
 
-  .btn-browse {
-    padding: var(--space-3) var(--space-5);
-    font-size: 14px;
+  .btn-outline {
+    padding: 8px 16px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--sumi);
-    background: var(--paper);
-    border: var(--hairline);
-    border-radius: var(--radius-lg);
+    background: transparent;
+    border: var(--border-card);
+    border-radius: var(--radius);
     cursor: pointer;
     font-family: var(--font-ui);
     transition: background 0.14s;
     white-space: nowrap;
   }
 
-  .btn-browse:hover {
+  .btn-outline:hover {
     background: var(--paper-2);
   }
 
@@ -214,19 +214,19 @@
     flex-shrink: 0;
   }
 
-  .link-remove {
-    font-size: 13px;
-    color: var(--sumi-3);
+  .btn-remove {
+    font-size: 16px;
+    color: var(--sumi-4);
     background: none;
     border: none;
     cursor: pointer;
-    padding: 0;
-    font-family: var(--font-ui);
+    padding: 4px;
+    line-height: 1;
     transition: color 0.14s;
     flex-shrink: 0;
   }
 
-  .link-remove:hover {
+  .btn-remove:hover {
     color: var(--shu);
   }
 
