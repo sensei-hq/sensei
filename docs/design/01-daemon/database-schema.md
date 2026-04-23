@@ -1,6 +1,6 @@
 # Database Schema
 
-> Complete schema reference for the sensei PostgreSQL database. 5 schemas, 42 tables.
+> Complete schema reference for the sensei PostgreSQL database. 5 schemas, 39 tables.
 
 ## Schema overview
 
