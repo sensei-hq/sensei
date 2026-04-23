@@ -1,8 +1,13 @@
--- Config — key-value user preferences.
+set search_path to sensei, extensions;
 
-CREATE TABLE IF NOT EXISTS sensei.config (
-  key   text PRIMARY KEY,
-  value text NOT NULL
+create table if not exists config (
+  key          text        primary key
+, value        text        not null
 );
 
-COMMENT ON TABLE sensei.config IS 'User preferences. setup_complete, active_project, sidebar_max_items, etc.';
+comment on table config is
+'Key-value user preferences.
+setup_complete, active_project, sidebar_max_items, etc.';
+
+comment on column config.key is 'Preference key.';
+comment on column config.value is 'Preference value stored as text (JSON-encoded for complex values).';

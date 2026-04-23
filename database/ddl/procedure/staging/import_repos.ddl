@@ -1,4 +1,4 @@
-set search_path to staging;
+set search_path to staging, extensions;
 
 create or replace procedure import_repos()
 language plpgsql
@@ -20,17 +20,21 @@ begin
   where stg.name is not null
   on conflict (id)
   do update set
-      name                = excluded.name
-    , remote_url          = excluded.remote_url
-    , default_branch      = excluded.default_branch
-    , description         = excluded.description
-    , stack               = excluded.stack
-    , entry_points        = excluded.entry_points
+      name = excluded.name
+    , remote_url = excluded.remote_url
+    , default_branch = excluded.default_branch
+    , description = excluded.description
+    , stack = excluded.stack
+    , entry_points = excluded.entry_points
     , last_indexed_commit = excluded.last_indexed_commit
-    , last_indexed_at     = excluded.last_indexed_at
-    , is_public           = excluded.is_public
-    , modified_at         = excluded.modified_at
-    , modified_by         = excluded.modified_by
+    , last_indexed_at = excluded.last_indexed_at
+    , is_public = excluded.is_public
+    , modified_at = excluded.modified_at
+    , modified_by = excluded.modified_by
   where excluded.modified_at >= sensei.repos.modified_at;
 end;
 $$;
+
+comment on procedure import_repos is
+'Import staging.repos into sensei.repos.
+Upserts on id, updates only if source is newer (freshness gate).';
