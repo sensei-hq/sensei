@@ -27,6 +27,7 @@ create table if not exists nodes (
 , is_exported              boolean     not null default false
 , community_id             integer
 , degree                   integer
+, embedding                vector(384)
 , tags                     text[]      not null default '{}'
 , props                    jsonb       not null default '{}'
 , modified_at              timestamptz not null default now()
@@ -55,6 +56,11 @@ create index if not exists nodes_exported_idx
 create index if not exists nodes_community_id_idx
     on nodes(community_id)
  where community_id is not null;
+
+create index if not exists nodes_embedding_hnsw
+    on nodes using hnsw (embedding vector_cosine_ops)
+  with (m = 16, ef_construction = 64)
+ where embedding is not null;
 
 create index if not exists nodes_tags_idx
     on nodes using gin(tags);
@@ -112,6 +118,8 @@ comment on column nodes.community_id
      is 'Leiden community cluster ID. Batch-computed. Null until computed.';
 comment on column nodes.degree
      is 'Precomputed in+out edge count. Used for god-node detection.';
+comment on column nodes.embedding
+     is '384-dim vector embedding for semantic search. Computed by local model during indexing. HNSW indexed.';
 comment on column nodes.tags
      is 'Array of tag strings for filtering.';
 comment on column nodes.props
