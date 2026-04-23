@@ -1,8 +1,4 @@
 set search_path to gateway, extensions;
-
-create type if not exists model_capability
-    as enum ('chat', 'reasoning', 'embed', 'classify', 'summarize', 'vision', 'audio');
-
 create table if not exists fallback_chains (
   id                       uuid               primary key default gen_random_uuid()
 , name                     text               not null unique

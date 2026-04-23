@@ -1,8 +1,4 @@
 set search_path to inference, sensei, extensions;
-
-create type if not exists drift_status
-    as enum ('current', 'drifted', 'broken');
-
 create table if not exists drift_items (
   id                       uuid         primary key default gen_random_uuid()
 , folder_id                uuid         not null references sensei.folders(id) on delete cascade

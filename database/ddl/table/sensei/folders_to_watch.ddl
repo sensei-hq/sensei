@@ -1,8 +1,4 @@
 set search_path to sensei, extensions;
-
-create type if not exists watch_status
-    as enum ('scanning', 'watching', 'paused');
-
 create table if not exists folders_to_watch (
   id                       uuid         primary key default gen_random_uuid()
 , path                     text         not null unique
