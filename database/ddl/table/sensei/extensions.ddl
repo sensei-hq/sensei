@@ -1,14 +1,5 @@
 set search_path to sensei, extensions;
 
-create type if not exists extension_scope
-    as enum ('global', 'project', 'folder');
-
-create type if not exists extension_source
-    as enum ('builtin', 'marketplace', 'local');
-
-create type if not exists extension_kind
-    as enum ('plugin', 'skill', 'command', 'agent', 'hook');
-
 create table if not exists extensions (
   id                       uuid           primary key default gen_random_uuid()
 , plugin_id                uuid           references sensei.extensions(id) on delete cascade

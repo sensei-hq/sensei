@@ -1,8 +1,4 @@
 set search_path to sensei, extensions;
-
-create type if not exists project_maturity
-    as enum ('discovery', 'active', 'maintenance', 'archived');
-
 create table if not exists projects (
   id                       uuid             primary key default gen_random_uuid()
 , name                     text             not null

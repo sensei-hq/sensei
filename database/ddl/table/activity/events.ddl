@@ -1,21 +1,4 @@
 set search_path to activity, sensei, extensions;
-
-create type if not exists event_type
-    as enum (
-        'tool_call'
-      , 'api_request'
-      , 'correction'
-      , 'turn'
-      , 'phase_transition'
-      , 'checkpoint'
-      , 'task_start'
-      , 'task_end'
-      , 'context_loaded'
-      , 'edit'
-      , 'test'
-      , 'error'
-    );
-
 create table if not exists events (
   id                       uuid        primary key default gen_random_uuid()
 , session_id               uuid        not null references activity.sessions(id) on delete cascade

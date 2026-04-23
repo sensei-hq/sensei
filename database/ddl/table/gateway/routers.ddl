@@ -1,11 +1,5 @@
 set search_path to gateway, extensions;
 
-create type if not exists auth_type
-    as enum ('api_key', 'none');
-
-create type if not exists router_type
-    as enum ('direct', 'aggregator', 'local');
-
 create table if not exists routers (
   id                       uuid        primary key default gen_random_uuid()
 , name                     text        not null unique

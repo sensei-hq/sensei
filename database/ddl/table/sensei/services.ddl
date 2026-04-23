@@ -1,11 +1,5 @@
 set search_path to sensei, extensions;
 
-create type if not exists service_protocol
-    as enum ('mcp', 'ollama', 'anthropic', 'openai');
-
-create type if not exists service_kind
-    as enum ('data', 'api', 'devtool', 'service', 'inference');
-
 create table if not exists services (
   id                       uuid         primary key default gen_random_uuid()
 , name                     text         not null unique

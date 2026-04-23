@@ -1,9 +1,4 @@
 set search_path to history, sensei, extensions;
-
-create type if not exists dml_operation
-    as enum ('INSERT', 'UPDATE', 'DELETE');
-
-
 create table if not exists past_extensions (
   id                       uuid           primary key default gen_random_uuid()
 , extension_id             uuid           not null

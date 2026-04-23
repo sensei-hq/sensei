@@ -1,15 +1,5 @@
 set search_path to sensei, extensions;
 
-create type if not exists edge_kind
-    as enum (
-        'calls', 'implements', 'extends', 'imports', 'depends_on'
-      , 'traces_to', 'references', 'covers'
-      , 'rationale_for', 'duplicates', 'similar_to'
-    );
-
-create type if not exists edge_confidence
-    as enum ('extracted', 'inferred', 'ambiguous');
-
 create table if not exists edges (
   id                       uuid            primary key default gen_random_uuid()
 , folder_id                uuid            not null references sensei.folders(id) on delete cascade

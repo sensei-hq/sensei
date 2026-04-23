@@ -1,2 +1,0 @@
-{"id":"00000001-0000-0000-0000-000000000001","name":"sensei","remote_url":"https://github.com/example/sensei","default_branch":"main","description":"AI-powered codebase indexer and context manager","stack":["TypeScript","Bun","Node.js"],"is_public":false,"modified_at":"2026-03-12T00:00:00Z"}
-{"id":"00000001-0000-0000-0000-000000000002","name":"my-app","remote_url":null,"default_branch":"main","description":"A sample web application","stack":["TypeScript","SvelteKit","PostgreSQL"],"is_public":false,"modified_at":"2026-03-12T00:00:00Z"}

@@ -1,8 +1,4 @@
 set search_path to inference, sensei, extensions;
-
-create type if not exists preference_confidence
-    as enum ('low', 'medium', 'high');
-
 create table if not exists preferences (
   id                       uuid                    primary key default gen_random_uuid()
 , project_id               uuid                    references sensei.projects(id) on delete cascade

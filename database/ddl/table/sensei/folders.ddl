@@ -1,8 +1,4 @@
 set search_path to sensei, extensions;
-
-create type if not exists folder_kind
-    as enum ('parent', 'folder', 'git', 'subtree');
-
 create table if not exists folders (
   id                       uuid        primary key default gen_random_uuid()
 , root_id                  uuid        not null references sensei.folders_to_watch(id) on delete cascade
