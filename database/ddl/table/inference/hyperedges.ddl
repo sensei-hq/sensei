@@ -1,5 +1,8 @@
 set search_path to inference, sensei, extensions;
 
+create type if not exists edge_confidence
+    as enum ('extracted', 'inferred', 'ambiguous');
+
 create type if not exists hyperedge_kind
     as enum ('flow', 'group', 'co_change', 'addressed_by');
 
