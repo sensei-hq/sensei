@@ -1,15 +1,20 @@
 set search_path to sensei, extensions;
 
+create type if not exists memory_type
+    as enum ('decision', 'pattern', 'question');
+
+create type if not exists memory_status
+    as enum ('open', 'closed');
+
+
 create table if not exists memory_items (
   id                       uuid        primary key default gen_random_uuid()
 , folder_id                uuid        not null references sensei.folders(id) on delete cascade
 , session_id               uuid        references sensei.sessions(id) on delete set null
-, type                     text        not null
-                                       check (type in ('decision', 'pattern', 'question'))
+, type                     memory_type   not null
 , title                    text        not null
 , content                  text        not null
-, status                   text        not null default 'open'
-                                       check (status in ('open', 'closed'))
+, status                   memory_status not null default 'open'
 , resolution               text
 , closed_at                timestamptz
 , modified_at              timestamptz not null default now()

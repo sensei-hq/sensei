@@ -8,8 +8,7 @@ create table if not exists library_pages (
 , local_path               text
 , description              text
 , content                  text
-, source_type              text        not null
-                                       check (source_type in ('llms.txt', 'http', 'local'))
+, source_type              library_source_type not null
 , component                text
 , embedding                vector(768)
 , fetched_at               timestamptz

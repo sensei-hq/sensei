@@ -1,5 +1,8 @@
 set search_path to sensei, extensions;
 
+create type if not exists service_protocol
+    as enum ('mcp', 'ollama', 'anthropic', 'openai');
+
 create type if not exists service_kind
     as enum ('data', 'api', 'devtool', 'service', 'inference');
 
@@ -8,8 +11,7 @@ create table if not exists services (
 , name                     text         not null unique
 , display_name             text         not null
 , publisher                text
-, protocol                 text         not null default 'mcp'
-                                        check (protocol in ('mcp', 'ollama', 'anthropic', 'openai'))
+, protocol                 service_protocol not null default 'mcp'
 , kind                     service_kind not null
 , summary                  text
 , trigger_stacks           text[]       not null default '{}'

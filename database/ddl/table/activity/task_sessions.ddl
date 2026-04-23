@@ -1,14 +1,19 @@
 set search_path to activity, extensions;
 
+create type if not exists task_type_kind
+    as enum ('feat', 'fix', 'refactor', 'docs', 'test', 'chore', 'unknown');
+
+create type if not exists task_status
+    as enum ('in_progress', 'completed', 'abandoned');
+
+
 create table if not exists task_sessions (
   id                       uuid        primary key default gen_random_uuid()
 , session_id               uuid        references activity.sessions(id) on delete set null
 , folder_id                uuid        not null references sensei.folders(id) on delete cascade
 , task_description         text
-, task_type                text
-                                       check (task_type in ('feat', 'fix', 'refactor', 'docs', 'test', 'chore', 'unknown'))
-, status                   text        not null default 'in_progress'
-                                       check (status in ('in_progress', 'completed', 'abandoned'))
+, task_type                task_type_kind
+, status                   task_status    not null default 'in_progress'
 , ftr_score                numeric(4,3)
 , ftr_signals              jsonb
 , modified_at              timestamptz not null default now()
