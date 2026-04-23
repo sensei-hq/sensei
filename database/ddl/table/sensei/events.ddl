@@ -24,7 +24,7 @@ Types: turn, revision_requested, tool_used, phase_transition, mindset_applied, e
 Source for FTR, pattern detection, and coaching metrics.';
 
 comment on column events.id is 'Primary key — event_id from .sensei/sensei.json or generated UUID.';
-comment on column events.project is 'Project identifier (matches repos.project_id or sensei.project).';
+comment on column events.project is 'Project identifier.';
 comment on column events.session_id is 'Foreign key to sensei.sessions — null for global events.';
 comment on column events.event_type is 'Event type: turn, revision_requested, tool_used, phase_transition, mindset_applied, etc.';
 comment on column events.data is 'Event payload stored as JSON.';

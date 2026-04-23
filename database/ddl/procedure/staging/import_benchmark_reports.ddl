@@ -5,20 +5,19 @@ language plpgsql
 as $$
 begin
   insert into sensei.benchmark_reports (
-      id, repo_id, run_name, strategy, score
+      id, folder_id, run_name, strategy, score
     , tokens, elapsed_ms, payload, promoted, created_at
-    , modified_at, modified_by
+    , modified_at
   )
   select
       coalesce(stg.id, gen_random_uuid())
-    , stg.repo_id, stg.run_name, stg.strategy, stg.score
+    , stg.folder_id, stg.run_name, stg.strategy, stg.score
     , stg.tokens, stg.elapsed_ms, stg.payload
     , coalesce(stg.promoted, false)
     , coalesce(stg.created_at, now())
     , coalesce(stg.modified_at, stg.created_at, now())
-    , coalesce(stg.modified_by, current_user)
   from staging.benchmark_reports stg
-  join sensei.repos r on r.id = stg.repo_id
+  join sensei.folders f on f.id = stg.folder_id
   where stg.run_name is not null
   on conflict (id) do nothing;
 end;
@@ -26,4 +25,4 @@ $$;
 
 comment on procedure import_benchmark_reports is
 'Import staging.benchmark_reports into sensei.benchmark_reports.
-Joins to sensei.repos to skip rows whose repo has not been imported yet.';
+Joins to sensei.folders to skip rows whose folder has not been imported yet.';
