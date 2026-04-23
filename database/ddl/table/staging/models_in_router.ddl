@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists models_in_router (
+drop table if exists models_in_router cascade;
+create table models_in_router (
   router_name              text
 , model_full_name          text
 , router_model_id          text
