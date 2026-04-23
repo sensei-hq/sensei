@@ -1,17 +1,31 @@
--- Events — session-level activity captured by hooks and MCP tools.
--- Types: turn, revision_requested, tool_used, phase_transition, mindset_applied, etc.
+set search_path to sensei, extensions;
 
-CREATE TABLE IF NOT EXISTS sensei.events (
-  id         text        PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  project    text        NOT NULL,
-  session_id text        REFERENCES sensei.sessions(id),
-  event_type text        NOT NULL,
-  data       jsonb       NOT NULL DEFAULT '{}',
-  created_at timestamptz NOT NULL DEFAULT now()
+create table if not exists events (
+  id                       text primary key default gen_random_uuid()::text
+, project                  text not null
+, session_id               text references sensei.sessions(id)
+, event_type               text not null
+, data                     jsonb not null default '{}'
+, created_at               timestamptz not null default now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_project  ON sensei.events(project, created_at);
-CREATE INDEX IF NOT EXISTS idx_events_type     ON sensei.events(project, event_type);
-CREATE INDEX IF NOT EXISTS idx_events_session  ON sensei.events(session_id);
+create index if not exists idx_events_project
+    on events(project, created_at);
 
-COMMENT ON TABLE sensei.events IS 'Activity events within sessions. Source for FTR, pattern, and coaching metrics.';
+create index if not exists idx_events_type
+    on events(project, event_type);
+
+create index if not exists idx_events_session
+    on events(session_id);
+
+comment on table events is
+'Session-level activity captured by hooks and MCP tools.
+Types: turn, revision_requested, tool_used, phase_transition, mindset_applied, etc.
+Source for FTR, pattern detection, and coaching metrics.';
+
+comment on column events.id is 'Primary key — event_id from .sensei/sensei.json or generated UUID.';
+comment on column events.project is 'Project identifier (matches repos.project_id or sensei.project).';
+comment on column events.session_id is 'Foreign key to sensei.sessions — null for global events.';
+comment on column events.event_type is 'Event type: turn, revision_requested, tool_used, phase_transition, mindset_applied, etc.';
+comment on column events.data is 'Event payload stored as JSON.';
+comment on column events.created_at is 'Timestamp when this event was recorded.';

@@ -1,12 +1,16 @@
--- View: sensei.user_teams
--- Exposes core team membership for the current user via the /data endpoint.
-CREATE OR REPLACE VIEW sensei.user_teams AS
-SELECT
+set search_path to sensei, extensions;
+
+create or replace view sensei.user_teams as
+select
   tm.user_id,
   t.slug,
   t.display_name,
-  a.slug AS account_slug,
+  a.slug as account_slug,
   tm.role
-FROM core.team_members tm
-JOIN core.teams t ON t.id = tm.team_id
-JOIN core.accounts a ON a.id = t.account_id;
+from core.team_members tm
+join core.teams t on t.id = tm.team_id
+join core.accounts a on a.id = t.account_id;
+
+comment on view sensei.user_teams is
+'View: sensei.user_teams.
+Exposes core team membership for the current user via the /data endpoint.';

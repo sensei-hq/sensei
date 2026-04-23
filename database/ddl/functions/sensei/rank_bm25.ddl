@@ -1,8 +1,7 @@
 set search_path to sensei, extensions;
 
--- Keyword-based file ranking using ilike substring matching on symbol names, signatures, and docstrings.
--- Returns files ranked by how many symbols match the query terms.
--- Phase 1 implementation — full BM25 via pg_trgm can be added later.
+drop function if exists rank_bm25 cascade;
+
 create or replace function rank_bm25(
   p_repo_id uuid,
   p_query   text
@@ -12,11 +11,9 @@ language sql
 stable
 as $$
   with terms as (
-    -- Split query into individual words
     select lower(unnest(string_to_array(trim(p_query), ' '))) as term
   ),
   matches as (
-    -- Count how many query terms each symbol matches
     select
       s.file_path,
       count(t.term) as matched_terms
@@ -38,5 +35,12 @@ as $$
   order by score desc
   limit 20;
 $$;
+
+comment on function rank_bm25 is
+'Keyword-based file ranking using ilike substring matching on symbol names, signatures, and docstrings.
+Returns files ranked by how many symbols match the query terms.
+Phase 1 implementation — full BM25 via pg_trgm can be added later.
+p_repo_id: scope to a specific repo
+p_query: search query string';
 
 grant execute on function rank_bm25(uuid, text) to authenticated, service_role;

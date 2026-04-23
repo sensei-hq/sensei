@@ -1,9 +1,9 @@
 set search_path to sensei, extensions;
 
--- BFS traversal of import graph starting from changed files.
--- Returns files reachable from changed files, scored by inverse distance.
+drop function if exists rank_bfs cascade;
+
 create or replace function rank_bfs(
-  p_repo_id       uuid,
+  p_repo_id        uuid,
   p_changed_files text[]
 )
 returns table(file_path text, score float)
@@ -15,12 +15,10 @@ declare
 begin
   return query
   with recursive bfs(file_path, depth) as (
-    -- Seed: changed files at depth 0
     select unnest(p_changed_files) as file_path, 0 as depth
 
     union
 
-    -- Expand: files that import any file in the current frontier
     select i.source_file, b.depth + 1
     from bfs b
     join sensei.imports i on i.target_path = b.file_path
@@ -37,5 +35,11 @@ begin
   limit 20;
 end;
 $$;
+
+comment on function rank_bfs is
+'BFS traversal of import graph starting from changed files.
+Returns files reachable from changed files, scored by inverse distance.
+p_repo_id: scope to a specific repo
+p_changed_files: array of file paths that were modified';
 
 grant execute on function rank_bfs(uuid, text[]) to authenticated, service_role;

@@ -1,4 +1,4 @@
-set search_path to staging;
+set search_path to staging, extensions;
 
 create or replace procedure import_libraries()
 language plpgsql
@@ -21,17 +21,21 @@ begin
     and stg.ecosystem is not null
   on conflict (id)
   do update set
-      name                = excluded.name
-    , ecosystem           = excluded.ecosystem
-    , version             = excluded.version
-    , description         = excluded.description
-    , homepage_url        = excluded.homepage_url
-    , docs_url            = excluded.docs_url
-    , llms_txt_url        = excluded.llms_txt_url
-    , llms_txt            = excluded.llms_txt
+      name = excluded.name
+    , ecosystem = excluded.ecosystem
+    , version = excluded.version
+    , description = excluded.description
+    , homepage_url = excluded.homepage_url
+    , docs_url = excluded.docs_url
+    , llms_txt_url = excluded.llms_txt_url
+    , llms_txt = excluded.llms_txt
     , llms_txt_fetched_at = excluded.llms_txt_fetched_at
-    , modified_at         = excluded.modified_at
-    , modified_by         = excluded.modified_by
+    , modified_at = excluded.modified_at
+    , modified_by = excluded.modified_by
   where excluded.modified_at >= sensei.libraries.modified_at;
 end;
 $$;
+
+comment on procedure import_libraries is
+'Import staging.libraries into sensei.libraries.
+Upserts on id, updates only if source is newer (freshness gate).';

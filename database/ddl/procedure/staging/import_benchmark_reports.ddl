@@ -1,4 +1,4 @@
-set search_path to staging;
+set search_path to staging, extensions;
 
 create or replace procedure import_benchmark_reports()
 language plpgsql
@@ -18,8 +18,12 @@ begin
     , coalesce(stg.modified_at, stg.created_at, now())
     , coalesce(stg.modified_by, current_user)
   from staging.benchmark_reports stg
-  join sensei.repos r on r.id = stg.repo_id   -- skip rows whose repo hasn't been imported yet
+  join sensei.repos r on r.id = stg.repo_id
   where stg.run_name is not null
   on conflict (id) do nothing;
 end;
 $$;
+
+comment on procedure import_benchmark_reports is
+'Import staging.benchmark_reports into sensei.benchmark_reports.
+Joins to sensei.repos to skip rows whose repo has not been imported yet.';
