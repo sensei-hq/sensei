@@ -1,0 +1,6 @@
+{"name":"google","display_name":"Google","description":"Gemma open models — strong reasoning, efficient inference","website_url":"https://ai.google.dev","is_open_source":true,"sequence":1,"modified_at":"2026-04-23T00:00:00Z"}
+{"name":"alibaba","display_name":"Alibaba (Qwen)","description":"Qwen open models — multilingual, strong coding and reasoning","website_url":"https://qwenlm.github.io","is_open_source":true,"sequence":2,"modified_at":"2026-04-23T00:00:00Z"}
+{"name":"meta","display_name":"Meta","description":"Llama open models — general purpose, widely supported","website_url":"https://llama.meta.com","is_open_source":true,"sequence":3,"modified_at":"2026-04-23T00:00:00Z"}
+{"name":"microsoft","display_name":"Microsoft","description":"Phi models — small, efficient, strong at coding","website_url":"https://azure.microsoft.com/en-us/products/phi","is_open_source":true,"sequence":4,"modified_at":"2026-04-23T00:00:00Z"}
+{"name":"anthropic","display_name":"Anthropic","description":"Claude models — strong reasoning, safety-focused","website_url":"https://anthropic.com","is_open_source":false,"sequence":5,"modified_at":"2026-04-23T00:00:00Z"}
+{"name":"openai","display_name":"OpenAI","description":"GPT models — broad capabilities, widely adopted","website_url":"https://openai.com","is_open_source":false,"sequence":6,"modified_at":"2026-04-23T00:00:00Z"}

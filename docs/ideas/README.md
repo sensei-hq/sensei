@@ -1,95 +1,108 @@
 ---
 name: Ideas
-description: Ideation artifacts — problem statements, concepts, and early-stage thinking for the sensei system
+description: Conceptual explorations — problem statements, capabilities, and early-stage thinking for the sensei system
 ---
 
 # Ideas
 
-## Core concepts
-
-| # | Concept | Description |
-|---|---------|-------------|
-| 1 | **Workflow** | Phased development workflow for the AI assistant — structure, commands, configuration, quality gates |
-| 2 | **Logging & Qualitative Analysis** | Track interactions, sessions, and outcomes to provide qualitative guidance and coaching feedback |
-| 3 | **Metrics & Quantitative Analysis** | FTR scoring, turn counts, rework rates, trend visualization for measurable improvement |
-| 4 | **Assistive Tooling** | Precision assistance — codebase intelligence, library knowledge, context delivery, pattern enforcement |
-| 5 | **Knowledge Integrity** | Ensure the AI's information sources are accurate — doc traceability, drift detection, doc linting |
-| 6 | **Platform & Adoption** | Make sensei usable beyond Claude Code — multi-coordinator support, plugin packaging, skill transformation |
+What the system could be. For how users experience it, see [journeys](../journeys/).
 
 ---
 
-## 1. Workflow
+## Workflow & Session Management
 
-Phased development workflow that reduces rework cycles, preserves context across sessions, and adapts to different project needs.
-
-| # | Document | Status |
-|---|----------|--------|
-| 01 | [Workflow System](./01-workflow-system.md) | Complete |
-| 02 | [Commands](./02-commands.md) | Complete |
-| 03 | [Configuration](./03-configuration.md) | Complete |
-| 04 | [Cross-Cutting Concerns](./04-cross-cutting.md) | Complete |
-| 05 | [Decisions](./05-decisions.md) | Complete |
-| 06 | [Docs Disposition](./06-docs-disposition.md) | Complete |
-
----
-
-## 2. Logging & Qualitative Analysis
-
-Track interactions, sessions, and outcomes. Provide qualitative guidance — coaching feedback, session recovery, handoff documents.
+How AI assistants work with sensei: phases, commands, context, continuity.
 
 | # | Document | Status |
 |---|----------|--------|
-| 07 | [Metrics & Analytics](./07-metrics-analytics.md) — coaching layer, interaction tracking | Idea |
+| 01 | [Workflow System](./01-workflow-system.md) — phased development: brainstorm → build → validate | Complete |
+| 02 | [Commands](./02-commands.md) — slash commands for each phase + utilities | Complete |
+| 04 | [Cross-Cutting Concerns](./04-cross-cutting.md) — guardrails, tool preferences, compact handling | Complete |
 | 11 | [Session Continuity](./11-session-continuity.md) — recovery, interrupt detection, handoff | Idea |
+| 23 | [Personas & Mindsets](./23-personas-mindsets.md) — process mindsets + project personas | Idea |
+| 27 | [Developer Preferences](./27-developer-preferences.md) — learn personal style from corrections + codebase scan | Idea |
 
 ---
 
-## 3. Metrics & Quantitative Analysis
+## Codebase Intelligence
 
-Measure development quality with hard numbers. FTR scoring, turn counts, rework rates, trend visualization.
-
-| # | Document | Status |
-|---|----------|--------|
-| 07 | [Metrics & Analytics](./07-metrics-analytics.md) — FTR, telemetry, benchmarking, dashboards | Idea |
-| 10 | [Visualization & Dashboard](./10-visualization.md) — quality trends, session analytics | Idea |
-
----
-
-## 4. Assistive Tooling
-
-Precision assistance — understand the codebase deeply, serve the right context, know the libraries, enforce the patterns.
+Understand code deeply: index, graph, patterns, duplicates, complexity.
 
 | # | Document | Status |
 |---|----------|--------|
-| 08 | [Codebase Intelligence](./08-codebase-intelligence.md) — indexing, call graph, graph analysis, pattern detection | Idea |
-| 09 | [Library Intelligence](./09-library-intelligence.md) — doc indexing, registry, skill generation | Idea |
-| 14 | [Context Delivery](./14-context-delivery.md) — resolution levels, token budgeting, ranking | Idea |
-| 15 | [Pattern Store](./15-pattern-store.md) — detect, surface, enforce, grow lifecycle | Idea |
+| 08 | [Codebase Intelligence](./08-codebase-intelligence.md) — indexing, call graph, community detection | Idea |
+| 15 | [Pattern Store](./15-pattern-store.md) — detect, surface, enforce (suggested → gap → rule) | Idea |
 | 17 | [Pattern Knowledge](./17-pattern-knowledge.md) — library patterns, industry patterns, architectural options | Idea |
-| 18 | [Testability & TDD](./18-testability-tdd.md) — composable functions, test-first with human approval, testability scoring | Idea |
-| 22 | [Adapter IR](./22-adapter-ir.md) — common intermediate representation, separates parsing from processing | Complete |
+| 14 | [Context Delivery](./14-context-delivery.md) — resolution levels (L0-L3), token budgeting, ranking | Idea |
+| 18 | [Testability & TDD](./18-testability-tdd.md) — composable functions, test-first, testability scoring | Idea |
+| 22 | [Adapter IR](./22-adapter-ir.md) — common intermediate representation for language parsing | Complete |
 
 ---
 
-## 5. Knowledge Integrity
+## Library & Service Intelligence
 
-Ensure the AI's information sources are accurate and current. Stale docs mislead; drift erodes trust.
+Index documentation, track usage, detect drift, wrap libraries without their own MCP.
 
 | # | Document | Status |
 |---|----------|--------|
+| 09 | [Library Intelligence](./09-library-intelligence.md) — doc indexing, library wrapping, skill generation | Idea |
 | 13 | [Documentation Traceability](./13-doc-traceability.md) — doc-to-code links, drift detection, linting | Idea |
 
 ---
 
-## 6. Platform & Adoption
+## Metrics, Analytics & Coaching
 
-Make sensei usable beyond Claude Code. Multi-repo, multi-coordinator, multi-team.
+Measure session effectiveness. FTR, corrections, rework, coaching recommendations.
 
 | # | Document | Status |
 |---|----------|--------|
-| 12 | [Multi-Coordinator Support](./12-multi-coordinator.md) — adapter pattern for Cursor, Copilot, etc. | Idea |
+| 07 | [Metrics & Analytics](./07-metrics-analytics.md) — FTR scoring, coaching, session analytics, correction clustering | Active |
+| 10 | [Visualization & Dashboard](./10-visualization.md) — quality trends, session analytics, graph visualization | Idea |
+
+---
+
+## Insights, Playground & Continuous Improvement
+
+Tool exploration, session replay, MOE reasoning, change-impact tracking.
+
+| # | Document | Status |
+|---|----------|--------|
+| 25 | [Playground & Insights Engine](./25-playground-and-insights.md) — MCP playground, session replay, usage analytics, MOE consensus, change-impact tracking | Idea |
+| 20 | [Local Inference](./20-local-inference.md) — Ollama, Gemma4, embeddings, classification, reasoning panel | Idea |
+| 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — effectiveness benchmarks, reproducible comparison | Idea |
+| 28 | [Inference Gateway](./28-inference-gateway.md) — Rust LLM router: Ollama + external providers, fallback chains, circuit breaker, MOE consensus, budget management. Port of Strategos gateway. | Idea |
+
+---
+
+## Desktop & Observatory
+
+The visual layer: setup wizard, daily view, project pages, navigation.
+
+| # | Document | Status |
+|---|----------|--------|
+| 24 | [Desktop Observatory](./24-desktop-observatory.md) — session observatory, setup wizard, scope model | Idea |
+| 24a | [Observatory Data Audit](./24a-observatory-data-audit.md) — data requirements for observatory views | Idea |
+| 24b | [Capability Registry](./24b-capability-registry.md) — skills, plugins, MCP registration | Idea |
+| 26 | [Bootstrap & Dependencies](./26-bootstrap-and-dependencies.md) — startup screen, Homebrew, PostgreSQL, Ollama, models | Idea |
+
+---
+
+## Platform & Extensibility
+
+Multi-coordinator, plugins, agents, custom skills.
+
+| # | Document | Status |
+|---|----------|--------|
+| 12 | [Multi-Coordinator Support](./12-multi-coordinator.md) — adapter pattern for Cursor, Copilot, Codex, Aider | Idea |
 | 16 | [Workspace & System Intelligence](./16-workspace-system-intelligence.md) — multi-repo, conformance, health | Idea |
-| 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — competitive comparison, reproducible benchmarks, honest limitations | Idea |
-| 20 | [Local Inference](./20-local-inference.md) — Gemma4 via Ollama for summaries, embeddings, classification, pattern detection | Idea |
-| 21 | [Custom Agents](./21-custom-agents.md) — autonomous multi-step agents for review, build, analysis, benchmarking | Idea |
-| 23 | [Personas & Mindsets](./23-personas-mindsets.md) — process mindsets + project personas for design and validation | Idea |
+| 21 | [Custom Agents](./21-custom-agents.md) — autonomous multi-step agents for review, build, analysis | Idea |
+
+---
+
+## Configuration & Housekeeping
+
+| # | Document | Status |
+|---|----------|--------|
+| 03 | [Configuration](./03-configuration.md) — config schema, project vs user scope, defaults | Complete |
+| 05 | [Decisions](./05-decisions.md) — architectural decision records | Complete |
+| 06 | [Docs Disposition](./06-docs-disposition.md) — what to keep, archive, retire | Complete |
