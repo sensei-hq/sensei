@@ -1,5 +1,8 @@
 set search_path to gateway, extensions;
 
+create type if not exists auth_type
+    as enum ('api_key', 'none');
+
 create type if not exists router_type
     as enum ('direct', 'aggregator', 'local');
 
@@ -11,8 +14,7 @@ create table if not exists routers (
 , router_type              router_type not null
 , api_base_url             text
 , api_key_env_var          text
-, authentication_type      text        not null default 'api_key'
-                                       check (authentication_type in ('api_key', 'none'))
+, authentication_type      auth_type   not null default 'api_key'
 , default_headers          jsonb       not null default '{}'
 , rate_limits              jsonb       not null default '{}'
 , config                   jsonb       not null default '{}'

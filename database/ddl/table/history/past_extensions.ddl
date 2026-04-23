@@ -1,5 +1,9 @@
 set search_path to history, extensions;
 
+create type if not exists dml_operation
+    as enum ('INSERT', 'UPDATE', 'DELETE');
+
+
 create table if not exists past_extensions (
   id                       uuid           primary key default gen_random_uuid()
 , extension_id             uuid           not null
@@ -15,7 +19,7 @@ create table if not exists past_extensions (
 , source                   text           not null
 , icons                    jsonb          not null default '{}'
 , tags                     text[]         not null default '{}'
-, operation                text           not null check (operation in ('INSERT', 'UPDATE', 'DELETE'))
+, operation                dml_operation   not null
 , revision                 integer        not null default 0
 , recommendation_id        uuid
 , effective_from           timestamptz    not null

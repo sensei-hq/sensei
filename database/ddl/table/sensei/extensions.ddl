@@ -1,5 +1,11 @@
 set search_path to sensei, extensions;
 
+create type if not exists extension_scope
+    as enum ('global', 'project', 'folder');
+
+create type if not exists extension_source
+    as enum ('builtin', 'marketplace', 'local');
+
 create type if not exists extension_kind
     as enum ('plugin', 'skill', 'command', 'agent', 'hook');
 
@@ -12,11 +18,9 @@ create table if not exists extensions (
 , description              text
 , content                  text
 , props                    jsonb          not null default '{}'
-, scope                    text           not null default 'global'
-                                          check (scope in ('global', 'project', 'folder'))
+, scope                    extension_scope  not null default 'global'
 , enabled                  boolean        not null default true
-, source                   text           not null default 'local'
-                                          check (source in ('builtin', 'marketplace', 'local'))
+, source                   extension_source not null default 'local'
 , icons                    jsonb          not null default '{}'
 , tags                     text[]         not null default '{}'
 , revision                 integer        not null default 0

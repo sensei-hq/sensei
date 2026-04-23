@@ -1,11 +1,14 @@
 set search_path to activity, extensions;
 
+create type if not exists snapshot_kind
+    as enum ('manual', 'checkpoint');
+
+
 create table if not exists snapshots (
   id                       uuid        primary key default gen_random_uuid()
 , session_id               uuid        not null references activity.sessions(id) on delete cascade
 , folder_id                uuid        not null references sensei.folders(id) on delete cascade
-, kind                     text        not null
-                                       check (kind in ('manual', 'checkpoint'))
+, kind                     snapshot_kind not null
 , progress_summary         text        not null
 , next_step_hint           text
 , completed_steps          text[]      not null default '{}'
