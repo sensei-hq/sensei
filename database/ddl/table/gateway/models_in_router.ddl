@@ -1,9 +1,9 @@
-set search_path to inference, extensions;
+set search_path to gateway, extensions;
 
 create table if not exists models_in_router (
   id                       uuid        primary key default gen_random_uuid()
-, router_id                uuid        not null references inference.routers(id) on delete cascade
-, model_id                 uuid        not null references inference.models(id) on delete cascade
+, router_id                uuid        not null references gateway.routers(id) on delete cascade
+, model_id                 uuid        not null references gateway.models(id) on delete cascade
 , router_model_id          text        not null
 , cost_per_input_token     numeric(12,10) not null default 0
 , cost_per_output_token    numeric(12,10) not null default 0
