@@ -16,7 +16,7 @@ begin
     , stg.router_type::sensei.router_type
     , stg.api_base_url
     , stg.api_key_env_var
-    , coalesce(stg.authentication_type, 'api_key')
+    , coalesce(stg.authentication_type, 'api_key')::sensei.auth_type
     , coalesce(stg.default_headers, '{}')
     , coalesce(stg.rate_limits, '{}')
     , coalesce(stg.config, '{}')
