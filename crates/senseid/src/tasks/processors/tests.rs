@@ -29,7 +29,7 @@ mod tests {
 
     #[test]
     fn rust_adapter_svelte_rs() {
-        let r = process("crates/senseid/src/adapters/svelte.rs");
+        let r = process("crates/senseid/src/languages/svelte.rs");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "src");
         assert_eq!(r.language.as_deref(), Some("rust"));

@@ -1,7 +1,7 @@
 //! Code file processor — uses language adapters (TypeScript, Python, Rust, etc.)
 
 use super::types::*;
-use crate::adapters;
+use crate::languages;
 use crate::indexer::graph::compute_complexity;
 use crate::types::NodeKind;
 
@@ -11,11 +11,11 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
     // Try compound extension first (e.g. .svelte.ts), then simple extension
     let filename = std::path::Path::new(abs_path).file_name()
         .and_then(|n| n.to_str()).unwrap_or("");
-    let adapter = if let Some((a, _)) = adapters::adapter_for_filename(filename) {
+    let adapter = if let Some((a, _)) = languages::adapter_for_filename(filename) {
         a
     } else {
         let dotted = format!(".{}", ext);
-        adapters::adapter_for_ext(&dotted)?
+        languages::adapter_for_ext(&dotted)?
     };
 
     let parsed = adapter.parse(content, rel_path);
@@ -77,7 +77,7 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
         }).collect();
 
     // Parse IR (rich data) alongside the old path
-    let ir = adapters::parse_to_ir_for_filename(filename, content, rel_path);
+    let ir = languages::parse_to_ir_for_filename(filename, content, rel_path);
 
     Some(FileProcessResult {
         file_id,
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn rust_svelte_adapter() {
-        let r = process_code_file("crates/senseid/src/adapters/svelte.rs");
+        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
         assert_eq!(r.language.as_deref(), Some("rust"));
         assert_eq!(r.tags, "src");
 
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn rust_file_with_tests_and_src() {
         // Rust files contain both src and test code in the same file
-        let r = process_code_file("crates/senseid/src/adapters/svelte.rs");
+        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
 
         // Should have both regular functions AND test functions
         let all_fns: Vec<&str> = r.symbols.iter()
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn rust_methods_have_parent() {
-        let r = process_code_file("crates/senseid/src/adapters/svelte.rs");
+        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
 
         // Methods should have parent refs (from impl blocks)
         let methods_with_parent: Vec<_> = r.symbols.iter()

@@ -1,12 +1,12 @@
 mod types;
 mod db;
-mod adapters;
+mod languages;
 mod indexer;
 mod config;
 mod watcher;
 mod api;
 mod tasks;
-pub mod acp;
+pub mod assistants;
 pub mod installer;
 pub mod paths;
 pub mod ir;
