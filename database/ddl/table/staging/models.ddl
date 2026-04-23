@@ -19,7 +19,5 @@ create table models (
 , deprecated_on            date
 , props                    jsonb       default '{}'
 , is_active                boolean     default true
-, created_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
-, modified_by              text        not null default current_user
 );
