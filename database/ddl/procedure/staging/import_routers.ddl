@@ -4,7 +4,7 @@ create or replace procedure import_routers()
 language plpgsql
 as $$
 begin
-  insert into inference.routers (
+  insert into gateway.routers (
       name, display_name, description, router_type
     , api_base_url, api_key_env_var, authentication_type
     , default_headers, rate_limits, config, is_active, sequence, modified_at
@@ -13,7 +13,7 @@ begin
       stg.name
     , stg.display_name
     , stg.description
-    , stg.router_type::inference.router_type
+    , stg.router_type::gateway.router_type
     , stg.api_base_url
     , stg.api_key_env_var
     , coalesce(stg.authentication_type, 'api_key')
@@ -39,6 +39,6 @@ begin
     , is_active           = excluded.is_active
     , sequence            = excluded.sequence
     , modified_at         = excluded.modified_at
-  where excluded.modified_at >= inference.routers.modified_at;
+  where excluded.modified_at >= gateway.routers.modified_at;
 end;
 $$;

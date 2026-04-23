@@ -4,12 +4,12 @@ create or replace procedure import_fallback_chains()
 language plpgsql
 as $$
 begin
-  insert into inference.fallback_chains (
+  insert into gateway.fallback_chains (
       name, capability, description, max_fallback_attempts, is_active, sequence, modified_at
   )
   select
       stg.name
-    , stg.capability::inference.model_capability
+    , stg.capability::gateway.model_capability
     , stg.description
     , coalesce(stg.max_fallback_attempts, 3)
     , coalesce(stg.is_active, true)
@@ -25,6 +25,6 @@ begin
     , is_active             = excluded.is_active
     , sequence              = excluded.sequence
     , modified_at           = excluded.modified_at
-  where excluded.modified_at >= inference.fallback_chains.modified_at;
+  where excluded.modified_at >= gateway.fallback_chains.modified_at;
 end;
 $$;

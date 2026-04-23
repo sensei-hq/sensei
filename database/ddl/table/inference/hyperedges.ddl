@@ -1,4 +1,4 @@
-set search_path to sensei, extensions;
+set search_path to inference, extensions;
 
 create type if not exists hyperedge_kind
     as enum ('flow', 'group', 'co_change', 'addressed_by');

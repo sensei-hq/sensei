@@ -1,10 +1,10 @@
-set search_path to inference, extensions;
+set search_path to gateway, extensions;
 
 create table if not exists fallback_chain_models (
   id                       uuid        primary key default gen_random_uuid()
-, chain_id                 uuid        not null references inference.fallback_chains(id) on delete cascade
-, router_id                uuid        not null references inference.routers(id) on delete cascade
-, model_id                 uuid        not null references inference.models(id) on delete cascade
+, chain_id                 uuid        not null references gateway.fallback_chains(id) on delete cascade
+, router_id                uuid        not null references gateway.routers(id) on delete cascade
+, model_id                 uuid        not null references gateway.models(id) on delete cascade
 , sequence_order           integer     not null
 , max_retries              integer     not null default 1
 , is_active                boolean     not null default true
