@@ -19,7 +19,9 @@ create table if not exists extensions (
                                           check (source in ('builtin', 'marketplace', 'local'))
 , icons                    jsonb          not null default '{}'
 , tags                     text[]         not null default '{}'
+, revision                 integer        not null default 0
 , modified_at              timestamptz    not null default now()
+, modified_by              text
 , created_at               timestamptz    not null default now()
 );
 

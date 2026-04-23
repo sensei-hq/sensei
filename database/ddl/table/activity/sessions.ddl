@@ -1,4 +1,4 @@
-set search_path to sensei, extensions;
+set search_path to activity, extensions;
 
 create table if not exists sessions (
   id                       uuid        primary key default gen_random_uuid()
@@ -33,40 +33,40 @@ create index if not exists sessions_ftr_idx
 
 comment on table sessions is
 'AI coding sessions captured by hooks.
-- outcome: completed (no corrections), corrected (corrections made), blocked, partial (crash), abandoned
+- outcome: completed (no corrections), corrected, blocked, partial (crash), abandoned
 - ftr: true if corrections == 0 (First-Try Rate)
 - module: primary code module touched (for per-module FTR tracking)
-- props: extensible — {patterns_matched, personas_applied, ...}';
+- props: {patterns_matched, personas_applied, workflow_phase, ...}';
 
 comment on column sessions.id
      is 'Surrogate primary key (UUID).';
 comment on column sessions.folder_id
      is 'Foreign key to folders — which folder this session ran in.';
 comment on column sessions.project_id
-     is 'Foreign key to projects — which project this session belongs to. Derived from folder.';
+     is 'Foreign key to projects — derived from folder.';
 comment on column sessions.task
-     is 'Task description passed by the agent at get_session_context.';
+     is 'Task description passed at get_session_context.';
 comment on column sessions.acp_id
-     is 'Agent client identifier: claude-code, cursor, codex, aider, etc.';
+     is 'Agent client: claude-code, cursor, codex, aider, etc.';
 comment on column sessions.outcome
-     is 'Session outcome: completed, corrected, blocked, partial (crash), abandoned.';
+     is 'Session outcome: completed, corrected, blocked, partial, abandoned.';
 comment on column sessions.ftr
-     is 'First-Try Rate: true if session completed with zero corrections.';
+     is 'First-Try Rate: true if zero corrections.';
 comment on column sessions.turns
-     is 'Number of user turns in this session.';
+     is 'Number of user turns.';
 comment on column sessions.corrections
-     is 'Number of times the user corrected the assistant (FTR detractor).';
+     is 'Number of user corrections (FTR detractor).';
 comment on column sessions.tokens_in
-     is 'Total input tokens consumed during the session.';
+     is 'Total input tokens consumed.';
 comment on column sessions.tokens_out
-     is 'Total output tokens generated during the session.';
+     is 'Total output tokens generated.';
 comment on column sessions.duration_ms
      is 'Session duration in milliseconds.';
 comment on column sessions.module
-     is 'Primary code module touched during the session (e.g. "auth/refresh.ts"). For per-module FTR.';
+     is 'Primary code module touched. For per-module FTR.';
 comment on column sessions.props
-     is 'Extensible metadata: {patterns_matched, personas_applied, workflow_phase, ...}.';
+     is 'Extensible: {patterns_matched, personas_applied, workflow_phase, ...}.';
 comment on column sessions.started_at
-     is 'Timestamp when this session started.';
+     is 'When this session started.';
 comment on column sessions.completed_at
-     is 'Timestamp when this session ended.';
+     is 'When this session ended.';
