@@ -9,7 +9,7 @@ use super::handlers;
 /// Wraps the same store/graph as the API routes via AppState.
 pub struct TaskContext {
     pub queue: Arc<TaskQueue>,
-    pub app_state: crate::api::routes::AppState,
+    pub app_state: crate::api::state::AppState,
     pub _graph_path: Option<std::path::PathBuf>,
 }
 
@@ -73,7 +73,7 @@ mod tests {
     use tokio::sync::Mutex;
     use crate::db::Store;
     use crate::indexer::graph::GraphDb;
-    use crate::api::routes::SharedState;
+    use crate::api::state::SharedState;
 
     /// Build a TaskContext backed by in-memory Store + GraphDb.
     fn make_ctx() -> Arc<TaskContext> {

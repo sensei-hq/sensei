@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use notify::{Watcher, RecursiveMode, Event, EventKind};
 use crate::tasks::{Task, TaskKind};
 use crate::tasks::queue::TaskQueue;
-use crate::adapters;
+use crate::languages;
 
 const DEBOUNCE_MS: u64 = 500;
 
@@ -93,7 +93,7 @@ pub fn start_root_watcher(
                             .and_then(|e| e.to_str())
                             .map(|e| format!(".{}", e))
                             .unwrap_or_default();
-                        let is_code = adapters::adapter_for_ext(&ext).is_some();
+                        let is_code = languages::adapter_for_ext(&ext).is_some();
                         let is_doc = ext == ".md" || ext == ".mdx";
                         if !is_code && !is_doc { continue; }
 

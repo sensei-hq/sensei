@@ -5,7 +5,8 @@ use crate::db::Store;
 use crate::indexer::graph::GraphDb;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::executor::{TaskContext, spawn_workers};
-use super::routes::{create_router, SharedState};
+use super::routes::create_router;
+use super::state::SharedState;
 
 const DEFAULT_WORKERS: usize = 3;
 
