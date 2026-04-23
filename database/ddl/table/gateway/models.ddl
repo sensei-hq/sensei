@@ -1,4 +1,4 @@
-set search_path to gateway, extensions;
+set search_path to gateway, extensions, sensei;
 create table if not exists models (
   id                       uuid               primary key default gen_random_uuid()
 , provider_id              uuid               not null references gateway.providers(id) on delete cascade

@@ -23,5 +23,4 @@ import:
   options:
     truncate: true
     nullValue: ""
-  after:
-    - import/loader.sql
+  after: ~
