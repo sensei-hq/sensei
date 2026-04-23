@@ -1,4 +1,4 @@
-set search_path to gateway, extensions;
+set search_path to gateway, extensions, sensei;
 create table if not exists fallback_chains (
   id                       uuid               primary key default gen_random_uuid()
 , name                     text               not null unique
