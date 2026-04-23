@@ -3,7 +3,7 @@ set search_path to sensei, extensions;
 drop function if exists rank_bfs cascade;
 
 create or replace function rank_bfs(
-  p_folder_id        uuid,
+  p_folder_id uuid,
   p_changed_files text[]
 )
 returns table(file_path text, score float)
@@ -19,10 +19,11 @@ begin
 
     union
 
-    select i.source_file, b.depth + 1
+    select e.target_file, b.depth + 1
     from bfs b
-    join sensei.imports i on i.target_path = b.file_path
-      and i.folder_id = p_folder_id
+    join sensei.edges e on e.target_file = b.file_path
+      and e.folder_id = p_folder_id
+      and e.kind = 'imports'
     where b.depth < max_depth
   )
   select
