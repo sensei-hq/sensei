@@ -1,6 +1,8 @@
 # Folder Model — Configuration vs Content
 
-> Design doc for the unified data model that replaces `scanned_roots`, `repos`, `excluded_paths`, and consolidates the library tables.
+> **SUPERSEDED** — This was the initial design doc. The schema has evolved significantly. See [database-schema.md](../database-schema.md) for the current 5-schema architecture.
+>
+> This doc is retained for historical context on the config-vs-content separation principle and discovery rules, which remain valid.
 
 ## Principles
 
