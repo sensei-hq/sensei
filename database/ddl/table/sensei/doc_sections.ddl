@@ -30,7 +30,7 @@ Used by context_pack assembly.';
 comment on column doc_sections.id
      is 'Surrogate primary key (UUID).';
 comment on column doc_sections.folder_id
-     is 'Foreign key to folders — which repo this doc section belongs to.';
+     is 'Foreign key to folders — which folder this doc section belongs to.';
 comment on column doc_sections.file_path
      is 'Repository-relative path of the documentation file this section belongs to.';
 comment on column doc_sections.heading

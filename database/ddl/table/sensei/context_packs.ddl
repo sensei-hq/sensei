@@ -27,7 +27,7 @@ comment on table context_packs is
 comment on column context_packs.id
      is 'Surrogate primary key (UUID).';
 comment on column context_packs.folder_id
-     is 'Foreign key to folders — which repo this pack was assembled for.';
+     is 'Foreign key to folders — which folder this pack was assembled for.';
 comment on column context_packs.session_id
      is 'Session that created this pack. Nullable.';
 comment on column context_packs.task

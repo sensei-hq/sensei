@@ -28,7 +28,7 @@ comment on table imports is
 comment on column imports.id
      is 'Surrogate primary key (UUID).';
 comment on column imports.folder_id
-     is 'Foreign key to folders — which repo this import belongs to.';
+     is 'Foreign key to folders — which folder this import belongs to.';
 comment on column imports.source_file
      is 'Repository-relative path of the file that contains the import statement.';
 comment on column imports.target_path

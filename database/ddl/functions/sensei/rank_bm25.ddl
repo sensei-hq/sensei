@@ -40,7 +40,7 @@ comment on function rank_bm25 is
 'Keyword-based file ranking using ilike substring matching on symbol names, signatures, and docstrings.
 Returns files ranked by how many symbols match the query terms.
 Phase 1 implementation — full BM25 via pg_trgm can be added later.
-p_folder_id: scope to a specific folder (repo)
+p_folder_id: scope to a specific folder
 p_query: search query string';
 
 grant execute on function rank_bm25(uuid, text) to authenticated, service_role;

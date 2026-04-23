@@ -53,7 +53,7 @@ comment on table detected_patterns is
 comment on column detected_patterns.id
      is 'Surrogate primary key (UUID).';
 comment on column detected_patterns.folder_id
-     is 'Foreign key to folders — which repo this pattern was detected in.';
+     is 'Foreign key to folders — which folder this pattern was detected in.';
 comment on column detected_patterns.name
      is 'Pattern name (e.g. "Adapter", "Duplicated auth guard", "God node · router.ts").';
 comment on column detected_patterns.family

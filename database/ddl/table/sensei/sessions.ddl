@@ -41,7 +41,7 @@ comment on table sessions is
 comment on column sessions.id
      is 'Surrogate primary key (UUID).';
 comment on column sessions.folder_id
-     is 'Foreign key to folders — which repo this session ran in.';
+     is 'Foreign key to folders — which folder this session ran in.';
 comment on column sessions.project_id
      is 'Foreign key to projects — which project this session belongs to. Derived from folder.';
 comment on column sessions.task

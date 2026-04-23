@@ -38,7 +38,7 @@ comment on table call_edges is
 comment on column call_edges.id
      is 'Surrogate primary key (UUID).';
 comment on column call_edges.folder_id
-     is 'Foreign key to folders — which repo this edge belongs to.';
+     is 'Foreign key to folders — which folder this edge belongs to.';
 comment on column call_edges.caller_id
      is 'Foreign key to symbols — the symbol that performs this call.';
 comment on column call_edges.callee_id

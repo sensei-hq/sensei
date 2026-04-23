@@ -14,16 +14,16 @@ create index if not exists referenced_libraries_library_id_idx
     on referenced_libraries(library_id);
 
 comment on table referenced_libraries is
-'Junction table linking folders (git/subtree repos) to their library dependencies.
-- version_used: the pinned version observed in the repo (from package.json, Cargo.toml, etc.)
+'Junction table linking folders (git/subtree folders) to their library dependencies.
+- version_used: the pinned version observed in the folder (from package.json, Cargo.toml, etc.)
 - props: extensible — {source:"Cargo.toml", usage_count, skill_path, skill_generated_at, ...}';
 
 comment on column referenced_libraries.folder_id
-     is 'Foreign key to folders — the repo that uses this library.';
+     is 'Foreign key to folders — the folder that uses this library.';
 comment on column referenced_libraries.library_id
      is 'Foreign key to libraries — the library dependency.';
 comment on column referenced_libraries.version_used
-     is 'Version of the library pinned in this repo, as observed from the package manifest.';
+     is 'Version of the library pinned in this folder, as observed from the package manifest.';
 comment on column referenced_libraries.props
      is 'Extensible metadata: {source, usage_count, skill_path, skill_generated_at, ...}.';
 comment on column referenced_libraries.modified_at

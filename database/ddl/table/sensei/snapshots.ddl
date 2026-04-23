@@ -34,7 +34,7 @@ comment on column snapshots.id
 comment on column snapshots.session_id
      is 'Foreign key to sessions — the session that created this snapshot.';
 comment on column snapshots.folder_id
-     is 'Foreign key to folders — which repo this snapshot covers.';
+     is 'Foreign key to folders — which folder this snapshot covers.';
 comment on column snapshots.kind
      is 'Snapshot type: manual (take_snapshot) or checkpoint (task completion).';
 comment on column snapshots.progress_summary

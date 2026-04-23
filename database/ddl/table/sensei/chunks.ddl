@@ -30,7 +30,7 @@ comment on table chunks is
 comment on column chunks.id
      is 'Surrogate primary key (UUID).';
 comment on column chunks.folder_id
-     is 'Foreign key to folders — which repo this chunk belongs to.';
+     is 'Foreign key to folders — which folder this chunk belongs to.';
 comment on column chunks.file_path
      is 'Repository-relative path of the source file this chunk was extracted from.';
 comment on column chunks.chunk_index
