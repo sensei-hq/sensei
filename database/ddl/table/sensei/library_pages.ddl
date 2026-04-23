@@ -14,7 +14,6 @@ create table if not exists library_pages (
 , embedding                vector(768)
 , fetched_at               timestamptz
 , modified_at              timestamptz not null default now()
-, created_at               timestamptz not null default now()
 );
 
 create index if not exists library_pages_library_id_idx
@@ -58,5 +57,3 @@ comment on column library_pages.fetched_at
      is 'Timestamp when this page content was last fetched or refreshed.';
 comment on column library_pages.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column library_pages.created_at
-     is 'Timestamp when this page was first indexed.';

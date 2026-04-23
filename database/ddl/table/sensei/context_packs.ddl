@@ -8,12 +8,11 @@ create table if not exists context_packs (
 , model_id                 text
 , slices                   jsonb       not null default '[]'
 , total_tokens             integer     not null default 0
-, created_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 );
 
 create index if not exists context_packs_folder_id_idx
-    on context_packs(folder_id, created_at desc);
+    on context_packs(folder_id, modified_at desc);
 
 create index if not exists context_packs_session_id_idx
     on context_packs(session_id)
@@ -38,7 +37,5 @@ comment on column context_packs.slices
      is 'JSON array of file slices included in the assembled pack.';
 comment on column context_packs.total_tokens
      is 'Total token count of all slices in the assembled pack.';
-comment on column context_packs.created_at
-     is 'Timestamp when the row was first created.';
 comment on column context_packs.modified_at
      is 'Timestamp of the last modification to this row.';
