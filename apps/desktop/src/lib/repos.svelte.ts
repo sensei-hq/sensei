@@ -140,7 +140,7 @@ export class RepoStore {
     if (!repo) return;
     const api = senseiApi(this.port);
     // API client sends repoId, daemon expects repo_id — both are sent for compat
-    await api.addSolutionRepo(solutionId, { repoId, role });
+    await api.addProjectRepo(solutionId, { repoId, role });
     await this.fetchAll();
   }
 
@@ -167,9 +167,9 @@ export class RepoStore {
     const api = senseiApi(this.port);
     try {
       const [projects, status, rawSolutions] = await Promise.all([
-        api.getProjects() as Promise<ServerProject[]>,
+        api.getRepos() as Promise<ServerProject[]>,
         api.getIndexStatus() as Promise<any>,
-        api.listSolutions() as Promise<any[]>,
+        api.listProjects() as Promise<any[]>,
       ]);
 
       const repoStatus: Record<string, any> = status.repos ?? {};
