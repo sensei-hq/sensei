@@ -1,4 +1,4 @@
-set search_path to activity, extensions;
+set search_path to sensei, extensions;
 
 create type task_status
     as enum ('in_progress', 'completed', 'abandoned');
