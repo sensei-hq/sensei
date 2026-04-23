@@ -15,17 +15,17 @@ as $$
   ),
   matches as (
     select
-      s.file_path,
+      n.file_path,
       count(t.term) as matched_terms
-    from sensei.symbols s
+    from sensei.nodes n
     cross join terms t
-    where s.folder_id = p_folder_id
+    where n.folder_id = p_folder_id
       and (
-        lower(coalesce(s.name, ''))      like '%' || t.term || '%'
-        or lower(coalesce(s.signature, '')) like '%' || t.term || '%'
-        or lower(coalesce(s.docstring, '')) like '%' || t.term || '%'
+        lower(coalesce(n.name, ''))      like '%' || t.term || '%'
+        or lower(coalesce(n.signature, '')) like '%' || t.term || '%'
+        or lower(coalesce(n.docstring, '')) like '%' || t.term || '%'
       )
-    group by s.file_path, t.term
+    group by n.file_path, t.term
   )
   select
     m.file_path,
@@ -37,9 +37,8 @@ as $$
 $$;
 
 comment on function rank_bm25 is
-'Keyword-based file ranking using ilike substring matching on symbol names, signatures, and docstrings.
-Returns files ranked by how many symbols match the query terms.
-Phase 1 implementation — full BM25 via pg_trgm can be added later.
+'Keyword-based file ranking using ilike substring matching on node names, signatures, and docstrings.
+Returns files ranked by how many nodes match the query terms.
 p_folder_id: scope to a specific folder
 p_query: search query string';
 
