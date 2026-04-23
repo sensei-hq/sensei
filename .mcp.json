@@ -1,9 +1,17 @@
 {
   "mcpServers": {
+    "sensei": {
+      "command": "sensei-mcp"
+    },
     "svelte": {
+      "args": ["-y", "svelte-mcp"],
+      "command": "npx"
+    },
+    "playwright": {
       "args": [
-        "-y",
-        "svelte-mcp"
+        "@playwright/mcp@latest",
+        "--output-dir",
+        "/Users/Jerry/.playwright-mcp"
       ],
       "command": "npx"
     }

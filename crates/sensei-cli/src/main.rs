@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
+use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::fs;
 
 const DAEMON_URL: &str = "http://127.0.0.1:7744";
 
@@ -81,10 +81,24 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { scope, acp, recommended, plugin_dir } => {
-            init(scope.as_deref(), acp.as_deref(), recommended, plugin_dir.as_deref());
+        Commands::Init {
+            scope,
+            acp,
+            recommended,
+            plugin_dir,
+        } => {
+            init(
+                scope.as_deref(),
+                acp.as_deref(),
+                recommended,
+                plugin_dir.as_deref(),
+            );
         }
-        Commands::Remove { target, name, purge } => remove_cmd(&target, name.as_deref(), purge),
+        Commands::Remove {
+            target,
+            name,
+            purge,
+        } => remove_cmd(&target, name.as_deref(), purge),
         Commands::Start { port } => daemon_cmd("start", Some(port)),
         Commands::Stop => daemon_cmd("stop", None),
         Commands::Restart { port } => restart_daemon(port),
@@ -129,7 +143,6 @@ fn daemon_bin() -> PathBuf {
 }
 
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
-
 
 fn ensure_daemon() {
     if daemon_available() {
@@ -208,35 +221,15 @@ fn get_daemon_version() -> String {
 
 /// Prompt user with [Y/n] — returns true if accepted.
 fn confirm(prompt: &str, auto_yes: bool) -> bool {
-    if auto_yes { return true; }
+    if auto_yes {
+        return true;
+    }
     print!("{} [Y/n] ", prompt);
     io::stdout().flush().ok();
     let mut input = String::new();
     io::stdin().read_line(&mut input).ok();
     let trimmed = input.trim().to_lowercase();
     trimmed.is_empty() || trimmed == "y" || trimmed == "yes"
-}
-
-/// Resolve the marketplace directory.
-fn find_marketplace(override_path: Option<&str>) -> PathBuf {
-    if let Some(pd) = override_path {
-        return PathBuf::from(pd);
-    }
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let local = cwd.join("marketplace");
-    if local.join("mindsets").exists() { return local; }
-
-    let global = home().join(".sensei/marketplace");
-    if global.join("mindsets").exists() { return global; }
-
-    let brew = PathBuf::from("/opt/homebrew/share/sensei/marketplace");
-    if brew.join("mindsets").exists() { return brew; }
-
-    let brew_intel = PathBuf::from("/usr/local/share/sensei/marketplace");
-    if brew_intel.join("mindsets").exists() { return brew_intel; }
-
-    eprintln!("Cannot find marketplace directory. Use --plugin-dir or run: brew install mizukisu/tap/sensei");
-    std::process::exit(1);
 }
 
 /// Check if user-scope init has been done (MCP registered for at least one ACP).
@@ -280,10 +273,13 @@ fn register_project(repo_path: &std::path::Path) {
     if !projects.contains(&path_str) {
         projects.push(path_str);
         fs::create_dir_all(home().join(".sensei")).ok();
-        fs::write(&projects_file, serde_json::to_string_pretty(&projects).unwrap()).ok();
+        fs::write(
+            &projects_file,
+            serde_json::to_string_pretty(&projects).unwrap(),
+        )
+        .ok();
     }
 }
-
 
 /// Copy .md files from src dir to dst dir, returns count.
 fn copy_md_files(src: &std::path::Path, dst: &std::path::Path) -> u32 {
@@ -391,14 +387,21 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, _marketplace: &std::pa
                 let body: serde_json::Value = r.json().unwrap_or_default();
                 let errors: Vec<String> = body["errors"]
                     .as_array()
-                    .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| e.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let plugin_ok = body["plugin_installed"].as_bool() == Some(true);
 
                 if errors.is_empty() {
                     if plugin_ok {
-                        println!("  ✓ {} — plugin installed (commands, skills, hooks, MCP)", acp_id);
+                        println!(
+                            "  ✓ {} — plugin installed (commands, skills, hooks, MCP)",
+                            acp_id
+                        );
                     } else {
                         println!("  ✓ {} — MCP registered", acp_id);
                     }
@@ -420,7 +423,10 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, _marketplace: &std::pa
             Ok(r) => {
                 let status = r.status();
                 let body: String = r.text().unwrap_or_default();
-                eprintln!("  ✗ {} — configure failed (HTTP {}): {}", acp_id, status, body);
+                eprintln!(
+                    "  ✗ {} — configure failed (HTTP {}): {}",
+                    acp_id, status, body
+                );
                 all_errors.push(format!("{}: HTTP {}", acp_id, status));
             }
             Err(e) => {
@@ -431,7 +437,10 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, _marketplace: &std::pa
     }
 
     if !all_errors.is_empty() {
-        eprintln!("\n  {} error(s) during user scope init. Run with RUST_LOG=debug for details.", all_errors.len());
+        eprintln!(
+            "\n  {} error(s) during user scope init. Run with RUST_LOG=debug for details.",
+            all_errors.len()
+        );
     }
 
     if any_success {
@@ -457,7 +466,10 @@ fn init_project_scope(_recommended: bool, marketplace: &std::path::Path) {
     // Rules
     let rules_file = sensei_dir.join("rules.md");
     if !rules_file.exists() {
-        let project_name = repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("project");
+        let project_name = repo_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project");
         let today = format_date();
         fs::write(&rules_file, format!(
             "---\nname: Project Rules — {}\nupdated: {}\nmindsets: .sensei/mindsets/\npersonas: .sensei/personas/\n---\n\n# Rules\n\n## Patterns\n\n<!-- Add project patterns here -->\n\n## Quality\n\n- **Zero errors** — test suite must pass before and after every change\n\n## Process\n\n- **Design before code** — analyst mindset first\n- **One issue at a time** — complete, verify, close, then next\n",
@@ -497,10 +509,23 @@ fn init_project_scope(_recommended: bool, marketplace: &std::path::Path) {
 
     mcp_config
         .as_object_mut()
-        .and_then(|o| o.entry("mcpServers").or_insert(serde_json::json!({})).as_object_mut())
-        .map(|servers| servers.insert("sensei".into(), serde_json::json!({"command": "sensei-mcp"})));
+        .and_then(|o| {
+            o.entry("mcpServers")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+        })
+        .map(|servers| {
+            servers.insert(
+                "sensei".into(),
+                serde_json::json!({"command": "sensei-mcp"}),
+            )
+        });
 
-    fs::write(&mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap()).ok();
+    fs::write(
+        &mcp_file,
+        serde_json::to_string_pretty(&mcp_config).unwrap(),
+    )
+    .ok();
     println!("\n  [ok] .mcp.json");
 
     // 3. Clean up stale per-project hooks from .claude/settings.local.json
@@ -508,22 +533,33 @@ fn init_project_scope(_recommended: bool, marketplace: &std::path::Path) {
     let settings_local = repo_root.join(".claude/settings.local.json");
     if settings_local.exists()
         && let Ok(content) = fs::read_to_string(&settings_local)
-            && let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content)
-                && settings.get("hooks").is_some() {
-                    settings.as_object_mut().unwrap().remove("hooks");
-                    if let Ok(json) = serde_json::to_string_pretty(&settings) {
-                        fs::write(&settings_local, json).ok();
-                        println!("\n  [cleaned] .claude/settings.local.json — removed stale hooks (handled by global plugin)");
-                    }
-                }
+        && let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content)
+        && settings.get("hooks").is_some()
+    {
+        settings.as_object_mut().unwrap().remove("hooks");
+        if let Ok(json) = serde_json::to_string_pretty(&settings) {
+            fs::write(&settings_local, json).ok();
+            println!(
+                "\n  [cleaned] .claude/settings.local.json — removed stale hooks (handled by global plugin)"
+            );
+        }
+    }
 
     // 4. Gate check
     println!("\n  --- gate check ---");
-    if which_exists("senseid") { println!("  ✓ senseid on PATH"); }
-    if which_exists("sensei-mcp") { println!("  ✓ sensei-mcp on PATH"); }
+    if which_exists("senseid") {
+        println!("  ✓ senseid on PATH");
+    }
+    if which_exists("sensei-mcp") {
+        println!("  ✓ sensei-mcp on PATH");
+    }
     println!("  ✓ mindsets/ ({} files)", count_md_files(&mindsets_dst));
-    if rules_file.exists() { println!("  ✓ rules.md"); }
-    if repo_root.join("CLAUDE.md").exists() { println!("  ✓ CLAUDE.md"); }
+    if rules_file.exists() {
+        println!("  ✓ rules.md");
+    }
+    if repo_root.join("CLAUDE.md").exists() {
+        println!("  ✓ CLAUDE.md");
+    }
 }
 
 fn count_md_files(dir: &std::path::Path) -> usize {
@@ -548,15 +584,37 @@ fn format_date() -> String {
     let mut y = 1970i32;
     let mut remaining = days as i32;
     loop {
-        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
-        if remaining < year_days { break; }
+        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if remaining < year_days {
+            break;
+        }
         remaining -= year_days;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0usize;
-    while m < 12 && remaining >= mdays[m] { remaining -= mdays[m]; m += 1; }
+    while m < 12 && remaining >= mdays[m] {
+        remaining -= mdays[m];
+        m += 1;
+    }
     format!("{}-{:02}-{:02}", y, m + 1, remaining + 1)
 }
 
@@ -575,7 +633,10 @@ fn acp_name_to_id(name: &str) -> Option<String> {
         "vscode" => Some("vscode".into()),
         "all" => None, // None means all
         _ => {
-            eprintln!("Unknown ACP: {}. Available: claude, desktop, cursor, windsurf, zed, kiro, opencode, vscode, all", name);
+            eprintln!(
+                "Unknown ACP: {}. Available: claude, desktop, cursor, windsurf, zed, kiro, opencode, vscode, all",
+                name
+            );
             std::process::exit(1);
         }
     }
@@ -611,7 +672,10 @@ fn remove_acp(name: &str) {
     {
         Ok(r) if r.status().is_success() => {
             let result: serde_json::Value = r.json().unwrap_or_default();
-            let removed = result["acps_removed"].as_array().cloned().unwrap_or_default();
+            let removed = result["acps_removed"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
 
             if removed.is_empty() {
                 println!("  No ACPs to remove.");
@@ -635,7 +699,9 @@ fn remove_acp(name: &str) {
 fn remove_all(purge: bool) {
     if purge {
         println!("=== sensei remove all --purge ===\n");
-        println!("This will remove ALL sensei data including sessions, indexes, and project artifacts.");
+        println!(
+            "This will remove ALL sensei data including sessions, indexes, and project artifacts."
+        );
         if !confirm("Continue?", false) {
             println!("Cancelled.");
             return;
@@ -663,12 +729,24 @@ fn remove_all(purge: bool) {
             let skills = result["skills_removed"].as_u64().unwrap_or(0);
             let cmds = result["commands_removed"].as_u64().unwrap_or(0);
             let agents = result["agents_removed"].as_u64().unwrap_or(0);
-            if skills > 0 { println!("  ✓ {} skills removed", skills); }
-            if cmds > 0 { println!("  ✓ {} commands removed", cmds); }
-            if agents > 0 { println!("  ✓ {} agents removed", agents); }
-            if result["hooks_removed"].as_bool() == Some(true) { println!("  ✓ Hooks removed"); }
-            if result["plugin_removed"].as_bool() == Some(true) { println!("  ✓ Plugin removed"); }
-            if result["cache_cleared"].as_bool() == Some(true) { println!("  ✓ Cache cleared"); }
+            if skills > 0 {
+                println!("  ✓ {} skills removed", skills);
+            }
+            if cmds > 0 {
+                println!("  ✓ {} commands removed", cmds);
+            }
+            if agents > 0 {
+                println!("  ✓ {} agents removed", agents);
+            }
+            if result["hooks_removed"].as_bool() == Some(true) {
+                println!("  ✓ Hooks removed");
+            }
+            if result["plugin_removed"].as_bool() == Some(true) {
+                println!("  ✓ Plugin removed");
+            }
+            if result["cache_cleared"].as_bool() == Some(true) {
+                println!("  ✓ Cache cleared");
+            }
 
             for p in result["projects_cleaned"].as_array().unwrap_or(&vec![]) {
                 println!("  ✓ Project cleaned: {}", p.as_str().unwrap_or("?"));
@@ -694,7 +772,9 @@ fn remove_all(purge: bool) {
             println!("  ✓ Data directory removed (~/.sensei/)");
         }
 
-        println!("\nSensei fully removed. To reinstall: brew install mizukisu/tap/sensei && sensei init");
+        println!(
+            "\nSensei fully removed. To reinstall: brew install mizukisu/tap/sensei && sensei init"
+        );
     } else {
         println!("\nData preserved. To reinstall: sensei init");
     }
@@ -706,10 +786,16 @@ fn restart_daemon(port: u16) {
     let bin = daemon_bin();
     let _ = std::process::Command::new(&bin).arg("stop").status();
     std::thread::sleep(std::time::Duration::from_millis(500));
-    match std::process::Command::new(&bin).args(["start", "--port", &port.to_string()]).status() {
+    match std::process::Command::new(&bin)
+        .args(["start", "--port", &port.to_string()])
+        .status()
+    {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
-            eprintln!("Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei", e);
+            eprintln!(
+                "Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei",
+                e
+            );
             std::process::exit(1);
         }
     }
@@ -725,7 +811,10 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
     match std::process::Command::new(&bin).args(&args).status() {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
-            eprintln!("Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei", e);
+            eprintln!(
+                "Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei",
+                e
+            );
             std::process::exit(1);
         }
     }
