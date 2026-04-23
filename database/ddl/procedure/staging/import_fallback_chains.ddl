@@ -9,7 +9,7 @@ begin
   )
   select
       stg.name
-    , stg.capability::gateway.model_capability
+    , stg.capability::sensei.model_capability
     , stg.description
     , coalesce(stg.max_fallback_attempts, 3)
     , coalesce(stg.is_active, true)

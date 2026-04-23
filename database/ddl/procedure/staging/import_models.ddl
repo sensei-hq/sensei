@@ -18,7 +18,7 @@ begin
     , stg.full_name
     , stg.display_name
     , stg.description
-    , stg.capabilities::gateway.model_capability[]
+    , stg.capabilities::sensei.model_capability[]
     , stg.context_window
     , stg.max_output_tokens
     , stg.parameters_count
