@@ -12,7 +12,6 @@ create table if not exists models_in_router (
 , is_default               boolean     not null default false
 , props                    jsonb       not null default '{}'
 , modified_at              timestamptz not null default now()
-, created_at               timestamptz not null default now()
 , unique(router_id, model_id)
 );
 
@@ -52,5 +51,3 @@ comment on column models_in_router.props
      is 'Extensible: {max_concurrent, supports_streaming, supports_tools, ...}.';
 comment on column models_in_router.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column models_in_router.created_at
-     is 'Timestamp when this model-router binding was first registered.';

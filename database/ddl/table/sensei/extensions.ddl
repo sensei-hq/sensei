@@ -22,7 +22,6 @@ create table if not exists extensions (
 , revision                 integer        not null default 0
 , modified_at              timestamptz    not null default now()
 , modified_by              text
-, created_at               timestamptz    not null default now()
 );
 
 create index if not exists extensions_plugin_id_idx
@@ -71,5 +70,3 @@ comment on column extensions.tags
      is 'Array of tag strings for filtering. Vocabulary controlled by sensei.tags table.';
 comment on column extensions.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column extensions.created_at
-     is 'Timestamp when this extension was first registered.';

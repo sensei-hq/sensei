@@ -11,13 +11,12 @@ create table if not exists task_sessions (
                                        check (status in ('in_progress', 'completed', 'abandoned'))
 , ftr_score                numeric(4,3)
 , ftr_signals              jsonb
-, created_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 , completed_at             timestamptz
 );
 
 create index if not exists task_sessions_folder_id_idx
-    on task_sessions(folder_id, created_at desc);
+    on task_sessions(folder_id, modified_at desc);
 
 create index if not exists task_sessions_session_id_idx
     on task_sessions(session_id)
@@ -45,8 +44,6 @@ comment on column task_sessions.ftr_score
      is 'First-Try-Right score 0.000–1.000. Null until checkpoint.';
 comment on column task_sessions.ftr_signals
      is 'Raw signal values used to compute ftr_score.';
-comment on column task_sessions.created_at
-     is 'Timestamp when created.';
 comment on column task_sessions.modified_at
      is 'Timestamp of last modification.';
 comment on column task_sessions.completed_at

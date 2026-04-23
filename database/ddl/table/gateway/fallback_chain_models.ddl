@@ -9,7 +9,6 @@ create table if not exists fallback_chain_models (
 , max_retries              integer     not null default 1
 , is_active                boolean     not null default true
 , modified_at              timestamptz not null default now()
-, created_at               timestamptz not null default now()
 , unique(chain_id, sequence_order)
 );
 
@@ -37,5 +36,3 @@ comment on column fallback_chain_models.is_active
      is 'Whether this chain entry is currently active.';
 comment on column fallback_chain_models.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column fallback_chain_models.created_at
-     is 'Timestamp when this chain entry was first registered.';
