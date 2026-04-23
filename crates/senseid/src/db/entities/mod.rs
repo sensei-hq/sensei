@@ -1,0 +1,11 @@
+mod repos;
+mod tags;
+mod projects;
+mod sessions;
+mod events;
+mod workflow_state;
+mod excluded_paths;
+mod config;
+mod index_errors;
+mod lib_docs;
+mod detected_patterns;
