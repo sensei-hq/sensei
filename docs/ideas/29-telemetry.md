@@ -77,17 +77,26 @@ flowchart TD
 
 ## Data model
 
+### No separate insights table needed
+
+Insights already exist in the system:
+- `change_impacts` — recommendation outcomes (FTR deltas, correction changes)
+- `reasoning_traces` — MOE panel analyses
+- `detected_patterns` — pattern/anti-pattern data with confidence and evidence
+- `sessions` — FTR, corrections, duration, tool usage (aggregated)
+
+The collective sharing layer is just a **reference table** that marks which existing records were shared and when:
+
 ### `collective_insights` table
 
 ```
 collective_insights
 ├── id                     uuid PK
-├── category               text           -- pattern, model, skill, tool, correction, stack, ftr, anti_pattern
-├── event                  text           -- e.g. "pattern_detected", "model_benchmark", "skill_effectiveness"
-├── payload                jsonb          -- structured insight data (always visible to user)
-├── batch_id               uuid           -- null until sent; groups events sent together
-├── sent_at                timestamptz    -- null until sent; timestamp when shared
-├── target                 text           -- where it was sent: "git", "posthog", null
+├── batch_id               uuid FK → collective_insight_batches(id)
+├── source_table           text           -- "change_impacts", "detected_patterns", "sessions", etc.
+├── source_id              uuid           -- PK of the source record
+├── category               text           -- pattern, model, skill, correction, ftr, anti_pattern
+├── payload                jsonb          -- anonymized snapshot of the insight at time of sharing
 ├── created_at             timestamptz
 ```
 
@@ -96,15 +105,20 @@ collective_insights
 ```
 collective_insight_batches
 ├── id                     uuid PK
-├── event_count            integer        -- how many events in this batch
+├── insight_count          integer        -- how many insights in this batch
 ├── target                 text           -- "git", "posthog"
 ├── reference              text           -- git commit SHA, PostHog batch ID, etc.
 ├── sent_at                timestamptz
 ```
 
-Every sent event links to its batch via `batch_id`. The batch carries the external reference (git commit SHA or analytics batch ID) so the user can trace exactly what went where.
+**How it works:**
+1. Weekly (or on demand), the daemon selects new insights from `change_impacts`, `detected_patterns`, `sessions`, etc.
+2. Each is anonymized (strip project names, file paths, repo info) into a `payload` snapshot
+3. A `collective_insight_batches` row is created with the target and reference
+4. Each insight gets a `collective_insights` row linking `source_table` + `source_id` → `batch_id`
+5. The source records are never modified — the collective table is a lightweight reference layer
 
-User can browse: Settings → Shared history → click batch → see all events in that batch with full payloads.
+**User sees:** Settings → Shared history → click batch → see the anonymized payloads. Click any insight → navigate to the original source record in the local system.
 
 ### Example payloads
 
