@@ -2,7 +2,7 @@ set search_path to staging, extensions;
 
 create table if not exists benchmark_reports (
   id             uuid
-, repo_id        uuid
+, folder_id        uuid
 , run_name       text
 , strategy       text
 , score          numeric
@@ -23,7 +23,7 @@ comment on table benchmark_reports is
 Fields match sensei.benchmark_reports with staging-specific tracking columns.';
 
 comment on column benchmark_reports.id is 'UUID that will become the surrogate primary key in sensei.benchmark_reports.';
-comment on column benchmark_reports.repo_id is 'UUID of the repo this benchmark was run against; resolved against sensei.repos on import.';
+comment on column benchmark_reports.folder_id is 'UUID of the folder this benchmark was run against; resolved against sensei.folders on import.';
 comment on column benchmark_reports.run_name is 'Human-readable label identifying this benchmark run.';
 comment on column benchmark_reports.strategy is 'Context-retrieval strategy evaluated in this benchmark run.';
 comment on column benchmark_reports.score is 'Aggregate quality score produced by the benchmark.';

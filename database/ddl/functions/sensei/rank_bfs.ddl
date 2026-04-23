@@ -3,7 +3,7 @@ set search_path to sensei, extensions;
 drop function if exists rank_bfs cascade;
 
 create or replace function rank_bfs(
-  p_repo_id        uuid,
+  p_folder_id        uuid,
   p_changed_files text[]
 )
 returns table(file_path text, score float)
@@ -22,7 +22,7 @@ begin
     select i.source_file, b.depth + 1
     from bfs b
     join sensei.imports i on i.target_path = b.file_path
-      and i.repo_id = p_repo_id
+      and i.folder_id = p_folder_id
     where b.depth < max_depth
   )
   select
@@ -39,7 +39,7 @@ $$;
 comment on function rank_bfs is
 'BFS traversal of import graph starting from changed files.
 Returns files reachable from changed files, scored by inverse distance.
-p_repo_id: scope to a specific repo
+p_folder_id: scope to a specific folder (repo)
 p_changed_files: array of file paths that were modified';
 
 grant execute on function rank_bfs(uuid, text[]) to authenticated, service_role;
