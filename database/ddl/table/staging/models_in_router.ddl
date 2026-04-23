@@ -11,7 +11,5 @@ create table models_in_router (
 , is_active                boolean     default true
 , is_default               boolean     default false
 , props                    jsonb       default '{}'
-, created_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
-, modified_by              text        not null default current_user
 );

@@ -9,7 +9,5 @@ create table providers (
 , is_open_source           boolean
 , is_active                boolean     default true
 , sequence                 integer     default 0
-, created_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
-, modified_by              text        not null default current_user
 );
