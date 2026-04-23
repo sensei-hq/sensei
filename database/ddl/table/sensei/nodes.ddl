@@ -1,16 +1,4 @@
 set search_path to sensei, extensions;
-
-create type if not exists node_kind
-    as enum (
-        'file'
-      , 'module', 'package'
-      , 'class', 'interface', 'function', 'method'
-      , 'property', 'field', 'parameter'
-      , 'type', 'const', 'enum', 'enum_variant'
-      , 'section'
-      , 'rationale'
-    );
-
 create table if not exists nodes (
   id                       uuid        primary key default gen_random_uuid()
 , folder_id                uuid        not null references sensei.folders(id) on delete cascade

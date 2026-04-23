@@ -1,12 +1,5 @@
 set search_path to activity, sensei, extensions;
 
-create type if not exists task_type_kind
-    as enum ('feat', 'fix', 'refactor', 'docs', 'test', 'chore', 'unknown');
-
-create type if not exists task_status
-    as enum ('in_progress', 'completed', 'abandoned');
-
-
 create table if not exists task_sessions (
   id                       uuid        primary key default gen_random_uuid()
 , session_id               uuid        references activity.sessions(id) on delete set null
