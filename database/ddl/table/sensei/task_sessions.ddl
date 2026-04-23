@@ -34,7 +34,7 @@ comment on column task_sessions.id
 comment on column task_sessions.session_id
      is 'Foreign key to sessions — the session this task belongs to.';
 comment on column task_sessions.folder_id
-     is 'Foreign key to folders — which repo this task ran in.';
+     is 'Foreign key to folders — which folder this task ran in.';
 comment on column task_sessions.task_description
      is 'Task description passed by the agent at get_session_context.';
 comment on column task_sessions.task_type

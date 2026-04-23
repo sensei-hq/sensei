@@ -20,9 +20,9 @@ comment on table symbol_map is
 - l2: logic flow summaries (newline-separated) — ~200 tokens per function';
 
 comment on column symbol_map.folder_id
-     is 'Foreign key to folders — which repo this file belongs to.';
+     is 'Foreign key to folders — which folder this file belongs to.';
 comment on column symbol_map.file_path
-     is 'Repo-relative path of the source file this summary covers.';
+     is 'Folder-relative path of the source file this summary covers.';
 comment on column symbol_map.l0
      is 'Array of exported symbol signatures (L0 detail level).';
 comment on column symbol_map.l1
