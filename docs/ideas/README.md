@@ -19,6 +19,7 @@ How AI assistants work with sensei: phases, commands, context, continuity.
 | 02 | [Commands](./02-commands.md) — slash commands for each phase + utilities | Complete |
 | 04 | [Cross-Cutting Concerns](./04-cross-cutting.md) — guardrails, tool preferences, compact handling | Complete |
 | 11 | [Session Continuity](./11-session-continuity.md) — recovery, interrupt detection, handoff | Idea |
+| 30 | [Contextual Memory](./30-contextual-memory.md) — multi-level reasoned knowledge with consequences, strength, contextual surfacing | Idea |
 | 23 | [Personas & Mindsets](./23-personas-mindsets.md) — process mindsets + project personas | Idea |
 | 27 | [Developer Preferences](./27-developer-preferences.md) — learn personal style from corrections + codebase scan | Idea |
 
