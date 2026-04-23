@@ -1920,7 +1920,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sensei-cli"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "clap",
  "dirs",
@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-mcp"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "reqwest",
  "serde",
@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "senseid"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "axum",
  "cc",
