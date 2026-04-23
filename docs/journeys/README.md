@@ -42,6 +42,7 @@ New users move left to right. Returning users live in the **Observe → Work →
 | 4 | [Work with Assistants](./04-work-with-assistants.md) | In-ACP (invisible — no sensei screens) | 01, 02, 04, 11, 23, 14 |
 | 5 | [Understand the Codebase](./05-understand-codebase.md) | Project overview, code graph, patterns, sessions, replay, libraries, playground, doc traceability, pattern catalog, tool analytics | 08, 15, 17, 09, 13, 25, 10 |
 | 6 | [Measure & Improve](./06-measure-improve.md) | Action drawer, change impact report, negative impact alert | 07, 25, 20 |
+| 9 | [Memory & Learning](./09-memory-and-learning.md) | Observatory memory panel, project memory view, memory detail, consolidation, context pack tool | 30, 27, 11 |
 | 7 | [Extend & Customize](./07-extend-customize.md) | Extensions browser, skill editor, agent editor, persona editor, inference settings, multi-ACP config, benchmark runner | 12, 21, 23, 19, 20, 24b |
 
 ## System journeys
@@ -72,7 +73,7 @@ Every idea is covered by at least one journey.
 | 08 | Codebase Intelligence | J5 | Indexing Pipeline |
 | 09 | Library Intelligence | J2, J5 | Indexing Pipeline |
 | 10 | Visualization & Dashboard | J3, J5 | — |
-| 11 | Session Continuity | J4 | Session Lifecycle |
+| 11 | Session Continuity | J4, J9 | Session Lifecycle |
 | 12 | Multi-Coordinator Support | J2, J7 | — |
 | 13 | Doc Traceability | J5 | Workspace Intelligence |
 | 14 | Context Delivery | J4 | Indexing Pipeline |
@@ -90,8 +91,10 @@ Every idea is covered by at least one journey.
 | 24b | Capability Registry | J7 | — |
 | 25 | Playground & Insights Engine | J5, J6 | — |
 | 26 | Bootstrap & Dependencies | J1 | — |
-| 27 | Developer Preferences | J4, J7 | Session Lifecycle |
+| 27 | Developer Preferences | J4, J7, J9 | Session Lifecycle |
 | 28 | Inference Gateway | J2, J7 | Indexing Pipeline, Session Lifecycle |
+| 29 | Collective Intelligence Network | J9 | — |
+| 30 | Contextual Memory | J9 | Session Lifecycle |
 
 ---
 
