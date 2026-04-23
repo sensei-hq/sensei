@@ -13,7 +13,7 @@ begin
       stg.name
     , stg.display_name
     , stg.description
-    , stg.router_type::gateway.router_type
+    , stg.router_type::sensei.router_type
     , stg.api_base_url
     , stg.api_key_env_var
     , coalesce(stg.authentication_type, 'api_key')
