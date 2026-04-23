@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists routers (
+drop table if exists routers cascade;
+create table routers (
   name                     text
 , display_name             text
 , description              text

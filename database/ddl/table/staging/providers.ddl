@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists providers (
+drop table if exists providers cascade;
+create table providers (
   name                     text
 , display_name             text
 , description              text

@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists libraries (
+drop table if exists libraries cascade;
+create table libraries (
   name              text
 , ecosystem         text
 , kind              text
