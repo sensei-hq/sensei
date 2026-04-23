@@ -129,6 +129,101 @@ This has powerful implications:
 - "What memories apply to this pattern?" → pattern → memory edges
 - "Why does TDD matter for this project?" → memory with good/bad examples of test-first vs test-after outcomes
 
+## The questions memory must answer
+
+Memory isn't a table — it's the system that answers the questions a developer would ask before starting work. The questions change depending on context:
+
+### First session ever (new user)
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Who am I working with?                               │
+│ → Global preferences: style, communication, workflow │
+│                                                       │
+│ What do I know about this tech stack?                │
+│ → Stack-level knowledge: Rust conventions, SQL        │
+│   formatting, framework patterns                     │
+│                                                       │
+│ What has the community learned?                      │
+│ → Collective insights for this stack combination      │
+└─────────────────────────────────────────────────────┘
+```
+
+### First session for this project
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Everything above, plus:                              │
+│                                                       │
+│ What is this project?                                │
+│ → Project goal, stack, repos, key architecture       │
+│                                                       │
+│ Are there existing rules or conventions?             │
+│ → Guidelines, patterns, architectural decisions      │
+│                                                       │
+│ What do similar projects do?                         │
+│ → Imported knowledge from related projects/stack     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Continuing session in a known project
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Everything above, plus:                              │
+│                                                       │
+│ What did we learn in previous sessions?              │
+│ → Corrections that became memories                   │
+│ → Patterns that work here, anti-patterns to avoid    │
+│                                                       │
+│ What keeps going wrong?                              │
+│ → Recurring corrections, low-FTR modules             │
+│ → "Auth module: 3 corrections this week"             │
+│                                                       │
+│ What improved recently?                              │
+│ → Adopted teachings, positive recommendation outcomes│
+└─────────────────────────────────────────────────────┘
+```
+
+### Resuming interrupted work
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Everything above, plus:                              │
+│                                                       │
+│ What was I doing?                                    │
+│ → Last session task, phase, progress                 │
+│                                                       │
+│ Where did I stop?                                    │
+│ → Last checkpoint, completed steps                   │
+│                                                       │
+│ What's pending?                                      │
+│ → Remaining steps, in-flight files, uncommitted work │
+│                                                       │
+│ What should be the focus?                            │
+│ → Next step hint, open blockers, test results        │
+└─────────────────────────────────────────────────────┘
+```
+
+The memory system assembles answers to these questions from different sources depending on the situation. This is a **decision tree for context assembly**, not a single table query.
+
+### Data sources per question
+
+| Question | Source | Table/Location |
+|----------|--------|---------------|
+| Who am I? (preferences) | Learned memories, scope=global | memory system |
+| Stack knowledge | Learned memories, scope=stack | memory system |
+| Community knowledge | Collective insights | inference.insights |
+| Project info | Project metadata | sensei.projects |
+| Rules/conventions | Project guidelines + learned memories | projects.guidelines + memory |
+| Previous learnings | Correction-derived memories | memory system |
+| Recurring problems | Session analytics + memories | activity.sessions + memory |
+| Recent improvements | Recommendation outcomes | inference.recommendations |
+| What was I doing? | Session continuity | activity.snapshots + continuity memories |
+| What's pending? | Workflow state + snapshots | sensei.workflow_state + activity.snapshots |
+
+Memory is the **glue** that makes all these sources coherent for a single `get_session_context()` call.
+
 ## Memory levels
 
 ```
