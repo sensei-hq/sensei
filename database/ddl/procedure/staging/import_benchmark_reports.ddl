@@ -6,7 +6,7 @@ as $$
 begin
   insert into sensei.benchmark_reports (
       id, folder_id, run_name, strategy, score
-    , tokens, elapsed_ms, payload, promoted, created_at
+    , tokens, elapsed_ms, payload, promoted
     , modified_at
   )
   select
@@ -14,8 +14,7 @@ begin
     , stg.folder_id, stg.run_name, stg.strategy, stg.score
     , stg.tokens, stg.elapsed_ms, stg.payload
     , coalesce(stg.promoted, false)
-    , coalesce(stg.created_at, now())
-    , coalesce(stg.modified_at, stg.created_at, now())
+    , coalesce(stg.modified_at, now())
   from staging.benchmark_reports stg
   join sensei.folders f on f.id = stg.folder_id
   where stg.run_name is not null

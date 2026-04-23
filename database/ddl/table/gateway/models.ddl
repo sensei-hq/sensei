@@ -23,7 +23,6 @@ create table if not exists models (
 , props                    jsonb              not null default '{}'
 , is_active                boolean            not null default true
 , modified_at              timestamptz        not null default now()
-, created_at               timestamptz        not null default now()
 , unique(provider_id, full_name)
 );
 
@@ -79,5 +78,3 @@ comment on column models.is_active
      is 'Whether this model is available for selection.';
 comment on column models.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column models.created_at
-     is 'Timestamp when this model was first registered.';

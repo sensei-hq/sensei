@@ -18,7 +18,6 @@ create table if not exists projects (
 , preferred_acp            text
 , tags                     text[]           not null default '{}'
 , modified_at              timestamptz      not null default now()
-, created_at               timestamptz      not null default now()
 );
 
 create index if not exists projects_maturity_idx
@@ -65,5 +64,3 @@ comment on column projects.tags
      is 'Array of tag strings for quick filtering. Vocabulary controlled by sensei.tags table.';
 comment on column projects.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column projects.created_at
-     is 'Timestamp when this project was created.';

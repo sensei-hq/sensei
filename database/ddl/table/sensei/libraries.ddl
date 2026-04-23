@@ -24,7 +24,6 @@ create table if not exists libraries (
 , tags                     text[]       not null default '{}'
 , indexed_at               timestamptz
 , modified_at              timestamptz  not null default now()
-, created_at               timestamptz  not null default now()
 , unique(ecosystem, name)
 );
 
@@ -85,5 +84,3 @@ comment on column libraries.indexed_at
      is 'Timestamp of the last successful index run for this library.';
 comment on column libraries.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column libraries.created_at
-     is 'Timestamp when this library was first registered.';

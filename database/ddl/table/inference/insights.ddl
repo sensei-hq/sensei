@@ -7,7 +7,6 @@ create table if not exists insights (
 , source_id                uuid        not null
 , category                 text        not null
 , payload                  jsonb       not null default '{}'
-, created_at               timestamptz not null default now()
 );
 
 create index if not exists insights_batch_id_idx
@@ -37,5 +36,3 @@ comment on column insights.category
      is 'Insight category: pattern, model, skill, correction, ftr, anti_pattern, tool, stack.';
 comment on column insights.payload
      is 'Anonymized snapshot of the insight at share time. No code, paths, or identifiable info.';
-comment on column insights.created_at
-     is 'Timestamp when this insight was created.';
