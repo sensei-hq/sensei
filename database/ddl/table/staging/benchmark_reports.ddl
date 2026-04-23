@@ -11,7 +11,7 @@ create table benchmark_reports (
 , elapsed_ms     integer
 , payload        jsonb
 , promoted       boolean
-, modified_at    timestamptz not null default now()
+, modified_at    timestamptz
 );
 
 create unique index if not exists benchmark_reports_id_ukey

@@ -15,7 +15,7 @@ create table libraries (
 , icons             jsonb       default '{}'
 , props             jsonb       default '{}'
 , tags              text[]      default '{}'
-, modified_at       timestamptz not null default now()
+, modified_at       timestamptz
 );
 
 create unique index if not exists libraries_ukey

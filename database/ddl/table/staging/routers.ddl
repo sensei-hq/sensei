@@ -1,4 +1,4 @@
-set search_path to staging, extensions;
+set search_path to staging, extensions, sensei;
 
 drop table if exists routers cascade;
 create table routers (
