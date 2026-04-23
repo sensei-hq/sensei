@@ -37,7 +37,7 @@ comment on table api_requests is
 comment on column api_requests.id
      is 'Surrogate primary key (UUID).';
 comment on column api_requests.folder_id
-     is 'Foreign key to folders — which repo this API call was made in.';
+     is 'Foreign key to folders — which folder this API call was made in.';
 comment on column api_requests.task_session_id
      is 'Optional FK to task_sessions — the task active when this call was made.';
 comment on column api_requests.benchmark_run_id

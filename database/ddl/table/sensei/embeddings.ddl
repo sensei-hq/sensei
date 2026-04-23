@@ -21,9 +21,9 @@ comment on table embeddings is
 comment on column embeddings.id
      is 'Surrogate primary key (UUID).';
 comment on column embeddings.folder_id
-     is 'Foreign key to folders — which repo this embedding belongs to.';
+     is 'Foreign key to folders — which folder this embedding belongs to.';
 comment on column embeddings.file_path
-     is 'Repo-relative path of the source file this embedding represents.';
+     is 'Folder-relative path of the source file this embedding represents.';
 comment on column embeddings.chunk_text
      is 'Concatenated symbol names and signatures used as input to generate the embedding.';
 comment on column embeddings.embedding

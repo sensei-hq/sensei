@@ -37,7 +37,7 @@ comment on table extensions is
 Plugins are containers — other extensions reference them via plugin_id (self-ref).
 - content: markdown body — the actual skill/command text, editable and round-trippable to .md files
 - props: parsed frontmatter + additional config (triggers, inputs, tool_access, etc.)
-- scope: global (all projects), project (specific project), folder (specific repo)
+- scope: global (all projects), project (specific project), folder (specific repository)
 - source: builtin (ships with sensei), marketplace (installed), local (user-created)
 - plugin_id: null = standalone extension; set = belongs to a plugin';
 
@@ -58,7 +58,7 @@ comment on column extensions.content
 comment on column extensions.props
      is 'Parsed frontmatter + config: {triggers, inputs, tool_access, hook_event, ...}.';
 comment on column extensions.scope
-     is 'Visibility: global (all projects), project (one project), folder (one repo).';
+     is 'Visibility: global (all projects), project (one project), folder (one repository).';
 comment on column extensions.enabled
      is 'Whether this extension is currently active.';
 comment on column extensions.source

@@ -51,7 +51,7 @@ One row per exported/top-level symbol in each file.
 comment on column symbols.id
      is 'Surrogate primary key (UUID).';
 comment on column symbols.folder_id
-     is 'Foreign key to folders — which repo this symbol belongs to.';
+     is 'Foreign key to folders — which folder this symbol belongs to.';
 comment on column symbols.file_path
      is 'Repository-relative path of the source file that declares this symbol.';
 comment on column symbols.name

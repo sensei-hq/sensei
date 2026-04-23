@@ -26,7 +26,7 @@ comment on table benchmark_runs is
 comment on column benchmark_runs.id
      is 'Surrogate primary key (UUID).';
 comment on column benchmark_runs.folder_id
-     is 'Foreign key to folders — which repo this benchmark ran against.';
+     is 'Foreign key to folders — which folder this benchmark ran against.';
 comment on column benchmark_runs.task_description
      is 'Coding task given to the AI during this run.';
 comment on column benchmark_runs.branch

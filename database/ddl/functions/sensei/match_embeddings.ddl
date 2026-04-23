@@ -26,7 +26,7 @@ comment on function match_embeddings is
 'Vector similarity search against file embeddings.
 Requires the vector extension and populated embeddings table.
 Returns files with cosine similarity above the threshold.
-p_folder_id: scope to a specific folder (repo)
+p_folder_id: scope to a specific folder
 query_embedding: 384-dim vector to search against
 match_threshold: minimum similarity (0-1); default 0.3
 match_count: max results to return; default 20';
