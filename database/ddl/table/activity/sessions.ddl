@@ -1,13 +1,16 @@
 set search_path to activity, extensions;
 
+create type if not exists session_outcome
+    as enum ('completed', 'corrected', 'blocked', 'partial', 'abandoned');
+
+
 create table if not exists sessions (
   id                       uuid        primary key default gen_random_uuid()
 , folder_id                uuid        not null references sensei.folders(id) on delete cascade
 , project_id               uuid        references sensei.projects(id) on delete set null
 , task                     text        not null default ''
 , acp_id                   text
-, outcome                  text
-                                       check (outcome in ('completed', 'corrected', 'blocked', 'partial', 'abandoned'))
+, outcome                  session_outcome
 , ftr                      boolean
 , turns                    integer     not null default 0
 , corrections              integer     not null default 0
