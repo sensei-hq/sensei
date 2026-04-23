@@ -11,7 +11,8 @@
 
   let inputValue = $state('');
 
-  // Track which folders were loaded from daemon (already scanned)
+  // Local reactive state — loaded from daemon, not from parent props
+  let folders = $state<ScanFolder[]>([]);
   let scannedPaths = $state<Set<string>>(new Set());
 
   // Load existing scan roots from daemon
@@ -20,16 +21,13 @@
       const api = senseiApi(getPort());
       const roots = await api.getScanRoots();
       if (roots.length > 0) {
-        const existing: ScanFolder[] = roots.map((r, i) => ({
+        folders = roots.map((r, i) => ({
           id: `existing-${i}`,
           path: r.path,
           note: r.scanned ? `${r.repos_found} repos found` : '',
         }));
-        // Merge with any folders already in state (don't duplicate)
-        const existingPaths = new Set(existing.map(f => f.path));
-        const newFolders = wizState.folders.filter(f => !existingPaths.has(f.path));
-        update({ folders: [...existing, ...newFolders] });
         scannedPaths = new Set(roots.filter(r => r.scanned).map(r => r.path));
+        update({ folders });
       }
     } catch { /* daemon not available */ }
   });
@@ -37,18 +35,15 @@
   function addFolder() {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-    if (wizState.folders.some(f => f.path === trimmed)) return;
-    const newFolder: ScanFolder = {
-      id: `f${Date.now()}`,
-      path: trimmed,
-      note: '',
-    };
-    update({ folders: [...wizState.folders, newFolder] });
+    if (folders.some(f => f.path === trimmed)) return;
+    folders = [...folders, { id: `f${Date.now()}`, path: trimmed, note: '' }];
+    update({ folders });
     inputValue = '';
   }
 
   function removeFolder(id: string) {
-    update({ folders: wizState.folders.filter(f => f.id !== id) });
+    folders = folders.filter(f => f.id !== id);
+    update({ folders });
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -74,7 +69,7 @@
   </div>
 
   <div class="folder-list">
-    {#each wizState.folders as folder}
+    {#each folders as folder}
       <div class="folder-row">
         <span class="folder-arrow">&#9656;</span>
         <div class="folder-info">
