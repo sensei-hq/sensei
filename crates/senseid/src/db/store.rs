@@ -292,8 +292,20 @@ impl Store {
             })
         })?;
         let mut repos: Vec<Repo> = rows.collect::<Result<_, _>>()?;
+
+        // Batch load all repo tags in one query (avoid N+1)
+        let mut tag_stmt = self.conn.prepare(
+            "SELECT entity_id, tag FROM tags WHERE entity_type = 'repo' ORDER BY entity_id, tag"
+        )?;
+        let tag_rows = tag_stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut tag_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for row in tag_rows.flatten() {
+            tag_map.entry(row.0).or_default().push(row.1);
+        }
         for p in &mut repos {
-            p.tags = self.get_tags("repo", &p.repo_id)?;
+            p.tags = tag_map.remove(&p.repo_id).unwrap_or_default();
         }
         Ok(repos)
     }
