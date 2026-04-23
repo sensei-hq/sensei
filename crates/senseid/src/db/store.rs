@@ -505,8 +505,19 @@ impl Store {
             })
         })?;
         let mut projects: Vec<Project> = rows.collect::<Result<_, _>>()?;
+        // Batch load tags
+        let mut tag_stmt = self.conn.prepare(
+            "SELECT entity_id, tag FROM tags WHERE entity_type = 'project' ORDER BY entity_id, tag"
+        )?;
+        let tag_rows = tag_stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut tag_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for row in tag_rows.flatten() {
+            tag_map.entry(row.0).or_default().push(row.1);
+        }
         for p in &mut projects {
-            p.tags = self.get_tags("project", &p.id)?;
+            p.tags = tag_map.remove(&p.id).unwrap_or_default();
         }
         Ok(projects)
     }
