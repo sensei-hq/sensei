@@ -224,6 +224,132 @@ The memory system assembles answers to these questions from different sources de
 
 Memory is the **glue** that makes all these sources coherent for a single `get_session_context()` call.
 
+## Context assembly: checklist → consolidated markdown
+
+The questions above form a **checklist**. At session start, sensei evaluates which questions apply (based on: is this the first session? is there pending work? what project/stack?), gathers answers from the relevant sources, and assembles a consolidated markdown document delivered to the assistant.
+
+```
+## Session context for lumen-cloud · auth/refresh.ts · task: fix
+
+### Resuming from last session
+- Working on: refresh token rotation fix
+- Completed: skewTolerance added, tests passing
+- Pending: inFlightMutex implementation
+- In-flight: auth/refresh.ts (uncommitted changes)
+
+### Project knowledge
+- Use adapter pattern for auth integrations
+  → see: src/middleware/auth_adapter.rs:14
+  → because: inline auth diverges, sync.ts missed audit log (s-2891)
+- API handlers return Result<Json<T>, ApiError>
+- Don't mock the database in integration tests
+  → because: mock/prod divergence masked broken migration (Q1 2026)
+
+### This module
+- Always use inFlightMutex for concurrent refresh
+  → because: race condition without mutex (s-2895)
+- Check clock-skew tolerance (30s per SDK 4.2)
+
+### Your preferences
+- DDL column types at position 27
+- Terse responses, no trailing summaries
+- Don't add docstrings to code you didn't change
+
+### Heads up
+- Auth module FTR: 64% (3 corrections this week)
+- Recommendation pending: create auth-tests persona
+```
+
+Only sections with content are included. Empty sections are omitted. Token budget governs total size — high-strength memories and resumption context take priority.
+
+## Two-way memory: assistant as contributor
+
+The assistant isn't just a consumer of memory — it's an active contributor. During a session, the assistant may discover something worth remembering.
+
+### Learning flow
+
+```mermaid
+sequenceDiagram
+    participant A as Assistant
+    participant M as Sensei MCP
+    participant S as Memory System
+
+    A->>M: report_learning({what, because, scope, references})
+    M->>S: Validate + store as pending memory
+    M-->>A: Acknowledged. Anything else about this?
+
+    Note over M,A: MCP may ask follow-up questions
+
+    M->>A: "What was the impact of not doing this?"
+    A->>M: "TokenExpiredError at +3s offset"
+    M->>S: Enrich memory with impact detail
+
+    M->>A: "Should this apply to all auth modules or just refresh?"
+    A->>M: "All auth modules in this project"
+    M->>S: Set scope: project + modules: auth/*
+```
+
+### MCP tools for memory
+
+```
+report_learning(what, because, scope?, references?)
+  → Assistant reports something it learned during the session
+  → MCP validates, may ask follow-up questions for enrichment
+  → Stored as pending memory (strength: 1)
+
+get_memories(context?)
+  → Returns relevant memories for current context
+  → Used by assistant to refresh context mid-session
+
+confirm_memory(memory_id)
+  → User or assistant confirms a memory is still valid
+  → Passive reinforcement (+0.1 strength)
+
+challenge_memory(memory_id, reason)
+  → Assistant or user challenges a memory with evidence
+  → Flags for review, may weaken or supersede
+```
+
+### Structured reporting for agents
+
+When agents (autonomous multi-step tasks) run, they can't interactively answer follow-up questions. They report learnings in a predefined structure:
+
+```json
+{
+  "tool": "report_learning",
+  "params": {
+    "what": "Cache invalidation must happen before token rotation",
+    "because": "Without invalidation first, stale cached tokens survive rotation and cause auth failures for 30s",
+    "scope": {
+      "project": "lumen-cloud",
+      "modules": ["auth/session.ts", "auth/refresh.ts"],
+      "task_types": ["fix", "refactor"]
+    },
+    "references": {
+      "good_example": "auth/refresh.ts:88 (invalidate-then-rotate pattern)",
+      "bad_example": "auth/session.ts:142 (rotate without invalidation)",
+      "evidence": ["s-2891", "s-2886"]
+    },
+    "impact": "high",
+    "category": "correctness"
+  }
+}
+```
+
+The MCP server validates the structure, enriches with additional context (link references to actual node IDs, verify sessions exist), and stores. No follow-up questions needed — the structure captures everything.
+
+### What the assistant can report
+
+| Category | Example |
+|----------|---------|
+| `correctness` | "Cache must be invalidated before token rotation" |
+| `convention` | "This project uses leading-comma SQL style" |
+| `pattern` | "Retry-with-backoff is emerging in 3 places" |
+| `anti_pattern` | "Error handling is copy-pasted in 12 handlers" |
+| `dependency` | "sync/clock.ts assumptions don't match auth/refresh.ts" |
+| `preference` | "User prefers terse responses" |
+| `context` | "This module was last refactored 3 months ago, tests are brittle" |
+
 ## Memory levels
 
 ```
