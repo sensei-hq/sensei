@@ -1,0 +1,11 @@
+{"router_name":"ollama","model_full_name":"gemma3:12b","router_model_id":"gemma3:12b","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"ollama","model_full_name":"gemma3:27b","router_model_id":"gemma3:27b","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"ollama","model_full_name":"qwen3:14b","router_model_id":"qwen3:14b","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"ollama","model_full_name":"qwen3:8b","router_model_id":"qwen3:8b","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"ollama","model_full_name":"phi-4:14b","router_model_id":"phi4:14b","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"ollama","model_full_name":"llama4-scout:17b","router_model_id":"llama4-scout:17b","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"ollama","model_full_name":"all-minilm-l6-v2","router_model_id":"all-minilm:l6-v2","cost_per_input_token":0,"cost_per_output_token":0,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"anthropic","model_full_name":"claude-haiku-4-5","router_model_id":"claude-haiku-4-5-20251001","cost_per_input_token":0.0000008,"cost_per_output_token":0.000004,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"anthropic","model_full_name":"claude-sonnet-4-5","router_model_id":"claude-sonnet-4-5-20251022","cost_per_input_token":0.000003,"cost_per_output_token":0.000015,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"openai","model_full_name":"gpt-4o-mini","router_model_id":"gpt-4o-mini","cost_per_input_token":0.00000015,"cost_per_output_token":0.0000006,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
+{"router_name":"openai","model_full_name":"gpt-4o","router_model_id":"gpt-4o","cost_per_input_token":0.0000025,"cost_per_output_token":0.00001,"is_default":true,"modified_at":"2026-04-23T00:00:00Z"}
