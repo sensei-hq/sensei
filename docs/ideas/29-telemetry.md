@@ -84,10 +84,27 @@ telemetry_events
 ├── id                     uuid PK
 ├── category               text           -- pattern, model, skill, tool, correction, stack, ftr, anti_pattern
 ├── event                  text           -- e.g. "pattern_detected", "model_benchmark", "skill_effectiveness"
-├── payload                jsonb          -- structured insight data (inspectable by user)
-├── sent_at                timestamptz    -- null until sent
+├── payload                jsonb          -- structured insight data (always visible to user)
+├── batch_id               uuid           -- null until sent; groups events sent together
+├── sent_at                timestamptz    -- null until sent; timestamp when shared
+├── target                 text           -- where it was sent: "git", "posthog", null
 ├── created_at             timestamptz
 ```
+
+### `telemetry_batches` table
+
+```
+telemetry_batches
+├── id                     uuid PK
+├── event_count            integer        -- how many events in this batch
+├── target                 text           -- "git", "posthog"
+├── reference              text           -- git commit SHA, PostHog batch ID, etc.
+├── sent_at                timestamptz
+```
+
+Every sent event links to its batch via `batch_id`. The batch carries the external reference (git commit SHA or analytics batch ID) so the user can trace exactly what went where.
+
+User can browse: Settings → Shared history → click batch → see all events in that batch with full payloads.
 
 ### Example payloads
 
@@ -166,14 +183,14 @@ telemetry_events
 │  for everyone. Only derived learnings are shared —    │
 │  never code, prompts, or personal data.               │
 │                                                       │
-│  Sharing: [On ▾]  On · Off                            │
+│  Sharing: [Auto ▾]  Auto · Review first · Off         │
 │                                                       │
 │  ─────────────────────────────────────────────────    │
 │                                                       │
 │  Last shared: 2026-04-16 · 42 insights                │
-│  Next share: 2026-04-23 (auto, weekly)                │
+│  Next share: 2026-04-23 (weekly)                      │
 │                                                       │
-│  [View what was shared]                               │
+│  [View shared history]                                │
 │                                                       │
 │  What you've contributed                              │
 │  147 insights shared · helping 2,340 sensei users     │
@@ -258,8 +275,8 @@ Delivered via `brew upgrade sensei` → new seed data → `import_*` procedures 
 1. **No code content** — ever. Not file contents, not function bodies, not prompts.
 2. **No identifiable project info** — no repo names, file paths, URLs, hostnames.
 3. **Anonymous device hash** — SHA-256 of random install ID. Not MAC, not hostname, not username.
-4. **Automated, viewable** — sharing happens automatically; user can view exactly what was shared and when.
-5. **Opt-out** — one toggle in settings turns it off entirely.
+4. **Always visible** — every shared insight stays in the local database with its batch reference. User can browse shared history anytime, see exact payloads, and trace to the external target (git commit SHA, etc.).
+5. **Three modes** — auto (default, weekly), review first (user approves each batch before send), off (opt-out).
 6. **Rotatable identity** — user can regenerate install ID to break linkability.
 
 ## Open questions
