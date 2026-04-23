@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists fallback_chains (
+drop table if exists fallback_chains cascade;
+create table fallback_chains (
   name                     text
 , capability               text
 , description              text
