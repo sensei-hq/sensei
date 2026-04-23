@@ -1,8 +1,8 @@
-set search_path to sensei, extensions;
+set search_path to activity, extensions;
 
 create table if not exists task_sessions (
   id                       uuid        primary key default gen_random_uuid()
-, session_id               uuid        references sensei.sessions(id) on delete set null
+, session_id               uuid        references activity.sessions(id) on delete set null
 , folder_id                uuid        not null references sensei.folders(id) on delete cascade
 , task_description         text
 , task_type                text
@@ -24,21 +24,21 @@ create index if not exists task_sessions_session_id_idx
  where session_id is not null;
 
 comment on table task_sessions is
-'One row per agent task (checkpoint boundary).
-- ftr_score: 0.000–1.000, null until checkpoint is called
-- ftr_signals: raw signals used to compute the score
-- status: in_progress → completed (via checkpoint) or abandoned';
+'Task boundaries within sessions. One row per checkpoint boundary.
+- ftr_score: 0.000–1.000, null until checkpoint
+- status: in_progress → completed or abandoned
+Task-level events (task_start, task_end) are in the events table.';
 
 comment on column task_sessions.id
      is 'Surrogate primary key (UUID).';
 comment on column task_sessions.session_id
-     is 'Foreign key to sessions — the session this task belongs to.';
+     is 'Foreign key to sessions.';
 comment on column task_sessions.folder_id
-     is 'Foreign key to folders — which folder this task ran in.';
+     is 'Foreign key to folders.';
 comment on column task_sessions.task_description
-     is 'Task description passed by the agent at get_session_context.';
+     is 'Task description passed at get_session_context.';
 comment on column task_sessions.task_type
-     is 'Auto-detected category: feat, fix, refactor, docs, test, chore, unknown.';
+     is 'Auto-detected: feat, fix, refactor, docs, test, chore, unknown.';
 comment on column task_sessions.status
      is 'Lifecycle: in_progress → completed or abandoned.';
 comment on column task_sessions.ftr_score
@@ -46,8 +46,8 @@ comment on column task_sessions.ftr_score
 comment on column task_sessions.ftr_signals
      is 'Raw signal values used to compute ftr_score.';
 comment on column task_sessions.created_at
-     is 'Timestamp when the row was first created.';
+     is 'Timestamp when created.';
 comment on column task_sessions.modified_at
-     is 'Timestamp of the last modification to this row.';
+     is 'Timestamp of last modification.';
 comment on column task_sessions.completed_at
-     is 'Timestamp when the task reached a terminal state.';
+     is 'Timestamp when task reached terminal state.';
