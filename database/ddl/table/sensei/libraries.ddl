@@ -1,5 +1,11 @@
 set search_path to sensei, extensions;
 
+create type if not exists library_ecosystem
+    as enum ('npm', 'pypi', 'cargo', 'go', 'docs');
+
+create type if not exists library_source_type
+    as enum ('llms.txt', 'http', 'local');
+
 create type if not exists library_kind
     as enum ('detected', 'imported');
 
@@ -7,12 +13,10 @@ create table if not exists libraries (
   id                       uuid         primary key default gen_random_uuid()
 , kind                     library_kind not null default 'detected'
 , name                     text         not null
-, ecosystem                text         not null
-                                        check (ecosystem in ('npm', 'pypi', 'cargo', 'go', 'docs'))
+, ecosystem                library_ecosystem not null
 , version                  text
 , description              text
-, source_type              text
-                                        check (source_type in ('llms.txt', 'http', 'local'))
+, source_type              library_source_type
 , base_url                 text
 , local_path               text
 , homepage_url             text
