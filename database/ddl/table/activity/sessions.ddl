@@ -1,9 +1,4 @@
 set search_path to activity, sensei, extensions;
-
-create type if not exists session_outcome
-    as enum ('completed', 'corrected', 'blocked', 'partial', 'abandoned');
-
-
 create table if not exists sessions (
   id                       uuid        primary key default gen_random_uuid()
 , folder_id                uuid        not null references sensei.folders(id) on delete cascade

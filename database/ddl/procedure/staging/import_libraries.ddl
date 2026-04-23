@@ -5,37 +5,46 @@ language plpgsql
 as $$
 begin
   insert into sensei.libraries (
-      id, name, ecosystem, version, description
-    , homepage_url, docs_url, llms_txt_url, llms_txt
-    , llms_txt_fetched_at, modified_at, modified_by
+      name, ecosystem, kind, version, description
+    , source_type, base_url, local_path, homepage_url, docs_url
+    , icons, props, tags, modified_at
   )
   select
-      coalesce(stg.id, gen_random_uuid())
-    , stg.name, stg.ecosystem, stg.version, stg.description
-    , stg.homepage_url, stg.docs_url, stg.llms_txt_url, stg.llms_txt
-    , stg.llms_txt_fetched_at
+      stg.name
+    , stg.ecosystem::sensei.library_ecosystem
+    , coalesce(stg.kind, 'detected')::sensei.library_kind
+    , stg.version
+    , stg.description
+    , stg.source_type::sensei.library_source_type
+    , stg.base_url
+    , stg.local_path
+    , stg.homepage_url
+    , stg.docs_url
+    , coalesce(stg.icons, '{}')
+    , coalesce(stg.props, '{}')
+    , coalesce(stg.tags, '{}')
     , coalesce(stg.modified_at, now())
-    , coalesce(stg.modified_by, current_user)
   from staging.libraries stg
   where stg.name is not null
     and stg.ecosystem is not null
-  on conflict (id)
+  on conflict (ecosystem, name)
   do update set
-      name = excluded.name
-    , ecosystem = excluded.ecosystem
-    , version = excluded.version
+      kind        = excluded.kind
+    , version     = excluded.version
     , description = excluded.description
+    , source_type = excluded.source_type
+    , base_url    = excluded.base_url
+    , local_path  = excluded.local_path
     , homepage_url = excluded.homepage_url
-    , docs_url = excluded.docs_url
-    , llms_txt_url = excluded.llms_txt_url
-    , llms_txt = excluded.llms_txt
-    , llms_txt_fetched_at = excluded.llms_txt_fetched_at
+    , docs_url    = excluded.docs_url
+    , icons       = excluded.icons
+    , props       = excluded.props
+    , tags        = excluded.tags
     , modified_at = excluded.modified_at
-    , modified_by = excluded.modified_by
   where excluded.modified_at >= sensei.libraries.modified_at;
 end;
 $$;
 
 comment on procedure import_libraries is
 'Import staging.libraries into sensei.libraries.
-Upserts on id, updates only if source is newer (freshness gate).';
+Upserts on (ecosystem, name), updates only if source is newer (freshness gate).';

@@ -1,11 +1,5 @@
 set search_path to inference, sensei, extensions;
 
-create type if not exists edge_confidence
-    as enum ('extracted', 'inferred', 'ambiguous');
-
-create type if not exists hyperedge_kind
-    as enum ('flow', 'group', 'co_change', 'addressed_by');
-
 create table if not exists hyperedges (
   id                       uuid            primary key default gen_random_uuid()
 , folder_id                uuid            not null references sensei.folders(id) on delete cascade

@@ -1,11 +1,5 @@
 set search_path to sensei, extensions;
 
-create type if not exists memory_type
-    as enum ('decision', 'pattern', 'question');
-
-create type if not exists memory_status
-    as enum ('open', 'closed');
-
 create table if not exists memory_items (
   id                       uuid          primary key default gen_random_uuid()
 , project_id               uuid          not null references sensei.projects(id) on delete cascade

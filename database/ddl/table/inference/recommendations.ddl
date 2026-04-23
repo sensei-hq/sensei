@@ -1,14 +1,5 @@
 set search_path to inference, sensei, extensions;
 
-create type if not exists recommendation_urgency
-    as enum ('low', 'medium', 'high');
-
-create type if not exists recommendation_status
-    as enum ('pending', 'accepted', 'dismissed', 'superseded');
-
-create type if not exists recommendation_verdict
-    as enum ('pending', 'positive', 'negative', 'neutral');
-
 create table if not exists recommendations (
   id                       uuid                      primary key default gen_random_uuid()
 , project_id               uuid                      not null references sensei.projects(id) on delete cascade
