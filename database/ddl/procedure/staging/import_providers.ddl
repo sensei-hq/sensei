@@ -4,7 +4,7 @@ create or replace procedure import_providers()
 language plpgsql
 as $$
 begin
-  insert into inference.providers (name, display_name, description, website_url, is_open_source, is_active, sequence, modified_at)
+  insert into gateway.providers (name, display_name, description, website_url, is_open_source, is_active, sequence, modified_at)
   select
       stg.name
     , stg.display_name
@@ -25,6 +25,6 @@ begin
     , is_active    = excluded.is_active
     , sequence     = excluded.sequence
     , modified_at  = excluded.modified_at
-  where excluded.modified_at >= inference.providers.modified_at;
+  where excluded.modified_at >= gateway.providers.modified_at;
 end;
 $$;

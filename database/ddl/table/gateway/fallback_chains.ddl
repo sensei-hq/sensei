@@ -1,4 +1,4 @@
-set search_path to inference, extensions;
+set search_path to gateway, extensions;
 
 create table if not exists fallback_chains (
   id                       uuid               primary key default gen_random_uuid()

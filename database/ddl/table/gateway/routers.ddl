@@ -1,4 +1,4 @@
-set search_path to inference, extensions;
+set search_path to gateway, extensions;
 
 create type if not exists router_type
     as enum ('direct', 'aggregator', 'local');
@@ -23,7 +23,7 @@ create table if not exists routers (
 );
 
 comment on table routers is
-'API access points for LLM inference.
+'API access points for LLM gateway.
 - direct: single-provider API (anthropic, openai)
 - aggregator: multi-provider proxy (openrouter)
 - local: on-device runtime (ollama)

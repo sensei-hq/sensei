@@ -1,11 +1,11 @@
-set search_path to inference, extensions;
+set search_path to gateway, extensions;
 
 create type if not exists model_capability
     as enum ('chat', 'reasoning', 'embed', 'classify', 'summarize', 'vision', 'audio');
 
 create table if not exists models (
   id                       uuid               primary key default gen_random_uuid()
-, provider_id              uuid               not null references inference.providers(id) on delete cascade
+, provider_id              uuid               not null references gateway.providers(id) on delete cascade
 , name                     text               not null
 , version                  text
 , variant                  text

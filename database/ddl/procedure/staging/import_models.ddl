@@ -4,7 +4,7 @@ create or replace procedure import_models()
 language plpgsql
 as $$
 begin
-  insert into inference.models (
+  insert into gateway.models (
       provider_id, name, version, variant, full_name, display_name
     , description, capabilities, context_window, max_output_tokens
     , parameters_count, memory_gb, license_type, released_on, deprecated_on
@@ -18,7 +18,7 @@ begin
     , stg.full_name
     , stg.display_name
     , stg.description
-    , stg.capabilities::inference.model_capability[]
+    , stg.capabilities::gateway.model_capability[]
     , stg.context_window
     , stg.max_output_tokens
     , stg.parameters_count
@@ -30,7 +30,7 @@ begin
     , coalesce(stg.is_active, true)
     , coalesce(stg.modified_at, now())
   from staging.models stg
-  inner join inference.providers p on p.name = stg.provider_name
+  inner join gateway.providers p on p.name = stg.provider_name
   where stg.full_name is not null
   on conflict (provider_id, full_name)
   do update set
@@ -50,6 +50,6 @@ begin
     , props            = excluded.props
     , is_active        = excluded.is_active
     , modified_at      = excluded.modified_at
-  where excluded.modified_at >= inference.models.modified_at;
+  where excluded.modified_at >= gateway.models.modified_at;
 end;
 $$;
