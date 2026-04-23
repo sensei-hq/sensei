@@ -19,7 +19,6 @@ create table if not exists routers (
 , is_active                boolean     not null default true
 , sequence                 integer     not null default 0
 , modified_at              timestamptz not null default now()
-, created_at               timestamptz not null default now()
 );
 
 comment on table routers is
@@ -59,5 +58,3 @@ comment on column routers.sequence
      is 'Display order — lower values shown first.';
 comment on column routers.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column routers.created_at
-     is 'Timestamp when this router was first registered.';

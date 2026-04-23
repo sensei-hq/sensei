@@ -11,7 +11,6 @@ create table if not exists folders_to_watch (
 , status                   watch_status not null default 'scanning'
 , excluded                 jsonb        not null default '[]'
 , modified_at              timestamptz  not null default now()
-, created_at               timestamptz  not null default now()
 );
 
 comment on table folders_to_watch is
@@ -34,5 +33,3 @@ comment on column folders_to_watch.excluded
      is 'JSON array of relative folder names/paths excluded from scanning, e.g. ["node_modules","dist",".git"].';
 comment on column folders_to_watch.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column folders_to_watch.created_at
-     is 'Timestamp when this root was first added.';

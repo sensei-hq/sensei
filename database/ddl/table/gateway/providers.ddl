@@ -10,7 +10,6 @@ create table if not exists providers (
 , is_active                boolean     not null default true
 , sequence                 integer     not null default 0
 , modified_at              timestamptz not null default now()
-, created_at               timestamptz not null default now()
 );
 
 comment on table providers is
@@ -35,5 +34,3 @@ comment on column providers.sequence
      is 'Display order — lower values shown first.';
 comment on column providers.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column providers.created_at
-     is 'Timestamp when this provider was first registered.';

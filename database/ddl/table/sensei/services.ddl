@@ -20,7 +20,6 @@ create table if not exists services (
 , icons                    jsonb        not null default '{}'
 , tags                     text[]       not null default '{}'
 , modified_at              timestamptz  not null default now()
-, created_at               timestamptz  not null default now()
 );
 
 create index if not exists services_kind_idx
@@ -70,5 +69,3 @@ comment on column services.tags
      is 'Array of tag strings for filtering. Vocabulary controlled by sensei.tags table.';
 comment on column services.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column services.created_at
-     is 'Timestamp when this service was first registered.';

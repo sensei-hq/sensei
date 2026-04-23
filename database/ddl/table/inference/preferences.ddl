@@ -12,7 +12,6 @@ create table if not exists preferences (
 , confidence               preference_confidence   not null default 'low'
 , correction_count         integer                 not null default 0
 , props                    jsonb                   not null default '{}'
-, created_at               timestamptz             not null default now()
 , modified_at              timestamptz             not null default now()
 );
 
@@ -49,7 +48,5 @@ comment on column preferences.correction_count
      is 'Number of times user corrected for this preference.';
 comment on column preferences.props
      is 'Extensible: {session_ids:[], files_observed:[], last_correction_at, ...}.';
-comment on column preferences.created_at
-     is 'Timestamp when this preference was first detected.';
 comment on column preferences.modified_at
      is 'Timestamp of the last modification to this row.';

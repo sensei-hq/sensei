@@ -27,7 +27,6 @@ create table if not exists recommendations (
 , current_ftr              numeric(4,3)
 , verdict                  recommendation_verdict    not null default 'pending'
 , props                    jsonb                     not null default '{}'
-, created_at               timestamptz               not null default now()
 , acted_at                 timestamptz
 , measured_at              timestamptz
 );
@@ -92,8 +91,6 @@ comment on column recommendations.verdict
      is 'Impact: positive (FTR improved), negative (FTR dropped), neutral, pending.';
 comment on column recommendations.props
      is 'Extensible: {baseline_corrections_avg, current_corrections_avg, tool_usage_delta, ...}.';
-comment on column recommendations.created_at
-     is 'Timestamp when this recommendation was generated.';
 comment on column recommendations.acted_at
      is 'Timestamp when the user accepted — the point-in-time marker for before/after FTR comparison.';
 comment on column recommendations.measured_at

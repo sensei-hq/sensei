@@ -17,7 +17,6 @@ create table if not exists folders (
 , props                    jsonb       not null default '{}'
 , tags                     text[]      not null default '{}'
 , modified_at              timestamptz not null default now()
-, created_at               timestamptz not null default now()
 );
 
 create index if not exists folders_root_id_idx
@@ -71,5 +70,3 @@ comment on column folders.tags
      is 'Array of tag strings for quick filtering. Vocabulary controlled by sensei.tags table.';
 comment on column folders.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column folders.created_at
-     is 'Timestamp when this folder was first discovered.';

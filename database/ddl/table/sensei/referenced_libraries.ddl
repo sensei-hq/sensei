@@ -6,7 +6,6 @@ create table if not exists referenced_libraries (
 , version_used             text
 , props                    jsonb       not null default '{}'
 , modified_at              timestamptz not null default now()
-, created_at               timestamptz not null default now()
 , primary key (folder_id, library_id)
 );
 
@@ -28,5 +27,3 @@ comment on column referenced_libraries.props
      is 'Extensible metadata: {source, usage_count, skill_path, skill_generated_at, ...}.';
 comment on column referenced_libraries.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column referenced_libraries.created_at
-     is 'Timestamp when this library was first detected in this folder.';

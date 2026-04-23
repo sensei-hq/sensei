@@ -12,7 +12,6 @@ create table if not exists memory_items (
                                        check (status in ('open', 'closed'))
 , resolution               text
 , closed_at                timestamptz
-, created_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 );
 
@@ -47,7 +46,5 @@ comment on column memory_items.resolution
      is 'How the item was resolved. Required when closing a question.';
 comment on column memory_items.closed_at
      is 'Timestamp when the item was closed. Null while open.';
-comment on column memory_items.created_at
-     is 'Timestamp when the row was first created.';
 comment on column memory_items.modified_at
      is 'Timestamp of the last modification to this row.';

@@ -9,7 +9,6 @@ create table if not exists fallback_chains (
 , is_active                boolean            not null default true
 , sequence                 integer            not null default 0
 , modified_at              timestamptz        not null default now()
-, created_at               timestamptz        not null default now()
 );
 
 comment on table fallback_chains is
@@ -35,5 +34,3 @@ comment on column fallback_chains.sequence
      is 'Display order — lower values shown first.';
 comment on column fallback_chains.modified_at
      is 'Timestamp of the last modification to this row.';
-comment on column fallback_chains.created_at
-     is 'Timestamp when this chain was first registered.';

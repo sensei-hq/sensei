@@ -11,7 +11,6 @@ create table if not exists hyperedges (
 , description              text
 , confidence               edge_confidence not null default 'extracted'
 , member_count             integer         not null default 0
-, created_at               timestamptz     not null default now()
 , modified_at              timestamptz     not null default now()
 );
 
@@ -43,7 +42,5 @@ comment on column hyperedges.confidence
      is 'How this hyperedge was detected: extracted, inferred, ambiguous.';
 comment on column hyperedges.member_count
      is 'Denormalized count of members.';
-comment on column hyperedges.created_at
-     is 'Timestamp when this hyperedge was first detected.';
 comment on column hyperedges.modified_at
      is 'Timestamp of the last modification to this row.';

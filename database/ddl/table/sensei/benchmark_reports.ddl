@@ -10,7 +10,6 @@ create table if not exists benchmark_reports (
 , elapsed_ms               integer
 , payload                  jsonb
 , promoted                 boolean     not null default false
-, created_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 );
 
@@ -35,7 +34,5 @@ comment on column benchmark_reports.payload
      is 'Detailed results as JSON.';
 comment on column benchmark_reports.promoted
      is 'Whether this strategy has been promoted as active.';
-comment on column benchmark_reports.created_at
-     is 'Timestamp when the row was first created.';
 comment on column benchmark_reports.modified_at
      is 'Timestamp of the last modification to this row.';

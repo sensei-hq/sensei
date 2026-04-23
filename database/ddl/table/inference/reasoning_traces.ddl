@@ -9,7 +9,6 @@ create table if not exists reasoning_traces (
 , exchanges                jsonb       not null default '[]'
 , consensus                jsonb       not null default '{}'
 , action_proposed          jsonb
-, created_at               timestamptz not null default now()
 );
 
 create index if not exists reasoning_traces_project_id_idx
@@ -40,5 +39,3 @@ comment on column reasoning_traces.consensus
      is 'Final consensus: {conclusion, confidence:0.0-1.0, disagreements:[]}.';
 comment on column reasoning_traces.action_proposed
      is 'Recommendation generated from this reasoning, if any.';
-comment on column reasoning_traces.created_at
-     is 'Timestamp when this reasoning trace was generated.';
