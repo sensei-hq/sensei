@@ -1,4 +1,4 @@
-set search_path to inference, extensions;
+set search_path to inference, sensei, extensions;
 
 create table if not exists communities (
   id                       uuid        primary key default gen_random_uuid()

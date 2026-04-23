@@ -1,4 +1,4 @@
-set search_path to activity, extensions;
+set search_path to activity, sensei, extensions;
 
 create type if not exists session_outcome
     as enum ('completed', 'corrected', 'blocked', 'partial', 'abandoned');

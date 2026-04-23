@@ -1,4 +1,4 @@
-set search_path to inference, extensions;
+set search_path to inference, sensei, extensions;
 
 create type if not exists pattern_lifecycle
     as enum ('suggested', 'gap', 'rule');
@@ -18,7 +18,7 @@ create table if not exists detected_patterns (
 , instance_count           integer           not null default 0
 , instances                jsonb             not null default '[]'
 , evidence                 jsonb             not null default '[]'
-, fix_pattern_id           uuid              references sensei.detected_patterns(id) on delete set null
+, fix_pattern_id           uuid              references inference.detected_patterns(id) on delete set null
 , description              text
 , example                  text
 , enforcement              text
