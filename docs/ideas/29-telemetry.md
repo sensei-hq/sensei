@@ -50,7 +50,7 @@ The key distinction: **we share the derived insight, never the source material.*
 ```mermaid
 flowchart TD
     A[Sensei observes sessions] --> B[Insights engine derives learnings]
-    B --> C[Insights stored locally\ntelemetry_events table]
+    B --> C[Insights stored locally\ncollective_insights table]
     C --> D{User reviews}
     D -->|Approve| E[Push to collective]
     D -->|Edit| F[Redact/modify before push]
@@ -77,10 +77,10 @@ flowchart TD
 
 ## Data model
 
-### `telemetry_events` table
+### `collective_insights` table
 
 ```
-telemetry_events
+collective_insights
 ├── id                     uuid PK
 ├── category               text           -- pattern, model, skill, tool, correction, stack, ftr, anti_pattern
 ├── event                  text           -- e.g. "pattern_detected", "model_benchmark", "skill_effectiveness"
@@ -91,10 +91,10 @@ telemetry_events
 ├── created_at             timestamptz
 ```
 
-### `telemetry_batches` table
+### `collective_insight_batches` table
 
 ```
-telemetry_batches
+collective_insight_batches
 ├── id                     uuid PK
 ├── event_count            integer        -- how many events in this batch
 ├── target                 text           -- "git", "posthog"
