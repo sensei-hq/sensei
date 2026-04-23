@@ -1,4 +1,4 @@
-set search_path to activity, extensions;
+set search_path to activity, sensei, extensions;
 
 create type if not exists task_type_kind
     as enum ('feat', 'fix', 'refactor', 'docs', 'test', 'chore', 'unknown');

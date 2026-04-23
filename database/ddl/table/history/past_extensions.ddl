@@ -1,4 +1,4 @@
-set search_path to history, extensions;
+set search_path to history, sensei, extensions;
 
 create type if not exists dml_operation
     as enum ('INSERT', 'UPDATE', 'DELETE');

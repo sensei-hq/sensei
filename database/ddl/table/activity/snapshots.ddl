@@ -1,4 +1,4 @@
-set search_path to activity, extensions;
+set search_path to activity, sensei, extensions;
 
 create type if not exists snapshot_kind
     as enum ('manual', 'checkpoint');

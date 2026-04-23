@@ -1,4 +1,4 @@
-set search_path to inference, extensions;
+set search_path to inference, sensei, extensions;
 
 create type if not exists preference_confidence
     as enum ('low', 'medium', 'high');

@@ -1,4 +1,4 @@
-set search_path to staging, extensions;
+set search_path to staging, sensei, gateway, inference, activity, extensions;
 
 create or replace procedure import_routers()
 language plpgsql

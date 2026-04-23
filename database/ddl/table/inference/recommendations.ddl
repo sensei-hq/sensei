@@ -1,4 +1,4 @@
-set search_path to inference, extensions;
+set search_path to inference, sensei, extensions;
 
 create type if not exists recommendation_urgency
     as enum ('low', 'medium', 'high');
