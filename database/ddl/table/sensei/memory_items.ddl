@@ -6,39 +6,32 @@ create type if not exists memory_type
 create type if not exists memory_status
     as enum ('open', 'closed');
 
-
 create table if not exists memory_items (
-  id                       uuid        primary key default gen_random_uuid()
-, folder_id                uuid        not null references sensei.folders(id) on delete cascade
-, session_id               uuid        references sensei.sessions(id) on delete set null
+  id                       uuid          primary key default gen_random_uuid()
+, project_id               uuid          not null references sensei.projects(id) on delete cascade
 , type                     memory_type   not null
-, title                    text        not null
-, content                  text        not null
+, title                    text          not null
+, content                  text          not null
 , status                   memory_status not null default 'open'
 , resolution               text
 , closed_at                timestamptz
-, modified_at              timestamptz not null default now()
+, modified_at              timestamptz   not null default now()
 );
 
-create index if not exists memory_items_folder_id_idx
-    on memory_items(folder_id, type, status);
-
-create index if not exists memory_items_session_id_idx
-    on memory_items(session_id)
- where session_id is not null;
+create index if not exists memory_items_project_id_idx
+    on memory_items(project_id, type, status);
 
 comment on table memory_items is
 'Project-scoped persistent knowledge that survives across sessions.
 - type=decision: architectural choice (always surfaced in orientation)
 - type=pattern: coding convention (always surfaced)
-- type=question: open question needing resolution (surfaced until closed)';
+- type=question: open question needing resolution (surfaced until closed)
+Provenance (which session created an item) is tracked via activity.events.';
 
 comment on column memory_items.id
      is 'Surrogate primary key (UUID).';
-comment on column memory_items.folder_id
-     is 'Foreign key to folders — which folder this memory item belongs to.';
-comment on column memory_items.session_id
-     is 'Foreign key to sessions — the session that created this item.';
+comment on column memory_items.project_id
+     is 'Foreign key to projects — which project this memory item belongs to.';
 comment on column memory_items.type
      is 'Knowledge category: decision, pattern, or question.';
 comment on column memory_items.title
