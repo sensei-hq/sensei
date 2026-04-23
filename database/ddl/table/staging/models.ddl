@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists models (
+drop table if exists models cascade;
+create table models (
   provider_name            text
 , name                     text
 , version                  text

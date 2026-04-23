@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists fallback_chain_models (
+drop table if exists fallback_chain_models cascade;
+create table fallback_chain_models (
   chain_name               text
 , router_name              text
 , model_full_name          text

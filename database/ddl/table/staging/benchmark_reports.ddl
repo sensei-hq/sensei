@@ -1,6 +1,7 @@
 set search_path to staging, extensions;
 
-create table if not exists benchmark_reports (
+drop table if exists benchmark_reports cascade;
+create table benchmark_reports (
   id             uuid
 , folder_id        uuid
 , run_name       text
