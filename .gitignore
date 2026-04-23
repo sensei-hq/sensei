@@ -18,17 +18,6 @@ results/**/c/
 .env
 database/.env.local
 
-# Sensei generated index artifacts — all stored in Supabase; only config.yaml and llmspec.yaml belong on disk
-.sensei/reports.db
-.sensei/chunks.json
-.sensei/embeddings.json
-.sensei/symbol-map.json
-.sensei/doc-index.json
-.sensei/traceability.json
-.sensei/stack.md
-.sensei/shortcuts.md
-.sensei/llms.txt
-
 # Superpowers plugin cache
 .superpowers/
 
@@ -44,6 +33,6 @@ coverage
 firebase-debug.log
 .worktrees/
 .cocoindex_code
-
+.claude-flow/
 target/
 *.png
