@@ -58,6 +58,7 @@ Measure session effectiveness. FTR, corrections, rework, coaching recommendation
 |---|----------|--------|
 | 07 | [Metrics & Analytics](./07-metrics-analytics.md) — FTR scoring, coaching, session analytics, correction clustering | Active |
 | 10 | [Visualization & Dashboard](./10-visualization.md) — quality trends, session analytics, graph visualization | Idea |
+| 29 | [Collective Intelligence Network](./29-telemetry.md) — share derived insights across all users to improve skills, agents, and defaults for everyone | Idea |
 
 ---
 
