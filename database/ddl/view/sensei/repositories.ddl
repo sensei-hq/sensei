@@ -14,7 +14,6 @@ select id
      , props
      , tags
      , modified_at
-     , created_at
   from folders
  where kind in ('git', 'subtree');
 
