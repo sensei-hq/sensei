@@ -21,7 +21,7 @@ comment on table docs is
 comment on column docs.id
      is 'Surrogate primary key (UUID).';
 comment on column docs.folder_id
-     is 'Foreign key to folders — which repo this doc belongs to.';
+     is 'Foreign key to folders — which folder this doc belongs to.';
 comment on column docs.doc_path
      is 'Repository-relative path of the documentation file.';
 comment on column docs.covers

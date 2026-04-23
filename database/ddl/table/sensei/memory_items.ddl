@@ -32,7 +32,7 @@ comment on table memory_items is
 comment on column memory_items.id
      is 'Surrogate primary key (UUID).';
 comment on column memory_items.folder_id
-     is 'Foreign key to folders — which repo this memory item belongs to.';
+     is 'Foreign key to folders — which folder this memory item belongs to.';
 comment on column memory_items.session_id
      is 'Foreign key to sessions — the session that created this item.';
 comment on column memory_items.type

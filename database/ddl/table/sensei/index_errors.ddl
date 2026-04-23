@@ -19,7 +19,7 @@ comment on table index_errors is
 comment on column index_errors.id
      is 'Surrogate primary key (serial).';
 comment on column index_errors.folder_id
-     is 'Foreign key to folders — which repo this error occurred in.';
+     is 'Foreign key to folders — which folder this error occurred in.';
 comment on column index_errors.file_path
      is 'Path to the file that failed to index.';
 comment on column index_errors.error

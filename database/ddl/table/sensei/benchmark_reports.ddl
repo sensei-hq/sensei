@@ -20,7 +20,7 @@ comment on table benchmark_reports is
 comment on column benchmark_reports.id
      is 'Surrogate primary key (UUID).';
 comment on column benchmark_reports.folder_id
-     is 'Foreign key to folders — which repo this report covers. Nullable.';
+     is 'Foreign key to folders — which folder this report covers. Nullable.';
 comment on column benchmark_reports.run_name
      is 'Human-readable label for this benchmark report.';
 comment on column benchmark_reports.strategy

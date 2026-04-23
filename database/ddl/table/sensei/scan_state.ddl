@@ -23,9 +23,9 @@ comment on table scan_state is
 - indexed_at: when this file was last successfully indexed';
 
 comment on column scan_state.folder_id
-     is 'Foreign key to folders — which repo this file belongs to.';
+     is 'Foreign key to folders — which folder this file belongs to.';
 comment on column scan_state.file_path
-     is 'Repo-relative path of the source file being tracked.';
+     is 'Folder-relative path of the source file being tracked.';
 comment on column scan_state.mtime
      is 'File modification time as Unix epoch milliseconds, used for quick change detection.';
 comment on column scan_state.content_hash

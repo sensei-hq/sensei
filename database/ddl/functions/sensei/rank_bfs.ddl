@@ -39,7 +39,7 @@ $$;
 comment on function rank_bfs is
 'BFS traversal of import graph starting from changed files.
 Returns files reachable from changed files, scored by inverse distance.
-p_folder_id: scope to a specific folder (repo)
+p_folder_id: scope to a specific folder
 p_changed_files: array of file paths that were modified';
 
 grant execute on function rank_bfs(uuid, text[]) to authenticated, service_role;
