@@ -46,12 +46,10 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     // Also check what we can infer from existing data
     // For now, use a simpler heuristic: re-read source files and extract non-relative imports
     // This is expensive but accurate. TODO: store raw imports in a metadata field.
-    let repo_path_str = {
-        let store = ctx.store().await;
-        store.get_repo(repo_id).ok().flatten()
-            .map(|p| p.path.clone())
-            .unwrap_or_default()
-    };
+    let repo_path_str = ctx.pg().get_repo_by_name(repo_id).await
+        .ok().flatten()
+        .and_then(|r| r["abs_path"].as_str().map(String::from))
+        .unwrap_or_default();
 
     // Walk source files and extract external imports
     for node in &nodes {
@@ -105,14 +103,18 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     libs.sort();
 
     // Check which libs are internal (match another repo in a project)
-    let store = ctx.store().await;
-    let all_repos = store.list_repos().unwrap_or_default();
+    let all_repos = ctx.pg().list_repositories().await.unwrap_or_default();
     let _internal_repos: std::collections::HashSet<String> = all_repos.iter()
-        .map(|p| p.name.to_lowercase())
+        .filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase()))
         .collect();
 
-    // Update repo libs
-    store.mark_indexed(repo_id, &libs).ok();
+    // Update folder libs via PgStore
+    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
+        }
+    }
 
     tracing::info!("resolve_libs: {} — {} external libs detected", repo_id, libs.len());
     Ok(())
@@ -135,10 +137,9 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         .text().await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    let store = ctx.store().await;
-    match crate::indexer::lib_indexer::index_lib_content(&store, lib_name, url, &content, None) {
-        Ok(result) => {
-            tracing::info!("import_lib: {} — {} docs indexed from {}", lib_name, result.docs_indexed, result.source_type);
+    match ctx.pg().upsert_library(lib_name, "npm", None, Some(&content), Some("url"), Some(url)).await {
+        Ok(lib_id) => {
+            tracing::info!("import_lib: {} — indexed as {} from {}", lib_name, lib_id, url);
             Ok(())
         }
         Err(e) => Err(format!("Failed to index lib {}: {}", lib_name, e))
