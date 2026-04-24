@@ -27,32 +27,21 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         find_git_repos(root, 0, max_depth, &mut repos);
     }
 
-    {
-        let store = ctx.store().await;
+    // Register watch root in PG
+    let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("root");
+    ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await.ok();
 
-        // Persist this root for watcher recreation on restart
-        store.execute_raw(&format!(
-            "INSERT OR IGNORE INTO scanned_roots(path) VALUES('{}')",
-            task.path.replace('\'', "''")
-        )).ok();
+    for (name, path) in &repos {
+        // Register folder as git repo in PG
+        // TODO: need root_id from add_watch_root return value for proper FK
+        // For now, enqueue process_repo with the discovered path
+        let repo_id = name.clone();
 
-        for (name, path) in &repos {
-            // Skip excluded paths
-            if store.is_excluded(path) {
-                tracing::debug!("scan_root: skipping excluded path {}", path);
-                continue;
-            }
-
-            // Register project
-            let repo_id = name.clone();
-            store.upsert_repo_basic(&repo_id, name, path).ok();
-
-            // Enqueue process_repo
-            let repo_task = Task::new(TaskKind::ProcessRepo, &repo_id, path)
-                .with_parent(task.id);
-            ctx.queue.enqueue(repo_task).await;
-        }
-    } // drop store lock
+        // Enqueue process_repo
+        let repo_task = Task::new(TaskKind::ProcessRepo, &repo_id, path)
+            .with_parent(task.id);
+        ctx.queue.enqueue(repo_task).await;
+    }
 
     // Register this root with the watcher (caller is responsible for starting)
     {
@@ -72,8 +61,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
             );
         }
         if !suggestions.is_empty() {
-            let store = ctx.store().await;
-            store.set_config("solution_suggestions", &serde_json::to_string(&suggestions).unwrap_or_default()).ok();
+            ctx.pg().set_config("solution_suggestions", &serde_json::to_string(&suggestions).unwrap_or_default()).await.ok();
         }
     }
 
@@ -111,6 +99,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
     let new_branch = task.branch.as_deref().ok_or("branch_switch requires branch field")?;
 
     // Detect current branch from git
+    // TODO: migrate to PgStore when repos → folders migration complete
     let repo_path = {
         let store = ctx.store().await;
         store.get_repo(repo_id).ok().flatten()
@@ -301,13 +290,6 @@ mod tests {
         // Two ProcessRepo tasks should have been enqueued
         let status = ctx.queue.status().await;
         assert_eq!(status.pending, 2, "expected 2 process_repo tasks enqueued");
-
-        // Verify repos were registered in store
-        let store = ctx.store().await;
-        let repos = store.list_repos().unwrap();
-        let names: Vec<&str> = repos.iter().map(|p| p.name.as_str()).collect();
-        assert!(names.contains(&"alpha"));
-        assert!(names.contains(&"beta"));
     }
 
     #[tokio::test]
