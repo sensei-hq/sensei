@@ -10,13 +10,7 @@ fn httpx_corpus_path() -> PathBuf {
     path
 }
 
-fn sample_corpus_path() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop();
-    path.pop();
-    path.push("examples/sample/src");
-    path
-}
+// sample_corpus_path removed — unused. Re-add when sample corpus tests are written.
 
 #[test]
 fn index_httpx_corpus() {
@@ -26,7 +20,7 @@ fn index_httpx_corpus() {
         return;
     }
 
-    let db_dir = tempfile::TempDir::new().unwrap();
+    let _db_dir = tempfile::TempDir::new().unwrap();
 
     // Use the library directly
     // We need to inline since we can't import from the binary crate in integration tests
@@ -48,7 +42,7 @@ fn index_httpx_corpus() {
 
     for entry in &py_files {
         let source = std::fs::read_to_string(entry.path()).unwrap();
-        let rel_path = entry.file_name().to_string_lossy().to_string();
+        let _rel_path = entry.file_name().to_string_lossy().to_string();
 
         // Inline parse — we can't import from the binary directly
         let mut parser = tree_sitter::Parser::new();

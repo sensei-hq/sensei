@@ -8,7 +8,6 @@ mod tests {
     use crate::tasks::progress::TaskEvent;
     use crate::types::{NodeKind, HierarchyNode};
     use crate::indexer::graph::GraphDb;
-    use std::sync::Arc;
 
     // ── File operation tests ────────────────────────────────────────
 
@@ -129,7 +128,7 @@ mod tests {
         graph.merge_edge("pkg:repo:(root)", "mod:repo:src/new", "CONTAINS_MOD").unwrap();
 
         // Simulate process_file for files in new folder
-        for (name, line) in &[("index.ts", 1u32), ("utils.ts", 1)] {
+        for (name, _line) in &[("index.ts", 1u32), ("utils.ts", 1)] {
             let path = format!("/repo/src/new/{}", name);
             let mut f = HierarchyNode::group(format!("file:{}", path), name.to_string(), NodeKind::File, "repo".into());
             f.file = Some(path.clone());
@@ -180,7 +179,7 @@ mod tests {
         let mut rx = q.sender().subscribe();
 
         // Enqueue 3 file tasks for repo1
-        let ids: Vec<u64> = vec![
+        let _ids: Vec<u64> = vec![
             q.enqueue(Task::new(TaskKind::ProcessFile, "repo1", "a.ts")).await,
             q.enqueue(Task::new(TaskKind::ProcessFile, "repo1", "b.ts")).await,
             q.enqueue(Task::new(TaskKind::ProcessFile, "repo1", "c.ts")).await,
