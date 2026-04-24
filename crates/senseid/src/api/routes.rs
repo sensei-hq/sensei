@@ -133,13 +133,14 @@ mod tests {
     use crate::types::{Repo, IndexError};
     use crate::api::state::SharedState;
 
-    fn test_app() -> (Router, AppState) {
+    async fn test_app() -> (Router, AppState) {
         let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let state = Arc::new(SharedState {
             store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: Arc::new(TaskQueue::new()),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });
         let router = create_router(state.clone());
         (router, state)
@@ -147,7 +148,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_check() {
-        let (app, _) = test_app();
+        let (app, _) = test_app().await;
         let resp = app.oneshot(
             Request::builder().uri("/health").body(Body::empty()).unwrap()
         ).await.unwrap();
@@ -160,7 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_list_repos() {
-        let (app, _) = test_app();
+        let (app, _) = test_app().await;
 
         // Create
         let resp = app.clone().oneshot(
@@ -185,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_project_returns_ok() {
-        let (app, state) = test_app();
+        let (app, state) = test_app().await;
         {
             let s = state.store.lock().await;
             s.upsert_repo(&Repo {
@@ -202,7 +203,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_list_solutions() {
-        let (app, _) = test_app();
+        let (app, _) = test_app().await;
 
         let resp = app.clone().oneshot(
             Request::builder()
@@ -228,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_tags_via_api() {
-        let (app, state) = test_app();
+        let (app, state) = test_app().await;
         {
             let s = state.store.lock().await;
             s.upsert_repo(&Repo {
@@ -274,7 +275,7 @@ mod tests {
 
     #[tokio::test]
     async fn index_errors_via_api() {
-        let (app, state) = test_app();
+        let (app, state) = test_app().await;
         {
             let s = state.store.lock().await;
             s.log_index_error(&IndexError {
@@ -302,7 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn index_project_via_api() {
-        let (app, _) = test_app();
+        let (app, _) = test_app().await;
 
         // Create a temp repo with a Python file
         let dir = tempfile::TempDir::new().unwrap();
@@ -345,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn scan_folder_finds_repos() {
-        let (app, _) = test_app();
+        let (app, _) = test_app().await;
 
         // Create a temp dir with a "repo" (has .git)
         let root = tempfile::TempDir::new().unwrap();

@@ -21,8 +21,16 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
 
     let graph_path = graph.db_path().map(|p| p.parent().unwrap_or(p).to_path_buf());
 
+    // Connect to PostgreSQL
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
+    let pg = crate::db::pg_store::PgStore::connect(&database_url)
+        .await
+        .expect("Failed to connect to PostgreSQL");
+
     let state = Arc::new(SharedState {
         store: Mutex::new(store),
+        pg,
         graph: Mutex::new(graph),
         task_queue: task_queue.clone(),
     });
