@@ -28,7 +28,7 @@ flowchart TD
 
     F1 & F2 & F3 & F4 --> G[Assistant writes code]
     G --> H{User reviews}
-    H -->|Correct — first try| I[FTR = true ✓]
+    H -->|Correct — first try| I[FTR = true]
     H -->|Correction needed| J[User redirects]
     J --> K[log_event: correction]
     K --> G
@@ -40,25 +40,21 @@ flowchart TD
     N --> O[FTR computed\nInsights updated\nRecommendations regenerated]
 ```
 
-## Screens (in the AI assistant, not desktop)
+## Screens
 
-This journey happens inside the AI assistant's interface (Claude Code terminal, Cursor editor, etc.). Sensei is invisible — it works through MCP tools and hooks.
+This journey has no sensei desktop screens. It happens entirely inside the AI assistant's interface (Claude Code terminal, Cursor editor, etc.). Sensei is invisible — it works through MCP tools and hooks.
 
-### What the assistant sees (via MCP)
+### What the assistant receives (via MCP)
 
-```
-Session start → get_session_context()
-┌──────────────────────────────────────────────────────┐
-│ Project: Lumen Cloud · lumen-auth                     │
-│ Phase: build                                          │
-│ Active task: Fix refresh token rotation               │
-│ Patterns to follow: Adapter, Repository               │
-│ Recent decisions: clock-skew tolerance (s-2891)        │
-│ Open items: device-flow edge case                     │
-│ Rules: All handlers wrap ApiError                      │
-│ Persona: auth-tests (if configured)                   │
-└──────────────────────────────────────────────────────┘
-```
+On session start, `get_session_context()` delivers:
+- Project and repo identity (e.g., "Lumen Cloud, lumen-auth")
+- Current workflow phase (e.g., "build")
+- Active task description
+- Patterns to follow (e.g., Adapter, Repository)
+- Recent decisions from prior sessions (e.g., "clock-skew tolerance, session s-2891")
+- Open items and unresolved issues
+- Project rules (e.g., "All handlers wrap ApiError")
+- Active persona (if configured for the current working directory)
 
 ### What sensei captures (invisible to user)
 
@@ -94,7 +90,7 @@ sequenceDiagram
 | Session start | project, folder, ACP, timestamp |
 | Tool calls | tool_name, input_params, response, duration, turn_number |
 | Corrections | turn where user redirected, what was corrected |
-| Phase transitions | brainstorm → analyze → build → validate |
+| Phase transitions | brainstorm, analyze, build, validate |
 | Outcome | first-try / corrected / abandoned |
 | Tokens | input + output token counts |
 
@@ -110,21 +106,13 @@ flowchart LR
 
 Each phase has a slash command (`/sensei:brainstorm`, `/sensei:build`, etc.) that instructs the assistant on protocol, required MCP calls, and expected outputs.
 
-## Personas & mindsets
+## Personas and mindsets
 
-```
-Session loads context
-    │
-    ▼
-Global mindsets (analyst → developer → tester)
-    │
-    ▼
-Project personas (if cwd matches triggers)
-    e.g. "auth-tests" persona fires for lumen-auth/
-    │
-    ▼
-Assistant follows persona rules + project patterns
-```
+Session context is layered:
+
+1. **Global mindsets** apply to every session: analyst, developer, tester — applied in sequence.
+2. **Project personas** fire when the working directory matches their triggers (e.g., an "auth-tests" persona activates for `lumen-auth/`).
+3. The assistant follows persona rules combined with project patterns.
 
 ## How to use
 
@@ -134,15 +122,13 @@ Assistant follows persona rules + project patterns
 4. **Session ends** — outcome recorded, analytics updated.
 5. **Check impact** in the observatory (Journey 3) — did FTR improve?
 
-## Mockup status
+## Data sources
 
-This journey has **no sensei screens** — it happens entirely inside the AI assistant (Claude Code terminal, Cursor editor, etc.). Sensei is invisible here, working through MCP tools and hooks.
-
-| Aspect | Mockup exists? | What's needed |
-|--------|---------------|---------------|
-| Session data model | ✓ `data.js` | Sessions with id, project, title, FTR, corrections, turns, events timeline |
-| Session events | ✓ `data.js` | Timestamped events: start, context, edit, test, correction, end |
-| Tool call sequence | ✗ | Defined in system journey [session-lifecycle](08-system-pipelines/02-session-lifecycle.md) |
-| Crash recovery UX | ✗ | What does the user see when resuming an interrupted session? Needs a prompt design in the assistant (not desktop) — "Sensei detected an interrupted session. Resume from checkpoint?" |
-
-**No desktop mockups needed for this journey.** The data model in `data.js` already defines the session structure. The system journey [session-lifecycle](08-system-pipelines/02-session-lifecycle.md) covers what happens behind the scenes.
+| Data | Source |
+|------|--------|
+| Session context | `get_session_context()` MCP call — aggregates project, patterns, rules, persona |
+| Tool calls | Logged by sensei-mcp server on every invocation |
+| Corrections | Detected from user redirections in conversation turns |
+| Phase transitions | Triggered by `/sensei:*` slash commands |
+| Outcomes | `checkpoint()` MCP call at session end |
+| FTR computation | Analytics pipeline, post-session |
