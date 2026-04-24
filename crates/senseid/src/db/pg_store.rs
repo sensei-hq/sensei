@@ -171,6 +171,117 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Extensions ────────────────────────────────────────────────────
+
+    pub async fn create_extension(
+        &self, kind: &str, name: &str, description: Option<&str>, content: Option<&str>,
+        scope: &str, source: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.extensions(kind, name, description, content, scope, source)
+             VALUES($1::sensei.extension_kind, $2, $3, $4, $5::sensei.extension_scope, $6::sensei.extension_source) RETURNING id"
+        ).bind(kind).bind(name).bind(description).bind(content).bind(scope).bind(source)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn update_extension(&self, id: &uuid::Uuid, description: Option<&str>, content: Option<&str>) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.extensions SET description = COALESCE($2, description), content = COALESCE($3, content) WHERE id = $1"
+        ).bind(id).bind(description).bind(content)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn list_extensions_by_kind(&self, kind: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, String, String, bool)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, description, scope::text, source::text, enabled FROM sensei.extensions WHERE kind = $1::sensei.extension_kind ORDER BY name"
+        ).bind(kind).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, name, desc, scope, source, enabled)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "description": desc, "scope": scope, "source": source, "enabled": enabled })
+        }).collect())
+    }
+
+    pub async fn get_extension_history(&self, extension_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, i32, String, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT id, operation::text, revision, name, changed_at FROM history.past_extensions WHERE extension_id = $1 ORDER BY changed_at DESC"
+        ).bind(extension_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, op, rev, name, ts)| {
+            serde_json::json!({ "id": id, "operation": op, "revision": rev, "name": name, "changed_at": ts.to_rfc3339() })
+        }).collect())
+    }
+
+    pub async fn delete_extension(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.extensions WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ── Folders ──────────────────────────────────────────────────────
+
+    pub async fn upsert_folder(
+        &self, root_id: &uuid::Uuid, kind: &str, name: &str, path: &str, abs_path: &str,
+        parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id)
+             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7)
+             ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, project_id = COALESCE(EXCLUDED.project_id, folders.project_id), modified_at = now()
+             RETURNING id"
+        ).bind(root_id).bind(kind).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn list_folders_by_root(&self, root_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, path, abs_path, project_id FROM sensei.folders WHERE root_id = $1 ORDER BY path"
+        ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, name, path, abs, pid)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "path": path, "abs_path": abs, "project_id": pid })
+        }).collect())
+    }
+
+    pub async fn delete_folder_tree(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        // CASCADE will handle children via parent_id FK
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ── Benchmark Reports ────────────────────────────────────────────
+
+    pub async fn create_benchmark_report(
+        &self, folder_id: Option<&uuid::Uuid>, run_name: &str, strategy: &str,
+        score: Option<f64>, tokens: Option<i32>, elapsed_ms: Option<i32>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.benchmark_reports(folder_id, run_name, strategy, score, tokens, elapsed_ms) VALUES($1, $2, $3, $4, $5, $6) RETURNING id"
+        ).bind(folder_id).bind(run_name).bind(strategy).bind(score).bind(tokens).bind(elapsed_ms)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn list_benchmark_reports(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<f64>, Option<i32>, bool, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT id, run_name, strategy, score::float8, tokens, promoted, modified_at FROM sensei.benchmark_reports ORDER BY modified_at DESC"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, strategy, score, tokens, promoted, modified)| {
+            serde_json::json!({ "id": id, "run_name": name, "strategy": strategy, "score": score, "tokens": tokens, "promoted": promoted, "modified_at": modified.to_rfc3339() })
+        }).collect())
+    }
+
+    // ── Views (read-only) ────────────────────────────────────────────
+
+    pub async fn list_repositories(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, abs_path, kind::text FROM sensei.folders WHERE kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind) ORDER BY name"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, abs_path, kind)| {
+            serde_json::json!({ "id": id, "name": name, "abs_path": abs_path, "kind": kind })
+        }).collect())
+    }
+
     // ── Memories ──────────────────────────────────────────────────────
 
     pub async fn create_memory(
@@ -900,6 +1011,66 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    // ── Extensions tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn extension_create_and_list() {
+        let s = pg_store().await;
+        let name = format!("_test:ext_{}", uuid::Uuid::new_v4());
+        let id = s.create_extension("skill", &name, Some("test skill"), Some("# content"), "global", "local").await.unwrap();
+        let skills = s.list_extensions_by_kind("skill").await.unwrap();
+        assert!(skills.iter().any(|e| e["name"] == name));
+        s.delete_extension(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn extension_historize_trigger() {
+        let s = pg_store().await;
+        let name = format!("_test:ext_hist_{}", uuid::Uuid::new_v4());
+        let id = s.create_extension("skill", &name, Some("v1"), None, "global", "local").await.unwrap();
+        s.update_extension(&id, Some("v2"), None).await.unwrap();
+        let history = s.get_extension_history(&id).await.unwrap();
+        assert!(history.len() >= 2, "historize trigger should create INSERT + UPDATE entries");
+        s.delete_extension(&id).await.unwrap();
+    }
+
+    // ── Folders tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn folder_upsert_and_list() {
+        let s = pg_store().await;
+        let path = format!("/_test/folder_root_{}", uuid::Uuid::new_v4());
+        let rid = s.add_watch_root(&path, "test_root", &serde_json::json!([])).await.unwrap();
+        let fid = s.upsert_folder(&rid, "git", "myrepo", "myrepo", &format!("{}/myrepo", path), None, None).await.unwrap();
+        let folders = s.list_folders_by_root(&rid).await.unwrap();
+        assert!(folders.iter().any(|f| f["name"] == "myrepo"));
+        s.delete_folder_tree(&fid).await.unwrap();
+        s.remove_watch_root(&rid).await.unwrap();
+    }
+
+    // ── Benchmark Reports tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn benchmark_create_and_list() {
+        let s = pg_store().await;
+        let id = s.create_benchmark_report(None, "_test:bench", "strategy_a", Some(95.5), Some(1000), Some(5000)).await.unwrap();
+        let reports = s.list_benchmark_reports().await.unwrap();
+        assert!(reports.iter().any(|r| r["run_name"] == "_test:bench"));
+        sqlx_core::query::query("DELETE FROM sensei.benchmark_reports WHERE id = $1").bind(id).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Views tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn repositories_view() {
+        let s = pg_store().await;
+        // list_repositories returns git+subtree folders
+        let repos = s.list_repositories().await.unwrap();
+        // Just verify it doesn't error — content depends on seeded data
+        // Just verify the query succeeds — content depends on seeded data
+        let _ = repos;
     }
 
     // ── Memories tests ─────────────────────────────────────────────────
