@@ -55,225 +55,137 @@ flowchart TD
 
 ### Extensions browser
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Skills & Plugins                                     │
-│                                                       │
-│  Filter: [All]  Skills  Commands  Agents  Plugins     │
-│  Scope:  [Global]  Project: Lumen Cloud               │
-│                                                       │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ ● zero-errors-policy        skill   builtin    │   │
-│  │   Enforces zero lint and test errors           │   │
-│  │   Scope: global   Enabled: ☑                   │   │
-│  ├────────────────────────────────────────────────┤   │
-│  │ ● auth-tests                skill   local      │   │
-│  │   Auth module persona for lumen-cloud          │   │
-│  │   Scope: project  Enabled: ☑                   │   │
-│  ├────────────────────────────────────────────────┤   │
-│  │ ● sensei:build              command  builtin   │   │
-│  │   TDD cycle with pattern enforcement           │   │
-│  │   Scope: global   Enabled: ☑                   │   │
-│  ├────────────────────────────────────────────────┤   │
-│  │ ○ doc-drift-detector        skill   builtin    │   │
-│  │   Detect and resolve stale docs                │   │
-│  │   Scope: global   Enabled: ☐                   │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  [+ Create skill]  [+ Import plugin]                  │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Filter bar: All, Skills, Commands, Agents, Hooks, Plugins
+- Scope filter: Global or per-project (dropdown)
+- Extension list, each item showing: icon, name, kind badge (skill/command/agent/hook/plugin), source badge (builtin/marketplace/local), scope, enabled/disabled toggle
+- Create/import actions: create skill, create agent, import plugin
 
-### Skill editor
+**User interaction:**
+- Filter by kind and scope
+- Toggle extensions on/off
+- Click an extension to open its editor
+- Create a new skill or agent, or import a plugin from marketplace or git URL
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Edit: auth-tests                                     │
-│                                                       │
-│  Frontmatter (parsed → props)                         │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ name: auth-tests                               │   │
-│  │ description: Use when working in lumen-auth    │   │
-│  │   module on refresh or device flow code.       │   │
-│  │ triggers:                                       │   │
-│  │   - cwd: "*/lumen-auth/**"                     │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Content (markdown body)                              │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ # Auth Tests Persona                           │   │
-│  │                                                │   │
-│  │ ## Rules                                       │   │
-│  │ - Always account for 30s clock-skew tolerance  │   │
-│  │ - Use inFlightMutex for concurrent refresh     │   │
-│  │ - Integration tests hit real database          │   │
-│  │ ...                                            │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  [Save]  [Export as .md]  [Test in playground]         │
-└──────────────────────────────────────────────────────┘
-```
-
-### Inference settings
-
-```
-┌──────────────────────────────────────────────────────┐
-│  Settings → Inference                                 │
-│                                                       │
-│  Local models (Ollama)                                │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ ● gemma3:27b    16.0 GB  reasoning      active │   │
-│  │ ● qwen3:14b      8.7 GB  second opinion active │   │
-│  │ ○ llama4-scout   —        not pulled            │   │
-│  │                            [Pull 10.2 GB]       │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  MOE reasoning panel                                  │
-│  Proposer:    [gemma3:27b ▾]                          │
-│  Challenger:  [qwen3:14b ▾]                           │
-│  Synthesizer: [gemma3:27b ▾]  or external ▾           │
-│                                                       │
-│  External providers                                   │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ ● Anthropic  ANTHROPIC_API_KEY  ✓ configured   │   │
-│  │ ○ OpenAI     [Enter API key]                   │   │
-│  │ ○ Custom     [Configure endpoint]              │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Routing: [Auto]  Always local  Always external       │
-│  Auto = local for simple tasks, external for complex  │
-└──────────────────────────────────────────────────────┘
-```
-
-### Benchmark runner
-
-```
-┌──────────────────────────────────────────────────────┐
-│  Benchmark: auth-persona effectiveness                │
-│                                                       │
-│  Task corpus: 5 auth-related tasks from lumen-cloud   │
-│  Variant A: without auth-tests persona                │
-│  Variant B: with auth-tests persona                   │
-│                                                       │
-│  Results:                                             │
-│  ┌────────────────────────────────────────────────┐   │
-│  │              Variant A    Variant B    Delta    │   │
-│  │  FTR         40%          80%          +40%    │   │
-│  │  Corrections 2.4 avg      0.6 avg      -75%   │   │
-│  │  Tokens      42k avg      31k avg      -26%   │   │
-│  │  Duration    38m avg      24m avg      -37%   │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Conclusion: persona significantly improves FTR       │
-│  for auth tasks. Token reduction is secondary benefit.│
-│                                                       │
-│  [Promote to permanent]  [Run again]  [Discard]       │
-└──────────────────────────────────────────────────────┘
-```
-
-## How to use
-
-1. **Create a skill** — Extensions → Create → write markdown → test → enable
-2. **Install a plugin** — Extensions → Import → marketplace or git URL
-3. **Configure inference** — Settings → Inference → pull models, add API keys, set MOE panel
-4. **Add an ACP** — Settings → Assistants → register sensei with a new AI tool
-5. **Benchmark a change** — define task corpus → run A/B → compare FTR + corrections
-6. **Export/import skills** — Extensions → Export as .md or Import from .md
-
-## Additional screens (not yet in mockups)
-
-### Agent editor (idea 21)
-
-**Purpose:** Define autonomous agents that can run multi-step tasks (review, build, analysis).
-
-**Content needed:**
-- Agent name, description, trigger conditions (manual, scheduled, event-driven)
-- Tool access list: which MCP tools the agent can call
-- Autonomy level: fully autonomous, requires approval at checkpoints, manual-only
-- Template library: pre-built agents for common tasks (code review, test generation, doc update)
-- Test: run agent against a session replay to see what it would do
-
-**User flow:** Extensions → Agents → Create → define tools + triggers → test against replay → enable
-
-### Persona editor (idea 23)
-
-**Purpose:** Create project-specific personas with trigger conditions, rules, and context.
-
-**Content needed:**
-- Persona name, description, trigger (cwd pattern, file type, module name)
-- Rules list: what the assistant should know/follow when this persona is active
-- Context: files to always include, patterns to enforce
-- Derived from: which sessions/corrections inspired this persona (evidence trail)
-- Test: preview what `get_session_context()` returns when this persona fires
-
-**User flow:** Extensions → Personas → Create → set triggers + rules → link evidence → test → enable
-
-### Multi-ACP configuration (idea 12)
-
-**Purpose:** Manage per-ACP adapter settings — how sensei registers with each AI assistant.
-
-**Content needed:**
-- List of detected ACPs with registration status
-- Per-ACP detail: what's registered (MCP server, plugin, skills, hooks, logging)
-- Re-register action: if adapter config changed, re-run registration
-- Test connection: verify MCP server is reachable from this ACP
-- ACP-specific settings: some ACPs need different MCP transport (stdio vs HTTP)
-
-**User flow:** Settings → Assistants → click ACP → see registration detail → re-register if needed
+**Why:** Central place to see everything installed, enable/disable per project, and launch creation workflows. Accessible from the sidebar (global, not project-scoped).
 
 ---
 
-## Mockup status
+### Skill editor
 
-| Screen | Mockup exists? | What mockup covers | What's missing |
-|--------|---------------|--------------------|---------------------------------|
-| Extensions browser | ✗ | — | **New screen needed:** filter by kind, scope, source; enable/disable; create/import |
-| Skill editor | ✗ | — | **New screen needed:** frontmatter editor + markdown body + test + export |
-| Agent editor | ✗ | — | **New screen needed:** tool access, triggers, autonomy, test against replay |
-| Persona editor | ✗ | — | **New screen needed:** trigger conditions, rules, evidence trail, preview |
-| Inference settings | ✗ | — | **New screen needed:** model management, MOE panel config, external providers |
-| Multi-ACP config | ✓ partial `setup-wizard.jsx` | ACP detection + checkbox in wizard step 2 | Per-ACP detail view, re-register, test connection, transport config |
-| Benchmark runner | ✗ | — | **New screen needed:** task corpus definition, A/B variants, results comparison |
-
-### Design brief for missing screens
-
-**Extensions browser:**
-- Global page (not project-scoped). Accessible from sidebar.
-- Filter bar: All / Skills / Commands / Agents / Hooks / Plugins
-- Scope filter: Global / Project: [dropdown]
-- Each row: icon, name, kind badge, source badge (builtin/marketplace/local), scope, enabled toggle
-- Actions: + Create skill, + Create agent, + Import plugin
-- Click row → opens editor for that extension type
-
-**Skill editor:**
-- Two-pane: top = frontmatter (structured form: name, description, triggers), bottom = markdown body (code editor)
-- Toolbar: Save, Export as .md, Import from .md, Test in playground
+**What to show:**
+- Two sections: structured frontmatter (name, description, trigger conditions) and markdown body (code editor)
 - Preview panel: what `get_session_context()` returns when this skill is active
-- Round-trip: edit in UI → save to DB; export to .md file → import back
+- Toolbar: Save, Export as .md, Import from .md, Test in playground
 
-**Agent editor:**
-- Structured form: name, description, trigger (manual/scheduled/event-driven)
-- Tool access: checklist of available MCP tools this agent can call
-- Autonomy: radio — fully autonomous / checkpoint approval / manual only
-- Template selector: start from a pre-built template (code reviewer, test generator, doc updater)
-- Test panel: pick a session replay → run agent against it → see what actions it would take
+**User interaction:**
+- Edit frontmatter fields and markdown content
+- Preview the assembled context
+- Test the skill in the playground to verify it fires correctly
+- Export to a .md file or import from one (round-trip)
 
-**Persona editor:**
-- Similar to skill editor but focused on personas
+**Why:** Let users author and iterate on skills with immediate feedback on how they affect session context.
+
+---
+
+### Agent editor
+
+**What to show:**
+- Structured form: name, description, trigger type (manual, scheduled, event-driven)
+- Tool access checklist: which MCP tools this agent can call
+- Autonomy level: fully autonomous, requires approval at checkpoints, manual only
+- Template selector: pre-built templates for common tasks (code review, test generation, doc update)
+- Test panel: pick a session replay, run the agent against it, see what actions it would take
+
+**User interaction:**
+- Define agent properties and tool access
+- Choose autonomy level
+- Start from a template or build from scratch
+- Test against historical session replays before enabling
+
+**Why:** Let users define autonomous agents with controlled tool access and test them safely against real session data before deploying.
+
+---
+
+### Persona editor
+
+**What to show:**
 - Trigger section: cwd glob patterns, file type filters, module name patterns
-- Rules section: list of rules (add/remove/reorder)
-- Evidence section: which sessions/corrections this persona addresses (linked from recommendations)
-- Preview: simulate `get_session_context()` with this persona active → show what the assistant would see
+- Rules list: what the assistant should know/follow when this persona is active (add, remove, reorder)
+- Context: files to always include, patterns to enforce
+- Evidence trail: which sessions/corrections inspired this persona (linked from recommendations)
+- Preview: simulated `get_session_context()` output with this persona active
 
-**Inference settings:**
-- Local models section: list of pulled models with size, status (active/not pulled), pull/delete actions
-- MOE panel config: 3 dropdowns (proposer, challenger, synthesizer) — select from local or external models
-- External providers: table of configured providers with API key status, test connection button
-- Routing preference: Auto / Always local / Always external
+**User interaction:**
+- Set trigger conditions
+- Add/edit/reorder rules
+- Link evidence sessions
+- Preview the assembled context to verify correctness
 
-**Benchmark runner:**
-- Create benchmark: name, task corpus (list of task descriptions), project scope
-- Variants: A (baseline — no change), B (with change — skill/rule/persona)
-- Run: executes tasks with each variant, captures FTR + corrections + tokens + duration
-- Results: side-by-side comparison table + conclusion text
-- Actions: Promote change to permanent / Run again / Discard
+**Why:** Let users create project-specific personas grounded in real session failures, with immediate preview of what the assistant will see.
+
+---
+
+### Inference settings
+
+**What to show:**
+- Local models section: list of pulled models with name, size, role (reasoning/second opinion), status (active/not pulled), pull/delete actions
+- MOE reasoning panel config: three role selectors (proposer, challenger, synthesizer), each choosing from local or external models
+- External providers: table of configured providers with API key status and test-connection action
+- Routing preference: Auto (local for simple, external for complex), Always local, Always external
+
+**User interaction:**
+- Pull or delete local models
+- Configure MOE panel composition
+- Add/remove external provider API keys and test connections
+- Set routing preference
+
+**Why:** Give users control over which models power sensei's reasoning, balancing cost, speed, and capability.
+
+---
+
+### Multi-ACP configuration
+
+**What to show:**
+- List of detected ACPs with registration status (registered/unregistered)
+- Per-ACP detail: what's registered (MCP server, plugin, skills, hooks, logging)
+- Transport configuration: stdio vs. HTTP per ACP
+- Connection test result
+
+**User interaction:**
+- Click an ACP to see registration detail
+- Re-register if adapter config changed
+- Test the MCP connection from each ACP
+- Configure ACP-specific transport settings
+
+**Why:** Let users manage how sensei integrates with each AI assistant, ensuring MCP tools are reachable and correctly registered.
+
+---
+
+### Benchmark runner
+
+**What to show:**
+- Benchmark definition: name, task corpus (list of task descriptions), project scope
+- Variants: A (baseline, no change) and B (with the change — skill, rule, or persona)
+- Results table: FTR, corrections average, token usage average, duration average, with deltas
+- Conclusion text: plain-language summary of whether the change is effective
+- Actions: promote change to permanent, run again, discard
+
+**User interaction:**
+- Define a task corpus and select variants
+- Run the benchmark
+- Review the side-by-side results
+- Decide whether to keep, iterate, or discard the change
+
+**Why:** Let users measure whether a skill, rule, or persona actually improves outcomes before committing to it permanently.
+
+---
+
+## How to use
+
+1. **Create a skill** — Extensions, create, write markdown, test, enable.
+2. **Install a plugin** — Extensions, import from marketplace or git URL.
+3. **Configure inference** — Settings, Inference, pull models, add API keys, set MOE panel.
+4. **Add an ACP** — Settings, Assistants, register sensei with a new AI tool.
+5. **Benchmark a change** — define task corpus, run A/B, compare FTR and corrections.
+6. **Export/import skills** — Extensions, export as .md or import from .md.

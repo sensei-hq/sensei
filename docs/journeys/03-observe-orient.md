@@ -39,143 +39,47 @@ flowchart TD
     I -->|Click project| J[Project dashboard\n→ Journey 5]
 ```
 
-## Screens (1 main screen, 2 modes)
+## Screens
 
 ### Observatory — Early mode
 
 Shown when sensei has observed fewer than ~5 sessions. Quiet, unassuming.
 
-```
-┌──────────────────────────────────────────────┬──────────────────────┐
-│                                               │ OBSERVATORY          │
-│  Wed · 23 Apr                                 │ 家 Today             │
-│  Good morning, Jerry.                  ◌ FTR  │ 録 Sessions      4   │
-│                                  building…    │ 紋 Patterns      —   │
-│                                               │ 庫 Libraries    14   │
-│  ┌────────────────────────────────────────┐   │ 設 Settings          │
-│  │                                        │   │                      │
-│  │  sensei is listening     観             │   │ ACTIVE PROJECTS      │
-│  │                                        │   │ 工 Lumen Studio  —   │
-│  │  Still listening.                      │   │ 雲 Lumen Cloud   —   │
-│  │                                        │   │ 紋 Brand Kit     —   │
-│  │  Sensei has watched 4 sessions so far. │   │                      │
-│  │  A few early signals are forming in    │   │ RECENT               │
-│  │  lumen-auth, but nothing confident     │   │ 筆 Sketch tool  3w   │
-│  │  enough to teach yet.                  │   │                      │
-│  │                                        │   │                      │
-│  │  ~2-3 more sessions until first lesson │   │ daemon · running     │
-│  └────────────────────────────────────────┘   │ heartbeat 2s ago     │
-│                                               │                      │
-│  Early signals                                │                      │
-│  ┌──────────────────────────────────────┐     │                      │
-│  │ 耳 Listening                         │     │                      │
-│  │   Watching prompt style in canvas.   │     │                      │
-│  │   Early signal: you prefer terse.    │     │                      │
-│  └──────────────────────────────────────┘     │                      │
-│                                               │                      │
-│  System has learned                           │                      │
-│  ┌──────────────────────────────────────┐     │                      │
-│  │     空                                │     │                      │
-│  │  No teachings adopted yet.            │     │                      │
-│  │  Sensei needs a few more sessions.    │     │                      │
-│  └──────────────────────────────────────┘     │                      │
-│                                               │                      │
-└───────────────────────────────────────────────┴──────────────────────┘
-```
+**What to show:**
+- Date and personal greeting
+- An FTR indicator in "building" state (not enough data yet)
+- A hero message: sensei is listening. Session count so far. Which repos are showing early signals. Estimated sessions until first lesson.
+- Early signals section: nascent observations (e.g., "Watching prompt style in canvas. Early signal: you prefer terse.") with a "listening" status indicator
+- Empty teachings panel: explicit message that no teachings have been adopted yet, sensei needs more sessions
+- Sidebar: navigation (Today, Sessions, Patterns, Libraries, Settings), active projects (with no FTR scores yet), recent items, daemon health status
 
-**What the user does:** Reads. Understands sensei is building a baseline. Goes to work with their assistant (Journey 4). Comes back tomorrow.
+**User interaction:**
+- Read and understand that sensei is building a baseline.
+- Navigate to projects or sessions from the sidebar.
+
+**Why:** Prevent disappointment. The user just set up sensei and sees nothing actionable yet. This screen communicates progress ("4 sessions watched, ~2-3 more until first lesson") so they know the system is working, not broken.
 
 ### Observatory — Mature mode
 
 Shown after sensei has enough data to teach. This is the daily-driver screen.
 
-```
-┌──────────────────────────────────────────────┬──────────────────────┐
-│                                               │ OBSERVATORY          │
-│  Wed · 23 Apr                                 │ 家 Today             │
-│  Good morning, Jerry.        ◌ 78 FTR · 14d  │ 録 Sessions     41   │
-│                             ↑ 6% vs prior     │ 紋 Patterns     12   │
-│                             ▂▃▃▄▃▄▅▄▅▆▅▆▅▆   │ 庫 Libraries    14   │
-│                                               │ 設 Settings          │
-│  ┌────────────────────────────────────────┐   │                      │
-│  │                                        │   │ ACTIVE PROJECTS      │
-│  │  聴           sensei speaks            │   │ 工 Lumen Studio  82  │
-│  │                                        │   │ 雲 Lumen Cloud   64  │
-│  │  The AI does not know your auth.       │   │ 紋 Brand Kit     91  │
-│  │                                        │   │                      │
-│  │  Three sessions corrected this week    │   │ RECENT               │
-│  │  in lumen-auth — all touched refresh   │   │ 筆 Sketch tool  3w   │
-│  │  or device flow. There is no           │   │ 巻 Docs site   2mo   │
-│  │  integration-test persona for this     │   │                      │
-│  │  module yet.                           │   │                      │
-│  │                                        │   │ daemon · running     │
-│  │  [Draft a persona →]  ● FTR +14%      │   │ heartbeat 2s ago     │
-│  │                   from s-2891 · 2d ago │   │                      │
-│  └────────────────────────────────────────┘   │                      │
-│                                               │                      │
-│  Also worth noticing                          │                      │
-│  ┌──────────────────────────────────────┐     │                      │
-│  │ 繰 Pattern recurring          3rd×   │     │                      │
-│  │   Cache invalidation missed again.   │     │                      │
-│  ├──────────────────────────────────────┤     │                      │
-│  │ 昇 Teaching adopted          +7% FTR │     │                      │
-│  │   Canvas smoothing promoted to rule. │     │                      │
-│  ├──────────────────────────────────────┤     │                      │
-│  │ 探 Drift detected         low urgency│     │                      │
-│  │   brand-tokens README 47 days old.   │     │                      │
-│  └──────────────────────────────────────┘     │                      │
-│                                               │                      │
-│  System has learned                           │                      │
-│  ┌──────────────────────────────────────┐     │                      │
-│  │ ▎ 2d ago · lumen-studio              │     │                      │
-│  │   Canvas smoothing pattern → rule    │     │                      │
-│  │ ▎ 5d ago · lumen-cloud               │     │                      │
-│  │   Auth refresh · clock-skew tolerance│     │                      │
-│  │ ▎ 1w ago · brand-kit                 │     │                      │
-│  │   Token drift watchdog enabled       │     │                      │
-│  └──────────────────────────────────────┘     │                      │
-│                                               │                      │
-│  Recent sessions                              │                      │
-│  ● lumen-auth    Fix refresh token     3×  38m│                      │
-│  ● lumen-canvas  Bezier smoothing      1st 22m│                      │
-│  ● lumen-auth    OAuth device flow     4×  1h │                      │
-│  ● brand-tokens  Dark-mode ramps       1st 18m│                      │
-│                                               │                      │
-└───────────────────────────────────────────────┴──────────────────────┘
-```
+**What to show:**
+- Date and personal greeting
+- FTR score as a prominent ring/gauge, with a 14-day sparkline trend and delta vs. prior period
+- Hero koan card: the single most important insight today. Written as a brief observation (e.g., "The AI does not know your auth.") with supporting context (what happened, where, how often), a call-to-action button (e.g., "Draft a persona"), and impact attribution (FTR change, source session, recency)
+- Insights section (max 3): categorized observations — recurring patterns, adopted teachings with FTR impact, drift detection with urgency level
+- Adopted teachings: a timeline of recently adopted rules/patterns, showing when adopted, which project, and what changed
+- Recent sessions list: last 4-8 sessions with project, title, attempt count, FTR status, and duration
+- Sidebar: same navigation as early mode, but active projects now show per-project FTR scores
 
-**What the user does:**
+**User interaction:**
+- Read the hero koan and act on it (click the action button to open the action drawer, leading to Journey 6)
+- Scan insights for recurring patterns, teaching effectiveness, or drift
+- Check FTR trend — overall and per-project
+- Click a project in the sidebar to drill into its dashboard (Journey 5)
+- Click a session to see its replay with tool calls and corrections (Journey 5)
 
-1. **Read hero koan** — understand the most important thing today
-2. **Click "Draft a persona →"** — opens action drawer → send to Claude Code (Journey 6)
-3. **Scan insights** — are patterns recurring? teachings working? drift accumulating?
-4. **Check FTR trend** — is it going up? down? Which projects are struggling?
-5. **Click a project** in sidebar — drill into project-specific view (Journey 5)
-6. **Click a session** — see session replay with tool calls and corrections (Journey 5)
-
-## Layout anatomy
-
-```mermaid
-graph LR
-    subgraph Sidebar["Sidebar (240px)"]
-        A1[Sensei logo]
-        A2[Observatory nav\n家 Today\n録 Sessions\n紋 Patterns\n庫 Libraries\n設 Settings]
-        A3[Active projects\n+ FTR scores]
-        A4[Recent projects]
-        A5[Daemon status]
-    end
-
-    subgraph Main["Main content"]
-        B1[Greeting + date]
-        B2[FTR ring + sparkline]
-        B3[Hero koan card\naction button + impact]
-        B4[Insights · max 3]
-        B5[Adopted teachings]
-        B6[Recent sessions list]
-    end
-
-    Sidebar --- Main
-```
+**Why:** This is the command center. Every morning the user opens sensei and sees the one thing that matters most (hero koan), whether things are improving (FTR trend), what the system has learned (teachings), and where to go deeper (projects, sessions). It drives the feedback loop: observe, orient, act.
 
 ## How it works
 
@@ -195,20 +99,14 @@ graph LR
 3. **End of week:** Review adopted teachings. Is the system getting smarter? FTR trending up?
 4. **Drilling down:** Click anything to go deeper — project view, session replay, pattern catalog.
 
-## Mockup status
+## Data sources
 
-| Screen | Mockup exists? | What mockup covers | What's missing |
-|--------|---------------|--------------------|---------------------------------|
-| Observatory — early mode | ✓ `observatory.jsx` | Hero "still listening", early signals, empty teachings | — |
-| Observatory — mature mode | ✓ `observatory.jsx` | Hero koan, FTR ring, insights, adopted teachings, sessions | — |
-| Sidebar navigation | ✓ `observatory.jsx` | Active projects, recent, archived, nav sections | — |
-| First entry toast | ✓ `observatory.jsx` | Welcome toast on first visit | — |
-| Projects index (cards) | ✓ `navigation.jsx` | Card grid with search + status filter | — |
-| Projects palette (Cmd-K) | ✓ `navigation.jsx` | Global search across projects, libs, sessions, commands | — |
-| Projects browser (tree) | ✓ `navigation.jsx` | Left tree + grid, status grouping | — |
-
-### Design brief for mockup changes
-
-**Observatory mockups are comprehensive.** The main gap is connecting the observatory to the action drawer (J6) — when user clicks "Draft a persona →" on the hero koan, it should open the action drawer. The mockup shows the button but not the transition.
-
-**Navigation mockups cover 3 variants.** A decision is needed on which to use (cards, palette, or tree browser). Could be: palette (Cmd-K) as the quick switcher + cards as the default view.
+| Data | Source |
+|------|--------|
+| FTR scores | Computed from `sessions` table (first-try vs. corrected outcomes) |
+| Hero koan | Insights engine — highest urgency recommendation |
+| Insights | Session analytics, pattern detection pipeline, drift detection |
+| Teachings | `change_impacts` table, filtered by positive verdict |
+| Session list | `sessions` table, ordered by recency |
+| Project FTR | `sessions` grouped by `project_id`, 14-day window |
+| Daemon health | senseid heartbeat endpoint |

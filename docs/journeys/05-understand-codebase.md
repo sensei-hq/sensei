@@ -75,225 +75,140 @@ flowchart TD
 
 ### Project dashboard (overview)
 
-```
-┌──────────────────────────────────────────────────────┐
-│  雲 Lumen Cloud · internal                            │
-│  Goal: Keep everyone's work in sync.   64 FTR ▂▃▂▁▂  │
-│  28 sessions (7d) · preferred: claude-code            │
-│                                                       │
-│  ┌─ Overview ─ Graph ─ Patterns ─ Sessions ─ … ──┐   │
-│                                                       │
-│  Repos                                                │
-│  lumen-api    ~/work/lumen-cloud/api    Rust · 後     │
-│  lumen-sync   ~/work/lumen-cloud/sync   Rust · 後     │
-│  lumen-auth   ~/work/lumen-cloud/auth   Rust · 後     │
-│                                                       │
-│  Sensei recommends                                    │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ 急 Write an auth integration-test persona      │   │
-│  │   3 sessions corrected this week.              │   │
-│  │   Projected FTR +14%                           │   │
-│  │   [Send to Claude Code →]  [Customize prompt]  │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Patterns in use: 6                                   │
-│  ✓ Adapter (7 places) · ✓ Observer (14) · ...         │
-│  ⚠ Copy-paste error handling (12 sites)               │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Project identity: name, visibility, goal statement
+- FTR sparkline (7-day trend) and session count
+- Preferred ACP
+- Tabbed navigation: Overview, Graph, Patterns, Sessions, Libraries, MCP Playground, Settings
+- Repos list: repo name, local path, language, sync status
+- Sensei recommendations: each with title, supporting evidence (e.g. "3 sessions corrected this week"), projected FTR impact, and actions (send to ACP, customize prompt)
+- Patterns summary: count of patterns in use, top patterns with occurrence counts, flagged anti-patterns with site counts
 
-### Code graph (3 lens modes × 5 overlays)
+**User interaction:**
+- Navigate between tabs
+- Click a recommendation to open the action drawer
+- Click a pattern or anti-pattern to drill into the patterns section
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Graph · Lumen Cloud          12 files · 14 edges     │
-│                                                       │
-│  Lens: [Call graph]  Matrix  Clusters                 │
-│  Show: [Rework heat]  Duplicates  Patterns  Gods  Stale│
-│                                                       │
-│  ┌────────────────────────────────────────────────┐   │
-│  │                                                │   │
-│  │    ◉ router.ts (42 fan-in)                     │   │
-│  │   ╱  │  ╲                                      │   │
-│  │  ○   ○   ○  middleware / handlers              │   │
-│  │      │                                          │   │
-│  │      ◉ session.ts (28 fan-in)                  │   │
-│  │     ╱ ╲                                         │   │
-│  │    ○   ○  refresh.ts · oauth.ts                │   │
-│  │                                                │   │
-│  │  ● = hot (rework overlay active)               │   │
-│  │  Node size = fan-in + fan-out                  │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Selected: router.ts · 42 fan-in · 18 fan-out         │
-│  7 rework sessions · god-node                         │
-│  [View callers]  [Send refactor prompt]               │
-└──────────────────────────────────────────────────────┘
-```
-
-### Session replay
-
-```
-┌──────────────────────────────────────────────────────┐
-│  Session s-2891 · Fix refresh token rotation          │
-│  10:42 → 11:20 · 38m · 3 corrections · NOT first-try │
-│                                                       │
-│  Tool call timeline                                   │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ 10:42  start · claude-code · cwd lumen-auth    │   │
-│  │ 10:43  get_session_context() → 4 files loaded  │   │
-│  │ 10:44  search("refresh token") → 3 results     │   │
-│  │ 10:45  EDIT src/auth/refresh.ts                │   │
-│  │ 10:51  TEST failed — TokenExpiredError          │   │
-│  │ 10:53  ⚠ CORRECTION "account for clock skew"  │   │
-│  │ 10:55  search("clock skew") → 1 result         │   │
-│  │ 10:58  EDIT src/auth/refresh.ts + skewTolerance│   │
-│  │ 11:02  TEST 5/5 passing                        │   │
-│  │ 11:08  ⚠ CORRECTION "handle refresh during     │   │
-│  │         rotation"                               │   │
-│  │ 11:14  EDIT + inFlightMutex                    │   │
-│  │ 11:20  checkpoint · committed · 38m             │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Click any event to see:                              │
-│  • Tool call: input params + full response            │
-│  • Correction: what was wrong + how it was fixed      │
-│  • Edit: file diff                                    │
-└──────────────────────────────────────────────────────┘
-```
-
-### MCP Playground
-
-```
-┌──────────────────────────────────────────────────────┐
-│  MCP Playground                                       │
-│  Scope: [sensei]  postgres-mcp  stripe-mcp            │
-│                                                       │
-│  Categories                    Tool detail             │
-│  場 Project tools (3)          sensei.search           │
-│  庫 Library tools (4)    →     Search code by query    │
-│  紋 Pattern tools (3)                                  │
-│  録 Session tools (1)          Project: [Lumen Cloud ▾]│
-│                                Query:  [refresh token ]│
-│                                Limit:  [10           ]│
-│                                                        │
-│                                [Run tool]              │
-│                                                        │
-│                                Response:               │
-│                                ┌──────────────────┐   │
-│                                │ 3 results:       │   │
-│                                │ auth/refresh.ts  │   │
-│                                │ auth/session.ts  │   │
-│                                │ api/handlers/... │   │
-│                                └──────────────────┘   │
-│                                                        │
-│  Tool usage stats (this project)                       │
-│  search: 47x · get_callers: 23x · get_patterns: 0x ⚠ │
-└──────────────────────────────────────────────────────┘
-```
-
-## How to use
-
-1. **Daily check:** Open project from sidebar → Overview shows recommendations + pattern summary
-2. **Investigate hotspot:** Graph tab → rework overlay → click hot node → see callers → send refactor prompt
-3. **Understand failure:** Sessions tab → click a corrected session → step through tool calls → see where it went wrong
-4. **Explore patterns:** Patterns tab → see what's followed vs anti-patterns → promote or fix
-5. **Test a tool:** MCP Playground → select tool → fill inputs → run → see response
-6. **Check library usage:** Libraries tab → click library → see top symbols, call sites, rules
-
-## Additional screens (not yet in mockups)
-
-### Doc traceability (idea 13) — new section in project view
-
-**Purpose:** Show doc-to-code links, flag stale/broken references, offer "fix drift" actions.
-
-**Content needed:**
-- List of doc files with link health: current / drifted / broken
-- Per-doc drill-in: which symbols it references, their current state
-- Drift detail: what changed (old signature → new signature)
-- Action: "Update doc" → sends prompt to ACP with the specific drift
-- Filter: show all / drifted only / broken only
-
-**User flow:** Project view → Doc traceability section → see drifted docs → click → see what changed → send fix to ACP
-
-### Pattern knowledge catalog (idea 17) — extension of patterns section
-
-**Purpose:** Browse industry patterns (patterns.dev, GoF), match against codebase, import as project rules.
-
-**Content needed:**
-- Catalog browser with categories (GoF structural, behavioral, creational; resilience; data access)
-- Per-pattern: description, example, known implementations in this codebase (if any)
-- "Match" indicator: "This pattern detected in 3 places" or "Not present — recommended"
-- Import action: add pattern as project rule (suggested → rule)
-- Evidence: sessions that used this pattern and their FTR correlation
-
-**User flow:** Patterns tab → "Browse catalog" → filter by category → see matches → import recommended ones
-
-### Tool usage analytics (idea 25) — extension of MCP playground
-
-**Purpose:** See which tools are used/ignored across sessions, correlate with FTR.
-
-**Content needed:**
-- Tool frequency chart: bar chart of tool usage per week/month
-- Unused tools list with "why?" analysis (skill doesn't mention it, name unclear, etc.)
-- Effectiveness correlation: "Sessions using get_patterns() had 92% FTR vs 68% without"
-- Per-tool detail: average response time, % of times result was used by assistant
-- Trend: is tool adoption increasing after a skill change?
-
-**User flow:** MCP Playground → "Usage stats" tab → see frequency → click tool → see effectiveness → decide whether to update skill instructions
+**Why:** Give the user a single-screen health check of their project — what's working, what's not, and what sensei suggests next.
 
 ---
 
-## Mockup status
+### Code graph (3 lens modes x 5 overlays)
 
-What exists in the current mockups (`docs/design/02-desktop/setup/lib/`) vs what this journey needs.
+**What to show:**
+- Interactive graph visualization of code structure
+- Lens mode selector: Call graph (force layout), Matrix (heatmap), Clusters (community bubbles)
+- Overlay selector: Rework heat, Duplicates, Patterns, God-nodes/hotspots, Stale/drift
+- File count and edge count
+- Node sizing based on fan-in + fan-out; color coding based on active overlay
+- Selected node detail: file name, fan-in/fan-out counts, rework session count, god-node flag
+- Actions on selected node: view callers, send refactor prompt
 
-| Screen | Mockup exists? | What mockup covers | What's missing |
-|--------|---------------|--------------------|---------------------------------|
-| Project overview | ✓ `project-shared.jsx` | Repos list, recommendations, FTR sparkline, hotspots | — |
-| Code graph (3 lens) | ✓ `project-shared.jsx` | Force-layout, matrix, clusters + 5 overlays | — |
-| Patterns followed | ✓ `project-shared.jsx` | Rule/suggested/gap lifecycle, confidence, places | — |
-| Anti-patterns | ✓ `project-shared.jsx` | Severity, cross-link to constructive fix | — |
-| Sessions list | ✓ `project-shared.jsx` | FTR, corrections, duration, time | — |
-| Session replay | ✗ | — | Full tool call timeline, correction details, input/response for each call |
-| Libraries list | ✓ `libraries.jsx` | Detected/imported/services groups, filter, search | — |
-| Library detail | ✓ `libraries.jsx` | Top symbols, usage places, rules, MCP examples | — |
-| MCP Playground | ✓ partial `libraries.jsx` | Tool browser, form inputs, run tool, response | Tool usage stats, effectiveness correlation, scope switching between MCPs |
-| Project settings | ✓ `project-shared.jsx` | Identity, stack, repos, links, guidelines, skills, privacy | — |
-| Doc traceability | ✗ | — | **New screen needed:** doc-to-code links, drift status, fix actions |
-| Pattern catalog | ✗ | — | **New screen needed:** industry pattern browser, match against codebase, import |
-| Tool usage analytics | ✗ | — | **New screen needed:** frequency charts, unused tools, FTR correlation |
+**User interaction:**
+- Switch lens mode and overlay
+- Click/select a node to see its details
+- Pan and zoom the graph
+- Launch a refactor prompt from a selected node
 
-### Design brief for missing screens
+**Why:** Let the user visually identify structural problems (god-nodes, hotspots, duplication) and act on them directly.
 
-For an LLM designer creating additional mockups:
+---
 
-**Session replay screen:**
-- Part of the project view, accessible by clicking a session in the sessions list
-- Header: session id, title, time range, duration, outcome (first-try or N corrections)
-- Main content: vertical timeline of events — each event is a row with timestamp, kind icon, description
+### Session replay
+
+**What to show:**
+- Session header: ID, title, time range, duration, correction count, first-try-resolution status
+- Vertical timeline of events, each with: timestamp, event kind icon, description
 - Event kinds: start, context_loaded, tool_call, edit, test, correction, phase_change, end
-- Clicking a tool_call event expands to show input params (JSON) and response (JSON/text)
-- Clicking a correction event shows what was wrong and how the assistant adjusted
 - Color coding: corrections in amber, successful tool calls in jade, tests in neutral
+- Expanded event detail: tool call input params + full response (JSON), correction details (what was wrong, how it was fixed), edit diffs
 
-**Doc traceability screen:**
-- Part of the project view, new tab alongside Overview/Graph/Patterns/Sessions
-- Header: "N docs tracked · N current · N drifted · N broken"
-- List view: doc file path, link count, health status (current/drifted/broken), last checked
-- Drill-in: click doc → see each reference → symbol name, expected signature, actual signature, status
-- Action per drifted/broken ref: "Send fix to Claude Code" → opens action drawer with pre-filled prompt
+**User interaction:**
+- Click any event to expand and see full input/response
+- Click a correction to see the before/after reasoning
+- Navigate the timeline chronologically
 
-**Pattern catalog screen:**
-- Extension of the existing Patterns tab — add a "Browse catalog" button or sub-tab
-- Left rail: category filter (GoF · Structural, GoF · Behavioral, Resilience, Data Access, etc.)
-- Main list: pattern name, family, description, "detected in N places" badge (or "not present")
-- Detail panel: full description, example code, where it's detected in this codebase, FTR correlation
-- Action: "Import as project rule" or "Mark as gap" (recommended but absent)
+**Why:** Let the user understand exactly where a session went wrong and what corrections were needed, so they can create rules or personas to prevent the same failures.
 
-**Tool usage analytics screen:**
-- Extension of MCP Playground — add a "Usage" tab alongside "Try tool"
-- Bar chart: tool usage frequency over time (weekly buckets)
-- Table: tool name, total calls, % used in response, avg response time, FTR correlation
-- Highlight: tools with 0 usage get ⚠ badge — "Never called. Skill may not mention this tool."
-- Trend line: per-tool adoption over time (did a skill change increase usage?)
+---
+
+### MCP Playground
+
+**What to show:**
+- Scope selector: switch between MCP servers (sensei, postgres-mcp, stripe-mcp, etc.)
+- Tool categories with counts (project tools, library tools, pattern tools, session tools)
+- Selected tool detail: name, description, input parameter form
+- Response display area showing full request and response
+- Tool usage stats for this project: tool name, call count, flagged tools with zero usage
+
+**User interaction:**
+- Switch MCP scope
+- Browse tools by category
+- Select a tool, fill in inputs, execute it
+- View the raw request and response
+
+**Why:** Give the user (and the designer building AI skills) a way to explore and test MCP tools interactively, and to see which tools are underused.
+
+---
+
+### Doc traceability
+
+**What to show:**
+- Header stats: docs tracked, current count, drifted count, broken count
+- List of doc files: file path, link count, health status (current/drifted/broken), last checked
+- Per-doc drill-in: each referenced symbol, expected signature, actual signature, status
+- Drift detail: old signature vs. new signature
+
+**User interaction:**
+- Filter by status: all, drifted only, broken only
+- Click a doc to see its symbol references and their health
+- Send a "fix drift" prompt to ACP with the specific drift pre-filled
+
+**Why:** Show doc-to-code links and flag stale/broken references so the user can keep documentation accurate with minimal effort.
+
+---
+
+### Pattern knowledge catalog
+
+**What to show:**
+- Catalog browser with category filters: GoF (structural, behavioral, creational), resilience, data access
+- Per pattern: name, family, description, example, detection status ("detected in N places" or "not present — recommended")
+- Evidence: sessions that used this pattern and their FTR correlation
+- Import status: already a project rule, or available to import
+
+**User interaction:**
+- Filter by category
+- Click a pattern to see full description, example, and codebase matches
+- Import a pattern as a project rule (suggested or rule)
+- Mark a pattern as a gap (recommended but absent)
+
+**Why:** Let the user browse industry patterns, see which ones are already in the codebase, and import recommended patterns as enforceable rules.
+
+---
+
+### Tool usage analytics
+
+**What to show:**
+- Tool frequency chart: usage per week/month as a bar chart
+- Unused tools list with analysis of why (skill doesn't mention it, name unclear, etc.)
+- Effectiveness correlation: FTR comparison for sessions that used a tool vs. sessions that did not
+- Per-tool detail: average response time, percentage of times the result was actually used by the assistant
+- Trend: tool adoption over time, especially after skill changes
+
+**User interaction:**
+- Browse the frequency chart and click individual tools for detail
+- View unused tools and their suggested explanations
+- Decide whether to update skill instructions based on tool effectiveness data
+
+**Why:** Help the user understand which MCP tools are valuable and which are being ignored, so they can tune skills to drive better tool adoption and FTR.
+
+---
+
+## How to use
+
+1. **Daily check:** Open project from sidebar. Overview shows recommendations and pattern summary.
+2. **Investigate hotspot:** Graph tab, rework overlay, click hot node, see callers, send refactor prompt.
+3. **Understand failure:** Sessions tab, click a corrected session, step through tool calls, see where it went wrong.
+4. **Explore patterns:** Patterns tab, see what's followed vs. anti-patterns, promote or fix.
+5. **Test a tool:** MCP Playground, select tool, fill inputs, run, see response.
+6. **Check library usage:** Libraries tab, click library, see top symbols, call sites, rules.

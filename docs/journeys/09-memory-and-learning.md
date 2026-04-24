@@ -50,213 +50,97 @@ flowchart TD
 
 ### Observatory — Memory indicator
 
-Memory surfaces in the observatory daily view as part of the "system has learned" section.
+**What to show:**
+- Section title with active/pending memory counts
+- 3-5 most recent memories, each with: age, scope, strength (dot indicator), title, reinforcement count, source session
+- Pending validation items: assistant-proposed memories with a warning badge
+- Actions per pending item: Validate, Enhance, Dismiss
+- Link to full memory view
 
-```
-┌──────────────────────────────────────────────────────┐
-│  System has learned                                   │
-│                                                       │
-│  ▎ 2d ago · lumen-cloud · strength 4                 │
-│    Don't mock the database in integration tests       │
-│    3x reinforced · 0 violations                       │
-│                                                       │
-│  ▎ 5d ago · global · strength 3                      │
-│    Check clock-skew tolerance in refresh flows        │
-│    2x reinforced · from s-2891                        │
-│                                                       │
-│  ▎ new · lumen-cloud · strength 0.5                  │
-│    ⚠ Assistant learned: cache invalidation before     │
-│    token rotation — awaiting validation               │
-│    [Validate]  [Enhance]  [Dismiss]                   │
-│                                                       │
-│  42 active memories · 3 pending validation            │
-│  [View all memories]                                  │
-└──────────────────────────────────────────────────────┘
-```
+**User interaction:**
+- Scan recent learnings at a glance
+- Validate or dismiss assistant-proposed memories
+- Click through to the full project memory view
 
-**What the user does:** Scan recent learnings. Validate assistant-proposed memories. Click through to full memory view.
+**Why:** Surface what sensei has learned in the daily observatory view so the user stays aware of accumulating knowledge and can validate uncertain memories quickly.
+
+---
 
 ### Project view — Memory section
 
-New section in the project view alongside Overview, Graph, Patterns, Sessions, Settings.
+**What to show:**
+- Filter bar: scope (all, project, module, task-type, stack), status (active, pending, archived), sort (strength, recent, category)
+- Memory list, each item showing: strength dots, title, truncated "because" reasoning, scope tags, module tags, task-type tags, reinforcement count, violation count, age, reference count (good examples + bad examples)
+- Actions per memory: View, Edit, Archive
+- Consolidation suggestions section: MOE-proposed merges showing which memories can be combined, the proposed core concept, and a link to review
+- Memory stats: active count, pending count, archived count, strongest memory, most-referenced memory, conflict count
 
-```
-┌──────────────────────────────────────────────────────┐
-│  雲 Lumen Cloud · Memories                            │
-│                                                       │
-│  Scope: [All]  Project  Module  Task-type  Stack      │
-│  Status: [Active]  Pending  Archived                  │
-│  Sort: [Strength ▾]  Recent  Category                 │
-│                                                       │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ ●●●●○  Don't mock the database in             │   │
-│  │        integration tests                       │   │
-│  │        because: mock/prod divergence masked    │   │
-│  │        broken migration (Q1 2026)              │   │
-│  │        scope: project · modules: database,     │   │
-│  │        migration · task: test, fix             │   │
-│  │        3x reinforced · 0 violations · 47d old  │   │
-│  │        refs: 2 good examples · 1 bad example   │   │
-│  │        [View]  [Edit]  [Archive]               │   │
-│  ├────────────────────────────────────────────────┤   │
-│  │ ●●●○○  Use adapter pattern for auth            │   │
-│  │        because: inline auth diverges — sync.ts │   │
-│  │        missed audit log (s-2891)               │   │
-│  │        scope: project · modules: auth/*        │   │
-│  │        2x reinforced · 0 violations · 23d old  │   │
-│  │        refs: auth_adapter.rs:14 (good)         │   │
-│  │              handlers/auth.ts:42 (bad)          │   │
-│  │        [View]  [Edit]  [Archive]               │   │
-│  ├────────────────────────────────────────────────┤   │
-│  │ ●○○○○  ⚠ Cache invalidation before rotation   │   │
-│  │        (pending validation — assistant learned) │   │
-│  │        [Validate]  [Enhance]  [Dismiss]        │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  ─────────────────────────────────────────────────    │
-│                                                       │
-│  Consolidation suggestions (from MOE panel)           │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ 📎 3 memories about auth can be consolidated:  │   │
-│  │    "adapter pattern" + "clock-skew" + "mutex"  │   │
-│  │    → Core concept: "Auth module conventions"   │   │
-│  │    [Review consolidation]                      │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Memory stats                                         │
-│  42 active · 3 pending · 12 archived                  │
-│  Strongest: "Don't mock DB" (4.0)                     │
-│  Most referenced: "Adapter pattern" (6 sessions)      │
-│  Conflict detected: 0                                 │
-└──────────────────────────────────────────────────────┘
-```
+**User interaction:**
+- Filter and sort memories
+- Validate assistant-proposed memories
+- Edit "because" reasoning or scope
+- Archive memories that no longer apply
+- Review MOE consolidation suggestions
+- View stats to understand memory health
 
-**What the user does:**
-1. Browse memories by scope, status, strength
-2. Validate assistant-proposed memories
-3. Edit "because" reasoning or scope
-4. Archive memories that no longer apply
-5. Review MOE consolidation suggestions
-6. View memory stats — what's strongest, most referenced
+**Why:** Give the user a complete view of everything sensei has learned about this project, with tools to curate, validate, and consolidate that knowledge.
+
+---
 
 ### Memory detail (drill-in)
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Memory: Don't mock the database in integration tests │
-│                                                       │
-│  Strength: ●●●●○ (4.0)    Status: active             │
-│  Category: correctness     Created: 2026-03-15        │
-│                                                       │
-│  Because:                                             │
-│  Q1 2026: mocked tests passed but prod migration      │
-│  failed. Three days of debugging. The mock diverged   │
-│  from actual PostgreSQL behavior on nullable FKs.     │
-│                                                       │
-│  Scope:                                               │
-│  Project: lumen-cloud                                 │
-│  Modules: database/*, migration/*                     │
-│  Task types: test, fix                                │
-│                                                       │
-│  ─────────────────────────────────────────────────    │
-│                                                       │
-│  References                                           │
-│  ✓ Good: tests/integration/auth_flow.rs:28            │
-│    "Real DB connection with test transaction"          │
-│  ✗ Bad: tests/unit/mock_refresh.rs:14                 │
-│    "Mocked DB — missed nullable FK behavior"          │
-│  📝 Evidence: sessions s-2891, s-2895, s-2901         │
-│                                                       │
-│  ─────────────────────────────────────────────────    │
-│                                                       │
-│  History                                              │
-│  2026-04-22 · reinforced (session s-2901)             │
-│  2026-04-15 · reinforced (session s-2895)             │
-│  2026-03-20 · reinforced (session s-2891)             │
-│  2026-03-15 · created from correction                 │
-│    user: "no, don't mock the database"                │
-│                                                       │
-│  [Edit]  [Archive]  [Convert to guideline]            │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Memory title, strength (dots + numeric), status, category, creation date
+- Full "because" text: the reasoning behind this memory, including the incident that created it
+- Scope breakdown: project, modules, task types
+- References: good examples (file:line with snippet description), bad examples (file:line with snippet description), evidence sessions (session IDs)
+- Reinforcement history: chronological list of events (created, reinforced, edited) with dates and session IDs
+- Original correction quote if created from a user correction
 
-**What the user does:**
-1. Read the full reasoning and history
-2. Click references to navigate to code
-3. Edit the "because" or scope if it needs refinement
-4. Convert to a project guideline (permanent, max strength)
-5. Archive if no longer relevant
+**User interaction:**
+- Click references to navigate to code locations
+- Edit the "because" reasoning or scope
+- Convert the memory to a permanent project guideline (max strength, non-decaying)
+- Archive if no longer relevant
+
+**Why:** Let the user understand the full story behind a memory — why it exists, how it was reinforced, and what code it applies to — so they can make informed decisions about keeping, editing, or promoting it.
+
+---
 
 ### Memory consolidation review
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Consolidation: Auth module conventions               │
-│                                                       │
-│  MOE panel suggests merging 3 memories:               │
-│                                                       │
-│  Source memories:                                      │
-│  1. "Use adapter pattern for auth" (strength 3)       │
-│  2. "Check clock-skew tolerance" (strength 4)         │
-│  3. "Use inFlightMutex for concurrent refresh" (2)    │
-│                                                       │
-│  Proposed consolidated memory:                        │
-│  ┌────────────────────────────────────────────────┐   │
-│  │ Auth module conventions                        │   │
-│  │                                                │   │
-│  │ All auth integrations use the adapter pattern  │   │
-│  │ (see auth_adapter.rs:14). Key rules:           │   │
-│  │ - 30s clock-skew tolerance for token flows     │   │
-│  │ - inFlightMutex for concurrent refresh ops     │   │
-│  │ - Never inline auth logic in handlers          │   │
-│  │                                                │   │
-│  │ Because: inline auth diverges (sync.ts missed  │   │
-│  │ audit log), clock-skew causes TokenExpiredError │   │
-│  │ at +3s offset, concurrent refresh without      │   │
-│  │ mutex causes race conditions.                  │   │
-│  │ Evidence: s-2891, s-2895, s-2901 (3 sessions)  │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  Combined strength: 4.0 (highest of sources)          │
-│  Original memories will be archived.                  │
-│                                                       │
-│  [Accept consolidation]  [Edit first]  [Keep separate]│
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Source memories: list of memories being merged, each with title and current strength
+- Proposed consolidated memory: title, combined rules/content, merged "because" reasoning, combined evidence
+- Combined strength: highest of the source memories
+- Note that original memories will be archived upon acceptance
 
-**What the user does:** Review the proposed merge. Accept, edit, or keep memories separate.
+**User interaction:**
+- Review the proposed merge
+- Edit the consolidated text before accepting
+- Accept (archives originals, creates merged memory)
+- Keep separate (dismiss the suggestion)
+
+**Why:** Prevent memory bloat by letting the MOE panel suggest merges of related memories, with full user control over the final result.
+
+---
 
 ### Context pack tool (mid-session)
 
-When context gets bloated in a long session, the assistant or user triggers a context rotation:
+**What to show:**
+- Current progress snapshot: what the user is working on, what's completed, what's pending, what files are in-flight
+- Memories to reload: grouped by scope (global, project, module, task-type) with counts
+- Noise to clear: stale file reads and accumulated context that will be removed
+- What will be kept: snapshot + memories + active files
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Context rotation                                     │
-│                                                       │
-│  Current session context is large. Sensei can:        │
-│                                                       │
-│  1. Snapshot current progress                         │
-│     ✓ Working on: inFlightMutex implementation        │
-│     ✓ Completed: skewTolerance, tests passing         │
-│     ✓ Pending: mutex implementation, integration test │
-│     ✓ In-flight: auth/refresh.ts                      │
-│                                                       │
-│  2. Reload relevant memories                          │
-│     → 5 global memories                               │
-│     → 8 project memories (lumen-cloud)                │
-│     → 3 module memories (auth/refresh.ts)             │
-│     → 2 task-type memories (fix)                      │
-│                                                       │
-│  3. Clear accumulated noise                           │
-│     → Remove stale file reads from context             │
-│     → Keep: snapshot + memories + active files         │
-│                                                       │
-│  [Rotate context now]  [Cancel]                       │
-└──────────────────────────────────────────────────────┘
-```
+**User interaction:**
+- Trigger when a session feels sluggish or the assistant starts forgetting rules
+- Review what will be snapshot and what will be cleared
+- Execute the rotation or cancel
 
-**What the user does:** Trigger when session feels sluggish or assistant starts forgetting rules. Sensei snapshots, clears, and reloads with fresh memories.
+**Why:** Give users a way to reset a bloated session context without losing progress or accumulated memories. Sensei snapshots the current state, clears noise, and reloads relevant memories.
+
+---
 
 ## How it works
 
@@ -337,51 +221,9 @@ gantt
 
 ## How to use
 
-1. **Do nothing** — memories accumulate automatically from corrections and session activity
-2. **Validate** — when assistant proposes a memory, review and validate from observatory or project view
-3. **Enhance** — edit the "because" reasoning or adjust scope when a memory is too narrow/broad
-4. **Consolidate** — review MOE suggestions to merge related memories into concise knowledge
-5. **Rotate context** — in long sessions, trigger context pack tool to snapshot + reload with fresh memories
-6. **Convert to guideline** — promote a battle-tested memory to a permanent project rule
-
-## Mockup status
-
-| Screen | Mockup exists? | What's missing |
-|--------|---------------|----------------|
-| Observatory memory indicator | ✗ | **New section** in daily view — recent learnings, pending validation, memory stats |
-| Project memory view | ✗ | **New section** in project view — filter/sort memories, validate, consolidate |
-| Memory detail | ✗ | **New screen** — full reasoning, references to code, reinforcement history |
-| Memory consolidation | ✗ | **New screen** — MOE-proposed merge, preview, accept/edit/keep separate |
-| Context pack tool | ✗ | **New screen** (or modal) — snapshot summary, memory reload preview, rotate action |
-
-### Design brief for missing screens
-
-**Observatory memory indicator:**
-- Part of "system has learned" section in observatory daily view
-- Shows 3-5 most recent memories with strength indicators (● dots)
-- Pending validation items have ⚠ badge and Validate/Enhance/Dismiss actions
-- Count: "42 active · 3 pending · [View all]"
-
-**Project memory view:**
-- New tab in project view: Overview / Graph / Patterns / **Memories** / Sessions / Settings
-- Filter bar: scope (all, project, module, task-type, stack) + status (active, pending, archived) + sort
-- Each memory shows: strength dots, title, truncated "because", scope tags, reinforcement count, age, reference count
-- Actions per memory: View, Edit, Archive
-- Bottom section: MOE consolidation suggestions + memory stats
-
-**Memory detail:**
-- Drill-in from project memory list or observatory
-- Full "because" text, scope breakdown, reference list with clickable code links
-- Reinforcement history timeline
-- Actions: Edit, Archive, Convert to guideline
-
-**Memory consolidation:**
-- Triggered from project memory view when MOE suggests a merge
-- Shows source memories side by side with proposed consolidated version
-- User can edit the consolidated text before accepting
-- Accept archives originals, creates merged memory with combined strength
-
-**Context pack tool:**
-- Modal triggered by assistant or user during a session
-- Shows: current progress snapshot, memories to reload (grouped by scope), noise to clear
-- Single "Rotate context now" action
+1. **Do nothing** — memories accumulate automatically from corrections and session activity.
+2. **Validate** — when the assistant proposes a memory, review and validate from observatory or project view.
+3. **Enhance** — edit the "because" reasoning or adjust scope when a memory is too narrow or too broad.
+4. **Consolidate** — review MOE suggestions to merge related memories into concise knowledge.
+5. **Rotate context** — in long sessions, trigger the context pack tool to snapshot and reload with fresh memories.
+6. **Convert to guideline** — promote a battle-tested memory to a permanent project rule.
