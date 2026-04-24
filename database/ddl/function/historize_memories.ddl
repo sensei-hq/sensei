@@ -58,7 +58,7 @@ begin
   , new.strength
   , new.status::text
   , new.session_id
-  , tg_op::history.dml_operation
+  , tg_op::sensei.dml_operation
   , new.modified_at
   , null
   , new.modified_at
