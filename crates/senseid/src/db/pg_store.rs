@@ -67,6 +67,47 @@ impl PgStore {
         Ok(rows.into_iter().collect())
     }
 
+    // ── Tags (controlled vocabulary) ──────────────────────────────────
+
+    pub async fn add_tag(&self, tag: &str, category: Option<&str>) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.tags(tag, category) VALUES($1, $2) ON CONFLICT(tag) DO UPDATE SET category = EXCLUDED.category, modified_at = now()"
+        )
+            .bind(tag)
+            .bind(category)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn remove_tag(&self, tag: &str) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.tags WHERE tag = $1")
+            .bind(tag)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn list_tags(&self) -> Result<Vec<(String, Option<String>)>, String> {
+        sqlx_core::query_as::query_as("SELECT tag, category FROM sensei.tags ORDER BY tag")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn list_tags_by_category(&self, category: &str) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT tag FROM sensei.tags WHERE category = $1 ORDER BY tag"
+        )
+            .bind(category)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
     // ── Raw ──────────────────────────────────────────────────────────
 
     /// Execute a raw SQL statement (for one-off queries like scanned_roots).
@@ -180,6 +221,75 @@ mod tests {
         assert_eq!(all[&k2], "2");
         s.delete_config(&k1).await.unwrap();
         s.delete_config(&k2).await.unwrap();
+    }
+
+    // ── Tags tests ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn tag_add_and_list() {
+        let s = pg_store().await;
+        let tag = "_test:tag_add:rust";
+        s.add_tag(tag, Some("stack")).await.unwrap();
+        let tags = s.list_tags().await.unwrap();
+        assert!(tags.iter().any(|(t, c)| t == tag && c.as_deref() == Some("stack")));
+        s.remove_tag(tag).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tag_add_without_category() {
+        let s = pg_store().await;
+        let tag = "_test:tag_nocat:misc";
+        s.add_tag(tag, None).await.unwrap();
+        let tags = s.list_tags().await.unwrap();
+        assert!(tags.iter().any(|(t, c)| t == tag && c.is_none()));
+        s.remove_tag(tag).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tag_add_duplicate_is_upsert() {
+        let s = pg_store().await;
+        let tag = "_test:tag_dup:ts";
+        s.add_tag(tag, Some("stack")).await.unwrap();
+        s.add_tag(tag, Some("language")).await.unwrap(); // update category
+        let tags = s.list_tags().await.unwrap();
+        let found: Vec<_> = tags.iter().filter(|(t, _)| t == tag).collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1.as_deref(), Some("language"));
+        s.remove_tag(tag).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tag_remove() {
+        let s = pg_store().await;
+        let tag = "_test:tag_rm:go";
+        s.add_tag(tag, Some("stack")).await.unwrap();
+        s.remove_tag(tag).await.unwrap();
+        let tags = s.list_tags().await.unwrap();
+        assert!(!tags.iter().any(|(t, _)| t == tag));
+    }
+
+    #[tokio::test]
+    async fn tag_remove_nonexistent_is_noop() {
+        let s = pg_store().await;
+        s.remove_tag("_test:tag_rm_noop:xyz").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tag_list_by_category() {
+        let s = pg_store().await;
+        let t1 = "_test:tag_cat:rust";
+        let t2 = "_test:tag_cat:ts";
+        let t3 = "_test:tag_cat:active";
+        s.add_tag(t1, Some("stack")).await.unwrap();
+        s.add_tag(t2, Some("stack")).await.unwrap();
+        s.add_tag(t3, Some("status")).await.unwrap();
+        let stack_tags = s.list_tags_by_category("stack").await.unwrap();
+        assert!(stack_tags.contains(&t1.to_string()));
+        assert!(stack_tags.contains(&t2.to_string()));
+        assert!(!stack_tags.contains(&t3.to_string()));
+        s.remove_tag(t1).await.unwrap();
+        s.remove_tag(t2).await.unwrap();
+        s.remove_tag(t3).await.unwrap();
     }
 
     // ── Schema tests ─────────────────────────────────────────────────
