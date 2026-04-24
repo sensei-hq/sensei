@@ -171,6 +171,88 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Nodes ─────────────────────────────────────────────────────────
+
+    pub async fn upsert_node(
+        &self, folder_id: &uuid::Uuid, kind: &str, name: &str, file_path: &str,
+        parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
+        line_start: Option<i32>, line_end: Option<i32>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
+             VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT DO NOTHING RETURNING id"
+        ).bind(folder_id).bind(kind).bind(name).bind(file_path)
+            .bind(parent_id).bind(signature).bind(line_start).bind(line_end)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn get_nodes_by_folder(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, Option<i32>, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end FROM sensei.nodes WHERE folder_id = $1 ORDER BY file_path, line_start"
+        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le })
+        }).collect())
+    }
+
+    pub async fn get_nodes_by_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, parent_id, line_start FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 ORDER BY line_start"
+        ).bind(folder_id).bind(file_path).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, name, pid, ls)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "parent_id": pid, "line_start": ls })
+        }).collect())
+    }
+
+    pub async fn delete_nodes_by_folder(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1")
+            .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ── Edges ────────────────────────────────────────────────────────
+
+    pub async fn insert_edge(
+        &self, folder_id: &uuid::Uuid, source_id: &uuid::Uuid,
+        target_id: Option<&uuid::Uuid>, target_name: Option<&str>,
+        kind: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.edges(folder_id, source_id, target_id, target_name, kind) VALUES($1, $2, $3, $4, $5::sensei.edge_kind) RETURNING id"
+        ).bind(folder_id).bind(source_id).bind(target_id).bind(target_name).bind(kind)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn get_callers(&self, node_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+            "SELECT e.id, e.source_id, e.kind::text FROM sensei.edges e WHERE e.target_id = $1 AND e.kind = 'calls'::sensei.edge_kind"
+        ).bind(node_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, src, kind)| {
+            serde_json::json!({ "edge_id": id, "caller_id": src, "kind": kind })
+        }).collect())
+    }
+
+    pub async fn get_callees(&self, node_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> = sqlx_core::query_as::query_as(
+            "SELECT e.id, e.target_id, e.target_name, e.kind::text FROM sensei.edges e WHERE e.source_id = $1 AND e.kind = 'calls'::sensei.edge_kind"
+        ).bind(node_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, tgt, name, kind)| {
+            serde_json::json!({ "edge_id": id, "callee_id": tgt, "callee_name": name, "kind": kind })
+        }).collect())
+    }
+
+    pub async fn get_edges_by_kind(&self, folder_id: &uuid::Uuid, kind: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, source_id, target_id, target_name FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind"
+        ).bind(folder_id).bind(kind).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, src, tgt, name)| {
+            serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name })
+        }).collect())
+    }
+
     // ── Extensions ────────────────────────────────────────────────────
 
     pub async fn create_extension(
@@ -1011,6 +1093,40 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    // ── Nodes + Edges tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn node_upsert_and_query() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("node_{}", uuid::Uuid::new_v4())).await;
+        let file_id = s.upsert_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None).await.unwrap();
+        let fn_id = s.upsert_node(&fid, "function", "main", "src/main.rs", Some(&file_id), Some("fn main()"), Some(1), Some(10)).await.unwrap();
+        let nodes = s.get_nodes_by_folder(&fid).await.unwrap();
+        assert_eq!(nodes.len(), 2);
+        let by_file = s.get_nodes_by_file(&fid, "src/main.rs").await.unwrap();
+        assert_eq!(by_file.len(), 2);
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+        assert_eq!(s.get_nodes_by_folder(&fid).await.unwrap().len(), 0);
+        let _ = (file_id, fn_id);
+    }
+
+    #[tokio::test]
+    async fn edge_insert_and_query() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("edge_{}", uuid::Uuid::new_v4())).await;
+        let fn_a = s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+        let fn_b = s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+        s.insert_edge(&fid, &fn_a, Some(&fn_b), None, "calls").await.unwrap();
+        let callers = s.get_callers(&fn_b).await.unwrap();
+        assert_eq!(callers.len(), 1);
+        assert_eq!(callers[0]["caller_id"], fn_a.to_string());
+        let callees = s.get_callees(&fn_a).await.unwrap();
+        assert_eq!(callees.len(), 1);
+        let by_kind = s.get_edges_by_kind(&fid, "calls").await.unwrap();
+        assert_eq!(by_kind.len(), 1);
+        s.delete_nodes_by_folder(&fid).await.unwrap(); // cascades edges
     }
 
     // ── Extensions tests ───────────────────────────────────────────────
