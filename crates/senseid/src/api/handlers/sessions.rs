@@ -12,9 +12,18 @@ pub(crate) async fn get_sessions_stub(
     State(state): State<AppState>,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    let repo_id = q.get("repoId").map(|s| s.as_str());
-    let sessions = store.get_sessions(repo_id).unwrap_or_default();
+    // PgStore uses list_sessions_by_folder(&Uuid, limit) instead of get_sessions(repo_id)
+    let sessions = if let Some(folder_str) = q.get("repoId") {
+        if let Ok(folder_id) = uuid::Uuid::parse_str(folder_str) {
+            state.pg.list_sessions_by_folder(&folder_id, 50).await.unwrap_or_default()
+        } else {
+            vec![]
+        }
+    } else {
+        // No folder filter — no PgStore equivalent for "all sessions".
+        // TODO: Add list_all_sessions to PgStore if needed.
+        vec![]
+    };
     let total = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
     Json(serde_json::json!({
@@ -29,12 +38,19 @@ pub(crate) async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let id = body["id"].as_str().unwrap_or(&uuid::Uuid::new_v4().to_string()).to_string();
-    let repo_id = body["repoId"].as_str().unwrap_or("");
+    let folder_str = body["repoId"].as_str().unwrap_or("");
     let task = body["task"].as_str().unwrap_or("untitled");
-    let store = state.store.lock().await;
-    store.create_session(&id, repo_id, task).ok();
-    Json(serde_json::json!({"ok": true, "id": id}))
+    let acp_id = body["acpId"].as_str();
+
+    let folder_id = match uuid::Uuid::parse_str(folder_str) {
+        Ok(id) => id,
+        Err(_) => return Json(serde_json::json!({"ok": false, "error": "invalid repoId (expected UUID)"})),
+    };
+
+    match state.pg.create_session(&folder_id, task, acp_id).await {
+        Ok(id) => Json(serde_json::json!({"ok": true, "id": id})),
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
+    }
 }
 
 pub(crate) async fn update_session_handler(
@@ -42,16 +58,21 @@ pub(crate) async fn update_session_handler(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    store.update_session(
-        &id,
-        body["outcome"].as_str(),
-        body["summary"].as_str(),
-        body["cost"].as_f64(),
-        body["tokensIn"].as_i64(),
-        body["tokensOut"].as_i64(),
-    ).ok();
-    Json(serde_json::json!({"ok": true}))
+    let session_id = match uuid::Uuid::parse_str(&id) {
+        Ok(uid) => uid,
+        Err(_) => return Json(serde_json::json!({"ok": false, "error": "invalid session id (expected UUID)"})),
+    };
+
+    // PgStore complete_session expects: outcome, ftr (bool), turns (i32), corrections (i32)
+    let outcome = body["outcome"].as_str().unwrap_or("completed");
+    let ftr = body["ftr"].as_bool().unwrap_or(false);
+    let turns = body["turns"].as_i64().unwrap_or(0) as i32;
+    let corrections = body["corrections"].as_i64().unwrap_or(0) as i32;
+
+    match state.pg.complete_session(&session_id, outcome, ftr, turns, corrections).await {
+        Ok(_) => Json(serde_json::json!({"ok": true})),
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
+    }
 }
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -60,23 +81,26 @@ pub(crate) async fn create_event(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let id = body["id"].as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let project = body["project"].as_str().unwrap_or("unknown");
-    let session_id = body["session_id"].as_str();
     let event_type = match body["event_type"].as_str().or(body["type"].as_str()) {
         Some(t) => t,
         None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "event_type is required"}))),
     };
-    let data = body.get("data")
-        .map(|d| serde_json::to_string(d).unwrap_or_default())
-        .unwrap_or_else(|| "{}".to_string());
 
-    let store = state.store.lock().await;
-    match store.insert_event(&id, project, session_id, event_type, &data) {
-        Ok(_) => (StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "error": e.to_string()}))),
+    // PgStore insert_event expects session_uuid, folder_uuid, event_type, turn_number, json data
+    let session_id = match body["session_id"].as_str().map(uuid::Uuid::parse_str) {
+        Some(Ok(uid)) => uid,
+        _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "session_id (UUID) is required"}))),
+    };
+    let folder_id = match body["project"].as_str().or(body["folder_id"].as_str()).map(uuid::Uuid::parse_str) {
+        Some(Ok(uid)) => uid,
+        _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "project/folder_id (UUID) is required"}))),
+    };
+    let turn_number = body["turn_number"].as_i64().map(|n| n as i32);
+    let data = body.get("data").cloned().unwrap_or(serde_json::json!({}));
+
+    match state.pg.insert_event(&session_id, &folder_id, event_type, turn_number, &data).await {
+        Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "error": e}))),
     }
 }
 
@@ -85,6 +109,7 @@ pub(crate) struct EventQuery {
     #[serde(rename = "type")]
     event_type: Option<String>,
     session: Option<String>,
+    #[allow(dead_code)]
     limit: Option<u32>,
 }
 
@@ -93,12 +118,33 @@ pub(crate) async fn list_events(
     Path(project): Path<String>,
     Query(q): Query<EventQuery>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    let limit = q.limit.unwrap_or(50).min(500);
-    match store.list_events(&project, q.event_type.as_deref(), q.session.as_deref(), limit) {
-        Ok(events) => Json(serde_json::json!({"events": events, "count": events.len()})),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    // PgStore offers get_events_by_session or get_events_by_type — route based on query params.
+    // If session filter is provided, use that; otherwise filter by folder + event_type.
+    if let Some(session_str) = &q.session {
+        if let Ok(session_id) = uuid::Uuid::parse_str(session_str) {
+            return match state.pg.get_events_by_session(&session_id).await {
+                Ok(events) => {
+                    let count = events.len();
+                    Json(serde_json::json!({"events": events, "count": count}))
+                }
+                Err(e) => Json(serde_json::json!({"error": e})),
+            };
+        }
     }
+
+    // Fall back to folder + event_type query
+    if let (Ok(folder_id), Some(etype)) = (uuid::Uuid::parse_str(&project), &q.event_type) {
+        return match state.pg.get_events_by_type(&folder_id, etype).await {
+            Ok(events) => {
+                let count = events.len();
+                Json(serde_json::json!({"events": events, "count": count}))
+            }
+            Err(e) => Json(serde_json::json!({"error": e})),
+        };
+    }
+
+    // TODO: PgStore has no list_events(folder, None, None, limit) — need a broader query method.
+    Json(serde_json::json!({"events": [], "count": 0}))
 }
 
 // ── Workflow State ──────────────────────────────────────────────────────────
@@ -107,8 +153,7 @@ pub(crate) async fn get_workflow_state(
     State(state): State<AppState>,
     Path(project): Path<String>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    match store.get_workflow_state(&project) {
+    match state.pg.get_workflow_state(&project).await {
         Ok(Some(ws)) => Json(ws),
         Ok(None) => Json(serde_json::json!({
             "project": project,
@@ -119,7 +164,7 @@ pub(crate) async fn get_workflow_state(
             "last_checkpoint": null,
             "rules_hash": null,
         })),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+        Err(e) => Json(serde_json::json!({"error": e})),
     }
 }
 
@@ -128,9 +173,7 @@ pub(crate) async fn update_workflow_state(
     Path(project): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-
-    let result = store.upsert_workflow_state(
+    let result = state.pg.upsert_workflow_state(
         &project,
         body["active_phase"].as_str(),
         body["active_plan"].as_str(),
@@ -138,23 +181,23 @@ pub(crate) async fn update_workflow_state(
         body["active_issue"].as_i64(),
         body["last_checkpoint"].as_str(),
         body["rules_hash"].as_str(),
-    );
+    ).await;
 
     if let Err(e) = result {
-        return Json(serde_json::json!({"ok": false, "error": e.to_string()}));
+        return Json(serde_json::json!({"ok": false, "error": e}));
     }
 
     // Sync to .sensei/state.yaml
-    // Use explicit project_path from body, or look up from projects table
-    let project_path = body["project_path"].as_str().map(String::from)
-        .or_else(|| store.get_repo_path(&project).ok().flatten());
+    // Use explicit project_path from body; old store.get_repo_path() fallback removed.
+    // TODO: Add a PgStore lookup for folder abs_path by project name if needed.
+    let project_path = body["project_path"].as_str().map(String::from);
     if let Some(project_path) = project_path {
         let sensei_dir = std::path::Path::new(&project_path).join(".sensei");
         std::fs::create_dir_all(&sensei_dir).ok();
         let state_file = sensei_dir.join("state.yaml");
 
         // Read back the state we just wrote to get all fields
-        if let Ok(Some(ws)) = store.get_workflow_state(&project) {
+        if let Ok(Some(ws)) = state.pg.get_workflow_state(&project).await {
             let yaml = format!(
                 "active_phase: {}\nactive_plan: {}\nactive_task: {}\nactive_issue: {}\nlast_checkpoint: {}\nrules_hash: {}\n",
                 ws["active_phase"].as_str().unwrap_or("~"),
