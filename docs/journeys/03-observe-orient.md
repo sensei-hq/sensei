@@ -88,7 +88,7 @@ Shown after sensei has enough data to teach. This is the daily-driver screen.
 | FTR ring | `sessions` table, 14-day window | After each session completes |
 | Hero koan | Highest-urgency recommendation from insights engine | Daily or after significant FTR change |
 | Insights | Aggregated from session analytics, pattern detection, drift detection | After each session |
-| Adopted teachings | `change_impacts` where verdict = positive | After impact measurement (7-day window) |
+| Adopted teachings | `recommendations` where verdict = positive | After impact measurement (7-day window) |
 | Recent sessions | Latest 4-8 sessions | Real-time as sessions complete |
 | Project FTR | Per-project from `sessions` grouped by `project_id` | After each session |
 
@@ -106,7 +106,7 @@ Shown after sensei has enough data to teach. This is the daily-driver screen.
 | FTR scores | Computed from `sessions` table (first-try vs. corrected outcomes) |
 | Hero koan | Insights engine — highest urgency recommendation |
 | Insights | Session analytics, pattern detection pipeline, drift detection |
-| Teachings | `change_impacts` table, filtered by positive verdict |
+| Teachings | `recommendations` table, filtered by positive verdict and recommendation_urgency |
 | Session list | `sessions` table, ordered by recency |
 | Project FTR | `sessions` grouped by `project_id`, 14-day window |
 | Daemon health | senseid heartbeat endpoint |

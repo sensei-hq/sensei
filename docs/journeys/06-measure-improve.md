@@ -23,7 +23,7 @@ flowchart TD
 
     B4 --> C[User executes in assistant]
     C --> C1[e.g. creates persona, promotes pattern,\nrefactors code, enables skill]
-    C1 --> D[Change recorded in change_impacts]
+    C1 --> D[Change recorded in recommendations]
 
     D --> E[Impact measurement begins]
     E --> E1[Baseline FTR captured]
