@@ -18,6 +18,11 @@ impl TaskContext {
         self.app_state.store.lock().await
     }
 
+    /// Access the PostgreSQL store (no mutex — PgPool is thread-safe).
+    pub fn pg(&self) -> &crate::db::pg_store::PgStore {
+        &self.app_state.pg
+    }
+
     pub async fn graph(&self) -> tokio::sync::MutexGuard<'_, crate::indexer::graph::GraphDb> {
         self.app_state.graph.lock().await
     }
@@ -76,7 +81,7 @@ mod tests {
     use crate::api::state::SharedState;
 
     /// Build a TaskContext backed by in-memory Store + GraphDb.
-    fn make_ctx() -> Arc<TaskContext> {
+    async fn make_ctx() -> Arc<TaskContext> {
         let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
@@ -84,6 +89,7 @@ mod tests {
             store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: queue.clone(),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });
         Arc::new(TaskContext {
             queue,
@@ -94,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_scan_root() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path");
         let result = execute_task(&ctx, &task).await;
         // ScanRoot with a nonexistent path should fail with a clear error
@@ -104,7 +110,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_process_repo() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ProcessRepo, "repo", "/nonexistent/repo");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_err());
@@ -113,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_delete_file() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         // DeleteFile on an empty graph should succeed (no-op)
         let task = Task::new(TaskKind::DeleteFile, "repo", "/some/file.rs");
         let result = execute_task(&ctx, &task).await;
@@ -122,7 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_delete_folder() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         {
             let store = ctx.store().await;
             store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
@@ -134,7 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_resolve_edges() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         {
             let store = ctx.store().await;
             store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
@@ -146,7 +152,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_resolve_libs() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         {
             let store = ctx.store().await;
             store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
@@ -158,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_build_connections() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         {
             let store = ctx.store().await;
             store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
@@ -170,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_import_lib_without_url() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         // ImportLib without a URL should fail
         let task = Task::new(TaskKind::ImportLib, "repo", "react");
         let result = execute_task(&ctx, &task).await;
@@ -180,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_branch_switch_without_branch() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         // BranchSwitch without branch field should fail
         let task = Task::new(TaskKind::BranchSwitch, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -194,7 +200,7 @@ mod tests {
         let src_dir = tmp.path().join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
 
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         {
             let store = ctx.store().await;
             store.upsert_repo_basic("repo", "repo", &tmp.path().to_string_lossy()).unwrap();
@@ -214,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_task_dispatches_reconcile_connections() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         {
             let store = ctx.store().await;
             store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
@@ -227,7 +233,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_context_provides_store_and_graph() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         // Verify we can access both store and graph
         {
             let store = ctx.store().await;

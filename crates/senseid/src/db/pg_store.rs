@@ -2,13 +2,10 @@ use sqlx_postgres::PgPool;
 
 /// PostgreSQL store — replaces SQLite Store during migration.
 /// Schema is managed by `dbd apply`, not by this code.
-/// Callers will be wired in as entities migrate (issues #101–#111).
-#[allow(dead_code)]
 pub struct PgStore {
     pool: PgPool,
 }
 
-#[allow(dead_code)]
 impl PgStore {
     /// Connect to a PostgreSQL database.
     pub async fn connect(database_url: &str) -> Result<Self, String> {
@@ -16,6 +13,13 @@ impl PgStore {
             .await
             .map_err(|e| format!("PgStore connect: {}", e))?;
         Ok(Self { pool })
+    }
+
+    /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to local sensei.
+    pub async fn connect_test() -> Result<Self, String> {
+        let url = std::env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
+        Self::connect(&url).await
     }
 
     /// Get a reference to the connection pool.

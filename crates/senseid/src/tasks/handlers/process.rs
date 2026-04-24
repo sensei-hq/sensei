@@ -310,7 +310,7 @@ mod tests {
     use super::super::super::executor::TaskContext;
 
     /// Build a TaskContext backed by in-memory Store + GraphDb and a fresh TaskQueue.
-    fn make_ctx() -> Arc<TaskContext> {
+    async fn make_ctx() -> Arc<TaskContext> {
         let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
@@ -318,6 +318,7 @@ mod tests {
             store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: queue.clone(),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });
         Arc::new(TaskContext {
             queue,
@@ -328,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_repo_errors_on_nonexistent_path() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ProcessRepo, "test-repo", "/nonexistent/repo");
         let result = process_repo(&ctx, &task).await;
         assert!(result.is_err());
@@ -341,7 +342,7 @@ mod tests {
         let src_dir = tmp.path().join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
 
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
         let repo_path = tmp.path().to_string_lossy().to_string();
 
@@ -384,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_file_removes_nodes_and_edges() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
 
         // Seed graph with two file nodes and an edge
@@ -411,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_folder_removes_module_and_child_nodes() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
         let repo_path = "/tmp/myrepo";
 

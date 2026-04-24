@@ -191,7 +191,7 @@ mod tests {
     use super::super::super::executor::TaskContext;
 
     /// Build a TaskContext backed by in-memory Store + GraphDb and a fresh TaskQueue.
-    fn make_ctx() -> Arc<TaskContext> {
+    async fn make_ctx() -> Arc<TaskContext> {
         let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
@@ -199,6 +199,7 @@ mod tests {
             store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: queue.clone(),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });
         Arc::new(TaskContext {
             queue,
@@ -209,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_edges_resolves_calls_and_parent_refs() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
 
         // Seed graph with functions and types
@@ -247,7 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_edges_resolves_covers_refs() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
 
         {
@@ -276,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_edges_resolves_mentions_fn_refs() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
 
         {
@@ -303,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_edges_skips_non_relative_imports() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
 
         {
@@ -329,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_edges_with_no_refs_is_noop() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let repo_id = "test-repo";
 
         {
