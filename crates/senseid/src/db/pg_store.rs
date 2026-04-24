@@ -171,6 +171,124 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Folders to Watch ───────────────────────────────────────────────
+
+    pub async fn add_watch_root(&self, path: &str, name: &str, excluded: &serde_json::Value) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders_to_watch(path, name, excluded) VALUES($1, $2, $3)
+             ON CONFLICT(path) DO UPDATE SET name = EXCLUDED.name, excluded = EXCLUDED.excluded, modified_at = now()
+             RETURNING id"
+        ).bind(path).bind(name).bind(excluded)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn list_watch_roots(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, path, name, status::text, excluded, modified_at FROM sensei.folders_to_watch ORDER BY path"
+            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, path, name, status, excluded, modified)| {
+            serde_json::json!({ "id": id, "path": path, "name": name, "status": status, "excluded": excluded, "modified_at": modified.to_rfc3339() })
+        }).collect())
+    }
+
+    pub async fn update_watch_status(&self, id: &uuid::Uuid, status: &str) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.folders_to_watch SET status = $2::sensei.watch_status, modified_at = now() WHERE id = $1")
+            .bind(id).bind(status).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn remove_watch_root(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ── Scan State ───────────────────────────────────────────────────
+
+    pub async fn upsert_scan_state(&self, folder_id: &uuid::Uuid, file_path: &str, mtime: i64, content_hash: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.scan_state(folder_id, file_path, mtime, content_hash) VALUES($1, $2, $3, $4)
+             ON CONFLICT(folder_id, file_path) DO UPDATE SET mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash, indexed_at = now(), modified_at = now()"
+        ).bind(folder_id).bind(file_path).bind(mtime).bind(content_hash)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_stale_files(&self, folder_id: &uuid::Uuid, current_files: &[(String, i64)]) -> Result<Vec<String>, String> {
+        // Return files where mtime has changed
+        let mut stale = Vec::new();
+        for (path, mtime) in current_files {
+            let row: Option<(i64,)> = sqlx_core::query_as::query_as(
+                "SELECT mtime FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
+            ).bind(folder_id).bind(path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+            match row {
+                None => stale.push(path.clone()), // new file
+                Some((old_mtime,)) if old_mtime != *mtime => stale.push(path.clone()),
+                _ => {}
+            }
+        }
+        Ok(stale)
+    }
+
+    pub async fn delete_scan_state(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1")
+            .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ── Services ─────────────────────────────────────────────────────
+
+    pub async fn upsert_service(&self, name: &str, display_name: &str, kind: &str, protocol: &str, config: &serde_json::Value) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.services(name, display_name, kind, protocol, config) VALUES($1, $2, $3::sensei.service_kind, $4::sensei.service_protocol, $5)
+             ON CONFLICT(name) DO UPDATE SET display_name = EXCLUDED.display_name, config = EXCLUDED.config, modified_at = now()
+             RETURNING id"
+        ).bind(name).bind(display_name).bind(kind).bind(protocol).bind(config)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn list_services(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, bool, serde_json::Value)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, display_name, kind::text, protocol::text, installed, config FROM sensei.services ORDER BY name"
+            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, dn, kind, proto, inst, config)| {
+            serde_json::json!({ "id": id, "name": name, "display_name": dn, "kind": kind, "protocol": proto, "installed": inst, "config": config })
+        }).collect())
+    }
+
+    pub async fn delete_service(&self, name: &str) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.services WHERE name = $1")
+            .bind(name).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ── Snapshots (activity) ─────────────────────────────────────────
+
+    pub async fn create_snapshot(
+        &self, session_id: &uuid::Uuid, folder_id: &uuid::Uuid, kind: &str,
+        progress: &str, next_step: Option<&str>, completed_steps: &[String],
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.snapshots(session_id, folder_id, kind, progress_summary, next_step_hint, completed_steps) VALUES($1, $2, $3::sensei.snapshot_kind, $4, $5, $6) RETURNING id"
+        ).bind(session_id).bind(folder_id).bind(kind).bind(progress).bind(next_step).bind(completed_steps)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn get_latest_snapshot(&self, session_id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, String, Option<String>, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind::text, progress_summary, next_step_hint, completed_steps, created_at FROM activity.snapshots WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1"
+            ).bind(session_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id, kind, progress, next, steps, ts)| {
+            serde_json::json!({ "id": id, "kind": kind, "progress_summary": progress, "next_step_hint": next, "completed_steps": steps, "created_at": ts.to_rfc3339() })
+        }))
+    }
+
     // ── Detected Patterns (inference) ──────────────────────────────────
 
     pub async fn upsert_pattern(
@@ -573,6 +691,77 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    // ── Folders to Watch tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn watch_root_add_and_list() {
+        let s = pg_store().await;
+        let path = format!("/_test/watch_{}", uuid::Uuid::new_v4());
+        let id = s.add_watch_root(&path, "test_root", &serde_json::json!(["node_modules"])).await.unwrap();
+        let roots = s.list_watch_roots().await.unwrap();
+        assert!(roots.iter().any(|r| r["path"] == path));
+        s.remove_watch_root(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn watch_root_update_status() {
+        let s = pg_store().await;
+        let path = format!("/_test/watch_status_{}", uuid::Uuid::new_v4());
+        let id = s.add_watch_root(&path, "test", &serde_json::json!([])).await.unwrap();
+        s.update_watch_status(&id, "watching").await.unwrap();
+        let roots = s.list_watch_roots().await.unwrap();
+        let r = roots.iter().find(|r| r["path"] == path).unwrap();
+        assert_eq!(r["status"], "watching");
+        s.remove_watch_root(&id).await.unwrap();
+    }
+
+    // ── Scan State tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn scan_state_upsert_and_stale() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("scan_{}", uuid::Uuid::new_v4())).await;
+        s.upsert_scan_state(&fid, "src/main.rs", 1000, "hash1").await.unwrap();
+        // Same mtime = not stale
+        let stale = s.get_stale_files(&fid, &[("src/main.rs".into(), 1000)]).await.unwrap();
+        assert!(stale.is_empty());
+        // Changed mtime = stale
+        let stale = s.get_stale_files(&fid, &[("src/main.rs".into(), 2000)]).await.unwrap();
+        assert_eq!(stale, vec!["src/main.rs"]);
+        // New file = stale
+        let stale = s.get_stale_files(&fid, &[("src/new.rs".into(), 1000)]).await.unwrap();
+        assert_eq!(stale, vec!["src/new.rs"]);
+        s.delete_scan_state(&fid).await.unwrap();
+    }
+
+    // ── Services tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn service_upsert_and_list() {
+        let s = pg_store().await;
+        let name = format!("_test:svc_{}", uuid::Uuid::new_v4());
+        let id = s.upsert_service(&name, "Test MCP", "data", "mcp", &serde_json::json!({"url":"http://localhost"})).await.unwrap();
+        let svcs = s.list_services().await.unwrap();
+        assert!(svcs.iter().any(|sv| sv["name"] == name));
+        s.delete_service(&name).await.unwrap();
+        let _ = id;
+    }
+
+    // ── Snapshots tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn snapshot_create_and_get_latest() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("snap_{}", uuid::Uuid::new_v4())).await;
+        let sid = s.create_session(&fid, "snapshot test", None).await.unwrap();
+        s.create_snapshot(&sid, &fid, "manual", "Step 1 done", Some("Do step 2"), &["Step 1".into()]).await.unwrap();
+        s.create_snapshot(&sid, &fid, "checkpoint", "Step 2 done", None, &["Step 1".into(), "Step 2".into()]).await.unwrap();
+        let latest = s.get_latest_snapshot(&sid).await.unwrap().unwrap();
+        assert_eq!(latest["progress_summary"], "Step 2 done");
+        assert_eq!(latest["kind"], "checkpoint");
+        assert_eq!(latest["completed_steps"].as_array().unwrap().len(), 2);
     }
 
     // ── Detected Patterns tests ────────────────────────────────────────
