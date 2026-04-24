@@ -67,7 +67,7 @@ begin
   , new.source
   , new.icons
   , new.tags
-  , tg_op::history.dml_operation
+  , tg_op::sensei.dml_operation
   , new.revision
   , new.modified_at
   , null
