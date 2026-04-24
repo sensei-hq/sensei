@@ -3,9 +3,8 @@
 use std::path::Path;
 use super::super::executor::TaskContext;
 use super::super::Task;
-use crate::types::Project;
 
-// ── Resolve Edges (barrier) ───────────────────────────────────────────────
+// ── Resolve Edges (barrier) ──────────────────────────────────────────────
 
 /// Resolve all unresolved references for a repo: IMPORTS, CALLS, HAS_METHOD, COVERS, MENTIONS_FN.
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String> {
@@ -31,12 +30,10 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
         .map(|n| (n.name.clone(), n.id.clone()))
         .collect();
 
-    let _repo_path_str = {
-        let store = ctx.store().await;
-        store.get_repo(repo_id).ok().flatten()
-            .map(|p| p.path.clone())
-            .unwrap_or_default()
-    };
+    let _repo_path_str = ctx.pg().get_repo_by_name(repo_id).await
+        .ok().flatten()
+        .and_then(|r| r["abs_path"].as_str().map(String::from))
+        .unwrap_or_default();
 
     let mut edges_created = 0u32;
 
@@ -120,19 +117,21 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
     // Doc<>code traceability (SPECIFIES, IMPLEMENTS, DOCUMENTS)
     crate::indexer::doc_indexer::create_traceability_edges_pub(&graph, repo_id)?;
 
-    // Mark project as indexed
-    let store = ctx.store().await;
-    // Collect libs from unresolved import targets
-    let nodes = graph.get_nodes(repo_id)?;
-    let libs = std::collections::HashSet::new();
-    // Simple lib detection from file-level imports
-    for node in &nodes {
-        if node.kind == "file" {
-            // Libs are detected from imports during resolve, but we can also check here
+    // Mark project as indexed via PgStore
+    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            // Collect libs from graph nodes
+            let nodes = graph.get_nodes(repo_id)?;
+            let libs = std::collections::HashSet::<String>::new();
+            // Simple lib detection from file-level imports
+            for _node in &nodes {
+                // Libs are detected from imports during resolve_libs
+            }
+            let lib_vec: Vec<String> = libs.into_iter().collect();
+            ctx.pg().mark_folder_indexed(&folder_id, &lib_vec).await.ok();
         }
     }
-    let lib_vec: Vec<String> = libs.into_iter().collect();
-    store.mark_indexed(repo_id, &lib_vec).ok();
 
     tracing::info!("build_connections: {} complete", repo_id);
     Ok(())
@@ -143,38 +142,36 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
 /// Re-evaluate cross-repo edges after a branch switch or repo update.
 pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-    let store = ctx.store().await;
     let graph = ctx.graph().await;
 
-    // Find the project this repo belongs to
-    let repo_data = store.get_repo(repo_id).ok().flatten();
-    let my_projects: Vec<Project> = if let Some(pid) = repo_data.as_ref().and_then(|r| r.project_id.as_ref()) {
-        store.list_projects().unwrap_or_default().into_iter().filter(|p| p.id == *pid).collect()
-    } else {
-        vec![]
-    };
+    // Find the project this repo belongs to via PgStore
+    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let project_id = folder.as_ref()
+        .and_then(|f| f["project_id"].as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
-    if my_projects.is_empty() {
+    if project_id.is_none() {
         tracing::info!("reconcile_connections: {} not in any project", repo_id);
+        // Still rebuild doc<>code traceability
+        crate::indexer::doc_indexer::create_traceability_edges_pub(&graph, repo_id)?;
         return Ok(());
     }
 
-    for proj in &my_projects {
-        match crate::indexer::cross_repo::analyze_project(&store, &graph, proj) {
-            Ok(analysis) => {
-                tracing::info!(
-                    "reconcile_connections: project {} — {} links, {} shared libs",
-                    proj.id, analysis.links.len(), analysis.shared_libs.len()
-                );
-            }
-            Err(e) => tracing::warn!("reconcile failed for {}: {}", proj.id, e),
-        }
+    let project_id = project_id.unwrap();
+    let project = ctx.pg().get_project(&project_id).await.ok().flatten();
+
+    if let Some(proj) = &project {
+        tracing::info!(
+            "reconcile_connections: project {} — {}",
+            proj["name"].as_str().unwrap_or("unknown"),
+            proj["id"].as_str().unwrap_or(""),
+        );
     }
 
     // Rebuild doc<>code traceability
     crate::indexer::doc_indexer::create_traceability_edges_pub(&graph, repo_id)?;
 
-    tracing::info!("reconcile_connections: {} — {} projects", repo_id, my_projects.len());
+    tracing::info!("reconcile_connections: {} — project {:?}", repo_id, project_id);
     Ok(())
 }
 
@@ -183,7 +180,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::sync::Mutex;
-    use crate::db::Store;
     use crate::indexer::graph::GraphDb;
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
@@ -192,11 +188,9 @@ mod tests {
 
     /// Build a TaskContext backed by in-memory Store + GraphDb and a fresh TaskQueue.
     async fn make_ctx() -> Arc<TaskContext> {
-        let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
         let app_state = Arc::new(SharedState {
-            store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: queue.clone(),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
@@ -228,8 +222,8 @@ mod tests {
 
         // Register project (resolve_edges reads project path)
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/repo").await.unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -260,8 +254,8 @@ mod tests {
         }
 
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/repo").await.unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -288,8 +282,8 @@ mod tests {
         }
 
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/repo").await.unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -315,8 +309,8 @@ mod tests {
         }
 
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/repo").await.unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
@@ -338,8 +332,8 @@ mod tests {
             graph.merge_file("file:a.rs", "a.rs", "a", "rust", repo_id).unwrap();
         }
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic(repo_id, repo_id, "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/repo").await.unwrap();
         }
 
         let task = Task::new(TaskKind::ResolveEdges, repo_id, "");

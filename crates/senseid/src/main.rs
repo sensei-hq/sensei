@@ -152,20 +152,12 @@ async fn run_foreground(port: u16) {
     let pid_path = db_dir.join("serve.pid");
     std::fs::write(&pid_path, std::process::id().to_string()).ok();
 
-    let store = db::Store::open(&db_path()).expect("Failed to open SQLite");
-
-    // Print repo stats
-    if let Ok(repos) = store.list_repos() {
-        let indexed = repos.iter().filter(|p| p.indexed_at.is_some()).count();
-        println!("[senseid] {} repos registered ({} indexed)", repos.len(), indexed);
-    }
-
     let gp = graph_path();
     std::fs::create_dir_all(&gp).ok();
     let graph = indexer::graph::GraphDb::open(&gp).expect("Failed to open graph DB");
     println!("[senseid] Listening on :{}", port);
 
-    if let Err(e) = api::start_server(store, graph, port).await {
+    if let Err(e) = api::start_server(graph, port).await {
         eprintln!("[senseid] Server error: {}", e);
     }
     std::fs::remove_file(&pid_path).ok();

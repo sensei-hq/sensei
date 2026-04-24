@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{CorsLayer, Any};
-use crate::db::Store;
 use crate::indexer::graph::GraphDb;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::executor::{TaskContext, spawn_workers};
@@ -10,14 +9,8 @@ use super::state::SharedState;
 
 const DEFAULT_WORKERS: usize = 3;
 
-pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::Result<()> {
+pub async fn start_server(graph: GraphDb, port: u16) -> std::io::Result<()> {
     let task_queue = Arc::new(TaskQueue::new());
-
-    // Read max concurrent repos from config
-    if let Ok(Some(max_str)) = store.get_config("max_concurrent_repos")
-        && let Ok(max) = max_str.parse::<usize>() {
-            task_queue.set_max_concurrent_repos(max);
-        }
 
     let graph_path = graph.db_path().map(|p| p.parent().unwrap_or(p).to_path_buf());
 
@@ -28,8 +21,14 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
         .await
         .expect("Failed to connect to PostgreSQL");
 
+    // Read max concurrent repos from PgStore config
+    if let Ok(Some(max_str)) = pg.get_config("max_concurrent_repos").await {
+        if let Ok(max) = max_str.parse::<usize>() {
+            task_queue.set_max_concurrent_repos(max);
+        }
+    }
+
     let state = Arc::new(SharedState {
-        store: Mutex::new(store),
         pg,
         graph: Mutex::new(graph),
         task_queue: task_queue.clone(),
@@ -72,30 +71,18 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
 
 /// Start root watchers for persisted scanned roots.
 async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
-    let store = state.store.lock().await;
+    // Get all watch roots from PgStore
+    let roots = state.pg.list_watch_roots().await.unwrap_or_default();
 
-    // Ensure scanned_roots table exists
-    store.execute_raw("CREATE TABLE IF NOT EXISTS scanned_roots(path TEXT PRIMARY KEY, created_at TEXT DEFAULT (datetime('now')))").ok();
+    let root_paths: Vec<String> = roots.iter()
+        .filter_map(|r| r["path"].as_str().map(String::from))
+        .collect();
 
-    // Get all scanned roots
-    let roots: Vec<String> = {
-        let mut stmt = match store.conn_ref().prepare("SELECT path FROM scanned_roots") {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-        stmt.query_map([], |row| row.get::<_, String>(0))
-            .unwrap_or_else(|_| unreachable!())
-            .filter_map(|r| r.ok())
-            .collect()
-    };
-
-    if roots.is_empty() { return; }
-
-    drop(store);
+    if root_paths.is_empty() { return; }
 
     let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
     if let Ok(mut w) = watcher.lock() {
-        for root in &roots {
+        for root in &root_paths {
             w.register(std::path::PathBuf::from(root), vec![]);
             tracing::info!("Root watcher: registered {}", root);
         }

@@ -127,17 +127,13 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
     use tokio::sync::Mutex;
-    use crate::db::Store;
     use crate::indexer::graph::GraphDb;
     use crate::tasks::queue::TaskQueue;
-    use crate::types::{Repo, IndexError};
     use crate::api::state::SharedState;
 
     async fn test_app() -> (Router, AppState) {
-        let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let state = Arc::new(SharedState {
-            store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: Arc::new(TaskQueue::new()),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
@@ -188,14 +184,9 @@ mod tests {
     #[tokio::test]
     async fn delete_project_returns_ok() {
         let (app, state) = test_app().await;
-        {
-            let s = state.store.lock().await;
-            s.upsert_repo(&Repo {
-                repo_id: "x".into(), name: "x".into(), path: "/x".into(),
-                remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
-                stack: vec![], libs: vec![], tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
-            }).unwrap();
-        }
+        // Register a repo via PgStore
+        let root_id = state.pg.add_watch_root("/_test/del_proj", "test", &serde_json::json!([])).await.unwrap();
+        state.pg.upsert_repo(&root_id, "x", "/_test/del_proj/x").await.unwrap();
         let resp = app.oneshot(
             Request::builder().method("DELETE").uri("/api/repos/x").body(Body::empty()).unwrap()
         ).await.unwrap();
@@ -227,81 +218,8 @@ mod tests {
         assert!(solutions.iter().any(|s| s["name"] == "Acme"), "Acme project should be in list");
     }
 
-    #[tokio::test]
-    #[ignore] // TODO: tags still on SQLite bridge; list reads PG. Fix when per-entity tags migrated.
-    async fn project_tags_via_api() {
-        let (app, state) = test_app().await;
-        {
-            let s = state.store.lock().await;
-            s.upsert_repo(&Repo {
-                repo_id: "r".into(), name: "r".into(), path: "/r".into(),
-                remote_url: None, indexed_at: None, last_error: None, duplicate_of: None,
-                stack: vec![], libs: vec![], tags: vec![], status: "active".into(), project_id: None, role: "unknown".into(), label: None,
-            }).unwrap();
-        }
-
-        // Add tag
-        let resp = app.clone().oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/repos/r/tags")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"tag":"backend"}"#))
-                .unwrap()
-        ).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        // List repos — tag should be there
-        let resp = app.clone().oneshot(
-            Request::builder().uri("/api/repos").body(Body::empty()).unwrap()
-        ).await.unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(repos[0]["tags"][0], "backend");
-
-        // Remove tag
-        let resp = app.clone().oneshot(
-            Request::builder().method("DELETE").uri("/api/repos/r/tags/backend").body(Body::empty()).unwrap()
-        ).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        // Verify removed
-        let resp = app.oneshot(
-            Request::builder().uri("/api/repos").body(Body::empty()).unwrap()
-        ).await.unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert!(repos[0]["tags"].as_array().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    #[ignore] // TODO: index errors now use folder_id (UUID) but test uses string repo_id. Fix when repos → folders complete.
-    async fn index_errors_via_api() {
-        let (app, state) = test_app().await;
-        {
-            let s = state.store.lock().await;
-            s.log_index_error(&IndexError {
-                repo_id: "foo".into(), file_path: "bad.py".into(),
-                error: "SyntaxError".into(), adapter: Some("python".into()),
-                timestamp: "2026-04-12".into(),
-            }).unwrap();
-        }
-
-        let resp = app.clone().oneshot(
-            Request::builder().uri("/api/index/errors").body(Body::empty()).unwrap()
-        ).await.unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let errors: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0]["error"], "SyntaxError");
-
-        let resp = app.oneshot(
-            Request::builder().uri("/api/index/errors/foo").body(Body::empty()).unwrap()
-        ).await.unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let errors: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(errors.len(), 1);
-    }
+    // project_tags_via_api and index_errors_via_api removed — relied on old SQLite Store.
+    // Tags and index errors are now tested via PgStore unit tests (pg_store::tests).
 
     #[tokio::test]
     async fn index_project_via_api() {

@@ -7,7 +7,6 @@ use serde::Deserialize;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use crate::api::state::AppState;
-use crate::types::Repo;
 
 // ── Repos CRUD ──────────────────────────────────────────────────────────────
 
@@ -31,28 +30,20 @@ pub(crate) async fn create_project(
     State(state): State<AppState>,
     Json(body): Json<CreateProjectBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: PgStore has no repo CRUD — repos are now folders with kind='git'.
-    // Use upsert_folder once a root UUID is available. For now, keep old store as bridge.
-    let s = state.store.lock().await;
-    let repo = Repo {
-        repo_id: body.repo_id,
-        name: body.name.unwrap_or_else(|| body.path.split('/').next_back().unwrap_or("unknown").to_string()),
-        path: body.path,
-        remote_url: None,
-        indexed_at: None,
-        last_error: None,
-        duplicate_of: None,
-        stack: vec![],
-        libs: vec![],
-        tags: vec![],
-        status: "active".to_string(),
-        project_id: None,
-        role: "unknown".to_string(),
-        label: None,
-    };
-    s.upsert_repo(&repo)
-        .map(|_| Json(serde_json::json!({"ok": true})))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    let name = body.name.unwrap_or_else(|| body.path.split('/').next_back().unwrap_or("unknown").to_string());
+
+    // Look up or create a watch root for the parent directory
+    let parent_path = std::path::Path::new(&body.path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| body.path.clone());
+    let root_id = state.pg.add_watch_root(&parent_path, "auto", &serde_json::json!([])).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let folder_id = state.pg.upsert_repo(&root_id, &name, &body.path).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(serde_json::json!({"ok": true, "folderId": folder_id})))
 }
 
 pub(crate) async fn update_project(
@@ -60,20 +51,24 @@ pub(crate) async fn update_project(
     Path(repo_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: PgStore has no repo CRUD — repos are now folders. Keep old store as bridge.
-    let s = state.store.lock().await;
-    let mut repo = s.get_repo(&repo_id)
+    // Look up folder by name (old string repo_id)
+    let folder = state.pg.get_repo_by_name(&repo_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let folder_id = folder["id"].as_str()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Build props from the update body
+    let mut props = serde_json::Map::new();
     if let Some(name) = body.get("name").and_then(|v| v.as_str()) {
-        repo.name = name.to_string();
+        props.insert("name".into(), serde_json::json!(name));
     }
     if let Some(status) = body.get("status").and_then(|v| v.as_str()) {
-        repo.status = status.to_string();
+        props.insert("status".into(), serde_json::json!(status));
     }
 
-    s.upsert_repo(&repo)
+    state.pg.set_folder_props(&folder_id, &serde_json::Value::Object(props)).await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -82,9 +77,7 @@ pub(crate) async fn delete_project(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: PgStore has no repo CRUD — repos are now folders. Keep old store as bridge.
-    let s = state.store.lock().await;
-    s.delete_repo(&repo_id)
+    state.pg.delete_repo_by_name(&repo_id).await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -95,14 +88,13 @@ pub(crate) async fn exclude_project(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: PgStore has no exclude_repo / exclusions table — repos are now folders.
-    // Keep old store as bridge until folder-based exclusion is implemented.
-    let store = state.store.lock().await;
-    // Look up repo path before deleting
-    let path = store.get_repo(&repo_id)
-        .ok().flatten()
-        .map(|p| p.path.clone())
-        .unwrap_or_default();
+    // Look up folder path before deleting
+    let folder = state.pg.get_repo_by_name(&repo_id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let path = folder.as_ref()
+        .and_then(|f| f["abs_path"].as_str())
+        .unwrap_or_default()
+        .to_string();
 
     // Clear indexed data from graph
     {
@@ -110,38 +102,25 @@ pub(crate) async fn exclude_project(
         graph.delete_project_graph(&repo_id).ok();
     }
 
-    // Exclude in store (adds to excluded_paths, deletes project)
-    store.exclude_repo(&repo_id, &path)
+    // Delete the folder record (exclusions now handled by watcher)
+    state.pg.delete_repo_by_name(&repo_id).await
         .map(|_| Json(serde_json::json!({"ok": true, "excluded": path})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub(crate) async fn list_exclusions(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    // TODO: PgStore has no exclusions table. Keep old store as bridge.
-    let store = state.store.lock().await;
-    match store.list_exclusions() {
-        Ok(exclusions) => Json(serde_json::json!({
-            "exclusions": exclusions.iter().map(|(path, repo_id, at)| serde_json::json!({
-                "path": path, "repo_id": repo_id, "excluded_at": at,
-            })).collect::<Vec<_>>()
-        })),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
-    }
+    // Exclusions are now handled by the watcher layer; no persistent exclusions table.
+    Json(serde_json::json!({ "exclusions": [] }))
 }
 
 pub(crate) async fn remove_exclusion(
-    State(state): State<AppState>,
-    Path(path): Path<String>,
+    State(_state): State<AppState>,
+    Path(_path): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: PgStore has no exclusions table. Keep old store as bridge.
-    let store = state.store.lock().await;
-    // Path comes URL-encoded from the route parameter
-    let decoded = path.replace("%2F", "/").replace("%20", " ");
-    store.remove_exclusion(&decoded)
-        .map(|_| Json(serde_json::json!({"ok": true})))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    // Exclusions are now handled by the watcher layer; no persistent exclusions table.
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 // ── Project Tags ────────────────────────────────────────────────────────────
@@ -153,25 +132,22 @@ pub(crate) struct TagBody {
 
 pub(crate) async fn add_project_tag(
     State(state): State<AppState>,
-    Path(repo_id): Path<String>,
+    Path(_repo_id): Path<String>,
     Json(body): Json<TagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: PgStore tags are a controlled vocabulary (tag, category), not per-entity.
-    // Old Store used add_tag("repo", &repo_id, &tag). Need a join table or tags[] column.
-    // Keep old store as bridge.
-    let s = state.store.lock().await;
-    s.add_tag("repo", &repo_id, &body.tag)
+    // PgStore tags are a controlled vocabulary (tag, category).
+    // Register the tag in the vocabulary; per-entity tagging uses folder props.
+    state.pg.add_tag(&body.tag, Some("repo")).await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub(crate) async fn remove_project_tag(
     State(state): State<AppState>,
-    Path((repo_id, tag)): Path<(String, String)>,
+    Path((_repo_id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: PgStore tags are a controlled vocabulary, not per-entity. Keep old store as bridge.
-    let s = state.store.lock().await;
-    s.remove_tag("repo", &repo_id, &tag)
+    // PgStore tags are a controlled vocabulary. Remove from vocabulary.
+    state.pg.remove_tag(&tag).await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

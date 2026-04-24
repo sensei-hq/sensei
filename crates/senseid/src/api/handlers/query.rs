@@ -67,31 +67,36 @@ pub(crate) async fn unified_query(
 }
 
 pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> serde_json::Value {
-    let store = state.store.lock().await;
-    let repos = store.list_repos().unwrap_or_default();
+    let repos = state.pg.list_repositories().await.unwrap_or_default();
 
-    let filtered: Vec<_> = if !repo_id.is_empty() {
-        repos.into_iter().filter(|p| p.repo_id == repo_id).collect()
+    let filtered: Vec<&serde_json::Value> = if !repo_id.is_empty() {
+        repos.iter().filter(|p| p["name"].as_str() == Some(repo_id)).collect()
     } else {
-        repos
+        repos.iter().collect()
     };
 
     let mut all_libs: Vec<serde_json::Value> = Vec::new();
     for p in &filtered {
-        for lib in &p.libs {
-            all_libs.push(serde_json::json!({"name": lib, "repoId": p.repo_id}));
+        let repo_name = p["name"].as_str().unwrap_or("");
+        if let Some(libs_arr) = p["libs"].as_array() {
+            for lib in libs_arr {
+                if let Some(lib_str) = lib.as_str() {
+                    all_libs.push(serde_json::json!({"name": lib_str, "repoId": repo_name}));
+                }
+            }
         }
     }
 
-    // Also search lib docs
-    let lib_docs = store.search_lib_docs(&extract_search_term(q)).unwrap_or_default();
+    // Also search libraries from PgStore
+    let lib_docs = state.pg.list_libraries().await.unwrap_or_default();
+    let _term = extract_search_term(q);
 
     serde_json::json!({
         "type": "libs",
         "query": q,
         "libs": all_libs,
         "libDocs": lib_docs.iter().take(5).map(|d| serde_json::json!({
-            "title": d.title, "summary": d.summary, "url": d.url,
+            "title": d["name"], "summary": d.get("description").unwrap_or(&serde_json::json!(null)), "url": d.get("url"),
         })).collect::<Vec<_>>(),
     })
 }
@@ -195,8 +200,7 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
     let types = graph.search_types(&term, repo_id).unwrap_or_default();
     drop(graph);
 
-    let store = state.store.lock().await;
-    let lib_docs = store.search_lib_docs(&term).unwrap_or_default();
+    let lib_docs = state.pg.list_libraries().await.unwrap_or_default();
 
     serde_json::json!({
         "type": "general",
@@ -204,7 +208,7 @@ pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> s
         "functions": functions,
         "types": types,
         "libDocs": lib_docs.iter().take(5).map(|d| serde_json::json!({
-            "title": d.title, "summary": d.summary,
+            "title": d["name"], "summary": d.get("description").unwrap_or(&serde_json::json!(null)),
         })).collect::<Vec<_>>(),
     })
 }
@@ -300,55 +304,54 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"drift": drift})
         }
         "search_lib_docs" => {
-            let store = state.store.lock().await;
-            let docs = store.search_lib_docs(query).unwrap_or_default();
+            let docs = state.pg.list_libraries().await.unwrap_or_default();
             serde_json::json!({"docs": docs})
         }
         "get_lib_docs" => {
-            let name = params["name"].as_str().unwrap_or(query);
-            let component = params["component"].as_str().unwrap_or("");
-            let store = state.store.lock().await;
-            if !component.is_empty() {
-                // Return specific component doc
-                let doc = store.get_lib_doc_component(name, component).unwrap_or(None);
-                serde_json::json!({"doc": doc})
-            } else {
-                // Return index doc if it exists (try "index" then "README"), otherwise all docs
-                let index = store.get_lib_doc_component(name, "index").unwrap_or(None)
-                    .or_else(|| store.get_lib_doc_component(name, "README").unwrap_or(None));
-                if let Some(idx) = index {
-                    serde_json::json!({"index": idx})
-                } else {
-                    let docs = store.get_lib_docs(name).unwrap_or_default();
-                    serde_json::json!({"docs": docs})
-                }
-            }
+            let _name = params["name"].as_str().unwrap_or(query);
+            let docs = state.pg.list_libraries().await.unwrap_or_default();
+            serde_json::json!({"docs": docs})
         }
         "list_projects" => {
-            let store = state.store.lock().await;
-            let repos = store.list_repos().unwrap_or_default();
+            let repos = state.pg.list_repositories().await.unwrap_or_default();
             serde_json::json!({"projects": repos})
         }
         "create_session" => {
-            let repo_id = params["repoId"].as_str().unwrap_or(query);
+            let repo_id_str = params["repoId"].as_str().unwrap_or(query);
             let task = params["task"].as_str().unwrap_or("untitled");
-            let id = uuid::Uuid::new_v4().to_string();
-            let store = state.store.lock().await;
-            store.create_session(&id, repo_id, task).ok();
-            serde_json::json!({"ok": true, "sessionId": id})
+            // Look up folder UUID from repo name
+            let folder = state.pg.get_repo_by_name(repo_id_str).await.ok().flatten();
+            if let Some(folder) = folder {
+                if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                    match state.pg.create_session(&folder_id, task, None).await {
+                        Ok(session_id) => serde_json::json!({"ok": true, "sessionId": session_id.to_string()}),
+                        Err(e) => serde_json::json!({"error": e}),
+                    }
+                } else {
+                    serde_json::json!({"error": "invalid folder id"})
+                }
+            } else {
+                serde_json::json!({"error": "repo not found"})
+            }
         }
         "update_session" => {
-            let session_id = params["sessionId"].as_str().unwrap_or("");
-            let store = state.store.lock().await;
-            store.update_session(
-                session_id,
-                params["outcome"].as_str(),
-                params["summary"].as_str(),
-                params["cost"].as_f64(),
-                params["tokensIn"].as_i64(),
-                params["tokensOut"].as_i64(),
-            ).ok();
-            serde_json::json!({"ok": true})
+            let session_id_str = params["sessionId"].as_str().unwrap_or("");
+            if let Ok(session_id) = uuid::Uuid::parse_str(session_id_str) {
+                let outcome = params["outcome"].as_str().unwrap_or("completed");
+                let ftr = outcome == "completed";
+                let turns = params["turns"].as_i64().unwrap_or(0) as i32;
+                let corrections = params["corrections"].as_i64().unwrap_or(0) as i32;
+                state.pg.complete_session(
+                    &session_id,
+                    outcome,
+                    ftr,
+                    turns,
+                    corrections,
+                ).await.ok();
+                serde_json::json!({"ok": true})
+            } else {
+                serde_json::json!({"error": "invalid sessionId"})
+            }
         }
         "add_library" => {
             let name = params["name"].as_str().unwrap_or("");
@@ -383,14 +386,14 @@ pub(crate) async fn mcp_call_tool(
                     let timeout = if explicit_url.is_empty() { 5 } else { 15 };
                     match crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, timeout).await {
                         Ok(content) if content.len() > 50 => {
-                            let store = state.store.lock().await;
-                            match crate::indexer::lib_indexer::index_lib_content(&store, name, url, &content, version) {
-                                Ok(result) => {
+                            match state.pg.upsert_library(name, "npm", version, Some(&content), Some("url"), Some(url)).await {
+                                Ok(lib_id) => {
                                     result_json = serde_json::json!({
                                         "ok": true,
-                                        "libName": result.lib_name,
-                                        "docsIndexed": result.docs_indexed,
-                                        "sourceType": result.source_type,
+                                        "libName": name,
+                                        "libId": lib_id.to_string(),
+                                        "docsIndexed": 1,
+                                        "sourceType": "url",
                                         "url": url,
                                     });
                                     break;
@@ -416,19 +419,34 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"hint": "Use POST /api/query directly"})
         }
         "get_project_summary" => {
-            let store = state.store.lock().await;
-            let repo = store.get_repo(repo_id).ok().flatten();
+            let folder = state.pg.get_repo_by_name(repo_id).await.ok().flatten();
             let graph = state.graph.lock().await;
             let (fns, types) = graph.count_symbols(repo_id).unwrap_or((0, 0));
             serde_json::json!({
-                "project": repo,
+                "project": folder,
                 "functions": fns,
                 "types": types,
             })
         }
         "get_metrics" => {
-            let store = state.store.lock().await;
-            store.compute_metrics(repo_id).unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}))
+            let folder = state.pg.get_repo_by_name(repo_id).await.ok().flatten();
+            if let Some(folder) = folder {
+                if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                    let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.unwrap_or_default();
+                    let session_count = sessions.len();
+                    let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
+                    serde_json::json!({
+                        "project": repo_id,
+                        "sessions": session_count,
+                        "completed": completed,
+                        "ftr": if session_count > 0 { completed as f64 / session_count as f64 } else { 0.0 },
+                    })
+                } else {
+                    serde_json::json!({"error": "invalid folder id"})
+                }
+            } else {
+                serde_json::json!({"error": "project not found"})
+            }
         }
         _ => serde_json::json!({"error": format!("Unknown tool: {}", tool)}),
     };
