@@ -11,8 +11,7 @@ use crate::api::state::AppState;
 pub(crate) async fn get_config(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.store.lock().await;
-    let config = store.get_all_config().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let config = state.pg.get_all_config().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!(config)))
 }
 
@@ -20,8 +19,7 @@ pub(crate) async fn get_config_key(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.store.lock().await;
-    let val = store.get_config(&key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let val = state.pg.get_config(&key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"key": key, "value": val})))
 }
 
@@ -29,11 +27,10 @@ pub(crate) async fn set_config_handler(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.store.lock().await;
     if let Some(obj) = body.as_object() {
         for (key, val) in obj {
             let v = match val { serde_json::Value::String(s) => s.clone(), other => other.to_string() };
-            store.set_config(key, &v).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            state.pg.set_config(key, &v).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
     }
     Ok(Json(serde_json::json!({"ok": true})))
@@ -43,8 +40,7 @@ pub(crate) async fn delete_config_key(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.store.lock().await;
-    store.delete_config(&key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state.pg.delete_config(&key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -218,16 +214,12 @@ pub(crate) async fn remove_all(
 pub(crate) async fn reset_all(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    // Clear store: projects, solutions, config, errors
-    {
-        let store = state.store.lock().await;
-        store.execute_raw("DELETE FROM repos").ok();
-        store.execute_raw("DELETE FROM projects").ok();
-        store.execute_raw("DELETE FROM config").ok();
-        store.execute_raw("DELETE FROM index_errors").ok();
-        store.execute_raw("DELETE FROM lib_docs").ok();
-        store.execute_raw("DELETE FROM lib_meta").ok();
-    }
+    // Clear PG tables
+    state.pg.execute_raw("DELETE FROM sensei.config").await.ok();
+    state.pg.execute_raw("DELETE FROM sensei.index_errors").await.ok();
+    state.pg.execute_raw("DELETE FROM sensei.nodes").await.ok();
+    state.pg.execute_raw("DELETE FROM sensei.folders").await.ok();
+    state.pg.execute_raw("DELETE FROM sensei.projects").await.ok();
 
     // Clear graph DB
     {
