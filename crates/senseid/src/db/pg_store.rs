@@ -171,6 +171,49 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Index Errors ──────────────────────────────────────────────────
+
+    pub async fn log_index_error(
+        &self, folder_id: &uuid::Uuid, file_path: &str, error: &str,
+        adapter: Option<&str>, phase: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.index_errors(folder_id, file_path, error, adapter, phase) VALUES($1, $2, $3, $4, $5)"
+        )
+            .bind(folder_id).bind(file_path).bind(error).bind(adapter).bind(phase)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_index_errors(&self, folder_id: Option<&uuid::Uuid>) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = match folder_id {
+            Some(fid) => sqlx_core::query_as::query_as(
+                "SELECT folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors WHERE folder_id = $1 ORDER BY created_at DESC"
+            ).bind(fid).fetch_all(&self.pool).await,
+            None => sqlx_core::query_as::query_as(
+                "SELECT folder_id, file_path, error, adapter, phase, created_at FROM sensei.index_errors ORDER BY created_at DESC LIMIT 200"
+            ).fetch_all(&self.pool).await,
+        }.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(fid, fp, err, adapter, phase, ts)| {
+            serde_json::json!({
+                "folder_id": fid, "file_path": fp, "error": err,
+                "adapter": adapter, "phase": phase, "created_at": ts.to_rfc3339(),
+            })
+        }).collect())
+    }
+
+    pub async fn clear_index_errors(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.index_errors WHERE folder_id = $1")
+            .bind(folder_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Raw ──────────────────────────────────────────────────────────
 
     /// Execute a raw SQL statement (for one-off queries like scanned_roots).
@@ -284,6 +327,51 @@ mod tests {
         assert_eq!(all[&k2], "2");
         s.delete_config(&k1).await.unwrap();
         s.delete_config(&k2).await.unwrap();
+    }
+
+    /// Create a unique test folder for FK tests. Uses suffix for isolation.
+    async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid {
+        use sqlx_core::query_as::query_as;
+        s.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+        let abs_path = format!("/_test/{}", suffix);
+        let row: (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
+        ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
+        row.0
+    }
+
+    // ── Index Errors tests ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn idx_err_log_and_get() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "idx_err_log").await;
+        s.clear_index_errors(&fid).await.unwrap(); // ensure clean
+        s.log_index_error(&fid, "src/bad.ts", "SyntaxError", Some("typescript"), None).await.unwrap();
+        s.log_index_error(&fid, "src/x.py", "IndentError", Some("python"), Some("parse")).await.unwrap();
+        let errors = s.get_index_errors(Some(&fid)).await.unwrap();
+        assert_eq!(errors.len(), 2);
+        s.clear_index_errors(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn idx_err_clear() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "idx_err_clear").await;
+        s.clear_index_errors(&fid).await.unwrap();
+        s.log_index_error(&fid, "a.rs", "err", Some("rust"), None).await.unwrap();
+        s.clear_index_errors(&fid).await.unwrap();
+        assert_eq!(s.get_index_errors(Some(&fid)).await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn idx_err_empty() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "idx_err_empty").await;
+        s.clear_index_errors(&fid).await.unwrap();
+        assert_eq!(s.get_index_errors(Some(&fid)).await.unwrap().len(), 0);
     }
 
     // ── Workflow State tests ────────────────────────────────────────────
