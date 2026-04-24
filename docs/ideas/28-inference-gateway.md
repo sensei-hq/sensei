@@ -5,7 +5,10 @@ date: 2026-04-23
 status: idea
 related: 20-local-inference.md, 25-playground-and-insights.md, 27-developer-preferences.md
 reference: /Users/Jerry/Developer/strategos/packages/gateway
+moved_to: /Users/Jerry/Developer/gateway
 ---
+
+> **Note:** The gateway has been extracted to its own repository: [`mizukisu/gateway`](https://github.com/mizukisu/gateway). Full documentation (ideas, journeys, design) lives there. This doc remains as the sensei-side reference for the integration points (MOE consensus wrapper, MCP exposure, daemon wiring).
 
 # Inference Gateway
 

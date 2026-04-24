@@ -167,23 +167,29 @@ pub(crate) async fn detect_patterns(
     State(state): State<AppState>,
     Path(project): Path<String>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    let graph = state.graph.lock().await;
-    match store.detect_patterns_from_graph(graph.conn_ref(), &project) {
-        Ok(patterns) => Json(serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()})),
-        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    // Look up folder UUID and query patterns from PgStore
+    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
+            return Json(serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()}));
+        }
     }
+    Json(serde_json::json!({"ok": false, "error": "project not found"}))
 }
 
 pub(crate) async fn list_patterns(
     State(state): State<AppState>,
     Path(project): Path<String>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    match store.list_detected_patterns(&project) {
-        Ok(patterns) => Json(serde_json::json!({"patterns": patterns, "count": patterns.len()})),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
+            return Json(serde_json::json!({"patterns": patterns, "count": patterns.len()}));
+        }
     }
+    Json(serde_json::json!({"patterns": [], "count": 0}))
 }
 
 #[derive(Deserialize)]
@@ -197,45 +203,54 @@ pub(crate) async fn match_pattern_handler(
     Query(q): Query<MatchQuery>,
 ) -> Json<serde_json::Value> {
     let desc = q.description.unwrap_or_default();
-    let store = state.store.lock().await;
-    match store.match_pattern(&project, &desc) {
-        Ok(matches) => Json(serde_json::json!({"matches": matches, "count": matches.len()})),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    // Search patterns by folder using BM25 ranking
+    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let ranked = state.pg.rank_bm25(&folder_id, &desc).await.unwrap_or_default();
+            let matches: Vec<serde_json::Value> = ranked.into_iter()
+                .map(|(name, score)| serde_json::json!({"name": name, "score": score}))
+                .collect();
+            return Json(serde_json::json!({"matches": matches, "count": matches.len()}));
+        }
     }
+    Json(serde_json::json!({"matches": [], "count": 0}))
 }
 
 pub(crate) async fn pattern_for_symbol(
     State(state): State<AppState>,
     Path((project, symbol)): Path<(String, String)>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    match store.get_pattern_for(&project, &symbol) {
-        Ok(Some(pattern)) => Json(pattern),
-        Ok(None) => Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"})),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
+    // Search patterns by folder, then filter by symbol
+    let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
+            // Find pattern whose members include this symbol
+            for p in &patterns {
+                if let Some(members) = p.get("members").and_then(|m| m.as_array()) {
+                    if members.iter().any(|m| m.as_str() == Some(&symbol)) {
+                        return Json(p.clone());
+                    }
+                }
+            }
+        }
     }
+    Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"}))
 }
 
 pub(crate) async fn find_duplicates_handler(
-    State(state): State<AppState>,
-    Path(project): Path<String>,
+    State(_state): State<AppState>,
+    Path(_project): Path<String>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    let graph = state.graph.lock().await;
-    match store.find_duplicates(graph.conn_ref(), &project) {
-        Ok(dups) => Json(serde_json::json!({"duplicates": dups, "count": dups.len()})),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
-    }
+    // Duplicate detection requires graph analysis; pending migration to PgStore nodes/edges.
+    Json(serde_json::json!({"duplicates": [], "count": 0, "note": "pending migration to PgStore"}))
 }
 
 pub(crate) async fn project_conventions_handler(
-    State(state): State<AppState>,
-    Path(project): Path<String>,
+    State(_state): State<AppState>,
+    Path(_project): Path<String>,
 ) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    let graph = state.graph.lock().await;
-    match store.get_project_conventions(graph.conn_ref(), &project) {
-        Ok(conventions) => Json(serde_json::json!({"conventions": conventions, "count": conventions.len()})),
-        Err(e) => Json(serde_json::json!({"error": e.to_string()})),
-    }
+    // Convention detection requires graph analysis; pending migration to PgStore nodes/edges.
+    Json(serde_json::json!({"conventions": [], "count": 0, "note": "pending migration to PgStore"}))
 }

@@ -99,13 +99,10 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
     let new_branch = task.branch.as_deref().ok_or("branch_switch requires branch field")?;
 
     // Detect current branch from git
-    // TODO: migrate to PgStore when repos → folders migration complete
-    let repo_path = {
-        let store = ctx.store().await;
-        store.get_repo(repo_id).ok().flatten()
-            .map(|p| p.path.clone())
-            .ok_or("Project not found")?
-    };
+    let repo_path = ctx.pg().get_repo_by_name(repo_id).await
+        .map_err(|e| format!("PgStore error: {}", e))?
+        .and_then(|r| r["abs_path"].as_str().map(String::from))
+        .ok_or("Project not found")?;
 
     let old_branch = detect_git_branch(&repo_path).unwrap_or_else(|| "unknown".to_string());
     let old_branch_project = format!("{}@{}", repo_id, old_branch);
@@ -178,7 +175,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::sync::Mutex;
-    use crate::db::Store;
     use crate::indexer::graph::GraphDb;
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
@@ -187,11 +183,9 @@ mod tests {
 
     /// Build a TaskContext backed by in-memory Store + GraphDb and a fresh TaskQueue.
     async fn make_ctx() -> Arc<TaskContext> {
-        let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
         let app_state = Arc::new(SharedState {
-            store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: queue.clone(),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),

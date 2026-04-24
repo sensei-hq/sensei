@@ -70,6 +70,7 @@ Tool exploration, session replay, MOE reasoning, change-impact tracking.
 | # | Document | Status |
 |---|----------|--------|
 | 25 | [Playground & Insights Engine](./25-playground-and-insights.md) — MCP playground, session replay, usage analytics, MOE consensus, change-impact tracking | Idea |
+| 31 | [Semantic Search Layer](./31-semantic-search-layer.md) — hybrid Postgres search (full-text + semantic + structural + grep fallback) as primary search layer for ACPs | Idea |
 | 20 | [Local Inference](./20-local-inference.md) — Ollama, Gemma4, embeddings, classification, reasoning panel | Idea |
 | 19 | [Benchmarking & Credibility](./19-benchmarking-credibility.md) — effectiveness benchmarks, reproducible comparison | Idea |
 | 28 | [Inference Gateway](./28-inference-gateway.md) — Rust LLM router: Ollama + external providers, fallback chains, circuit breaker, MOE consensus, budget management. Port of Strategos gateway. | Idea |

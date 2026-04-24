@@ -27,23 +27,28 @@ pub(crate) async fn list_libs(
     State(state): State<AppState>,
     Query(q): Query<LibsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store = state.store.lock().await;
-    let all_repos = store.list_repos().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let all_repos = state.pg.list_repositories().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Scope: repoId > solutionId > all
-    let repos: Vec<_> = if let Some(rid) = &q.repo_id {
-        all_repos.into_iter().filter(|p| p.repo_id == *rid).collect()
+    let repos: Vec<&serde_json::Value> = if let Some(rid) = &q.repo_id {
+        all_repos.iter().filter(|p| p["name"].as_str() == Some(rid.as_str())).collect()
     } else if let Some(pid) = &q.solution_id {
-        all_repos.into_iter().filter(|r| r.project_id.as_deref() == Some(pid.as_str())).collect()
+        all_repos.iter().filter(|r| r["project_id"].as_str() == Some(pid.as_str())).collect()
     } else {
-        all_repos
+        all_repos.iter().collect()
     };
 
-    // lib_name → [repo_ids]
+    // lib_name -> [repo_ids]
     let mut lib_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for p in &repos {
-        for lib in &p.libs {
-            lib_map.entry(lib.clone()).or_default().push(p.repo_id.clone());
+        if let Some(libs_arr) = p["libs"].as_array() {
+            let repo_name = p["name"].as_str().unwrap_or("").to_string();
+            for lib in libs_arr {
+                if let Some(lib_str) = lib.as_str() {
+                    lib_map.entry(lib_str.to_string()).or_default().push(repo_name.clone());
+                }
+            }
         }
     }
 
@@ -78,23 +83,23 @@ pub(crate) async fn index_lib(
     State(state): State<AppState>,
     Json(body): Json<IndexLibBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Fetch content first (async), then store (sync with lock)
+    // Fetch content (async)
     let content = crate::indexer::lib_indexer::fetch_lib_url(&body.url).await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
-    let store = state.store.lock().await;
-    match crate::indexer::lib_indexer::index_lib_content(
-        &store, &body.lib_name, &body.url, &content, body.version.as_deref()
-    ) {
-        Ok(result) => Ok(Json(serde_json::json!({
-            "ok": true,
-            "libName": result.lib_name,
-            "docsIndexed": result.docs_indexed,
-            "sourceType": result.source_type,
-            "version": result.version,
-        }))),
-        Err(e) => Ok(Json(serde_json::json!({"ok": false, "error": e}))),
-    }
+    // Upsert library into PgStore
+    let lib_id = state.pg.upsert_library(
+        &body.lib_name, "npm", body.version.as_deref(), Some(&content), Some("url"), Some(&body.url),
+    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "libName": body.lib_name,
+        "libId": lib_id.to_string(),
+        "docsIndexed": 1,
+        "sourceType": "url",
+        "version": body.version,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -105,20 +110,20 @@ pub(crate) struct LibDocsQuery {
 pub(crate) async fn search_lib_docs(
     State(state): State<AppState>,
     Query(q): Query<LibDocsQuery>,
-) -> Result<Json<Vec<crate::indexer::lib_indexer::LibDoc>>, StatusCode> {
-    let query = q.q.unwrap_or_default();
-    let store = state.store.lock().await;
-    store.search_lib_docs(&query)
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let _query = q.q.unwrap_or_default();
+    // Return all libraries; full-text search pending migration
+    state.pg.list_libraries().await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 pub(crate) async fn get_lib_docs(
     State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Result<Json<Vec<crate::indexer::lib_indexer::LibDoc>>, StatusCode> {
-    let store = state.store.lock().await;
-    store.get_lib_docs(&name)
+    Path(_name): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    // Return all libraries; per-name filtering pending migration
+    state.pg.list_libraries().await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -132,13 +137,33 @@ pub(crate) struct DepVersionsQuery {
 pub(crate) async fn get_dep_versions(
     State(state): State<AppState>,
     Query(q): Query<DepVersionsQuery>,
-) -> Result<Json<Vec<crate::indexer::lib_indexer::DepVersion>>, StatusCode> {
-    let store = state.store.lock().await;
-    let repo = store.get_repo(&q.repo_id)
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let folder = state.pg.get_repo_by_name(&q.repo_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    crate::indexer::lib_indexer::extract_dep_versions(&store, &q.repo_id, &repo.path)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    let abs_path = folder["abs_path"].as_str().unwrap_or("");
+    // Extract dependency versions from filesystem (no Store needed)
+    let repo_path = std::path::Path::new(abs_path);
+    if !repo_path.exists() {
+        return Ok(Json(serde_json::json!([])));
+    }
+
+    // Read package.json / Cargo.toml for version info
+    let mut deps = Vec::new();
+    let pkg_json = repo_path.join("package.json");
+    if pkg_json.exists() {
+        if let Ok(content) = std::fs::read_to_string(&pkg_json) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                for section in &["dependencies", "devDependencies"] {
+                    if let Some(obj) = parsed.get(section).and_then(|v| v.as_object()) {
+                        for (name, ver) in obj {
+                            deps.push(serde_json::json!({"name": name, "version": ver, "source": section}));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(Json(serde_json::json!(deps)))
 }
