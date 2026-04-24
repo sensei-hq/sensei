@@ -7,13 +7,14 @@ use serde::Deserialize;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use crate::api::state::AppState;
-use crate::types::{Repo, IndexError};
+use crate::types::Repo;
 
 // ── Repos CRUD ──────────────────────────────────────────────────────────────
 
-pub(crate) async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<Repo>>, StatusCode> {
-    let s = state.store.lock().await;
-    s.list_repos()
+pub(crate) async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    // TODO: Old Store returned Vec<Repo>; PgStore returns folders with kind='git'/'subtree' as JSON.
+    // Callers may need updating for the new shape.
+    state.pg.list_repositories().await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -30,6 +31,8 @@ pub(crate) async fn create_project(
     State(state): State<AppState>,
     Json(body): Json<CreateProjectBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no repo CRUD — repos are now folders with kind='git'.
+    // Use upsert_folder once a root UUID is available. For now, keep old store as bridge.
     let s = state.store.lock().await;
     let repo = Repo {
         repo_id: body.repo_id,
@@ -57,6 +60,7 @@ pub(crate) async fn update_project(
     Path(repo_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no repo CRUD — repos are now folders. Keep old store as bridge.
     let s = state.store.lock().await;
     let mut repo = s.get_repo(&repo_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -78,6 +82,7 @@ pub(crate) async fn delete_project(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no repo CRUD — repos are now folders. Keep old store as bridge.
     let s = state.store.lock().await;
     s.delete_repo(&repo_id)
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -90,6 +95,8 @@ pub(crate) async fn exclude_project(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no exclude_repo / exclusions table — repos are now folders.
+    // Keep old store as bridge until folder-based exclusion is implemented.
     let store = state.store.lock().await;
     // Look up repo path before deleting
     let path = store.get_repo(&repo_id)
@@ -112,6 +119,7 @@ pub(crate) async fn exclude_project(
 pub(crate) async fn list_exclusions(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
+    // TODO: PgStore has no exclusions table. Keep old store as bridge.
     let store = state.store.lock().await;
     match store.list_exclusions() {
         Ok(exclusions) => Json(serde_json::json!({
@@ -127,6 +135,7 @@ pub(crate) async fn remove_exclusion(
     State(state): State<AppState>,
     Path(path): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no exclusions table. Keep old store as bridge.
     let store = state.store.lock().await;
     // Path comes URL-encoded from the route parameter
     let decoded = path.replace("%2F", "/").replace("%20", " ");
@@ -147,6 +156,9 @@ pub(crate) async fn add_project_tag(
     Path(repo_id): Path<String>,
     Json(body): Json<TagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore tags are a controlled vocabulary (tag, category), not per-entity.
+    // Old Store used add_tag("repo", &repo_id, &tag). Need a join table or tags[] column.
+    // Keep old store as bridge.
     let s = state.store.lock().await;
     s.add_tag("repo", &repo_id, &body.tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -157,6 +169,7 @@ pub(crate) async fn remove_project_tag(
     State(state): State<AppState>,
     Path((repo_id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore tags are a controlled vocabulary, not per-entity. Keep old store as bridge.
     let s = state.store.lock().await;
     s.remove_tag("repo", &repo_id, &tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -203,8 +216,7 @@ pub(crate) async fn scan_folder(
 
 /// Return project grouping suggestions from the last scan.
 pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    let suggestions = store.get_config("solution_suggestions")
+    let suggestions = state.pg.get_config("solution_suggestions").await
         .ok()
         .flatten()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
@@ -214,30 +226,15 @@ pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serd
 
 /// List configured scan roots with their scan status.
 pub(crate) async fn scan_roots(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let store = state.store.lock().await;
-    let mut roots: Vec<serde_json::Value> = Vec::new();
-
-    if let Ok(mut stmt) = store.conn_ref().prepare(
-        "SELECT path, created_at FROM scanned_roots ORDER BY created_at DESC"
-    ) {
-        let rows = stmt.query_map([], |row| {
-            Ok(serde_json::json!({
-                "path": row.get::<_, String>(0)?,
-                "created_at": row.get::<_, Option<String>>(1)?,
-            }))
-        });
-        if let Ok(rows) = rows {
-            for row in rows.flatten() {
-                roots.push(row);
-            }
-        }
-    }
+    let mut roots = state.pg.list_watch_roots().await.unwrap_or_default();
 
     // Enrich with repo count per root
-    let repos = store.list_repos().unwrap_or_default();
+    let repos = state.pg.list_repositories().await.unwrap_or_default();
     for root in &mut roots {
         let root_path = root["path"].as_str().unwrap_or("");
-        let count = repos.iter().filter(|r| r.path.starts_with(root_path)).count();
+        let count = repos.iter().filter(|r| {
+            r["abs_path"].as_str().unwrap_or("").starts_with(root_path)
+        }).count();
         root["repos_found"] = serde_json::json!(count);
         root["scanned"] = serde_json::json!(count > 0);
     }
@@ -261,8 +258,10 @@ pub(crate) async fn index_project(
     State(state): State<AppState>,
     Json(body): Json<IndexBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Clear errors for this project
-    { let s = state.store.lock().await; s.clear_index_errors(&body.repo_id).ok(); }
+    // Clear errors for this project (PgStore expects UUID)
+    if let Ok(folder_id) = uuid::Uuid::parse_str(&body.repo_id) {
+        state.pg.clear_index_errors(&folder_id).await.ok();
+    }
 
     let task = crate::tasks::Task::new(
         crate::tasks::TaskKind::ProcessRepo, &body.repo_id, &body.repo_path,
@@ -321,9 +320,8 @@ pub(crate) async fn task_progress_sse(
 
 // ── Index Errors ────────────────────────────────────────────────────────────
 
-pub(crate) async fn list_index_errors(State(state): State<AppState>) -> Result<Json<Vec<IndexError>>, StatusCode> {
-    let s = state.store.lock().await;
-    s.get_index_errors(None)
+pub(crate) async fn list_index_errors(State(state): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    state.pg.get_index_errors(None).await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -331,9 +329,10 @@ pub(crate) async fn list_index_errors(State(state): State<AppState>) -> Result<J
 pub(crate) async fn list_repo_index_errors(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
-) -> Result<Json<Vec<IndexError>>, StatusCode> {
-    let s = state.store.lock().await;
-    s.get_index_errors(Some(&repo_id))
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let folder_id = uuid::Uuid::parse_str(&repo_id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.get_index_errors(Some(&folder_id)).await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
