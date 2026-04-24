@@ -163,7 +163,7 @@ mod tests {
         // Nodes in the same cluster should be in the same community
         let a1_c = communities["fn:a1"];
         let a2_c = communities["fn:a2"];
-        let b1_c = communities["fn:b1"];
+        let _b1_c = communities["fn:b1"];
 
         assert_eq!(a1_c, a2_c, "A cluster nodes should be in same community");
         // B cluster may or may not merge with A depending on modularity — just check it assigned

@@ -65,7 +65,6 @@ pub fn extract_summary(repo_path: &Path) -> ProjectSummary {
 /// Extract the first non-heading, non-empty paragraph from markdown.
 pub(crate) fn extract_first_paragraph(content: &str) -> Option<String> {
     let mut in_frontmatter = false;
-    let mut found_content = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -78,16 +77,12 @@ pub(crate) fn extract_first_paragraph(content: &str) -> Option<String> {
         if in_frontmatter { continue; }
 
         // Skip headings, badges, empty lines
-        if trimmed.is_empty() {
-            if found_content { break; } // end of paragraph
-            continue;
-        }
+        if trimmed.is_empty() { continue; }
         if trimmed.starts_with('#') { continue; }
         if trimmed.starts_with('[') && trimmed.contains("![") { continue; } // badge
         if trimmed.starts_with("![") { continue; } // image
         if trimmed.starts_with('<') { continue; } // HTML
 
-        found_content = true;
         let desc = trimmed.to_string();
         // Cap at 200 chars
         if desc.len() > 200 {

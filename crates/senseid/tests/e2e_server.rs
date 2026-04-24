@@ -158,7 +158,7 @@ mod senseid_test {
     pub async fn start_server(store: rusqlite::Connection, graph: rusqlite::Connection, port: u16) -> std::io::Result<()> {
         // This is a simplified server that mirrors the real one's endpoints
         // In practice we'd import from the library, but binary crates can't be imported in integration tests
-        use axum::{Router, routing::{get, post, delete}, Json, extract::{State, Path as AxumPath}, http::StatusCode};
+        use axum::{Router, routing::{get, post}, Json, extract::{Path as AxumPath}, http::StatusCode};
         use std::sync::Arc;
         use tokio::sync::Mutex;
 

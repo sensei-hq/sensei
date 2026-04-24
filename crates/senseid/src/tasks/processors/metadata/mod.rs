@@ -10,7 +10,7 @@ mod summary;
 
 // Re-export all public types and functions so callers using
 // `crate::tasks::processors::metadata::X` continue to work.
-pub use icons::{IconResult, scan_icons};
-pub use external_links::{ExternalLinksResult, ExternalLink, scan_external_links};
-pub use solutions::{SolutionMatch, suggest_solutions};
-pub use summary::{ProjectSummary, extract_summary};
+pub use icons::scan_icons;
+pub use external_links::scan_external_links;
+pub use solutions::suggest_solutions;
+pub use summary::extract_summary;

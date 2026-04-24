@@ -2,6 +2,7 @@ use rusqlite::params;
 use super::super::Store;
 
 impl Store {
+    #[allow(dead_code)] // used in tests; will be called from API layer
     pub fn get_tags(&self, entity_type: &str, entity_id: &str) -> rusqlite::Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT tag FROM tags WHERE entity_type = ?1 AND entity_id = ?2 ORDER BY tag"
