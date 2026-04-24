@@ -148,7 +148,7 @@ pub(crate) async fn add_project_tag(
     Json(body): Json<TagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    s.add_tag("project", &repo_id, &body.tag)
+    s.add_tag("repo", &repo_id, &body.tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -158,7 +158,7 @@ pub(crate) async fn remove_project_tag(
     Path((repo_id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = state.store.lock().await;
-    s.remove_tag("project", &repo_id, &tag)
+    s.remove_tag("repo", &repo_id, &tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
