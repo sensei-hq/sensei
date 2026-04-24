@@ -16,6 +16,6 @@ mod tests;
 
 
 #[cfg(test)]
-pub use types::{FileProcessResult, SymbolResult, UnresolvedCall, ParentRef};
+pub use types::FileProcessResult;
 pub use router::process_file;
 pub use graph_writer::write_to_graph;
