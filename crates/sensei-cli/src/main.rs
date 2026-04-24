@@ -28,9 +28,6 @@ enum Commands {
         #[arg(long)]
         recommended: bool,
 
-        /// Path to the plugin/marketplace directory (default: auto-detect)
-        #[arg(long)]
-        plugin_dir: Option<String>,
     },
 
     /// Remove sensei configuration
@@ -85,13 +82,11 @@ fn main() {
             scope,
             acp,
             recommended,
-            plugin_dir,
         } => {
             init(
                 scope.as_deref(),
                 acp.as_deref(),
                 recommended,
-                plugin_dir.as_deref(),
             );
         }
         Commands::Remove {
@@ -281,25 +276,9 @@ fn register_project(repo_path: &std::path::Path) {
     }
 }
 
-/// Copy .md files from src dir to dst dir, returns count.
-fn copy_md_files(src: &std::path::Path, dst: &std::path::Path) -> u32 {
-    fs::create_dir_all(dst).ok();
-    let mut count = 0u32;
-    if let Ok(entries) = fs::read_dir(src) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "md") {
-                fs::copy(&path, dst.join(entry.file_name())).ok();
-                count += 1;
-            }
-        }
-    }
-    count
-}
-
 // ── Init ────────────────────────────────────────────────────────────────────
 
-fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool, plugin_dir: Option<&str>) {
+fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool) {
     println!("=== sensei init ===\n");
 
     // Verify binaries
@@ -308,14 +287,12 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool, plugin_dir: O
         std::process::exit(1);
     }
 
-    let marketplace = find_marketplace(plugin_dir);
-
     match scope {
         Some("user") => {
-            init_user_scope(acp, recommended, &marketplace);
+            init_user_scope(acp, recommended);
         }
         Some("project") => {
-            init_project_scope(recommended, &marketplace);
+            init_project_scope(recommended);
         }
         Some(other) => {
             eprintln!("Unknown scope: {}. Use 'user' or 'project'.", other);
@@ -325,10 +302,10 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool, plugin_dir: O
             // Auto-detect: if user scope not configured, do both
             if !is_user_scope_configured() {
                 println!("First-time setup detected — configuring user + project scope.\n");
-                init_user_scope(acp, recommended, &marketplace);
+                init_user_scope(acp, recommended);
                 println!();
             }
-            init_project_scope(recommended, &marketplace);
+            init_project_scope(recommended);
         }
     }
 
@@ -337,7 +314,7 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool, plugin_dir: O
 
 // ── User scope ──────────────────────────────────────────────────────────────
 
-fn init_user_scope(acp: Option<&str>, _recommended: bool, _marketplace: &std::path::Path) {
+fn init_user_scope(acp: Option<&str>, _recommended: bool) {
     println!("[user scope] Global setup — daemon, ACP registration\n");
 
     // 1. Daemon
@@ -452,7 +429,7 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool, _marketplace: &std::pa
 
 // ── Project scope ───────────────────────────────────────────────────────────
 
-fn init_project_scope(_recommended: bool, marketplace: &std::path::Path) {
+fn init_project_scope(_recommended: bool) {
     let repo_root = std::env::current_dir().expect("Cannot determine current directory");
     println!("[project scope] {}\n", repo_root.display());
 
@@ -491,12 +468,8 @@ fn init_project_scope(_recommended: bool, marketplace: &std::path::Path) {
     }
 
     // Mindsets
-    let mindsets_src = marketplace.join("mindsets");
     let mindsets_dst = sensei_dir.join("mindsets");
-    if mindsets_src.exists() {
-        let count = copy_md_files(&mindsets_src, &mindsets_dst);
-        println!("  [copied]  .sensei/mindsets/ ({} mindsets)", count);
-    }
+    fs::create_dir_all(&mindsets_dst).ok();
 
     // 2. .mcp.json — upsert sensei entry (for non-plugin ACPs)
     let mcp_file = repo_root.join(".mcp.json");
