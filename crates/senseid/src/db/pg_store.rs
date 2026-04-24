@@ -186,6 +186,71 @@ impl PgStore {
         Ok(rows)
     }
 
+    // ── Repo compat (folders with kind='git'/'subtree') ────────────────
+    // These bridge the old Repo API to the new folders model.
+
+    /// Register a git repo as a folder. Equivalent to old upsert_repo_basic.
+    pub async fn upsert_repo(&self, root_id: &uuid::Uuid, name: &str, abs_path: &str) -> Result<uuid::Uuid, String> {
+        self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
+    }
+
+    /// Get a repo (folder with kind='git'/'subtree') by abs_path.
+    pub async fn get_repo_by_path(&self, abs_path: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind::text, name, abs_path, project_id, props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
+            ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id, kind, name, abs, pid, props, tags, modified)| {
+            serde_json::json!({
+                "id": id, "kind": kind, "name": name, "abs_path": abs,
+                "project_id": pid, "props": props, "tags": tags,
+                "modified_at": modified.to_rfc3339(),
+            })
+        }))
+    }
+
+    /// Get a repo by name (for backward compat with repo_id lookups).
+    pub async fn get_repo_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, String, Option<uuid::Uuid>, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, abs_path, project_id, props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind) LIMIT 1"
+            ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id, name, abs, pid, props, modified)| {
+            serde_json::json!({ "id": id, "name": name, "abs_path": abs, "project_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
+        }))
+    }
+
+    /// Set folder props (metadata like stack, libs, indexed_at, etc.).
+    pub async fn set_folder_props(&self, folder_id: &uuid::Uuid, props: &serde_json::Value) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET props = props || $2, modified_at = now() WHERE id = $1"
+        ).bind(folder_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Assign a folder to a project with role/label.
+    pub async fn set_folder_project(&self, folder_id: &uuid::Uuid, project_id: &uuid::Uuid, role: &str, label: Option<&str>) -> Result<(), String> {
+        let props = serde_json::json!({"role": role, "label": label});
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET project_id = $2, props = props || $3, modified_at = now() WHERE id = $1"
+        ).bind(folder_id).bind(project_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Mark a folder as indexed with detected libs.
+    pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
+        let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
+        self.set_folder_props(folder_id, &props).await
+    }
+
+    /// Delete a folder (cascade deletes nodes, edges, scan_state, etc.).
+    pub async fn delete_repo_by_name(&self, name: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "DELETE FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind)"
+        ).bind(name).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Nodes ─────────────────────────────────────────────────────────
 
     pub async fn upsert_node(

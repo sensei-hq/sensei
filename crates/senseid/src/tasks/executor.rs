@@ -14,10 +14,6 @@ pub struct TaskContext {
 }
 
 impl TaskContext {
-    pub async fn store(&self) -> tokio::sync::MutexGuard<'_, crate::db::Store> {
-        self.app_state.store.lock().await
-    }
-
     /// Access the PostgreSQL store (no mutex — PgPool is thread-safe).
     pub fn pg(&self) -> &crate::db::pg_store::PgStore {
         &self.app_state.pg
@@ -76,17 +72,14 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 mod tests {
     use super::*;
     use tokio::sync::Mutex;
-    use crate::db::Store;
     use crate::indexer::graph::GraphDb;
     use crate::api::state::SharedState;
 
     /// Build a TaskContext backed by in-memory Store + GraphDb.
     async fn make_ctx() -> Arc<TaskContext> {
-        let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
         let app_state = Arc::new(SharedState {
-            store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: queue.clone(),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
@@ -130,8 +123,8 @@ mod tests {
     async fn execute_task_dispatches_delete_folder() {
         let ctx = make_ctx().await;
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
         let result = execute_task(&ctx, &task).await;
@@ -142,8 +135,8 @@ mod tests {
     async fn execute_task_dispatches_resolve_edges() {
         let ctx = make_ctx().await;
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::ResolveEdges, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -154,8 +147,8 @@ mod tests {
     async fn execute_task_dispatches_resolve_libs() {
         let ctx = make_ctx().await;
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::ResolveLibs, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -166,8 +159,8 @@ mod tests {
     async fn execute_task_dispatches_build_connections() {
         let ctx = make_ctx().await;
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::BuildConnections, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -202,8 +195,9 @@ mod tests {
 
         let ctx = make_ctx().await;
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic("repo", "repo", &tmp.path().to_string_lossy()).unwrap();
+            let repo_path = tmp.path().to_string_lossy().to_string();
+            let root_id = ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, "repo", &repo_path).await.unwrap();
         }
 
         let mut task = Task::new(TaskKind::ProcessFolder, "repo", &src_dir.to_string_lossy());
@@ -222,8 +216,8 @@ mod tests {
     async fn execute_task_dispatches_reconcile_connections() {
         let ctx = make_ctx().await;
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic("repo", "repo", "/tmp/repo").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         // ReconcileConnections with no solutions should succeed (no-op)
         let task = Task::new(TaskKind::ReconcileConnections, "repo", "");
@@ -232,13 +226,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_context_provides_store_and_graph() {
+    async fn task_context_provides_pg_and_graph() {
         let ctx = make_ctx().await;
-        // Verify we can access both store and graph
+        // Verify we can access both pg and graph
         {
-            let store = ctx.store().await;
-            store.upsert_repo_basic("test", "test", "/tmp/test").unwrap();
-            let p = store.get_repo("test").unwrap();
+            let root_id = ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, "test", "/tmp/test").await.unwrap();
+            let p = ctx.pg().get_repo_by_name("test").await.unwrap();
             assert!(p.is_some());
         }
         {

@@ -51,7 +51,7 @@ flowchart TD
     H --> H1[Update project FTR\nrolling 14-day window]
     H --> H2[Update module correction rate\ngroup corrections by code module]
     H --> H3[Update tool usage stats\naggregated from tool_calls]
-    H --> H4[Check change_impacts\nany active measurement windows?]
+    H --> H4[Check recommendations\nany active measurement windows?]
     H --> H5[Trigger insight generation\nnew patterns? recurring corrections?]
 
     H5 --> I{Insight threshold met?}
@@ -124,9 +124,9 @@ After every session completes, these run:
 | Project FTR update | All sessions in 14-day window | Project FTR trend | < 1s |
 | Module correction rate | Corrections grouped by file path | Per-module rate | < 1s |
 | Tool usage aggregation | `tool_calls` rows | Usage frequency map | < 1s |
-| Change impact check | Active `change_impacts` rows | Updated current metrics | < 1s |
+| Change impact check | Active `recommendations` rows (by verdict + recommendation_urgency) | Updated current metrics | < 1s |
 | Insight generation | Accumulated signals | New recommendations | 1-5s (may use local model) |
 
 ## Tables written
 
-`sessions`, `events`, `tool_calls`, `change_impacts` (updated), recommendations (generated)
+`sessions`, `events`, `tool_calls`, `recommendations` (updated with verdict + recommendation_urgency)
