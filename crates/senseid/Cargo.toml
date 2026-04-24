@@ -11,8 +11,12 @@ tower-http = { version = "0.6", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
-# SQLite (store + graph — Kuzu migration planned when linking is stable)
+# SQLite (store + graph — being migrated to PostgreSQL)
 rusqlite = { version = "0.34", features = ["bundled"] }
+
+# PostgreSQL (replacing SQLite — migration in progress)
+sqlx-core = { version = "0.8", features = ["_rt-tokio", "chrono", "uuid", "json"] }
+sqlx-postgres = { version = "0.8", features = ["chrono", "uuid", "json"] }
 
 # Tree-sitter (for Python, Rust, Java)
 tree-sitter = "0.24"
