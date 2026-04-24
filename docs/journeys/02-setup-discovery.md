@@ -58,239 +58,125 @@ flowchart TD
     H1 --> H2[Toggle which to install]
 ```
 
-## Screens (8 steps + welcome + done)
+## Screens
 
 ### Step 1: Welcome
 
-```
-┌──────────────────────────────────────────────────────┐
-│                                                       │
-│              先                                        │
-│           sensei                                      │
-│                                                       │
-│     A teacher does not write the code.                │
-│     A teacher watches. Notices. Teaches.              │
-│                                                       │
-│     Sensei observes your AI sessions — prompts,       │
-│     corrections, outcomes — and learns what works     │
-│     for your codebase. After a few sessions, it       │
-│     begins to teach: surfacing patterns, preventing   │
-│     repeated mistakes, improving first-try rate.      │
-│                                                       │
-│     Nothing leaves your machine.                      │
-│                                                       │
-│                               [Begin setup →]         │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Sensei logo and name
+- A brief philosophy statement: sensei observes AI sessions (prompts, corrections, outcomes), learns what works for your codebase, and begins to teach — surfacing patterns, preventing repeated mistakes, improving first-try rate
+- Privacy assurance: nothing leaves your machine
 
-**What the user does:** Reads. Clicks "Begin setup."
+**User interaction:**
+- Click "Begin setup" to proceed.
+
+**Why:** Set expectations. The user should understand that sensei is a teacher, not a linter — it watches, learns, then teaches.
 
 ### Step 2: Assistants
 
-```
-┌──────────────────────────────────────────────────────┐
-│  三  Assistants                                       │
-│      Which AI coding tools do you use?                │
-│                                                       │
-│  ☑  Claude Code    1.8.2   /Users/you/.claude/code   │
-│     → register sensei plugin, skills, session hooks   │
-│                                                       │
-│  ☑  Cursor         0.42    /Applications/Cursor.app   │
-│     → register MCP server, adapter config             │
-│                                                       │
-│  ☐  Codex CLI      —       not found                  │
-│  ☐  Aider          —       not found                  │
-│                                                       │
-│  Sensei registers its MCP tools with each assistant   │
-│  so they can call search(), get_callers(), etc.       │
-│                                                       │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- A list of detected AI coding assistants (Claude Code, Cursor, Codex CLI, Aider, etc.)
+- For each: name, version, install path, detected/not-found status
+- A brief explanation of what registration does (registers MCP tools so assistants can call search, get_callers, etc.)
 
-**What the user does:** Toggle which assistants to register with. Auto-detected ones are pre-checked.
+**User interaction:**
+- Toggle which assistants to register with. Auto-detected ones are pre-checked.
+
+**Why:** Sensei works through MCP tools inside the user's existing assistant. This step establishes which assistants to integrate with.
 
 ### Step 3: Folders
 
-```
-┌──────────────────────────────────────────────────────┐
-│  四  Folders                                          │
-│      Where does your work live?                       │
-│                                                       │
-│  ┌────────────────────────────────────────────────┐  │
-│  │  ~/Developer           monorepo root, 3 pkgs   │  │
-│  │  ~/work/clients        client projects          │  │
-│  └────────────────────────────────────────────────┘  │
-│                                                       │
-│  [+ Add folder]                                       │
-│                                                       │
-│  Sensei will recursively scan these folders for       │
-│  git repos and organize them into projects.           │
-│  Depth 1-2 for plain folders, any depth for git.     │
-│                                                       │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- A list of root directories the user wants sensei to watch
+- For each: path and a brief description (auto-detected or user-entered)
+- An explanation: sensei will recursively scan these for git repos and organize them into projects (depth 1-2 for plain folders, any depth for git)
 
-**What the user does:** Add root directories. Each becomes a `folders_to_watch` entry.
+**User interaction:**
+- Add root directories via folder picker or path entry.
+- Remove directories from the list.
+
+**Why:** Sensei needs to know where the user's code lives before it can discover projects and build its index.
 
 ### Step 4: Scan
 
-```
-┌──────────────────────────────────────────────────────┐
-│  五  Scan                                             │
-│      Discovering your projects. ~2M files/min.        │
-│                                                       │
-│  Roots: 2  ·  Discovered: 8  ·  Queued: 3,214       │
-│  ████████████████████░░░░░░░  72%                     │
-│                                                       │
-│  ┌────────────────────────────────────────────────┐  │
-│  │ 00:02  ~/Developer · found git repo            │  │
-│  │ 00:03  ~/Developer/lumen-app · git    842f     │  │
-│  │ 00:04  ~/Developer/lumen-canvas · git  614f    │  │
-│  │ 00:05  ~/Developer/lumen-shell · git   291f    │  │
-│  │ 00:06  lumen-app · 612/842 processed           │  │
-│  │ 00:08  lumen-canvas · 614/614 · graph done     │  │
-│  │ ...                                             │  │
-│  └────────────────────────────────────────────────┘  │
-│                                                       │
-│  scan complete · 8 repos · 3,214 files · 21s         │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Aggregate stats: number of roots, repos discovered, files queued
+- A progress indicator (percentage or bar)
+- A live event log showing discovery in real time (SSE stream) — timestamps, repo names, file counts, processing status
+- Completion summary: total repos, total files, elapsed time
 
-**What the user does:** Watches. No input needed. Live SSE stream shows discovery in real time.
+**User interaction:**
+- Watch. No input needed. The scan runs automatically.
+
+**Why:** Gives the user confidence that sensei found their code. The live stream prevents the feeling of a frozen UI during a potentially long operation.
 
 ### Step 5: Projects
 
-```
-┌──────────────────────────────────────────────────────┐
-│  六  Projects                                         │
-│      3 projects detected. Confirm or reorganize.      │
-│                                                       │
-│  ┌─ 工  Lumen Studio ──────────────────────────────┐ │
-│  │  ☑ lumen-app     ~/Developer/lumen-app    前    │ │
-│  │  ☑ lumen-canvas  ~/Developer/lumen-canvas  書   │ │
-│  │  ☑ lumen-shell   ~/Developer/lumen-shell   基   │ │
-│  │  Client: internal    Goal: [                  ] │ │
-│  └──────────────────────────────────────────────────┘ │
-│                                                       │
-│  ┌─ 雲  Lumen Cloud ───────────────────────────────┐ │
-│  │  ☑ lumen-api     ~/work/lumen-cloud/api    後   │ │
-│  │  ☑ lumen-sync    ~/work/lumen-cloud/sync   後   │ │
-│  │  ☑ lumen-auth    ~/work/lumen-cloud/auth   後   │ │
-│  └──────────────────────────────────────────────────┘ │
-│                                                       │
-│  [Split]  [Merge]  [+ Create project]                 │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Auto-grouped projects, each containing one or more repos
+- For each project: name, constituent repos with paths
+- For each repo: a role indicator (frontend, backend, library, infra)
+- Project-level metadata fields: client, goal
 
-**What the user does:** Confirm auto-grouping. Rename projects. Change repo roles (前=frontend, 後=backend, 書=library, 基=infra). Split or merge projects. Set client/goal.
+**User interaction:**
+- Confirm auto-grouping or reorganize: rename projects, change repo roles, split a project into multiple, merge projects together
+- Set client and goal per project
+- Create new projects manually
+
+**Why:** Sensei's insights are project-scoped. Correct grouping determines whether analytics are meaningful — a monorepo with 3 services should be one project, not three.
 
 ### Step 6: Libraries
 
-```
-┌──────────────────────────────────────────────────────┐
-│  七  Libraries                                        │
-│      6 detected · sensei will index docs for these.   │
-│                                                       │
-│  Detected from code                                   │
-│  ☑  axum       0.7.5   Rust    docs indexed     47x  │
-│  ☑  tokio      1.39    Rust    docs indexed    112x  │
-│  ☑  sqlx       0.8.0   Rust    docs indexed     23x  │
-│  ☑  Svelte 5   5.0.0   TS      docs indexed    128x  │
-│  ☐  wgpu       0.20    Rust    no docs           7x  │
-│                                                       │
-│  [+ Import from URL]  [+ Import llms.txt]             │
-│                                                       │
-│  Sensei wraps these libraries — indexes their docs    │
-│  and exposes search, usage, and drift tools via MCP.  │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Libraries detected from the user's code (name, version, language, doc-indexing status, usage frequency)
+- A toggle per library to include/exclude from indexing
+- Options to import custom libraries by URL or llms.txt
 
-**What the user does:** Toggle which libraries to index. Import custom ones by URL or llms.txt.
+**User interaction:**
+- Toggle which libraries to index.
+- Import additional libraries not auto-detected.
+
+**Why:** Sensei wraps libraries — indexing their docs and exposing search, usage, and drift tools via MCP. The user controls which libraries are worth the indexing cost.
 
 ### Step 7: MCP Registry
 
-```
-┌──────────────────────────────────────────────────────┐
-│  八  MCP Registry                                     │
-│      Recommended for your stack.                      │
-│                                                       │
-│  Your stack: Rust · TypeScript · PostgreSQL · Redis   │
-│                                                       │
-│  Recommended                                          │
-│  ☑  PostgreSQL MCP   supabase    ✓ verified   14 tools│
-│  ☑  Stripe MCP       stripe      ✓ verified   18 tools│
-│  ☐  Redis MCP        redis labs  ✓ verified    9 tools│
-│  ☐  GitHub MCP       github      ✓ verified   23 tools│
-│                                                       │
-│  Other available                                      │
-│  ☐  Sentry MCP       sentry      ✓ verified   11 tools│
-│  ☐  Playwright MCP   microsoft   ✓ verified    7 tools│
-│  ☐  Figma MCP        figma       ✓ verified   12 tools│
-│                                                       │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- The user's detected stack (e.g., "Rust, TypeScript, PostgreSQL, Redis")
+- Recommended MCP servers based on stack, with: name, publisher, verification status, tool count
+- Additional available MCP servers beyond the recommendations
 
-**What the user does:** Toggle which external MCP servers to install. Stack-based recommendations are pre-checked.
+**User interaction:**
+- Toggle which MCP servers to install. Stack-based recommendations are pre-checked.
+
+**Why:** External MCP servers extend sensei's tool surface (database queries, deployment, monitoring). Stack-aware recommendations reduce decision fatigue.
 
 ### Step 8: Inference
 
-```
-┌──────────────────────────────────────────────────────┐
-│  八+  Inference                                       │
-│       Local models + external providers               │
-│                                                       │
-│  Your machine: 32GB RAM · Apple M3 Pro · Metal GPU    │
-│  Recommended: Full reasoning panel (3 models)         │
-│                                                       │
-│  Local models (via Ollama)                            │
-│  ☑  gemma3:27b     16.0 GB   reasoning + analysis    │
-│  ☑  qwen3:14b       8.7 GB   second opinion          │
-│  ☐  llama4-scout   10.2 GB   synthesis (optional)    │
-│                                                       │
-│  Total: ~25 GB disk · ~20 GB RAM during inference     │
-│  [Pull selected models]  [Skip — configure later]     │
-│                                                       │
-│  ─────────────────────────────────────────────────    │
-│                                                       │
-│  External providers (optional — bring your own key)   │
-│                                                       │
-│  ● Anthropic    ANTHROPIC_API_KEY detected    ✓       │
-│  ○ OpenAI       no key found     [Enter API key]      │
-│  ○ Custom       OpenAI-compatible  [Configure]        │
-│                                                       │
-│  External models enable richer reasoning in the       │
-│  insights panel. Local models work without them.      │
-│                                                       │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- Hardware detection summary: RAM, GPU type, recommended model tier
+- Local models section (via Ollama): model name, disk size, purpose/role. Pre-checked based on hardware capacity.
+- Total resource impact: disk usage, RAM during inference
+- External providers section: auto-detected API keys from environment variables (e.g., ANTHROPIC_API_KEY), with status. Fields to enter keys manually for providers without auto-detection.
+- A note that external models enable richer reasoning but local models work without them
 
-**What the user does:**
-1. Select which local models to pull (hardware-aware recommendations pre-checked).
-2. Model pull runs in background — can proceed to next step while downloading.
-3. If environment variables for API keys are detected (e.g. `ANTHROPIC_API_KEY`), they are auto-shown.
-4. Optionally enter API keys for external providers.
-5. Skip entirely if they want local-only or configure later in Settings.
+**User interaction:**
+- Select which local models to pull (can proceed to next step while models download in background).
+- Review auto-detected API keys; optionally enter keys for additional providers.
+- Skip entirely to configure later in Settings.
+
+**Why:** Inference powers the insights panel. This step right-sizes model selection to the user's hardware and lets them opt into external providers without requiring it.
 
 ### Step 9: Enter
 
-```
-┌──────────────────────────────────────────────────────┐
-│  九  The observatory is ready.                        │
-│                                                       │
-│       3 projects · 8 repos · 6 libraries · 2 MCPs    │
-│       2 assistants registered                         │
-│                                                       │
-│  Start a session with your assistant.                 │
-│  Sensei will watch in silence for a few days,         │
-│  then begin to teach.                                 │
-│                                                       │
-│  Setup can be resumed at any time from Settings.      │
-│                                                       │
-│                        [Enter the observatory →]      │
-└──────────────────────────────────────────────────────┘
-```
+**What to show:**
+- A summary of everything configured: project count, repo count, library count, MCP server count, registered assistants, inference status
+- A brief message setting expectations: sensei will watch in silence for a few days, then begin to teach
+- A note that setup can be resumed from Settings at any time
 
-**What the user does:** Clicks "Enter the observatory." Setup complete.
+**User interaction:**
+- Click "Enter the observatory" to finish setup.
+
+**Why:** Closure. The user sees the full picture of what was configured and knows what to expect next.
 
 ## What gets created
 
@@ -311,30 +197,14 @@ erDiagram
 3. **Reorganizing:** Settings → Projects → Split/Merge/Move repos.
 4. **Re-running setup:** Settings → "Re-run setup wizard" starts from Step 2.
 
-## Mockup status
+## Data sources
 
-| Screen | Mockup exists? | What mockup covers | What's missing |
-|--------|---------------|--------------------|---------------------------------|
-| Welcome | ✓ `setup-wizard.jsx` | Tagline, begin button | — |
-| Components | ✓ `setup-wizard.jsx` | 3 components with auto-resolve | **Moved to bootstrap (J1).** Remove from wizard. |
-| Assistants | ✓ `setup-wizard.jsx` | ACP detection, checkbox registration | — |
-| Folders | ✓ `setup-wizard.jsx` | Add paths, notes | — |
-| Scan | ✓ `setup-wizard.jsx` | Live SSE stream, progress, stats | — |
-| Projects | ✓ `setup-wizard.jsx` | Auto-group, split/merge, roles, metadata | — |
-| Libraries | ✓ `setup-wizard.jsx` | Detected list, toggle, custom add | — |
-| MCP Registry | ✓ `setup-wizard.jsx` | Stack-aware recommendations, toggle | — |
-| Inference | ✗ | — | **New step needed:** hardware detection, model selection, API key config |
-| Enter | ✓ `setup-wizard.jsx` | Summary counts, "enter observatory" | Add inference summary (models pulled, providers configured) |
-
-### Design brief for mockup changes
-
-**Remove Components step from wizard** — it's now the bootstrap startup screen (J1), not a wizard step. Wizard starts at Welcome → Assistants.
-
-**Add Inference step (new, after MCP Registry):**
-- Hardware detection banner: RAM, GPU, recommended tier
-- Local models section: checkboxes with model name, size, purpose. Pre-checked based on hardware.
-- Pull progress: can proceed to next step while models download in background
-- External providers section: auto-detect env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY). Show status. Allow manual entry.
-- Skip option: "Continue without — configure later in Settings"
-
-**Update Enter step:** Add inference summary line ("2 local models · 1 external provider" or "no inference configured")
+| Data | Source |
+|------|--------|
+| Installed assistants | File system detection (known install paths) |
+| Repos and files | Recursive walk of `folders_to_watch` roots |
+| Project grouping | Heuristic: directory proximity, shared config, monorepo markers |
+| Libraries | Dependency files (Cargo.toml, package.json, etc.) |
+| MCP recommendations | Stack detection cross-referenced with MCP registry |
+| Hardware specs | System profiling (RAM, GPU via sysctl / Metal API) |
+| API keys | Environment variable detection |
