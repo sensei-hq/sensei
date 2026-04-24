@@ -171,6 +171,215 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Memories ──────────────────────────────────────────────────────
+
+    pub async fn create_memory(
+        &self, project_id: Option<&uuid::Uuid>, scope: &str, scope_filter: Option<&str>,
+        mem_type: &str, title: &str, content: &str, impact: Option<&str>,
+        session_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memories(project_id, scope, scope_filter, type, title, content, impact, session_id)
+             VALUES($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7, $8) RETURNING id"
+        ).bind(project_id).bind(scope).bind(scope_filter).bind(mem_type)
+            .bind(title).bind(content).bind(impact).bind(session_id)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn reinforce_memory(&self, id: &uuid::Uuid, amount: f64) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.memories SET strength = LEAST(strength + $2, 5.0), modified_at = now() WHERE id = $1"
+        ).bind(id).bind(amount).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn archive_memory(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.memories SET status = 'archived'::sensei.memory_status, modified_at = now() WHERE id = $1"
+        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_memory(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String, Option<String>, f64, String, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content, impact, strength::float8, status::text, modified_at FROM sensei.memories WHERE id = $1"
+            ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|(id, pid, scope, filter, mtype, title, content, impact, strength, status, modified)| {
+            serde_json::json!({
+                "id": id, "project_id": pid, "scope": scope, "scope_filter": filter,
+                "type": mtype, "title": title, "content": content, "impact": impact,
+                "strength": strength, "status": status, "modified_at": modified.to_rfc3339(),
+            })
+        }))
+    }
+
+    pub async fn list_active_memories(&self, project_id: Option<&uuid::Uuid>, scope: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, String, String, Option<String>, f64)> = match (project_id, scope) {
+            (Some(pid), Some(s)) => sqlx_core::query_as::query_as(
+                "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
+                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (project_id = $1 OR project_id IS NULL) AND scope = $2::sensei.memory_scope
+                 ORDER BY strength DESC"
+            ).bind(pid).bind(s).fetch_all(&self.pool).await,
+            (Some(pid), None) => sqlx_core::query_as::query_as(
+                "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
+                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND (project_id = $1 OR project_id IS NULL)
+                 ORDER BY strength DESC"
+            ).bind(pid).fetch_all(&self.pool).await,
+            _ => sqlx_core::query_as::query_as(
+                "SELECT id, scope::text, scope_filter, type::text, title, content, impact, strength::float8
+                 FROM sensei.memories WHERE status = 'active' AND strength >= 1.0 AND project_id IS NULL
+                 ORDER BY strength DESC"
+            ).fetch_all(&self.pool).await,
+        }.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, scope, filter, mtype, title, content, impact, strength)| {
+            serde_json::json!({ "id": id, "scope": scope, "scope_filter": filter, "type": mtype, "title": title, "content": content, "impact": impact, "strength": strength })
+        }).collect())
+    }
+
+    // ── Memory Examples ──────────────────────────────────────────────
+
+    pub async fn add_memory_example(&self, memory_id: &uuid::Uuid, node_id: &str, is_good: bool, note: Option<&str>) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memory_examples(memory_id, node_id, is_good, note) VALUES($1, $2, $3, $4) RETURNING id"
+        ).bind(memory_id).bind(node_id).bind(is_good).bind(note)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn list_memory_examples(&self, memory_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, bool, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, node_id, is_good, note FROM sensei.memory_examples WHERE memory_id = $1"
+        ).bind(memory_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, nid, good, note)| {
+            serde_json::json!({ "id": id, "node_id": nid, "is_good": good, "note": note })
+        }).collect())
+    }
+
+    // ── Memory Evidence ──────────────────────────────────────────────
+
+    pub async fn add_memory_evidence(&self, memory_id: &uuid::Uuid, session_id: &uuid::Uuid, note: Option<&str>) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memory_evidence(memory_id, session_id, note) VALUES($1, $2, $3) RETURNING id"
+        ).bind(memory_id).bind(session_id).bind(note)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn list_memory_evidence(&self, memory_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx_core::query_as::query_as(
+            "SELECT id, session_id, note, modified_at FROM sensei.memory_evidence WHERE memory_id = $1"
+        ).bind(memory_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, sid, note, modified)| {
+            serde_json::json!({ "id": id, "session_id": sid, "note": note, "modified_at": modified.to_rfc3339() })
+        }).collect())
+    }
+
+    // ── Memory Links ─────────────────────────────────────────────────
+
+    pub async fn link_memories(&self, parent_id: &uuid::Uuid, child_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.memory_links(parent_id, child_id) VALUES($1, $2) ON CONFLICT DO NOTHING"
+        ).bind(parent_id).bind(child_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_memory_children(&self, parent_id: &uuid::Uuid) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT child_id FROM sensei.memory_links WHERE parent_id = $1"
+        ).bind(parent_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    pub async fn get_memory_parent(&self, child_id: &uuid::Uuid) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT parent_id FROM sensei.memory_links WHERE child_id = $1"
+        ).bind(child_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
+    }
+
+    // ── Recommendations (inference) ──────────────────────────────────
+
+    pub async fn create_recommendation(
+        &self, project_id: &uuid::Uuid, title: &str, why: &str, action_type: &str, urgency: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO inference.recommendations(project_id, title, why, action_type, urgency)
+             VALUES($1, $2, $3, $4, $5::sensei.recommendation_urgency) RETURNING id"
+        ).bind(project_id).bind(title).bind(why).bind(action_type).bind(urgency)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn accept_recommendation(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.recommendations SET status = 'accepted'::sensei.recommendation_status, acted_at = now() WHERE id = $1"
+        ).bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn measure_recommendation(&self, id: &uuid::Uuid, verdict: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.recommendations SET verdict = $2::sensei.recommendation_verdict, measured_at = now() WHERE id = $1"
+        ).bind(id).bind(verdict).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn list_recommendations(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, title, why, urgency::text, status::text, verdict::text FROM inference.recommendations WHERE project_id = $1 ORDER BY urgency::text"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, title, why, urg, status, verdict)| {
+            serde_json::json!({ "id": id, "title": title, "why": why, "urgency": urg, "status": status, "verdict": verdict })
+        }).collect())
+    }
+
+    // ── Communities (inference) ───────────────────────────────────────
+
+    pub async fn upsert_community(&self, folder_id: &uuid::Uuid, community_id: i32, label: &str, node_count: i32) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO inference.communities(folder_id, community_id, label, node_count)
+             VALUES($1, $2, $3, $4)
+             ON CONFLICT(folder_id, community_id) DO UPDATE SET label = EXCLUDED.label, node_count = EXCLUDED.node_count, modified_at = now()
+             RETURNING id"
+        ).bind(folder_id).bind(community_id).bind(label).bind(node_count)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn list_communities(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, i32)> = sqlx_core::query_as::query_as(
+            "SELECT id, label, node_count FROM inference.communities WHERE folder_id = $1 ORDER BY node_count DESC"
+        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, label, count)| {
+            serde_json::json!({ "id": id, "label": label, "node_count": count })
+        }).collect())
+    }
+
+    // ── Reasoning Traces (inference) ─────────────────────────────────
+
+    pub async fn insert_reasoning_trace(
+        &self, project_id: Option<&uuid::Uuid>, trigger_event: &str,
+        models_used: &[String], exchanges: &serde_json::Value, consensus: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO inference.reasoning_traces(project_id, trigger_event, models_used, exchanges, consensus) VALUES($1, $2, $3, $4, $5) RETURNING id"
+        ).bind(project_id).bind(trigger_event).bind(models_used).bind(exchanges).bind(consensus)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn get_reasoning_traces_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Vec<String>, serde_json::Value, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT id, trigger_event, models_used, exchanges, consensus FROM inference.reasoning_traces WHERE project_id = $1"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, trigger, models, exchanges, consensus)| {
+            serde_json::json!({ "id": id, "trigger_event": trigger, "models_used": models, "exchanges": exchanges, "consensus": consensus })
+        }).collect())
+    }
+
     // ── Folders to Watch ───────────────────────────────────────────────
 
     pub async fn add_watch_root(&self, path: &str, name: &str, excluded: &serde_json::Value) -> Result<uuid::Uuid, String> {
@@ -691,6 +900,152 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    // ── Memories tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_create_and_get() {
+        let s = pg_store().await;
+        let id = s.create_memory(None, "global", None, "decision", "_test:mem_create", "Always use TDD", Some("Bugs ship to prod"), None).await.unwrap();
+        let m = s.get_memory(&id).await.unwrap().unwrap();
+        assert_eq!(m["title"], "_test:mem_create");
+        assert_eq!(m["scope"], "global");
+        assert_eq!(m["strength"], 1.0);
+        assert_eq!(m["status"], "active");
+        // cleanup via historize trigger test
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_reinforce() {
+        let s = pg_store().await;
+        let id = s.create_memory(None, "global", None, "pattern", "_test:mem_reinforce", "rule", None, None).await.unwrap();
+        s.reinforce_memory(&id, 1.0).await.unwrap();
+        s.reinforce_memory(&id, 1.0).await.unwrap();
+        let m = s.get_memory(&id).await.unwrap().unwrap();
+        assert_eq!(m["strength"], 3.0); // 1.0 + 1.0 + 1.0
+        // Cap at 5.0
+        s.reinforce_memory(&id, 10.0).await.unwrap();
+        let m = s.get_memory(&id).await.unwrap().unwrap();
+        assert_eq!(m["strength"], 5.0);
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_archive() {
+        let s = pg_store().await;
+        let id = s.create_memory(None, "global", None, "question", "_test:mem_archive", "open q", None, None).await.unwrap();
+        s.archive_memory(&id).await.unwrap();
+        let m = s.get_memory(&id).await.unwrap().unwrap();
+        assert_eq!(m["status"], "archived");
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(id).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_list_active() {
+        let s = pg_store().await;
+        let id1 = s.create_memory(None, "global", None, "decision", "_test:mem_list_a", "rule a", None, None).await.unwrap();
+        let id2 = s.create_memory(None, "global", None, "decision", "_test:mem_list_b", "rule b", None, None).await.unwrap();
+        let active = s.list_active_memories(None, Some("global")).await.unwrap();
+        assert!(active.iter().any(|m| m["title"] == "_test:mem_list_a"));
+        assert!(active.iter().any(|m| m["title"] == "_test:mem_list_b"));
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)").bind(&[id1, id2][..]).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Memory Examples tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_example_add_and_list() {
+        let s = pg_store().await;
+        let mid = s.create_memory(None, "global", None, "pattern", "_test:mem_ex", "rule", None, None).await.unwrap();
+        s.add_memory_example(&mid, "fn:auth_handler", true, Some("canonical auth")).await.unwrap();
+        s.add_memory_example(&mid, "fn:inline_auth", false, Some("avoid inline")).await.unwrap();
+        let examples = s.list_memory_examples(&mid).await.unwrap();
+        assert_eq!(examples.len(), 2);
+        assert!(examples.iter().any(|e| e["is_good"] == true));
+        assert!(examples.iter().any(|e| e["is_good"] == false));
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(mid).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Memory Evidence tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_evidence_add_and_list() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("mem_ev_{}", uuid::Uuid::new_v4())).await;
+        let sid = s.create_session(&fid, "test", None).await.unwrap();
+        let mid = s.create_memory(None, "global", None, "decision", "_test:mem_ev", "rule", None, None).await.unwrap();
+        s.add_memory_evidence(&mid, &sid, Some("user corrected twice")).await.unwrap();
+        let evidence = s.list_memory_evidence(&mid).await.unwrap();
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0]["note"], "user corrected twice");
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = $1").bind(mid).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Memory Links tests ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_links_parent_child() {
+        let s = pg_store().await;
+        let parent = s.create_memory(None, "global", None, "decision", "_test:mem_parent", "combined", None, None).await.unwrap();
+        let child1 = s.create_memory(None, "global", None, "decision", "_test:mem_child1", "original 1", None, None).await.unwrap();
+        let child2 = s.create_memory(None, "global", None, "decision", "_test:mem_child2", "original 2", None, None).await.unwrap();
+        s.link_memories(&parent, &child1).await.unwrap();
+        s.link_memories(&parent, &child2).await.unwrap();
+        let children = s.get_memory_children(&parent).await.unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(s.get_memory_parent(&child1).await.unwrap(), Some(parent));
+        sqlx_core::query::query("DELETE FROM sensei.memories WHERE id = ANY($1)")
+            .bind(&[parent, child1, child2][..]).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Recommendations tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn recommendation_lifecycle() {
+        let s = pg_store().await;
+        let pid = s.create_project("_test:rec_proj", None, None).await.unwrap();
+        let rid = s.create_recommendation(&pid, "_test:rec", "reduces corrections", "promote_pattern", "high").await.unwrap();
+        s.accept_recommendation(&rid).await.unwrap();
+        s.measure_recommendation(&rid, "positive").await.unwrap();
+        let recs = s.list_recommendations(&pid).await.unwrap();
+        let r = recs.iter().find(|r| r["title"] == "_test:rec").unwrap();
+        assert_eq!(r["status"], "accepted");
+        assert_eq!(r["verdict"], "positive");
+        sqlx_core::query::query("DELETE FROM inference.recommendations WHERE id = $1").bind(rid).execute(s.pool()).await.unwrap();
+        s.delete_project(&pid).await.unwrap();
+    }
+
+    // ── Communities tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn community_upsert_and_list() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("comm_{}", uuid::Uuid::new_v4())).await;
+        let cid = s.upsert_community(&fid, 1, "_test:auth_cluster", 3).await.unwrap();
+        let comms = s.list_communities(&fid).await.unwrap();
+        assert!(comms.iter().any(|c| c["label"] == "_test:auth_cluster" && c["node_count"] == 3));
+        sqlx_core::query::query("DELETE FROM inference.communities WHERE id = $1").bind(cid).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Reasoning Traces tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn reasoning_trace_insert_and_get() {
+        let s = pg_store().await;
+        let pid = s.create_project("_test:rt_proj", None, None).await.unwrap();
+        let tid = s.insert_reasoning_trace(
+            Some(&pid), "pattern_emerging", &["gemma4:27b".into()],
+            &serde_json::json!([{"model":"gemma4","role":"proposer","content":"analyze"}]),
+            &serde_json::json!({"conclusion":"adopt adapter pattern","confidence":0.9}),
+        ).await.unwrap();
+        let traces = s.get_reasoning_traces_by_project(&pid).await.unwrap();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0]["consensus"]["confidence"], 0.9);
+        assert_eq!(traces[0]["trigger_event"], "pattern_emerging");
+        sqlx_core::query::query("DELETE FROM inference.reasoning_traces WHERE id = $1").bind(tid).execute(s.pool()).await.unwrap();
+        s.delete_project(&pid).await.unwrap();
     }
 
     // ── Folders to Watch tests ─────────────────────────────────────────
