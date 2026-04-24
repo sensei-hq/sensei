@@ -171,6 +171,103 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Detected Patterns (inference) ──────────────────────────────────
+
+    pub async fn upsert_pattern(
+        &self, folder_id: &uuid::Uuid, name: &str, is_anti: bool,
+        confidence: Option<f64>, instances: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
+        let count = instances.as_array().map(|a| a.len() as i32).unwrap_or(0);
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO inference.detected_patterns(folder_id, name, is_anti_pattern, confidence, instance_count, instances)
+             VALUES($1, $2, $3, $4, $5, $6)
+             ON CONFLICT(folder_id, name, is_anti_pattern) DO UPDATE SET
+               confidence = COALESCE(EXCLUDED.confidence, detected_patterns.confidence),
+               instance_count = EXCLUDED.instance_count,
+               instances = EXCLUDED.instances,
+               modified_at = now()
+             RETURNING id"
+        ).bind(folder_id).bind(name).bind(is_anti).bind(confidence).bind(count).bind(instances)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn promote_pattern(&self, id: &uuid::Uuid, lifecycle: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE inference.detected_patterns SET lifecycle = $2::sensei.pattern_lifecycle, modified_at = now() WHERE id = $1"
+        ).bind(id).bind(lifecycle)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn list_patterns_by_folder(&self, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, String, bool, Option<f64>, i32, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, family, lifecycle::text, is_anti_pattern, confidence::float8, instance_count, modified_at
+                 FROM inference.detected_patterns WHERE folder_id = $1 ORDER BY instance_count DESC"
+            ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, family, lc, anti, conf, count, modified)| {
+            serde_json::json!({
+                "id": id, "name": name, "family": family, "lifecycle": lc,
+                "is_anti_pattern": anti, "confidence": conf, "instance_count": count,
+                "modified_at": modified.to_rfc3339(),
+            })
+        }).collect())
+    }
+
+    // ── Libraries ────────────────────────────────────────────────────
+
+    pub async fn upsert_library(
+        &self, name: &str, ecosystem: &str, version: Option<&str>,
+        description: Option<&str>, source_type: Option<&str>, base_url: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.libraries(name, ecosystem, version, description, source_type, base_url)
+             VALUES($1, $2::sensei.library_ecosystem, $3, $4, $5::sensei.library_source_type, $6)
+             ON CONFLICT(ecosystem, name) DO UPDATE SET
+               version = COALESCE(EXCLUDED.version, libraries.version),
+               description = COALESCE(EXCLUDED.description, libraries.description),
+               source_type = COALESCE(EXCLUDED.source_type, libraries.source_type),
+               base_url = COALESCE(EXCLUDED.base_url, libraries.base_url),
+               modified_at = now()
+             RETURNING id"
+        ).bind(name).bind(ecosystem).bind(version).bind(description).bind(source_type).bind(base_url)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn get_library(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, String, Option<String>, Option<String>, i32, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, ecosystem::text, version, description, page_count, modified_at FROM sensei.libraries WHERE id = $1"
+            ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(row.map(|(id, name, eco, ver, desc, pages, modified)| {
+            serde_json::json!({
+                "id": id, "name": name, "ecosystem": eco, "version": ver,
+                "description": desc, "page_count": pages, "modified_at": modified.to_rfc3339(),
+            })
+        }))
+    }
+
+    pub async fn list_libraries(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, i32)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, ecosystem::text, version, page_count FROM sensei.libraries ORDER BY name"
+            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, eco, ver, pages)| {
+            serde_json::json!({ "id": id, "name": name, "ecosystem": eco, "version": ver, "page_count": pages })
+        }).collect())
+    }
+
+    pub async fn delete_library(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Sessions (activity) ────────────────────────────────────────────
 
     pub async fn create_session(&self, folder_id: &uuid::Uuid, task: &str, acp_id: Option<&str>) -> Result<uuid::Uuid, String> {
@@ -478,6 +575,93 @@ mod tests {
         row.0
     }
 
+    // ── Detected Patterns tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn pattern_upsert_and_list() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "pat_upsert").await;
+        let instances = serde_json::json!([{"file":"src/lib.rs","line":10},{"file":"src/main.rs","line":20}]);
+        let pid = s.upsert_pattern(&fid, "_test:Adapter", false, Some(0.85), &instances).await.unwrap();
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        assert!(patterns.iter().any(|p| p["name"] == "_test:Adapter" && p["instance_count"] == 2));
+        // cleanup
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
+            .bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pattern_promote() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "pat_promote").await;
+        let pid = s.upsert_pattern(&fid, "_test:Factory", false, None, &serde_json::json!([])).await.unwrap();
+        s.promote_pattern(&pid, "rule").await.unwrap();
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        let p = patterns.iter().find(|p| p["id"] == pid.to_string()).unwrap();
+        assert_eq!(p["lifecycle"], "rule");
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
+            .bind(pid).execute(s.pool()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pattern_upsert_updates_existing() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "pat_dup").await;
+        let id1 = s.upsert_pattern(&fid, "_test:Singleton", false, Some(0.5), &serde_json::json!([{"file":"a.rs"}])).await.unwrap();
+        let id2 = s.upsert_pattern(&fid, "_test:Singleton", false, Some(0.9), &serde_json::json!([{"file":"a.rs"},{"file":"b.rs"}])).await.unwrap();
+        assert_eq!(id1, id2); // same row updated
+        let patterns = s.list_patterns_by_folder(&fid).await.unwrap();
+        let p = patterns.iter().find(|p| p["name"] == "_test:Singleton").unwrap();
+        assert_eq!(p["instance_count"], 2);
+        sqlx_core::query::query("DELETE FROM inference.detected_patterns WHERE id = $1")
+            .bind(id1).execute(s.pool()).await.unwrap();
+    }
+
+    // ── Libraries tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn library_upsert_and_get() {
+        let s = pg_store().await;
+        let id = s.upsert_library("_test:tokio", "cargo", Some("1.0"), Some("async runtime"), None, None).await.unwrap();
+        let lib = s.get_library(&id).await.unwrap().unwrap();
+        assert_eq!(lib["name"], "_test:tokio");
+        assert_eq!(lib["ecosystem"], "cargo");
+        assert_eq!(lib["version"], "1.0");
+        s.delete_library(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn library_upsert_updates() {
+        let s = pg_store().await;
+        let id1 = s.upsert_library("_test:react", "npm", Some("18"), None, None, None).await.unwrap();
+        let id2 = s.upsert_library("_test:react", "npm", Some("19"), Some("UI library"), None, None).await.unwrap();
+        assert_eq!(id1, id2);
+        let lib = s.get_library(&id1).await.unwrap().unwrap();
+        assert_eq!(lib["version"], "19");
+        assert_eq!(lib["description"], "UI library");
+        s.delete_library(&id1).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn library_list() {
+        let s = pg_store().await;
+        let id1 = s.upsert_library("_test:lib_a", "npm", None, None, None, None).await.unwrap();
+        let id2 = s.upsert_library("_test:lib_b", "cargo", None, None, None, None).await.unwrap();
+        let all = s.list_libraries().await.unwrap();
+        assert!(all.iter().any(|l| l["name"] == "_test:lib_a"));
+        assert!(all.iter().any(|l| l["name"] == "_test:lib_b"));
+        s.delete_library(&id1).await.unwrap();
+        s.delete_library(&id2).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn library_delete() {
+        let s = pg_store().await;
+        let id = s.upsert_library("_test:deleteme", "npm", None, None, None, None).await.unwrap();
+        s.delete_library(&id).await.unwrap();
+        assert!(s.get_library(&id).await.unwrap().is_none());
+    }
+
     // ── Sessions + Events tests ────────────────────────────────────────
 
     #[tokio::test]
@@ -508,7 +692,8 @@ mod tests {
     #[tokio::test]
     async fn session_list_by_folder() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "sess_list").await;
+        let suffix = format!("sess_list_{}", uuid::Uuid::new_v4());
+        let fid = create_test_folder(&s, &suffix).await;
         s.create_session(&fid, "task 1", None).await.unwrap();
         s.create_session(&fid, "task 2", None).await.unwrap();
         let sessions = s.list_sessions_by_folder(&fid, 10).await.unwrap();
@@ -531,7 +716,7 @@ mod tests {
     #[tokio::test]
     async fn event_get_by_type() {
         let s = pg_store().await;
-        let fid = create_test_folder(&s, "evt_type").await;
+        let fid = create_test_folder(&s, &format!("evt_type_{}", uuid::Uuid::new_v4())).await;
         let sid = s.create_session(&fid, "test", None).await.unwrap();
         s.insert_event(&sid, &fid, "correction", None, &serde_json::json!({"description": "wrong indent"})).await.unwrap();
         s.insert_event(&sid, &fid, "tool_call", Some(1), &serde_json::json!({"tool_name": "grep"})).await.unwrap();
