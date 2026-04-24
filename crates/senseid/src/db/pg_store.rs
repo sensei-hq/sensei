@@ -171,6 +171,17 @@ impl PgStore {
         Ok(())
     }
 
+    // ── PG Function Wrappers ───────────────────────────────────────────
+
+    /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
+    pub async fn rank_bm25(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<(String, f64)>, String> {
+        let rows: Vec<(String, f64)> = sqlx_core::query_as::query_as(
+            "SELECT file_path, score FROM sensei.rank_bm25($1, $2)"
+        ).bind(folder_id).bind(query)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     // ── Nodes ─────────────────────────────────────────────────────────
 
     pub async fn upsert_node(
@@ -1093,6 +1104,28 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    // ── PG Function tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn rank_bm25_returns_results() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("bm25_{}", uuid::Uuid::new_v4())).await;
+        s.upsert_node(&fid, "function", "authenticate_user", "src/auth.rs", None, Some("fn authenticate_user(token: &str)"), Some(1), Some(20)).await.unwrap();
+        s.upsert_node(&fid, "function", "validate_email", "src/validation.rs", None, Some("fn validate_email(email: &str)"), Some(1), Some(10)).await.unwrap();
+        let results = s.rank_bm25(&fid, "authenticate").await.unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].0, "src/auth.rs");
+        s.delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rank_bm25_empty_folder() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, &format!("bm25_empty_{}", uuid::Uuid::new_v4())).await;
+        let results = s.rank_bm25(&fid, "anything").await.unwrap();
+        assert!(results.is_empty());
     }
 
     // ── Nodes + Edges tests ────────────────────────────────────────────
