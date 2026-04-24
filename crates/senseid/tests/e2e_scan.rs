@@ -114,7 +114,7 @@ mod senseid_config {
 }
 
 mod senseid_graph {
-    use rusqlite::{Connection, params, OptionalExtension};
+    use rusqlite::{Connection, params};
     use std::path::Path;
 
     pub struct GraphDb { conn: Connection }
@@ -139,11 +139,6 @@ mod senseid_graph {
             Ok(())
         }
 
-        pub fn merge_file(&self, id: &str, path: &str, module: &str, lang: &str, project: &str) -> Result<(), String> {
-            self.conn.execute("INSERT OR REPLACE INTO files(id,path,module,lang,project) VALUES(?1,?2,?3,?4,?5)", params![id, path, module, lang, project]).map_err(|e| e.to_string())?;
-            Ok(())
-        }
-
         pub fn merge_type(&self, id: &str, name: &str, file: &str, line: u32, kind: &str, project: &str) -> Result<(), String> {
             self.conn.execute("INSERT OR REPLACE INTO types(id,name,file,line,kind,project) VALUES(?1,?2,?3,?4,?5,?6)", params![id, name, file, line, kind, project]).map_err(|e| e.to_string())?;
             Ok(())
@@ -154,30 +149,18 @@ mod senseid_graph {
             Ok(())
         }
 
-        pub fn merge_edge(&self, from_id: &str, to_id: &str, edge_type: &str) -> Result<(), String> {
-            self.conn.execute("INSERT OR REPLACE INTO edges(from_id,to_id,edge_type) VALUES(?1,?2,?3)", params![from_id, to_id, edge_type]).map_err(|e| e.to_string())?;
-            Ok(())
-        }
-
-        pub fn find_function_by_name(&self, name: &str, project: &str) -> Result<Option<String>, String> {
-            self.conn.query_row("SELECT id FROM functions WHERE name=?1 AND project=?2 LIMIT 1", params![name, project], |r| r.get(0))
-                .optional().map_err(|e| e.to_string())
-        }
-
         pub fn count_symbols(&self, project: &str) -> Result<(u32, u32), String> {
             let fns: u32 = self.conn.query_row("SELECT COUNT(*) FROM functions WHERE project=?1", params![project], |r| r.get(0)).unwrap_or(0);
             let types: u32 = self.conn.query_row("SELECT COUNT(*) FROM types WHERE project=?1", params![project], |r| r.get(0)).unwrap_or(0);
             Ok((fns, types))
         }
 
-        pub fn delete_file(&self, _abs_path: &str, _project: &str) -> Result<(), String> { Ok(()) }
     }
 }
 
 mod senseid_pipeline {
     use super::senseid_graph::GraphDb;
-    use std::path::{Path, PathBuf};
-    use std::collections::HashMap;
+    use std::path::Path;
     use std::time::Instant;
 
     pub struct IndexResult {
@@ -196,7 +179,7 @@ mod senseid_pipeline {
         let mut files_failed = 0u32;
         let mut functions_indexed = 0u32;
         let mut types_indexed = 0u32;
-        let mut edges_created = 0u32;
+        let edges_created = 0u32;
         let mut docs_indexed = 0u32;
         let mut lib_set = std::collections::HashSet::new();
 
@@ -305,7 +288,7 @@ mod senseid_pipeline {
         })
     }
 
-    fn extract_python(node: &tree_sitter::Node, src: &[u8], lines: &[&str], abs: &str, project: &str, graph: &GraphDb, fns: &mut u32, types: &mut u32, in_class: bool) {
+    fn extract_python(node: &tree_sitter::Node, src: &[u8], lines: &[&str], abs: &str, project: &str, graph: &GraphDb, fns: &mut u32, types: &mut u32, _in_class: bool) {
         for i in 0..node.child_count() {
             let c = node.child(i).unwrap();
             match c.kind() {

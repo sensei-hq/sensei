@@ -54,17 +54,6 @@ impl GraphDb {
     }
 
     #[cfg(test)]
-    pub fn merge_package(
-        &self, id: &str, name: &str, version: Option<&str>, path: &str, pkg_type: &str, project: &str,
-    ) -> Result<(), String> {
-        let mut n = HierarchyNode::group(id.into(), name.into(), NodeKind::Package, project.into());
-        n.level = Some(pkg_type.into());
-        n.file = Some(path.into());
-        n.docstring = version.map(|v| v.into());
-        self.merge_node(&n)
-    }
-
-    #[cfg(test)]
     pub fn merge_module(
         &self, id: &str, name: &str, path: &str, package_id: Option<&str>, project: &str,
     ) -> Result<(), String> {
@@ -72,16 +61,6 @@ impl GraphDb {
         n.file = Some(path.into());
         n.parent_id = package_id.map(|s| s.into());
         self.merge_node(&n)
-    }
-
-    #[cfg(test)]
-    pub fn delete_file(&self, abs_path: &str, project: &str) -> Result<(), String> {
-        self.delete_by_file(abs_path, project)
-    }
-
-    #[cfg(test)]
-    pub fn delete_doc(&self, doc_id: &str) -> Result<(), String> {
-        self.delete_node(doc_id)
     }
 
     pub fn count_symbols(&self, project: &str) -> Result<(u32, u32), String> {
@@ -116,21 +95,6 @@ impl GraphDb {
             id: f.id, name: f.name, file: f.file, line: f.line, kind: String::new(),
         }).collect())
     }
-
-    #[cfg(test)]
-    pub fn find_function_by_name(&self, name: &str, project: &str) -> Result<Option<String>, String> {
-        use rusqlite::OptionalExtension;
-        // Search across all function-like kinds
-        self.conn.query_row(
-            "SELECT id FROM hierarchy_nodes WHERE name = ?1 AND project = ?2 AND kind IN ('function','method','component','hook') LIMIT 1",
-            params![name, project], |row| row.get(0),
-        ).optional().map_err(|e| e.to_string())
-    }
-
-    #[cfg(test)]
-    pub fn tag_file(&self, id: &str, tags: &str) -> Result<(), String> { self.tag_node(id, tags) }
-    #[cfg(test)]
-    pub fn tag_function(&self, id: &str, tags: &str) -> Result<(), String> { self.tag_node(id, tags) }
 
     pub fn files_by_tag(&self, tag: &str, project: &str) -> Result<Vec<(String, String, String)>, String> {
         self.nodes_by_tag(tag, project, "file")
