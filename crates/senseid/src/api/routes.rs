@@ -19,6 +19,8 @@ pub fn create_router(state: AppState) -> Router {
         // Health
         .route("/health", get(health::health))
         .route("/api/health/components", get(health::health_components))
+        .route("/api/watcher/status", get(health::watcher_status))
+        .route("/api/watcher/unregister", axum::routing::post(health::watcher_unregister))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
         .route("/api/repos/{repo_id}", put(workspace::update_project).delete(workspace::delete_project))
@@ -157,14 +159,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_and_list_projects() {
+    async fn create_and_list_repos() {
         let (app, _) = test_app();
 
         // Create
         let resp = app.clone().oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/projects")
+                .uri("/api/repos")
                 .header("content-type", "application/json")
                 .body(Body::from(r#"{"repoId":"test","path":"/tmp/test"}"#))
                 .unwrap()
@@ -173,12 +175,12 @@ mod tests {
 
         // List
         let resp = app.oneshot(
-            Request::builder().uri("/api/projects").body(Body::empty()).unwrap()
+            Request::builder().uri("/api/repos").body(Body::empty()).unwrap()
         ).await.unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let projects: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0]["repo_id"], "test");
+        let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0]["repo_id"], "test");
     }
 
     #[tokio::test]
@@ -193,7 +195,7 @@ mod tests {
             }).unwrap();
         }
         let resp = app.oneshot(
-            Request::builder().method("DELETE").uri("/api/projects/x").body(Body::empty()).unwrap()
+            Request::builder().method("DELETE").uri("/api/repos/x").body(Body::empty()).unwrap()
         ).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
@@ -205,7 +207,7 @@ mod tests {
         let resp = app.clone().oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/solutions")
+                .uri("/api/projects")
                 .header("content-type", "application/json")
                 .body(Body::from(r#"{"name":"Acme","repos":[]}"#))
                 .unwrap()
@@ -216,7 +218,7 @@ mod tests {
         assert!(json["id"].is_string());
 
         let resp = app.oneshot(
-            Request::builder().uri("/api/solutions").body(Body::empty()).unwrap()
+            Request::builder().uri("/api/projects").body(Body::empty()).unwrap()
         ).await.unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let solutions: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
@@ -240,34 +242,34 @@ mod tests {
         let resp = app.clone().oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/projects/r/tags")
+                .uri("/api/repos/r/tags")
                 .header("content-type", "application/json")
                 .body(Body::from(r#"{"tag":"backend"}"#))
                 .unwrap()
         ).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // List projects — tag should be there
+        // List repos — tag should be there
         let resp = app.clone().oneshot(
-            Request::builder().uri("/api/projects").body(Body::empty()).unwrap()
+            Request::builder().uri("/api/repos").body(Body::empty()).unwrap()
         ).await.unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let projects: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(projects[0]["tags"][0], "backend");
+        let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(repos[0]["tags"][0], "backend");
 
         // Remove tag
         let resp = app.clone().oneshot(
-            Request::builder().method("DELETE").uri("/api/projects/r/tags/backend").body(Body::empty()).unwrap()
+            Request::builder().method("DELETE").uri("/api/repos/r/tags/backend").body(Body::empty()).unwrap()
         ).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         // Verify removed
         let resp = app.oneshot(
-            Request::builder().uri("/api/projects").body(Body::empty()).unwrap()
+            Request::builder().uri("/api/repos").body(Body::empty()).unwrap()
         ).await.unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let projects: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert!(projects[0]["tags"].as_array().unwrap().is_empty());
+        let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert!(repos[0]["tags"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

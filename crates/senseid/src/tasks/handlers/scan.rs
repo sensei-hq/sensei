@@ -27,40 +27,40 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         find_git_repos(root, 0, max_depth, &mut repos);
     }
 
-    let store = ctx.store().await;
+    {
+        let store = ctx.store().await;
 
-    // Persist this root for watcher recreation on restart
-    store.execute_raw(&format!(
-        "INSERT OR IGNORE INTO scanned_roots(path) VALUES('{}')",
-        task.path.replace('\'', "''")
-    )).ok();
+        // Persist this root for watcher recreation on restart
+        store.execute_raw(&format!(
+            "INSERT OR IGNORE INTO scanned_roots(path) VALUES('{}')",
+            task.path.replace('\'', "''")
+        )).ok();
 
-    for (name, path) in &repos {
-        // Skip excluded paths
-        if store.is_excluded(path) {
-            tracing::debug!("scan_root: skipping excluded path {}", path);
-            continue;
+        for (name, path) in &repos {
+            // Skip excluded paths
+            if store.is_excluded(path) {
+                tracing::debug!("scan_root: skipping excluded path {}", path);
+                continue;
+            }
+
+            // Register project
+            let repo_id = name.clone();
+            store.upsert_repo_basic(&repo_id, name, path).ok();
+
+            // Enqueue process_repo
+            let repo_task = Task::new(TaskKind::ProcessRepo, &repo_id, path)
+                .with_parent(task.id);
+            ctx.queue.enqueue(repo_task).await;
         }
+    } // drop store lock
 
-        // Register project
-        let repo_id = name.clone();
-        store.upsert_repo_basic(&repo_id, name, path).ok();
-
-        // Enqueue process_repo
-        let repo_task = Task::new(TaskKind::ProcessRepo, &repo_id, path)
-            .with_parent(task.id);
-        ctx.queue.enqueue(repo_task).await;
+    // Register this root with the watcher (caller is responsible for starting)
+    {
+        let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
+        if let Ok(mut w) = watcher.lock() {
+            w.register(std::path::PathBuf::from(&task.path), vec![]);
+        }
     }
-
-    // Start a root watcher for this scanned root
-    let projects_map: std::collections::HashMap<String, String> = repos.iter()
-        .map(|(name, path)| (name.clone(), path.clone()))
-        .collect();
-    crate::watcher::root_watcher::start_root_watcher(
-        std::path::PathBuf::from(&task.path),
-        ctx.queue.clone(),
-        projects_map,
-    ).ok();
 
     // Suggest solution groupings for discovered repos (parent-folder + name-prefix)
     if repos.len() >= 2 {
@@ -71,7 +71,6 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
                 suggestion.name, suggestion.strategy, suggestion.repo_ids.len()
             );
         }
-        // Store suggestions so the desktop setup wizard can present them
         if !suggestions.is_empty() {
             let store = ctx.store().await;
             store.set_config("solution_suggestions", &serde_json::to_string(&suggestions).unwrap_or_default()).ok();
