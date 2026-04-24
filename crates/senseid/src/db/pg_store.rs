@@ -23,6 +23,52 @@ impl PgStore {
         &self.pool
     }
 
+    // ── Config ────────────────────────────────────────────────────────
+
+    pub async fn get_config(&self, key: &str) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT value FROM sensei.config WHERE key = $1"
+        )
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
+    }
+
+    pub async fn set_config(&self, key: &str, value: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.config(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value"
+        )
+            .bind(key)
+            .bind(value)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_config(&self, key: &str) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.config WHERE key = $1")
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_all_config(&self) -> Result<std::collections::HashMap<String, String>, String> {
+        let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
+            "SELECT key, value FROM sensei.config"
+        )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().collect())
+    }
+
+    // ── Raw ──────────────────────────────────────────────────────────
+
     /// Execute a raw SQL statement (for one-off queries like scanned_roots).
     pub async fn execute_raw(&self, sql: &str) -> Result<(), String> {
         sqlx_core::query::query(sql)
@@ -70,6 +116,73 @@ mod tests {
             .unwrap();
         assert!(row.0, "sensei schema must exist — run `dbd apply` first");
     }
+
+    // ── Config tests ───────────────────────────────────────────────
+
+    async fn pg_store() -> PgStore {
+        PgStore::connect(&test_db_url()).await.unwrap()
+    }
+
+    /// Generate a unique key prefix for test isolation.
+    fn tkey(test: &str, key: &str) -> String {
+        format!("_test:{}:{}", test, key)
+    }
+
+    #[tokio::test]
+    async fn config_set_and_get() {
+        let s = pg_store().await;
+        let k = tkey("set_get", "theme");
+        s.set_config(&k, "dark").await.unwrap();
+        assert_eq!(s.get_config(&k).await.unwrap(), Some("dark".into()));
+        s.delete_config(&k).await.unwrap(); // cleanup
+    }
+
+    #[tokio::test]
+    async fn config_get_missing_returns_none() {
+        let s = pg_store().await;
+        assert_eq!(s.get_config("_test:missing:nonexistent").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn config_set_overwrites() {
+        let s = pg_store().await;
+        let k = tkey("overwrite", "k");
+        s.set_config(&k, "v1").await.unwrap();
+        s.set_config(&k, "v2").await.unwrap();
+        assert_eq!(s.get_config(&k).await.unwrap(), Some("v2".into()));
+        s.delete_config(&k).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn config_delete() {
+        let s = pg_store().await;
+        let k = tkey("delete", "k");
+        s.set_config(&k, "v").await.unwrap();
+        s.delete_config(&k).await.unwrap();
+        assert_eq!(s.get_config(&k).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn config_delete_nonexistent_is_noop() {
+        let s = pg_store().await;
+        s.delete_config("_test:noop:nope").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn config_get_all() {
+        let s = pg_store().await;
+        let k1 = tkey("getall", "a");
+        let k2 = tkey("getall", "b");
+        s.set_config(&k1, "1").await.unwrap();
+        s.set_config(&k2, "2").await.unwrap();
+        let all = s.get_all_config().await.unwrap();
+        assert_eq!(all[&k1], "1");
+        assert_eq!(all[&k2], "2");
+        s.delete_config(&k1).await.unwrap();
+        s.delete_config(&k2).await.unwrap();
+    }
+
+    // ── Schema tests ─────────────────────────────────────────────────
 
     #[tokio::test]
     async fn memories_table_exists() {
