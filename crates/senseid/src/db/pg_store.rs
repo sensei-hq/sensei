@@ -171,6 +171,89 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Sessions (activity) ────────────────────────────────────────────
+
+    pub async fn create_session(&self, folder_id: &uuid::Uuid, task: &str, acp_id: Option<&str>) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.sessions(folder_id, task, acp_id) VALUES($1, $2, $3) RETURNING id"
+        ).bind(folder_id).bind(task).bind(acp_id)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn complete_session(
+        &self, id: &uuid::Uuid, outcome: &str, ftr: bool,
+        turns: i32, corrections: i32,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.sessions SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4, corrections = $5, completed_at = now() WHERE id = $1"
+        ).bind(id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_session(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, uuid::Uuid, String, Option<String>, Option<String>, Option<bool>, i32, i32, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, folder_id, task, acp_id, outcome::text, ftr, turns, corrections, started_at, completed_at FROM activity.sessions WHERE id = $1"
+            ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(row.map(|(id, fid, task, acp, outcome, ftr, turns, corr, started, completed)| {
+            serde_json::json!({
+                "id": id, "folder_id": fid, "task": task, "acp_id": acp,
+                "outcome": outcome, "ftr": ftr, "turns": turns, "corrections": corr,
+                "started_at": started.to_rfc3339(),
+                "completed_at": completed.map(|t| t.to_rfc3339()),
+            })
+        }))
+    }
+
+    pub async fn list_sessions_by_folder(&self, folder_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<bool>, i32, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, task, outcome::text, ftr, corrections, started_at FROM activity.sessions WHERE folder_id = $1 ORDER BY started_at DESC LIMIT $2"
+            ).bind(folder_id).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, task, outcome, ftr, corr, started)| {
+            serde_json::json!({ "id": id, "task": task, "outcome": outcome, "ftr": ftr, "corrections": corr, "started_at": started.to_rfc3339() })
+        }).collect())
+    }
+
+    // ── Events (activity) ────────────────────────────────────────────
+
+    pub async fn insert_event(
+        &self, session_id: &uuid::Uuid, folder_id: &uuid::Uuid,
+        event_type: &str, turn_number: Option<i32>, data: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.events(session_id, folder_id, event_type, turn_number, data) VALUES($1, $2, $3::sensei.event_type, $4, $5) RETURNING id"
+        ).bind(session_id).bind(folder_id).bind(event_type).bind(turn_number).bind(data)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn get_events_by_session(&self, session_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<i32>, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, event_type::text, turn_number, data, created_at FROM activity.events WHERE session_id = $1 ORDER BY created_at"
+            ).bind(session_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, etype, turn, data, ts)| {
+            serde_json::json!({ "id": id, "event_type": etype, "turn_number": turn, "data": data, "created_at": ts.to_rfc3339() })
+        }).collect())
+    }
+
+    pub async fn get_events_by_type(&self, folder_id: &uuid::Uuid, event_type: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, session_id, data, created_at FROM activity.events WHERE folder_id = $1 AND event_type = $2::sensei.event_type ORDER BY created_at DESC"
+            ).bind(folder_id).bind(event_type).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, sid, data, ts)| {
+            serde_json::json!({ "id": id, "session_id": sid, "data": data, "created_at": ts.to_rfc3339() })
+        }).collect())
+    }
+
     // ── Projects ──────────────────────────────────────────────────────
 
     pub async fn create_project(&self, name: &str, description: Option<&str>, client: Option<&str>) -> Result<uuid::Uuid, String> {
@@ -393,6 +476,74 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    // ── Sessions + Events tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn session_create_and_get() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "sess_create").await;
+        let sid = s.create_session(&fid, "fix bug #42", Some("claude-code")).await.unwrap();
+        let sess = s.get_session(&sid).await.unwrap().unwrap();
+        assert_eq!(sess["task"], "fix bug #42");
+        assert_eq!(sess["acp_id"], "claude-code");
+        assert!(sess["outcome"].is_null());
+        assert_eq!(sess["turns"], 0);
+    }
+
+    #[tokio::test]
+    async fn session_complete() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "sess_complete").await;
+        let sid = s.create_session(&fid, "add feature", None).await.unwrap();
+        s.complete_session(&sid, "completed", true, 5, 0).await.unwrap();
+        let sess = s.get_session(&sid).await.unwrap().unwrap();
+        assert_eq!(sess["outcome"], "completed");
+        assert_eq!(sess["ftr"], true);
+        assert_eq!(sess["turns"], 5);
+        assert!(sess["completed_at"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn session_list_by_folder() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "sess_list").await;
+        s.create_session(&fid, "task 1", None).await.unwrap();
+        s.create_session(&fid, "task 2", None).await.unwrap();
+        let sessions = s.list_sessions_by_folder(&fid, 10).await.unwrap();
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn event_insert_and_get() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "evt_insert").await;
+        let sid = s.create_session(&fid, "test", None).await.unwrap();
+        let data = serde_json::json!({"tool_name": "search", "duration_ms": 42});
+        s.insert_event(&sid, &fid, "tool_call", Some(1), &data).await.unwrap();
+        let events = s.get_events_by_session(&sid).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event_type"], "tool_call");
+        assert_eq!(events[0]["data"]["tool_name"], "search");
+    }
+
+    #[tokio::test]
+    async fn event_get_by_type() {
+        let s = pg_store().await;
+        let fid = create_test_folder(&s, "evt_type").await;
+        let sid = s.create_session(&fid, "test", None).await.unwrap();
+        s.insert_event(&sid, &fid, "correction", None, &serde_json::json!({"description": "wrong indent"})).await.unwrap();
+        s.insert_event(&sid, &fid, "tool_call", Some(1), &serde_json::json!({"tool_name": "grep"})).await.unwrap();
+        let corrections = s.get_events_by_type(&fid, "correction").await.unwrap();
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0]["data"]["description"], "wrong indent");
+    }
+
+    #[tokio::test]
+    async fn session_get_nonexistent() {
+        let s = pg_store().await;
+        assert!(s.get_session(&uuid::Uuid::new_v4()).await.unwrap().is_none());
     }
 
     // ── Projects tests ────────────────────────────────────────────────
