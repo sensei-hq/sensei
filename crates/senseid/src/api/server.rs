@@ -48,7 +48,18 @@ pub async fn start_server(store: Store, graph: GraphDb, port: u16) -> std::io::R
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!("senseid listening on :{}", port);
 
-    axum::serve(listener, app).await
+    let watcher_queue = task_queue.clone();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Shutting down...");
+            let watcher = crate::watcher::root_watcher::RootWatcher::instance(watcher_queue);
+            if let Ok(mut w) = watcher.lock() {
+                w.stop();
+                tracing::info!("Watcher stopped");
+            }
+        })
+        .await
 }
 
 /// Start root watchers for persisted scanned roots.
@@ -72,20 +83,14 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
 
     if roots.is_empty() { return; }
 
-    let projects: std::collections::HashMap<String, String> = store.list_repos()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| (p.repo_id, p.path))
-        .collect();
-
     drop(store);
 
-    for root in roots {
-        crate::watcher::root_watcher::start_root_watcher(
-            std::path::PathBuf::from(&root),
-            queue.clone(),
-            projects.clone(),
-        ).ok();
-        tracing::info!("Root watcher: {}", root);
+    let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
+    if let Ok(mut w) = watcher.lock() {
+        for root in &roots {
+            w.register(std::path::PathBuf::from(root), vec![]);
+            tracing::info!("Root watcher: registered {}", root);
+        }
+        w.start().ok();
     }
 }

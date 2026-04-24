@@ -32,6 +32,45 @@ pub(crate) async fn health_components() -> Json<serde_json::Value> {
     }))
 }
 
+/// Watcher status — shows watched roots, exclusions, and watcher state.
+pub(crate) async fn watcher_status() -> Json<serde_json::Value> {
+    let queue = std::sync::Arc::new(crate::tasks::queue::TaskQueue::new());
+    let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
+
+    if let Ok(w) = watcher.lock() {
+        let status = format!("{:?}", w.status());
+        let roots: Vec<serde_json::Value> = w.roots().iter().map(|(path, root)| {
+            serde_json::json!({
+                "path": path.to_string_lossy(),
+                "excluded": root.excluded,
+            })
+        }).collect();
+        Json(serde_json::json!({ "status": status, "roots": roots }))
+    } else {
+        Json(serde_json::json!({ "status": "error", "message": "lock poisoned" }))
+    }
+}
+
+/// Unregister a root from the watcher.
+pub(crate) async fn watcher_unregister(
+    axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    if path.is_empty() {
+        return Json(serde_json::json!({ "error": "path required" }));
+    }
+
+    let queue = std::sync::Arc::new(crate::tasks::queue::TaskQueue::new());
+    let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
+
+    if let Ok(mut w) = watcher.lock() {
+        w.unregister(&std::path::PathBuf::from(path));
+        Json(serde_json::json!({ "ok": true, "unregistered": path }))
+    } else {
+        Json(serde_json::json!({ "error": "lock poisoned" }))
+    }
+}
+
 pub(crate) fn check_binary(name: &str) -> (&'static str, Option<String>) {
     // Check if binary exists on PATH or in known locations
     let paths = [
