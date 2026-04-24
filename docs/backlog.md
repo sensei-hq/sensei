@@ -55,6 +55,14 @@ Replace `rusqlite` with `sqlx::PgPool` in `crates/senseid/src/db/`. 97 rusqlite 
 | 28 | Add services CRUD | upsert, list, get_by_kind | Test: create MCP service, list by kind, verify config jsonb |
 | 29 | Add benchmark_reports + benchmark_runs CRUD | create_report, add_run, list_by_project | Test: create report, add runs, verify aggregation |
 
+### Phase 2b: Read-only view entities
+
+| # | Title | Description | Test approach |
+|---|-------|-------------|---------------|
+| V1 | Expose repositories view | `sensei.repositories` — git+subtree folders with parent info | Test: create folders, query view, verify git repos returned |
+| V2 | Expose parent_folders view | `sensei.parent_folders` — folder hierarchy with parent path | Test: create nested folders, query, verify parent chain |
+| V3 | Expose libraries_in_project view | `sensei.libraries_in_project` — libraries joined with folder/project | Test: create library + link to folder, query view, verify join |
+
 ### Phase 3: PG functions + search
 
 | # | Title | Description | Test approach |
