@@ -197,7 +197,7 @@ mod tests {
     use super::super::super::executor::TaskContext;
 
     /// Build a TaskContext backed by in-memory Store + GraphDb and a fresh TaskQueue.
-    fn make_ctx() -> Arc<TaskContext> {
+    async fn make_ctx() -> Arc<TaskContext> {
         let store = Store::open_memory().unwrap();
         let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
@@ -205,6 +205,7 @@ mod tests {
             store: Mutex::new(store),
             graph: Mutex::new(graph),
             task_queue: queue.clone(),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });
         Arc::new(TaskContext {
             queue,
@@ -274,7 +275,7 @@ mod tests {
 
     #[tokio::test]
     async fn scan_root_errors_on_nonexistent_path() {
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ScanRoot, "", "/nonexistent/path/xyz");
         let result = scan_root(&ctx, &task).await;
         assert!(result.is_err());
@@ -293,7 +294,7 @@ mod tests {
         std::fs::write(repo_a.join("main.rs"), "fn main() {}").unwrap();
         std::fs::write(repo_b.join("main.py"), "print('hi')").unwrap();
 
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
@@ -315,7 +316,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         std::fs::write(tmp.path().join("lib.rs"), "pub fn x() {}").unwrap();
 
-        let ctx = make_ctx();
+        let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
