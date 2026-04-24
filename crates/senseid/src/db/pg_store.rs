@@ -171,6 +171,59 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Projects ──────────────────────────────────────────────────────
+
+    pub async fn create_project(&self, name: &str, description: Option<&str>, client: Option<&str>) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.projects(name, description, client) VALUES($1, $2, $3) RETURNING id"
+        ).bind(name).bind(description).bind(client)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn get_project(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, description, client, maturity::text, goal, stack, links, tags, modified_at FROM sensei.projects WHERE id = $1"
+            ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(row.map(|(id, name, desc, client, maturity, goal, stack, links, tags, modified)| {
+            serde_json::json!({
+                "id": id, "name": name, "description": desc, "client": client,
+                "maturity": maturity, "goal": goal, "stack": stack, "links": links,
+                "tags": tags, "modified_at": modified.to_rfc3339(),
+            })
+        }))
+    }
+
+    pub async fn list_projects(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, String, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, description, client, maturity::text, tags, modified_at FROM sensei.projects ORDER BY name"
+            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, desc, client, maturity, tags, modified)| {
+            serde_json::json!({
+                "id": id, "name": name, "description": desc, "client": client,
+                "maturity": maturity, "tags": tags, "modified_at": modified.to_rfc3339(),
+            })
+        }).collect())
+    }
+
+    pub async fn update_project(&self, id: &uuid::Uuid, name: Option<&str>, description: Option<&str>, maturity: Option<&str>) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.projects SET name = COALESCE($2, name), description = COALESCE($3, description), maturity = COALESCE($4::sensei.project_maturity, maturity), modified_at = now() WHERE id = $1"
+        ).bind(id).bind(name).bind(description).bind(maturity)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_project(&self, id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+            .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Index Errors ──────────────────────────────────────────────────
 
     pub async fn log_index_error(
@@ -340,6 +393,59 @@ mod tests {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
         row.0
+    }
+
+    // ── Projects tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn project_create_and_get() {
+        let s = pg_store().await;
+        let id = s.create_project("_test:proj:create", Some("desc"), Some("client")).await.unwrap();
+        let p = s.get_project(&id).await.unwrap().unwrap();
+        assert_eq!(p["name"], "_test:proj:create");
+        assert_eq!(p["description"], "desc");
+        assert_eq!(p["client"], "client");
+        assert_eq!(p["maturity"], "discovery"); // default
+        s.delete_project(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_list() {
+        let s = pg_store().await;
+        let id1 = s.create_project("_test:proj:list_a", None, None).await.unwrap();
+        let id2 = s.create_project("_test:proj:list_b", None, None).await.unwrap();
+        let all = s.list_projects().await.unwrap();
+        let names: Vec<&str> = all.iter().filter_map(|p| p["name"].as_str()).collect();
+        assert!(names.contains(&"_test:proj:list_a"));
+        assert!(names.contains(&"_test:proj:list_b"));
+        s.delete_project(&id1).await.unwrap();
+        s.delete_project(&id2).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_update() {
+        let s = pg_store().await;
+        let id = s.create_project("_test:proj:update", None, None).await.unwrap();
+        s.update_project(&id, Some("renamed"), None, Some("active")).await.unwrap();
+        let p = s.get_project(&id).await.unwrap().unwrap();
+        assert_eq!(p["name"], "renamed");
+        assert_eq!(p["maturity"], "active");
+        s.delete_project(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_delete() {
+        let s = pg_store().await;
+        let id = s.create_project("_test:proj:delete", None, None).await.unwrap();
+        s.delete_project(&id).await.unwrap();
+        assert!(s.get_project(&id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn project_get_nonexistent() {
+        let s = pg_store().await;
+        let fake = uuid::Uuid::new_v4();
+        assert!(s.get_project(&fake).await.unwrap().is_none());
     }
 
     // ── Index Errors tests ───────────────────────────────────────────
