@@ -108,6 +108,69 @@ impl PgStore {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
+    // ── Workflow State ────────────────────────────────────────────────
+
+    pub async fn upsert_workflow_state(
+        &self, project: &str, phase: Option<&str>, plan: Option<&str>,
+        task: Option<&str>, issue: Option<i64>, checkpoint: Option<&str>,
+        rules_hash: Option<&str>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.workflow_state(project, active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at)
+             VALUES($1, $2, $3, $4, $5, $6, $7, now())
+             ON CONFLICT(project) DO UPDATE SET
+               active_phase = COALESCE($2, workflow_state.active_phase),
+               active_plan = COALESCE($3, workflow_state.active_plan),
+               active_task = COALESCE($4, workflow_state.active_task),
+               active_issue = COALESCE($5, workflow_state.active_issue),
+               last_checkpoint = COALESCE($6, workflow_state.last_checkpoint),
+               rules_hash = COALESCE($7, workflow_state.rules_hash),
+               updated_at = now()"
+        )
+            .bind(project).bind(phase).bind(plan).bind(task)
+            .bind(issue).bind(checkpoint).bind(rules_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn get_workflow_state(&self, project: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(
+            Option<String>, Option<String>, Option<String>,
+            Option<i32>, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT active_phase, active_plan, active_task, active_issue, last_checkpoint, rules_hash, updated_at
+             FROM sensei.workflow_state WHERE project = $1"
+        )
+            .bind(project)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(row.map(|(phase, plan, task, issue, checkpoint, hash, updated)| {
+            serde_json::json!({
+                "project": project,
+                "active_phase": phase,
+                "active_plan": plan,
+                "active_task": task,
+                "active_issue": issue,
+                "last_checkpoint": checkpoint,
+                "rules_hash": hash,
+                "updated_at": updated.to_rfc3339(),
+            })
+        }))
+    }
+
+    pub async fn delete_workflow_state(&self, project: &str) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.workflow_state WHERE project = $1")
+            .bind(project)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Raw ──────────────────────────────────────────────────────────
 
     /// Execute a raw SQL statement (for one-off queries like scanned_roots).
@@ -221,6 +284,51 @@ mod tests {
         assert_eq!(all[&k2], "2");
         s.delete_config(&k1).await.unwrap();
         s.delete_config(&k2).await.unwrap();
+    }
+
+    // ── Workflow State tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn wf_upsert_and_get() {
+        let s = pg_store().await;
+        let p = "_test:wf:upsert";
+        s.delete_workflow_state(p).await.unwrap();
+        assert!(s.get_workflow_state(p).await.unwrap().is_none());
+        s.upsert_workflow_state(p, Some("ideate"), None, None, None, None, None).await.unwrap();
+        let state = s.get_workflow_state(p).await.unwrap().unwrap();
+        assert_eq!(state["active_phase"], "ideate");
+        assert!(state["active_task"].is_null());
+        s.delete_workflow_state(p).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wf_partial_update_preserves() {
+        let s = pg_store().await;
+        let p = "_test:wf:partial";
+        s.delete_workflow_state(p).await.unwrap();
+        s.upsert_workflow_state(p, Some("build"), Some("plan.md"), Some("task 1"), Some(42), None, Some("hash123")).await.unwrap();
+        s.upsert_workflow_state(p, Some("validate"), None, None, None, None, None).await.unwrap();
+        let state = s.get_workflow_state(p).await.unwrap().unwrap();
+        assert_eq!(state["active_phase"], "validate");
+        assert_eq!(state["active_plan"], "plan.md");
+        assert_eq!(state["active_task"], "task 1");
+        assert_eq!(state["active_issue"], 42);
+        s.delete_workflow_state(p).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wf_nonexistent_returns_none() {
+        let s = pg_store().await;
+        assert!(s.get_workflow_state("_test:wf:none").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn wf_delete() {
+        let s = pg_store().await;
+        let p = "_test:wf:delete";
+        s.upsert_workflow_state(p, Some("ideate"), None, None, None, None, None).await.unwrap();
+        s.delete_workflow_state(p).await.unwrap();
+        assert!(s.get_workflow_state(p).await.unwrap().is_none());
     }
 
     // ── Tags tests ────────────────────────────────────────────────────
