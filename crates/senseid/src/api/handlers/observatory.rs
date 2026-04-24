@@ -5,7 +5,6 @@ use axum::{
 };
 use serde::Deserialize;
 use crate::api::state::AppState;
-use crate::types::Project;
 
 // Re-use TagBody from workspace
 use super::workspace::TagBody;
@@ -13,35 +12,13 @@ use super::workspace::TagBody;
 // ── Solutions CRUD ──────────────────────────────────────────────────────────
 
 pub(crate) async fn list_solutions(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = state.store.lock().await;
-    let projects = s.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let all_repos = s.list_repos().unwrap_or_default();
+    let projects = state.pg.list_projects().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Enrich each project with its repos for the API response
-    let enriched: Vec<serde_json::Value> = projects.iter().map(|p| {
-        let repos: Vec<serde_json::Value> = all_repos.iter()
-            .filter(|r| r.project_id.as_deref() == Some(&p.id))
-            .map(|r| serde_json::json!({
-                "repo_id": r.repo_id,
-                "role": r.role,
-                "label": r.label,
-                "path": r.path,
-            }))
-            .collect();
-        serde_json::json!({
-            "id": p.id,
-            "name": p.name,
-            "description": p.description,
-            "client": p.client,
-            "category": p.category,
-            "repos": repos,
-            "tags": p.tags,
-            "created_at": p.created_at,
-            "updated_at": p.updated_at,
-        })
-    }).collect();
-
-    Ok(Json(serde_json::json!(enriched)))
+    // TODO: Old Store enriched each project with its repos via list_repos() + project_id matching.
+    // PgStore projects don't have a direct repo-membership view yet. Return projects without repo enrichment.
+    // Add a list_folders_by_project() method to PgStore when needed.
+    Ok(Json(serde_json::json!(projects)))
 }
 
 #[derive(Deserialize)]
@@ -51,9 +28,12 @@ pub(crate) struct CreateSolutionBody {
     description: Option<String>,
     #[serde(default)]
     client: Option<String>,
+    // TODO: category and repos unused until PgStore supports maturity + repo membership
     #[serde(default = "default_category")]
+    #[allow(dead_code)]
     category: String,
     #[serde(default)]
+    #[allow(dead_code)]
     repos: Vec<CreateProjectRepo>,
 }
 
@@ -72,23 +52,16 @@ pub(crate) async fn create_solution(
     State(state): State<AppState>,
     Json(body): Json<CreateSolutionBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
-    let s = state.store.lock().await;
-    let id = uuid::Uuid::new_v4().to_string();
-    let project = Project {
-        id: id.clone(),
-        name: body.name,
-        description: body.description,
-        client: body.client,
-        category: body.category,
-        tags: vec![],
-        created_at: None,
-        updated_at: None,
-    };
-    s.create_project(&project).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    // Assign repos to this project
-    for r in &body.repos {
-        s.set_repo_project(&r.repo_id, &id, &r.role, r.label.as_deref()).ok();
-    }
+    let id = state.pg.create_project(
+        &body.name,
+        body.description.as_deref(),
+        body.client.as_deref(),
+    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // TODO: PgStore has no set_repo_project — repo-to-project membership not yet modeled.
+    // Old Store assigned repos to this project via set_repo_project. Skipping for now.
+    // for r in &body.repos { ... }
+
     Ok((StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))))
 }
 
@@ -105,8 +78,9 @@ pub(crate) async fn delete_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let s = state.store.lock().await;
-    s.delete_project(&id)
+    let project_id = uuid::Uuid::parse_str(&id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.delete_project(&project_id).await
         .map(|_| Json(serde_json::json!({"ok": true})))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -116,6 +90,8 @@ pub(crate) async fn add_solution_repo(
     Path(id): Path<String>,
     Json(body): Json<CreateProjectRepo>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no set_repo_project — repo-to-project membership not yet modeled.
+    // Keep old store as bridge.
     let s = state.store.lock().await;
     s.set_repo_project(&body.repo_id, &id, &body.role, body.label.as_deref())
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -126,6 +102,7 @@ pub(crate) async fn remove_solution_repo(
     State(state): State<AppState>,
     Path((_id, repo_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no clear_repo_project. Keep old store as bridge.
     let s = state.store.lock().await;
     s.clear_repo_project(&repo_id)
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -137,6 +114,7 @@ pub(crate) async fn add_solution_tag(
     Path(id): Path<String>,
     Json(body): Json<TagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore tags are a controlled vocabulary, not per-entity. Keep old store as bridge.
     let s = state.store.lock().await;
     s.add_tag("solution", &id, &body.tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -147,6 +125,7 @@ pub(crate) async fn remove_solution_tag(
     State(state): State<AppState>,
     Path((id, tag)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore tags are a controlled vocabulary, not per-entity. Keep old store as bridge.
     let s = state.store.lock().await;
     s.remove_tag("solution", &id, &tag)
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -159,6 +138,8 @@ pub(crate) async fn analyze_solution(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<crate::indexer::cross_repo::ProjectAnalysis>, StatusCode> {
+    // TODO: cross_repo::analyze_project takes &Store + &GraphDb + &Project (old types).
+    // Keep old store as bridge until analyze_project is migrated to PgStore.
     let store = state.store.lock().await;
     let projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let project = projects.into_iter().find(|s| s.id == id)
@@ -175,6 +156,8 @@ pub(crate) async fn project_summary(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: PgStore has no get_repo (repos are now folders). Keep old store as bridge
+    // until project_summary is reworked for folder-based model.
     let store = state.store.lock().await;
     let repo = store.get_repo(&repo_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -221,6 +204,8 @@ pub(crate) async fn solution_graph(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: Uses old store for list_projects (typed) + get_project_repos. Keep as bridge
+    // until graph queries are migrated to PgStore nodes/edges.
     let store = state.store.lock().await;
     let projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let project = projects.into_iter().find(|s| s.id == id)
@@ -299,6 +284,7 @@ pub(crate) async fn solution_roles(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::indexer::cross_repo::InferredRole>>, StatusCode> {
+    // TODO: Uses old store for list_projects (typed) + get_project_repos. Keep as bridge.
     let store = state.store.lock().await;
     let projects = store.list_projects().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let _project = projects.into_iter().find(|s| s.id == id)
@@ -319,6 +305,7 @@ pub(crate) async fn get_metrics(
     State(state): State<AppState>,
     Path(project): Path<String>,
 ) -> Json<serde_json::Value> {
+    // TODO: PgStore has no compute_metrics. Keep old store as bridge.
     let store = state.store.lock().await;
     match store.compute_metrics(&project) {
         Ok(metrics) => Json(metrics),
