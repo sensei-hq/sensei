@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod base;
+pub mod grok;
 pub mod noop;
 pub mod ollama;
 pub mod openai;
