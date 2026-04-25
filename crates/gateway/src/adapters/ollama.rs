@@ -345,17 +345,17 @@ impl InferenceAdapter for OllamaAdapter {
                         continue;
                     }
                     let json_str = line.strip_prefix("data: ").unwrap_or(line);
-                    if let Ok(parsed) = serde_json::from_str::<StreamChatResponse>(json_str) {
-                        if let Some(choice) = parsed.choices.first() {
-                            let content =
-                                choice.delta.content.clone().unwrap_or_default();
-                            let usage = usage_from_response(&parsed.usage);
-                            chunks.push(StreamChunk {
-                                content,
-                                finish_reason: choice.finish_reason.clone(),
-                                usage,
-                            });
-                        }
+                    if let Ok(parsed) = serde_json::from_str::<StreamChatResponse>(json_str)
+                        && let Some(choice) = parsed.choices.first()
+                    {
+                        let content =
+                            choice.delta.content.clone().unwrap_or_default();
+                        let usage = usage_from_response(&parsed.usage);
+                        chunks.push(StreamChunk {
+                            content,
+                            finish_reason: choice.finish_reason.clone(),
+                            usage,
+                        });
                     }
                 }
 
