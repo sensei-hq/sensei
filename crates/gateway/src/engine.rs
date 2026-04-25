@@ -184,6 +184,10 @@ fn estimate_input_tokens(payload: &Payload) -> u32 {
             let total_chars: usize = texts.iter().map(|t| t.len()).sum();
             (total_chars / 4) as u32
         }
+        // STT has no meaningful text input to estimate.
+        Payload::Stt { .. } => 0,
+        // For TTS, rough heuristic on text length.
+        Payload::Tts { text, .. } => (text.len() / 4) as u32,
     }
 }
 
