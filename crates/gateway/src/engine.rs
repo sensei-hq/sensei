@@ -17,7 +17,7 @@ use crate::types::trace::{Attempt, AttemptStatus};
 /// chains, records attempts, and integrates the circuit breaker.
 pub struct Gateway {
     config: Arc<RwLock<GatewayConfig>>,
-    adapters: AdapterRegistry,
+    pub(crate) adapters: AdapterRegistry,
     circuit_breaker: CircuitBreakerManager,
 }
 
