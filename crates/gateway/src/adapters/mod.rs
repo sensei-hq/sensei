@@ -2,14 +2,18 @@ pub mod anthropic;
 pub mod async_job;
 pub mod base;
 pub mod fal;
+pub mod flux;
 pub mod grok;
 pub mod kling;
 pub mod luma;
 pub mod noop;
 pub mod ollama;
 pub mod openai;
+pub mod recraft;
 pub mod replicate;
 pub mod runway;
+pub mod stability;
+pub mod together;
 
 use std::collections::HashMap;
 use std::pin::Pin;
