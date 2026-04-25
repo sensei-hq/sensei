@@ -151,6 +151,13 @@ pub enum Payload {
         #[serde(default = "default_image_count")]
         n: u8,
     },
+    VideoGenerate {
+        prompt: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_secs: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        resolution: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +168,14 @@ pub struct ImageResult {
     pub b64_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revised_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +209,8 @@ pub struct InferenceResponse {
     pub audio: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<ImageResult>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub videos: Option<Vec<VideoResult>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -311,6 +328,7 @@ mod tests {
             transcription: None,
             audio: None,
             images: None,
+            videos: None,
             model: Some("claude-sonnet".to_string()),
             usage: Some(TokenUsage {
                 input_tokens: 10,
@@ -428,6 +446,7 @@ mod tests {
             transcription: Some("Hello world".to_string()),
             audio: None,
             images: None,
+            videos: None,
             model: Some("whisper-1".to_string()),
             usage: None,
             estimated_cost: None,
@@ -456,6 +475,7 @@ mod tests {
             transcription: None,
             audio: Some(audio_bytes.clone()),
             images: None,
+            videos: None,
             model: Some("tts-1".to_string()),
             usage: None,
             estimated_cost: None,
@@ -547,6 +567,7 @@ mod tests {
                 b64_json: None,
                 revised_prompt: None,
             }]),
+            videos: None,
             model: Some("dall-e-3".to_string()),
             usage: None,
             estimated_cost: None,
@@ -582,5 +603,98 @@ mod tests {
         } else {
             panic!("Expected ImageGenerate payload");
         }
+    }
+
+    #[test]
+    fn video_generate_request_serde() {
+        let request = InferenceRequest {
+            capability: Capability::VideoGenerate,
+            model: None,
+            router: None,
+            chain: None,
+            payload: Payload::VideoGenerate {
+                prompt: "A timelapse of a blooming flower".to_string(),
+                duration_secs: Some(10),
+                resolution: Some("1080p".to_string()),
+            },
+            budget: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains(r#""type":"video_generate""#));
+
+        let deserialized: InferenceRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.capability, Capability::VideoGenerate);
+        if let Payload::VideoGenerate {
+            prompt,
+            duration_secs,
+            resolution,
+        } = &deserialized.payload
+        {
+            assert_eq!(prompt, "A timelapse of a blooming flower");
+            assert_eq!(*duration_secs, Some(10));
+            assert_eq!(resolution.as_deref(), Some("1080p"));
+        } else {
+            panic!("Expected VideoGenerate payload");
+        }
+    }
+
+    #[test]
+    fn video_result_serde() {
+        let result = VideoResult {
+            url: Some("https://example.com/video.mp4".to_string()),
+            duration_secs: Some(10.5),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: VideoResult = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.url.as_deref(),
+            Some("https://example.com/video.mp4"),
+        );
+        assert!((deserialized.duration_secs.unwrap() - 10.5).abs() < f32::EPSILON);
+
+        // Test with all fields None
+        let empty = VideoResult {
+            url: None,
+            duration_secs: None,
+        };
+        let json = serde_json::to_string(&empty).unwrap();
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn response_with_videos_serde() {
+        let response = InferenceResponse {
+            success: true,
+            content: None,
+            embeddings: None,
+            transcription: None,
+            audio: None,
+            images: None,
+            videos: Some(vec![VideoResult {
+                url: Some("https://example.com/video.mp4".to_string()),
+                duration_secs: Some(5.0),
+            }]),
+            model: Some("video-gen-1".to_string()),
+            usage: None,
+            estimated_cost: None,
+            actual_cost: None,
+            attempts: vec![],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"videos\""));
+
+        let deserialized: InferenceResponse = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.videos.is_some());
+        let videos = deserialized.videos.unwrap();
+        assert_eq!(videos.len(), 1);
+        assert_eq!(
+            videos[0].url.as_deref(),
+            Some("https://example.com/video.mp4"),
+        );
+        assert!((videos[0].duration_secs.unwrap() - 5.0).abs() < f32::EPSILON);
     }
 }

@@ -11,4 +11,5 @@ pub enum Capability {
     VoiceStt,
     VoiceTts,
     ImageGenerate,
+    VideoGenerate,
 }
