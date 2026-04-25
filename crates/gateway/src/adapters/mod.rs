@@ -1,9 +1,15 @@
 pub mod anthropic;
+pub mod async_job;
 pub mod base;
+pub mod fal;
 pub mod grok;
+pub mod kling;
+pub mod luma;
 pub mod noop;
 pub mod ollama;
 pub mod openai;
+pub mod replicate;
+pub mod runway;
 
 use std::collections::HashMap;
 use std::pin::Pin;
