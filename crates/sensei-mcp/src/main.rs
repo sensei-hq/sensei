@@ -155,6 +155,14 @@ fn handle_list_tools() -> Value {
                 ("model", "string", "Embedding model to use"),
             ]),
             tool("gateway_status", "Show inference gateway status — available adapters, models, health.", &[], &[]),
+            tool("consensus", "Run a multi-model consensus analysis (MOE). Three models debate: proposer analyzes, challenger reviews, synthesizer produces consensus. Use for root cause analysis, architecture decisions, or any analysis that benefits from multiple perspectives.", &[
+                ("signal", "string", "The signal, question, or topic to analyze"),
+            ], &[
+                ("context", "string", "Additional context (metrics, history, code snippets)"),
+                ("proposer_model", "string", "Model for the proposer (default: best available)"),
+                ("challenger_model", "string", "Model for the challenger (default: balanced)"),
+                ("synthesizer_model", "string", "Model for the synthesizer (default: best available)"),
+            ]),
             // Event logging
             tool("log_event", "Log a workflow event. Call this to record phase transitions, locate steps, issue lifecycle, review findings. MANDATORY in commands — do not skip.", &[
                 ("type", "string", "Event type: phase_transition, command_invoked, locate, issue_started, issue_completed, review_finding, rework, checkpoint, context_loaded, files_modified"),
@@ -260,6 +268,57 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             Ok(resp) if resp.status().is_success() => {
                 let data: Value = resp.json().unwrap_or(json!({}));
                 json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+
+    if tool_name == "consensus" {
+        let signal = args["signal"].as_str().unwrap_or("");
+        let context = args["context"].as_str();
+        let proposer = args["proposer_model"].as_str();
+        let challenger = args["challenger_model"].as_str();
+        let synthesizer = args["synthesizer_model"].as_str();
+
+        let body = json!({
+            "signal": signal,
+            "context": context,
+            "proposer_model": proposer,
+            "challenger_model": challenger,
+            "synthesizer_model": synthesizer,
+        });
+
+        // Use longer timeout for consensus (3 model calls)
+        let consensus_client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| client.clone());
+
+        let result = consensus_client
+            .post(format!("{}/api/gateway/consensus", DAEMON_URL))
+            .json(&body)
+            .send();
+
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: Value = resp.json().unwrap_or(json!({}));
+                let text = if let Some(conclusion) = data["conclusion"].as_str() {
+                    let confidence = data["confidence"].as_str().unwrap_or("unknown");
+                    let duration = data["total_duration_ms"].as_u64().unwrap_or(0);
+                    format!(
+                        "## Consensus (confidence: {})\n\n{}\n\n---\n\nDuration: {}ms | Models: {}",
+                        confidence,
+                        conclusion,
+                        duration,
+                        serde_json::to_string(&data["models_used"]).unwrap_or_default()
+                    )
+                } else if let Some(error) = data["error"].as_str() {
+                    format!("Consensus error: {}", error)
+                } else {
+                    serde_json::to_string_pretty(&data).unwrap_or_default()
+                };
+                json!({"content": [{"type": "text", "text": text}]})
             }
             Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
             Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
