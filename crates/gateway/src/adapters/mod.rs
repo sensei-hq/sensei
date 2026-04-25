@@ -1,3 +1,4 @@
+pub mod anthropic;
 pub mod base;
 pub mod noop;
 pub mod ollama;
