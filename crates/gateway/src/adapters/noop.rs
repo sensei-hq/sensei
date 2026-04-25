@@ -62,6 +62,8 @@ impl InferenceAdapter for NoopAdapter {
             success: false,
             content: Some(Self::unavailable_message(&request.capability)),
             embeddings: None,
+            transcription: None,
+            audio: None,
             model: None,
             usage: None,
             estimated_cost: None,

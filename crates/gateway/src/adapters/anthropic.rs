@@ -270,6 +270,8 @@ impl InferenceAdapter for AnthropicAdapter {
                 Some(content)
             },
             embeddings: None,
+            transcription: None,
+            audio: None,
             model: Some(model),
             usage: Some(usage),
             estimated_cost: None,

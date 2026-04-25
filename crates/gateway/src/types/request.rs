@@ -4,6 +4,87 @@ use super::capability::Capability;
 use super::cost::{Cost, CostEstimate, TokenUsage};
 use super::trace::Attempt;
 
+// ---------------------------------------------------------------------------
+// Base64 serde helpers for audio byte fields
+// ---------------------------------------------------------------------------
+
+mod base64_serde {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(data: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&STANDARD.encode(data))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(d)?;
+        STANDARD.decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+mod option_base64_serde {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(data: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match data {
+            Some(bytes) => s.serialize_str(&STANDARD.encode(bytes)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        let opt: Option<String> = Option::deserialize(d)?;
+        match opt {
+            Some(s) => STANDARD
+                .decode(&s)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audio types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioFormat {
+    Mp3,
+    Wav,
+    Opus,
+    Pcm,
+    Flac,
+}
+
+impl std::fmt::Display for AudioFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AudioFormat::Mp3 => write!(f, "mp3"),
+            AudioFormat::Wav => write!(f, "wav"),
+            AudioFormat::Opus => write!(f, "opus"),
+            AudioFormat::Pcm => write!(f, "pcm"),
+            AudioFormat::Flac => write!(f, "flac"),
+        }
+    }
+}
+
+fn default_audio_format() -> String {
+    "wav".into()
+}
+
+fn default_tts_format() -> AudioFormat {
+    AudioFormat::Mp3
+}
+
+// ---------------------------------------------------------------------------
+// Messages / Payloads
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
@@ -36,6 +117,25 @@ pub enum Payload {
     Embed {
         texts: Vec<String>,
     },
+    Stt {
+        /// Raw audio bytes, base64-encoded for serde.
+        #[serde(with = "base64_serde")]
+        audio: Vec<u8>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+        /// Audio format: "mp3", "wav", "webm", "m4a".
+        #[serde(default = "default_audio_format")]
+        format: String,
+    },
+    Tts {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        voice: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        speed: Option<f32>,
+        #[serde(default = "default_tts_format")]
+        output_format: AudioFormat,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +159,14 @@ pub struct InferenceResponse {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embeddings: Option<Vec<Vec<f32>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription: Option<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "option_base64_serde",
+        default
+    )]
+    pub audio: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,6 +281,8 @@ mod tests {
             success: true,
             content: Some("Hello!".to_string()),
             embeddings: None,
+            transcription: None,
+            audio: None,
             model: Some("claude-sonnet".to_string()),
             usage: Some(TokenUsage {
                 input_tokens: 10,
@@ -190,5 +300,145 @@ mod tests {
         assert!(deserialized.success);
         assert_eq!(deserialized.content, Some("Hello!".to_string()));
         assert!(deserialized.attempts.is_empty());
+    }
+
+    #[test]
+    fn stt_request_serde() {
+        let audio_bytes = vec![0xFF, 0xD8, 0x00, 0x10, 0x4A, 0x46];
+        let request = InferenceRequest {
+            capability: Capability::VoiceStt,
+            model: Some("whisper-1".to_string()),
+            router: None,
+            chain: None,
+            payload: Payload::Stt {
+                audio: audio_bytes.clone(),
+                language: Some("en".to_string()),
+                format: "wav".to_string(),
+            },
+            budget: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains(r#""type":"stt""#));
+
+        let deserialized: InferenceRequest = serde_json::from_str(&json).unwrap();
+        if let Payload::Stt {
+            audio,
+            language,
+            format,
+        } = &deserialized.payload
+        {
+            assert_eq!(audio, &audio_bytes);
+            assert_eq!(language.as_deref(), Some("en"));
+            assert_eq!(format, "wav");
+        } else {
+            panic!("Expected Stt payload");
+        }
+    }
+
+    #[test]
+    fn tts_request_serde() {
+        let request = InferenceRequest {
+            capability: Capability::VoiceTts,
+            model: Some("tts-1".to_string()),
+            router: None,
+            chain: None,
+            payload: Payload::Tts {
+                text: "Hello world".to_string(),
+                voice: Some("alloy".to_string()),
+                speed: Some(1.0),
+                output_format: AudioFormat::Mp3,
+            },
+            budget: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains(r#""type":"tts""#));
+
+        let deserialized: InferenceRequest = serde_json::from_str(&json).unwrap();
+        if let Payload::Tts {
+            text,
+            voice,
+            speed,
+            output_format,
+        } = &deserialized.payload
+        {
+            assert_eq!(text, "Hello world");
+            assert_eq!(voice.as_deref(), Some("alloy"));
+            assert!((speed.unwrap() - 1.0).abs() < f32::EPSILON);
+            assert_eq!(*output_format, AudioFormat::Mp3);
+        } else {
+            panic!("Expected Tts payload");
+        }
+    }
+
+    #[test]
+    fn audio_format_serde() {
+        let formats = vec![
+            (AudioFormat::Mp3, "\"mp3\""),
+            (AudioFormat::Wav, "\"wav\""),
+            (AudioFormat::Opus, "\"opus\""),
+            (AudioFormat::Pcm, "\"pcm\""),
+            (AudioFormat::Flac, "\"flac\""),
+        ];
+
+        for (format, expected_json) in formats {
+            let json = serde_json::to_string(&format).unwrap();
+            assert_eq!(json, expected_json);
+
+            let deserialized: AudioFormat = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, format);
+        }
+    }
+
+    #[test]
+    fn response_with_transcription_serde() {
+        let response = InferenceResponse {
+            success: true,
+            content: None,
+            embeddings: None,
+            transcription: Some("Hello world".to_string()),
+            audio: None,
+            model: Some("whisper-1".to_string()),
+            usage: None,
+            estimated_cost: None,
+            actual_cost: None,
+            attempts: vec![],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains(r#""transcription":"Hello world""#));
+
+        let deserialized: InferenceResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.transcription.as_deref(),
+            Some("Hello world"),
+        );
+        assert!(deserialized.audio.is_none());
+    }
+
+    #[test]
+    fn response_with_audio_serde() {
+        let audio_bytes = vec![0xFF, 0xFB, 0x90, 0x00];
+        let response = InferenceResponse {
+            success: true,
+            content: None,
+            embeddings: None,
+            transcription: None,
+            audio: Some(audio_bytes.clone()),
+            model: Some("tts-1".to_string()),
+            usage: None,
+            estimated_cost: None,
+            actual_cost: None,
+            attempts: vec![],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        // Audio should be base64-encoded
+        assert!(json.contains("\"audio\""));
+
+        let deserialized: InferenceResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.audio, Some(audio_bytes));
+        assert!(deserialized.transcription.is_none());
     }
 }
