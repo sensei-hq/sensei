@@ -1131,7 +1131,19 @@ impl PgStore {
 
     // ── Raw ──────────────────────────────────────────────────────────
 
-    /// Execute a raw SQL statement (for one-off queries like scanned_roots).
+    /// Execute a parameterized query returning unresolved edges.
+    pub async fn execute_raw_query(&self, sql: &str, folder_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<String>, String)> = sqlx_core::query_as::query_as(sql)
+            .bind(folder_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, src, tgt_name, kind)| {
+            serde_json::json!({ "id": id, "source_id": src, "target_name": tgt_name, "kind": kind })
+        }).collect())
+    }
+
+    /// Execute a raw SQL statement.
     pub async fn execute_raw(&self, sql: &str) -> Result<(), String> {
         sqlx_core::query::query(sql)
             .execute(&self.pool)

@@ -27,18 +27,17 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         find_git_repos(root, 0, max_depth, &mut repos);
     }
 
-    // Register watch root in PG
+    // Register watch root in PG and get its UUID for folder FK
     let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("root");
-    ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await.ok();
+    let root_id = ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await
+        .map_err(|e| format!("Failed to register watch root: {}", e))?;
 
     for (name, path) in &repos {
-        // Register folder as git repo in PG
-        // TODO: need root_id from add_watch_root return value for proper FK
-        // For now, enqueue process_repo with the discovered path
-        let repo_id = name.clone();
+        // Register each discovered repo as a folder in PG
+        ctx.pg().upsert_repo(&root_id, name, path).await.ok();
 
         // Enqueue process_repo
-        let repo_task = Task::new(TaskKind::ProcessRepo, &repo_id, path)
+        let repo_task = Task::new(TaskKind::ProcessRepo, name, path)
             .with_parent(task.id);
         ctx.queue.enqueue(repo_task).await;
     }
