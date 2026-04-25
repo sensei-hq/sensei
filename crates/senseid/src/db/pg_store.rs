@@ -406,6 +406,14 @@ impl PgStore {
         }).collect())
     }
 
+    /// Update an unresolved edge with a resolved target_id.
+    pub async fn resolve_edge(&self, edge_id: &uuid::Uuid, target_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.edges SET target_id = $2, modified_at = now() WHERE id = $1")
+            .bind(edge_id).bind(target_id)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn get_edges_by_kind(&self, folder_id: &uuid::Uuid, kind: &str) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT id, source_id, target_id, target_name FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind"
