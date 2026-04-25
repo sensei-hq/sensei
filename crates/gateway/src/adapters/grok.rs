@@ -193,11 +193,9 @@ impl InferenceAdapter for GrokAdapter {
     fn supports(&self, capability: &Capability) -> bool {
         matches!(
             capability,
-            Capability::Chat
-                | Capability::Classify
-                | Capability::Summarize
-                | Capability::VoiceStt
-                | Capability::VoiceTts
+            Capability::TextChat
+                | Capability::AudioTranscribe
+                | Capability::AudioGenerate
         )
     }
 
@@ -564,17 +562,15 @@ mod tests {
         assert_eq!(adapter.id(), "grok");
 
         // Supported capabilities
-        assert!(adapter.supports(&Capability::Chat));
-        assert!(adapter.supports(&Capability::Classify));
-        assert!(adapter.supports(&Capability::Summarize));
-        assert!(adapter.supports(&Capability::VoiceStt));
-        assert!(adapter.supports(&Capability::VoiceTts));
+        assert!(adapter.supports(&Capability::TextChat));
+        assert!(adapter.supports(&Capability::AudioTranscribe));
+        assert!(adapter.supports(&Capability::AudioGenerate));
 
         // NOT supported
-        assert!(!adapter.supports(&Capability::Embed));
+        assert!(!adapter.supports(&Capability::TextEmbed));
         assert!(!adapter.supports(&Capability::ImageGenerate));
         assert!(!adapter.supports(&Capability::VideoGenerate));
-        assert!(!adapter.supports(&Capability::Consolidate));
+        assert!(!adapter.supports(&Capability::TextComplete));
     }
 
     #[test]
@@ -719,7 +715,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
         };
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("grok-4-fast".to_string()),
             router: None,
             chain: None,
@@ -759,7 +755,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
         };
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("grok-4-fast".to_string()),
             router: None,
             chain: None,

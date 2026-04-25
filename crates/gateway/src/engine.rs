@@ -229,7 +229,7 @@ mod tests {
                 id: "noop".to_string(),
                 api_model_id: None,
                 provider: "noop".to_string(),
-                capabilities: vec![Capability::Chat, Capability::Embed],
+                capabilities: vec![Capability::TextChat, Capability::TextEmbed],
                 context_window: 4096,
                 max_output_tokens: 1024,
                 pricing: None,
@@ -241,7 +241,7 @@ mod tests {
             "chat_chain".to_string(),
             FallbackChainConfig {
                 id: "chat_chain".to_string(),
-                capability: Capability::Chat,
+                capability: Capability::TextChat,
                 models: vec![ChainEntry {
                     model: "noop".to_string(),
                     router: Some("noop".to_string()),
@@ -284,7 +284,7 @@ mod tests {
 
     fn chat_request() -> InferenceRequest {
         InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: None,
             router: None,
             chain: None,
@@ -324,7 +324,7 @@ mod tests {
 
         // VoiceStt has no chain configured
         let request = InferenceRequest {
-            capability: Capability::VoiceStt,
+            capability: Capability::AudioTranscribe,
             model: None,
             router: None,
             chain: None,
@@ -345,7 +345,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             GatewayError::NoCandidates { capability } => {
-                assert_eq!(capability, Capability::VoiceStt);
+                assert_eq!(capability, Capability::AudioTranscribe);
             }
             other => panic!("Expected NoCandidates, got: {other}"),
         }
@@ -357,7 +357,7 @@ mod tests {
         register_noop(&gw).await;
 
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("noop".to_string()),
             router: Some("noop".to_string()),
             chain: None,

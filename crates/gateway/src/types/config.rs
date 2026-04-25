@@ -122,7 +122,7 @@ mod tests {
             id: "claude-sonnet".to_string(),
             api_model_id: Some("claude-3-5-sonnet-20241022".to_string()),
             provider: "anthropic".to_string(),
-            capabilities: vec![Capability::Chat, Capability::Summarize],
+            capabilities: vec![Capability::TextChat, Capability::TextEmbed],
             context_window: 200000,
             max_output_tokens: 8192,
             pricing: Some(ModelPricing {
@@ -137,8 +137,8 @@ mod tests {
 
         assert_eq!(deserialized.id, "claude-sonnet");
         assert_eq!(deserialized.capabilities.len(), 2);
-        assert_eq!(deserialized.capabilities[0], Capability::Chat);
-        assert_eq!(deserialized.capabilities[1], Capability::Summarize);
+        assert_eq!(deserialized.capabilities[0], Capability::TextChat);
+        assert_eq!(deserialized.capabilities[1], Capability::TextEmbed);
         assert!(deserialized.pricing.is_some());
     }
 
@@ -146,7 +146,7 @@ mod tests {
     fn fallback_chain_serde_roundtrip() {
         let chain = FallbackChainConfig {
             id: "chat-primary".to_string(),
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             models: vec![
                 ChainEntry {
                     model: "claude-sonnet".to_string(),

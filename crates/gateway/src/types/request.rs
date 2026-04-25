@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn chat_request_serde() {
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("claude-sonnet".to_string()),
             router: None,
             chain: None,
@@ -279,7 +279,7 @@ mod tests {
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: InferenceRequest = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(deserialized.capability, Capability::Chat);
+        assert_eq!(deserialized.capability, Capability::TextChat);
         assert_eq!(deserialized.model, Some("claude-sonnet".to_string()));
         if let Payload::Chat {
             messages, system, ..
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn embed_request_serde() {
         let request = InferenceRequest {
-            capability: Capability::Embed,
+            capability: Capability::TextEmbed,
             model: None,
             router: None,
             chain: None,
@@ -352,7 +352,7 @@ mod tests {
     fn stt_request_serde() {
         let audio_bytes = vec![0xFF, 0xD8, 0x00, 0x10, 0x4A, 0x46];
         let request = InferenceRequest {
-            capability: Capability::VoiceStt,
+            capability: Capability::AudioTranscribe,
             model: Some("whisper-1".to_string()),
             router: None,
             chain: None,
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn tts_request_serde() {
         let request = InferenceRequest {
-            capability: Capability::VoiceTts,
+            capability: Capability::AudioGenerate,
             model: Some("tts-1".to_string()),
             router: None,
             chain: None,

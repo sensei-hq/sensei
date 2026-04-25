@@ -235,12 +235,10 @@ impl InferenceAdapter for OpenAIAdapter {
     fn supports(&self, capability: &Capability) -> bool {
         matches!(
             capability,
-            Capability::Chat
-                | Capability::Embed
-                | Capability::Classify
-                | Capability::Summarize
-                | Capability::VoiceStt
-                | Capability::VoiceTts
+            Capability::TextChat
+                | Capability::TextEmbed
+                | Capability::AudioTranscribe
+                | Capability::AudioGenerate
                 | Capability::ImageGenerate
         )
     }
@@ -717,22 +715,20 @@ mod tests {
         let adapter = OpenAIAdapter::new().unwrap();
         assert_eq!(adapter.id(), "openai");
 
-        assert!(adapter.supports(&Capability::Chat));
-        assert!(adapter.supports(&Capability::Embed));
-        assert!(adapter.supports(&Capability::Classify));
-        assert!(adapter.supports(&Capability::Summarize));
-        assert!(adapter.supports(&Capability::VoiceStt));
-        assert!(adapter.supports(&Capability::VoiceTts));
+        assert!(adapter.supports(&Capability::TextChat));
+        assert!(adapter.supports(&Capability::TextEmbed));
+        assert!(adapter.supports(&Capability::AudioTranscribe));
+        assert!(adapter.supports(&Capability::AudioGenerate));
         assert!(adapter.supports(&Capability::ImageGenerate));
 
-        assert!(!adapter.supports(&Capability::Consolidate));
+        assert!(!adapter.supports(&Capability::VideoGenerate));
     }
 
     #[test]
     fn openai_supports_voice() {
         let adapter = OpenAIAdapter::new().unwrap();
-        assert!(adapter.supports(&Capability::VoiceStt));
-        assert!(adapter.supports(&Capability::VoiceTts));
+        assert!(adapter.supports(&Capability::AudioTranscribe));
+        assert!(adapter.supports(&Capability::AudioGenerate));
     }
 
     #[test]
@@ -887,7 +883,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
         };
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("gpt-4o-mini".to_string()),
             router: None,
             chain: None,
@@ -989,7 +985,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
         };
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("gpt-4o-mini".to_string()),
             router: None,
             chain: None,

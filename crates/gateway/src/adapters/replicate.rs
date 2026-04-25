@@ -262,8 +262,8 @@ mod tests {
         assert_eq!(adapter.id(), "replicate");
 
         assert!(adapter.supports(&Capability::VideoGenerate));
-        assert!(!adapter.supports(&Capability::Chat));
-        assert!(!adapter.supports(&Capability::Embed));
+        assert!(!adapter.supports(&Capability::TextChat));
+        assert!(!adapter.supports(&Capability::TextEmbed));
     }
 
     #[test]
