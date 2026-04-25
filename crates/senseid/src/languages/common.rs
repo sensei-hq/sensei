@@ -93,7 +93,7 @@ pub fn ir_function(
         return_type,
         is_async,
         decorators,
-        complexity: crate::indexer::graph::compute_complexity(body_text),
+        complexity: crate::languages::compute_complexity(body_text),
         ..Default::default()
     }
 }
@@ -123,7 +123,7 @@ pub fn ir_method(
         is_static,
         decorators,
         visibility,
-        complexity: crate::indexer::graph::compute_complexity(body_text),
+        complexity: crate::languages::compute_complexity(body_text),
         ..Default::default()
     }
 }
