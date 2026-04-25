@@ -13,7 +13,7 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Message, MessageRole, Payload, StreamChunk,
+    ImageResult, InferenceRequest, InferenceResponse, Message, MessageRole, Payload, StreamChunk,
 };
 
 // ---------------------------------------------------------------------------
@@ -93,6 +93,33 @@ struct TtsRequest {
     voice: String,
     speed: f32,
     response_format: String,
+}
+
+// Image generation wire types
+
+#[derive(Debug, Serialize)]
+struct ImageGenerateRequest {
+    model: String,
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    style: Option<String>,
+    n: u8,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageGenerateResponse {
+    data: Vec<ImageData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageData {
+    url: Option<String>,
+    b64_json: Option<String>,
+    revised_prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +241,7 @@ impl InferenceAdapter for OpenAIAdapter {
                 | Capability::Summarize
                 | Capability::VoiceStt
                 | Capability::VoiceTts
+                | Capability::ImageGenerate
         )
     }
 
@@ -262,6 +290,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     embeddings: None,
                     transcription: None,
                     audio: None,
+                    images: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -295,6 +324,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     embeddings: Some(embeddings),
                     transcription: None,
                     audio: None,
+                    images: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -387,6 +417,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     embeddings: None,
                     transcription: Some(whisper_resp.text),
                     audio: None,
+                    images: None,
                     model: Some(model),
                     usage: None,
                     estimated_cost: None,
@@ -458,7 +489,96 @@ impl InferenceAdapter for OpenAIAdapter {
                     embeddings: None,
                     transcription: None,
                     audio: Some(audio_bytes.to_vec()),
+                    images: None,
                     model: Some(model),
+                    usage: None,
+                    estimated_cost: None,
+                    actual_cost: None,
+                    attempts: vec![],
+                })
+            }
+            Payload::ImageGenerate {
+                prompt,
+                size,
+                quality,
+                style,
+                n,
+            } => {
+                let image_model = request
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "dall-e-3".to_string());
+
+                let body = ImageGenerateRequest {
+                    model: image_model.clone(),
+                    prompt: prompt.clone(),
+                    size: size.clone(),
+                    quality: quality.clone(),
+                    style: style.clone(),
+                    n: *n,
+                };
+
+                let url = format!(
+                    "{}/v1/images/generations",
+                    config.url.trim_end_matches('/')
+                );
+                let mut req = self
+                    .client
+                    .post(&url)
+                    .json(&body)
+                    .bearer_auth(&api_key);
+
+                for (k, v) in &config.headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+
+                let response = req.send().await?;
+                let status = response.status();
+
+                if !status.is_success() {
+                    let body_text = response.text().await.unwrap_or_default();
+                    return Err(match status.as_u16() {
+                        401 | 403 => GatewayError::Authentication {
+                            adapter: "openai".into(),
+                            message: body_text,
+                        },
+                        429 => GatewayError::RateLimit {
+                            adapter: "openai".into(),
+                            retry_after_ms: None,
+                        },
+                        _ => GatewayError::ProviderError {
+                            adapter: "openai".into(),
+                            message: body_text,
+                            status: Some(status.as_u16()),
+                        },
+                    });
+                }
+
+                let image_resp: ImageGenerateResponse =
+                    response.json().await.map_err(|e| GatewayError::ProviderError {
+                        adapter: "openai".into(),
+                        message: format!("failed to parse image generation response: {e}"),
+                        status: Some(status.as_u16()),
+                    })?;
+
+                let images: Vec<ImageResult> = image_resp
+                    .data
+                    .into_iter()
+                    .map(|d| ImageResult {
+                        url: d.url,
+                        b64_json: d.b64_json,
+                        revised_prompt: d.revised_prompt,
+                    })
+                    .collect();
+
+                Ok(InferenceResponse {
+                    success: true,
+                    content: None,
+                    embeddings: None,
+                    transcription: None,
+                    audio: None,
+                    images: Some(images),
+                    model: Some(image_model),
                     usage: None,
                     estimated_cost: None,
                     actual_cost: None,
@@ -593,6 +713,7 @@ mod tests {
         assert!(adapter.supports(&Capability::Summarize));
         assert!(adapter.supports(&Capability::VoiceStt));
         assert!(adapter.supports(&Capability::VoiceTts));
+        assert!(adapter.supports(&Capability::ImageGenerate));
 
         assert!(!adapter.supports(&Capability::Consolidate));
     }
@@ -780,6 +901,68 @@ mod tests {
         assert!(
             matches!(err, GatewayError::Authentication { .. }),
             "expected Authentication error, got: {err:?}",
+        );
+    }
+
+    #[test]
+    fn openai_supports_image_generate() {
+        let adapter = OpenAIAdapter::new().unwrap();
+        assert!(adapter.supports(&Capability::ImageGenerate));
+    }
+
+    #[test]
+    fn build_image_generate_request() {
+        let body = ImageGenerateRequest {
+            model: "dall-e-3".to_string(),
+            prompt: "A sunset over mountains".to_string(),
+            size: Some("1792x1024".to_string()),
+            quality: Some("hd".to_string()),
+            style: Some("vivid".to_string()),
+            n: 1,
+        };
+
+        let json = serde_json::to_value(&body).unwrap();
+
+        assert_eq!(json["model"], "dall-e-3");
+        assert_eq!(json["prompt"], "A sunset over mountains");
+        assert_eq!(json["size"], "1792x1024");
+        assert_eq!(json["quality"], "hd");
+        assert_eq!(json["style"], "vivid");
+        assert_eq!(json["n"], 1);
+    }
+
+    #[test]
+    fn parse_image_generate_response() {
+        let json = r#"{
+            "data": [
+                {
+                    "url": "https://oaidalleapiprodscus.blob.core.windows.net/image1.png",
+                    "revised_prompt": "A breathtaking sunset over snow-capped mountains"
+                },
+                {
+                    "b64_json": "iVBORw0KGgo=",
+                    "revised_prompt": "Another sunset variation"
+                }
+            ]
+        }"#;
+
+        let resp: ImageGenerateResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(resp.data.len(), 2);
+        assert_eq!(
+            resp.data[0].url.as_deref(),
+            Some("https://oaidalleapiprodscus.blob.core.windows.net/image1.png"),
+        );
+        assert!(resp.data[0].b64_json.is_none());
+        assert_eq!(
+            resp.data[0].revised_prompt.as_deref(),
+            Some("A breathtaking sunset over snow-capped mountains"),
+        );
+        assert!(resp.data[1].url.is_none());
+        assert_eq!(resp.data[1].b64_json.as_deref(), Some("iVBORw0KGgo="));
+        assert_eq!(
+            resp.data[1].revised_prompt.as_deref(),
+            Some("Another sunset variation"),
         );
     }
 

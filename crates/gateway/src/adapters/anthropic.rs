@@ -272,6 +272,7 @@ impl InferenceAdapter for AnthropicAdapter {
             embeddings: None,
             transcription: None,
             audio: None,
+            images: None,
             model: Some(model),
             usage: Some(usage),
             estimated_cost: None,
@@ -434,6 +435,7 @@ mod tests {
         assert!(!adapter.supports(&Capability::Summarize));
         assert!(!adapter.supports(&Capability::VoiceStt));
         assert!(!adapter.supports(&Capability::VoiceTts));
+        assert!(!adapter.supports(&Capability::ImageGenerate));
     }
 
     #[test]
