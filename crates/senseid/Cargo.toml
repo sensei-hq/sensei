@@ -11,9 +11,6 @@ tower-http = { version = "0.6", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
-# SQLite (graph DB only — store fully migrated to PostgreSQL)
-rusqlite = { version = "0.34", features = ["bundled"] }
-
 # PostgreSQL (primary store)
 sqlx-core = { version = "0.8", features = ["_rt-tokio", "chrono", "uuid", "json"] }
 sqlx-postgres = { version = "0.8", features = ["chrono", "uuid", "json"] }
