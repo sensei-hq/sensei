@@ -105,37 +105,14 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
         .ok_or("Project not found")?;
 
     let old_branch = detect_git_branch(&repo_path).unwrap_or_else(|| "unknown".to_string());
-    let old_branch_project = format!("{}@{}", repo_id, old_branch);
-    let new_branch_project = format!("{}@{}", repo_id, new_branch);
 
-    let graph = ctx.graph().await;
+    // TODO: branch snapshots not in PG yet — noop for clone/restore
+    // Old code used graph.project_exists / clone_project_graph / delete_project_graph.
+    // For now, always do a full reindex on branch switch.
 
-    // Check if we already have a snapshot for the new branch
-    if graph.project_exists(&new_branch_project) {
-        // Restore: swap current graph with the branch snapshot
-        // 1. Save current as old_branch snapshot (if not already saved)
-        if !graph.project_exists(&old_branch_project) {
-            graph.clone_project_graph(repo_id, &old_branch_project)?;
-            tracing::info!("branch_switch: saved {}  snapshot ({} nodes)", old_branch, graph.count_by_kind(&old_branch_project)?.values().sum::<u32>());
-        }
-        // 2. Clear current graph
-        graph.delete_project_graph(repo_id)?;
-        // 3. Restore new branch snapshot as current
-        graph.clone_project_graph(&new_branch_project, repo_id)?;
-        tracing::info!("branch_switch: restored {} from snapshot", new_branch);
-        return Ok(());
-    }
+    tracing::info!("branch_switch: {} → {} — full reindex (no branch snapshots in PG yet)", old_branch, new_branch);
 
-    // No snapshot for new branch — save current and reindex
-    // 1. Save current as old_branch snapshot
-    if !graph.project_exists(&old_branch_project) {
-        graph.clone_project_graph(repo_id, &old_branch_project)?;
-        tracing::info!("branch_switch: saved {} snapshot", old_branch);
-    }
-
-    drop(graph); // release lock before enqueuing
-
-    // 2. Clear manifest for full re-parse
+    // Clear manifest for full re-parse
     let manifest_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".sensei").join("projects").join(repo_id).join("manifest.json");
@@ -174,19 +151,15 @@ fn detect_git_branch(repo_path: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use tokio::sync::Mutex;
-    use crate::indexer::graph::GraphDb;
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
     use crate::api::state::SharedState;
     use super::super::super::executor::TaskContext;
 
-    /// Build a TaskContext backed by in-memory Store + GraphDb and a fresh TaskQueue.
+    /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     async fn make_ctx() -> Arc<TaskContext> {
-        let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
         let app_state = Arc::new(SharedState {
-            graph: Mutex::new(graph),
             task_queue: queue.clone(),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });

@@ -186,6 +186,89 @@ impl PgStore {
         Ok(rows)
     }
 
+    // ── Graph compat (typed wrappers matching GraphDb API) ─────────────
+
+    pub async fn merge_function(
+        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
+        signature: Option<&str>, line_start: Option<i32>, line_end: Option<i32>,
+        parent_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
+        self.upsert_node(folder_id, "function", name, file_path, parent_id, signature, line_start, line_end).await
+    }
+
+    pub async fn merge_file(
+        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
+    ) -> Result<uuid::Uuid, String> {
+        self.upsert_node(folder_id, "file", name, file_path, None, None, None, None).await
+    }
+
+    pub async fn merge_type(
+        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
+        kind: &str, line_start: Option<i32>,
+    ) -> Result<uuid::Uuid, String> {
+        self.upsert_node(folder_id, kind, name, file_path, None, None, line_start, None).await
+    }
+
+    pub async fn merge_doc(
+        &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
+    ) -> Result<uuid::Uuid, String> {
+        self.upsert_node(folder_id, "doc", name, file_path, None, None, None, None).await
+    }
+
+    pub async fn project_exists(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
+        let row: (bool,) = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.nodes WHERE folder_id = $1)"
+        ).bind(folder_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn search_functions(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
+             WHERE folder_id = $1 AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+             AND (name ILIKE '%' || $2 || '%' OR signature ILIKE '%' || $2 || '%')
+             ORDER BY name LIMIT 50"
+        ).bind(folder_id).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, fp, sig, line)| {
+            serde_json::json!({ "id": id, "name": name, "file_path": fp, "signature": sig, "line_start": line })
+        }).collect())
+    }
+
+    pub async fn search_types(&self, folder_id: &uuid::Uuid, query: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, file_path, line_start FROM sensei.nodes
+             WHERE folder_id = $1 AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
+             AND name ILIKE '%' || $2 || '%'
+             ORDER BY name LIMIT 50"
+        ).bind(folder_id).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, fp, line)| {
+            serde_json::json!({ "id": id, "name": name, "file_path": fp, "line_start": line })
+        }).collect())
+    }
+
+    pub async fn count_nodes_by_kind(&self, folder_id: &uuid::Uuid) -> Result<std::collections::HashMap<String, i64>, String> {
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT kind::text, COUNT(*) FROM sensei.nodes WHERE folder_id = $1 GROUP BY kind"
+        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().collect())
+    }
+
+    pub async fn delete_node(&self, node_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE id = $1")
+            .bind(node_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_nodes_by_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2")
+            .bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn clear_all_nodes(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
+        self.delete_nodes_by_folder(folder_id).await
+    }
+
     // ── Repo compat (folders with kind='git'/'subtree') ────────────────
     // These bridge the old Repo API to the new folders model.
 

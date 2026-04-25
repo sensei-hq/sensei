@@ -1,12 +1,10 @@
 use std::path::Path;
 use walkdir::WalkDir;
-use crate::indexer::graph::GraphDb;
 
 /// Discover and index llms.txt files from a repo.
 /// TODO: Migrate to PgStore — currently returns count of discovered files.
 #[allow(dead_code)]
 pub fn index_llms(
-    _graph_db: &GraphDb,
     repo_path: &str,
     _repo_id: &str,
 ) -> Result<u32, String> {
@@ -81,74 +79,15 @@ fn discover_llms_files(repo: &Path) -> Vec<(String, String)> {
 }
 
 /// Generate llms-style documentation from the indexed call graph.
-/// Creates an overview doc with exported functions, types, and their signatures.
+/// TODO: Migrate to PgStore — currently a no-op stub.
 #[allow(dead_code)]
 fn generate_llms_from_graph(
-
-    graph_db: &GraphDb,
-    repo_path: &str,
-    repo_id: &str,
-    now: &str,
+    _repo_path: &str,
+    _repo_id: &str,
+    _now: &str,
 ) -> Result<u32, String> {
-    let (fn_count, type_count) = graph_db.count_symbols(repo_id)?;
-    if fn_count == 0 && type_count == 0 { return Ok(0); }
-
-    // Get all functions with their details
-    let functions = graph_db.search_functions("", repo_id)?;
-    let types = graph_db.search_types("", repo_id)?;
-
-    if functions.is_empty() && types.is_empty() { return Ok(0); }
-
-    // Group functions by file (module)
-    let mut modules: std::collections::HashMap<String, Vec<&crate::types::FunctionDetail>> = std::collections::HashMap::new();
-    for f in &functions {
-        let module = f.file.split('/').next_back().unwrap_or(&f.file).to_string();
-        modules.entry(module).or_default().push(f);
-    }
-
-    // Build index doc
-    let repo_name = std::path::Path::new(repo_path)
-        .file_name().and_then(|n| n.to_str()).unwrap_or(repo_id);
-
-    let mut doc = format!("# {} — Auto-generated API Reference\n\n", repo_name);
-    doc.push_str(&format!("> {} functions, {} types across {} modules\n\n", fn_count, type_count, modules.len()));
-
-    // Types section
-    if !types.is_empty() {
-        doc.push_str("## Types\n\n");
-        for t in types.iter().take(30) {
-            let file_short = t.file.split('/').next_back().unwrap_or(&t.file);
-            doc.push_str(&format!("- `{}` ({}) — {}\n", t.name, t.kind, file_short));
-        }
-        if types.len() > 30 {
-            doc.push_str(&format!("- ... and {} more\n", types.len() - 30));
-        }
-        doc.push('\n');
-    }
-
-    // Modules section (top functions per module)
-    doc.push_str("## Modules\n\n");
-    let mut sorted_modules: Vec<_> = modules.iter().collect();
-    sorted_modules.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
-
-    for (module, fns) in sorted_modules.iter().take(20) {
-        doc.push_str(&format!("### {}\n\n", module));
-        for f in fns.iter().take(10) {
-            let sig = f.signature.as_deref().unwrap_or("");
-            let sig_short = if sig.len() > 80 { &sig[..80] } else { sig };
-            doc.push_str(&format!("- `{}`", f.name));
-            if !sig_short.is_empty() {
-                doc.push_str(&format!(" — `{}`", sig_short));
-            }
-            doc.push('\n');
-        }
-        if fns.len() > 10 {
-            doc.push_str(&format!("- ... and {} more functions\n", fns.len() - 10));
-        }
-        doc.push('\n');
-    }
-
-    Ok(1)
+    // TODO: implement via PgStore — old code used GraphDb.count_symbols/search_functions/search_types
+    Ok(0)
 }
 
 #[cfg(test)]

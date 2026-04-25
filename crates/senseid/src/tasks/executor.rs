@@ -18,10 +18,6 @@ impl TaskContext {
     pub fn pg(&self) -> &crate::db::pg_store::PgStore {
         &self.app_state.pg
     }
-
-    pub async fn graph(&self) -> tokio::sync::MutexGuard<'_, crate::indexer::graph::GraphDb> {
-        self.app_state.graph.lock().await
-    }
 }
 
 /// Spawn N worker threads that process tasks from the queue.
@@ -71,16 +67,12 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::Mutex;
-    use crate::indexer::graph::GraphDb;
     use crate::api::state::SharedState;
 
-    /// Build a TaskContext backed by in-memory Store + GraphDb.
+    /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     async fn make_ctx() -> Arc<TaskContext> {
-        let graph = GraphDb::open_memory().unwrap();
         let queue = Arc::new(TaskQueue::new());
         let app_state = Arc::new(SharedState {
-            graph: Mutex::new(graph),
             task_queue: queue.clone(),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });
@@ -205,11 +197,7 @@ mod tests {
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_ok());
 
-        // Verify module node was created by the dispatched handler
-        let graph = ctx.graph().await;
-        let nodes = graph.get_nodes("repo").unwrap();
-        assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, "module");
+        // TODO: verify module node in PgStore once module writes are implemented
     }
 
     #[tokio::test]
@@ -226,19 +214,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_context_provides_pg_and_graph() {
+    async fn task_context_provides_pg() {
         let ctx = make_ctx().await;
-        // Verify we can access both pg and graph
+        // Verify we can access pg
         {
             let root_id = ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
             ctx.pg().upsert_repo(&root_id, "test", "/tmp/test").await.unwrap();
             let p = ctx.pg().get_repo_by_name("test").await.unwrap();
             assert!(p.is_some());
-        }
-        {
-            let graph = ctx.graph().await;
-            let counts = graph.count_by_kind("empty").unwrap();
-            assert!(counts.is_empty());
         }
     }
 }
