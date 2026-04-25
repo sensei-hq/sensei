@@ -5,6 +5,7 @@ create table if not exists folders (
 , parent_id                uuid        references sensei.folders(id) on delete cascade
 , project_id               uuid        references sensei.projects(id) on delete set null
 , kind                     folder_kind not null
+, role                     folder_role
 , name                     text        not null
 , path                     text        not null
 , abs_path                 text        not null unique
@@ -50,6 +51,8 @@ comment on column folders.project_id
      is 'Foreign key to projects — groups this folder into a project. Nullable.';
 comment on column folders.kind
      is 'Folder classification: parent (depth 1), folder (depth 2), git (repository), subtree (nested repo).';
+comment on column folders.role
+     is 'Project role assigned during setup: backend, frontend, library, docs, infra. Null until assigned.';
 comment on column folders.name
      is 'Display name — typically the directory basename.';
 comment on column folders.path
