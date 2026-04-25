@@ -176,11 +176,23 @@ pub(crate) async fn project_summary(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let graph = state.graph.lock().await;
-    let (fn_count, type_count) = graph.count_symbols(&repo_id).unwrap_or((0, 0));
-    let edge_count = graph.count_edges(&repo_id).unwrap_or(0);
-    let pkg_count = graph.count_packages(&repo_id).unwrap_or(0);
-    let mod_count = graph.count_modules(&repo_id).unwrap_or(0);
+    // Derive counts from PgStore count_nodes_by_kind
+    let folder_id_opt = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let counts = if let Some(fid) = &folder_id_opt {
+        state.pg.count_nodes_by_kind(fid).await.unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+    let fn_count = counts.get("function").copied().unwrap_or(0)
+        + counts.get("method").copied().unwrap_or(0);
+    let type_count = counts.get("class").copied().unwrap_or(0)
+        + counts.get("struct").copied().unwrap_or(0)
+        + counts.get("interface").copied().unwrap_or(0)
+        + counts.get("enum").copied().unwrap_or(0)
+        + counts.get("type").copied().unwrap_or(0);
+    let edge_count: u32 = 0; // TODO: implement edge count in PG
+    let pkg_count = counts.get("package").copied().unwrap_or(0);
+    let mod_count = counts.get("module").copied().unwrap_or(0);
 
     Ok(Json(serde_json::json!({
         "repoId": folder["name"],
@@ -220,8 +232,6 @@ pub(crate) async fn solution_graph(
         .filter(|r| r["project_id"].as_str() == Some(&id))
         .collect();
 
-    let graph = state.graph.lock().await;
-
     let mut all_nodes = Vec::new();
     let mut all_edges = Vec::new();
     let mut seen_repo_ids = std::collections::HashSet::new();
@@ -232,22 +242,25 @@ pub(crate) async fn solution_graph(
             continue;
         }
 
-        let nodes = graph.get_nodes(repo_name).unwrap_or_default();
-        let edges = graph.get_edges(repo_name).unwrap_or_default();
-        let role = repo["role"].as_str().unwrap_or("unknown");
-        for node in nodes {
-            all_nodes.push(serde_json::json!({
-                "id": node.id, "name": node.name, "kind": node.kind,
-                "file": node.file, "line": node.line, "complexity": node.complexity,
-                "doc_type": node.doc_type, "level": node.level, "parent_id": node.parent_id,
-                "repoId": repo_name, "role": role,
-            }));
-        }
-        for edge in edges {
-            all_edges.push(serde_json::json!({
-                "source": edge.source, "target": edge.target,
-                "type": edge.edge_type, "repoId": repo_name,
-            }));
+        // Look up folder UUID for this repo to query PgStore
+        if let Some(folder_id) = repo["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
+            let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
+            let role = repo["role"].as_str().unwrap_or("unknown");
+            for node in nodes {
+                all_nodes.push(serde_json::json!({
+                    "id": node["id"], "name": node["name"], "kind": node["kind"],
+                    "file": node["file"], "line": node["line"], "complexity": node["complexity"],
+                    "doc_type": node["doc_type"], "level": node["level"], "parent_id": node["parent_id"],
+                    "repoId": repo_name, "role": role,
+                }));
+            }
+            for edge in edges {
+                all_edges.push(serde_json::json!({
+                    "source": edge["source"], "target": edge["target"],
+                    "type": edge["kind"], "repoId": repo_name,
+                }));
+            }
         }
     }
 

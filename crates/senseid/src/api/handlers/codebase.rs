@@ -22,10 +22,16 @@ pub(crate) async fn graph_nodes(
     if repo_id.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    let graph = state.graph.lock().await;
-    let nodes = graph.get_nodes(&repo_id).unwrap_or_default();
-    let edges = graph.get_edges(&repo_id).unwrap_or_default();
-    Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
+    // TODO: implement via PgStore — need folder_uuid lookup
+    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
+            let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
+            return Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})));
+        }
+    }
+    Ok(Json(serde_json::json!({"nodes": [], "edges": []})))
 }
 
 #[derive(Deserialize)]
@@ -39,21 +45,29 @@ pub(crate) struct SymbolQuery {
 pub(crate) async fn search_functions(
     State(state): State<AppState>,
     Query(q): Query<SymbolQuery>,
-) -> Result<Json<Vec<crate::types::FunctionDetail>>, StatusCode> {
-    let graph = state.graph.lock().await;
-    graph.search_functions(&q.query, &q.repo_id)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let folder = state.pg.get_repo_by_name(&q.repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let results = state.pg.search_functions(&folder_id, &q.query).await.unwrap_or_default();
+            return Ok(Json(results));
+        }
+    }
+    Ok(Json(vec![]))
 }
 
 pub(crate) async fn search_types(
     State(state): State<AppState>,
     Query(q): Query<SymbolQuery>,
-) -> Result<Json<Vec<crate::types::TypeDetail>>, StatusCode> {
-    let graph = state.graph.lock().await;
-    graph.search_types(&q.query, &q.repo_id)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let folder = state.pg.get_repo_by_name(&q.repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let results = state.pg.search_types(&folder_id, &q.query).await.unwrap_or_default();
+            return Ok(Json(results));
+        }
+    }
+    Ok(Json(vec![]))
 }
 
 #[derive(Deserialize)]
@@ -64,23 +78,19 @@ pub(crate) struct TraceQuery {
 }
 
 pub(crate) async fn fn_callers(
-    State(state): State<AppState>,
-    Query(q): Query<TraceQuery>,
-) -> Result<Json<Vec<crate::types::FunctionDetail>>, StatusCode> {
-    let graph = state.graph.lock().await;
-    graph.callers_of(&q.name, &q.repo_id)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    State(_state): State<AppState>,
+    Query(_q): Query<TraceQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    // TODO: implement via PgStore — need node_uuid from name lookup
+    Ok(Json(vec![]))
 }
 
 pub(crate) async fn fn_callees(
-    State(state): State<AppState>,
-    Query(q): Query<TraceQuery>,
-) -> Result<Json<Vec<crate::types::FunctionDetail>>, StatusCode> {
-    let graph = state.graph.lock().await;
-    graph.callees_of(&q.name, &q.repo_id)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    State(_state): State<AppState>,
+    Query(_q): Query<TraceQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    // TODO: implement via PgStore — need node_uuid from name lookup
+    Ok(Json(vec![]))
 }
 
 #[derive(Deserialize)]
@@ -91,41 +101,27 @@ pub(crate) struct TagQuery {
 }
 
 pub(crate) async fn files_by_tag(
-    State(state): State<AppState>,
-    Query(q): Query<TagQuery>,
+    State(_state): State<AppState>,
+    Query(_q): Query<TagQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let graph = state.graph.lock().await;
-    match graph.files_by_tag(&q.tag, &q.repo_id) {
-        Ok(files) => {
-            let result: Vec<serde_json::Value> = files.into_iter().map(|(id, path, tags)| {
-                serde_json::json!({"id": id, "path": path, "tags": tags})
-            }).collect();
-            Ok(Json(serde_json::json!(result)))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    // TODO: implement in PG
+    Ok(Json(serde_json::json!([])))
 }
 
 pub(crate) async fn doc_drift(
-    State(state): State<AppState>,
-    Query(q): Query<GraphQuery>,
-) -> Result<Json<Vec<crate::indexer::graph::DocDrift>>, StatusCode> {
-    let repo_id = q.repo_id.unwrap_or_default();
-    let graph = state.graph.lock().await;
-    graph.get_doc_drift(&repo_id)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    State(_state): State<AppState>,
+    Query(_q): Query<GraphQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // TODO: implement in PG
+    Ok(Json(serde_json::json!([])))
 }
 
 pub(crate) async fn call_flow(
-    State(state): State<AppState>,
-    Query(q): Query<GraphQuery>,
+    State(_state): State<AppState>,
+    Query(_q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let repo_id = q.repo_id.unwrap_or_default();
-    let graph = state.graph.lock().await;
-    graph.get_call_flow(&repo_id)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    // TODO: implement in PG
+    Ok(Json(serde_json::json!({})))
 }
 
 pub(crate) async fn detect_communities(
@@ -136,29 +132,34 @@ pub(crate) async fn detect_communities(
     if repo_id.is_empty() {
         return Ok(Json(serde_json::json!({"error": "repoId required"})));
     }
-    let graph = state.graph.lock().await;
-    match crate::indexer::community::detect_communities(&graph, &repo_id) {
-        Ok(communities) => {
-            let num = communities.values().collect::<std::collections::HashSet<_>>().len();
-            Ok(Json(serde_json::json!({
+    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let communities = state.pg.list_communities(&folder_id).await.unwrap_or_default();
+            let num = communities.len();
+            return Ok(Json(serde_json::json!({
                 "ok": true,
                 "communities": num,
-                "assignments": communities.len(),
-            })))
+                "assignments": num,
+            })));
         }
-        Err(e) => Ok(Json(serde_json::json!({"ok": false, "error": e}))),
     }
+    Ok(Json(serde_json::json!({"ok": false, "error": "project not found"})))
 }
 
 pub(crate) async fn community_info(
     State(state): State<AppState>,
     Query(q): Query<GraphQuery>,
-) -> Result<Json<Vec<crate::indexer::community::CommunityInfo>>, StatusCode> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
-    let graph = state.graph.lock().await;
-    graph.get_communities(&repo_id)
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            let communities = state.pg.list_communities(&folder_id).await.unwrap_or_default();
+            return Ok(Json(serde_json::json!(communities)));
+        }
+    }
+    Ok(Json(serde_json::json!([])))
 }
 
 // ── Patterns ────────────────────────────────────────────────────────────────

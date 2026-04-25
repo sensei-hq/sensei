@@ -143,8 +143,6 @@ fn start_daemon(port: u16) {
     println!("senseid: started (pid {})", pid);
 }
 
-fn graph_path() -> PathBuf { paths::graph_dir() }
-
 async fn run_foreground(port: u16) {
     let db_dir = sensei_dir();
     std::fs::create_dir_all(&db_dir).ok();
@@ -152,12 +150,9 @@ async fn run_foreground(port: u16) {
     let pid_path = db_dir.join("serve.pid");
     std::fs::write(&pid_path, std::process::id().to_string()).ok();
 
-    let gp = graph_path();
-    std::fs::create_dir_all(&gp).ok();
-    let graph = indexer::graph::GraphDb::open(&gp).expect("Failed to open graph DB");
     println!("[senseid] Listening on :{}", port);
 
-    if let Err(e) = api::start_server(graph, port).await {
+    if let Err(e) = api::start_server(port).await {
         eprintln!("[senseid] Server error: {}", e);
     }
     std::fs::remove_file(&pid_path).ok();

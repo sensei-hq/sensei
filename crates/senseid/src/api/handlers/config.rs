@@ -221,12 +221,6 @@ pub(crate) async fn reset_all(
     state.pg.execute_raw("DELETE FROM sensei.folders").await.ok();
     state.pg.execute_raw("DELETE FROM sensei.projects").await.ok();
 
-    // Clear graph DB
-    {
-        let graph = state.graph.lock().await;
-        graph.clear_all().ok();
-    }
-
     // Clear manifest files
     if let Some(home) = dirs::home_dir() {
         let projects_dir = home.join(".sensei").join("projects");

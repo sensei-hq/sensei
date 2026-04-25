@@ -1,7 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower_http::cors::{CorsLayer, Any};
-use crate::indexer::graph::GraphDb;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::executor::{TaskContext, spawn_workers};
 use super::routes::create_router;
@@ -9,10 +7,8 @@ use super::state::SharedState;
 
 const DEFAULT_WORKERS: usize = 3;
 
-pub async fn start_server(graph: GraphDb, port: u16) -> std::io::Result<()> {
+pub async fn start_server(port: u16) -> std::io::Result<()> {
     let task_queue = Arc::new(TaskQueue::new());
-
-    let graph_path = graph.db_path().map(|p| p.parent().unwrap_or(p).to_path_buf());
 
     // Connect to PostgreSQL
     let database_url = std::env::var("DATABASE_URL")
@@ -30,7 +26,6 @@ pub async fn start_server(graph: GraphDb, port: u16) -> std::io::Result<()> {
 
     let state = Arc::new(SharedState {
         pg,
-        graph: Mutex::new(graph),
         task_queue: task_queue.clone(),
     });
 
@@ -38,7 +33,7 @@ pub async fn start_server(graph: GraphDb, port: u16) -> std::io::Result<()> {
     let task_ctx = Arc::new(TaskContext {
         queue: task_queue.clone(),
         app_state: state.clone(),
-        _graph_path: graph_path,
+        _graph_path: None,
     });
     spawn_workers(task_ctx, DEFAULT_WORKERS);
 

@@ -126,15 +126,11 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
-    use tokio::sync::Mutex;
-    use crate::indexer::graph::GraphDb;
     use crate::tasks::queue::TaskQueue;
     use crate::api::state::SharedState;
 
     async fn test_app() -> (Router, AppState) {
-        let graph = GraphDb::open_memory().unwrap();
         let state = Arc::new(SharedState {
-            graph: Mutex::new(graph),
             task_queue: Arc::new(TaskQueue::new()),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
         });

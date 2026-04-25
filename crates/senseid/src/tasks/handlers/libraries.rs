@@ -9,92 +9,72 @@ use crate::languages;
 /// Classify imports as internal vs external libraries. Update project.libs.
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-    let graph = ctx.graph().await;
 
-    let nodes = graph.get_nodes(repo_id)?;
-    let edges = graph.get_edges(repo_id)?;
+    // TODO: migrate edge-based lib detection to PgStore
+    // Old code read nodes/edges from GraphDb to classify imports.
+    // For now, use the file-scanning heuristic only.
 
-    // Collect all import targets from IMPORTS edges
     let mut lib_set = std::collections::HashSet::new();
-    let file_ids: std::collections::HashSet<String> = nodes.iter()
-        .filter(|n| n.kind == "file")
-        .map(|n| n.id.clone())
-        .collect();
 
-    // Get raw import paths from unresolved_refs (already cleared by resolve_edges,
-    // so we need to look at IMPORTS edges + node metadata)
-    // Actually, imports are resolved into IMPORTS edges. External libs are imports
-    // that did NOT resolve to a local file. We can detect them by looking at
-    // the original import targets stored during process_file.
-    // Since unresolved_refs were cleared, let's scan node-level data instead.
-
-    // Simpler approach: scan all file nodes' level field (which stores language)
-    // and use the existing lib detection logic from the old pipeline
-    for edge in &edges {
-        if edge.edge_type == "IMPORTS" {
-            // If target is NOT a local file node, it's an external lib
-            if !file_ids.contains(&edge.target) {
-                // Extract lib name from the target
-                let target = &edge.target;
-                if !target.starts_with("file:") {
-                    lib_set.insert(target.clone());
-                }
-            }
-        }
-    }
-
-    // Also check what we can infer from existing data
-    // For now, use a simpler heuristic: re-read source files and extract non-relative imports
+    // Re-read source files and extract non-relative imports
     // This is expensive but accurate. TODO: store raw imports in a metadata field.
     let repo_path_str = ctx.pg().get_repo_by_name(repo_id).await
         .ok().flatten()
         .and_then(|r| r["abs_path"].as_str().map(String::from))
         .unwrap_or_default();
 
-    // Walk source files and extract external imports
-    for node in &nodes {
-        if node.kind != "file" || node.file.is_empty() { continue; }
-        let ext = std::path::Path::new(&node.file).extension()
-            .and_then(|e| e.to_str())
-            .map(|e| format!(".{}", e))
-            .unwrap_or_default();
-        let adapter = match languages::adapter_for_ext(&ext) {
-            Some(a) => a,
-            None => continue,
-        };
-        let content = match std::fs::read_to_string(&node.file) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let rel_path = std::path::Path::new(&node.file).strip_prefix(&repo_path_str)
-            .unwrap_or(std::path::Path::new(&node.file))
-            .to_string_lossy().to_string();
-        let parsed = adapter.parse(&content, &rel_path);
+    // Walk source files in the repo directory and extract external imports
+    if !repo_path_str.is_empty() {
+        let repo_path = std::path::Path::new(&repo_path_str);
+        let walker = ignore::WalkBuilder::new(repo_path)
+            .hidden(true).git_ignore(true).git_global(true).git_exclude(true)
+            .build();
 
-        for imp in &parsed.imports {
-            let path = &imp.target_path;
-            // Skip relative, absolute, node builtins, framework aliases
-            if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") { continue; }
-            if path.starts_with('$') { continue; }
-            if ["fs","path","os","url","http","https","module","child_process","crypto","util",
-                "events","stream","buffer","net","dns","tls","cluster","worker_threads",
-                "perf_hooks","process","assert","readline","querystring","string_decoder","zlib"]
-                .contains(&path.as_str()) { continue; }
-            if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
-            if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
-            if path.starts_with("java.") || path.starts_with("javax.") { continue; }
-            if path.starts_with("import_") || path.starts_with("from_") { continue; }
-            if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
-
-            let lib_name = if path.starts_with('@') {
-                path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
-            } else if path.contains("::") {
-                path.split("::").next().unwrap_or("").to_string()
-            } else {
-                path.split('/').next().unwrap_or("").to_string()
+        for entry in walker.flatten() {
+            if !entry.path().is_file() { continue; }
+            let ext = entry.path().extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{}", e))
+                .unwrap_or_default();
+            let adapter = match languages::adapter_for_ext(&ext) {
+                Some(a) => a,
+                None => continue,
             };
-            if !lib_name.is_empty() && lib_name.len() > 1 {
-                lib_set.insert(lib_name);
+            let file_path = entry.path().to_string_lossy().to_string();
+            let content = match std::fs::read_to_string(&file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let rel_path = entry.path().strip_prefix(repo_path)
+                .unwrap_or(entry.path())
+                .to_string_lossy().to_string();
+            let parsed = adapter.parse(&content, &rel_path);
+
+            for imp in &parsed.imports {
+                let path = &imp.target_path;
+                // Skip relative, absolute, node builtins, framework aliases
+                if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") { continue; }
+                if path.starts_with('$') { continue; }
+                if ["fs","path","os","url","http","https","module","child_process","crypto","util",
+                    "events","stream","buffer","net","dns","tls","cluster","worker_threads",
+                    "perf_hooks","process","assert","readline","querystring","string_decoder","zlib"]
+                    .contains(&path.as_str()) { continue; }
+                if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
+                if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
+                if path.starts_with("java.") || path.starts_with("javax.") { continue; }
+                if path.starts_with("import_") || path.starts_with("from_") { continue; }
+                if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
+
+                let lib_name = if path.starts_with('@') {
+                    path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
+                } else if path.contains("::") {
+                    path.split("::").next().unwrap_or("").to_string()
+                } else {
+                    path.split('/').next().unwrap_or("").to_string()
+                };
+                if !lib_name.is_empty() && lib_name.len() > 1 {
+                    lib_set.insert(lib_name);
+                }
             }
         }
     }

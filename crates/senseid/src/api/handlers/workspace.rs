@@ -96,11 +96,7 @@ pub(crate) async fn exclude_project(
         .unwrap_or_default()
         .to_string();
 
-    // Clear indexed data from graph
-    {
-        let graph = state.graph.lock().await;
-        graph.delete_project_graph(&repo_id).ok();
-    }
+    // TODO: clear indexed nodes from PG when exclude is called
 
     // Delete the folder record (exclusions now handled by watcher)
     state.pg.delete_repo_by_name(&repo_id).await
