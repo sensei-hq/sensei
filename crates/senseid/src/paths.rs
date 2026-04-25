@@ -55,16 +55,6 @@ pub fn sensei_dir() -> PathBuf {
     home().join(dir_name())
 }
 
-/// SQLite database path
-pub fn db_path() -> PathBuf {
-    sensei_dir().join("sensei.db")
-}
-
-/// Graph database directory
-pub fn graph_dir() -> PathBuf {
-    sensei_dir().join("graph")
-}
-
 /// Log file
 pub fn log_path() -> PathBuf {
     sensei_dir().join("senseid.log")
@@ -111,13 +101,6 @@ mod tests {
         // Note: can't test set_mode in parallel tests due to OnceLock
         // but we can verify the dir_name logic
         assert_eq!(dir_name(), ".sensei"); // default is prod
-    }
-
-    #[test]
-    fn db_path_under_sensei_dir() {
-        let db = db_path();
-        assert!(db.starts_with(sensei_dir()));
-        assert!(db.to_string_lossy().ends_with("sensei.db"));
     }
 
     #[test]

@@ -197,7 +197,7 @@ mod tests {
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_ok());
 
-        // TODO: verify module node in PgStore once module writes are implemented
+        // TODO: verify module node once module writes are implemented
     }
 
     #[tokio::test]

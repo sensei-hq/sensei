@@ -138,7 +138,7 @@ pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> ser
 
 pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    // TODO: implement via PgStore — need node_uuid from name lookup
+    // TODO: implement — need node_uuid from name lookup
     let _ = (state, repo_id);
     serde_json::json!({
         "type": "callers",
@@ -150,7 +150,7 @@ pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> s
 
 pub(crate) async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    // TODO: implement via PgStore — need node_uuid from name lookup
+    // TODO: implement — need node_uuid from name lookup
     let _ = (state, repo_id);
     serde_json::json!({
         "type": "callees",
@@ -294,11 +294,11 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"results": fns})
         }
         "get_callers" => {
-            // TODO: implement via PgStore — need node_uuid from name lookup
+            // TODO: implement — need node_uuid from name lookup
             serde_json::json!({"callers": []})
         }
         "get_callees" => {
-            // TODO: implement via PgStore — need node_uuid from name lookup
+            // TODO: implement — need node_uuid from name lookup
             serde_json::json!({"callees": []})
         }
         "get_file_tags" => {

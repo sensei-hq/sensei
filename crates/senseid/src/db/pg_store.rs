@@ -1,6 +1,6 @@
 use sqlx_postgres::PgPool;
 
-/// PostgreSQL store — replaces SQLite Store during migration.
+/// PostgreSQL store.
 /// Schema is managed by `dbd apply`, not by this code.
 pub struct PgStore {
     pool: PgPool,
@@ -186,7 +186,7 @@ impl PgStore {
         Ok(rows)
     }
 
-    // ── Graph compat (typed wrappers matching GraphDb API) ─────────────
+    // ── Graph (typed wrappers) ─────────────────────────────────────────
 
     pub async fn merge_function(
         &self, folder_id: &uuid::Uuid, name: &str, file_path: &str,
@@ -269,8 +269,7 @@ impl PgStore {
         self.delete_nodes_by_folder(folder_id).await
     }
 
-    // ── Repo compat (folders with kind='git'/'subtree') ────────────────
-    // These bridge the old Repo API to the new folders model.
+    // ── Repo (folders with kind='git'/'subtree') ──────────────────────
 
     /// Register a git repo as a folder. Equivalent to old upsert_repo_basic.
     pub async fn upsert_repo(&self, root_id: &uuid::Uuid, name: &str, abs_path: &str) -> Result<uuid::Uuid, String> {
