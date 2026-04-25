@@ -11,6 +11,9 @@ create table if not exists memories (
 , impact                   text
 , strength                 real          not null default 1.0
 , status                   memory_status not null default 'active'
+, reinforced_count         integer       not null default 0
+, violated_count           integer       not null default 0
+, last_relevant_at         timestamptz
 , session_id               uuid
 , modified_at              timestamptz   not null default now()
 );
@@ -56,7 +59,13 @@ comment on column memories.impact
 comment on column memories.strength
      is 'Confidence score 0–5. Created at 1.0, reinforced +1.0, confirmed = 5.0, decayed over time. Below 1.0 = auto-archived.';
 comment on column memories.status
-     is 'Lifecycle: active (surfaced in context) or archived (retained for history, not surfaced).';
+     is 'Lifecycle: active (newly learned), reinforced (evidence accumulated), challenged (violated recently), battle_tested (high strength + zero violations over time), archived (retained for history, not surfaced).';
+comment on column memories.reinforced_count
+     is 'Number of times evidence has confirmed this memory.';
+comment on column memories.violated_count
+     is 'Number of times this memory was violated (assistant acted contrary to it).';
+comment on column memories.last_relevant_at
+     is 'Timestamp of last reinforcement or violation. Used for recency-based surfacing.';
 comment on column memories.session_id
      is 'Session that created this memory. Null for imported or collective memories.';
 comment on column memories.modified_at
