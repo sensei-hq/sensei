@@ -5,6 +5,7 @@ use futures::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+
 use super::base::{build_client, resolve_api_key};
 use super::InferenceAdapter;
 use crate::adapters::async_job::{poll_until_complete, JobConfig};
@@ -12,7 +13,7 @@ use crate::types::capability::Capability;
 use crate::types::config::RouterConfig;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Payload, StreamChunk, VideoResult,
+    ImageResult, InferenceRequest, InferenceResponse, Payload, StreamChunk, VideoResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,23 @@ struct FalResultResponse {
 
 #[derive(Debug, Deserialize)]
 struct FalVideo {
+    url: String,
+}
+
+// Image-specific wire types
+
+#[derive(Debug, Serialize)]
+struct FalImageRequest {
+    prompt: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FalImageResult {
+    images: Vec<FalImage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FalImage {
     url: String,
 }
 
@@ -110,7 +128,10 @@ impl InferenceAdapter for FalAdapter {
     }
 
     fn supports(&self, capability: &Capability) -> bool {
-        matches!(capability, Capability::VideoGenerate)
+        matches!(
+            capability,
+            Capability::VideoGenerate | Capability::ImageGenerate
+        )
     }
 
     async fn execute(
@@ -118,6 +139,140 @@ impl InferenceAdapter for FalAdapter {
         config: &RouterConfig,
         request: &InferenceRequest,
     ) -> Result<InferenceResponse, GatewayError> {
+        let api_key = require_api_key(config)?;
+
+        // --- ImageGenerate branch ---
+        if let Payload::ImageGenerate { prompt, .. } = &request.payload {
+            let model = request
+                .model
+                .clone()
+                .unwrap_or_else(|| "fal-ai/flux-pro/v1.1".to_string());
+            let url_base = base_url(config);
+            let auth_header = format!("Key {api_key}");
+
+            let body = FalImageRequest {
+                prompt: prompt.clone(),
+            };
+
+            let submit_url = format!("{url_base}/{model}");
+            let resp = self
+                .client
+                .post(&submit_url)
+                .json(&body)
+                .header("Authorization", &auth_header)
+                .send()
+                .await?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(GatewayError::ProviderError {
+                    adapter: "fal".into(),
+                    message: body_text,
+                    status: Some(status.as_u16()),
+                });
+            }
+
+            let queue: FalQueueResponse =
+                resp.json().await.map_err(|e| GatewayError::ProviderError {
+                    adapter: "fal".into(),
+                    message: format!("failed to parse queue response: {e}"),
+                    status: Some(status.as_u16()),
+                })?;
+
+            let request_id = queue.request_id;
+            let status_url = format!("{url_base}/requests/{request_id}/status");
+            let job_config = JobConfig::default();
+            let client = &self.client;
+            let auth_ref = &auth_header;
+
+            poll_until_complete(&job_config, || async {
+                let resp = client
+                    .get(&status_url)
+                    .header("Authorization", auth_ref)
+                    .send()
+                    .await?;
+
+                if !resp.status().is_success() {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    return Err(GatewayError::ProviderError {
+                        adapter: "fal".into(),
+                        message: body_text,
+                        status: None,
+                    });
+                }
+
+                let fal_status: FalStatusResponse =
+                    resp.json().await.map_err(|e| GatewayError::ProviderError {
+                        adapter: "fal".into(),
+                        message: format!("failed to parse status response: {e}"),
+                        status: None,
+                    })?;
+
+                match fal_status.status.as_str() {
+                    "COMPLETED" => Ok(Some(())),
+                    "FAILED" => Err(GatewayError::ProviderError {
+                        adapter: "fal".into(),
+                        message: "fal.ai request failed".to_string(),
+                        status: None,
+                    }),
+                    _ => Ok(None),
+                }
+            })
+            .await?;
+
+            let result_url = format!("{url_base}/requests/{request_id}");
+            let resp = self
+                .client
+                .get(&result_url)
+                .header("Authorization", &auth_header)
+                .send()
+                .await?;
+
+            let resp_status = resp.status();
+            if !resp_status.is_success() {
+                let body_text = resp.text().await.unwrap_or_default();
+                return Err(GatewayError::ProviderError {
+                    adapter: "fal".into(),
+                    message: body_text,
+                    status: Some(resp_status.as_u16()),
+                });
+            }
+
+            let result: FalImageResult =
+                resp.json().await.map_err(|e| GatewayError::ProviderError {
+                    adapter: "fal".into(),
+                    message: format!("failed to parse image result: {e}"),
+                    status: None,
+                })?;
+
+            let images: Vec<ImageResult> = result
+                .images
+                .into_iter()
+                .map(|img| ImageResult {
+                    url: Some(img.url),
+                    b64_json: None,
+                    revised_prompt: None,
+                })
+                .collect();
+
+            return Ok(InferenceResponse {
+                success: true,
+                content: None,
+                embeddings: None,
+                transcription: None,
+                audio: None,
+                images: Some(images),
+                videos: None,
+                model: Some(model),
+                usage: None,
+                estimated_cost: None,
+                actual_cost: None,
+                attempts: vec![],
+            });
+        }
+
+        // --- VideoGenerate branch ---
         let Payload::VideoGenerate {
             prompt,
             duration_secs,
@@ -126,12 +281,11 @@ impl InferenceAdapter for FalAdapter {
         else {
             return Err(GatewayError::ProviderError {
                 adapter: "fal".into(),
-                message: "only VideoGenerate payload is supported".into(),
+                message: "only VideoGenerate and ImageGenerate payloads are supported".into(),
                 status: None,
             });
         };
 
-        let api_key = require_api_key(config)?;
         let model = resolve_model(request);
         let url_base = base_url(config);
         let auth_header = format!("Key {api_key}");
@@ -266,7 +420,7 @@ impl InferenceAdapter for FalAdapter {
     {
         Err(GatewayError::ProviderError {
             adapter: "fal".into(),
-            message: "streaming is not supported for video generation".into(),
+            message: "streaming is not supported for image/video generation".into(),
             status: None,
         })
     }
@@ -310,6 +464,21 @@ mod tests {
         let json = r#"{"request_id":"req-abc-123"}"#;
         let resp: FalQueueResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.request_id, "req-abc-123");
+    }
+
+    #[test]
+    fn fal_supports_image_generate() {
+        let adapter = FalAdapter::new().unwrap();
+        assert!(adapter.supports(&Capability::ImageGenerate));
+        assert!(adapter.supports(&Capability::VideoGenerate));
+    }
+
+    #[test]
+    fn parse_fal_image_result() {
+        let json = r#"{"images":[{"url":"https://fal.media/image1.png"}]}"#;
+        let result: FalImageResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.images.len(), 1);
+        assert_eq!(result.images[0].url, "https://fal.media/image1.png");
     }
 
     #[test]
