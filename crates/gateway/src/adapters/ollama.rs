@@ -236,6 +236,7 @@ impl InferenceAdapter for OllamaAdapter {
                     embeddings: None,
                     transcription: None,
                     audio: None,
+                    images: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -269,6 +270,7 @@ impl InferenceAdapter for OllamaAdapter {
                     embeddings: Some(embeddings),
                     transcription: None,
                     audio: None,
+                    images: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -404,6 +406,7 @@ mod tests {
 
         assert!(!adapter.supports(&Capability::VoiceStt));
         assert!(!adapter.supports(&Capability::VoiceTts));
+        assert!(!adapter.supports(&Capability::ImageGenerate));
         assert!(!adapter.supports(&Capability::Consolidate));
     }
 
