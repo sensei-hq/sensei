@@ -52,7 +52,6 @@ enum Commands {
 }
 
 fn sensei_dir() -> PathBuf { paths::sensei_dir() }
-// db_path removed — SQLite store no longer used by daemon
 
 #[tokio::main]
 async fn main() {
@@ -235,4 +234,3 @@ fn clear_logs() {
     }
 }
 
-// Old integration_tests removed — they tested SQLite Store which is deleted.
