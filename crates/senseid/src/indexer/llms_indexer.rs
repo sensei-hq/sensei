@@ -2,7 +2,6 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 /// Discover and index llms.txt files from a repo.
-/// TODO: Migrate to PgStore — currently returns count of discovered files.
 #[allow(dead_code)]
 pub fn index_llms(
     repo_path: &str,
@@ -79,14 +78,13 @@ fn discover_llms_files(repo: &Path) -> Vec<(String, String)> {
 }
 
 /// Generate llms-style documentation from the indexed call graph.
-/// TODO: Migrate to PgStore — currently a no-op stub.
 #[allow(dead_code)]
 fn generate_llms_from_graph(
     _repo_path: &str,
     _repo_id: &str,
     _now: &str,
 ) -> Result<u32, String> {
-    // TODO: implement via PgStore — old code used GraphDb.count_symbols/search_functions/search_types
+    // TODO: implement
     Ok(0)
 }
 

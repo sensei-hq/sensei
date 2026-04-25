@@ -11,8 +11,6 @@ use crate::api::state::AppState;
 // ── Repos CRUD ──────────────────────────────────────────────────────────────
 
 pub(crate) async fn list_projects(State(state): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    // TODO: Old Store returned Vec<Repo>; PgStore returns folders with kind='git'/'subtree' as JSON.
-    // Callers may need updating for the new shape.
     state.pg.list_repositories().await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)

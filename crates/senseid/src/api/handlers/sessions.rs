@@ -21,7 +21,7 @@ pub(crate) async fn get_sessions_stub(
         }
     } else {
         // No folder filter — no PgStore equivalent for "all sessions".
-        // TODO: Add list_all_sessions to PgStore if needed.
+        // TODO: Add list_all_sessions if needed.
         vec![]
     };
     let total = sessions.len();
@@ -143,7 +143,7 @@ pub(crate) async fn list_events(
         };
     }
 
-    // TODO: PgStore has no list_events(folder, None, None, limit) — need a broader query method.
+    // TODO: need a broader query method for listing all events by folder.
     Json(serde_json::json!({"events": [], "count": 0}))
 }
 
@@ -188,8 +188,7 @@ pub(crate) async fn update_workflow_state(
     }
 
     // Sync to .sensei/state.yaml
-    // Use explicit project_path from body; old store.get_repo_path() fallback removed.
-    // TODO: Add a PgStore lookup for folder abs_path by project name if needed.
+    // TODO: Add a lookup for folder abs_path by project name if needed.
     let project_path = body["project_path"].as_str().map(String::from);
     if let Some(project_path) = project_path {
         let sensei_dir = std::path::Path::new(&project_path).join(".sensei");

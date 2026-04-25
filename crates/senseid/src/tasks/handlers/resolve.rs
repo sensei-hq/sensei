@@ -9,13 +9,10 @@ use super::super::Task;
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
 
-    // TODO: implement edge resolution via PgStore
-    // Old code used graph.get_unresolved_refs() / graph.get_nodes() / graph.merge_edge().
-    // Unresolved refs are not yet stored in PG. Stub for now.
-
+    // TODO: implement edge resolution
     let _ = ctx.pg().get_repo_by_name(repo_id).await;
 
-    tracing::info!("resolve_edges: {} — stubbed (pending PG migration)", repo_id);
+    tracing::info!("resolve_edges: {} — stubbed", repo_id);
     Ok(())
 }
 
@@ -25,8 +22,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
 
-    // TODO: doc<>code traceability edges via PgStore
-    // Old code: crate::indexer::doc_indexer::create_traceability_edges_pub(&graph, repo_id)?;
+    // TODO: doc<>code traceability edges
 
     // Mark project as indexed via PgStore
     let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
@@ -55,7 +51,7 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
 
     if project_id.is_none() {
         tracing::info!("reconcile_connections: {} not in any project", repo_id);
-        // TODO: rebuild doc<>code traceability via PgStore
+        // TODO: rebuild doc<>code traceability
         return Ok(());
     }
 
@@ -70,7 +66,7 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
         );
     }
 
-    // TODO: rebuild doc<>code traceability via PgStore
+    // TODO: rebuild doc<>code traceability
 
     tracing::info!("reconcile_connections: {} — project {:?}", repo_id, project_id);
     Ok(())

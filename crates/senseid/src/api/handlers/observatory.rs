@@ -15,9 +15,7 @@ pub(crate) async fn list_solutions(State(state): State<AppState>) -> Result<Json
     let projects = state.pg.list_projects().await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // TODO: Old Store enriched each project with its repos via list_repos() + project_id matching.
-    // PgStore projects don't have a direct repo-membership view yet. Return projects without repo enrichment.
-    // Add a list_folders_by_project() method to PgStore when needed.
+    // TODO: enrich projects with repo membership. Add a list_folders_by_project() method when needed.
     Ok(Json(serde_json::json!(projects)))
 }
 
@@ -28,7 +26,7 @@ pub(crate) struct CreateSolutionBody {
     description: Option<String>,
     #[serde(default)]
     client: Option<String>,
-    // TODO: category and repos unused until PgStore supports maturity + repo membership
+    // TODO: category and repos unused until maturity + repo membership is modeled
     #[serde(default = "default_category")]
     #[allow(dead_code)]
     category: String,
@@ -58,9 +56,7 @@ pub(crate) async fn create_solution(
         body.client.as_deref(),
     ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // TODO: PgStore has no set_repo_project — repo-to-project membership not yet modeled.
-    // Old Store assigned repos to this project via set_repo_project. Skipping for now.
-    // for r in &body.repos { ... }
+    // TODO: repo-to-project membership not yet modeled.
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"ok": true, "id": id}))))
 }
@@ -157,12 +153,11 @@ pub(crate) async fn analyze_solution(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // Return project data; full cross-repo analysis requires migration of analyze_project to PgStore
+    // TODO: implement full cross-repo analysis
     Ok(Json(serde_json::json!({
         "project": project,
         "links": [],
         "shared_libs": [],
-        "note": "Cross-repo analysis pending migration to PgStore"
     })))
 }
 

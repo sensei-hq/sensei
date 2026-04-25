@@ -10,10 +10,6 @@ use crate::languages;
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
 
-    // TODO: migrate edge-based lib detection to PgStore
-    // Old code read nodes/edges from GraphDb to classify imports.
-    // For now, use the file-scanning heuristic only.
-
     let mut lib_set = std::collections::HashSet::new();
 
     // Re-read source files and extract non-relative imports

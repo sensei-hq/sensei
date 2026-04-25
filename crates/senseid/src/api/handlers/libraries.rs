@@ -112,7 +112,7 @@ pub(crate) async fn search_lib_docs(
     Query(q): Query<LibDocsQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let _query = q.q.unwrap_or_default();
-    // Return all libraries; full-text search pending migration
+    // TODO: implement full-text search filtering
     state.pg.list_libraries().await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -122,7 +122,7 @@ pub(crate) async fn get_lib_docs(
     State(state): State<AppState>,
     Path(_name): Path<String>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    // Return all libraries; per-name filtering pending migration
+    // TODO: implement per-name filtering
     state.pg.list_libraries().await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
