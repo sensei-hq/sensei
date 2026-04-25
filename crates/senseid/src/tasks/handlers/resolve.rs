@@ -5,14 +5,55 @@ use super::super::Task;
 
 // ── Resolve Edges (barrier) ──────────────────────────────────────────────
 
-/// Resolve all unresolved references for a repo: IMPORTS, CALLS, HAS_METHOD, COVERS, MENTIONS_FN.
+/// Resolve unresolved edges by matching target_name against existing nodes.
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
+    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder_id = match folder.as_ref()
+        .and_then(|f| f["id"].as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        Some(id) => id,
+        None => { tracing::warn!("resolve_edges: {} — folder not found", repo_id); return Ok(()); }
+    };
 
-    // TODO: implement edge resolution
-    let _ = ctx.pg().get_repo_by_name(repo_id).await;
+    // Get all unresolved edges (target_id IS NULL, target_name IS NOT NULL)
+    let unresolved: Vec<serde_json::Value> = ctx.pg().execute_raw_query(
+        "SELECT id, source_id, target_name, kind::text FROM sensei.edges WHERE folder_id = $1 AND target_id IS NULL AND target_name IS NOT NULL",
+        &folder_id,
+    ).await.unwrap_or_default();
 
-    tracing::info!("resolve_edges: {} — stubbed", repo_id);
+    // Get all nodes for name matching
+    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_default();
+
+    let mut resolved = 0u32;
+    for edge in &unresolved {
+        let target_name = match edge["target_name"].as_str() { Some(n) => n, None => continue };
+        let edge_id = match edge["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) { Some(id) => id, None => continue };
+        let kind = edge["kind"].as_str().unwrap_or("calls");
+
+        // Try to find a matching node by name
+        let matched = nodes.iter().find(|n| {
+            let name = n["name"].as_str().unwrap_or("");
+            let file_path = n["file_path"].as_str().unwrap_or("");
+            match kind {
+                "imports" => file_path.contains(target_name) || file_path.ends_with(&format!("{}.rs", target_name)) || file_path.ends_with(&format!("{}.ts", target_name)),
+                "calls" => name == target_name,
+                _ => name == target_name,
+            }
+        });
+
+        if let Some(target_node) = matched {
+            if let Some(target_id) = target_node["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                // Update edge with resolved target_id
+                ctx.pg().execute_raw(&format!(
+                    "UPDATE sensei.edges SET target_id = '{}' WHERE id = '{}'", target_id, edge_id
+                )).await.ok();
+                resolved += 1;
+            }
+        }
+    }
+
+    tracing::info!("resolve_edges: {} — {} unresolved, {} resolved", repo_id, unresolved.len(), resolved);
     Ok(())
 }
 
