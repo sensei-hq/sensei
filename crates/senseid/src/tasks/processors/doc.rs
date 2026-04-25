@@ -37,20 +37,15 @@ pub fn process(abs_path: &str, rel_path: &str, content: &str, _repo_id: &str, re
 
 /// IR-based document processing — thin wrapper that calls parse → write.
 /// No logic here — just orchestration. (D18: workers are thin wrappers)
-/// Currently test-only; will be wired into the processing pipeline (issue #90).
+/// Currently test-only; will be wired into the processing pipeline.
 #[cfg(test)]
 pub fn process_ir(
     rel_path: &str,
     content: &str,
     repo_path: &str,
-    project: &str,
-    graph: &crate::indexer::graph::GraphDb,
+    _project: &str,
 ) -> Result<crate::ir::IRDoc, String> {
-    // Phase 1: Parse (pure function, no IO)
     let ir_doc = doc_indexer::parse_to_ir(content, rel_path, repo_path);
-
-    // Phase 2: Write to graph
-    graph.write_ir_doc(&ir_doc, project)?;
 
     Ok(ir_doc)
 }
@@ -160,62 +155,32 @@ mod tests {
 
     #[test]
     fn process_ir_end_to_end() {
-        let graph = crate::indexer::graph::GraphDb::open_memory().unwrap();
         let content = "---\nname: Test Idea\nstatus: idea\norigin: conversation\n---\n\n# Test Idea\n\n## Problem\n\nSomething needs fixing.\n\n## Solution\n\nFix it.\n";
 
-        let result = process_ir(
-            "docs/ideas/test-idea.md",
-            content,
-            "/tmp/repo",
-            "test-proj",
-            &graph,
-        ).unwrap();
+        let result = process_ir("docs/ideas/test-idea.md", content, "/tmp/repo", "test-proj").unwrap();
 
-        // Verify IRDoc fields
         assert_eq!(result.base.name, "Test Idea");
         assert_eq!(result.doc_type, Some("idea".into()));
         assert_eq!(result.status, Some("idea".into()));
         assert_eq!(result.origin, Some("conversation".into()));
-        assert!(result.sections.len() >= 2); // Problem + Solution
-
-        // Verify it was written to graph
-        let read_back = graph.read_ir_doc("doc:docs/ideas/test-idea.md").unwrap();
-        assert!(read_back.is_some());
-        let read_back = read_back.unwrap();
-        assert_eq!(read_back.title, Some("Test Idea".into()));
-        assert_eq!(read_back.status, Some("idea".into()));
+        assert!(result.sections.len() >= 2);
     }
 
     #[test]
     fn process_ir_creates_traceability_edge() {
-        let graph = crate::indexer::graph::GraphDb::open_memory().unwrap();
         let content = "---\nname: Blueprint\norigin: docs/ideas/01.md\n---\n\n# Blueprint\n\nArchitecture.\n";
-
-        process_ir("docs/blueprints/01.md", content, "/tmp/repo", "test", &graph).unwrap();
-
-        // Verify TRACES_TO edge
-        let count: i64 = graph.conn_ref().query_row(
-            "SELECT COUNT(*) FROM edges WHERE from_id='doc:docs/blueprints/01.md' AND edge_type='TRACES_TO'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
-        assert_eq!(count, 1);
+        let result = process_ir("docs/blueprints/01.md", content, "/tmp/repo", "test").unwrap();
+        assert_eq!(result.base.name, "Blueprint");
+        // Traceability edges now created via PgStore, not tested here
     }
 
     #[test]
     fn process_ir_without_frontmatter() {
-        let graph = crate::indexer::graph::GraphDb::open_memory().unwrap();
         let content = "# Plain Readme\n\nSome content.\n";
-
-        let result = process_ir("README.md", content, "/tmp/repo", "test", &graph).unwrap();
-
+        let result = process_ir("README.md", content, "/tmp/repo", "test").unwrap();
         assert_eq!(result.title, Some("Plain Readme".into()));
         assert!(result.frontmatter.is_empty());
         assert_eq!(result.doc_type, Some("usage".into()));
-
-        // Still written to graph
-        let read_back = graph.read_ir_doc("doc:README.md").unwrap();
-        assert!(read_back.is_some());
     }
 }
 

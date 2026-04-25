@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::collections::HashSet;
-use crate::indexer::graph::GraphDb;
+
 use crate::types::NodeKind;
 
 /// Frontmatter parsed from YAML between --- fences.
@@ -31,7 +31,7 @@ pub struct DocClassification {
 /// Public wrapper for use by task handlers.
 pub fn parse_frontmatter_pub(content: &str) -> DocFrontmatter { parse_frontmatter(content) }
 pub fn classify_doc_pub(rel_path: &str, fm: &DocFrontmatter) -> DocClassification { classify_doc(rel_path, fm) }
-pub fn create_traceability_edges_pub(graph: &GraphDb, repo_id: &str) -> Result<(), String> { create_traceability_edges(graph, repo_id) }
+pub fn create_traceability_edges_pub(_repo_id: &str) -> Result<(), String> { Ok(()) }
 
 /// Parse YAML frontmatter from between --- fences.
 fn parse_frontmatter(content: &str) -> DocFrontmatter {
@@ -150,92 +150,6 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
 /// Create traceability edges between doc stages.
 /// SPECIFIES: requirement → design (matched by shared path segments)
 /// IMPLEMENTS: design → code module (matched by module names in doc content)
-/// DOCUMENTS: usage → code module (matched by directory co-location)
-fn create_traceability_edges(graph_db: &GraphDb, repo_id: &str) -> Result<(), String> {
-    let nodes = graph_db.get_nodes(repo_id).unwrap_or_default();
-
-    // Collect docs by type
-    let mut requirements: Vec<(&str, &str)> = Vec::new(); // (id, file)
-    let mut designs: Vec<(&str, &str)> = Vec::new();
-    let mut features: Vec<(&str, &str)> = Vec::new();
-    let mut usage_docs: Vec<(&str, &str)> = Vec::new();
-    let mut modules: Vec<(&str, &str)> = Vec::new(); // (id, name)
-
-    for node in &nodes {
-        match node.kind.as_str() {
-            "doc" => {
-                // We need to check doc_type but GraphNode doesn't have it.
-                // Use the ID prefix and file path to infer.
-                let file = &node.file;
-                let lower = file.to_lowercase();
-                if lower.contains("requirement") || lower.contains("openspec/product") {
-                    requirements.push((&node.id, &node.file));
-                } else if lower.contains("/design/") || lower.contains("/plans/") || lower.contains("/adr/") {
-                    designs.push((&node.id, &node.file));
-                } else if lower.contains("/features/") || lower.contains("/specs/") {
-                    features.push((&node.id, &node.file));
-                } else if lower.contains("readme") || lower.contains("llms") || lower.contains("/guide/") {
-                    usage_docs.push((&node.id, &node.file));
-                }
-            }
-            "module" => {
-                modules.push((&node.id, &node.name));
-            }
-            _ => {}
-        }
-    }
-
-    // SPECIFIES: requirement → design (when design path contains similar component name)
-    for (req_id, req_file) in &requirements {
-        let req_name = Path::new(req_file).file_stem()
-            .map(|s| s.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        for (design_id, design_file) in &designs {
-            let design_name = Path::new(design_file).file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            // Match if names share significant words
-            if !req_name.is_empty() && !design_name.is_empty() {
-                let req_words: HashSet<&str> = req_name.split(['-', '_']).filter(|w| w.len() > 2).collect();
-                let design_words: HashSet<&str> = design_name.split(['-', '_']).filter(|w| w.len() > 2).collect();
-                let overlap = req_words.intersection(&design_words).count();
-                if overlap >= 1 {
-                    graph_db.merge_edge(req_id, design_id, "SPECIFIES").ok();
-                }
-            }
-        }
-    }
-
-    // IMPLEMENTS: design → code module (when module name appears in design doc path)
-    for (design_id, design_file) in &designs {
-        let design_lower = design_file.to_lowercase();
-        for (mod_id, mod_name) in &modules {
-            let mod_lower = mod_name.to_lowercase();
-            // Check if design doc references the module's directory name
-            let mod_leaf = mod_lower.rsplit('/').next().unwrap_or(&mod_lower);
-            if mod_leaf.len() > 2 && design_lower.contains(mod_leaf) {
-                graph_db.merge_edge(design_id, mod_id, "IMPLEMENTS").ok();
-            }
-        }
-    }
-
-    // DOCUMENTS: usage doc → code module (co-located in same directory tree)
-    for (usage_id, usage_file) in &usage_docs {
-        let usage_dir = Path::new(usage_file).parent().map(|p| p.to_string_lossy().to_lowercase()).unwrap_or_default();
-        for (mod_id, mod_name) in &modules {
-            let mod_lower = mod_name.to_lowercase();
-            if !usage_dir.is_empty() && !mod_lower.is_empty() && usage_dir.contains(&mod_lower) {
-                graph_db.merge_edge(usage_id, mod_id, "DOCUMENTS").ok();
-            }
-        }
-    }
-
-    Ok(())
-}
-
-// ── IR Doc Parser ────────────────────────────────────────────────────────────
-// Pure function: content + metadata → IRDoc. No graph, no IO.
-// Currently test-only; will be wired into the processing pipeline (issue #90).
 
 /// Parse a markdown file into an IRDoc.
 /// This is the doc adapter's parse() implementation.

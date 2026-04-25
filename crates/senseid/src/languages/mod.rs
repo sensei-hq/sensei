@@ -94,6 +94,15 @@ pub fn parse_to_ir_for_filename(filename: &str, source: &str, file_path: &str) -
     parse_to_ir_for_ext(&ext, source, file_path)
 }
 
+/// Cyclomatic complexity estimate from source text.
+pub fn compute_complexity(body: &str) -> u32 {
+    let patterns = ["if ", "else if ", "elif ", "else ", "for ", "while ", "catch ",
+        "case ", "&&", "||", "? ", "try ", "match ", "except "];
+    let mut n: u32 = 1;
+    for pat in &patterns { n += body.matches(pat).count() as u32; }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,7 +2,7 @@
 
 use super::types::*;
 use crate::languages;
-use crate::indexer::graph::compute_complexity;
+use crate::languages::compute_complexity;
 use crate::types::NodeKind;
 
 /// Process a code file via the appropriate language adapter.
