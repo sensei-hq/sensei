@@ -234,6 +234,8 @@ impl InferenceAdapter for OllamaAdapter {
                     success: true,
                     content,
                     embeddings: None,
+                    transcription: None,
+                    audio: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -265,6 +267,8 @@ impl InferenceAdapter for OllamaAdapter {
                     success: true,
                     content: None,
                     embeddings: Some(embeddings),
+                    transcription: None,
+                    audio: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -272,6 +276,11 @@ impl InferenceAdapter for OllamaAdapter {
                     attempts: vec![],
                 })
             }
+            _ => Err(GatewayError::ProviderError {
+                adapter: "ollama".into(),
+                message: "Ollama only supports chat and embed payloads".into(),
+                status: None,
+            }),
         }
     }
 

@@ -79,6 +79,22 @@ struct EmbedData {
     embedding: Vec<f32>,
 }
 
+// Voice wire types — Whisper (STT) + TTS
+
+#[derive(Debug, Deserialize)]
+struct WhisperResponse {
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TtsRequest {
+    model: String,
+    input: String,
+    voice: String,
+    speed: f32,
+    response_format: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct StreamChatResponse {
     choices: Vec<StreamChoice>,
@@ -192,7 +208,12 @@ impl InferenceAdapter for OpenAIAdapter {
     fn supports(&self, capability: &Capability) -> bool {
         matches!(
             capability,
-            Capability::Chat | Capability::Embed | Capability::Classify | Capability::Summarize
+            Capability::Chat
+                | Capability::Embed
+                | Capability::Classify
+                | Capability::Summarize
+                | Capability::VoiceStt
+                | Capability::VoiceTts
         )
     }
 
@@ -239,6 +260,8 @@ impl InferenceAdapter for OpenAIAdapter {
                     success: true,
                     content,
                     embeddings: None,
+                    transcription: None,
+                    audio: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -270,8 +293,173 @@ impl InferenceAdapter for OpenAIAdapter {
                     success: true,
                     content: None,
                     embeddings: Some(embeddings),
+                    transcription: None,
+                    audio: None,
                     model: Some(model),
                     usage,
+                    estimated_cost: None,
+                    actual_cost: None,
+                    attempts: vec![],
+                })
+            }
+            Payload::Stt {
+                audio,
+                language,
+                format,
+            } => {
+                let mime = match format.as_str() {
+                    "mp3" => "audio/mpeg",
+                    "wav" => "audio/wav",
+                    "webm" => "audio/webm",
+                    "m4a" => "audio/mp4",
+                    other => {
+                        return Err(GatewayError::ProviderError {
+                            adapter: "openai".into(),
+                            message: format!("unsupported audio format: {other}"),
+                            status: None,
+                        })
+                    }
+                };
+
+                let file_part = reqwest::multipart::Part::bytes(audio.clone())
+                    .file_name(format!("audio.{format}"))
+                    .mime_str(mime)
+                    .map_err(|e| GatewayError::ProviderError {
+                        adapter: "openai".into(),
+                        message: format!("failed to build multipart: {e}"),
+                        status: None,
+                    })?;
+
+                let mut form = reqwest::multipart::Form::new()
+                    .part("file", file_part)
+                    .text("model", model.clone());
+
+                if let Some(lang) = language {
+                    form = form.text("language", lang.clone());
+                }
+
+                let url = format!(
+                    "{}/v1/audio/transcriptions",
+                    config.url.trim_end_matches('/')
+                );
+                let mut req = self
+                    .client
+                    .post(&url)
+                    .multipart(form)
+                    .bearer_auth(&api_key);
+
+                for (k, v) in &config.headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+
+                let response = req.send().await?;
+                let status = response.status();
+
+                if !status.is_success() {
+                    let body_text = response.text().await.unwrap_or_default();
+                    return Err(match status.as_u16() {
+                        401 | 403 => GatewayError::Authentication {
+                            adapter: "openai".into(),
+                            message: body_text,
+                        },
+                        429 => GatewayError::RateLimit {
+                            adapter: "openai".into(),
+                            retry_after_ms: None,
+                        },
+                        _ => GatewayError::ProviderError {
+                            adapter: "openai".into(),
+                            message: body_text,
+                            status: Some(status.as_u16()),
+                        },
+                    });
+                }
+
+                let whisper_resp: WhisperResponse =
+                    response.json().await.map_err(|e| GatewayError::ProviderError {
+                        adapter: "openai".into(),
+                        message: format!("failed to parse whisper response: {e}"),
+                        status: Some(status.as_u16()),
+                    })?;
+
+                Ok(InferenceResponse {
+                    success: true,
+                    content: None,
+                    embeddings: None,
+                    transcription: Some(whisper_resp.text),
+                    audio: None,
+                    model: Some(model),
+                    usage: None,
+                    estimated_cost: None,
+                    actual_cost: None,
+                    attempts: vec![],
+                })
+            }
+            Payload::Tts {
+                text,
+                voice,
+                speed,
+                output_format,
+            } => {
+                let body = TtsRequest {
+                    model: model.clone(),
+                    input: text.clone(),
+                    voice: voice.clone().unwrap_or_else(|| "alloy".to_string()),
+                    speed: speed.unwrap_or(1.0),
+                    response_format: output_format.to_string(),
+                };
+
+                let url = format!(
+                    "{}/v1/audio/speech",
+                    config.url.trim_end_matches('/')
+                );
+                let mut req = self
+                    .client
+                    .post(&url)
+                    .json(&body)
+                    .bearer_auth(&api_key);
+
+                for (k, v) in &config.headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+
+                let response = req.send().await?;
+                let status = response.status();
+
+                if !status.is_success() {
+                    let body_text = response.text().await.unwrap_or_default();
+                    return Err(match status.as_u16() {
+                        401 | 403 => GatewayError::Authentication {
+                            adapter: "openai".into(),
+                            message: body_text,
+                        },
+                        429 => GatewayError::RateLimit {
+                            adapter: "openai".into(),
+                            retry_after_ms: None,
+                        },
+                        _ => GatewayError::ProviderError {
+                            adapter: "openai".into(),
+                            message: body_text,
+                            status: Some(status.as_u16()),
+                        },
+                    });
+                }
+
+                let audio_bytes = response.bytes().await.map_err(|e| {
+                    GatewayError::ProviderError {
+                        adapter: "openai".into(),
+                        message: format!("failed to read TTS audio bytes: {e}"),
+                        status: None,
+                    }
+                })?;
+
+                Ok(InferenceResponse {
+                    success: true,
+                    content: None,
+                    embeddings: None,
+                    transcription: None,
+                    audio: Some(audio_bytes.to_vec()),
+                    model: Some(model),
+                    usage: None,
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -403,10 +591,43 @@ mod tests {
         assert!(adapter.supports(&Capability::Embed));
         assert!(adapter.supports(&Capability::Classify));
         assert!(adapter.supports(&Capability::Summarize));
+        assert!(adapter.supports(&Capability::VoiceStt));
+        assert!(adapter.supports(&Capability::VoiceTts));
 
-        assert!(!adapter.supports(&Capability::VoiceStt));
-        assert!(!adapter.supports(&Capability::VoiceTts));
         assert!(!adapter.supports(&Capability::Consolidate));
+    }
+
+    #[test]
+    fn openai_supports_voice() {
+        let adapter = OpenAIAdapter::new().unwrap();
+        assert!(adapter.supports(&Capability::VoiceStt));
+        assert!(adapter.supports(&Capability::VoiceTts));
+    }
+
+    #[test]
+    fn parse_whisper_response() {
+        let json = r#"{"text":"Hello world"}"#;
+        let resp: WhisperResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.text, "Hello world");
+    }
+
+    #[test]
+    fn build_tts_request() {
+        let body = TtsRequest {
+            model: "tts-1".to_string(),
+            input: "Hello world".to_string(),
+            voice: "alloy".to_string(),
+            speed: 1.0,
+            response_format: "mp3".to_string(),
+        };
+
+        let json = serde_json::to_value(&body).unwrap();
+
+        assert_eq!(json["model"], "tts-1");
+        assert_eq!(json["input"], "Hello world");
+        assert_eq!(json["voice"], "alloy");
+        assert!((json["speed"].as_f64().unwrap() - 1.0).abs() < f64::EPSILON);
+        assert_eq!(json["response_format"], "mp3");
     }
 
     #[test]
