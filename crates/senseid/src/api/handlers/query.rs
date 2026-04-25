@@ -66,6 +66,13 @@ pub(crate) async fn unified_query(
     Ok(Json(result))
 }
 
+/// Resolve a repo_id string to a folder UUID, returning None if not found.
+async fn resolve_folder_id(state: &AppState, repo_id: &str) -> Option<uuid::Uuid> {
+    if repo_id.is_empty() { return None; }
+    state.pg.get_repo_by_name(repo_id).await.ok().flatten()
+        .and_then(|f| f["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()))
+}
+
 pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _solution_id: &Option<String>) -> serde_json::Value {
     let repos = state.pg.list_repositories().await.unwrap_or_default();
 
@@ -103,8 +110,11 @@ pub(crate) async fn query_libs(state: &AppState, q: &str, repo_id: &str, _soluti
 
 pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let graph = state.graph.lock().await;
-    let results = graph.search_functions(&term, repo_id).unwrap_or_default();
+    let results = if let Some(fid) = resolve_folder_id(state, repo_id).await {
+        state.pg.search_functions(&fid, &term).await.unwrap_or_default()
+    } else {
+        vec![]
+    };
     serde_json::json!({
         "type": "functions",
         "query": q,
@@ -114,8 +124,11 @@ pub(crate) async fn query_functions(state: &AppState, q: &str, repo_id: &str) ->
 
 pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let graph = state.graph.lock().await;
-    let results = graph.search_types(&term, repo_id).unwrap_or_default();
+    let results = if let Some(fid) = resolve_folder_id(state, repo_id).await {
+        state.pg.search_types(&fid, &term).await.unwrap_or_default()
+    } else {
+        vec![]
+    };
     serde_json::json!({
         "type": "types",
         "query": q,
@@ -125,36 +138,32 @@ pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> ser
 
 pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let graph = state.graph.lock().await;
-    let results = graph.callers_of(&term, repo_id).unwrap_or_default();
+    // TODO: implement via PgStore — need node_uuid from name lookup
+    let _ = (state, repo_id);
     serde_json::json!({
         "type": "callers",
         "query": q,
         "function": term,
-        "results": results,
+        "results": [],
     })
 }
 
 pub(crate) async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let graph = state.graph.lock().await;
-    let results = graph.callees_of(&term, repo_id).unwrap_or_default();
+    // TODO: implement via PgStore — need node_uuid from name lookup
+    let _ = (state, repo_id);
     serde_json::json!({
         "type": "callees",
         "query": q,
         "function": term,
-        "results": results,
+        "results": [],
     })
 }
 
 pub(crate) async fn query_files(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
-    let term = extract_search_term(q);
-    let graph = state.graph.lock().await;
-    let results = graph.files_by_tag(&term, repo_id).unwrap_or_default();
-    let files: Vec<serde_json::Value> = results.into_iter()
-        .map(|(id, path, tags)| serde_json::json!({"id": id, "path": path, "tags": tags}))
-        .collect();
-    serde_json::json!({ "type": "files", "query": q, "results": files })
+    // TODO: implement files_by_tag in PG
+    let _ = (state, repo_id);
+    serde_json::json!({ "type": "files", "query": q, "results": [] })
 }
 
 pub(crate) async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
@@ -166,27 +175,27 @@ pub(crate) async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> 
         else if q.contains("component") { "component" }
         else { &extract_search_term(q) };
 
-    let graph = state.graph.lock().await;
-    let files = graph.files_by_tag(tag, repo_id).unwrap_or_default();
-    let file_results: Vec<serde_json::Value> = files.into_iter()
-        .map(|(_id, path, tags)| serde_json::json!({"path": path, "tags": tags}))
-        .collect();
-    serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": file_results })
+    // TODO: implement files_by_tag in PG
+    let _ = (state, repo_id);
+    serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": [] })
 }
 
 pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
-    let graph = state.graph.lock().await;
-    let drift = graph.get_doc_drift(repo_id).unwrap_or_default();
+    // TODO: implement doc drift in PG
+    let _ = (state, repo_id);
     serde_json::json!({
         "type": "docs",
         "query": q,
-        "driftedDocs": drift,
+        "driftedDocs": [],
     })
 }
 
 pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> serde_json::Value {
-    let graph = state.graph.lock().await;
-    let communities = graph.get_communities(repo_id).unwrap_or_default();
+    let communities = if let Some(fid) = resolve_folder_id(state, repo_id).await {
+        state.pg.list_communities(&fid).await.unwrap_or_default()
+    } else {
+        vec![]
+    };
     serde_json::json!({
         "type": "communities",
         "results": communities,
@@ -195,10 +204,13 @@ pub(crate) async fn query_communities(state: &AppState, repo_id: &str) -> serde_
 
 pub(crate) async fn query_general(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    let graph = state.graph.lock().await;
-    let functions = graph.search_functions(&term, repo_id).unwrap_or_default();
-    let types = graph.search_types(&term, repo_id).unwrap_or_default();
-    drop(graph);
+    let (functions, types) = if let Some(fid) = resolve_folder_id(state, repo_id).await {
+        let fns = state.pg.search_functions(&fid, &term).await.unwrap_or_default();
+        let tys = state.pg.search_types(&fid, &term).await.unwrap_or_default();
+        (fns, tys)
+    } else {
+        (vec![], vec![])
+    };
 
     let lib_docs = state.pg.list_libraries().await.unwrap_or_default();
 
@@ -264,44 +276,46 @@ pub(crate) async fn mcp_call_tool(
 
     let result = match tool {
         "search" => {
-            let graph = state.graph.lock().await;
-            let fns = graph.search_functions(query, repo_id).unwrap_or_default();
-            let types = graph.search_types(query, repo_id).unwrap_or_default();
+            let (fns, types) = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
+                let f = state.pg.search_functions(&fid, query).await.unwrap_or_default();
+                let t = state.pg.search_types(&fid, query).await.unwrap_or_default();
+                (f, t)
+            } else {
+                (vec![], vec![])
+            };
             serde_json::json!({"functions": fns, "types": types})
         }
         "get_symbol" => {
-            let graph = state.graph.lock().await;
-            let fns = graph.search_functions(query, repo_id).unwrap_or_default();
+            let fns = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
+                state.pg.search_functions(&fid, query).await.unwrap_or_default()
+            } else {
+                vec![]
+            };
             serde_json::json!({"results": fns})
         }
         "get_callers" => {
-            let graph = state.graph.lock().await;
-            let results = graph.callers_of(query, repo_id).unwrap_or_default();
-            serde_json::json!({"callers": results})
+            // TODO: implement via PgStore — need node_uuid from name lookup
+            serde_json::json!({"callers": []})
         }
         "get_callees" => {
-            let graph = state.graph.lock().await;
-            let results = graph.callees_of(query, repo_id).unwrap_or_default();
-            serde_json::json!({"callees": results})
+            // TODO: implement via PgStore — need node_uuid from name lookup
+            serde_json::json!({"callees": []})
         }
         "get_file_tags" => {
-            let tag = params["tag"].as_str().unwrap_or(query);
-            let graph = state.graph.lock().await;
-            let files = graph.files_by_tag(tag, repo_id).unwrap_or_default();
-            let results: Vec<serde_json::Value> = files.into_iter()
-                .map(|(_, path, tags)| serde_json::json!({"path": path, "tags": tags}))
-                .collect();
-            serde_json::json!({"files": results})
+            // TODO: implement files_by_tag in PG
+            serde_json::json!({"files": []})
         }
         "get_communities" => {
-            let graph = state.graph.lock().await;
-            let communities = graph.get_communities(repo_id).unwrap_or_default();
+            let communities = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
+                state.pg.list_communities(&fid).await.unwrap_or_default()
+            } else {
+                vec![]
+            };
             serde_json::json!({"communities": communities})
         }
         "get_doc_drift" => {
-            let graph = state.graph.lock().await;
-            let drift = graph.get_doc_drift(repo_id).unwrap_or_default();
-            serde_json::json!({"drift": drift})
+            // TODO: implement doc drift in PG
+            serde_json::json!({"drift": []})
         }
         "search_lib_docs" => {
             let docs = state.pg.list_libraries().await.unwrap_or_default();
@@ -420,8 +434,17 @@ pub(crate) async fn mcp_call_tool(
         }
         "get_project_summary" => {
             let folder = state.pg.get_repo_by_name(repo_id).await.ok().flatten();
-            let graph = state.graph.lock().await;
-            let (fns, types) = graph.count_symbols(repo_id).unwrap_or((0, 0));
+            let (fns, types) = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
+                let counts = state.pg.count_nodes_by_kind(&fid).await.unwrap_or_default();
+                let f = counts.get("function").copied().unwrap_or(0)
+                    + counts.get("method").copied().unwrap_or(0);
+                let t = counts.get("class").copied().unwrap_or(0)
+                    + counts.get("struct").copied().unwrap_or(0)
+                    + counts.get("interface").copied().unwrap_or(0);
+                (f, t)
+            } else {
+                (0, 0)
+            };
             serde_json::json!({
                 "project": folder,
                 "functions": fns,
