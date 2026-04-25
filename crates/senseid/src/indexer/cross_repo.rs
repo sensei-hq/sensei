@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use crate::db::Store;
 use crate::types::{Repo, Project};
 use super::graph::GraphDb;
 
@@ -38,49 +37,17 @@ pub struct SharedLib {
 }
 
 /// Analyze cross-repo relationships within a project.
+/// TODO: Migrate to PgStore — currently returns empty analysis.
+#[allow(unused_variables)]
 pub fn analyze_project(
-    store: &Store,
     graph_db: &GraphDb,
     project: &Project,
 ) -> Result<ProjectAnalysis, String> {
-    // Load all repos in the project
-    let mut repos: HashMap<String, Repo> = HashMap::new();
-    for r in store.get_project_repos(&project.id).unwrap_or_default() {
-        repos.insert(r.repo_id.clone(), r);
-    }
-
-    if repos.len() < 2 {
-        return Ok(ProjectAnalysis {
-            project_id: project.id.clone(),
-            links: vec![],
-            inferred_roles: vec![],
-            shared_libs: vec![],
-        });
-    }
-
-    // 1. Detect shared libraries
-    let shared_libs = detect_shared_libs(&repos);
-
-    // 2. Detect cross-repo type/function references
-    let mut links = detect_cross_imports(graph_db, &repos);
-
-    // 3. Detect doc→code coverage across repos
-    links.extend(detect_cross_doc_coverage(graph_db, &repos));
-
-    // 4. Detect shared lib coupling (repos using same libs = likely related)
-    links.extend(detect_lib_coupling(&shared_libs));
-
-    // 5. Infer roles based on stack, libs, and file patterns
-    let inferred_roles = infer_roles(&repos);
-
-    // 6. Store cross-repo edges in graph
-    store_cross_repo_edges(graph_db, &project.id, &links)?;
-
     Ok(ProjectAnalysis {
         project_id: project.id.clone(),
-        links,
-        inferred_roles,
-        shared_libs,
+        links: vec![],
+        inferred_roles: vec![],
+        shared_libs: vec![],
     })
 }
 
@@ -358,63 +325,11 @@ fn infer_roles(repos: &HashMap<String, Repo>) -> Vec<InferredRole> {
 /// Only registers actual git repos (parent + subtrees) — NOT workspace packages.
 /// Workspace packages are already tracked in the graph's `packages` table.
 /// Returns Some(project_id) if a project was created/updated, None otherwise.
+/// TODO: Migrate to PgStore — currently no-ops.
 pub fn auto_project_for_monorepo(
-    store: &Store,
-    repo: &Repo,
+    _repo: &Repo,
 ) -> Result<Option<String>, String> {
-    let repo_path = std::path::Path::new(&repo.path);
-
-    // Detect git subtrees by looking for directories with their own git history
-    // (merged via `git subtree add`). These show up as dirs that were squash-merged.
-    let subtrees = detect_git_subtrees(repo_path);
-
-    // Check if this repo already belongs to a project
-    if repo.project_id.is_some() {
-        let project_id = repo.project_id.as_ref().unwrap();
-        // Add any missing subtree repos to the same project
-        for (name, _path) in &subtrees {
-            let sub_id = format!("{}:{}", repo.repo_id, name);
-            if let Ok(Some(sub_repo)) = store.get_repo(&sub_id) {
-                if sub_repo.project_id.is_none() {
-                    store.set_repo_project(&sub_id, project_id, "subtree", Some(name)).ok();
-                }
-            }
-        }
-        return Ok(Some(project_id.clone()));
-    }
-
-    // Nothing to create a project for if no subtrees found
-    if subtrees.is_empty() {
-        return Ok(None);
-    }
-
-    // Create new project
-    let project_id = format!("auto:{}", repo.repo_id);
-    let project = Project {
-        id: project_id.clone(),
-        name: repo.name.clone(),
-        description: Some(format!(
-            "Monorepo with {} subtree repo(s)",
-            subtrees.len()
-        )),
-        client: None,
-        category: "active".to_string(),
-        tags: vec!["monorepo".to_string(), "auto-detected".to_string()],
-        created_at: Some(chrono::Utc::now().to_rfc3339()),
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
-    };
-    store.create_project(&project).map_err(|e| e.to_string())?;
-
-    // Assign parent repo to the project
-    store.set_repo_project(&repo.repo_id, &project_id, "parent", Some(&repo.name)).ok();
-
-    // Assign subtree repos
-    for (name, _path) in &subtrees {
-        let sub_id = format!("{}:{}", repo.repo_id, name);
-        store.set_repo_project(&sub_id, &project_id, "subtree", Some(name)).ok();
-    }
-
-    Ok(Some(project_id))
+    Ok(None)
 }
 
 /// Detect git subtrees by finding directories that were merged via `git subtree add`.

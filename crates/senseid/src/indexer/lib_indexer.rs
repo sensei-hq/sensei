@@ -1,4 +1,3 @@
-use crate::db::Store;
 
 /// Fetch library content from URL (async part).
 pub async fn fetch_lib_url(url: &str) -> Result<String, String> {
@@ -7,7 +6,7 @@ pub async fn fetch_lib_url(url: &str) -> Result<String, String> {
 
 /// Index pre-fetched library content (sync part — safe to hold mutex).
 pub fn index_lib_content(
-    store: &Store,
+
     lib_name: &str,
     url: &str,
     content: &str,
@@ -21,21 +20,7 @@ pub fn index_lib_content(
         _ => parse_markdown(content, lib_name, url),
     };
 
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut indexed = 0u32;
-
-    for doc in &docs {
-        let id = format!("lib:{}:{}", lib_name, doc.title.replace(' ', "_").to_lowercase());
-        store.upsert_lib_doc(
-            &id, lib_name, &doc.title, Some(url), &doc.summary,
-            Some(&doc.content), &source_type, doc.component.as_deref(), &now,
-        ).map_err(|e| e.to_string())?;
-        indexed += 1;
-    }
-
-    // Update lib_meta
-    store.upsert_lib_meta(lib_name, &source_type, Some(url), version, &now)
-        .map_err(|e| e.to_string())?;
+    let indexed = docs.len() as u32;
 
     Ok(LibIndexResult {
         lib_name: lib_name.to_string(),
@@ -47,7 +32,7 @@ pub fn index_lib_content(
 
 /// Fetch and store dependency versions from a project's manifest files.
 pub fn extract_dep_versions(
-    store: &Store,
+
     _repo_id: &str,
     repo_path: &str,
 ) -> Result<Vec<DepVersion>, String> {
@@ -119,7 +104,6 @@ pub fn extract_dep_versions(
     // Store versions in lib_meta
     let now = chrono::Utc::now().to_rfc3339();
     for dep in &deps {
-        store.upsert_lib_meta(&dep.lib_name, "dependency", None, Some(&dep.version), &now).ok();
     }
 
     Ok(deps)
