@@ -291,6 +291,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     transcription: None,
                     audio: None,
                     images: None,
+                    videos: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -325,6 +326,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     transcription: None,
                     audio: None,
                     images: None,
+                    videos: None,
                     model: Some(model),
                     usage,
                     estimated_cost: None,
@@ -418,6 +420,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     transcription: Some(whisper_resp.text),
                     audio: None,
                     images: None,
+                    videos: None,
                     model: Some(model),
                     usage: None,
                     estimated_cost: None,
@@ -490,6 +493,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     transcription: None,
                     audio: Some(audio_bytes.to_vec()),
                     images: None,
+                    videos: None,
                     model: Some(model),
                     usage: None,
                     estimated_cost: None,
@@ -578,6 +582,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     transcription: None,
                     audio: None,
                     images: Some(images),
+                    videos: None,
                     model: Some(image_model),
                     usage: None,
                     estimated_cost: None,
@@ -585,6 +590,11 @@ impl InferenceAdapter for OpenAIAdapter {
                     attempts: vec![],
                 })
             }
+            Payload::VideoGenerate { .. } => Err(GatewayError::ProviderError {
+                adapter: "openai".into(),
+                message: "OpenAI video generation is not yet supported".into(),
+                status: None,
+            }),
         }
     }
 
