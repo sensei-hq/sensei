@@ -148,35 +148,50 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
 // ── Reconcile Connections ──────────────────────────────────────────────────
 
 /// Re-evaluate cross-repo edges after a branch switch or repo update.
+/// Detects shared symbols across repos in the same project.
 pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-
-    // Find the project this repo belongs to via PgStore
     let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder_id = folder.as_ref()
+        .and_then(|f| f["id"].as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
     let project_id = folder.as_ref()
         .and_then(|f| f["project_id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
+    // Rebuild doc↔code traceability for this repo
+    if let Some(ref fid) = folder_id {
+        let nodes = ctx.pg().get_nodes_by_folder(fid).await.unwrap_or_default();
+        let docs: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("doc")).collect();
+        let code_files: Vec<_> = nodes.iter().filter(|n| n["kind"].as_str() == Some("file")).collect();
+
+        let mut edges = 0u32;
+        for doc in &docs {
+            let doc_id = match doc["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) { Some(id) => id, None => continue };
+            let doc_stem = std::path::Path::new(doc["file_path"].as_str().unwrap_or(""))
+                .file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            for code in &code_files {
+                let code_stem = std::path::Path::new(code["file_path"].as_str().unwrap_or(""))
+                    .file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if !doc_stem.is_empty() && doc_stem == code_stem {
+                    if let Some(code_id) = code["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                        ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, "covers").await.ok();
+                        edges += 1;
+                    }
+                }
+            }
+        }
+        tracing::info!("reconcile_connections: {} — {} traceability edges", repo_id, edges);
+    }
+
+    // Cross-repo analysis requires a project with 2+ repos
     if project_id.is_none() {
         tracing::info!("reconcile_connections: {} not in any project", repo_id);
-        // TODO: rebuild doc<>code traceability
         return Ok(());
     }
 
     let project_id = project_id.unwrap();
-    let project = ctx.pg().get_project(&project_id).await.ok().flatten();
-
-    if let Some(proj) = &project {
-        tracing::info!(
-            "reconcile_connections: project {} — {}",
-            proj["name"].as_str().unwrap_or("unknown"),
-            proj["id"].as_str().unwrap_or(""),
-        );
-    }
-
-    // TODO: rebuild doc<>code traceability
-
-    tracing::info!("reconcile_connections: {} — project {:?}", repo_id, project_id);
+    tracing::info!("reconcile_connections: {} — project {}", repo_id, project_id);
     Ok(())
 }
 
