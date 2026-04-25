@@ -1,57 +1,18 @@
 use std::path::Path;
 use walkdir::WalkDir;
-use crate::db::Store;
 use crate::indexer::graph::GraphDb;
 
 /// Discover and index llms.txt files from a repo.
-/// Also generates llms-style docs from the call graph for repos without llms.txt.
+/// TODO: Migrate to PgStore — currently returns count of discovered files.
 #[allow(dead_code)]
 pub fn index_llms(
-    store: &Store,
-    graph_db: &GraphDb,
+    _graph_db: &GraphDb,
     repo_path: &str,
-    repo_id: &str,
+    _repo_id: &str,
 ) -> Result<u32, String> {
     let repo = Path::new(repo_path);
-    let mut indexed = 0u32;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // 1. Discover llms.txt files in standard locations
     let llms_files = discover_llms_files(repo);
-
-    if !llms_files.is_empty() {
-        // Index each discovered llms.txt
-        for (component_name, file_path) in &llms_files {
-            let content = match std::fs::read_to_string(file_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            let title = content.lines().next()
-                .map(|l| l.trim_start_matches('#').trim().to_string())
-                .unwrap_or_else(|| component_name.clone());
-
-            let summary = content.lines().skip(1).take(3)
-                .collect::<Vec<_>>().join(" ").trim().chars().take(200).collect::<String>();
-
-            let id = format!("lib:{}:{}", repo_id, component_name);
-
-            store.upsert_lib_doc(
-                &id, repo_id, &title, None, &summary,
-                Some(&content[..content.len().min(10000)]),
-                "llms-txt", Some(component_name.as_str()), &now,
-            ).ok();
-            indexed += 1;
-        }
-
-        // Update lib_meta
-        store.upsert_lib_meta(repo_id, "local", Some(repo_path), None, &now).ok();
-    } else {
-        // 2. No llms.txt found — generate docs from call graph
-        indexed += generate_llms_from_graph(store, graph_db, repo_path, repo_id, &now)?;
-    }
-
-    Ok(indexed)
+    Ok(llms_files.len() as u32)
 }
 
 /// Find llms.txt files in standard locations within a repo.
@@ -123,7 +84,7 @@ fn discover_llms_files(repo: &Path) -> Vec<(String, String)> {
 /// Creates an overview doc with exported functions, types, and their signatures.
 #[allow(dead_code)]
 fn generate_llms_from_graph(
-    store: &Store,
+
     graph_db: &GraphDb,
     repo_path: &str,
     repo_id: &str,
@@ -186,17 +147,6 @@ fn generate_llms_from_graph(
         }
         doc.push('\n');
     }
-
-    let summary = format!("{} functions, {} types — auto-generated from code graph", fn_count, type_count);
-    let id = format!("lib:{}:index", repo_id);
-
-    store.upsert_lib_doc(
-        &id, repo_id, &format!("{} API Reference", repo_name), None,
-        &summary, Some(&doc[..doc.len().min(10000)]),
-        "auto-generated", Some("index"), now,
-    ).ok();
-
-    store.upsert_lib_meta(repo_id, "local", Some(repo_path), None, now).ok();
 
     Ok(1)
 }
