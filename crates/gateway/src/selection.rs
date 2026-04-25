@@ -209,23 +209,23 @@ impl<'a> ModelSelectionService<'a> {
 
         // Cost estimation and budget check
         let cost_estimate = self.estimate_cost(model_config, criteria);
-        if let (Some(budget), Some(est)) = (criteria.budget, &cost_estimate) {
-            if est.estimated > budget {
-                skipped.push(SkippedCandidate {
-                    model: model_name.clone(),
-                    router: router_name.clone(),
-                    reason: format!(
-                        "over budget (estimated {:.4}, budget {:.4})",
-                        est.estimated, budget
-                    ),
-                });
-                return SelectionResult {
-                    selected: None,
-                    all_candidates: vec![],
-                    skipped,
-                    chain: None,
-                };
-            }
+        if let (Some(budget), Some(est)) = (criteria.budget, &cost_estimate)
+            && est.estimated > budget
+        {
+            skipped.push(SkippedCandidate {
+                model: model_name.clone(),
+                router: router_name.clone(),
+                reason: format!(
+                    "over budget (estimated {:.4}, budget {:.4})",
+                    est.estimated, budget
+                ),
+            });
+            return SelectionResult {
+                selected: None,
+                all_candidates: vec![],
+                skipped,
+                chain: None,
+            };
         }
 
         let api_model_id = model_config
@@ -335,18 +335,18 @@ impl<'a> ModelSelectionService<'a> {
 
             // Cost estimation and budget check
             let cost_estimate = self.estimate_cost(model_config, criteria);
-            if let (Some(budget), Some(est)) = (criteria.budget, &cost_estimate) {
-                if est.estimated > budget {
-                    skipped.push(SkippedCandidate {
-                        model: model_name.clone(),
-                        router: router_name,
-                        reason: format!(
-                            "over budget (estimated {:.4}, budget {:.4})",
-                            est.estimated, budget
-                        ),
-                    });
-                    continue;
-                }
+            if let (Some(budget), Some(est)) = (criteria.budget, &cost_estimate)
+                && est.estimated > budget
+            {
+                skipped.push(SkippedCandidate {
+                    model: model_name.clone(),
+                    router: router_name,
+                    reason: format!(
+                        "over budget (estimated {:.4}, budget {:.4})",
+                        est.estimated, budget
+                    ),
+                });
+                continue;
             }
 
             // Resolve API model ID: chain entry override, else model config, else model id
