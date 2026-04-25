@@ -26,6 +26,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/status", get(gateway::gateway_status))
         .route("/api/gateway/infer", post(gateway::infer))
         .route("/api/gateway/embed", post(gateway::embed))
+        .route("/api/gateway/consensus", post(gateway::consensus))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
         .route("/api/repos/{repo_id}", put(workspace::update_project).delete(workspace::delete_project))
