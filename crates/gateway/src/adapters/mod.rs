@@ -1,4 +1,6 @@
+pub mod base;
 pub mod noop;
+pub mod ollama;
 
 use std::collections::HashMap;
 use std::pin::Pin;
