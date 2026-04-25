@@ -73,10 +73,8 @@ impl Gateway {
 
         // 6. Walk candidates in order
         let mut attempts: Vec<Attempt> = Vec::new();
-        let mut sequence: u8 = 0;
 
-        for candidate in &result.all_candidates {
-            sequence += 1;
+        for (sequence, candidate) in (1_u8..).zip(result.all_candidates.iter()) {
             let start = Instant::now();
 
             // Get adapter from registry
