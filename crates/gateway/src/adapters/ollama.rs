@@ -187,7 +187,7 @@ impl InferenceAdapter for OllamaAdapter {
     fn supports(&self, capability: &Capability) -> bool {
         matches!(
             capability,
-            Capability::Chat | Capability::Embed | Capability::Classify | Capability::Summarize
+            Capability::TextChat | Capability::TextComplete | Capability::TextEmbed
         )
     }
 
@@ -401,15 +401,14 @@ mod tests {
         let adapter = OllamaAdapter::new().unwrap();
         assert_eq!(adapter.id(), "ollama");
 
-        assert!(adapter.supports(&Capability::Chat));
-        assert!(adapter.supports(&Capability::Embed));
-        assert!(adapter.supports(&Capability::Classify));
-        assert!(adapter.supports(&Capability::Summarize));
+        assert!(adapter.supports(&Capability::TextChat));
+        assert!(adapter.supports(&Capability::TextComplete));
+        assert!(adapter.supports(&Capability::TextEmbed));
 
-        assert!(!adapter.supports(&Capability::VoiceStt));
-        assert!(!adapter.supports(&Capability::VoiceTts));
+        assert!(!adapter.supports(&Capability::AudioTranscribe));
+        assert!(!adapter.supports(&Capability::AudioGenerate));
         assert!(!adapter.supports(&Capability::ImageGenerate));
-        assert!(!adapter.supports(&Capability::Consolidate));
+        assert!(!adapter.supports(&Capability::VideoGenerate));
     }
 
     #[test]
@@ -522,7 +521,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
         };
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("llama3.2:latest".to_string()),
             router: None,
             chain: None,

@@ -109,7 +109,7 @@ mod tests {
 
     fn test_request() -> InferenceRequest {
         InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: None,
             router: None,
             chain: None,
@@ -130,10 +130,10 @@ mod tests {
     #[test]
     fn noop_supports_all_capabilities() {
         let adapter = NoopAdapter;
-        assert!(adapter.supports(&Capability::Chat));
-        assert!(adapter.supports(&Capability::Embed));
-        assert!(adapter.supports(&Capability::Classify));
-        assert!(adapter.supports(&Capability::VoiceStt));
+        assert!(adapter.supports(&Capability::TextChat));
+        assert!(adapter.supports(&Capability::TextEmbed));
+        assert!(adapter.supports(&Capability::TextRerank));
+        assert!(adapter.supports(&Capability::AudioTranscribe));
     }
 
     #[tokio::test]
