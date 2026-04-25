@@ -10,6 +10,8 @@ create table if not exists task_turns (
 , tool            text    not null
 , success         integer               -- null=unknown, 1=ok, 0=error
 , duration_ms     integer               -- null when not available (non-OTLP coordinators)
+, usage           text                   -- null=unknown, 'used', 'partial', 'ignored'
+                       check (usage is null or usage in ('used','partial','ignored'))
 , created_at      text    not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 , modified_at     text    not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 , modified_by     text    not null default 'system'
