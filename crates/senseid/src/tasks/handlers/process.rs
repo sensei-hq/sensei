@@ -253,16 +253,36 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
                 ).await.ok();
             }
 
-            // Write unresolved edges (imports, calls) for later resolution
+            // Write unresolved import edges
             for import in &result.unresolved_imports {
-                // Store as edge with target_name (unresolved — target_id is None)
                 if let Some(ref fid) = file_node_id {
                     ctx.pg().insert_edge(&folder_id, fid, None, Some(import), "imports").await.ok();
                 }
             }
+
+            // Write unresolved call edges
             for call in &result.unresolved_calls {
                 if let Some(ref fid) = file_node_id {
                     ctx.pg().insert_edge(&folder_id, fid, None, Some(&call.callee_name), "calls").await.ok();
+                }
+            }
+
+            // Write parent refs (HAS_METHOD: type → method)
+            for pref in &result.parent_refs {
+                if let Some(ref fid) = file_node_id {
+                    ctx.pg().insert_edge(&folder_id, fid, None, Some(&pref.parent_name), "extends").await.ok();
+                }
+            }
+
+            // Write doc references (file_refs → COVERS, fn_mentions → references)
+            if result.kind == "doc" {
+                if let Some(ref fid) = file_node_id {
+                    for file_ref in &result.file_refs {
+                        ctx.pg().insert_edge(&folder_id, fid, None, Some(file_ref), "covers").await.ok();
+                    }
+                    for fn_ref in &result.fn_mentions {
+                        ctx.pg().insert_edge(&folder_id, fid, None, Some(fn_ref), "references").await.ok();
+                    }
                 }
             }
         }
