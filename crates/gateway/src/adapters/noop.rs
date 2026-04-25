@@ -64,6 +64,7 @@ impl InferenceAdapter for NoopAdapter {
             embeddings: None,
             transcription: None,
             audio: None,
+            images: None,
             model: None,
             usage: None,
             estimated_cost: None,

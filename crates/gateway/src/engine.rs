@@ -188,6 +188,8 @@ fn estimate_input_tokens(payload: &Payload) -> u32 {
         Payload::Stt { .. } => 0,
         // For TTS, rough heuristic on text length.
         Payload::Tts { text, .. } => (text.len() / 4) as u32,
+        // Image generation: estimate based on prompt length.
+        Payload::ImageGenerate { prompt, .. } => (prompt.len() / 4) as u32,
     }
 }
 
