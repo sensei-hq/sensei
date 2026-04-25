@@ -180,7 +180,7 @@ impl InferenceAdapter for AnthropicAdapter {
     }
 
     fn supports(&self, capability: &Capability) -> bool {
-        matches!(capability, Capability::Chat)
+        matches!(capability, Capability::TextChat)
     }
 
     async fn execute(
@@ -429,13 +429,12 @@ mod tests {
         let adapter = AnthropicAdapter::new().unwrap();
         assert_eq!(adapter.id(), "anthropic");
 
-        assert!(adapter.supports(&Capability::Chat));
+        assert!(adapter.supports(&Capability::TextChat));
 
-        assert!(!adapter.supports(&Capability::Embed));
-        assert!(!adapter.supports(&Capability::Classify));
-        assert!(!adapter.supports(&Capability::Summarize));
-        assert!(!adapter.supports(&Capability::VoiceStt));
-        assert!(!adapter.supports(&Capability::VoiceTts));
+        assert!(!adapter.supports(&Capability::TextEmbed));
+        assert!(!adapter.supports(&Capability::TextComplete));
+        assert!(!adapter.supports(&Capability::AudioTranscribe));
+        assert!(!adapter.supports(&Capability::AudioGenerate));
         assert!(!adapter.supports(&Capability::ImageGenerate));
     }
 
@@ -629,7 +628,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
         };
         let request = InferenceRequest {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("claude-haiku-4-5-20250414".to_string()),
             router: None,
             chain: None,
