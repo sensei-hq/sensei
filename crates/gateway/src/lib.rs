@@ -4,6 +4,7 @@ pub mod circuit_breaker;
 pub mod config;
 pub mod engine;
 pub mod selection;
+pub mod store;
 pub mod types;
 
 pub use config::GatewayBuilder;
