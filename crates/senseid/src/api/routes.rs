@@ -13,6 +13,7 @@ use crate::api::handlers::codebase;
 use crate::api::handlers::libraries;
 use crate::api::handlers::config;
 use crate::api::handlers::query;
+use crate::api::handlers::gateway;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -21,6 +22,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/health/components", get(health::health_components))
         .route("/api/watcher/status", get(health::watcher_status))
         .route("/api/watcher/unregister", axum::routing::post(health::watcher_unregister))
+        // Gateway
+        .route("/api/gateway/status", get(gateway::gateway_status))
+        .route("/api/gateway/infer", post(gateway::infer))
+        .route("/api/gateway/embed", post(gateway::embed))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
         .route("/api/repos/{repo_id}", put(workspace::update_project).delete(workspace::delete_project))
@@ -130,9 +135,11 @@ mod tests {
     use crate::api::state::SharedState;
 
     async fn test_app() -> (Router, AppState) {
+        let gateway = crate::api::gateway_init::init_gateway_test().await;
         let state = Arc::new(SharedState {
             task_queue: Arc::new(TaskQueue::new()),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
+            gateway,
         });
         let router = create_router(state.clone());
         (router, state)

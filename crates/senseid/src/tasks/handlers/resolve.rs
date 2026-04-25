@@ -207,9 +207,11 @@ mod tests {
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     async fn make_ctx() -> Arc<TaskContext> {
         let queue = Arc::new(TaskQueue::new());
+        let gateway = crate::api::gateway_init::init_gateway_test().await;
         let app_state = Arc::new(SharedState {
             task_queue: queue.clone(),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
+            gateway,
         });
         Arc::new(TaskContext {
             queue,

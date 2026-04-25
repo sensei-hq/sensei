@@ -140,6 +140,21 @@ fn handle_list_tools() -> Value {
             ], &[]),
             tool("get_duplicates", "Find duplicate or very similar functions across different files. Use during /sensei:review to catch code duplication.", &[], &[]),
             tool("get_project_conventions", "Analyze project conventions — naming patterns, directory structure, design patterns. Use to understand how this project is structured.", &[], &[]),
+            // Inference
+            tool("infer", "Run inference using the gateway — chat, classify, summarize, or reason about text. Routes to the best available model automatically.", &[
+                ("prompt", "string", "The text prompt or question"),
+            ], &[
+                ("system", "string", "System prompt to guide the response"),
+                ("model", "string", "Specific model to use (e.g. 'gemma3:27b', 'claude-haiku')"),
+                ("max_tokens", "string", "Maximum tokens in response"),
+                ("capability", "string", "Capability: text_chat (default), text_complete"),
+            ]),
+            tool("embed", "Generate vector embeddings for text. Used for semantic search.", &[
+                ("texts", "string", "Comma-separated texts to embed, or a single text"),
+            ], &[
+                ("model", "string", "Embedding model to use"),
+            ]),
+            tool("gateway_status", "Show inference gateway status — available adapters, models, health.", &[], &[]),
             // Event logging
             tool("log_event", "Log a workflow event. Call this to record phase transitions, locate steps, issue lifecycle, review findings. MANDATORY in commands — do not skip.", &[
                 ("type", "string", "Event type: phase_transition, command_invoked, locate, issue_started, issue_completed, review_finding, rework, checkpoint, context_loaded, files_modified"),
@@ -177,6 +192,78 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             obj.insert("tag".into(), pattern);
         }
         obj.insert("q".into(), json!(query));
+    }
+
+    // ── Inference tools (direct endpoints, not mcp proxy) ──────────────
+    if tool_name == "infer" {
+        let prompt = args["prompt"].as_str().unwrap_or("");
+        let system = args["system"].as_str();
+        let model = args["model"].as_str();
+        let max_tokens = args["max_tokens"].as_str().and_then(|s| s.parse::<u32>().ok());
+        let capability = args["capability"].as_str().unwrap_or("text_chat");
+
+        let body = json!({
+            "capability": capability,
+            "prompt": prompt,
+            "system": system,
+            "model": model,
+            "max_tokens": max_tokens,
+        });
+
+        let result = client.post(format!("{}/api/gateway/infer", DAEMON_URL))
+            .json(&body)
+            .send();
+
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: Value = resp.json().unwrap_or(json!({}));
+                if let Some(content) = data["content"].as_str() {
+                    json!({"content": [{"type": "text", "text": content}]})
+                } else if let Some(error) = data["error"].as_str() {
+                    json!({"content": [{"type": "text", "text": format!("Inference error: {}", error)}], "isError": true})
+                } else {
+                    json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+                }
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+
+    if tool_name == "embed" {
+        let texts_str = args["texts"].as_str().unwrap_or("");
+        let texts: Vec<String> = texts_str.split(',').map(|s| s.trim().to_string()).collect();
+        let model = args["model"].as_str();
+
+        let body = json!({
+            "texts": texts,
+            "model": model,
+        });
+
+        let result = client.post(format!("{}/api/gateway/embed", DAEMON_URL))
+            .json(&body)
+            .send();
+
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: Value = resp.json().unwrap_or(json!({}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
+    }
+
+    if tool_name == "gateway_status" {
+        let result = client.get(format!("{}/api/gateway/status", DAEMON_URL)).send();
+        return match result {
+            Ok(resp) if resp.status().is_success() => {
+                let data: Value = resp.json().unwrap_or(json!({}));
+                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+            }
+            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+        };
     }
 
     // ── Workflow state tools (direct endpoints, not mcp proxy) ─────────
