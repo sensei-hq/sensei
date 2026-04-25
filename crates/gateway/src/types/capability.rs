@@ -10,4 +10,5 @@ pub enum Capability {
     Consolidate,
     VoiceStt,
     VoiceTts,
+    ImageGenerate,
 }

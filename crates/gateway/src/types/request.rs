@@ -81,6 +81,10 @@ fn default_tts_format() -> AudioFormat {
     AudioFormat::Mp3
 }
 
+fn default_image_count() -> u8 {
+    1
+}
+
 // ---------------------------------------------------------------------------
 // Messages / Payloads
 // ---------------------------------------------------------------------------
@@ -136,6 +140,27 @@ pub enum Payload {
         #[serde(default = "default_tts_format")]
         output_format: AudioFormat,
     },
+    ImageGenerate {
+        prompt: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        size: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        quality: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        style: Option<String>,
+        #[serde(default = "default_image_count")]
+        n: u8,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b64_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revised_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +192,8 @@ pub struct InferenceResponse {
         default
     )]
     pub audio: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<ImageResult>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,6 +310,7 @@ mod tests {
             embeddings: None,
             transcription: None,
             audio: None,
+            images: None,
             model: Some("claude-sonnet".to_string()),
             usage: Some(TokenUsage {
                 input_tokens: 10,
@@ -399,6 +427,7 @@ mod tests {
             embeddings: None,
             transcription: Some("Hello world".to_string()),
             audio: None,
+            images: None,
             model: Some("whisper-1".to_string()),
             usage: None,
             estimated_cost: None,
@@ -426,6 +455,7 @@ mod tests {
             embeddings: None,
             transcription: None,
             audio: Some(audio_bytes.clone()),
+            images: None,
             model: Some("tts-1".to_string()),
             usage: None,
             estimated_cost: None,
@@ -440,5 +470,117 @@ mod tests {
         let deserialized: InferenceResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.audio, Some(audio_bytes));
         assert!(deserialized.transcription.is_none());
+    }
+
+    #[test]
+    fn image_generate_request_serde() {
+        let request = InferenceRequest {
+            capability: Capability::ImageGenerate,
+            model: Some("dall-e-3".to_string()),
+            router: None,
+            chain: None,
+            payload: Payload::ImageGenerate {
+                prompt: "A sunset over mountains".to_string(),
+                size: Some("1024x1024".to_string()),
+                quality: Some("hd".to_string()),
+                style: Some("natural".to_string()),
+                n: 2,
+            },
+            budget: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains(r#""type":"image_generate""#));
+
+        let deserialized: InferenceRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.capability, Capability::ImageGenerate);
+        if let Payload::ImageGenerate {
+            prompt,
+            size,
+            quality,
+            style,
+            n,
+        } = &deserialized.payload
+        {
+            assert_eq!(prompt, "A sunset over mountains");
+            assert_eq!(size.as_deref(), Some("1024x1024"));
+            assert_eq!(quality.as_deref(), Some("hd"));
+            assert_eq!(style.as_deref(), Some("natural"));
+            assert_eq!(*n, 2);
+        } else {
+            panic!("Expected ImageGenerate payload");
+        }
+    }
+
+    #[test]
+    fn image_result_serde() {
+        let result = ImageResult {
+            url: Some("https://example.com/image.png".to_string()),
+            b64_json: None,
+            revised_prompt: Some("A beautiful sunset over snow-capped mountains".to_string()),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: ImageResult = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.url.as_deref(),
+            Some("https://example.com/image.png"),
+        );
+        assert!(deserialized.b64_json.is_none());
+        assert_eq!(
+            deserialized.revised_prompt.as_deref(),
+            Some("A beautiful sunset over snow-capped mountains"),
+        );
+    }
+
+    #[test]
+    fn response_with_images_serde() {
+        let response = InferenceResponse {
+            success: true,
+            content: None,
+            embeddings: None,
+            transcription: None,
+            audio: None,
+            images: Some(vec![ImageResult {
+                url: Some("https://example.com/img.png".to_string()),
+                b64_json: None,
+                revised_prompt: None,
+            }]),
+            model: Some("dall-e-3".to_string()),
+            usage: None,
+            estimated_cost: None,
+            actual_cost: None,
+            attempts: vec![],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"images\""));
+
+        let deserialized: InferenceResponse = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.images.is_some());
+        let images = deserialized.images.unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(
+            images[0].url.as_deref(),
+            Some("https://example.com/img.png"),
+        );
+    }
+
+    #[test]
+    fn image_generate_defaults() {
+        // When n is omitted, it should default to 1
+        let json = r#"{"type":"image_generate","prompt":"A cat"}"#;
+        let payload: Payload = serde_json::from_str(json).unwrap();
+
+        if let Payload::ImageGenerate { prompt, n, size, quality, style } = &payload {
+            assert_eq!(prompt, "A cat");
+            assert_eq!(*n, 1);
+            assert!(size.is_none());
+            assert!(quality.is_none());
+            assert!(style.is_none());
+        } else {
+            panic!("Expected ImageGenerate payload");
+        }
     }
 }
