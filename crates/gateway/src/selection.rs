@@ -432,7 +432,7 @@ mod tests {
                 id: "gemma3:27b".to_string(),
                 api_model_id: None,
                 provider: "ollama".to_string(),
-                capabilities: vec![Capability::Chat, Capability::Classify, Capability::Summarize],
+                capabilities: vec![Capability::TextChat, Capability::TextComplete, Capability::TextEmbed],
                 context_window: 128000,
                 max_output_tokens: 8192,
                 pricing: None,
@@ -444,7 +444,7 @@ mod tests {
                 id: "all-minilm".to_string(),
                 api_model_id: None,
                 provider: "ollama".to_string(),
-                capabilities: vec![Capability::Embed],
+                capabilities: vec![Capability::TextEmbed],
                 context_window: 512,
                 max_output_tokens: 0,
                 pricing: None,
@@ -456,7 +456,7 @@ mod tests {
                 id: "claude-haiku".to_string(),
                 api_model_id: Some("claude-haiku-4-5-20251001".to_string()),
                 provider: "anthropic".to_string(),
-                capabilities: vec![Capability::Chat],
+                capabilities: vec![Capability::TextChat],
                 context_window: 200000,
                 max_output_tokens: 8192,
                 pricing: Some(ModelPricing {
@@ -472,7 +472,7 @@ mod tests {
             "embed_chain".to_string(),
             FallbackChainConfig {
                 id: "embed_chain".to_string(),
-                capability: Capability::Embed,
+                capability: Capability::TextEmbed,
                 models: vec![ChainEntry {
                     model: "all-minilm".to_string(),
                     router: None,
@@ -486,7 +486,7 @@ mod tests {
             "chat_chain".to_string(),
             FallbackChainConfig {
                 id: "chat_chain".to_string(),
-                capability: Capability::Chat,
+                capability: Capability::TextChat,
                 models: vec![
                     ChainEntry {
                         model: "gemma3:27b".to_string(),
@@ -530,7 +530,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("gemma3:27b".to_string()),
             router: Some("ollama".to_string()),
             chain: None,
@@ -551,7 +551,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("gemma3:27b".to_string()),
             router: Some("nonexistent".to_string()),
             chain: None,
@@ -571,7 +571,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select_all(&SelectionCriteria {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: None,
             router: None,
             chain: Some("chat_chain".to_string()),
@@ -594,7 +594,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::Embed,
+            capability: Capability::TextEmbed,
             model: None,
             router: None,
             chain: None,
@@ -616,7 +616,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: None,
             router: None,
             chain: Some("chat_chain".to_string()),
@@ -639,7 +639,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::Embed,
+            capability: Capability::AudioTranscribe,
             model: Some("gemma3:27b".to_string()),
             router: Some("ollama".to_string()),
             chain: None,
@@ -668,7 +668,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: None,
             router: None,
             chain: Some("chat_chain".to_string()),
@@ -690,7 +690,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select_all(&SelectionCriteria {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: None,
             router: None,
             chain: Some("chat_chain".to_string()),
@@ -715,7 +715,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             model: Some("claude-haiku".to_string()),
             router: Some("anthropic".to_string()),
             chain: None,
@@ -735,7 +735,7 @@ mod tests {
         let svc = ModelSelectionService::new(&config, &cb);
 
         let result = svc.select(&SelectionCriteria {
-            capability: Capability::VoiceStt,
+            capability: Capability::AudioTranscribe,
             model: None,
             router: None,
             chain: None,

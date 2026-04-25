@@ -173,7 +173,7 @@ mod tests {
             id: Uuid::new_v4(),
             session_id,
             project_id: None,
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             chain_id: None,
             adapter: "anthropic".to_string(),
             model: model.to_string(),
@@ -195,7 +195,7 @@ mod tests {
             inference_call_id: call_id,
             trace: ExecutionTrace {
                 request_id: Uuid::new_v4().to_string(),
-                capability: Capability::Chat,
+                capability: Capability::TextChat,
                 status: TraceStatus::Success,
                 duration_ms: 1500,
                 candidates: vec![CandidateInfo {

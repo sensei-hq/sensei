@@ -133,7 +133,7 @@ mod tests {
             id: "gemma3:27b".to_string(),
             api_model_id: None,
             provider: "ollama".to_string(),
-            capabilities: vec![Capability::Chat, Capability::Summarize],
+            capabilities: vec![Capability::TextChat, Capability::TextEmbed],
             context_window: 128000,
             max_output_tokens: 8192,
             pricing: None,
@@ -143,7 +143,7 @@ mod tests {
     fn chat_chain() -> FallbackChainConfig {
         FallbackChainConfig {
             id: "chat_chain".to_string(),
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             models: vec![ChainEntry {
                 model: "gemma3:27b".to_string(),
                 router: None,
@@ -197,7 +197,7 @@ mod tests {
     fn fails_with_dangling_model_ref_in_chain() {
         let bad_chain = FallbackChainConfig {
             id: "bad_chain".to_string(),
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             models: vec![ChainEntry {
                 model: "nonexistent".to_string(),
                 router: None,
@@ -248,7 +248,7 @@ mod tests {
 
         let bad_chain = FallbackChainConfig {
             id: "bad_chain".to_string(),
-            capability: Capability::Chat,
+            capability: Capability::TextChat,
             models: vec![ChainEntry {
                 model: "ghost".to_string(),
                 router: None,
