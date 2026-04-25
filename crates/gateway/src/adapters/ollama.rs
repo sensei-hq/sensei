@@ -509,7 +509,7 @@ mod tests {
         };
         let request = InferenceRequest {
             capability: Capability::Chat,
-            model: Some("gemma3:27b".to_string()),
+            model: Some("llama3.2:latest".to_string()),
             router: None,
             chain: None,
             payload: Payload::Chat {
