@@ -101,11 +101,6 @@ pub fn extract_dep_versions(
                 }
             }
 
-    // Store versions in lib_meta
-    let now = chrono::Utc::now().to_rfc3339();
-    for dep in &deps {
-    }
-
     Ok(deps)
 }
 

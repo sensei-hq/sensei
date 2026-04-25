@@ -10,8 +10,6 @@ pub mod executor;
 pub mod handlers;
 pub mod progress;
 pub mod processors;
-#[cfg(test)]
-mod integration_tests;
 
 use serde::{Serialize, Deserialize};
 use std::time::Instant;

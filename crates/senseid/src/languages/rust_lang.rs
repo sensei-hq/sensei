@@ -132,7 +132,7 @@ fn walk_ir(
                         return_type,
                         is_async,
                         decorators,
-                        complexity: crate::indexer::graph::compute_complexity(
+                        complexity: crate::languages::compute_complexity(
                             &source_text(&child, src)
                         ),
                         ..Default::default()
@@ -248,7 +248,7 @@ fn walk_ir(
                                     is_async: source_text(&method_node, src).contains("async fn"),
                                     decorators: collect_attributes(&method_node, src),
                                     visibility: if is_pub { Visibility::Public } else { Visibility::Private },
-                                    complexity: crate::indexer::graph::compute_complexity(
+                                    complexity: crate::languages::compute_complexity(
                                         &source_text(&method_node, src)
                                     ),
                                     ..Default::default()
