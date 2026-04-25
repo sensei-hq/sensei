@@ -1,6 +1,13 @@
 pub mod adapters;
 pub mod budget;
 pub mod circuit_breaker;
+pub mod config;
 pub mod engine;
 pub mod selection;
 pub mod types;
+
+pub use config::GatewayBuilder;
+pub use engine::Gateway;
+pub use types::capability::Capability;
+pub use types::error::GatewayError;
+pub use types::request::{InferenceRequest, InferenceResponse};
