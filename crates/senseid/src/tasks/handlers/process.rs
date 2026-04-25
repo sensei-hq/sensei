@@ -198,21 +198,23 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 /// Create module node for a folder.
 pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-    let repo_path_str = ctx.pg().get_repo_by_name(repo_id).await
-        .ok().flatten()
-        .and_then(|r| r["abs_path"].as_str().map(String::from))
-        .unwrap_or_default();
-    let repo_path = Path::new(&repo_path_str);
+    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder_id = folder.as_ref()
+        .and_then(|f| f["id"].as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let repo_path_str = folder.as_ref()
+        .and_then(|f| f["abs_path"].as_str())
+        .unwrap_or("");
 
-    let rel_dir = Path::new(&task.path).strip_prefix(repo_path)
+    let rel_dir = Path::new(&task.path).strip_prefix(Path::new(repo_path_str))
         .unwrap_or(Path::new(&task.path))
         .to_string_lossy().to_string();
-    let _mod_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
-    let _mod_id = format!("mod:{}:{}", repo_id, _mod_name);
 
-    let _pkg_id = task.module_id.clone(); // parent package ID stored here by process_repo
-
-    // TODO: write module node — module hierarchy is not persisted yet.
+    // Write module node to PG
+    if let Some(ref fid) = folder_id {
+        let mod_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
+        ctx.pg().upsert_node(fid, "module", &mod_name, &task.path, None, None, None, None).await.ok();
+    }
 
     Ok(())
 }
@@ -229,10 +231,42 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         .and_then(|r| r["abs_path"].as_str().map(String::from))
         .unwrap_or_default();
 
-    // Use the testable file processor — no DB dependency in extraction
-    let _result = crate::tasks::processors::process_file(abs_path, &repo_path_str, repo_id)?;
+    // Parse the file
+    let result = crate::tasks::processors::process_file(abs_path, &repo_path_str, repo_id)?;
 
-    // TODO: write parsed result to store
+    // Write parsed symbols to PG
+    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    if let Some(folder) = folder {
+        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            // Write file node
+            let file_node_id = ctx.pg().upsert_node(
+                &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
+            ).await.ok();
+
+            // Write symbol nodes (functions, classes, types, etc.)
+            for sym in &result.symbols {
+                let parent_uuid = file_node_id; // symbols are children of the file
+                ctx.pg().upsert_node(
+                    &folder_id, &sym.kind, &sym.name, &result.rel_path,
+                    parent_uuid.as_ref(), sym.signature.as_deref(),
+                    Some(sym.line as i32), Some(sym.line_end as i32),
+                ).await.ok();
+            }
+
+            // Write unresolved edges (imports, calls) for later resolution
+            for import in &result.unresolved_imports {
+                // Store as edge with target_name (unresolved — target_id is None)
+                if let Some(ref fid) = file_node_id {
+                    ctx.pg().insert_edge(&folder_id, fid, None, Some(import), "imports").await.ok();
+                }
+            }
+            for call in &result.unresolved_calls {
+                if let Some(ref fid) = file_node_id {
+                    ctx.pg().insert_edge(&folder_id, fid, None, Some(&call.callee_name), "calls").await.ok();
+                }
+            }
+        }
+    }
 
     Ok(())
 }
