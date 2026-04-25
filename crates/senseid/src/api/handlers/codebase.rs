@@ -22,7 +22,6 @@ pub(crate) async fn graph_nodes(
     if repo_id.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    // TODO: implement via PgStore — need folder_uuid lookup
     let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
     if let Some(folder) = folder {
         if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
@@ -81,7 +80,7 @@ pub(crate) async fn fn_callers(
     State(_state): State<AppState>,
     Query(_q): Query<TraceQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    // TODO: implement via PgStore — need node_uuid from name lookup
+    // TODO: implement — need node_uuid from name lookup
     Ok(Json(vec![]))
 }
 
@@ -89,7 +88,7 @@ pub(crate) async fn fn_callees(
     State(_state): State<AppState>,
     Query(_q): Query<TraceQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    // TODO: implement via PgStore — need node_uuid from name lookup
+    // TODO: implement — need node_uuid from name lookup
     Ok(Json(vec![]))
 }
 
@@ -244,14 +243,14 @@ pub(crate) async fn find_duplicates_handler(
     State(_state): State<AppState>,
     Path(_project): Path<String>,
 ) -> Json<serde_json::Value> {
-    // Duplicate detection requires graph analysis; pending migration to PgStore nodes/edges.
-    Json(serde_json::json!({"duplicates": [], "count": 0, "note": "pending migration to PgStore"}))
+    // TODO: implement duplicate detection via graph analysis
+    Json(serde_json::json!({"duplicates": [], "count": 0}))
 }
 
 pub(crate) async fn project_conventions_handler(
     State(_state): State<AppState>,
     Path(_project): Path<String>,
 ) -> Json<serde_json::Value> {
-    // Convention detection requires graph analysis; pending migration to PgStore nodes/edges.
-    Json(serde_json::json!({"conventions": [], "count": 0, "note": "pending migration to PgStore"}))
+    // TODO: implement convention detection via graph analysis
+    Json(serde_json::json!({"conventions": [], "count": 0}))
 }

@@ -26,7 +26,7 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     if let Some(ref fid) = folder_uuid {
         ctx.pg().delete_nodes_by_folder(fid).await.ok();
     }
-    // TODO: clear_unresolved_refs — not in PG yet
+    // TODO: clear_unresolved_refs
 
     // Detect workspace members
     let workspace_members = crate::config::detector::detect_workspace_members(repo_path);
@@ -212,8 +212,7 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
 
     let _pkg_id = task.module_id.clone(); // parent package ID stored here by process_repo
 
-    // TODO: write module node to PgStore instead of GraphDb
-    // For now, module hierarchy is not persisted — file processing still works.
+    // TODO: write module node — module hierarchy is not persisted yet.
 
     Ok(())
 }
@@ -233,8 +232,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     // Use the testable file processor — no DB dependency in extraction
     let _result = crate::tasks::processors::process_file(abs_path, &repo_path_str, repo_id)?;
 
-    // TODO: write_to_graph migrated to PgStore — stubbed for now
-    // Old code: crate::tasks::processors::write_to_graph(&graph, &result, repo_id, task.module_id.as_deref())?;
+    // TODO: write parsed result to store
 
     Ok(())
 }
@@ -259,7 +257,7 @@ pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String>
     if let Some(folder) = folder {
         if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
             // Delete all nodes whose file path starts with the deleted folder path
-            // TODO: PgStore should have a delete_nodes_by_path_prefix method
+            // TODO: add a delete_nodes_by_path_prefix method
             ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
         }
     }
@@ -322,7 +320,7 @@ mod tests {
 
         process_folder(&ctx, &task).await.unwrap();
 
-        // TODO: verify module node in PgStore once module writes are implemented
+        // TODO: verify module node once module writes are implemented
     }
 
     #[tokio::test]
@@ -342,7 +340,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // TODO: graph delete_node doesn't remove module nodes — graph DB migration needed
     async fn delete_folder_removes_module_and_child_nodes() {
         let ctx = make_ctx().await;
         let repo_id = "test-repo";

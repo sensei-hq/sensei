@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 /// Run Leiden-inspired community detection.
-/// TODO: Reimplement using PgStore nodes/edges queries.
+/// TODO: implement using nodes/edges queries.
 #[allow(dead_code)]
 pub fn detect_communities(_project: &str) -> Result<HashMap<String, u32>, String> {
     Ok(HashMap::new())

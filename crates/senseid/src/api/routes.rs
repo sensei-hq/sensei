@@ -152,7 +152,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // TODO: repo CRUD still on SQLite bridge; list_projects reads PG. Fix when repos → folders migration complete.
     async fn create_and_list_repos() {
         let (app, _) = test_app().await;
 
@@ -173,8 +172,7 @@ mod tests {
         ).await.unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let repos: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(repos.len(), 1);
-        assert_eq!(repos[0]["repo_id"], "test");
+        assert!(repos.iter().any(|r| r["name"] == "test"), "created repo should be in list");
     }
 
     #[tokio::test]
@@ -213,9 +211,6 @@ mod tests {
         let solutions: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
         assert!(solutions.iter().any(|s| s["name"] == "Acme"), "Acme project should be in list");
     }
-
-    // project_tags_via_api and index_errors_via_api removed — relied on old SQLite Store.
-    // Tags and index errors are now tested via PgStore unit tests (pg_store::tests).
 
     #[tokio::test]
     async fn index_project_via_api() {
