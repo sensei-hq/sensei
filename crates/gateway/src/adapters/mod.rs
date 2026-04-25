@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod base;
 pub mod noop;
 pub mod ollama;
+pub mod openai;
 
 use std::collections::HashMap;
 use std::pin::Pin;
