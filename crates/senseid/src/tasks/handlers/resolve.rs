@@ -25,31 +25,46 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
     // Get all nodes for name matching
     let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_default();
 
+    // Build lookup maps
+    let node_by_name: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
+        .filter_map(|n| n["name"].as_str().map(|name| (name, n)))
+        .collect();
+
+    let file_by_path: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
+        .filter(|n| n["kind"].as_str() == Some("file"))
+        .filter_map(|n| n["file_path"].as_str().map(|fp| (fp, n)))
+        .collect();
+
     let mut resolved = 0u32;
     for edge in &unresolved {
         let target_name = match edge["target_name"].as_str() { Some(n) => n, None => continue };
         let edge_id = match edge["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) { Some(id) => id, None => continue };
         let kind = edge["kind"].as_str().unwrap_or("calls");
 
-        // Try to find a matching node by name
-        let matched = nodes.iter().find(|n| {
-            let name = n["name"].as_str().unwrap_or("");
-            let file_path = n["file_path"].as_str().unwrap_or("");
-            match kind {
-                "imports" => file_path.contains(target_name) || file_path.ends_with(&format!("{}.rs", target_name)) || file_path.ends_with(&format!("{}.ts", target_name)),
-                "calls" => name == target_name,
-                _ => name == target_name,
+        let matched_id = match kind {
+            "imports" => {
+                // Resolve relative import: match against file paths
+                file_by_path.iter()
+                    .find(|(fp, _)| fp.contains(target_name))
+                    .and_then(|(_, n)| n["id"].as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
             }
-        });
+            "calls" => {
+                // Resolve function call by name
+                node_by_name.get(target_name)
+                    .and_then(|n| n["id"].as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            }
+            _ => {
+                node_by_name.get(target_name)
+                    .and_then(|n| n["id"].as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            }
+        };
 
-        if let Some(target_node) = matched {
-            if let Some(target_id) = target_node["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
-                // Update edge with resolved target_id
-                ctx.pg().execute_raw(&format!(
-                    "UPDATE sensei.edges SET target_id = '{}' WHERE id = '{}'", target_id, edge_id
-                )).await.ok();
-                resolved += 1;
-            }
+        if let Some(target_id) = matched_id {
+            ctx.pg().resolve_edge(&edge_id, &target_id).await.ok();
+            resolved += 1;
         }
     }
 
@@ -59,22 +74,74 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
 
 // ── Build Connections ─────────────────────────────────────────────────────
 
-/// Build doc<>code traceability and cross-repo links.
+/// Build doc↔code traceability edges and mark as indexed.
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_id = &task.repo_id;
-
-    // TODO: doc<>code traceability edges
-
-    // Mark project as indexed via PgStore
     let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
-            let libs = Vec::<String>::new();
-            ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
+    let folder_id = match folder.as_ref()
+        .and_then(|f| f["id"].as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        Some(id) => id,
+        None => { tracing::info!("build_connections: {} — folder not found", repo_id); return Ok(()); }
+    };
+
+    let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_default();
+
+    // Separate docs and code nodes
+    let docs: Vec<&serde_json::Value> = nodes.iter()
+        .filter(|n| n["kind"].as_str() == Some("doc"))
+        .collect();
+    let functions: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
+        .filter(|n| matches!(n["kind"].as_str(), Some("function" | "method")))
+        .filter_map(|n| n["name"].as_str().map(|name| (name, n)))
+        .collect();
+    let files: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
+        .filter(|n| n["kind"].as_str() == Some("file"))
+        .filter_map(|n| n["file_path"].as_str().map(|fp| (fp, n)))
+        .collect();
+
+    let mut edges_created = 0u32;
+
+    // For each doc, check if its file_path suggests coverage of code files
+    for doc in &docs {
+        let doc_id = match doc["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) { Some(id) => id, None => continue };
+        let doc_path = doc["file_path"].as_str().unwrap_or("");
+
+        // Check if doc covers a code file by path proximity
+        // e.g., docs/api/auth.md → src/api/auth.ts
+        let doc_stem = std::path::Path::new(doc_path)
+            .file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if doc_stem.is_empty() { continue; }
+
+        for (file_path, file_node) in &files {
+            let file_stem = std::path::Path::new(file_path)
+                .file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if file_stem == doc_stem && file_path != &doc_path {
+                if let Some(file_id) = file_node["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                    ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, "covers").await.ok();
+                    edges_created += 1;
+                }
+            }
         }
     }
 
-    tracing::info!("build_connections: {} complete", repo_id);
+    // Collect libs from detected import targets
+    let edges = ctx.pg().get_edges_by_kind(&folder_id, "imports").await.unwrap_or_default();
+    let mut lib_set = std::collections::HashSet::new();
+    for edge in &edges {
+        if let Some(target_name) = edge["target_name"].as_str() {
+            // External imports (not resolved to local files) are likely library imports
+            if edge["target_id"].is_null() {
+                lib_set.insert(target_name.to_string());
+            }
+        }
+    }
+    let libs: Vec<String> = lib_set.into_iter().collect();
+
+    // Mark as indexed
+    ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
+
+    tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", repo_id, edges_created, libs.len());
     Ok(())
 }
 
