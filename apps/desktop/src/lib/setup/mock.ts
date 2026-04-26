@@ -3,14 +3,8 @@
 
 import type {
   AcpEntry, ScanFolder, ScanEvent, DiscoveredProject,
-  DiscoveredLibrary, McpEntry, ComponentStatus, WizardState
+  DiscoveredLibrary, McpEntry, WizardState
 } from './types.js';
-
-export const MOCK_COMPONENTS: ComponentStatus[] = [
-  { id: 'cli',    name: 'sensei-cli',    version: '0.2.13', status: 'ready', icon: '令' },
-  { id: 'mcp',    name: 'MCP bridge',    version: '0.2.13', status: 'ready', icon: '橋' },
-  { id: 'daemon', name: 'sensei-daemon', version: '0.2.13', status: 'ready', icon: '守' },
-];
 
 export const MOCK_ACPS: AcpEntry[] = [
   { id: 'claude-code', name: 'Claude Code', version: '1.8.2', found: true,  path: '/Users/aiko/.claude/code' },
@@ -85,7 +79,6 @@ export const MOCK_STACK = {
 /** Empty state for production — populated from daemon on mount. */
 export function createEmptyState(): WizardState {
   return {
-    components: [],
     acps: {},
     acpList: [],
     folders: [],
@@ -105,7 +98,6 @@ export function createEmptyState(): WizardState {
 /** Full mock state for when daemon is unreachable. */
 export function createMockState(): WizardState {
   return {
-    components: MOCK_COMPONENTS,
     acps: Object.fromEntries(MOCK_ACPS.map(a => [a.id, a.found])),
     acpList: MOCK_ACPS,
     folders: [...MOCK_FOLDERS],
