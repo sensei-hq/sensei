@@ -7,8 +7,6 @@
 
 import { senseiApi } from '$lib/api.js';
 import { getPort } from '$lib/appstate.svelte.js';
-import type { ComponentStatus } from './types.js';
-
 export type ComponentState = 'checking' | 'missing' | 'installing' | 'stopped' | 'starting' | 'ready' | 'error';
 
 export interface ComponentInfo {

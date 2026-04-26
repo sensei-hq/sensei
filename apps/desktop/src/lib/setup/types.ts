@@ -8,26 +8,17 @@ export interface WizStage {
 }
 
 export const WIZ_STAGES: WizStage[] = [
-  { id: 'welcome',    n: '一', title: 'Welcome',      sub: 'a quiet observer of your work' },
-  { id: 'components', n: '二', title: 'Components',   sub: 'installed automatically' },
-  { id: 'assistants', n: '三', title: 'Assistants',   sub: 'plugins · skills · commands · logging' },
-  { id: 'folders',    n: '四', title: 'Folders',      sub: 'where does your work live' },
-  { id: 'scan',       n: '五', title: 'Scan',         sub: 'watching the worker' },
-  { id: 'projects',   n: '六', title: 'Projects',     sub: 'one or more repos each' },
-  { id: 'libraries',  n: '七', title: 'Libraries',    sub: 'what sensei should wrap' },
-  { id: 'registry',   n: '八', title: 'MCP Registry', sub: 'recommended for your stack' },
-  { id: 'done',       n: '九', title: 'Enter',        sub: 'the observatory is ready' },
+  { id: 'welcome',     n: '一', title: 'Welcome',     sub: 'a quiet observer of your work' },
+  { id: 'assistants',  n: '二', title: 'Assistants',  sub: 'plugins · skills · commands · logging' },
+  { id: 'folders',     n: '三', title: 'Folders',     sub: 'where does your work live' },
+  { id: 'scan',        n: '四', title: 'Scan',        sub: 'watching the worker' },
+  { id: 'projects',    n: '五', title: 'Projects',    sub: 'one or more repos each' },
+  { id: 'libraries',   n: '六', title: 'Libraries',   sub: 'what sensei should wrap' },
+  { id: 'instruments', n: '七', title: 'Instruments', sub: 'recommended MCPs for your stack' },
+  { id: 'done',        n: '八', title: 'Enter',       sub: 'the observatory is ready' },
 ];
 
-// ── Component types ─────────────────────────────────────────
-
-export interface ComponentStatus {
-  id: string;
-  name: string;
-  version: string | null;
-  status: 'missing' | 'installed' | 'stopped' | 'ready';
-  icon: string; // short symbol: '$', '↔', '◇'
-}
+// ── Setup step types ────────────────────────────────────────
 
 export interface AcpEntry {
   id: string;
@@ -111,7 +102,6 @@ export const ROLES: RoleOption[] = [
 // ── Wizard accumulated state ────────────────────────────────
 
 export interface WizardState {
-  components: ComponentStatus[];
   acps: Record<string, boolean>;
   acpList: AcpEntry[];
   folders: ScanFolder[];
