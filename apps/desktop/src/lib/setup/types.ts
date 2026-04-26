@@ -2,20 +2,21 @@
 
 export interface WizStage {
   id: string;
-  n: string;     // kanji numeral (一, 二, ...)
+  n: string;        // kanji numeral (一, 二, ...)
   title: string;
-  sub: string;   // subtitle shown in rail
+  sub: string;      // subtitle shown in rail
+  watermark: boolean; // show faded kanji watermark in content area
 }
 
 export const WIZ_STAGES: WizStage[] = [
-  { id: 'welcome',     n: '一', title: 'Welcome',     sub: 'a quiet observer of your work' },
-  { id: 'assistants',  n: '二', title: 'Assistants',  sub: 'plugins · skills · commands · logging' },
-  { id: 'folders',     n: '三', title: 'Folders',     sub: 'where does your work live' },
-  { id: 'scan',        n: '四', title: 'Scan',        sub: 'watching the worker' },
-  { id: 'projects',    n: '五', title: 'Projects',    sub: 'one or more repos each' },
-  { id: 'libraries',   n: '六', title: 'Libraries',   sub: 'what sensei should wrap' },
-  { id: 'instruments', n: '七', title: 'Instruments', sub: 'recommended MCPs for your stack' },
-  { id: 'done',        n: '八', title: 'Enter',       sub: 'the observatory is ready' },
+  { id: 'welcome',     n: '一', title: 'Welcome',     sub: 'a quiet observer of your work',       watermark: true  },
+  { id: 'assistants',  n: '二', title: 'Assistants',  sub: 'plugins · skills · commands · logging', watermark: true  },
+  { id: 'folders',     n: '三', title: 'Folders',     sub: 'where does your work live',            watermark: true  },
+  { id: 'scan',        n: '四', title: 'Scan',        sub: 'watching the worker',                  watermark: false },
+  { id: 'projects',    n: '五', title: 'Projects',    sub: 'one or more repos each',               watermark: true  },
+  { id: 'libraries',   n: '六', title: 'Libraries',   sub: 'what sensei should wrap',              watermark: true  },
+  { id: 'instruments', n: '七', title: 'Instruments', sub: 'recommended MCPs for your stack',      watermark: true  },
+  { id: 'done',        n: '八', title: 'Enter',       sub: 'the observatory is ready',             watermark: false },
 ];
 
 // ── Setup step types ────────────────────────────────────────
