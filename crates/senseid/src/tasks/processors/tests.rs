@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn svelte_component() {
-        let r = process("apps/desktop/src/lib/ServerStatus.svelte");
+        let r = process("apps/desktop/src/lib/setup/wizard/StepHeader.svelte");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "src");
         assert_eq!(r.language.as_deref(), Some("svelte"));
@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn svelte_page_route() {
-        let r = process("apps/desktop/src/routes/(app)/p/[id]/+page.svelte");
+        let r = process("apps/desktop/src/routes/(app)/observatory/+page.svelte");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "src");
     }
