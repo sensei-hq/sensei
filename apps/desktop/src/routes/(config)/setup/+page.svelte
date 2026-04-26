@@ -30,10 +30,10 @@
 
   const done = async () => {
     await setConfigValue('setup_complete', '1');
-    goto('/overview');
+    goto('/observatory');
   };
 
-  const exit = () => { goto('/overview'); };
+  const exit = () => { goto('/observatory'); };
 
   // Hydrate from daemon on mount
   onMount(async () => {
