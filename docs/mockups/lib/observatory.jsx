@@ -167,9 +167,12 @@ function ObsFtrRing({ value, delta, size = 110 }) {
 // ─── Observatory (daily) ─────────────────────────────────────
 function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) {
   const [mode, setMode] = oS(stateMode);       // "mature" | "early"
-  const [section, setSection] = oS("home");    // "home" | "sessions" | "patterns" | "teachings" | "settings"
+  const [section, setSection] = oS("home");    // "home" | "projects" | "project" | "sessions" | "patterns" | "libraries" | "registry" | "teachings" | "settings"
+  const [activeProjectId, setActiveProjectId] = oS(null);
   const [toast, setToast] = oS(firstEntry ? "welcome" : null);
   const D = window.OBS_DATA;
+
+  const openProject = (id) => { setActiveProjectId(id); setSection("project"); };
 
   oE(() => { setMode(stateMode); }, [stateMode]);
   oE(() => {
@@ -189,10 +192,27 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
       <TauriChrome title={`Sensei  先生  ·  observatory`}/>
 
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '240px 1fr', minHeight: 0 }}>
-        <ObsSidebar section={section} setSection={setSection} mode={mode} setMode={setMode}/>
+        <ObsSidebar section={section} setSection={setSection}
+                    activeProjectId={activeProjectId}
+                    onOpenProject={openProject}
+                    mode={mode} setMode={setMode}/>
         <main style={{ overflow: 'auto', position: 'relative' }}>
-          {section === "home" && <ObsHome mode={mode} hero={hero} insights={insights} adopted={adopted} D={D}/>}
-          {section !== "home" && <ObsPlaceholder section={section} onBack={() => setSection("home")}/>}
+          {section === "home"      && <ObsHome mode={mode} hero={hero} insights={insights} adopted={adopted} D={D} onOpenProject={openProject}/>}
+          {section === "projects"  && <ProjectsIndexA embedded={true} onOpenProject={openProject}/>}
+          {section === "project"   && <ProjectPageTopTabs embedded={true} projectId={activeProjectId}
+                                                          onBack={() => setSection("projects")}/>}
+          {section === "libraries" && <LibrariesVariantA/>}
+          {section === "learnings" && <LearningsPage/>}
+          {section === "instruments-playground" && <InstrumentsPlaygroundSimple/>}
+          {section === "instruments-replay"     && <InstrumentsReplaySimple/>}
+          {section === "instruments-insights"   && <InstrumentsInsightsSimple/>}
+          {section !== "home" && section !== "projects" && section !== "project" &&
+           section !== "libraries" &&
+           section !== "learnings" &&
+           section !== "instruments-playground" &&
+           section !== "instruments-replay" &&
+           section !== "instruments-insights" &&
+            <ObsPlaceholder section={section} onBack={() => setSection("home")}/>}
 
           {toast === "welcome" && (
             <FirstEntryToast onDismiss={() => setToast(null)} mode={mode}/>
@@ -204,7 +224,7 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
 }
 
 // ─── Sidebar ────────────────────────────────────────────────
-function ObsSidebar({ section, setSection, mode, setMode }) {
+function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode, setMode }) {
   const D = window.OBS_DATA;
   const NavItem = ({ id, kanji, label, badge }) => (
     <button onClick={() => setSection(id)}
@@ -240,11 +260,26 @@ function ObsSidebar({ section, setSection, mode, setMode }) {
                        textTransform: 'uppercase', padding: '0 10px 8px' }}>Observatory</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           <NavItem id="home"      kanji="家" label="Today"/>
+          <NavItem id="projects"  kanji="場" label="Projects"   badge={D.projects.active.length + D.projects.recent.length}/>
           <NavItem id="sessions"  kanji="録" label="Sessions"   badge="41"/>
-          <NavItem id="patterns"  kanji="紋" label="Patterns"   badge="12"/>
+          <NavItem id="learnings" kanji="学" label="Learnings"  badge="6"/>
           <NavItem id="libraries" kanji="庫" label="Libraries"  badge="14"/>
-          <NavItem id="registry"  kanji="録" label="MCP Registry" badge="7"/>
-          <NavItem id="teachings" kanji="師" label="Teachings"  badge="3"/>
+          <div style={{ padding: '2px 10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
+                           alignItems: 'center', padding: '7px 0',
+                           color: 'var(--sumi-2)', fontSize: 13 }}>
+              <span className="kanji" style={{ fontSize: 13, width: 14,
+                            color: 'var(--sumi-3)' }}>具</span>
+              <span>Instruments</span>
+              <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>7</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1,
+                           paddingLeft: 24 }}>
+              <NavItem id="instruments-playground" kanji="試" label="Playground"/>
+              <NavItem id="instruments-replay"     kanji="録" label="Replay"/>
+              <NavItem id="instruments-insights"   kanji="照" label="Insights"/>
+            </div>
+          </div>
           <NavItem id="settings"  kanji="設" label="Settings"/>
         </div>
       </div>
@@ -259,45 +294,57 @@ function ObsSidebar({ section, setSection, mode, setMode }) {
           </span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          {D.projects.active.map(p => (
-            <button key={p.id} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
-              alignItems: 'center', width: '100%',
-              padding: '8px 10px', borderRadius: 6, textAlign: 'left',
-              color: 'var(--sumi-2)', fontSize: 12.5
-            }}>
-              <span className="kanji" style={{ fontSize: 13, width: 14,
-                          color: p.warn ? 'var(--amber)' : 'var(--shu)' }}>{p.kanji}</span>
-              <span>{p.name}</span>
-              <span className="mono" style={{ fontSize: 10,
-                            color: p.warn ? 'var(--amber)' : 'var(--sumi-3)' }}>
-                {Math.round(p.ftr * 100)}
-              </span>
-            </button>
-          ))}
+          {D.projects.active.map(p => {
+            const on = section === "project" && activeProjectId === p.id;
+            return (
+              <button key={p.id} onClick={() => onOpenProject && onOpenProject(p.id)}
+                      style={{
+                display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
+                alignItems: 'center', width: '100%',
+                padding: '8px 10px', borderRadius: 6, textAlign: 'left',
+                background: on ? 'var(--paper-3)' : 'transparent',
+                color: on ? 'var(--sumi)' : 'var(--sumi-2)', fontSize: 12.5,
+                cursor: 'pointer'
+              }}>
+                <span className="kanji" style={{ fontSize: 13, width: 14,
+                            color: p.warn ? 'var(--amber)' : 'var(--shu)' }}>{p.kanji}</span>
+                <span>{p.name}</span>
+                <span className="mono" style={{ fontSize: 10,
+                              color: p.warn ? 'var(--amber)' : 'var(--sumi-3)' }}>
+                  {Math.round(p.ftr * 100)}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       <div>
         <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', padding: '0 10px 8px' }}>Recent</div>
+                       textTransform: 'uppercase', padding: '0 10px 8px' }}>Dormant</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          {D.projects.recent.map(p => (
-            <button key={p.id} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
-              alignItems: 'center', width: '100%',
-              padding: '7px 10px', borderRadius: 6, textAlign: 'left',
-              color: 'var(--sumi-3)', fontSize: 12.5, opacity: 0.82
-            }}>
-              <span className="kanji" style={{ fontSize: 12, width: 14, opacity: 0.6 }}>{p.kanji}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {p.name}
-              </span>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)' }}>
-                {p.lastSeen.split(' ')[0]}
-              </span>
-            </button>
-          ))}
+          {D.projects.recent.map(p => {
+            const on = section === "project" && activeProjectId === p.id;
+            return (
+              <button key={p.id} onClick={() => onOpenProject && onOpenProject(p.id)}
+                      style={{
+                display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
+                alignItems: 'center', width: '100%',
+                padding: '7px 10px', borderRadius: 6, textAlign: 'left',
+                background: on ? 'var(--paper-3)' : 'transparent',
+                color: on ? 'var(--sumi-2)' : 'var(--sumi-3)', fontSize: 12.5,
+                opacity: on ? 1 : 0.82, cursor: 'pointer'
+              }}>
+                <span className="kanji" style={{ fontSize: 12, width: 14, opacity: 0.6 }}>{p.kanji}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p.name}
+                </span>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)' }}>
+                  {p.lastSeen.split(' ')[0]}
+                </span>
+              </button>
+            );
+          })}
           <button style={{
             padding: '6px 10px', fontSize: 11, color: 'var(--sumi-4)', textAlign: 'left'
           }}>
@@ -588,7 +635,7 @@ function ObsPlaceholder({ section, onBack }) {
     sessions:  { k: "録", t: "Sessions",  s: "every session sensei has witnessed" },
     patterns:  { k: "紋", t: "Patterns",  s: "recurring shapes across your work"  },
     libraries: { k: "庫", t: "Libraries", s: "small & internal libs sensei wraps with its own tools" },
-    registry:  { k: "録", t: "MCP Registry", s: "available & installed MCPs · recommended by stack" },
+    registry:  { k: "具", t: "Instruments", s: "available & installed MCPs · recommended by stack" },
     teachings: { k: "師", t: "Teachings", s: "what sensei has learned & applied"  },
     settings:  { k: "設", t: "Settings",  s: "folders · integrations · daemon"    }
   };

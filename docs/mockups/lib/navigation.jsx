@@ -15,7 +15,7 @@ function StatusDot({ ftr, warn }) {
 // Variation A — Projects grid with search + status filter
 // Denser cards. Dormant / archived projects render without stats.
 // ═════════════════════════════════════════════════════════════
-function ProjectsIndexA() {
+function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
   const D = window.PROJECTS_INDEX;
   const [status, setStatus] = nvS("all");   // all | active | dormant | archived
   const [query, setQuery] = nvS("");
@@ -45,7 +45,7 @@ function ProjectsIndexA() {
     <div className="sensei" data-screen-label="Projects · Grid"
          style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
                   background: 'var(--paper)', overflow: 'hidden' }}>
-      <TauriChrome title="Sensei  先生  ·  projects"/>
+      {!embedded && <TauriChrome title="Sensei  先生  ·  projects"/>}
       <div style={{ padding: '28px 56px 20px',
                     display: 'flex', alignItems: 'flex-end', gap: 20, borderBottom: 'var(--hairline)' }}>
         <div className="kanji" style={{ fontSize: 46, color: 'var(--shu)', lineHeight: 1 }}>場</div>
@@ -116,7 +116,7 @@ function ProjectsIndexA() {
             No projects match.
           </div>
         )}
-        {filtered.map(p => <ProjectCard key={p.id} p={p}/>)}
+        {filtered.map(p => <ProjectCard key={p.id} p={p} onOpen={onOpenProject}/>)}
       </main>
     </div>
   );
@@ -124,17 +124,21 @@ function ProjectsIndexA() {
 
 // Denser card. Stats only when this project has been touched recently;
 // dormant and archived show a quieter secondary line instead.
-function ProjectCard({ p }) {
+function ProjectCard({ p, onOpen }) {
   const dormant = p.status !== "active";
   const hasStats = p.sessions7d > 0;
 
   return (
-    <div style={{
+    <button onClick={() => onOpen && onOpen(p.id)} style={{
       padding: '12px 14px', background: 'var(--paper-2)',
       border: 'var(--hairline)', borderRadius: 8,
       opacity: p.status === "archived" ? 0.6 : 1,
-      display: 'flex', flexDirection: 'column', gap: 10
-    }}>
+      display: 'flex', flexDirection: 'column', gap: 10,
+      textAlign: 'left', cursor: onOpen ? 'pointer' : 'default',
+      transition: 'background 0.12s, border-color 0.12s'
+    }}
+    onMouseEnter={(e) => { if (onOpen) e.currentTarget.style.background = 'var(--paper-3)'; }}
+    onMouseLeave={(e) => { if (onOpen) e.currentTarget.style.background = 'var(--paper-2)'; }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="kanji" style={{ fontSize: 20, color: 'var(--shu)', lineHeight: 1,
                       width: 24, textAlign: 'center', flexShrink: 0 }}>
@@ -176,7 +180,7 @@ function ProjectCard({ p }) {
           <span>last · {p.lastSession}</span>
         </div>
       )}
-    </div>
+    </button>
   );
 }
 
