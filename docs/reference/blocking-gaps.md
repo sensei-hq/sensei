@@ -129,23 +129,9 @@ the session protocol they need.
 
 ---
 
-## Gap 6 — SQLite schema is not designed
+## Gap 6 — ~~SQLite schema~~ RESOLVED
 
-**What the roadmap says:** Replace Supabase with SQLite.
-
-**What exists:** Supabase migrations in `supabase/migrations/`. No SQLite schema.
-
-The SQLite design from the roadmap (`02-local-architecture.md`) specifies two databases:
-- `~/.sensei/sensei.db` — global (projects, ideas, cards, sessions, FTR, libraries, settings)
-- `<repo>/.sensei/index.db` — per-repo (symbols, call_edges, imports, embeddings)
-
-But the actual tables, columns, indexes, and constraints are not designed anywhere.
-This is the foundation for everything in Phase 0. Without a schema:
-- The engine rewrite (Supabase → SQLite) cannot start
-- The collector rewrite cannot start
-- The card system (Phase 3) has no target to build toward
-
-**What needs to happen:** A `docs/roadmap/08-sqlite-schema.md` that defines both databases completely — tables, columns, types, indexes, foreign keys. This should be written before Phase 0 implementation starts.
+Resolved by ADR-005. Storage migrated to PostgreSQL. Schema lives in `database/ddl/`.
 
 ---
 
@@ -258,7 +244,7 @@ A skill written for Claude Code may not be parseable by opencode without modific
 | 3 | MCP config hardcoded | Phase 0 refactor | Move to `CoordinatorAdapter.installContextDelivery()` |
 | 4 | setupAgent hard-rejects non-Claude | Phase 0 refactor | Replace with registry lookup — 3 lines of change |
 | 5 | CLAUDE.md is content-specific | Phase 0 + coordinator design | Templates become `CoordinatorAdapter.writeProjectContext()` |
-| **6** | **SQLite schema not designed** | **Phase 0 cannot start** | **Write `08-sqlite-schema.md` first** |
+| **6** | **~~SQLite schema~~ RESOLVED** | **Resolved by ADR-005** | **Storage migrated to PostgreSQL. Schema in `database/ddl/`.** |
 | **7** | **AgentAdapter vs CoordinatorAdapter** | **Phase 0 cannot start** | **Define interface in shared, migrate ClaudeAdapter** |
 | 8 | Daemon lifecycle conflict (launchd vs Tauri) | Phase 1 | Three modes; launchd becomes opt-in |
 | 9 | OTLP fallback not designed | Non-Claude coordinator tracking | Define minimum session tracking for no-OTLP cases |
