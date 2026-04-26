@@ -159,7 +159,7 @@ window.SENSEI_SETUP = {
     ]
   },
 
-  // Global MCP registry — sensei knows about these.
+  // Global MCP registry (shown as "Instruments" in the UI) — sensei knows about these.
   // Recommendations are computed from detectedStack at wizard time.
   // `trigger` = what in the stack surfaces this MCP as recommended.
   // `kind` = service · api · devtool · data
@@ -230,6 +230,103 @@ window.SENSEI_SETUP = {
       { id: "active",      label: "Active dev" },
       { id: "maintenance", label: "Maintenance" },
       { id: "archived",    label: "Archived" }
+    ]
+  },
+
+  // Inference — local models + external providers
+  inference: {
+    system: {
+      chip:    "Apple M3 Max",
+      cores:   "14-core CPU · 40-core GPU",
+      ram:     "64 GB unified",
+      ramGB:   64,
+      os:      "macOS 15.1",
+      disk:    "412 GB free"
+    },
+    localModels: [
+      { id: "qwen-coder-32b",    name: "Qwen2.5-Coder 32B",    role: "inference",
+        sizeGB: 19.9, tag: "32b-instruct-q5_K_M", recommended: true,
+        note: "primary inference · fits comfortably on 64 GB",  pulled: false },
+      { id: "deepseek-r1-14b",   name: "DeepSeek-R1 14B",      role: "consolidation",
+        sizeGB: 8.4,  tag: "14b-q4_K_M",          recommended: true,
+        note: "fast reasoning · memory consolidation",          pulled: false },
+      { id: "nomic-embed-v1.5",  name: "Nomic Embed v1.5",     role: "embedding",
+        sizeGB: 0.3,  tag: "v1.5",                recommended: true,
+        note: "required · indexes sessions, memories, refs",    pulled: true  },
+      { id: "llama-3.1-70b",     name: "Llama 3.1 70B",        role: "inference",
+        sizeGB: 42.5, tag: "70b-instruct-q4_K_M", recommended: false,
+        note: "heaviest · only if you have the RAM headroom",   pulled: false },
+      { id: "qwen-coder-7b",     name: "Qwen2.5-Coder 7B",     role: "voice",
+        sizeGB: 4.7,  tag: "7b-instruct-q5_K_M",  recommended: false,
+        note: "light · conversational · good for voice",       pulled: false }
+    ],
+    providers: [
+      { id: "anthropic", name: "Anthropic",  kanji: "人",
+        kind: "cloud",  envVar: "ANTHROPIC_API_KEY",
+        detected: true,  configured: true,
+        note: "detected in your shell · highest-quality reasoning",
+        models: [
+          { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5",  role: "inference",
+            context: "200K", cost: "$3 / 1M in  ·  $15 / 1M out" },
+          { id: "claude-opus-4",     name: "Claude Opus 4",      role: "inference",
+            context: "200K", cost: "$15 / 1M in ·  $75 / 1M out" },
+          { id: "claude-haiku-4",    name: "Claude Haiku 4",     role: "voice",
+            context: "200K", cost: "$1 / 1M in  ·  $5 / 1M out"  }
+        ]},
+      { id: "ollama",    name: "Ollama",     kanji: "羊",
+        kind: "local",  envVar: null,
+        detected: true,  configured: true,
+        note: "running locally · no key needed",
+        models: [
+          { id: "qwen-coder-32b",   name: "Qwen2.5-Coder 32B",  role: "inference",
+            sizeGB: 19.9, pulled: false, recommended: true,
+            note: "primary inference · fits 64 GB" },
+          { id: "deepseek-r1-14b",  name: "DeepSeek-R1 14B",    role: "consolidation",
+            sizeGB: 8.4,  pulled: false, recommended: true,
+            note: "fast reasoning · memory consolidation" },
+          { id: "nomic-embed-v1.5", name: "Nomic Embed v1.5",   role: "embedding",
+            sizeGB: 0.3,  pulled: true,  recommended: true,
+            note: "required · indexes sessions & memories" },
+          { id: "qwen-coder-7b",    name: "Qwen2.5-Coder 7B",   role: "voice",
+            sizeGB: 4.7,  pulled: false, recommended: false,
+            note: "light · conversational · good for voice" }
+        ]},
+      { id: "openai",    name: "OpenAI",     kanji: "開",
+        kind: "cloud",  envVar: "OPENAI_API_KEY",
+        detected: false, configured: false,
+        note: "gpt-4o · gpt-4-turbo · o1",
+        models: [
+          { id: "gpt-4o",       name: "GPT-4o",       role: "inference",     context: "128K" },
+          { id: "gpt-4o-mini",  name: "GPT-4o mini",  role: "consolidation", context: "128K" },
+          { id: "o1",           name: "o1",           role: "inference",     context: "128K" }
+        ]},
+      { id: "google",    name: "Google",     kanji: "星",
+        kind: "cloud",  envVar: "GEMINI_API_KEY",
+        detected: false, configured: false,
+        note: "gemini-2.5-pro · gemini-flash",
+        models: [
+          { id: "gemini-2.5-pro",   name: "Gemini 2.5 Pro",   role: "inference",     context: "2M" },
+          { id: "gemini-flash",     name: "Gemini Flash",     role: "voice",         context: "1M" }
+        ]}
+    ],
+
+    // Priority — which model handles each role. First item is primary;
+    // subsequent items are fallbacks used when primary fails or is rate-limited.
+    rolePriority: {
+      inference:     ["claude-sonnet-4.5", "qwen-coder-32b", "gpt-4o"],
+      consolidation: ["deepseek-r1-14b"],
+      embedding:     ["nomic-embed-v1.5"],
+      voice:         ["claude-haiku-4", "qwen-coder-7b"],
+      fallback:      ["qwen-coder-32b"]
+    },
+
+    // Providers sensei knows about but the user hasn't added yet
+    addable: [
+      { id: "openai",  name: "OpenAI",     kanji: "開", kind: "cloud" },
+      { id: "google",  name: "Google",     kanji: "星", kind: "cloud" },
+      { id: "groq",    name: "Groq",       kanji: "速", kind: "cloud" },
+      { id: "xai",     name: "xAI",        kanji: "乂", kind: "cloud" },
+      { id: "custom",  name: "Custom · OpenAI-compatible", kanji: "自", kind: "custom" }
     ]
   }
 };

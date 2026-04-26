@@ -475,7 +475,7 @@ function LibrariesVariantB() {
 // and lets users try each one. Tools declare their inputs
 // (project, library, session, text, enums) — the form adapts.
 // ═════════════════════════════════════════════════════════════
-function MCPPlayground() {
+function MCPPlayground({ activeTab = "playground", onTab = () => {} } = {}) {
   const T = window.MCP_TOOLS;
   // Scope switcher — default is sensei, can switch to any installed MCP
   // sourced from the global registry (if present) or fall back to sensei only.
@@ -508,34 +508,21 @@ function MCPPlayground() {
   const cat = T.categories.find(c => c.id === focus.category);
 
   return (
-    <div className="sensei" data-screen-label="MCP Playground"
-         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-                  background: 'var(--paper)', overflow: 'hidden' }}>
-      <TauriChrome title="Sensei  先生  ·  mcp playground"/>
-
-      <div style={{ padding: '26px 56px 18px', display: 'flex',
-                     alignItems: 'flex-end', gap: 20, borderBottom: 'var(--hairline)' }}>
-        <div className="kanji" style={{ fontSize: 44, color: 'var(--shu)', lineHeight: 1 }}>{scopeMcp.kanji}</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                         textTransform: 'uppercase', marginBottom: 6 }}>MCP Playground</div>
-          <h1 className="display" style={{ fontSize: 24, fontWeight: 400, margin: 0 }}>
-            {isSensei
-              ? "Sensei's tools, in your hands."
-              : scopeMcp.name + " · in your hands."}
-          </h1>
-          <p style={{ fontSize: 12.5, color: 'var(--sumi-2)', margin: '6px 0 0', maxWidth: 640,
-                       lineHeight: 1.55 }}>
-            {isSensei
-              ? "Sensei exposes these tools over MCP — any assistant with sensei attached can call them. Try any tool here; some take a project, some take a library."
-              : `Installed for this project. Inspect tools and try them the same way you'd try sensei's own.`}
-          </p>
-        </div>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)',
-                      padding: '5px 9px', border: 'var(--hairline)', borderRadius: 3 }}>
-          {scopeMcp.tools} tools
-        </span>
-      </div>
+    <MCPShell activeTab={activeTab} onTab={onTab}
+              kanji={scopeMcp.kanji}
+              title="Playground"
+              tagline={isSensei
+                ? "Sensei's tools, in your hands."
+                : scopeMcp.name + " · in your hands."}
+              sub={isSensei
+                ? "Sensei exposes these tools over MCP — any assistant with sensei attached can call them. Try any tool here; some take a project, some take a library."
+                : "Installed for this project. Inspect tools and try them the same way you'd try sensei's own."}
+              chip={
+                <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)',
+                              padding: '5px 9px', border: 'var(--hairline)', borderRadius: 3 }}>
+                  {scopeMcp.tools} tools
+                </span>
+              }>
 
       {/* MCP scope selector — horizontal pill row */}
       <div style={{ padding: '10px 56px', borderBottom: 'var(--hairline)',
@@ -654,7 +641,7 @@ function MCPPlayground() {
           <ToolDetail tool={focus} cat={cat}/>
         </main>
       </div>
-    </div>
+    </MCPShell>
   );
 }
 

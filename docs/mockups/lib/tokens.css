@@ -101,3 +101,5 @@
 
 /* Disable focus ring except where useful */
 .sensei button:focus-visible { outline: 1.5px solid var(--shu); outline-offset: 2px; border-radius: 3px; }
+
+@keyframes senseiSpin { to { transform: rotate(360deg); } }
