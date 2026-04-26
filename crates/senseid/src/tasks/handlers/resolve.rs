@@ -91,7 +91,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
     let docs: Vec<&serde_json::Value> = nodes.iter()
         .filter(|n| n["kind"].as_str() == Some("doc"))
         .collect();
-    let functions: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
+    let _functions: std::collections::HashMap<&str, &serde_json::Value> = nodes.iter()
         .filter(|n| matches!(n["kind"].as_str(), Some("function" | "method")))
         .filter_map(|n| n["name"].as_str().map(|name| (name, n)))
         .collect();
