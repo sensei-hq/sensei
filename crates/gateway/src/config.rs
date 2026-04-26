@@ -290,4 +290,13 @@ mod tests {
         assert_eq!(rebuilt.models.len(), 1);
         assert_eq!(rebuilt.chains.len(), 1);
     }
+
+    #[test]
+    fn default_builder_is_empty() {
+        // Exercises the Default impl (lines 107-108)
+        let builder = GatewayBuilder::default();
+        let errors = builder.validate();
+        // Should have at least "no routers configured"
+        assert!(errors.iter().any(|e| e.contains("no routers")));
+    }
 }
