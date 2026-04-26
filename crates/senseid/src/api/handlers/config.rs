@@ -79,6 +79,10 @@ pub(crate) async fn acp_detect() -> Json<Vec<crate::assistants::AcpStatus>> {
     Json(crate::assistants::detect())
 }
 
+pub(crate) async fn acp_detect_families() -> Json<Vec<crate::assistants::AcpFamily>> {
+    Json(crate::assistants::detect_families())
+}
+
 #[derive(Deserialize)]
 pub(crate) struct AcpConfigureBody {
     #[serde(default)]

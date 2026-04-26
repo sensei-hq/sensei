@@ -9,6 +9,8 @@ pub(crate) struct ClaudeCodeAcp;
 impl Acp for ClaudeCodeAcp {
     fn id(&self) -> &str { "claude-code" }
     fn name(&self) -> &str { "Claude Code" }
+    fn family(&self) -> &str { "claude" }
+    fn family_name(&self) -> &str { "Claude" }
     fn mcp_key(&self) -> &str { "mcpServers" }
     fn config_path(&self) -> PathBuf { home().join(".claude/settings.json") }
 

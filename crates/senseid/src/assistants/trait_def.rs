@@ -18,6 +18,13 @@ pub(crate) trait Acp {
     fn configure(&self, mcp_cmd: &str) -> Result<AcpConfigureOk, String>;
     fn remove(&self) -> bool;
 
+    /// Family ID for UI grouping. ACPs in the same family show as one card.
+    /// Default: same as id (each ACP is its own family).
+    fn family(&self) -> &str { self.id() }
+
+    /// Display name for the family (used when grouped).
+    fn family_name(&self) -> &str { self.name() }
+
     fn is_configured(&self) -> bool {
         check_mcp_configured(&self.config_path(), self.mcp_key())
     }
@@ -26,6 +33,7 @@ pub(crate) trait Acp {
         AcpStatus {
             id: self.id().to_string(),
             name: self.name().to_string(),
+            family: self.family().to_string(),
             installed: self.detect(),
             mcp_configured: self.is_configured(),
             config_path: self.config_path().to_string_lossy().into_owned(),
