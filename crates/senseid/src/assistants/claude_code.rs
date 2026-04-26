@@ -1,12 +1,12 @@
 use std::path::PathBuf;
-use super::trait_def::{Acp, AcpConfigureOk};
+use super::trait_def::{Assistant, AssistantConfigureOk};
 use super::helpers::{home, find_claude_binary};
 
 const SENSEI_MARKETPLACE_REPO: &str = "mizukisu/sensei-marketplace";
 
-pub(crate) struct ClaudeCodeAcp;
+pub(crate) struct ClaudeCodeAssistant;
 
-impl Acp for ClaudeCodeAcp {
+impl Assistant for ClaudeCodeAssistant {
     fn id(&self) -> &str { "claude-code" }
     fn name(&self) -> &str { "Claude Code" }
     fn family(&self) -> &str { "claude" }
@@ -21,7 +21,7 @@ impl Acp for ClaudeCodeAcp {
             || h.join(".claude").exists()
     }
 
-    fn configure(&self, _mcp_cmd: &str) -> Result<AcpConfigureOk, String> {
+    fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
@@ -49,7 +49,7 @@ impl Acp for ClaudeCodeAcp {
             return Err(format!("plugin install: {}", err));
         }
 
-        Ok(AcpConfigureOk { plugin: true, warnings: vec![] })
+        Ok(AssistantConfigureOk { plugin: true, warnings: vec![] })
     }
 
     fn remove(&self) -> bool {

@@ -21,7 +21,7 @@ export const WIZ_STAGES: WizStage[] = [
 
 // ── Setup step types ────────────────────────────────────────
 
-export interface AcpEntry {
+export interface AssistantEntry {
   id: string;
   name: string;
   version: string | null;
@@ -103,8 +103,8 @@ export const ROLES: RoleOption[] = [
 // ── Wizard accumulated state ────────────────────────────────
 
 export interface WizardState {
-  acps: Record<string, boolean>;
-  acpList: AcpEntry[];
+  assistants: Record<string, boolean>;
+  assistantList: AssistantEntry[];
   folders: ScanFolder[];
   scanStarted: boolean;
   scanDone: boolean;

@@ -13,7 +13,7 @@
     Object.values(wizState.libraries).filter(Boolean).length + wizState.libExtras.length
   );
   const mcpCount = $derived(Object.values(wizState.mcps).filter(Boolean).length);
-  const assistantCount = $derived(Object.values(wizState.acps).filter(Boolean).length);
+  const assistantCount = $derived(Object.values(wizState.assistants).filter(Boolean).length);
 
   const stats = $derived([
     { label: 'Projects',   value: projectCount },
