@@ -186,7 +186,6 @@ mod tests {
             threshold,
             timeout: Duration::from_millis(timeout_ms),
             half_open_max_requests: 3,
-            ..Default::default()
         })
     }
 
@@ -317,5 +316,65 @@ mod tests {
         mgr.reset_all();
         assert_eq!(mgr.get_state("ep1").name(), "closed");
         assert_eq!(mgr.get_state("ep2").name(), "closed");
+    }
+
+    #[test]
+    fn half_open_allows_execution() {
+        // Transition to HalfOpen, then verify can_execute returns true without
+        // the transition itself (i.e. already in HalfOpen).
+        let mgr = make_manager(1, 0);
+        mgr.can_execute("ep1"); // initialize
+        mgr.record_failure("ep1"); // -> Open
+        assert_eq!(mgr.get_state("ep1").name(), "open");
+        // Timeout is 0ms, so next can_execute transitions Open -> HalfOpen
+        assert!(mgr.can_execute("ep1"));
+        assert_eq!(mgr.get_state("ep1").name(), "half_open");
+        // Now call can_execute again while already in HalfOpen — line 87
+        assert!(mgr.can_execute("ep1"));
+        assert_eq!(mgr.get_state("ep1").name(), "half_open");
+    }
+
+    #[test]
+    fn record_success_unknown_endpoint() {
+        // record_success on an endpoint that was never seen should early-return
+        // without panic — line 100
+        let mgr = make_manager(5, 5000);
+        mgr.record_success("never_seen_endpoint");
+        // No panic, state is default Closed
+        assert_eq!(mgr.get_state("never_seen_endpoint").name(), "closed");
+    }
+
+    #[test]
+    fn record_success_open_is_noop() {
+        // record_success while Open should be a no-op — line 113
+        let mgr = make_manager(1, 60_000);
+        mgr.can_execute("ep1");
+        mgr.record_failure("ep1"); // -> Open
+        assert_eq!(mgr.get_state("ep1").name(), "open");
+        // record_success in Open state should not change state
+        mgr.record_success("ep1");
+        assert_eq!(mgr.get_state("ep1").name(), "open");
+    }
+
+    #[test]
+    fn record_failure_unknown_endpoint() {
+        // record_failure on an endpoint that was never seen should early-return
+        // without panic — line 126
+        let mgr = make_manager(5, 5000);
+        mgr.record_failure("never_seen_endpoint");
+        // No panic, state is default Closed (never initialized)
+        assert_eq!(mgr.get_state("never_seen_endpoint").name(), "closed");
+    }
+
+    #[test]
+    fn record_failure_open_is_noop() {
+        // record_failure while Open should be a no-op — line 143
+        let mgr = make_manager(1, 60_000);
+        mgr.can_execute("ep1");
+        mgr.record_failure("ep1"); // -> Open
+        assert_eq!(mgr.get_state("ep1").name(), "open");
+        // record_failure in Open state should not change state
+        mgr.record_failure("ep1");
+        assert_eq!(mgr.get_state("ep1").name(), "open");
     }
 }

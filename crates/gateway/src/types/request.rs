@@ -697,4 +697,194 @@ mod tests {
         );
         assert!((videos[0].duration_secs.unwrap() - 5.0).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn stt_payload_base64_roundtrip() {
+        // Test that Stt audio bytes survive base64 serde round-trip
+        let audio_bytes: Vec<u8> = (0..=255).collect();
+        let payload = Payload::Stt {
+            audio: audio_bytes.clone(),
+            language: Some("en".to_string()),
+            format: "mp3".to_string(),
+        };
+
+        let json = serde_json::to_string(&payload).unwrap();
+        let deserialized: Payload = serde_json::from_str(&json).unwrap();
+
+        if let Payload::Stt {
+            audio,
+            language,
+            format,
+        } = &deserialized
+        {
+            assert_eq!(audio, &audio_bytes);
+            assert_eq!(language.as_deref(), Some("en"));
+            assert_eq!(format, "mp3");
+        } else {
+            panic!("Expected Stt payload");
+        }
+    }
+
+    #[test]
+    fn tts_payload_default_output_format() {
+        // When output_format is omitted in JSON, it should default to mp3
+        let json = r#"{"type":"tts","text":"Hello"}"#;
+        let payload: Payload = serde_json::from_str(json).unwrap();
+
+        if let Payload::Tts {
+            text,
+            voice,
+            speed,
+            output_format,
+        } = &payload
+        {
+            assert_eq!(text, "Hello");
+            assert!(voice.is_none());
+            assert!(speed.is_none());
+            assert_eq!(*output_format, AudioFormat::Mp3);
+        } else {
+            panic!("Expected Tts payload");
+        }
+    }
+
+    #[test]
+    fn stt_default_audio_format() {
+        // When format is omitted in JSON, it should default to "wav"
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+        let audio_b64 = STANDARD.encode([0xFFu8, 0xFB]);
+        let json = format!(r#"{{"type":"stt","audio":"{}"}}"#, audio_b64);
+        let payload: Payload = serde_json::from_str(&json).unwrap();
+
+        if let Payload::Stt { format, .. } = &payload {
+            assert_eq!(format, "wav");
+        } else {
+            panic!("Expected Stt payload");
+        }
+    }
+
+    #[test]
+    fn image_result_all_fields() {
+        let result = ImageResult {
+            url: Some("https://example.com/img.png".to_string()),
+            b64_json: Some("iVBORw0KGgo=".to_string()),
+            revised_prompt: Some("A revised prompt".to_string()),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: ImageResult = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.url.as_deref(),
+            Some("https://example.com/img.png"),
+        );
+        assert_eq!(deserialized.b64_json.as_deref(), Some("iVBORw0KGgo="));
+        assert_eq!(
+            deserialized.revised_prompt.as_deref(),
+            Some("A revised prompt"),
+        );
+    }
+
+    #[test]
+    fn video_result_roundtrip_all_none() {
+        let result = VideoResult {
+            url: None,
+            duration_secs: None,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert_eq!(json, "{}");
+
+        let deserialized: VideoResult = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.url.is_none());
+        assert!(deserialized.duration_secs.is_none());
+    }
+
+    #[test]
+    fn audio_format_display() {
+        assert_eq!(AudioFormat::Mp3.to_string(), "mp3");
+        assert_eq!(AudioFormat::Wav.to_string(), "wav");
+        assert_eq!(AudioFormat::Opus.to_string(), "opus");
+        assert_eq!(AudioFormat::Pcm.to_string(), "pcm");
+        assert_eq!(AudioFormat::Flac.to_string(), "flac");
+    }
+
+    #[test]
+    fn response_with_no_audio_field() {
+        // Test that response without audio field deserializes correctly
+        let json = r#"{"success":true,"attempts":[]}"#;
+        let deserialized: InferenceResponse = serde_json::from_str(json).unwrap();
+        assert!(deserialized.audio.is_none());
+        assert!(deserialized.content.is_none());
+        assert!(deserialized.embeddings.is_none());
+    }
+
+    #[test]
+    fn stream_event_variants() {
+        // Verify StreamEvent and StreamChunk structs can be constructed
+        let chunk = StreamChunk {
+            content: "hello".to_string(),
+            finish_reason: Some("stop".to_string()),
+            usage: Some(TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                total_tokens: 15,
+            }),
+        };
+        assert_eq!(chunk.content, "hello");
+        assert_eq!(chunk.finish_reason.as_deref(), Some("stop"));
+        assert!(chunk.usage.is_some());
+
+        let event = StreamEvent::Chunk {
+            content: "hi".to_string(),
+        };
+        match event {
+            StreamEvent::Chunk { content } => assert_eq!(content, "hi"),
+            _ => panic!("wrong variant"),
+        }
+
+        let event = StreamEvent::Done {
+            model: "m".to_string(),
+            tokens: TokenUsage::default(),
+            cost: 0.01,
+        };
+        match event {
+            StreamEvent::Done { model, cost, .. } => {
+                assert_eq!(model, "m");
+                assert!((cost - 0.01).abs() < f64::EPSILON);
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        let event = StreamEvent::ProviderSwitch {
+            from_adapter: "a".into(),
+            from_model: "m1".into(),
+            to_adapter: "b".into(),
+            to_model: "m2".into(),
+            reason: "fallback".into(),
+        };
+        match event {
+            StreamEvent::ProviderSwitch {
+                from_adapter,
+                to_adapter,
+                ..
+            } => {
+                assert_eq!(from_adapter, "a");
+                assert_eq!(to_adapter, "b");
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        let event = StreamEvent::Error {
+            code: "500".into(),
+            message: "fail".into(),
+        };
+        match event {
+            StreamEvent::Error { code, message } => {
+                assert_eq!(code, "500");
+                assert_eq!(message, "fail");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
 }

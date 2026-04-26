@@ -746,4 +746,249 @@ mod tests {
         assert!(result.selected.is_none());
         assert!(result.all_candidates.is_empty());
     }
+
+    #[test]
+    fn chain_not_found() {
+        let config = test_config();
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        let result = svc.select(&SelectionCriteria {
+            capability: Capability::TextChat,
+            model: None,
+            router: None,
+            chain: Some("nonexistent_chain".to_string()),
+            budget: None,
+            input_tokens: None,
+        });
+
+        assert!(result.selected.is_none());
+        assert!(result.all_candidates.is_empty());
+        assert!(result.chain.is_none());
+    }
+
+    #[test]
+    fn direct_model_not_found() {
+        let config = test_config();
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        let result = svc.select(&SelectionCriteria {
+            capability: Capability::TextChat,
+            model: Some("nonexistent_model".to_string()),
+            router: Some("ollama".to_string()),
+            chain: None,
+            budget: None,
+            input_tokens: None,
+        });
+
+        assert!(result.selected.is_none());
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].reason.contains("model not found"));
+    }
+
+    #[test]
+    fn direct_model_wrong_capability() {
+        let config = test_config();
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        // all-minilm only supports TextEmbed, not AudioTranscribe
+        let result = svc.select(&SelectionCriteria {
+            capability: Capability::AudioTranscribe,
+            model: Some("all-minilm".to_string()),
+            router: Some("ollama".to_string()),
+            chain: None,
+            budget: None,
+            input_tokens: None,
+        });
+
+        assert!(result.selected.is_none());
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].reason.contains("does not support"));
+    }
+
+    #[test]
+    fn direct_circuit_breaker_open() {
+        let config = test_config();
+        let cb = test_cb();
+
+        // Open the breaker for this direct endpoint
+        let endpoint = "ollama:gemma3:27b";
+        cb.can_execute(endpoint); // init
+        for _ in 0..5 {
+            cb.record_failure(endpoint);
+        }
+        assert!(!cb.can_execute(endpoint));
+
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        let result = svc.select(&SelectionCriteria {
+            capability: Capability::TextChat,
+            model: Some("gemma3:27b".to_string()),
+            router: Some("ollama".to_string()),
+            chain: None,
+            budget: None,
+            input_tokens: None,
+        });
+
+        assert!(result.selected.is_none());
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].reason.contains("circuit breaker"));
+    }
+
+    #[test]
+    fn direct_over_budget() {
+        let config = test_config();
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        // claude-haiku has pricing, set budget very low
+        let result = svc.select(&SelectionCriteria {
+            capability: Capability::TextChat,
+            model: Some("claude-haiku".to_string()),
+            router: Some("anthropic".to_string()),
+            chain: None,
+            budget: Some(0.0001),
+            input_tokens: Some(1000),
+        });
+
+        assert!(result.selected.is_none());
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].reason.contains("over budget"));
+    }
+
+    #[test]
+    fn direct_router_disabled() {
+        let mut config = test_config();
+        config.routers.get_mut("ollama").unwrap().enabled = false;
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        let result = svc.select(&SelectionCriteria {
+            capability: Capability::TextChat,
+            model: Some("gemma3:27b".to_string()),
+            router: Some("ollama".to_string()),
+            chain: None,
+            budget: None,
+            input_tokens: None,
+        });
+
+        assert!(result.selected.is_none());
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].reason.contains("router disabled"));
+    }
+
+    #[test]
+    fn chain_entry_router_fallback_to_provider() {
+        // embed_chain has entries with router=None, so it should fall back
+        // to model.provider ("ollama")
+        let config = test_config();
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        let result = svc.select_all(&SelectionCriteria {
+            capability: Capability::TextEmbed,
+            model: None,
+            router: None,
+            chain: Some("embed_chain".to_string()),
+            budget: None,
+            input_tokens: None,
+        });
+
+        assert_eq!(result.all_candidates.len(), 1);
+        // Router should be resolved from provider
+        assert_eq!(result.all_candidates[0].router, "ollama");
+    }
+
+    #[test]
+    fn chain_entry_model_not_found() {
+        let mut config = test_config();
+        // Add a chain that references a non-existent model
+        config.chains.insert(
+            "bad_chain".to_string(),
+            FallbackChainConfig {
+                id: "bad_chain".to_string(),
+                capability: Capability::TextChat,
+                models: vec![
+                    ChainEntry {
+                        model: "ghost_model".to_string(),
+                        router: Some("ollama".to_string()),
+                        api_model_id: None,
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "gemma3:27b".to_string(),
+                        router: None,
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![],
+            },
+        );
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        let result = svc.select_all(&SelectionCriteria {
+            capability: Capability::TextChat,
+            model: None,
+            router: None,
+            chain: Some("bad_chain".to_string()),
+            budget: None,
+            input_tokens: None,
+        });
+
+        // ghost_model should be skipped, gemma3:27b should be selected
+        assert_eq!(result.all_candidates.len(), 1);
+        assert_eq!(result.all_candidates[0].model, "gemma3:27b");
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].reason.contains("model not found"));
+    }
+
+    #[test]
+    fn chain_entry_router_not_found() {
+        let mut config = test_config();
+        // Add a chain entry that specifies a non-existent router
+        config.chains.insert(
+            "bad_router_chain".to_string(),
+            FallbackChainConfig {
+                id: "bad_router_chain".to_string(),
+                capability: Capability::TextChat,
+                models: vec![
+                    ChainEntry {
+                        model: "gemma3:27b".to_string(),
+                        router: Some("nonexistent_router".to_string()),
+                        api_model_id: None,
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "claude-haiku".to_string(),
+                        router: None,
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![],
+            },
+        );
+        let cb = test_cb();
+        let svc = ModelSelectionService::new(&config, &cb);
+
+        let result = svc.select_all(&SelectionCriteria {
+            capability: Capability::TextChat,
+            model: None,
+            router: None,
+            chain: Some("bad_router_chain".to_string()),
+            budget: None,
+            input_tokens: None,
+        });
+
+        // gemma3:27b with nonexistent router should be skipped
+        assert!(result.skipped.iter().any(|s| s.model == "gemma3:27b"
+            && s.reason.contains("router not found")));
+        // claude-haiku should still be available
+        assert_eq!(result.all_candidates.len(), 1);
+        assert_eq!(result.all_candidates[0].model, "claude-haiku");
+    }
 }
