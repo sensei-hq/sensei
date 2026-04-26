@@ -1,10 +1,12 @@
 <script lang="ts">
-  import type { WizardState, WizUpdate } from '../types.js';
+  import type { WizardState, WizUpdate, WizStage } from '../types.js';
   import { MOCK_MCPS } from '../mock.js';
+  import StepHeader from './StepHeader.svelte';
 
-  let { wizState, update }: {
+  let { wizState, update, stage }: {
     wizState: WizardState;
     update: WizUpdate;
+    stage: WizStage;
   } = $props();
 
   const mcps = MOCK_MCPS;
@@ -29,12 +31,7 @@
 </script>
 
 <section class="step">
-  <div class="step-label"><span class="kanji">八</span> STEP</div>
-  <h1 class="display headline">MCP Registry</h1>
-  <p class="subtitle">
-    Sensei recommends these based on what it detected in your stack. Each one
-    brings its own tools — no wrapping needed.
-  </p>
+  <StepHeader {stage} subtitle="Sensei recommends these based on what it detected in your stack. Each one brings its own tools — no wrapping needed." />
 
   <!-- Detected stack -->
   <div class="section-heading">Detected in your stack</div>
@@ -120,35 +117,7 @@
 
 <style>
   .step {
-    padding: var(--space-10) var(--space-12);
     max-width: 780px;
-  }
-
-  .step-label {
-    font-size: 12px;
-    letter-spacing: 0.12em;
-    color: var(--sumi-3);
-    margin-bottom: var(--space-2);
-  }
-
-  .step-label .kanji {
-    color: var(--shu);
-    margin-right: 4px;
-  }
-
-  .headline {
-    font-size: 40px;
-    color: var(--sumi);
-    margin: 0 0 var(--space-2) 0;
-    line-height: 1.15;
-  }
-
-  .subtitle {
-    font-size: 15px;
-    color: var(--sumi-3);
-    margin: 0 0 var(--space-6) 0;
-    line-height: 1.55;
-    max-width: 620px;
   }
 
   /* ── Section heading ────────────────────────────────────── */
