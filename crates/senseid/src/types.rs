@@ -90,6 +90,7 @@ impl NodeKind {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "repo" => Self::Repo,
@@ -188,6 +189,7 @@ pub struct HierarchyNode {
 
 impl HierarchyNode {
     /// Create a minimal node (grouping/structural).
+    #[allow(dead_code)]
     pub fn group(id: String, name: String, kind: NodeKind, project: String) -> Self {
         Self {
             id, name, kind, level: None, parent_id: None, file: None, line: 0,
@@ -198,6 +200,7 @@ impl HierarchyNode {
 
     /// Create a function/method node.
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     pub fn function(
         id: String, name: String, kind: NodeKind, file: String, line: u32,
         sig: Option<String>, body: Option<String>, docstring: Option<String>,
@@ -265,6 +268,7 @@ pub struct ParsedImport {
 // ── Repo & Project ──────────────────────────────────────────────────────────
 
 /// A single git repository tracked by sensei.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Repo {
     pub repo_id: String,
@@ -297,15 +301,18 @@ pub struct Repo {
     pub label: Option<String>,
 }
 
+#[allow(dead_code)]
 fn default_status() -> String {
     "active".to_string()
 }
 
+#[allow(dead_code)]
 fn default_role() -> String {
     "unknown".to_string()
 }
 
 /// A project — one or more repos that evolve together.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: String,
@@ -324,6 +331,7 @@ pub struct Project {
     pub updated_at: Option<String>,
 }
 
+#[allow(dead_code)]
 fn default_category() -> String {
     "active".to_string()
 }
@@ -343,6 +351,7 @@ pub struct PackageInfo {
 
 // ── Indexing ─────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexError {
     pub repo_id: String,
@@ -355,6 +364,7 @@ pub struct IndexError {
 
 // ── Graph query results ──────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
     pub id: String,
@@ -374,6 +384,7 @@ pub struct GraphNode {
     pub tags: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
     pub source: String,
@@ -382,6 +393,7 @@ pub struct GraphEdge {
     pub edge_type: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionDetail {
     pub id: String,
@@ -397,6 +409,7 @@ pub struct FunctionDetail {
     pub tags: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeDetail {
     pub id: String,

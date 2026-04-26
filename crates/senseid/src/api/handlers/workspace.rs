@@ -19,6 +19,7 @@ pub(crate) async fn list_projects(State(state): State<AppState>) -> Result<Json<
 #[derive(Deserialize)]
 pub(crate) struct CreateProjectBody {
     #[serde(rename = "repoId")]
+    #[allow(dead_code)]
     repo_id: String,
     name: Option<String>,
     path: String,

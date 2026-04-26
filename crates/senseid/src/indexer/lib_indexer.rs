@@ -5,6 +5,7 @@ pub async fn fetch_lib_url(url: &str) -> Result<String, String> {
 }
 
 /// Index pre-fetched library content (sync part — safe to hold mutex).
+#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 pub fn index_lib_content(
 
     lib_name: &str,
@@ -31,6 +32,7 @@ pub fn index_lib_content(
 }
 
 /// Fetch and store dependency versions from a project's manifest files.
+#[allow(dead_code)] // TODO: wire up dep version extraction
 pub fn extract_dep_versions(
 
     _repo_id: &str,
@@ -104,6 +106,7 @@ pub fn extract_dep_versions(
     Ok(deps)
 }
 
+#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LibIndexResult {
     pub lib_name: String,
@@ -112,6 +115,7 @@ pub struct LibIndexResult {
     pub version: Option<String>,
 }
 
+#[allow(dead_code)] // TODO: wire up dep version extraction
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DepVersion {
     pub lib_name: String,
@@ -121,6 +125,7 @@ pub struct DepVersion {
     pub dev: bool,
 }
 
+#[allow(dead_code)] // TODO: wire up lib doc storage
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LibDoc {
     pub id: String,
@@ -133,6 +138,7 @@ pub struct LibDoc {
     pub indexed_at: String,
 }
 
+#[allow(dead_code)] // used by index_lib_content pipeline
 struct ParsedDoc {
     title: String,
     summary: String,
@@ -167,6 +173,7 @@ async fn fetch_url(url: &str) -> Result<String, String> {
     resp.text().await.map_err(|e| format!("Read body: {}", e))
 }
 
+#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 fn detect_source_type(url: &str, content: &str) -> String {
     if url.ends_with("llms.txt") || url.ends_with("llms-full.txt") {
         return "llms-txt".into();
@@ -181,6 +188,7 @@ fn detect_source_type(url: &str, content: &str) -> String {
 }
 
 /// Parse llms.txt format — sections delimited by `# heading` with content.
+#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
     let mut docs = Vec::new();
     let mut current_title = String::new();
@@ -244,11 +252,13 @@ fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
     docs
 }
 
+#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 fn parse_markdown(content: &str, lib_name: &str, _url: &str) -> Vec<ParsedDoc> {
     // Same as llms_txt for now — split by headings
     parse_llms_txt(content, lib_name)
 }
 
+#[allow(dead_code)] // TODO: wire up dep version extraction
 fn clean_version(v: &str) -> String {
     v.trim_start_matches('^')
         .trim_start_matches('~')
@@ -261,6 +271,7 @@ fn clean_version(v: &str) -> String {
         .to_string()
 }
 
+#[allow(dead_code)] // TODO: wire up dep version extraction
 fn parse_pep508(spec: &str) -> (String, String) {
     // "requests>=2.28" → ("requests", "2.28")
     let parts: Vec<&str> = spec.splitn(2, ['>', '<', '=', '!', '[']).collect();
