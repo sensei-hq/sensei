@@ -31,6 +31,7 @@ pub struct DocClassification {
 /// Public wrapper for use by task handlers.
 pub fn parse_frontmatter_pub(content: &str) -> DocFrontmatter { parse_frontmatter(content) }
 pub fn classify_doc_pub(rel_path: &str, fm: &DocFrontmatter) -> DocClassification { classify_doc(rel_path, fm) }
+#[allow(dead_code)] // TODO: wire up traceability edge creation
 pub fn create_traceability_edges_pub(_repo_id: &str) -> Result<(), String> { Ok(()) }
 
 /// Parse YAML frontmatter from between --- fences.

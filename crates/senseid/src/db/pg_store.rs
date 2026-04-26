@@ -6,6 +6,7 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+#[allow(dead_code)] // PgStore API surface — methods wired up incrementally
 impl PgStore {
     /// Connect to a PostgreSQL database.
     pub async fn connect(database_url: &str) -> Result<Self, String> {
