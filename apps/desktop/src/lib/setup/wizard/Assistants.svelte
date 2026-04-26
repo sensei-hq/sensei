@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { WizardState, WizUpdate, AcpEntry, WizStage } from '../types.js';
+  import type { WizardState, WizUpdate, AssistantEntry, WizStage } from '../types.js';
   import { senseiApi } from '$lib/api.js';
   import { getPort } from '$lib/appstate.svelte.js';
   import StepHeader from './StepHeader.svelte';
@@ -11,36 +11,35 @@
     stage: WizStage;
   } = $props();
 
-  let acps = $state<AcpEntry[]>(wizState.acpList);
+  let assistants = $state<AssistantEntry[]>(wizState.assistantList);
 
   /** Replace home dir with ~ for display */
   function shortPath(p: string | null): string {
     if (!p) return '';
     const home = typeof process !== 'undefined' ? process.env.HOME : null;
     if (home && p.startsWith(home)) return '~' + p.slice(home.length);
-    // Fallback: strip /Users/<name> pattern
     return p.replace(/^\/Users\/[^/]+/, '~');
   }
 
   onMount(async () => {
     try {
       const api = senseiApi(getPort());
-      const detected = await api.detectAcps();
-      if (detected.length > 0) {
-        acps = detected.map(a => ({
-          id: a.id, name: a.name, version: null,
-          found: a.installed, path: a.config_path ?? null,
+      const families = await api.detectAssistantFamilies();
+      if (families.length > 0) {
+        assistants = families.map(f => ({
+          id: f.family, name: f.name, version: null,
+          found: f.installed, path: f.config_path ? shortPath(f.config_path) : null,
         }));
         update({
-          acps: Object.fromEntries(detected.map(a => [a.id, a.installed])),
-          acpList: acps,
+          assistants: Object.fromEntries(families.map(f => [f.family, f.installed])),
+          assistantList: assistants,
         });
       }
     } catch { /* keep whatever was passed */ }
   });
 
   function toggle(id: string) {
-    update({ acps: { ...wizState.acps, [id]: !wizState.acps[id] } });
+    update({ assistants: { ...wizState.assistants, [id]: !wizState.assistants[id] } });
   }
 </script>
 
@@ -48,25 +47,25 @@
   <StepHeader {stage} subtitle="Registers plugins, skills, commands, agents, logging and metrics." />
 
   <div class="grid">
-    {#each acps as acp}
-      {@const checked = !!wizState.acps[acp.id]}
-      {@const found = acp.found}
+    {#each assistants as asst}
+      {@const checked = !!wizState.assistants[asst.id]}
+      {@const found = asst.found}
       <button
         class="card"
         class:card-found={found}
         class:card-missing={!found}
-        onclick={() => toggle(acp.id)}
+        onclick={() => toggle(asst.id)}
       >
         <div class="card-body">
           <div class="card-top">
-            <span class="card-name">{acp.name}</span>
-            {#if acp.version}
-              <span class="card-version">v{acp.version}</span>
+            <span class="card-name">{asst.name}</span>
+            {#if asst.version}
+              <span class="card-version">v{asst.version}</span>
             {/if}
           </div>
           <div class="card-bottom">
-            {#if found && acp.path}
-              <span class="card-path">{shortPath(acp.path)}</span>
+            {#if found && asst.path}
+              <span class="card-path">{asst.path}</span>
             {:else}
               <span class="card-notfound">not found</span>
             {/if}

@@ -4,16 +4,16 @@ mod claude_code;
 mod mcp_file;
 
 use serde::{Deserialize, Serialize};
-use trait_def::Acp;
-use claude_code::ClaudeCodeAcp;
-use mcp_file::{McpFileAcp, McpEntryFormat};
+use trait_def::Assistant;
+use claude_code::ClaudeCodeAssistant;
+use mcp_file::{McpFileAssistant, McpEntryFormat};
 use helpers::{home, find_mcp_binary};
 
 // ── Registry ───────────────────────────────────────────────────────────────
 
-fn all_acps() -> Vec<Box<dyn Acp>> {
+fn all_assistants() -> Vec<Box<dyn Assistant>> {
     vec![
-        Box::new(McpFileAcp {
+        Box::new(McpFileAssistant {
             id: "claude-desktop", name: "Claude Desktop",
             family_id: Some("claude"), family_label: Some("Claude"),
             mcp_key: "mcpServers",
@@ -23,8 +23,8 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
             bin_names: &[],
             home_paths: &[],
         }),
-        Box::new(ClaudeCodeAcp),
-        Box::new(McpFileAcp {
+        Box::new(ClaudeCodeAssistant),
+        Box::new(McpFileAssistant {
             id: "cursor", name: "Cursor",
             family_id: None, family_label: None,
             mcp_key: "mcpServers",
@@ -34,7 +34,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
             bin_names: &["cursor"],
             home_paths: &[],
         }),
-        Box::new(McpFileAcp {
+        Box::new(McpFileAssistant {
             id: "windsurf", name: "Windsurf",
             family_id: None, family_label: None,
             mcp_key: "mcpServers",
@@ -44,7 +44,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
             bin_names: &["windsurf"],
             home_paths: &[],
         }),
-        Box::new(McpFileAcp {
+        Box::new(McpFileAssistant {
             id: "zed", name: "Zed",
             family_id: None, family_label: None,
             mcp_key: "mcpServers",
@@ -54,7 +54,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
             bin_names: &["zed"],
             home_paths: &[".config/zed/settings.json"],
         }),
-        Box::new(McpFileAcp {
+        Box::new(McpFileAssistant {
             id: "kiro", name: "Kiro",
             family_id: None, family_label: None,
             mcp_key: "mcpServers",
@@ -64,7 +64,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
             bin_names: &["kiro"],
             home_paths: &[],
         }),
-        Box::new(McpFileAcp {
+        Box::new(McpFileAssistant {
             id: "opencode", name: "OpenCode",
             family_id: None, family_label: None,
             mcp_key: "mcp",
@@ -74,7 +74,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
             bin_names: &["opencode"],
             home_paths: &[".config/opencode/opencode.json", ".local/bin/opencode"],
         }),
-        Box::new(McpFileAcp {
+        Box::new(McpFileAssistant {
             id: "vscode", name: "VS Code",
             family_id: None, family_label: None,
             mcp_key: "mcpServers",
@@ -90,7 +90,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
 // ── Public types ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AcpStatus {
+pub struct AssistantStatus {
     pub id: String,
     pub name: String,
     pub family: String,
@@ -101,10 +101,10 @@ pub struct AcpStatus {
 
 /// Grouped view for the UI — one entry per family.
 #[derive(Debug, Serialize, Clone)]
-pub struct AcpFamily {
+pub struct AssistantFamily {
     pub family: String,
     pub name: String,
-    pub members: Vec<AcpStatus>,
+    pub members: Vec<AssistantStatus>,
     pub installed: bool,
     pub config_path: String,
 }
@@ -120,28 +120,28 @@ pub struct ConfigureResult {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-pub fn detect() -> Vec<AcpStatus> {
-    all_acps().iter().map(|acp| acp.status()).collect()
+pub fn detect() -> Vec<AssistantStatus> {
+    all_assistants().iter().map(|a| a.status()).collect()
 }
 
 /// Grouped view — one entry per family for the UI.
 /// Claude Desktop + Claude Code become a single "Claude" family card.
-pub fn detect_families() -> Vec<AcpFamily> {
+pub fn detect_families() -> Vec<AssistantFamily> {
     let statuses = detect();
-    let acps = all_acps();
-    let mut families: Vec<AcpFamily> = vec![];
+    let assistants = all_assistants();
+    let mut families: Vec<AssistantFamily> = vec![];
 
-    for acp in &acps {
-        let Some(status) = statuses.iter().find(|s| s.id == acp.id()).cloned() else { continue };
-        let fam_id = acp.family();
+    for asst in &assistants {
+        let Some(status) = statuses.iter().find(|s| s.id == asst.id()).cloned() else { continue };
+        let fam_id = asst.family();
 
         if let Some(existing) = families.iter_mut().find(|f| f.family == fam_id) {
             if status.installed { existing.installed = true; }
             existing.members.push(status);
         } else {
-            families.push(AcpFamily {
+            families.push(AssistantFamily {
                 family: fam_id.to_string(),
-                name: acp.family_name().to_string(),
+                name: asst.family_name().to_string(),
                 installed: status.installed,
                 config_path: status.config_path.clone(),
                 members: vec![status],
@@ -151,8 +151,8 @@ pub fn detect_families() -> Vec<AcpFamily> {
     families
 }
 
-pub fn configure(acp_ids: &[String]) -> ConfigureResult {
-    let acps = all_acps();
+pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
+    let assistants = all_assistants();
     let h = home();
     let mut result = ConfigureResult {
         configured: vec![],
@@ -169,24 +169,24 @@ pub fn configure(acp_ids: &[String]) -> ConfigureResult {
         }
     };
 
-    let targets: Vec<&Box<dyn Acp>> = if acp_ids.is_empty() {
-        acps.iter().filter(|a| a.detect()).collect()
+    let targets: Vec<&Box<dyn Assistant>> = if assistant_ids.is_empty() {
+        assistants.iter().filter(|a| a.detect()).collect()
     } else {
-        acps.iter().filter(|a| acp_ids.contains(&a.id().to_string())).collect()
+        assistants.iter().filter(|a| assistant_ids.contains(&a.id().to_string())).collect()
     };
 
-    for acp in &targets {
-        match acp.configure(&mcp_cmd) {
+    for asst in &targets {
+        match asst.configure(&mcp_cmd) {
             Ok(ok) => {
-                result.configured.push(acp.id().to_string());
+                result.configured.push(asst.id().to_string());
                 if ok.plugin { result.plugin_installed = true; }
                 result.errors.extend(ok.warnings);
             }
-            Err(e) => result.errors.push(format!("{}: {}", acp.id(), e)),
+            Err(e) => result.errors.push(format!("{}: {}", asst.id(), e)),
         }
     }
 
-    // Save configured ACPs
+    // Save configured assistants
     let sensei_dir = h.join(".sensei");
     std::fs::create_dir_all(&sensei_dir).ok();
     let config_file = sensei_dir.join("config.json");
@@ -196,7 +196,7 @@ pub fn configure(acp_ids: &[String]) -> ConfigureResult {
         .flatten()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::json!({}));
-    config["configured_acps"] = serde_json::json!(
+    config["configured_assistants"] = serde_json::json!(
         targets.iter()
             .filter(|a| result.configured.contains(&a.id().to_string()))
             .map(|a| a.id().to_string())
@@ -207,18 +207,18 @@ pub fn configure(acp_ids: &[String]) -> ConfigureResult {
     result
 }
 
-/// Remove specific ACP configs by ID. Empty slice = remove all.
+/// Remove specific Assistant configs by ID. Empty slice = remove all.
 pub fn remove_selected(ids: &[String]) -> Vec<String> {
-    let acps = all_acps();
-    let targets: Vec<&Box<dyn Acp>> = if ids.is_empty() {
-        acps.iter().collect()
+    let assistants = all_assistants();
+    let targets: Vec<&Box<dyn Assistant>> = if ids.is_empty() {
+        assistants.iter().collect()
     } else {
-        acps.iter().filter(|a| ids.contains(&a.id().to_string())).collect()
+        assistants.iter().filter(|a| ids.contains(&a.id().to_string())).collect()
     };
     targets
         .iter()
-        .filter_map(|acp| {
-            if acp.remove() { Some(acp.id().to_string()) } else { None }
+        .filter_map(|asst| {
+            if asst.remove() { Some(asst.id().to_string()) } else { None }
         })
         .collect()
 }
@@ -383,12 +383,12 @@ mod tests {
         assert!(remove_sensei_from_json(&path, "mcpServers"));
     }
 
-    // ── McpFileAcp configure/unconfigure ───────────────────────────────
+    // ── McpFileAssistant configure/unconfigure ──────────────────────────
 
     #[test]
-    fn mcp_file_acp_configure_creates_config() {
+    fn mcp_file_assistant_configure_creates_config() {
         let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("test-acp/mcp.json");
+        let config_path = dir.path().join("test-assistant/mcp.json");
 
         let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
         upsert_sensei_in_json(&config_path, "mcpServers", entry).unwrap();
@@ -402,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn opencode_acp_uses_different_entry_format() {
+    fn opencode_assistant_uses_different_entry_format() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("opencode.json");
 
@@ -419,55 +419,55 @@ mod tests {
     // ── Registry consistency ───────────────────────────────────────────
 
     #[test]
-    fn all_acps_have_unique_ids() {
-        let acps = all_acps();
-        let mut ids: Vec<&str> = acps.iter().map(|a| a.id()).collect();
+    fn all_assistants_have_unique_ids() {
+        let assistants = all_assistants();
+        let mut ids: Vec<&str> = assistants.iter().map(|a| a.id()).collect();
         let original_len = ids.len();
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), original_len, "duplicate ACP ids found");
+        assert_eq!(ids.len(), original_len, "duplicate assistant ids found");
     }
 
     #[test]
-    fn all_acps_have_nonempty_fields() {
-        for acp in all_acps() {
-            assert!(!acp.id().is_empty(), "empty id");
-            assert!(!acp.name().is_empty(), "empty name for {}", acp.id());
-            assert!(!acp.mcp_key().is_empty(), "empty mcp_key for {}", acp.id());
-            assert!(!acp.config_path().as_os_str().is_empty(), "empty config_path for {}", acp.id());
+    fn all_assistants_have_nonempty_fields() {
+        for asst in all_assistants() {
+            assert!(!asst.id().is_empty(), "empty id");
+            assert!(!asst.name().is_empty(), "empty name for {}", asst.id());
+            assert!(!asst.mcp_key().is_empty(), "empty mcp_key for {}", asst.id());
+            assert!(!asst.config_path().as_os_str().is_empty(), "empty config_path for {}", asst.id());
         }
     }
 
     #[test]
     fn claude_code_is_registered() {
-        let acps = all_acps();
-        assert!(acps.iter().any(|a| a.id() == "claude-code"));
+        let assistants = all_assistants();
+        assert!(assistants.iter().any(|a| a.id() == "claude-code"));
     }
 
     #[test]
     fn opencode_uses_mcp_key() {
-        let acps = all_acps();
-        let oc = acps.iter().find(|a| a.id() == "opencode").unwrap();
+        let assistants = all_assistants();
+        let oc = assistants.iter().find(|a| a.id() == "opencode").unwrap();
         assert_eq!(oc.mcp_key(), "mcp");
     }
 
     #[test]
-    fn standard_acps_use_mcp_servers_key() {
-        let acps = all_acps();
+    fn standard_assistants_use_mcp_servers_key() {
+        let assistants = all_assistants();
         for id in ["cursor", "windsurf", "zed", "kiro", "vscode", "claude-desktop", "claude-code"] {
-            let acp = acps.iter().find(|a| a.id() == id).expect(id);
-            assert_eq!(acp.mcp_key(), "mcpServers", "{} should use mcpServers key", id);
+            let asst = assistants.iter().find(|a| a.id() == id).expect(id);
+            assert_eq!(asst.mcp_key(), "mcpServers", "{} should use mcpServers key", id);
         }
     }
 
     #[test]
-    fn expected_acps_are_registered() {
-        let acps = all_acps();
-        let ids: Vec<&str> = acps.iter().map(|a| a.id()).collect();
+    fn expected_assistants_are_registered() {
+        let assistants = all_assistants();
+        let ids: Vec<&str> = assistants.iter().map(|a| a.id()).collect();
         for expected in ["claude-desktop", "claude-code", "cursor", "windsurf", "zed", "kiro", "opencode", "vscode"] {
-            assert!(ids.contains(&expected), "missing ACP: {}", expected);
+            assert!(ids.contains(&expected), "missing assistant: {}", expected);
         }
-        assert_eq!(ids.len(), 8, "unexpected number of ACPs");
+        assert_eq!(ids.len(), 8, "unexpected number of assistants");
     }
 
     // ── Edge cases ─────────────────────────────────────────────────────
@@ -503,7 +503,7 @@ mod tests {
         assert!(!remove_sensei_from_json(&path, "mcpServers"));
     }
 
-    // Note: ClaudeCodeAcp::configure/remove call `claude` CLI which
+    // Note: ClaudeCodeAssistant::configure/remove call `claude` CLI which
     // can't be safely mocked in parallel unit tests (requires PATH mutation).
     // The CLI invocation behavior is tested via the integration/e2e path.
 }

@@ -2,11 +2,11 @@
 // Replace with real daemon API calls when endpoints are ready.
 
 import type {
-  AcpEntry, ScanFolder, ScanEvent, DiscoveredProject,
+  AssistantEntry, ScanFolder, ScanEvent, DiscoveredProject,
   DiscoveredLibrary, McpEntry, WizardState
 } from './types.js';
 
-export const MOCK_ACPS: AcpEntry[] = [
+export const MOCK_ASSISTANTS: AssistantEntry[] = [
   { id: 'claude-code', name: 'Claude Code', version: '1.8.2', found: true,  path: '/Users/aiko/.claude/code' },
   { id: 'cursor',      name: 'Cursor',      version: '0.42',  found: true,  path: '/Applications/Cursor.app' },
   { id: 'zed',         name: 'Zed',         version: '0.148', found: false, path: null },
@@ -79,8 +79,8 @@ export const MOCK_STACK = {
 /** Empty state for production — populated from daemon on mount. */
 export function createEmptyState(): WizardState {
   return {
-    acps: {},
-    acpList: [],
+    assistants: {},
+    assistantList: [],
     folders: [],
     scanStarted: false,
     scanDone: false,
@@ -98,8 +98,8 @@ export function createEmptyState(): WizardState {
 /** Full mock state for when daemon is unreachable. */
 export function createMockState(): WizardState {
   return {
-    acps: Object.fromEntries(MOCK_ACPS.map(a => [a.id, a.found])),
-    acpList: MOCK_ACPS,
+    assistants: Object.fromEntries(MOCK_ASSISTANTS.map(a => [a.id, a.found])),
+    assistantList: MOCK_ASSISTANTS,
     folders: [...MOCK_FOLDERS],
     scanStarted: false,
     scanDone: false,

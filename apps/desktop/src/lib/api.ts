@@ -249,21 +249,23 @@ export function senseiApi(port: number) {
 
     deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
 
-    // ── ACP (AI Coding Platform) ────────────────────────────────────────
-    detectAcps: () => get<import('./types').AcpStatus[]>('/api/acp/detect', []),
+    // ── Assistants ────────────────────────────────────────────────────────
+    detectAssistants: () => get<import('./types').AssistantStatus[]>('/api/assistants/detect', []),
 
-    configureAcps: (acps: string[]) =>
-      post<import('./types').AcpConfigureResult>('/api/acp/configure', { acps }, { configured: [], skipped: [], errors: [] }),
+    detectAssistantFamilies: () => get<import('./types').AssistantFamily[]>('/api/assistants/families', []),
 
-    removeAcps: (acps: string[] = []) =>
-      post<import('./types').AcpRemoveResult>('/api/acp/remove', { acps }, { acps_removed: [], errors: [] }),
+    configureAssistants: (assistants: string[]) =>
+      post<import('./types').AssistantConfigureResult>('/api/assistants/configure', { acps: assistants }, { configured: [], skipped: [], errors: [] }),
+
+    removeAssistants: (assistants: string[] = []) =>
+      post<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }, { assistants_removed: [], errors: [] }),
 
     // ── Installer ───────────────────────────────────────────────────────
-    installAll: (acps: string[], scope = 'global') =>
-      post<import('./types').InstallResult>('/api/install', { acps, scope }, {
+    installAll: (assistants: string[], scope = 'global') =>
+      post<import('./types').InstallResult>('/api/install', { acps: assistants, scope }, {
         hooks_installed: 0, skills_installed: 0, commands_installed: 0,
         stale_commands_removed: 0, stale_skills_removed: 0,
-        acps_configured: [], errors: [], marketplace_version: '',
+        assistants_configured: [], errors: [], marketplace_version: '',
       }),
 
     installHooks: () =>

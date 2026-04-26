@@ -1,14 +1,23 @@
-// ─── ACP (AI Coding Platforms) ─────────────────────────────────────────────────
+// ─── Assistants (AI coding tools) ──────────────────────────────────────────────
 
-export interface AcpStatus {
+export interface AssistantStatus {
   id: string;
   name: string;
+  family: string;
   installed: boolean;
   mcp_configured: boolean;
   config_path: string;
 }
 
-export interface AcpConfigureResult {
+export interface AssistantFamily {
+  family: string;
+  name: string;
+  members: AssistantStatus[];
+  installed: boolean;
+  config_path: string;
+}
+
+export interface AssistantConfigureResult {
   configured: string[];
   skipped: string[];
   errors: string[];
@@ -22,13 +31,13 @@ export interface InstallResult {
   commands_installed: number;
   stale_commands_removed: number;
   stale_skills_removed: number;
-  acps_configured: string[];
+  assistants_configured: string[];
   errors: string[];
   marketplace_version: string;
 }
 
 export interface RemoveResult {
-  acps_removed: string[];
+  assistants_removed: string[];
   plugin_removed: boolean;
   commands_removed: number;
   skills_removed: number;
@@ -39,8 +48,8 @@ export interface RemoveResult {
   errors: string[];
 }
 
-export interface AcpRemoveResult {
-  acps_removed: string[];
+export interface AssistantRemoveResult {
+  assistants_removed: string[];
   errors: string[];
 }
 

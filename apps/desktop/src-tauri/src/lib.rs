@@ -2,16 +2,16 @@ use std::time::SystemTime;
 use serde_json::{json, Value};
 use tauri::Manager;
 
-// ── ACP detection (delegates to daemon API) ──────────────────────────────
+// ── Assistant detection (delegates to daemon API) ────────────────────────
 
 const DAEMON_URL: &str = "http://127.0.0.1:7744";
 
 #[tauri::command]
-fn detect_acps() -> Vec<String> {
-    match ureq::get(&format!("{}/api/acp/detect", DAEMON_URL)).call() {
+fn detect_assistants() -> Vec<String> {
+    match ureq::get(&format!("{}/api/assistants/detect", DAEMON_URL)).call() {
         Ok(resp) => {
-            let acps: Vec<serde_json::Value> = resp.into_json().unwrap_or_default();
-            acps.iter()
+            let assistants: Vec<serde_json::Value> = resp.into_json().unwrap_or_default();
+            assistants.iter()
                 .filter(|a| a["installed"].as_bool() == Some(true))
                 .filter_map(|a| a["id"].as_str().map(String::from))
                 .collect()
@@ -51,9 +51,9 @@ fn find_sensei_binary() -> Option<String> {
 // ── MCP configuration (delegates to daemon API) ──────────────────────────
 
 #[tauri::command]
-fn configure_mcp(acps: Vec<String>) -> Result<Vec<String>, String> {
-    let body = json!({"acps": acps});
-    match ureq::post(&format!("{}/api/acp/configure", DAEMON_URL))
+fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
+    let body = json!({"acps": assistants});
+    match ureq::post(&format!("{}/api/assistants/configure", DAEMON_URL))
         .send_json(&body)
     {
         Ok(resp) => {
@@ -603,20 +603,21 @@ fn parse_pkg_specifier(s: &str) -> Option<String> {
     None
 }
 
-// ── ACP config status ──────────────────────────────────────────────────────
+// ── Assistant config status ────────────────────────────────────────────────
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct AcpStatus {
+struct AssistantStatus {
     id: String,
     name: String,
+    family: String,
     installed: bool,
     mcp_configured: bool,
     config_path: String,
 }
 
 #[tauri::command]
-fn check_acp_configs() -> Vec<AcpStatus> {
-    match ureq::get(&format!("{}/api/acp/detect", DAEMON_URL)).call() {
+fn check_assistant_configs() -> Vec<AssistantStatus> {
+    match ureq::get(&format!("{}/api/assistants/detect", DAEMON_URL)).call() {
         Ok(resp) => resp.into_json().unwrap_or_default(),
         Err(_) => vec![],
     }
@@ -754,9 +755,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            detect_acps,
+            detect_assistants,
             configure_mcp,
-            check_acp_configs,
+            check_assistant_configs,
             get_repo_id,
             analyze_folder,
             detect_dependencies,

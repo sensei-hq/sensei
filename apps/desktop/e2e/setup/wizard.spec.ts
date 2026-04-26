@@ -109,12 +109,12 @@ test.describe('Setup Wizard', () => {
 
     await expect(page.locator('h1')).toContainText('Assistants');
 
-    const acps = await daemonGet<any[]>('/api/acp/detect');
-    const foundAcps = acps.filter((a: any) => a.installed);
-    expect(foundAcps.length).toBeGreaterThan(0);
+    const assistants = await daemonGet<any[]>('/api/assistants/detect');
+    const found = assistants.filter((a: any) => a.installed);
+    expect(found.length).toBeGreaterThan(0);
 
-    // At least one found ACP should be visible
-    await expect(page.getByText(foundAcps[0].name)).toBeVisible();
+    // At least one found assistant should be visible
+    await expect(page.getByText(found[0].name)).toBeVisible();
   });
 
   test('Step 4: Folders — starts empty, can add', async ({ page }) => {
