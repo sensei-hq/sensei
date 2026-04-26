@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn purpose_result_aggregates_costs() {
-        let steps = vec![
+        let steps = [
             StepResult {
                 step_index: 0,
                 capability: Capability::TextChat,

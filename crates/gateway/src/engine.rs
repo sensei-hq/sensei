@@ -166,6 +166,11 @@ impl Gateway {
         let mut guard = self.config.write().await;
         *guard = config;
     }
+
+    /// Return a sorted list of all registered adapter ids.
+    pub async fn list_adapters(&self) -> Vec<String> {
+        self.adapters.list().await
+    }
 }
 
 /// Estimate input token count from the request payload.
@@ -272,8 +277,7 @@ mod tests {
             half_open_max_requests: 3,
         });
 
-        let gw = Gateway::new(config, adapters, cb);
-        gw
+        Gateway::new(config, adapters, cb)
     }
 
     async fn register_noop(gw: &Gateway) {
@@ -408,5 +412,471 @@ mod tests {
             result.unwrap_err(),
             GatewayError::NoCandidates { .. }
         ));
+    }
+
+    // --- FailingAdapter for error/fallback path tests ---
+
+    use crate::adapters::InferenceAdapter;
+    use crate::types::request::StreamChunk;
+    use futures::Stream;
+    use std::pin::Pin;
+
+    struct FailingAdapter {
+        error: GatewayError,
+    }
+
+    #[async_trait::async_trait]
+    impl InferenceAdapter for FailingAdapter {
+        fn id(&self) -> &str {
+            "failing"
+        }
+
+        fn supports(&self, _capability: &Capability) -> bool {
+            true
+        }
+
+        async fn execute(
+            &self,
+            _config: &crate::types::config::RouterConfig,
+            _request: &crate::types::request::InferenceRequest,
+        ) -> Result<InferenceResponse, GatewayError> {
+            // Clone the error to return each time
+            match &self.error {
+                GatewayError::ProviderError {
+                    adapter,
+                    message,
+                    status,
+                } => Err(GatewayError::ProviderError {
+                    adapter: adapter.clone(),
+                    message: message.clone(),
+                    status: *status,
+                }),
+                GatewayError::Authentication { adapter, message } => {
+                    Err(GatewayError::Authentication {
+                        adapter: adapter.clone(),
+                        message: message.clone(),
+                    })
+                }
+                GatewayError::RateLimit {
+                    adapter,
+                    retry_after_ms,
+                } => Err(GatewayError::RateLimit {
+                    adapter: adapter.clone(),
+                    retry_after_ms: *retry_after_ms,
+                }),
+                GatewayError::Timeout {
+                    adapter,
+                    model,
+                    duration_ms,
+                } => Err(GatewayError::Timeout {
+                    adapter: adapter.clone(),
+                    model: model.clone(),
+                    duration_ms: *duration_ms,
+                }),
+                _ => Err(GatewayError::ProviderError {
+                    adapter: "failing".into(),
+                    message: "generic failure".into(),
+                    status: None,
+                }),
+            }
+        }
+
+        async fn stream(
+            &self,
+            _config: &crate::types::config::RouterConfig,
+            _request: &crate::types::request::InferenceRequest,
+        ) -> Result<
+            Pin<Box<dyn Stream<Item = Result<StreamChunk, GatewayError>> + Send>>,
+            GatewayError,
+        > {
+            Err(GatewayError::ProviderError {
+                adapter: "failing".into(),
+                message: "not supported".into(),
+                status: None,
+            })
+        }
+    }
+
+    /// Config with a failing adapter as primary and noop as fallback.
+    fn test_config_with_failing_and_noop() -> GatewayConfig {
+        let mut routers = HashMap::new();
+        routers.insert(
+            "failing".to_string(),
+            RouterConfig {
+                url: "http://localhost".to_string(),
+                api_key_env: None,
+                enabled: true,
+                timeout_ms: None,
+                headers: HashMap::new(),
+            },
+        );
+        routers.insert(
+            "noop".to_string(),
+            RouterConfig {
+                url: "http://localhost".to_string(),
+                api_key_env: None,
+                enabled: true,
+                timeout_ms: None,
+                headers: HashMap::new(),
+            },
+        );
+
+        let mut models = HashMap::new();
+        models.insert(
+            "fail-model".to_string(),
+            ModelConfig {
+                id: "fail-model".to_string(),
+                api_model_id: None,
+                provider: "failing".to_string(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 4096,
+                max_output_tokens: 1024,
+                pricing: None,
+            },
+        );
+        models.insert(
+            "noop".to_string(),
+            ModelConfig {
+                id: "noop".to_string(),
+                api_model_id: None,
+                provider: "noop".to_string(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 4096,
+                max_output_tokens: 1024,
+                pricing: None,
+            },
+        );
+
+        let mut chains = HashMap::new();
+        chains.insert(
+            "chat_chain".to_string(),
+            FallbackChainConfig {
+                id: "chat_chain".to_string(),
+                capability: Capability::TextChat,
+                models: vec![
+                    ChainEntry {
+                        model: "fail-model".to_string(),
+                        router: Some("failing".to_string()),
+                        api_model_id: None,
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "noop".to_string(),
+                        router: Some("noop".to_string()),
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![
+                    FallbackTrigger::ProviderError,
+                    FallbackTrigger::Timeout,
+                    FallbackTrigger::RateLimit,
+                ],
+            },
+        );
+
+        GatewayConfig {
+            routers,
+            models,
+            chains,
+        }
+    }
+
+    /// Helper: gateway with a failing adapter registered.
+    fn test_gateway_with_chain() -> Gateway {
+        let config = test_config_with_failing_and_noop();
+        let adapters = AdapterRegistry::new();
+        let cb = CircuitBreakerManager::new(CircuitBreakerConfig {
+            threshold: 5,
+            timeout: Duration::from_secs(300),
+            half_open_max_requests: 3,
+        });
+        Gateway::new(config, adapters, cb)
+    }
+
+    async fn register_failing(gw: &Gateway, error: GatewayError) {
+        gw.adapters
+            .register(Arc::new(FailingAdapter { error }) as Arc<dyn InferenceAdapter>)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn execute_fallback_on_provider_error() {
+        let gw = test_gateway_with_chain();
+        register_failing(
+            &gw,
+            GatewayError::ProviderError {
+                adapter: "failing".into(),
+                message: "server error".into(),
+                status: Some(500),
+            },
+        )
+        .await;
+        register_noop(&gw).await;
+
+        let response = gw.execute(&chat_request()).await.unwrap();
+        // Should have fallen back to noop after failing adapter errors
+        assert_eq!(response.model, Some("noop".to_string()));
+        assert!(response.attempts.len() >= 2);
+        // First attempt should be failed
+        assert_eq!(
+            response.attempts[0].status,
+            crate::types::trace::AttemptStatus::Failed
+        );
+        assert!(response.attempts[0].fallback_triggered);
+        // Second attempt should be the noop success
+        assert_eq!(
+            response.attempts[1].status,
+            crate::types::trace::AttemptStatus::Success
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_stops_on_auth_error() {
+        // Authentication error should NOT trigger fallback — it breaks the loop
+        let gw = test_gateway_with_chain();
+        register_failing(
+            &gw,
+            GatewayError::Authentication {
+                adapter: "failing".into(),
+                message: "bad key".into(),
+            },
+        )
+        .await;
+        register_noop(&gw).await;
+
+        let result = gw.execute(&chat_request()).await;
+        // Should be AllAttemptsFailed because auth error is not a fallback trigger
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GatewayError::AllAttemptsFailed { attempts } => {
+                assert_eq!(attempts, 1);
+            }
+            other => panic!("Expected AllAttemptsFailed, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_all_fail_returns_error() {
+        // Both adapters are failing — all candidates fail
+        let mut routers = HashMap::new();
+        routers.insert(
+            "failing".to_string(),
+            RouterConfig {
+                url: "http://localhost".to_string(),
+                api_key_env: None,
+                enabled: true,
+                timeout_ms: None,
+                headers: HashMap::new(),
+            },
+        );
+
+        let mut models = HashMap::new();
+        models.insert(
+            "fail-model".to_string(),
+            ModelConfig {
+                id: "fail-model".to_string(),
+                api_model_id: None,
+                provider: "failing".to_string(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 4096,
+                max_output_tokens: 1024,
+                pricing: None,
+            },
+        );
+
+        let mut chains = HashMap::new();
+        chains.insert(
+            "chat_chain".to_string(),
+            FallbackChainConfig {
+                id: "chat_chain".to_string(),
+                capability: Capability::TextChat,
+                models: vec![ChainEntry {
+                    model: "fail-model".to_string(),
+                    router: Some("failing".to_string()),
+                    api_model_id: None,
+                    priority: 1,
+                }],
+                fallback_triggers: vec![FallbackTrigger::ProviderError],
+            },
+        );
+
+        let config = GatewayConfig {
+            routers,
+            models,
+            chains,
+        };
+        let adapters = AdapterRegistry::new();
+        let cb = CircuitBreakerManager::new(CircuitBreakerConfig {
+            threshold: 5,
+            timeout: Duration::from_secs(300),
+            half_open_max_requests: 3,
+        });
+        let gw = Gateway::new(config, adapters, cb);
+        register_failing(
+            &gw,
+            GatewayError::ProviderError {
+                adapter: "failing".into(),
+                message: "error".into(),
+                status: Some(500),
+            },
+        )
+        .await;
+
+        let result = gw.execute(&chat_request()).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GatewayError::AllAttemptsFailed { attempts } => {
+                assert_eq!(attempts, 1);
+            }
+            other => panic!("Expected AllAttemptsFailed, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_adapter_not_found() {
+        // Config references a router "ghost" but no adapter is registered for it
+        let mut routers = HashMap::new();
+        routers.insert(
+            "ghost".to_string(),
+            RouterConfig {
+                url: "http://localhost".to_string(),
+                api_key_env: None,
+                enabled: true,
+                timeout_ms: None,
+                headers: HashMap::new(),
+            },
+        );
+        routers.insert(
+            "noop".to_string(),
+            RouterConfig {
+                url: "http://localhost".to_string(),
+                api_key_env: None,
+                enabled: true,
+                timeout_ms: None,
+                headers: HashMap::new(),
+            },
+        );
+
+        let mut models = HashMap::new();
+        models.insert(
+            "ghost-model".to_string(),
+            ModelConfig {
+                id: "ghost-model".to_string(),
+                api_model_id: None,
+                provider: "ghost".to_string(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 4096,
+                max_output_tokens: 1024,
+                pricing: None,
+            },
+        );
+        models.insert(
+            "noop".to_string(),
+            ModelConfig {
+                id: "noop".to_string(),
+                api_model_id: None,
+                provider: "noop".to_string(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 4096,
+                max_output_tokens: 1024,
+                pricing: None,
+            },
+        );
+
+        let mut chains = HashMap::new();
+        chains.insert(
+            "chat_chain".to_string(),
+            FallbackChainConfig {
+                id: "chat_chain".to_string(),
+                capability: Capability::TextChat,
+                models: vec![
+                    ChainEntry {
+                        model: "ghost-model".to_string(),
+                        router: Some("ghost".to_string()),
+                        api_model_id: None,
+                        priority: 1,
+                    },
+                    ChainEntry {
+                        model: "noop".to_string(),
+                        router: Some("noop".to_string()),
+                        api_model_id: None,
+                        priority: 2,
+                    },
+                ],
+                fallback_triggers: vec![FallbackTrigger::ProviderError],
+            },
+        );
+
+        let config = GatewayConfig {
+            routers,
+            models,
+            chains,
+        };
+        let adapters = AdapterRegistry::new();
+        let cb = CircuitBreakerManager::new(CircuitBreakerConfig {
+            threshold: 5,
+            timeout: Duration::from_secs(300),
+            half_open_max_requests: 3,
+        });
+        let gw = Gateway::new(config, adapters, cb);
+        // Only register noop — "ghost" has no adapter
+        register_noop(&gw).await;
+
+        let response = gw.execute(&chat_request()).await.unwrap();
+        // Ghost adapter was skipped, noop should have handled it
+        assert_eq!(response.model, Some("noop".to_string()));
+        assert!(response.attempts.len() >= 2);
+        assert!(response.attempts[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("no adapter registered"));
+    }
+
+    #[test]
+    fn estimate_input_tokens_stt() {
+        let payload = Payload::Stt {
+            audio: vec![0u8; 1000],
+            language: None,
+            format: "wav".to_string(),
+        };
+        assert_eq!(estimate_input_tokens(&payload), 0);
+    }
+
+    #[test]
+    fn estimate_input_tokens_tts() {
+        let payload = Payload::Tts {
+            text: "Hello world, this is a test!".to_string(),
+            voice: None,
+            speed: None,
+            output_format: crate::types::request::AudioFormat::Mp3,
+        };
+        let expected = ("Hello world, this is a test!".len() / 4) as u32;
+        assert_eq!(estimate_input_tokens(&payload), expected);
+    }
+
+    #[test]
+    fn estimate_input_tokens_image_generate() {
+        let payload = Payload::ImageGenerate {
+            prompt: "A beautiful sunset over mountains".to_string(),
+            size: None,
+            quality: None,
+            style: None,
+            n: 1,
+        };
+        let expected = ("A beautiful sunset over mountains".len() / 4) as u32;
+        assert_eq!(estimate_input_tokens(&payload), expected);
+    }
+
+    #[test]
+    fn estimate_input_tokens_video_generate() {
+        let payload = Payload::VideoGenerate {
+            prompt: "A timelapse of a blooming flower".to_string(),
+            duration_secs: Some(10),
+            resolution: Some("1080p".to_string()),
+        };
+        let expected = ("A timelapse of a blooming flower".len() / 4) as u32;
+        assert_eq!(estimate_input_tokens(&payload), expected);
     }
 }
