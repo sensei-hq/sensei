@@ -84,6 +84,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/marketplace/install", post(config::marketplace_install))
         // ACP (AI Coding Platform) detection & configuration
         .route("/api/acp/detect", get(config::acp_detect))
+        .route("/api/acp/families", get(config::acp_detect_families))
         .route("/api/acp/configure", post(config::acp_configure))
         .route("/api/acp/remove", post(config::acp_remove))
         // Installer — hooks, skills, commands, install/remove
