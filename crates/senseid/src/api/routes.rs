@@ -82,11 +82,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/mcp/call", post(query::mcp_call_tool))
         // Marketplace install (legacy — prefer /api/install endpoints)
         .route("/api/marketplace/install", post(config::marketplace_install))
-        // ACP (AI Coding Platform) detection & configuration
-        .route("/api/acp/detect", get(config::acp_detect))
-        .route("/api/acp/families", get(config::acp_detect_families))
-        .route("/api/acp/configure", post(config::acp_configure))
-        .route("/api/acp/remove", post(config::acp_remove))
+        // Assistants detection & configuration
+        .route("/api/assistants/detect", get(config::assistant_detect))
+        .route("/api/assistants/families", get(config::assistant_detect_families))
+        .route("/api/assistants/configure", post(config::assistant_configure))
+        .route("/api/assistants/remove", post(config::assistant_remove))
         // Installer — hooks, skills, commands, install/remove
         .route("/api/install", post(config::install_all))
         .route("/api/install/hooks", post(config::install_hooks))
