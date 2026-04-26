@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { WizardState, WizUpdate, AcpEntry } from '../types.js';
+  import type { WizardState, WizUpdate, AcpEntry, WizStage } from '../types.js';
   import { senseiApi } from '$lib/api.js';
   import { getPort } from '$lib/appstate.svelte.js';
+  import StepHeader from './StepHeader.svelte';
 
-  let { wizState, update }: {
+  let { wizState, update, stage }: {
     wizState: WizardState;
     update: WizUpdate;
+    stage: WizStage;
   } = $props();
 
   let acps = $state<AcpEntry[]>(wizState.acpList);
@@ -34,9 +36,7 @@
 </script>
 
 <section class="step">
-  <div class="step-label"><span class="kanji">三</span> STEP</div>
-  <h1 class="display headline">Assistants</h1>
-  <p class="subtitle">Registers plugins, skills, commands, agents, logging and metrics.</p>
+  <StepHeader {stage} subtitle="Registers plugins, skills, commands, agents, logging and metrics." />
 
   <div class="grid">
     {#each acps as acp}
@@ -75,33 +75,7 @@
 
 <style>
   .step {
-    padding: var(--space-10) var(--space-12);
     max-width: 780px;
-  }
-
-  .step-label {
-    font-size: 12px;
-    letter-spacing: 0.12em;
-    color: var(--sumi-3);
-    margin-bottom: var(--space-2);
-  }
-
-  .step-label .kanji {
-    color: var(--shu);
-    margin-right: 4px;
-  }
-
-  .headline {
-    font-size: 40px;
-    color: var(--sumi);
-    margin: 0 0 var(--space-2) 0;
-    line-height: 1.15;
-  }
-
-  .subtitle {
-    font-size: 15px;
-    color: var(--sumi-3);
-    margin: 0 0 var(--space-8) 0;
   }
 
   .grid {
