@@ -6,9 +6,16 @@
   import { senseiApi } from '$lib/api.js';
   import { getPort, setConfigValue, loadAppState } from '$lib/appstate.svelte.js';
   import {
-    Rail, Bottom, Welcome, Components, Assistants,
+    Rail, Bottom, Welcome, Assistants,
     Folders, Scan, Projects, Libraries, Registry, Done
   } from '$lib/setup/wizard/index.js';
+
+  // Watermark kanji per stage — faded background character
+  const STAGE_KANJI: Record<string, string> = {
+    welcome: '先', components: '支', assistants: '助', folders: '径',
+    scan: '探', projects: '場', libraries: '庫', registry: '具',
+    inference: '推', assignments: '配', done: '観',
+  };
 
   // Landing vs wizard state
   let started = $state(false);
@@ -46,15 +53,7 @@
       if (!health?.ok) throw new Error('daemon not ready');
       daemonReady = true;
 
-      // Step 2: Component health
-      const compData = await api.getComponents();
-      console.log('[setup] components from daemon:', compData);
-      if (compData.components?.length > 0) {
-        update({ components: compData.components as any });
-        console.log('[setup] state after update:', wizardState.components.length);
-      }
-
-      // Step 3: ACP detection
+      // ACP detection
       const acps = await api.detectAcps();
       if (acps.length > 0) {
         const acpList = acps.map(a => ({
@@ -214,16 +213,20 @@
 
       <div class="main">
         <div class="content">
-          {#if stage.id === 'welcome'}<Welcome />
-          {:else if stage.id === 'components'}<Components wizState={wizardState} {update} />
-          {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} acpList={wizardState.acpList} />
-          {:else if stage.id === 'folders'}<Folders wizState={wizardState} {update} />
-          {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} onScan={onScanComplete} {daemonReady} />
-          {:else if stage.id === 'projects'}<Projects wizState={wizardState} {update} />
-          {:else if stage.id === 'libraries'}<Libraries wizState={wizardState} {update} />
-          {:else if stage.id === 'registry'}<Registry wizState={wizardState} {update} />
-          {:else if stage.id === 'done'}<Done wizState={wizardState} />
+          {#if stage.id !== 'welcome' && stage.id !== 'done'}
+            <span class="watermark kanji">{STAGE_KANJI[stage.id] ?? ''}</span>
           {/if}
+          <div class="content-inner">
+            {#if stage.id === 'welcome'}<Welcome />
+            {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} acpList={wizardState.acpList} />
+            {:else if stage.id === 'folders'}<Folders wizState={wizardState} {update} />
+            {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} onScan={onScanComplete} {daemonReady} />
+            {:else if stage.id === 'projects'}<Projects wizState={wizardState} {update} />
+            {:else if stage.id === 'libraries'}<Libraries wizState={wizardState} {update} />
+            {:else if stage.id === 'instruments'}<Registry wizState={wizardState} {update} />
+            {:else if stage.id === 'done'}<Done wizState={wizardState} />
+            {/if}
+          </div>
         </div>
 
         <Bottom {stage} stageIndex={stageIdx} total={WIZ_STAGES.length}
@@ -380,5 +383,22 @@
     flex: 1;
     overflow: auto;
     padding: 44px 64px 32px;
+    position: relative;
+  }
+  .content-inner {
+    position: relative;
+    z-index: 1;
+  }
+  .watermark {
+    position: absolute;
+    right: 64px;
+    bottom: 32px;
+    font-size: 240px;
+    color: var(--shu);
+    opacity: 0.035;
+    line-height: 1;
+    user-select: none;
+    pointer-events: none;
+    z-index: 0;
   }
 </style>

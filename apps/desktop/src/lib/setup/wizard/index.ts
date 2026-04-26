@@ -1,7 +1,6 @@
 export { default as Rail } from './Rail.svelte';
 export { default as Bottom } from './Bottom.svelte';
 export { default as Welcome } from './Welcome.svelte';
-export { default as Components } from './Components.svelte';
 export { default as Assistants } from './Assistants.svelte';
 export { default as Folders } from './Folders.svelte';
 export { default as Scan } from './Scan.svelte';
