@@ -22,7 +22,7 @@
     if (isSetupComplete()) {
       goto('/observatory', { replaceState: true });
     } else {
-      goto('/setup', { replaceState: true });
+      goto('/config', { replaceState: true });
     }
   });
 </script>
