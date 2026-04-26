@@ -119,7 +119,7 @@ These two files share 150+ lines of identical code that should be in a shared mo
 |---|-----|-----------|--------|
 | B1 | `getLibDocsTool` called with 5 args, signature accepts 3 | `mcp-server.ts:277` | MCP lib docs tool always fails |
 | B2 | `fnIdByName` built from `callerName -> callerId`; lookup uses `calleeName` | `indexer.ts:499-504` | CALLS edges missing for leaf functions |
-| B3 | `activity-log.ts` `.run([values])` wraps args in extra array (25x) | `activity-log.ts` throughout | SQLite queries get wrong params |
+| B3 | [RESOLVED — SQLite removed] `activity-log.ts` `.run([values])` wraps args in extra array (25x) | `activity-log.ts` throughout | SQLite queries get wrong params |
 | B4 | `record-memory.ts` returns fake UUID for decisions/patterns | `record-memory.ts:25,37` | Returned IDs are meaningless |
 | B5 | `clearProgress` writes empty string `""` — JSON parse error for readers | `indexer.ts:90` | Desktop progress poll crashes |
 | B6 | `escapeCypher` in doc-indexer only escapes `\` and `'`, missing `\n\r\t` | `doc-indexer.ts:135` | Corrupted Cypher on multiline titles |
@@ -272,7 +272,7 @@ These exist as fallbacks when daemon isn't running but contain no actual impleme
 | `reformat` undocumented alias for `doctor` | `cli/src/cli.ts:225` | Remove alias |
 | `--drift` flag on `watch` (silently ignored) | `cli/src/commands/watch.ts:8` | Remove or implement |
 | `--hooks` flag (defined, never used) | `cli/src/cli.ts:37` | Remove |
-| `better-sqlite3` in server deps (not imported) | `server/package.json` | Remove dep |
+| [RESOLVED] `better-sqlite3` in server deps (not imported) | `server/package.json` | Remove dep |
 | `mergeHooks` exported from `acp-utils.ts` | `engine/src/agent/acp-utils.ts:49` | Remove (dead import in claude-adapter) |
 | 3 uncalled methods in `ActivityLog` | `server/activity-log.ts:517-557` | Remove or wire up |
 | `installHooks()` / `registerCommands()` on interface | `engine/src/agent/acp-adapter.ts:32,41` | Remove (no implementations exist) |
@@ -314,7 +314,7 @@ These exist as fallbacks when daemon isn't running but contain no actual impleme
 - Remove `supabase_url` from `SenseiRepoConfig`
 - Remove `supabase_service_key` from `loadCredentials`
 - Remove stale types: `IndexConfig`, `SetupStatus`
-- Remove `better-sqlite3` from server deps
+- [RESOLVED] Remove `better-sqlite3` from server deps
 - Fix CLI help text referencing Supabase
 
 **B2. Delete dead code**

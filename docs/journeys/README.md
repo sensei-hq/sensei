@@ -100,42 +100,112 @@ Every idea is covered by at least one journey.
 
 ## Mockup coverage
 
-Summary of which screens exist in the current mockups (`docs/design/02-desktop/setup/lib/`) and which need design work.
+All mockups live in `docs/mockups/lib/`. Design summary in `docs/mockups/summary.md`.
 
-### Screens with existing mockups
+### Screens with mockups
 
-| Screen | Mockup file | Journey |
-|--------|------------|---------|
-| Setup wizard (9 steps) | `setup-wizard.jsx` | J2 |
-| Observatory (early + mature) | `observatory.jsx` | J3 |
-| Project overview | `project-shared.jsx` | J5 |
-| Code graph (3 lens, 5 overlays) | `project-shared.jsx` | J5 |
-| Patterns + anti-patterns | `project-shared.jsx` | J5 |
-| Recommendations + action drawer | `project-shared.jsx` | J5, J6 |
-| Project settings (2 variants) | `project-shared.jsx` | J5 |
-| Libraries (2 variants) | `libraries.jsx` | J5 |
-| MCP playground (partial) | `libraries.jsx` | J5 |
-| Navigation (3 variants) | `navigation.jsx` | J3 |
-| Design tokens + primitives | `tokens.css`, `primitives.jsx` | All |
+| Screen | Mockup file(s) | Journey | Status |
+|--------|---------------|---------|--------|
+| Bootstrap (6 gates) | `bootstrap.jsx` | J1 | Complete |
+| Setup wizard (10 steps) | `setup-wizard.jsx`, `setup-data.js` | J2 | Complete |
+| Inference providers + models | `wiz-inference.jsx` | J2 | Complete |
+| Model role assignments | `wiz-assignments.jsx` | J2 | Complete |
+| Observatory daily (early + mature) | `observatory.jsx` | J3 | Complete |
+| Sessions (digest + timeline + retro) | `sessions.jsx` | J3, J5 | Complete |
+| Learnings (original + 3 simplified) | `learnings.jsx`, `learnings-v2.jsx`, `learnings-data.js` | J9 | Complete |
+| Project pages (3 layout variants) | `project-pages.jsx`, `project-shared.jsx`, `project-data.js` | J5 | Complete |
+| Code graph (3 lenses) | `project-shared.jsx` | J5 | Complete |
+| Patterns + anti-patterns | `project-shared.jsx` | J5 | Complete |
+| Recommendations + action drawer | `project-shared.jsx` | J5, J6 | Complete |
+| Project settings (2 variants) | `project-shared.jsx` | J5 | Complete |
+| Libraries (2 variants) | `libraries.jsx` | J5 | Complete |
+| Instruments: Playground | `instruments.jsx`, `instruments-simple.jsx`, `instruments-data.js` | J5 | Complete |
+| Instruments: Replay | `mcp-replay-insights.jsx`, `mcp-signals-data.js` | J5 | Complete |
+| Instruments: Insights | `mcp-replay-insights.jsx`, `mcp-signals-data.js` | J5 | Complete |
+| Navigation (3 variants) | `navigation.jsx` | J3 | Complete |
+| Design tokens + primitives | `tokens.css`, `primitives.jsx` | All | Complete |
 
-### Screens needing new mockups
+### Screens needing mockups
 
-| Screen | Journey | Design brief in |
-|--------|---------|----------------|
-| Bootstrap startup screen | J1 | [J1 mockup status](./01-install-bootstrap.md#mockup-status) |
-| Inference config (wizard step) | J2 | [J2 mockup status](./02-setup-discovery.md#mockup-status) |
-| Session replay | J5 | [J5 mockup status](./05-understand-codebase.md#mockup-status) |
-| Doc traceability | J5 | [J5 mockup status](./05-understand-codebase.md#mockup-status) |
-| Pattern catalog (industry) | J5 | [J5 mockup status](./05-understand-codebase.md#mockup-status) |
-| Tool usage analytics | J5 | [J5 mockup status](./05-understand-codebase.md#mockup-status) |
-| Change impact report | J6 | [J6 mockup status](./06-measure-improve.md#mockup-status) |
-| Negative impact alert | J6 | [J6 mockup status](./06-measure-improve.md#mockup-status) |
-| Extensions browser | J7 | [J7 mockup status](./07-extend-customize.md#mockup-status) |
-| Skill editor | J7 | [J7 mockup status](./07-extend-customize.md#mockup-status) |
-| Agent editor | J7 | [J7 mockup status](./07-extend-customize.md#mockup-status) |
-| Persona editor | J7 | [J7 mockup status](./07-extend-customize.md#mockup-status) |
-| Inference settings | J7 | [J7 mockup status](./07-extend-customize.md#mockup-status) |
-| Multi-ACP config | J7 | [J7 mockup status](./07-extend-customize.md#mockup-status) |
-| Benchmark runner | J7 | [J7 mockup status](./07-extend-customize.md#mockup-status) |
+| Screen | Journey | Priority |
+|--------|---------|----------|
+| Doc traceability view | J5 | Medium |
+| Pattern catalog (industry patterns) | J5 | Low |
+| Change impact report | J6 | Medium |
+| Negative impact alert | J6 | Medium |
+| Extensions browser | J7 | Low |
+| Skill / agent / persona editors | J7 | Low |
+| Benchmark runner | J7 | Low |
 
-Each "mockup status" section in the journey docs includes a **design brief** with enough context to hand to an LLM designer for mockup creation.
+---
+
+## DB ↔ UI gap analysis
+
+Comparison of UI mockup elements vs the PostgreSQL schema (`database/ddl/`).
+
+**Terminology mapping** (mockup → DB):
+- Mockup "solutions" = DB `sensei.projects` (grouping entity for 1+ folders)
+- Mockup "repos" = DB `sensei.folders` (kind = git | subtree), linked to projects via `folder.project_id`
+- Mockup "folder roots" = DB `sensei.folders_to_watch` (user-configured watch roots)
+
+### Well-covered (DB already supports UI)
+
+| UI element | DB table(s) | Schema location | Notes |
+|-----------|-------------|-----------------|-------|
+| Projects (= mockup "solutions") | `sensei.projects` | `table/sensei/projects.ddl` | name, client, maturity (discovery→archived), goal, icon (kanji), stack, links, guidelines, preferred_acp, tags |
+| Folders (= mockup "repos") | `sensei.folders` | `table/sensei/folders.ddl` | kind (parent/folder/git/subtree), project_id FK, props (role, lang, files, stack), remote_urls |
+| Folder roots (setup step 4) | `sensei.folders_to_watch` | `table/sensei/folders_to_watch.ddl` | path, name, note, status (scanning→watching→paused), excluded |
+| Sessions + FTR | `activity.sessions` | `table/activity/sessions.ddl` | folder_id, project_id, acp_id, outcome, **ftr boolean**, turns, corrections, tokens, duration_ms, module |
+| Task sessions | `activity.task_sessions` | `table/activity/task_sessions.ddl` | ftr_score (numeric 0-1), ftr_signals (JSON), status, task_type |
+| Code graph | `sensei.nodes`, `sensei.edges` | `table/sensei/nodes.ddl`, `edges.ddl` | Nodes: kind, degree, community_id. Edges: relation (calls, imports, exports, etc.), confidence |
+| Communities | `inference.communities` | `table/inference/communities.ddl` | folder_id, community_id, god_node_ids, symbol_count |
+| Patterns + anti-patterns | `inference.detected_patterns` | `table/inference/detected_patterns.ddl` | lifecycle (suggested/gap/rule), is_anti_pattern, severity, confidence, instances, evidence, fix_pattern_id (self-ref) |
+| Recommendations | `inference.recommendations` | `table/inference/recommendations.ddl` | urgency, title, why, impact, evidence, action_type, prompt, default_acp, baseline_ftr, current_ftr, verdict |
+| Memories (learnings) | `sensei.memories` | `table/sensei/memories.ddl` | scope (global/project/stack/task_type/module), type, strength (0-5), status (active/archived), impact |
+| Memory evidence + examples | `sensei.memory_evidence`, `memory_examples`, `memory_links` | `table/sensei/memory_*.ddl` | Good/bad examples, evidence sessions, related memories |
+| Libraries | `sensei.libraries`, `sensei.referenced_libraries` | `table/sensei/referenced_libraries.ddl` | Per-folder library usage with version_used |
+| Library docs | `sensei.library_pages` | `table/sensei/library_pages.ddl` | Library documentation pages |
+| MCP / services registry | `sensei.services` | `table/sensei/services.ddl` | kind (data/api/devtool/service/**inference**), protocol (mcp/ollama/anthropic/openai), trigger_stacks, installed, verified, config |
+| Extensions (skills/agents) | `sensei.extensions` | `table/sensei/extensions.ddl` | kind (plugin/skill/command/agent/hook), scope, source, props, content |
+| Drift detection | `inference.drift_items` | `table/inference/drift_items.ddl` | doc_node → code_node, status (current/drifted/broken), signatures |
+| Scan state | `sensei.scan_state` | `table/sensei/scan_state.ddl` | folder_id, file_path, mtime, content_hash |
+| Settings | `sensei.config` | `table/sensei/config.ddl` | Key-value configuration |
+| API cost tracking | `activity.events` | `table/activity/events.ddl` | event_type = 'api_request', data: {model, tokens, cost_usd} |
+| Benchmarks | `sensei.benchmark_runs`, `benchmark_reports` | `table/sensei/benchmark_*.ddl` | Per-folder benchmark runs |
+| External links | `sensei.projects.links` | `table/sensei/projects.ddl` | JSONB array: [{id, kind, label, url}] — stored on the project, not a separate table |
+| Project guidelines | `sensei.projects.guidelines` | `table/sensei/projects.ddl` | JSONB array: [{id, rule, source}] |
+
+### Resolved gaps (DDL changes applied)
+
+| UI element | Resolution | DDL file(s) |
+|-----------|-----------|-------------|
+| **Inference role assignments** | Added `inference_role` enum (inference, consolidation, embedding, voice, default_fallback) + `gateway.inference_assignments` table mapping roles to fallback chains. `is_default_fallback` flag marks the catch-all chain per role. | `enum/sensei/inference_role.ddl`, `table/gateway/inference_assignments.ddl` |
+| **Memory lifecycle states** | Extended `memory_status` enum: active, reinforced, challenged, battle_tested, archived. | `enum/sensei/memory_status.ddl` |
+| **Memory violated/reinforced counts** | Added `violated_count`, `reinforced_count`, `last_relevant_at` columns to `sensei.memories`. | `table/sensei/memories.ddl` |
+| **Tool call usage** | `activity.events` already tracks this via `data.used_in_response` in tool_call payloads. Added `tool_usage` enum for typed queries and future column promotion. | `enum/sensei/tool_usage.ddl` |
+| **Folder roles** | Added typed `role` column (`folder_role` enum: backend, frontend, library, docs, infra) to `sensei.folders`. Replaces the untyped `props.role` JSON convention. | `table/sensei/folders.ddl`, `enum/sensei/folder_role.ddl` |
+
+### Remaining design considerations
+
+| UI element | Status | Notes |
+|-----------|--------|-------|
+| **Session retro (cross-project)** | Compute at query time | Sessions UI retrospective ("going well" / "not going well") is derived from sessions + memories. Cache in `inference.recommendations` with `action_type = 'retro'` if query performance becomes an issue. |
+| **Observatory maturity state** | Derive at query time | "Early" vs "mature" is `count(sessions) where project_id = X`. No table change needed. |
+| **Hyperedges in UI** | DB ready, UI not | `inference.hyperedges` has no mockup yet. Data is ready for code graph UI extension. |
+
+### Mockup naming → DB naming translation
+
+The mockups use a fictional product (Lumen) with different terminology than the DB. When implementing:
+
+| Mockup term | Mockup meaning | DB entity | DB column |
+|-------------|---------------|-----------|-----------|
+| solution | Multi-repo product group | `sensei.projects` | — (projects IS the grouping) |
+| project / repo | Individual git repository | `sensei.folders` | `kind = 'git'` or `kind = 'subtree'` |
+| folder root | User-configured watch path | `sensei.folders_to_watch` | `path`, `status` |
+| ACP / assistant | AI coding tool | `sensei.coordinator_installs` | `coordinator` column |
+| coaching koan | Actionable recommendation | `inference.recommendations` | `title`, `why`, `impact` |
+| teaching adopted | Memory promoted to rule | `sensei.memories` | `status`, `strength` |
+| FTR (binary) | Was session first-try-right? | `activity.sessions` | `ftr boolean` |
+| FTR (score) | Quality score 0-1 | `activity.task_sessions` | `ftr_score numeric(4,3)` |
+| MCP server | External service | `sensei.services` | `protocol = 'mcp'` |
+| Inference provider | LLM provider | `sensei.services` | `kind = 'inference'` |

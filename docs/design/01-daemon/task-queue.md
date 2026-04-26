@@ -41,14 +41,14 @@ scan_root(path)
 **Trigger**: User calls `POST /api/scan { root: "/path" }`
 **Action**:
 - Walk directory tree, find folders with `.git`
-- Register each as a project in SQLite
+- Register each as a project in PostgreSQL
 - Persist the root path in store (for watcher recreation on restart)
 - For each repo: enqueue `process_repo(repo_path)`
 
 ### `process_repo(repo_path)`
 **Trigger**: `scan_root` enqueues it, or user calls `POST /api/index`
 **Action**:
-- Register/update project in SQLite
+- Register/update project in PostgreSQL
 - Detect git remote URL → check for duplicates
 - Detect git subtrees → create auto-solution if found
 - Detect workspace members (npm, cargo, pnpm, go.work)
@@ -170,7 +170,7 @@ Since file tasks are created by folder tasks (not directly by process_repo), the
 ### One watcher per scanned root
 - User scans `~/Developer` → watcher started on `~/Developer`
 - User scans `~/Work` → second watcher started on `~/Work`
-- Scanned roots persisted in SQLite → watchers recreated on daemon restart
+- Scanned roots persisted in PostgreSQL → watchers recreated on daemon restart
 
 ### On file change event
 ```

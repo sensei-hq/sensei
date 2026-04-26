@@ -1,5 +1,7 @@
 # Graph Intelligence — Analysis of Graphify and the Karpathy Knowledge Base Model
 
+> **NOTE:** The graph layer has since migrated from Kuzu to PostgreSQL (`sensei.nodes`, `sensei.edges`). See ADR-005. The analysis of SQLite vs Kuzu below is retained for historical context.
+
 > Reference: [safishamsi/graphify](https://github.com/safishamsi/graphify) (10.6k stars, April 2026)
 > Inspired by: [Andrej Karpathy's LLM Knowledge Bases](https://x.com/karpathy/status/2039805659525644595)
 > and [llm-wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
@@ -233,8 +235,8 @@ sensei imports it and uses it for session assistance.**
 
 ### Replacing embeddings with topology-only clustering
 
-Graphify deliberately avoids a separate vector store. Sensei already has SQLite-vec for
-L4 semantic search. The semantic similarity edges that come from embeddings are valuable
+Graphify deliberately avoids a separate vector store. Sensei already has pgvector for
+semantic search. The semantic similarity edges that come from embeddings are valuable
 signal — don't remove them in favour of topology-only clustering. Use both: embeddings
 for semantic search, Leiden on the full graph (which includes semantic edges) for
 community detection.

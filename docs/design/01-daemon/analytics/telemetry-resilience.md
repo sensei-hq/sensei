@@ -6,6 +6,8 @@ status: active
 
 # Telemetry Resilience
 
+> **SUPERSEDED:** This design predates the PostgreSQL migration. The outbox pattern described here was not implemented. Events are now stored directly in `activity.events` (PostgreSQL). See ADR-005.
+
 > How sensei handles Supabase unavailability — local buffering, durable queue, and retry for both tool events and OTLP API-cost data.
 
 ---

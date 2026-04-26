@@ -21,7 +21,7 @@ The AI needs to understand codebases deeply — not just grep for strings, but k
 - Incremental re-indexing: partial — file-level change detection works, but doc files not in full indexer pass
 - Stack detection: implemented
 - Task queue: implemented (scan → repo → folder → file → resolve → connect, 233 tests)
-- Graph DB: SQLite-based (Kuzu migration planned when linking stabilizes)
+- Graph DB: PostgreSQL (sensei.nodes + sensei.edges)
 - **Design pattern recognition: not implemented**
 - **Duplicate/similarity detection: not implemented**
 
@@ -83,7 +83,6 @@ Pattern detection and duplicate detection would enhance existing MCP tools and e
 
 ## Open questions
 
-- When does Kuzu become viable? What's blocking the migration from SQLite graph tables?
 - Should pattern detection run on every index, or only on demand/first-index?
 - qlty vs jscpd vs semgrep for Phase A duplicate detection — which has best JSON output for ingestion?
 - How do cross-repo references work in practice? Workspace concept needed first?
