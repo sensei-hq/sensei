@@ -64,11 +64,11 @@
   </h1>
   <p class="subtitle">
     {#if !scanning && !done}
-      Ready to scan {roots} root{roots !== 1 ? 's' : ''}.
+      The path is set. Begin when ready.
     {:else if done}
       The map is drawn.
     {:else}
-      Scanning · {completedFiles} / {totalFiles} files
+      Watching the worker · {completedFiles} / {totalFiles} files
     {/if}
   </p>
 
@@ -125,7 +125,7 @@
 </section>
 
 <style>
-  .step { max-width: 780px; }
+  .step { }
   .step-label { font-size: 12px; letter-spacing: 0.12em; color: var(--sumi-3); margin-bottom: var(--space-2); }
   .step-label .kanji { color: var(--shu); margin-right: 4px; }
   .headline { font-size: 40px; color: var(--sumi); margin: 0 0 var(--space-2) 0; line-height: 1.15; }
