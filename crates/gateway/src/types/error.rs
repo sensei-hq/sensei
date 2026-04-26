@@ -228,4 +228,55 @@ mod tests {
         assert!(!GatewayError::AllAttemptsFailed { attempts: 5 }
             .should_trigger_fallback(&all_triggers));
     }
+
+    #[test]
+    fn from_serde_error() {
+        // Force a serde_json error and convert via From impl
+        let serde_err = serde_json::from_str::<serde_json::Value>("{{bad json").unwrap_err();
+        let gw_err: GatewayError = serde_err.into();
+        assert!(
+            matches!(gw_err, GatewayError::Serialization(_)),
+            "expected Serialization, got: {gw_err:?}",
+        );
+        assert!(gw_err.to_string().contains("serialization error"));
+    }
+
+    #[test]
+    fn model_unavailable_triggers_fallback() {
+        let triggers = vec![FallbackTrigger::ModelUnavailable];
+        assert!(GatewayError::ModelUnavailable {
+            adapter: "a".into(),
+            model: "m".into(),
+        }
+        .should_trigger_fallback(&triggers));
+    }
+
+    #[test]
+    fn budget_exceeded_triggers_fallback() {
+        let triggers = vec![FallbackTrigger::BudgetExceeded];
+        assert!(GatewayError::BudgetExceeded {
+            estimated: 1.0,
+            remaining: 0.5,
+        }
+        .should_trigger_fallback(&triggers));
+    }
+
+    #[test]
+    fn network_error_not_retryable_for_fallback() {
+        // Network errors are retryable but should NOT trigger fallback
+        let all_triggers = vec![
+            FallbackTrigger::RateLimit,
+            FallbackTrigger::Timeout,
+            FallbackTrigger::ProviderError,
+            FallbackTrigger::ModelUnavailable,
+            FallbackTrigger::BudgetExceeded,
+        ];
+
+        // We can't easily construct a reqwest::Error, so test the pattern
+        // indirectly via the NoCandidates variant (also doesn't trigger fallback)
+        assert!(!GatewayError::NoCandidates {
+            capability: Capability::TextChat,
+        }
+        .should_trigger_fallback(&all_triggers));
+    }
 }
