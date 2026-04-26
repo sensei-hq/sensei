@@ -218,12 +218,12 @@
           {/if}
           <div class="content-inner">
             {#if stage.id === 'welcome'}<Welcome />
-            {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} acpList={wizardState.acpList} />
-            {:else if stage.id === 'folders'}<Folders wizState={wizardState} {update} />
+            {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} {stage} acpList={wizardState.acpList} />
+            {:else if stage.id === 'folders'}<Folders wizState={wizardState} {update} {stage} />
             {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} onScan={onScanComplete} {daemonReady} />
-            {:else if stage.id === 'projects'}<Projects wizState={wizardState} {update} />
-            {:else if stage.id === 'libraries'}<Libraries wizState={wizardState} {update} />
-            {:else if stage.id === 'instruments'}<Registry wizState={wizardState} {update} />
+            {:else if stage.id === 'projects'}<Projects wizState={wizardState} {update} {stage} />
+            {:else if stage.id === 'libraries'}<Libraries wizState={wizardState} {update} {stage} />
+            {:else if stage.id === 'instruments'}<Registry wizState={wizardState} {update} {stage} />
             {:else if stage.id === 'done'}<Done wizState={wizardState} />
             {/if}
           </div>

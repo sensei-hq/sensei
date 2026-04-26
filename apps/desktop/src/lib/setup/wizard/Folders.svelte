@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { WizardState, WizUpdate, ScanFolder } from '../types.js';
+  import type { WizardState, WizUpdate, ScanFolder, WizStage } from '../types.js';
   import { senseiApi } from '$lib/api.js';
   import { getPort } from '$lib/appstate.svelte.js';
+  import StepHeader from './StepHeader.svelte';
 
-  let { wizState, update }: {
+  let { wizState, update, stage }: {
     wizState: WizardState;
     update: WizUpdate;
+    stage: WizStage;
   } = $props();
 
   let inputValue = $state('');
@@ -52,9 +54,7 @@
 </script>
 
 <section class="step">
-  <div class="step-label"><span class="kanji">四</span> STEP</div>
-  <h1 class="display headline">Folders</h1>
-  <p class="subtitle">Where your work lives. Sensei recurses and finds repos.</p>
+  <StepHeader {stage} subtitle="Where your work lives. Sensei recurses and finds repos." />
 
   <div class="input-row">
     <input
@@ -93,33 +93,7 @@
 
 <style>
   .step {
-    padding: var(--space-10) var(--space-12);
     max-width: 780px;
-  }
-
-  .step-label {
-    font-size: 12px;
-    letter-spacing: 0.12em;
-    color: var(--sumi-3);
-    margin-bottom: var(--space-2);
-  }
-
-  .step-label .kanji {
-    color: var(--shu);
-    margin-right: 4px;
-  }
-
-  .headline {
-    font-size: 40px;
-    color: var(--sumi);
-    margin: 0 0 var(--space-2) 0;
-    line-height: 1.15;
-  }
-
-  .subtitle {
-    font-size: 15px;
-    color: var(--sumi-3);
-    margin: 0 0 var(--space-8) 0;
   }
 
   .input-row {
