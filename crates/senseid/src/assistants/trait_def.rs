@@ -1,25 +1,25 @@
 use std::path::PathBuf;
 use super::helpers::check_mcp_configured;
-use super::AcpStatus;
+use super::AssistantStatus;
 
-/// Result of configuring an ACP. `plugin` is true when `claude plugin install` succeeded.
-pub(crate) struct AcpConfigureOk {
+/// Result of configuring an Assistant. `plugin` is true when `claude plugin install` succeeded.
+pub(crate) struct AssistantConfigureOk {
     pub plugin: bool,
     pub warnings: Vec<String>,
 }
 
-/// Each AI Coding Platform implements detect, configure, and remove.
-pub(crate) trait Acp {
+/// Each Assistant implements detect, configure, and remove.
+pub(crate) trait Assistant {
     fn id(&self) -> &str;
     fn name(&self) -> &str;
     fn mcp_key(&self) -> &str;
     fn config_path(&self) -> PathBuf;
     fn detect(&self) -> bool;
-    fn configure(&self, mcp_cmd: &str) -> Result<AcpConfigureOk, String>;
+    fn configure(&self, mcp_cmd: &str) -> Result<AssistantConfigureOk, String>;
     fn remove(&self) -> bool;
 
-    /// Family ID for UI grouping. ACPs in the same family show as one card.
-    /// Default: same as id (each ACP is its own family).
+    /// Family ID for UI grouping. Assistants in the same family show as one card.
+    /// Default: same as id (each Assistant is its own family).
     fn family(&self) -> &str { self.id() }
 
     /// Display name for the family (used when grouped).
@@ -29,8 +29,8 @@ pub(crate) trait Acp {
         check_mcp_configured(&self.config_path(), self.mcp_key())
     }
 
-    fn status(&self) -> AcpStatus {
-        AcpStatus {
+    fn status(&self) -> AssistantStatus {
+        AssistantStatus {
             id: self.id().to_string(),
             name: self.name().to_string(),
             family: self.family().to_string(),

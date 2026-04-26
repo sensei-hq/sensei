@@ -53,16 +53,16 @@
       if (!health?.ok) throw new Error('daemon not ready');
       daemonReady = true;
 
-      // ACP detection
-      const acps = await api.detectAcps();
-      if (acps.length > 0) {
-        const acpList = acps.map(a => ({
-          id: a.id, name: a.name, version: null,
-          found: a.installed, path: a.config_path ?? null,
+      // Assistant detection (grouped by family)
+      const families = await api.detectAssistantFamilies();
+      if (families.length > 0) {
+        const assistantList = families.map(f => ({
+          id: f.family, name: f.name, version: null,
+          found: f.installed, path: f.config_path ?? null,
         }));
         update({
-          acps: Object.fromEntries(acps.map(a => [a.id, a.installed])),
-          acpList,
+          assistants: Object.fromEntries(families.map(f => [f.family, f.installed])),
+          assistantList,
         });
       }
 
@@ -218,7 +218,7 @@
           {/if}
           <div class="content-inner">
             {#if stage.id === 'welcome'}<Welcome />
-            {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} {stage} acpList={wizardState.acpList} />
+            {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} {stage} />
             {:else if stage.id === 'folders'}<Folders wizState={wizardState} {update} {stage} />
             {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} onScan={onScanComplete} {daemonReady} />
             {:else if stage.id === 'projects'}<Projects wizState={wizardState} {update} {stage} />

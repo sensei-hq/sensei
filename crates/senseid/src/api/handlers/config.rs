@@ -73,39 +73,39 @@ pub(crate) async fn marketplace_install(
     }))
 }
 
-// ── ACP (AI Coding Platform) ────────────────────────────────────────────────
+// ── Assistants ──────────────────────────────────────────────────────────────
 
-pub(crate) async fn acp_detect() -> Json<Vec<crate::assistants::AcpStatus>> {
+pub(crate) async fn assistant_detect() -> Json<Vec<crate::assistants::AssistantStatus>> {
     Json(crate::assistants::detect())
 }
 
-pub(crate) async fn acp_detect_families() -> Json<Vec<crate::assistants::AcpFamily>> {
+pub(crate) async fn assistant_detect_families() -> Json<Vec<crate::assistants::AssistantFamily>> {
     Json(crate::assistants::detect_families())
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AcpConfigureBody {
+pub(crate) struct AssistantConfigureBody {
     #[serde(default)]
     acps: Vec<String>,
 }
 
-pub(crate) async fn acp_configure(
-    Json(body): Json<AcpConfigureBody>,
+pub(crate) async fn assistant_configure(
+    Json(body): Json<AssistantConfigureBody>,
 ) -> Json<crate::assistants::ConfigureResult> {
     Json(crate::assistants::configure(&body.acps))
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AcpRemoveBody {
+pub(crate) struct AssistantRemoveBody {
     #[serde(default)]
     acps: Vec<String>,
 }
 
-pub(crate) async fn acp_remove(
-    Json(body): Json<AcpRemoveBody>,
+pub(crate) async fn assistant_remove(
+    Json(body): Json<AssistantRemoveBody>,
 ) -> Json<serde_json::Value> {
     let removed = crate::assistants::remove_selected(&body.acps);
-    serde_json::json!({"acps_removed": removed, "errors": []}).into()
+    serde_json::json!({"assistants_removed": removed, "errors": []}).into()
 }
 
 // ── Installer ───────────────────────────────────────────────────────────────

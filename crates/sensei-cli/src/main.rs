@@ -326,7 +326,7 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
         vec![a.to_string()]
     } else {
         let detected: Vec<serde_json::Value> = client()
-            .get(format!("{}/api/acp/detect", DAEMON_URL))
+            .get(format!("{}/api/assistants/detect", DAEMON_URL))
             .send()
             .ok()
             .and_then(|r| r.json().ok())
@@ -354,7 +354,7 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
         // by default (SENSEI_MARKETPLACE_REPO). Passing a local dev path causes
         // Claude Code to register a directory source that breaks on other machines.
         match client()
-            .post(format!("{}/api/acp/configure", DAEMON_URL))
+            .post(format!("{}/api/assistants/configure", DAEMON_URL))
             .json(&serde_json::json!({
                 "acps": [acp_id],
             }))
@@ -639,7 +639,7 @@ fn remove_acp(name: &str) {
     ensure_daemon();
 
     match client()
-        .post(format!("{}/api/acp/remove", DAEMON_URL))
+        .post(format!("{}/api/assistants/remove", DAEMON_URL))
         .json(&serde_json::json!({"acps": acps}))
         .send()
     {

@@ -1,18 +1,18 @@
 use std::path::PathBuf;
-use super::trait_def::{Acp, AcpConfigureOk};
+use super::trait_def::{Assistant, AssistantConfigureOk};
 use super::helpers::{home, which_exists, upsert_sensei_in_json, remove_sensei_from_json};
 
 /// Entry format written to the MCP config file.
 pub(crate) enum McpEntryFormat {
-    /// `{"command": mcp_cmd, "args": []}` — used by most ACPs
+    /// `{"command": mcp_cmd, "args": []}` — used by most assistants
     Standard,
     /// `{"type": "local", "command": [mcp_cmd, ""], "enabled": true}` — OpenCode
     OpenCode,
 }
 
-/// Generic ACP that reads/writes a JSON MCP config file.
+/// Generic Assistant that reads/writes a JSON MCP config file.
 /// Covers Claude Desktop, Cursor, Windsurf, Zed, Kiro, VS Code, and OpenCode.
-pub(crate) struct McpFileAcp {
+pub(crate) struct McpFileAssistant {
     pub id: &'static str,
     pub name: &'static str,
     pub family_id: Option<&'static str>,
@@ -28,7 +28,7 @@ pub(crate) struct McpFileAcp {
     pub home_paths: &'static [&'static str],
 }
 
-impl Acp for McpFileAcp {
+impl Assistant for McpFileAssistant {
     fn id(&self) -> &str { self.id }
     fn name(&self) -> &str { self.name }
     fn family(&self) -> &str { self.family_id.unwrap_or(self.id) }
@@ -54,7 +54,7 @@ impl Acp for McpFileAcp {
         false
     }
 
-    fn configure(&self, mcp_cmd: &str) -> Result<AcpConfigureOk, String> {
+    fn configure(&self, mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
         let entry = match self.entry_format {
             McpEntryFormat::Standard => {
                 serde_json::json!({"command": mcp_cmd, "args": []})
@@ -64,7 +64,7 @@ impl Acp for McpFileAcp {
             }
         };
         upsert_sensei_in_json(&self.config_path(), self.mcp_key, entry)?;
-        Ok(AcpConfigureOk { plugin: false, warnings: vec![] })
+        Ok(AssistantConfigureOk { plugin: false, warnings: vec![] })
     }
 
     fn remove(&self) -> bool {
