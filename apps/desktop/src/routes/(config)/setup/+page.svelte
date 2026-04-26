@@ -213,7 +213,7 @@
 
       <div class="main">
         <div class="content">
-          {#if stage.id !== 'welcome' && stage.id !== 'done'}
+          {#if stage.watermark}
             <span class="watermark kanji">{STAGE_KANJI[stage.id] ?? ''}</span>
           {/if}
           <div class="content-inner">

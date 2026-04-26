@@ -43,8 +43,7 @@
 
 <style>
   .welcome {
-    max-width: 680px;
-    margin: 10px auto 0;
+    max-width: 720px;
   }
 
   .section-label {
