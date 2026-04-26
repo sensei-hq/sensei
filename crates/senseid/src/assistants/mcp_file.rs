@@ -15,6 +15,8 @@ pub(crate) enum McpEntryFormat {
 pub(crate) struct McpFileAcp {
     pub id: &'static str,
     pub name: &'static str,
+    pub family_id: Option<&'static str>,
+    pub family_label: Option<&'static str>,
     pub mcp_key: &'static str,
     pub config_rel: &'static str,
     pub entry_format: McpEntryFormat,
@@ -29,6 +31,8 @@ pub(crate) struct McpFileAcp {
 impl Acp for McpFileAcp {
     fn id(&self) -> &str { self.id }
     fn name(&self) -> &str { self.name }
+    fn family(&self) -> &str { self.family_id.unwrap_or(self.id) }
+    fn family_name(&self) -> &str { self.family_label.unwrap_or(self.name) }
     fn mcp_key(&self) -> &str { self.mcp_key }
     fn config_path(&self) -> PathBuf { home().join(self.config_rel) }
 

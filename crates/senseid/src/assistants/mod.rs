@@ -15,6 +15,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
     vec![
         Box::new(McpFileAcp {
             id: "claude-desktop", name: "Claude Desktop",
+            family_id: Some("claude"), family_label: Some("Claude"),
             mcp_key: "mcpServers",
             config_rel: "Library/Application Support/Claude/claude_desktop_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -25,6 +26,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
         Box::new(ClaudeCodeAcp),
         Box::new(McpFileAcp {
             id: "cursor", name: "Cursor",
+            family_id: None, family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".cursor/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -34,6 +36,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
         }),
         Box::new(McpFileAcp {
             id: "windsurf", name: "Windsurf",
+            family_id: None, family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".codeium/windsurf/mcp_config.json",
             entry_format: McpEntryFormat::Standard,
@@ -43,6 +46,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
         }),
         Box::new(McpFileAcp {
             id: "zed", name: "Zed",
+            family_id: None, family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".config/zed/settings.json",
             entry_format: McpEntryFormat::Standard,
@@ -52,6 +56,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
         }),
         Box::new(McpFileAcp {
             id: "kiro", name: "Kiro",
+            family_id: None, family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".kiro/settings/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -61,6 +66,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
         }),
         Box::new(McpFileAcp {
             id: "opencode", name: "OpenCode",
+            family_id: None, family_label: None,
             mcp_key: "mcp",
             config_rel: ".config/opencode/opencode.json",
             entry_format: McpEntryFormat::OpenCode,
@@ -70,6 +76,7 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
         }),
         Box::new(McpFileAcp {
             id: "vscode", name: "VS Code",
+            family_id: None, family_label: None,
             mcp_key: "mcpServers",
             config_rel: ".vscode/mcp.json",
             entry_format: McpEntryFormat::Standard,
@@ -86,8 +93,19 @@ fn all_acps() -> Vec<Box<dyn Acp>> {
 pub struct AcpStatus {
     pub id: String,
     pub name: String,
+    pub family: String,
     pub installed: bool,
     pub mcp_configured: bool,
+    pub config_path: String,
+}
+
+/// Grouped view for the UI — one entry per family.
+#[derive(Debug, Serialize, Clone)]
+pub struct AcpFamily {
+    pub family: String,
+    pub name: String,
+    pub members: Vec<AcpStatus>,
+    pub installed: bool,
     pub config_path: String,
 }
 
@@ -104,6 +122,33 @@ pub struct ConfigureResult {
 
 pub fn detect() -> Vec<AcpStatus> {
     all_acps().iter().map(|acp| acp.status()).collect()
+}
+
+/// Grouped view — one entry per family for the UI.
+/// Claude Desktop + Claude Code become a single "Claude" family card.
+pub fn detect_families() -> Vec<AcpFamily> {
+    let statuses = detect();
+    let acps = all_acps();
+    let mut families: Vec<AcpFamily> = vec![];
+
+    for acp in &acps {
+        let Some(status) = statuses.iter().find(|s| s.id == acp.id()).cloned() else { continue };
+        let fam_id = acp.family();
+
+        if let Some(existing) = families.iter_mut().find(|f| f.family == fam_id) {
+            if status.installed { existing.installed = true; }
+            existing.members.push(status);
+        } else {
+            families.push(AcpFamily {
+                family: fam_id.to_string(),
+                name: acp.family_name().to_string(),
+                installed: status.installed,
+                config_path: status.config_path.clone(),
+                members: vec![status],
+            });
+        }
+    }
+    families
 }
 
 pub fn configure(acp_ids: &[String]) -> ConfigureResult {
