@@ -4,8 +4,7 @@ type: design
 implements: []
 ---
 
-> **STATUS NOTE (2026-04-08):** The Supabase references in this document are being replaced by SQLite
-> as part of the local-first architecture shift. See `docs/roadmap/` for the current direction.
+> **STATUS NOTE (2026-04-23):** Storage is now PostgreSQL (see ADR-005 for the migration decision).
 > The engine package structure, interfaces, and pipeline stages documented here remain valid.
 
 # Architecture
@@ -387,7 +386,7 @@ Agent starts task
 
 | Decision | Why | Alternatives Considered |
 |---|---|---|
-| **Supabase as the single data store** | Enables cross-session persistence, cross-repo queries, real-time dashboard, and multi-user team access without file sync. pgvector handles semantic search natively. | File-based artifacts (JSON/YAML in repo): no cross-repo queries, breaks team sharing, no real-time dashboard. SQLite: no multi-user, no cloud sync, no pgvector. |
+| **PostgreSQL as the single data store** | Enables cross-session persistence, cross-repo queries, real-time dashboard, and multi-user team access without file sync. pgvector handles semantic search natively. See ADR-005. | File-based artifacts (JSON/YAML in repo): no cross-repo queries, breaks team sharing, no real-time dashboard. |
 | **Engine package separated from CLI and server** | Both CLI and MCP server need identical pipeline computation. Separating engine prevents duplication, allows engine stages to be unit-tested without transport concerns, and means adding a new transport (e.g. REST API) requires no engine changes. | Co-locating logic in CLI: duplicated code in server. Co-locating in server: CLI becomes thin wrapper with no local execution. |
 | **Pipeline stages as distinct interfaces** | Allows language adapters to be added (new `LanguageAdapter`) without modifying ranking or slicing. Allows ranking strategies to be swapped via config without touching parsing. Each stage can be tested independently. | Monolithic indexer function: impossible to swap adapters, hard to test ranking without running parse. |
 | **Adapters fail safely** | A broken Python adapter must not abort indexing a TypeScript repo. Each adapter is wrapped; errors are logged and the file is skipped. | Fail-fast: simpler but makes the pipeline brittle for multi-language repos. |

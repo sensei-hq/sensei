@@ -41,7 +41,7 @@ origin: docs/ideas/01-workflow-system.md
 │  │  │  ├── Pattern detector          │  │    │                               │
 │  │  │  └── Doc indexer (frontmatter) │  │    │                               │
 │  │  ├────────────────────────────────┤  │    │                               │
-│  │  │  Graph Store (SQLite)          │  │    │                               │
+│  │  │  Graph Store (PostgreSQL)      │  │    │                               │
 │  │  │  ├── Symbol nodes (enriched)   │  │    │                               │
 │  │  │  ├── Doc nodes (frontmatter)   │  │    │                               │
 │  │  │  ├── Edges (CALLS, IMPLEMENTS, │  │    │                               │
@@ -106,7 +106,7 @@ origin: docs/ideas/01-workflow-system.md
 │                                              │  └──────────────────────────┘  │
 │  ┌──────────────────────────────────────┐    │                               │
 │  │  Graph Data                          │    │  ┌──────────────────────────┐  │
-│  │  ├── ~/.sensei/sensei.db (SQLite)    │    │  │  Corpus + Benchmarks     │  │
+│  │  ├── PostgreSQL (senseid database)   │    │  │  Corpus + Benchmarks     │  │
 │  │  ├── ~/.sensei/graph/ (Kuzu future)  │    │  │  ├── benchmarks/         │  │
 │  │  └── ~/.sensei/senseid.log           │    │  │  │   registry.yaml       │  │
 │  └──────────────────────────────────────┘    │  │  │   tasks.yaml          │  │
