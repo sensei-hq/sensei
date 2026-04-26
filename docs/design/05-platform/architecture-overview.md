@@ -129,7 +129,7 @@ flowchart LR
 | **Diff-first BFS ranking** | ✅ git diff seeds relevance | ❌ no git-aware ranking | High — largest single token saving |
 | **Symbol-level AST slicing** | ✅ extract function bodies by line range | ⚠️ L0–L3 resolution, full sections | High — 20–25% token reduction |
 | **Session deduplication** | ✅ skip files Claude already read | ❌ not implemented | High — 32% savings on turn 2+ |
-| **Answer-driven relevance learning** | ✅ feedback loop → SQLite multipliers | ❌ no feedback loop | Medium — compounds over sessions |
+| **Answer-driven relevance learning** | ✅ feedback loop → PostgreSQL multipliers | ❌ no feedback loop | Medium — compounds over sessions |
 | **Real-time file watcher** | ✅ pre-warm on save, <20ms | ❌ manual reindex only | Medium — latency improvement |
 | **Hard token budget enforcement** | ✅ tiktoken, 8K hard cap | ⚠️ soft, resolution-level based | Medium — prevents context bloat |
 | **Real AST parsing** | ⚠️ Python ast + regex for TS | ⚠️ model-based + regex | Medium — accuracy for all languages |

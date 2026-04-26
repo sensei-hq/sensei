@@ -11,6 +11,8 @@ supersedes:
 
 # Indexing Architecture
 
+> **SUPERSEDED:** This document describes the original TypeScript indexing pipeline with SQLite + Kuzu. The current Rust implementation uses PostgreSQL. See `database/ddl/` for the active schema and ADR-005 for the migration decision.
+
 > Current as of April 2026. Covers the full pipeline from project registration through graph retrieval.
 > Implements a Kuzu embedded graph DB, SQLite-backed parallel indexing queue, and an L0–L5 depth
 > retrieval model served over MCP.

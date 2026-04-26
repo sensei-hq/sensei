@@ -449,7 +449,7 @@ The entire roadmap (all 3 waves, 22 components) should be pushed as GitHub issue
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Daemon (senseid :7744) — persistent store + compute                │
 │                                                                     │
-│  Stores (SQLite):                                                   │
+│  Stores (PostgreSQL):                                                │
 │  ├── events        — append-only log of everything that happens     │
 │  ├── sessions      — session lifecycle (start, checkpoint, end)     │
 │  ├── metrics       — computed from events (FTR, turn count, etc.)   │
