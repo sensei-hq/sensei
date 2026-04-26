@@ -72,7 +72,9 @@ pub(crate) async fn search_types(
 #[derive(Deserialize)]
 pub(crate) struct TraceQuery {
     #[serde(rename = "repoId")]
+    #[allow(dead_code)]
     pub repo_id: String,
+    #[allow(dead_code)]
     pub name: String,
 }
 
@@ -95,7 +97,9 @@ pub(crate) async fn fn_callees(
 #[derive(Deserialize)]
 pub(crate) struct TagQuery {
     #[serde(rename = "repoId")]
+    #[allow(dead_code)]
     pub repo_id: String,
+    #[allow(dead_code)]
     pub tag: String,
 }
 
