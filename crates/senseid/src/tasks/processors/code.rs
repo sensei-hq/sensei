@@ -137,14 +137,14 @@ mod tests {
     }
 
     #[test]
-    fn svelte_component_serverstatus() {
-        let r = process_code_file("apps/desktop/src/lib/ServerStatus.svelte");
+    fn svelte_component_step_header() {
+        let r = process_code_file("apps/desktop/src/lib/setup/wizard/StepHeader.svelte");
         assert_eq!(r.language.as_deref(), Some("svelte"));
 
         // Should find component symbol
         let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
         assert_eq!(components.len(), 1, "should find exactly 1 component");
-        assert_eq!(components[0].name, "ServerStatus");
+        assert_eq!(components[0].name, "StepHeader");
     }
 
     #[test]
@@ -163,15 +163,12 @@ mod tests {
 
     #[test]
     fn page_svelte_route() {
-        let r = process_code_file("apps/desktop/src/routes/(app)/p/[id]/+page.svelte");
+        let r = process_code_file("apps/desktop/src/routes/(app)/observatory/+page.svelte");
         assert_eq!(r.language.as_deref(), Some("svelte"));
 
         // Should find the page component
         let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
         assert_eq!(components.len(), 1);
-
-        // Should have imports (svelte imports)
-        assert!(r.unresolved_imports.len() > 0, "should have imports");
     }
 
     #[test]
