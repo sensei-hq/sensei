@@ -23,15 +23,17 @@ function ProjMiniSpark({ data, w = 110, h = 28, color = 'var(--shu)' }) {
 
 // ───────────────────────────────────────────────────────────
 // Project header — used at the top of every layout
-function ProjHeader({ project, onBack }) {
+function ProjHeader({ project, onBack, showBack = true }) {
   return (
     <div style={{ padding: '28px 44px 20px', borderBottom: 'var(--hairline)',
                   display: 'flex', alignItems: 'flex-start', gap: 22, background: 'var(--paper)' }}>
-      <button onClick={onBack}
-              style={{ fontSize: 11, color: 'var(--sumi-3)',
-                       padding: '6px 10px', border: 'var(--ink-line)', borderRadius: 5 }}>
-        ← all projects
-      </button>
+      {showBack && (
+        <button onClick={onBack}
+                style={{ fontSize: 11, color: 'var(--sumi-3)',
+                         padding: '6px 10px', border: 'var(--ink-line)', borderRadius: 5 }}>
+          ← all projects
+        </button>
+      )}
       <div className="kanji" style={{ fontSize: 52, color: 'var(--shu)', lineHeight: 1, marginTop: -4 }}>
         {project.kanji}
       </div>

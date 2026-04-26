@@ -9,15 +9,16 @@ const { useState: useS, useEffect: useE, useRef: useR, useMemo: useM } = React;
 // ─────────────────────────────────────────────────────────────
 // Stage list (order matters)
 const WIZ_STAGES = [
-  { id: "welcome",    n: "一", title: "Welcome",          sub: "先生 · a quiet observer of your work" },
-  { id: "components", n: "二", title: "Components",       sub: "installed automatically" },
-  { id: "acps",       n: "三", title: "Assistants",       sub: "plugins · skills · commands · logging" },
-  { id: "folders",    n: "四", title: "Folders",          sub: "where does your work live" },
-  { id: "scan",       n: "五", title: "Scan",             sub: "watching the worker" },
-  { id: "projects",   n: "六", title: "Projects",         sub: "one or more repos each" },
-  { id: "libraries",  n: "七", title: "Libraries",        sub: "what sensei should wrap" },
-  { id: "registry",   n: "八", title: "MCP Registry",     sub: "recommended for your stack" },
-  { id: "done",       n: "九", title: "Enter",            sub: "the observatory is ready" }
+  { id: "welcome",     n: "一",  title: "Welcome",         sub: "先生 · a quiet observer of your work" },
+  { id: "acps",        n: "二",  title: "Assistants",      sub: "plugins · skills · commands · logging" },
+  { id: "folders",     n: "三",  title: "Folders",         sub: "where does your work live" },
+  { id: "scan",        n: "四",  title: "Scan",            sub: "watching the worker" },
+  { id: "projects",    n: "五",  title: "Projects",        sub: "one or more repos each" },
+  { id: "libraries",   n: "六",  title: "Libraries",       sub: "what sensei should wrap" },
+  { id: "registry",    n: "七",  title: "Instruments",     sub: "recommended MCPs for your stack" },
+  { id: "inference",   n: "八",  title: "Inference",       sub: "providers · models" },
+  { id: "assignments", n: "九",  title: "Assignments",     sub: "which models handle which roles" },
+  { id: "done",        n: "十",  title: "Enter",           sub: "the observatory is ready" }
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -41,7 +42,11 @@ function SetupWizard({ onDone, onExit }) {
     libraries:  (D.discoveredLibraries ? D.discoveredLibraries.detected : []).reduce((a,l)=> (a[l.id] = true, a), {}),
     libExtras:  [],   // user-added: {id, name, url, lang}
     mcps:       (D.mcpRegistry ? D.mcpRegistry.available : [])
-                  .reduce((a,m)=> (a[m.id] = !!(m.installed || m.recommended), a), {})
+                  .reduce((a,m)=> (a[m.id] = !!(m.installed || m.recommended), a), {}),
+    models:     (D.inference ? D.inference.localModels : [])
+                  .reduce((a,m)=> (a[m.id] = !!m.recommended || !!m.pulled, a), {}),
+    apiKeys:    (D.inference ? D.inference.providers : [])
+                  .reduce((a,p)=> (a[p.id] = "", a), {})
   });
   const upd = (patch) => setState(prev => ({ ...prev, ...patch }));
 
@@ -65,10 +70,43 @@ function SetupWizard({ onDone, onExit }) {
             {stage.id === "projects"   && <WizProjects state={state} upd={upd}/>}
             {stage.id === "libraries"  && <WizLibraries state={state} upd={upd}/>}
             {stage.id === "registry"   && <WizRegistry state={state} upd={upd}/>}
-            {stage.id === "done"       && <WizDone state={state}/>}
+            {stage.id === "inference"   && <WizInference state={state} upd={upd}/>}
+            {stage.id === "assignments" && <WizAssignments state={state} upd={upd}/>}
+            {stage.id === "done"        && <WizDone state={state}/>}
           </div>
           <WizBottom stage={stage} stageIdx={stageIdx} total={WIZ_STAGES.length}
                      back={back} next={next} onDone={onDone} state={state}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Services status (all green / error) ────────────────────
+function ServicesStatus() {
+  // Pull live-ish values from the bootstrap model if present; otherwise all green.
+  const statuses = (window.BOOT_PRESETS && window.BOOT_PRESETS["all-green"].statuses) || {};
+  const services = [
+    { id: "postgres", label: "postgres" },
+    { id: "ollama",   label: "ollama"   },
+    { id: "daemon",   label: "daemon"   },
+  ];
+  const anyBad = services.some(s => {
+    const v = statuses[s.id];
+    return v && v !== "ready";
+  });
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{ width: 7, height: 7, borderRadius: 4,
+                      background: anyBad ? 'var(--shu)' : 'var(--matcha)' }}/>
+      <div style={{ fontSize: 11, color: 'var(--sumi-2)', lineHeight: 1.4 }}>
+        <div style={{ letterSpacing: '0.1em', textTransform: 'uppercase',
+                       fontSize: 10, color: 'var(--sumi-3)' }}>
+          Services
+        </div>
+        <div style={{ marginTop: 2 }}>
+          {anyBad ? "one or more down" : "all green"}
         </div>
       </div>
     </div>
@@ -82,7 +120,7 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                     display: 'flex', flexDirection: 'column',
                     background: 'var(--paper-2)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 28 }}>
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>先</span>
+        <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>先生</span>
         <span className="display" style={{ fontSize: 17 }}>Sensei</span>
         <span style={{ flex: 1 }}/>
         <button onClick={onExit} title="Exit setup"
@@ -131,10 +169,8 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
 
       <div style={{ flex: 1 }}/>
 
-      <div style={{ fontSize: 10, color: 'var(--sumi-3)', lineHeight: 1.6,
-                    borderTop: 'var(--hairline)', paddingTop: 14 }}>
-        <div className="mono">daemon · 9823</div>
-        <div style={{ marginTop: 4 }}>setup can be resumed at any time from <span className="mono">Settings</span></div>
+      <div style={{ borderTop: 'var(--hairline)', paddingTop: 12 }}>
+        <ServicesStatus/>
       </div>
     </aside>
   );
@@ -949,7 +985,7 @@ function WizProjects({ state, upd }) {
           const mergeTargets = sols.filter(x => x.id !== s.id);
           return (
           <div key={s.id} style={{
-            border: s.confirmed ? '1.5px solid var(--sumi-2)' : 'var(--hairline)',
+            border: 'var(--hairline)',
             borderRadius: 10, background: s.confirmed ? 'var(--paper-2)' : 'var(--paper)',
             padding: 18, opacity: s.confirmed ? 1 : 0.55, transition: 'all .2s',
             position: 'relative'
@@ -1281,7 +1317,7 @@ function MetaField({ label, children }) {
 // ─── Libraries — things sensei should WRAP ──────────────────
 // These are libs WITHOUT their own MCP. Sensei indexes code + docs
 // and exposes its own tools over them. Libraries with a proper MCP
-// (Postgres, Stripe, etc.) belong in the MCP Registry step instead.
+// (Postgres, Stripe, etc.) belong in the Instruments step instead.
 function WizLibraries({ state, upd }) {
   const D = window.SENSEI_SETUP.discoveredLibraries || { detected: [] };
   const [form, setForm] = useS({ name: "", url: "", lang: "Rust" });
@@ -1494,7 +1530,7 @@ function WizLibraries({ state, upd }) {
   );
 }
 
-// ─── MCP Registry — recommended based on detected stack ─────
+// ─── Instruments — recommended MCPs based on detected stack ─
 // These are libraries / services that bring their OWN MCP.
 // Sensei doesn't need to index them; it just installs the MCP
 // so other tools (including sensei) can call it.
@@ -1510,8 +1546,8 @@ function WizRegistry({ state, upd }) {
 
   return (
     <div>
-      <WizHeader n="八" title="MCP Registry"
-                 tagline="Sensei recommends these based on what it detected in your stack. Each one brings its own tools — no wrapping needed."/>
+      <WizHeader n="七" title="Instruments"
+                 tagline="Tools sensei can reach for — recommended based on what's in your stack. Each MCP brings its own capabilities, no wrapping needed."/>
 
       {/* Detected stack summary */}
       <div style={{ padding: '14px 18px', background: 'var(--paper-2)',
@@ -1662,7 +1698,11 @@ const wizInputStyle = {
   fontFamily: 'var(--font-mono)', outline: 'none'
 };
 
-// ─── 10 Done ─────────────────────────────────────────────────
+// ─── 8 Inference ─────────────────────────────────────────────
+// WizInference lives in lib/wiz-inference.jsx — loaded via <script> tag after this file.
+// Expects window.SENSEI_SETUP.inference (system, providers, rolePriority, addable).
+
+// ─── 9 Done ─────────────────────────────────────────────────
 function WizDone({ state }) {
   const confirmedSols = state.solutions.filter(s => s.confirmed);
   const repoCount = confirmedSols.reduce((a, s) => a + s.projects.length, 0);
@@ -1757,7 +1797,7 @@ function EmptyObservatoryApp({ onBeginSetup }) {
           {/* Left: the invitation */}
           <div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 28 }}>
-              <span className="kanji" style={{ fontSize: 28, color: 'var(--shu)' }}>先</span>
+              <span className="kanji" style={{ fontSize: 28, color: 'var(--shu)' }}>先生</span>
               <span className="display" style={{ fontSize: 22, fontWeight: 400 }}>Sensei</span>
             </div>
             <div style={{ fontSize: 10, letterSpacing: '0.18em', color: 'var(--sumi-3)',

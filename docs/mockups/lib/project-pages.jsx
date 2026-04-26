@@ -17,7 +17,7 @@ function renderSection(id, project, openAction) {
     case "graph":    return <ProjGraphLens   project={project}/>;
     case "patterns": return <ProjPatterns    openAction={openAction}/>;
     case "sessions": return <ProjSessions/>;
-    case "settings": return <ProjSettings    project={project}/>;
+    case "settings": return <ProjSettingsV2  project={project}/>;
     default:         return null;
   }
 }
@@ -32,8 +32,9 @@ function useActionDrawer() {
 // ═══════════════════════════════════════════════════════════
 // Variation A — Top tabs (classic, scannable)
 // ═══════════════════════════════════════════════════════════
-function ProjectPageTopTabs() {
-  const project = window.PROJECT_DATA.projects[window.PROJECT_DATA.active];
+function ProjectPageTopTabs({ embedded = false, onBack, projectId } = {}) {
+  const projects = window.PROJECT_DATA.projects;
+  const project = projects[projectId || window.PROJECT_DATA.active] || projects[window.PROJECT_DATA.active];
   const [sec, setSec] = ppS("overview");
   const { drawer, openAction, close } = useActionDrawer();
 
@@ -41,8 +42,8 @@ function ProjectPageTopTabs() {
     <div className="sensei" data-screen-label="Project · Top tabs"
          style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
                   background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
-      <TauriChrome title={`Sensei  先生  ·  ${project.name}`}/>
-      <ProjHeader project={project} onBack={() => {}}/>
+      {!embedded && <TauriChrome title={`Sensei  先生  ·  ${project.name}`}/>}
+      <ProjHeader project={project} onBack={onBack || (() => {})} showBack={!!embedded && !!onBack}/>
 
       {/* Tab bar */}
       <div style={{ padding: '0 44px', borderBottom: 'var(--hairline)',
