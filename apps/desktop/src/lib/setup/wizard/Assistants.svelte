@@ -13,6 +13,15 @@
 
   let acps = $state<AcpEntry[]>(wizState.acpList);
 
+  /** Replace home dir with ~ for display */
+  function shortPath(p: string | null): string {
+    if (!p) return '';
+    const home = typeof process !== 'undefined' ? process.env.HOME : null;
+    if (home && p.startsWith(home)) return '~' + p.slice(home.length);
+    // Fallback: strip /Users/<name> pattern
+    return p.replace(/^\/Users\/[^/]+/, '~');
+  }
+
   onMount(async () => {
     try {
       const api = senseiApi(getPort());
@@ -57,7 +66,7 @@
           </div>
           <div class="card-bottom">
             {#if found && acp.path}
-              <span class="card-path">{acp.path}</span>
+              <span class="card-path">{shortPath(acp.path)}</span>
             {:else}
               <span class="card-notfound">not found</span>
             {/if}
@@ -75,7 +84,6 @@
 
 <style>
   .step {
-    max-width: 780px;
   }
 
   .grid {
