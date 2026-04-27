@@ -303,11 +303,8 @@ function FilterRow({ scope, setScope, projectFilter, setPrj, sort, setSort }) {
         </ChipRow>
       )}
       <ChipRow label="project">
-        {projs.map(p => (
-          <Chip key={p} active={projectFilter === p} onClick={() => setPrj(p)}>
-            {p === "all" ? "all" : window.LEARNINGS.projects[p]?.name.replace(/-.*/, "") || p}
-          </Chip>
-        ))}
+        <ProjectFilter value={projectFilter} onChange={setPrj}
+                       projects={window.LEARNINGS.projects} label={null}/>
       </ChipRow>
       {sort != null && (
         <>

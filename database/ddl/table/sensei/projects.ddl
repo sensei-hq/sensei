@@ -12,6 +12,9 @@ create table if not exists projects (
 , links                    jsonb            not null default '[]'
 , guidelines               jsonb            not null default '[]'
 , preferred_acp            text
+, backlog                  jsonb            not null default '[]'
+, privacy                  jsonb            not null default '{}'
+, excluded_globs           jsonb            not null default '[]'
 , tags                     text[]           not null default '{}'
 , modified_at              timestamptz      not null default now()
 );
@@ -30,7 +33,10 @@ One project per git/subtree folder by default, but users can merge or split.
 - icon: {kind, value, bg, fg} — e.g. {kind:"kanji", value:"工", bg:"var(--shu-soft)", fg:"var(--shu)"}
 - links: external references [{id, kind, label, url}] — docs, dashboards, issue trackers
 - guidelines: project rules [{id, rule, source}]
-- preferred_acp: default AI coding tool for this project (claude-code, cursor, etc.)';
+- preferred_acp: default AI coding tool for this project (claude-code, cursor, etc.)
+- backlog: task items [{id, task, added}]
+- privacy: per-project privacy settings {logPrompts, logFileContents, redactSecrets, shareWithCloud}
+- excluded_globs: file/folder patterns to exclude from indexing ["dist/**", "*.generated.*"]';
 
 comment on column projects.id
      is 'Surrogate primary key (UUID).';
@@ -56,6 +62,12 @@ comment on column projects.guidelines
      is 'Project rules: [{id, rule, source}]. Source can be "house-style", a session id, or "manual".';
 comment on column projects.preferred_acp
      is 'Default AI coding tool for sessions in this project: claude-code, cursor, zed, etc.';
+comment on column projects.backlog
+     is 'Task backlog items: [{id, task, added}]. Surfaced in project settings.';
+comment on column projects.privacy
+     is 'Per-project privacy settings: {logPrompts:bool, logFileContents:bool, redactSecrets:bool, shareWithCloud:bool}. Defaults to empty = inherit global config.';
+comment on column projects.excluded_globs
+     is 'Glob patterns to exclude from indexing for this project: ["dist/**", "*.generated.*"]. Layered on top of folders_to_watch.excluded.';
 comment on column projects.tags
      is 'Array of tag strings for quick filtering. Vocabulary controlled by sensei.tags table.';
 comment on column projects.modified_at

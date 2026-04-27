@@ -125,7 +125,6 @@
 </section>
 
 <style>
-  .step { }
   .step-label { font-size: 12px; letter-spacing: 0.12em; color: var(--sumi-3); margin-bottom: var(--space-2); }
   .step-label .kanji { color: var(--shu); margin-right: 4px; }
   .headline { font-size: 40px; color: var(--sumi); margin: 0 0 var(--space-2) 0; line-height: 1.15; }

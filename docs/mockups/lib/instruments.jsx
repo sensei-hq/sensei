@@ -8,13 +8,20 @@
 // The three tabs answer distinct questions:
 //   具 Playground — what CAN these instruments do?  (interactive try)
 //   録 Replay     — what DID the assistant do?      (per-session tool-call log)
-//   照 Insights   — what SHOULD we change?          (usage + effectiveness)
+//   健 Health     — what SHOULD we change?          (usage + effectiveness)
+//
+// Renamed from "Insights" to "Health" to avoid colliding with the
+// observatory's top-level Insights surface (the things sensei has
+// noticed about your work). "Health" honestly names what this view is:
+// a diagnostic of how your toolset is performing. Route, component,
+// and tab id all renamed; an InstrumentsInsights alias remains on
+// window for any older artboard markup that hasn't been touched yet.
 //
 // This file exports:
 //   · InstrumentsShell     — shared chrome with tab nav
 //   · InstrumentsPlayground — revised (MCP-as-app-chooser, flat list, kinds)
 //   · InstrumentsReplay    — simplified (request/response only)
-//   · InstrumentsInsights  — unchanged from the old MCPInsights
+//   · InstrumentsHealth     — toolset health (usage + effectiveness)
 //   · InstrumentsApp       — connected host that switches tabs
 
 const { useState: iUseS, useMemo: iUseM } = React;
@@ -30,7 +37,7 @@ function InstrumentsShell({ activeTab, onTab, embedded = false,
       hint: "what can these instruments do?" },
     { id: "replay",     kanji: "録", label: "Replay",
       hint: "what did the assistant do?" },
-    { id: "insights",   kanji: "照", label: "Insights",
+    { id: "health",     kanji: "健", label: "Health",
       hint: "what should we change?" }
   ];
   const chrome = !embedded;
@@ -772,15 +779,15 @@ function inferKind(toolName) {
 // ═══════════════════════════════════════════════════════════════════════
 // INSIGHTS — unchanged, re-exported with new label
 // ═══════════════════════════════════════════════════════════════════════
-function InstrumentsInsights({ activeTab = "insights", onTab = () => {},
-                                embedded = false, simple = false } = {}) {
+function InstrumentsHealth({ activeTab = "health", onTab = () => {},
+                              embedded = false, simple = false } = {}) {
   const I = window.MCP_SIGNALS.insights;
   const [window_, setWindow] = iUseS(I.window);
   const [focusTool, setFocusTool] = iUseS(null);
 
   return (
     <InstrumentsShell activeTab={activeTab} onTab={onTab} embedded={embedded} simple={simple}
-      kanji="照"
+      kanji="健"
       tagline="Which instruments earn their keep — and what to change."
       sub="Aggregated across every session in the window. Usage alone isn't success; the signal is whether the assistant DID something with the response, and whether sessions that touched the tool landed first-try more often than ones that didn't."
       chip={
@@ -1092,12 +1099,14 @@ function ProjectUsageRow({ p }) {
 function InstrumentsApp({ initialTab = "playground", embedded = false } = {}) {
   const [tab, setTab] = iUseS(initialTab);
   const props = { activeTab: tab, onTab: setTab, embedded };
-  if (tab === "replay")   return <InstrumentsReplay {...props}/>;
-  if (tab === "insights") return <InstrumentsInsights {...props}/>;
+  if (tab === "replay") return <InstrumentsReplay {...props}/>;
+  if (tab === "health") return <InstrumentsHealth {...props}/>;
   return <InstrumentsPlayground {...props}/>;
 }
 
 Object.assign(window, {
-  InstrumentsShell, InstrumentsPlayground, InstrumentsReplay, InstrumentsInsights,
+  InstrumentsShell, InstrumentsPlayground, InstrumentsReplay, InstrumentsHealth,
+  // back-compat alias — some older artboards still reference InstrumentsInsights
+  InstrumentsInsights: InstrumentsHealth,
   InstrumentsApp
 });

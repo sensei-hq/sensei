@@ -72,7 +72,7 @@
           {#if mcp.installed}
             <span class="installed-badge">installed</span>
           {:else}
-            <button class="toggle-switch" class:toggle-on={enabled} onclick={() => toggle(mcp.id)}>
+            <button class="toggle-switch" class:toggle-on={enabled} onclick={() => toggle(mcp.id)} aria-label="Toggle {mcp.name}">
               <span class="toggle-thumb"></span>
             </button>
           {/if}
@@ -105,7 +105,7 @@
 
           <div class="mcp-actions">
             <span class="tool-count">{mcp.tools} tools</span>
-            <button class="toggle-switch" class:toggle-on={enabled} onclick={() => toggle(mcp.id)}>
+            <button class="toggle-switch" class:toggle-on={enabled} onclick={() => toggle(mcp.id)} aria-label="Toggle {mcp.name}">
               <span class="toggle-thumb"></span>
             </button>
           </div>

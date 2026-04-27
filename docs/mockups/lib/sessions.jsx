@@ -83,7 +83,24 @@ window.SESSIONS = (function () {
     ]
   };
 
-  return { projects: proj, sessions, retro };
+  // Recommendation checkpoints — moments where a memory/skill/agent was
+  // applied. Charts overlay these as vertical markers so before/after is visible.
+  const checkpoints = [
+    { id: "ck-adapter",  when: "5 days ago", kanji: "技",
+      title: "Adopted adapter pattern",
+      body: "wrote `lumen-conventions.skill.md` from m-adapter-pattern",
+      affects: ["lumen-cloud","lumen-auth"] },
+    { id: "ck-style",    when: "3 days ago", kanji: "則",
+      title: "Promoted response-style memory to rule",
+      body: "no trailing summaries · global response style",
+      affects: "all" },
+    { id: "ck-svelte",   when: "yesterday",  kanji: "禁",
+      title: "Enabled lint check for `let → $state`",
+      body: "sensei lint guards against legacy reactivity",
+      affects: ["koto-editor"] }
+  ];
+
+  return { projects: proj, sessions, retro, checkpoints };
 })();
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -224,9 +241,7 @@ function SessionsDigest() {
         <section>
           <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap',
                          marginBottom: 12 }}>
-            <FilterChips label="project" value={project} setValue={setProject}
-                          options={["all", ...Object.keys(D.projects)]}
-                          render={(p) => p === "all" ? "all" : D.projects[p]?.name || p}/>
+            <ProjectFilter value={project} onChange={setProject} projects={D.projects}/>
             <FilterChips label="language" value={lang} setValue={setLang} options={langs}/>
             <FilterChips label="outcome"  value={outcome} setValue={setOutcome}
                           options={["all","shipped","corrected","abandoned"]}/>
@@ -403,9 +418,7 @@ function SessionsTimeline() {
         </div>
 
         {/* Filter */}
-        <FilterChips label="project" value={project} setValue={setProject}
-                      options={["all", ...Object.keys(D.projects)]}
-                      render={(p) => p === "all" ? "all" : D.projects[p]?.name || p}/>
+        <ProjectFilter value={project} onChange={setProject} projects={D.projects}/>
 
         {/* Timeline */}
         <div style={{ position: 'relative', paddingLeft: 90 }}>

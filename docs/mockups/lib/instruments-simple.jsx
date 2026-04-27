@@ -12,7 +12,7 @@
 // Exports:
 //   · InstrumentsPlaygroundSimple
 //   · InstrumentsReplaySimple    (thin wrapper over the old Replay body)
-//   · InstrumentsInsightsSimple  (thin wrapper over the old Insights body)
+//   · InstrumentsHealthSimple   (thin wrapper over the old Insights body)
 
 const { useState: isS, useEffect: isE } = React;
 
@@ -401,12 +401,14 @@ function InstrumentsReplaySimple() {
   return <InstrumentsReplay simple={true} embedded={true}/>;
 }
 
-function InstrumentsInsightsSimple() {
-  return <InstrumentsInsights simple={true} embedded={true}/>;
+function InstrumentsHealthSimple() {
+  return <InstrumentsHealth simple={true} embedded={true}/>;
 }
 
 Object.assign(window, {
   InstrumentsPlaygroundSimple,
   InstrumentsReplaySimple,
-  InstrumentsInsightsSimple
+  InstrumentsHealthSimple,
+  // back-compat alias
+  InstrumentsInsightsSimple: InstrumentsHealthSimple
 });
