@@ -35,12 +35,18 @@ impl Gateway {
     }
 
     /// Execute an inference request, walking the fallback chain on failure.
+    ///
+    /// Returns `GatewayError::NotConfigured` if no config has been set.
     pub async fn execute(
         &self,
         request: &InferenceRequest,
     ) -> Result<InferenceResponse, GatewayError> {
         // 1. Clone config from RwLock
         let config = self.config.read().await.clone();
+
+        if config.routers.is_empty() && config.models.is_empty() && config.chains.is_empty() {
+            return Err(GatewayError::NotConfigured);
+        }
 
         // 2. Build SelectionCriteria from request
         let input_tokens = estimate_input_tokens(&request.payload);
@@ -170,6 +176,14 @@ impl Gateway {
     /// Return a sorted list of all registered adapter ids.
     pub async fn list_adapters(&self) -> Vec<String> {
         self.adapters.list().await
+    }
+
+    /// Whether the gateway has any configuration (routers, models, chains).
+    /// Returns false if the config is empty — callers should not attempt
+    /// execute() until config has been set via update_config().
+    pub async fn is_configured(&self) -> bool {
+        let config = self.config.read().await;
+        !config.routers.is_empty() || !config.models.is_empty() || !config.chains.is_empty()
     }
 }
 
@@ -405,12 +419,12 @@ mod tests {
         // Update config to empty — no routers, no models, no chains
         gw.update_config(GatewayConfig::default()).await;
 
-        // Now execute should fail with NoCandidates
+        // Now execute should fail with NotConfigured (empty config)
         let result = gw.execute(&chat_request()).await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            GatewayError::NoCandidates { .. }
+            GatewayError::NotConfigured
         ));
     }
 
