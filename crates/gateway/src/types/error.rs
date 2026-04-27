@@ -35,6 +35,9 @@ pub enum GatewayError {
     #[error("no candidates available for capability '{capability:?}'")]
     NoCandidates { capability: Capability },
 
+    #[error("gateway not configured — no routers, models, or chains have been set")]
+    NotConfigured,
+
     #[error("all {attempts} attempts failed")]
     AllAttemptsFailed { attempts: usize },
 
@@ -78,6 +81,7 @@ impl GatewayError {
             GatewayError::Authentication { .. }
             | GatewayError::AllAttemptsFailed { .. }
             | GatewayError::NoCandidates { .. }
+            | GatewayError::NotConfigured
             | GatewayError::Network(_)
             | GatewayError::Serialization(_) => false,
         }
