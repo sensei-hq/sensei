@@ -1,5 +1,16 @@
 // Wizard data + SSE-style scan events for the setup flow.
 window.SENSEI_SETUP = {
+  // OS-level facts the wizard derives defaults from. In a real build these
+  // come from the Tauri host; here we mock a believable home path so the
+  // Preferences stage can derive a display-name suggestion ("aiko" → "Aiko"),
+  // matching the rest of the prototype's persona.
+  system: {
+    homeDir:  "/Users/aiko",
+    username: "aiko",
+    osName:   "macOS 14.4 · arm64",
+    shell:    "zsh"
+  },
+
   // Components state (the user wanted all three cases as sub-variants)
   componentsVariants: [
     {

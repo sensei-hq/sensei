@@ -19,7 +19,7 @@ function MCPShell({ activeTab, onTab, kanji, title, tagline, chip, sub, children
       hint: "what can these tools do?" },
     { id: "replay",     kanji: "録", label: "Replay",
       hint: "what did the assistant do?" },
-    { id: "insights",   kanji: "照", label: "Insights",
+    { id: "insights",   kanji: "健", label: "Health",
       hint: "what should we change?" }
   ];
   return (

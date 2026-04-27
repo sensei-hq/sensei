@@ -285,7 +285,7 @@ export function senseiApi(port: number) {
 
     removeAll: (purge = false) =>
       post<import('./types').RemoveResult>('/api/remove', { purge }, {
-        acps_removed: [], plugin_removed: false, commands_removed: 0,
+        assistants_removed: [], plugin_removed: false, commands_removed: 0,
         skills_removed: 0, agents_removed: 0, hooks_removed: false,
         cache_cleared: false, projects_cleaned: [], errors: [],
       }),
