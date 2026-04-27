@@ -54,7 +54,7 @@ function WizAssignments({ state, upd }) {
   return (
     <div style={{ maxWidth: 1040, margin: '0 auto' }}>
       <div style={{ marginBottom: 18 }}>
-        <WizHeader n="九" title="Assignments"
+        <WizHeader n="任" title="Assignments"
                    tagline="Decide which models handle each reasoning role. The first model is primary; the rest are fallbacks used if the primary is down or rate-limited."/>
       </div>
 

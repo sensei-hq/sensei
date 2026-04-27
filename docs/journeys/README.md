@@ -202,7 +202,7 @@ The mockups use a fictional product (Lumen) with different terminology than the 
 | solution | Multi-repo product group | `sensei.projects` | — (projects IS the grouping) |
 | project / repo | Individual git repository | `sensei.folders` | `kind = 'git'` or `kind = 'subtree'` |
 | folder root | User-configured watch path | `sensei.folders_to_watch` | `path`, `status` |
-| ACP / assistant | AI coding tool | `sensei.coordinator_installs` | `coordinator` column |
+| ACP / assistant | AI coding tool | `sensei.assistants` | `family`, `configured`, `configured_version` |
 | coaching koan | Actionable recommendation | `inference.recommendations` | `title`, `why`, `impact` |
 | teaching adopted | Memory promoted to rule | `sensei.memories` | `status`, `strength` |
 | FTR (binary) | Was session first-try-right? | `activity.sessions` | `ftr boolean` |

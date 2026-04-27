@@ -4,5 +4,8 @@
 tap "mizukisu/tap", "https://github.com/mizukisu/homebrew-tap"
 
 brew "mizukisu/tap/sensei"        # CLI + background server daemon
+brew "sensei"                     # CLI + daemon + MCP server
+brew "postgresql@17"              # database
+
 cask "mizukisu/tap/sensei-app"    # Desktop app (optional)
 cask "ollama"                     # Local AI inference (optional, used by indexer)

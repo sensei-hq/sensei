@@ -13,6 +13,7 @@ create table if not exists sessions (
 , tokens_out               integer
 , duration_ms              integer
 , module                   text
+, summary                  text
 , props                    jsonb       not null default '{}'
 , started_at               timestamptz not null default now()
 , completed_at             timestamptz
@@ -45,7 +46,7 @@ comment on column sessions.project_id
 comment on column sessions.task
      is 'Task description passed at get_session_context.';
 comment on column sessions.acp_id
-     is 'Agent client: claude-code, cursor, codex, aider, etc.';
+     is 'Assistant family name (matches sensei.assistants.family): claude, cursor, codex, aider, etc.';
 comment on column sessions.outcome
      is 'Session outcome: completed, corrected, blocked, partial, abandoned.';
 comment on column sessions.ftr
@@ -62,6 +63,8 @@ comment on column sessions.duration_ms
      is 'Session duration in milliseconds.';
 comment on column sessions.module
      is 'Primary code module touched. For per-module FTR.';
+comment on column sessions.summary
+     is 'Brief summary of what happened in this session. Populated at checkpoint time by the assistant.';
 comment on column sessions.props
      is 'Extensible: {patterns_matched, personas_applied, workflow_phase, ...}.';
 comment on column sessions.started_at

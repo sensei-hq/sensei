@@ -73,7 +73,7 @@ function WizInference({ state, upd }) {
   return (
     <div style={{ maxWidth: 980, margin: '0 auto' }}>
       <div style={{ marginBottom: 18 }}>
-        <WizHeader n="八" title="Inference"
+        <WizHeader n="想" title="Inference"
                    tagline="Providers give sensei models for reasoning — inferring insights, consolidating memory, and making recommendations. Add providers, pull local models, leave assignment for the next step."/>
       </div>
 

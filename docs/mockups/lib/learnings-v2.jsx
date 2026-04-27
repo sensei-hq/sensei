@@ -116,21 +116,9 @@ function LearningsTriage() {
               sub="Memories sorted by immediacy. Most days you only need the first column."
               right={<TriageStats counts={L.counts}/>}/>
 
-      {/* one filter row only */}
-      <div style={{ padding: '12px 36px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 14 }}>
-        <span style={{ fontSize: 10, color: 'var(--sumi-4)', letterSpacing: '0.14em',
-                        textTransform: 'uppercase' }}>project</span>
-        {["all", ...Object.keys(L.projects)].map(p => (
-          <button key={p} onClick={() => setProject(p)}
-                  style={{ padding: '3px 10px', fontSize: 11,
-                            background: project === p ? 'var(--sumi)' : 'transparent',
-                            color: project === p ? 'var(--paper)' : 'var(--sumi-2)',
-                            border: project === p ? '1px solid var(--sumi)' : '1px solid var(--paper-edge)',
-                            borderRadius: 20, cursor: 'pointer' }}>
-            {p === "all" ? "all" : L.projects[p]?.name.replace(/-.*/, "") || p}
-          </button>
-        ))}
+      {/* shared project filter */}
+      <div style={{ padding: '12px 36px', borderBottom: 'var(--hairline)' }}>
+        <ProjectFilter value={project} onChange={setProject} projects={L.projects}/>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0,
@@ -654,21 +642,8 @@ function LearningsBrief() {
         {/* Memory shape chart */}
         <MemoryShapeChart memories={L.memories.filter(m => m.state !== "archived" && inProj(m))}/>
 
-        {/* Project filter (single one) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: 'var(--sumi-4)', letterSpacing: '0.14em',
-                          textTransform: 'uppercase' }}>filter project</span>
-          {["all", ...Object.keys(L.projects)].map(p => (
-            <button key={p} onClick={() => setProject(p)}
-                    style={{ padding: '3px 10px', fontSize: 11,
-                              background: project === p ? 'var(--sumi)' : 'transparent',
-                              color: project === p ? 'var(--paper)' : 'var(--sumi-2)',
-                              border: project === p ? '1px solid var(--sumi)' : '1px solid var(--paper-edge)',
-                              borderRadius: 20, cursor: 'pointer' }}>
-              {p === "all" ? "all" : L.projects[p]?.name.replace(/-.*/, "") || p}
-            </button>
-          ))}
-        </div>
+        {/* shared project filter */}
+        <ProjectFilter value={project} onChange={setProject} projects={L.projects}/>
 
         {/* Things to act on */}
         <section>

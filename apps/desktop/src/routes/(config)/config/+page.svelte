@@ -42,11 +42,13 @@
 
   const exit = () => { goto('/observatory'); };
 
+  let api: ReturnType<typeof senseiApi>;
+
   // Hydrate from daemon on mount
   onMount(async () => {
     await loadAppState();
     daemonPort = getPort();
-    const api = senseiApi(daemonPort);
+    api = senseiApi(daemonPort);
 
     try {
       const health = await api.getHealth();
@@ -95,8 +97,8 @@
 
       for (const s of suggestions) {
         const projRepos = repos
-          .filter(r => s.repo_ids.includes(r.repoId))
-          .map(r => ({
+          .filter((r: any) => s.repo_ids.includes(r.repoId))
+          .map((r: any) => ({
             id: r.repoId, name: r.name, path: r.path,
             files: 0, lang: (r as any).stack?.join(', ') || '',
             suggestedRole: (r as any).role || 'unknown',
@@ -220,7 +222,7 @@
             {#if stage.id === 'welcome'}<Welcome />
             {:else if stage.id === 'assistants'}<Assistants wizState={wizardState} {update} {stage} />
             {:else if stage.id === 'folders'}<Folders wizState={wizardState} {update} {stage} />
-            {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} onScan={onScanComplete} {daemonReady} />
+            {:else if stage.id === 'scan'}<Scan wizState={wizardState} {update} onScan={onScanComplete} />
             {:else if stage.id === 'projects'}<Projects wizState={wizardState} {update} {stage} />
             {:else if stage.id === 'libraries'}<Libraries wizState={wizardState} {update} {stage} />
             {:else if stage.id === 'instruments'}<Registry wizState={wizardState} {update} {stage} />

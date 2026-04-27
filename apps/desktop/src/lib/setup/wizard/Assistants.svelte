@@ -11,7 +11,14 @@
     stage: WizStage;
   } = $props();
 
-  let assistants = $state<AssistantEntry[]>(wizState.assistantList);
+  let assistants = $state<AssistantEntry[]>([]);
+
+  // Sync from wizState on init (avoid state_referenced_locally by reading inside $effect)
+  $effect(() => {
+    if (assistants.length === 0 && wizState.assistantList.length > 0) {
+      assistants = wizState.assistantList;
+    }
+  });
 
   /** Replace home dir with ~ for display */
   function shortPath(p: string | null): string {
@@ -82,9 +89,6 @@
 </section>
 
 <style>
-  .step {
-  }
-
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;

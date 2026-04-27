@@ -51,7 +51,7 @@ brew "postgresql@17"   # database
 brew "ollama"          # local inference runtime
 ```
 
-Shipped inside the desktop app bundle at `Contents/Resources/Brewfile`. Also available in the sensei repo root for CLI-only users.
+This can be referenced from sensei-homebrew git repo. One shared place
 
 ---
 
@@ -351,6 +351,120 @@ system_health
 
 ---
 
+## Tauri sidecar for app-only installs
+
+### Problem
+
+The bootstrap flow above assumes the user installed sensei via Homebrew (`brew install sensei`), which gives them the CLI, daemon, and MCP bridge as standalone binaries. But there's a second distribution path: **downloading the desktop app directly from the sensei website**.
+
+In this case:
+- The user has the `.app` bundle but no `senseid`, `sensei`, or `sensei-mcp` in PATH
+- Homebrew may or may not be installed
+- The daemon API is unreachable — there's nothing to `curl localhost:9823/health`
+- The health page currently shows "daemon not reachable, retry" with no way forward
+
+The desktop app needs to be self-sufficient for health checks and user guidance even when the daemon doesn't exist.
+
+### Solution: bundled Tauri sidecar
+
+Bundle a lightweight binary as a [Tauri sidecar](https://v2.tauri.app/develop/sidecar/) inside the `.app`. This sidecar handles bootstrap checks that don't require the daemon:
+
+```
+sensei-desktop.app/
+└── Contents/
+    └── Resources/
+        └── sidecar/
+            └── sensei-bootstrap   ← Rust binary, ships with the app
+```
+
+**What the sidecar does (daemon absent):**
+- Detect Homebrew presence (`/opt/homebrew/bin/brew`)
+- Check installed formulae (`brew list --versions sensei postgresql ollama`)
+- Detect system hardware (RAM, GPU type, core count) for model recommendations
+- Check PostgreSQL reachability (`pg_isready`)
+- Check Ollama reachability (`curl localhost:11434/api/version`)
+- Run `brew install` / `brew services start` commands on user's behalf
+- Report component versions and status back to the UI
+
+**What the sidecar does NOT do:**
+- Run SQL queries (that's the daemon's job)
+- Index code
+- Serve MCP tools
+- Anything that requires the database
+
+### Two-mode bootstrap
+
+```
+App opens
+    │
+    ├── Try daemon API (localhost:9823/health)
+    │   ├── Responds → use daemon for all health checks (fast path)
+    │   └── No response → fall back to sidecar
+    │
+    └── Sidecar mode
+        ├── Check Homebrew → guide install if missing
+        ├── Check brew formulae → `brew install sensei` if missing
+        ├── Check PostgreSQL → `brew services start` if stopped
+        ├── Check Ollama → `brew services start` if stopped
+        ├── Start daemon → `senseid serve`
+        ├── Wait for daemon health endpoint
+        └── Hand off to daemon for remaining checks (DB, models, schema)
+```
+
+Once the daemon is running, the sidecar's job is done. All subsequent health checks (including future app launches where daemon is already running) use the daemon API directly. The sidecar is the bootstrap-the-bootstrapper.
+
+### Sidecar scope
+
+The sidecar should be minimal — a Rust binary compiled alongside the desktop app, no database dependencies, no external crates beyond `sysinfo` for hardware detection and `std::process::Command` for running brew/ollama commands.
+
+```rust
+// sensei-bootstrap capabilities
+pub fn check_homebrew() -> ComponentStatus;
+pub fn check_formula(name: &str) -> ComponentStatus;
+pub fn check_service(name: &str, port: u16) -> ComponentStatus;
+pub fn detect_hardware() -> HardwareInfo;
+pub fn install_formula(name: &str) -> Result<()>;
+pub fn start_service(name: &str) -> Result<()>;
+pub fn start_daemon(port: u16) -> Result<()>;
+```
+
+### Tauri configuration
+
+```json
+// tauri.conf.json
+{
+  "bundle": {
+    "externalBin": ["sidecar/sensei-bootstrap"]
+  }
+}
+```
+
+The sidecar communicates with the frontend via Tauri's `invoke` mechanism (same as the existing `check_indexer` and `start_indexer` commands in `src-tauri/src/lib.rs`). These existing commands are a partial implementation of this pattern — they already check TCP connectivity and start the daemon. The sidecar extends this to cover the full dependency tree.
+
+### Relationship to existing code
+
+`src/lib/setup/daemon.ts` already has the shared health check logic (`checkComponents`, `getInitialComponents`) with Tauri detection and fallback. The sidecar would be the Rust backing for the Tauri invoke path, replacing the current `run_command` invocations with dedicated, typed commands:
+
+| Current (daemon.ts via Tauri) | Proposed (sidecar) |
+|------|------|
+| `invoke('run_command', { program: 'brew', args: ['list', 'sensei'] })` | `invoke('check_formula', { name: 'sensei' })` |
+| `invoke('run_command', { program: 'which', args: ['senseid'] })` | `invoke('check_homebrew')` + `invoke('check_formula', { name: 'sensei' })` |
+| `invoke('check_indexer', { port })` | `invoke('check_service', { name: 'daemon', port })` |
+| `invoke('start_indexer', { port })` | `invoke('start_daemon', { port })` |
+
+### Upgrade flow integration
+
+The sidecar also supports the upgrade flow. When the desktop app updates (auto-update or manual download), the sidecar's version matches the desktop. On launch:
+
+1. Sidecar checks installed `sensei` formula version
+2. If formula version < desktop version, prompt `brew upgrade sensei`
+3. After upgrade, start daemon with new binary
+4. Daemon checks `assistants.configured_version` and re-pushes extensions to stale assistants
+
+This ensures the full chain: desktop app → sidecar → brew formula → daemon → assistants all stay in sync.
+
+---
+
 ## Open questions
 
 | # | Question |
@@ -362,3 +476,5 @@ system_health
 | 5 | For the Rust-native inference runtime (Phase 2), which library? llama.cpp bindings, candle, mistral.rs? |
 | 6 | Should the fast-path health check (< 2s) be truly invisible, or always show a brief branded splash? |
 | 7 | Version compatibility matrix: how strict? Require exact match between desktop and CLI, or allow minor version drift? |
+| 8 | Should the sidecar binary be a separate Rust crate, or compiled into the Tauri app binary as additional commands? The latter is simpler (no separate process) but couples bootstrap logic to the desktop build. |
+| 9 | For app-only installs on systems without Homebrew, should the sidecar offer to install Homebrew automatically, or only show copy-paste instructions? |

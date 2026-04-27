@@ -7,18 +7,54 @@
 const { useState: useS, useEffect: useE, useRef: useR, useMemo: useM } = React;
 
 // ─────────────────────────────────────────────────────────────
+// Settings persistence helpers — used by the Preferences stage and read by
+// the observatory chrome (welcome toast, sensei tone, sharing schedule…).
+// Stored as a single JSON blob in localStorage; cross-window updates emit a
+// "sensei-settings-changed" CustomEvent so listeners refresh in place.
+function readSenseiSettings() {
+  try {
+    const raw = localStorage.getItem("sensei-settings");
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function writeSenseiSettings(patch) {
+  const next = { ...readSenseiSettings(), ...patch };
+  try { localStorage.setItem("sensei-settings", JSON.stringify(next)); } catch {}
+  window.dispatchEvent(new CustomEvent("sensei-settings-changed"));
+  return next;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Stage list (order matters)
+// Stage list (order matters)
+//
+// Each stage's `n` is a *meaning* kanji, not a counter — the glyph
+// reinforces what the step is *about*, and survives reordering without
+// going stale. The numeric "01 / 11" lives in the bottom bar for a sense
+// of progression. Mapping:
+//   礼 welcome     · the teacher's bow / receiving you
+//   名 preferences · "name" — the input itself
+//   連 assistants  · "connect / link" the agents in
+//   庵 folders     · "hermitage / dwelling" — where your work lives
+//   観 scan        · "observe / watch" — sensei's core verb
+//   組 projects    · "assemble / group" repos into a project
+//   書 libraries   · "writing / book" — the libs sensei wraps
+//   器 instruments · "vessel / instrument" — sensei's tools
+//   想 inference   · "thought / reasoning" — what models do
+//   任 assignments · "entrust / assign" roles to models
+//   入 done        · "enter" — the door at the end
 const WIZ_STAGES = [
-  { id: "welcome",     n: "一",  title: "Welcome",         sub: "先生 · a quiet observer of your work" },
-  { id: "acps",        n: "二",  title: "Assistants",      sub: "plugins · skills · commands · logging" },
-  { id: "folders",     n: "三",  title: "Folders",         sub: "where does your work live" },
-  { id: "scan",        n: "四",  title: "Scan",            sub: "watching the worker" },
-  { id: "projects",    n: "五",  title: "Projects",        sub: "one or more repos each" },
-  { id: "libraries",   n: "六",  title: "Libraries",       sub: "what sensei should wrap" },
-  { id: "registry",    n: "七",  title: "Instruments",     sub: "recommended MCPs for your stack" },
-  { id: "inference",   n: "八",  title: "Inference",       sub: "providers · models" },
-  { id: "assignments", n: "九",  title: "Assignments",     sub: "which models handle which roles" },
-  { id: "done",        n: "十",  title: "Enter",           sub: "the observatory is ready" }
+  { id: "welcome",     n: "礼",  title: "Welcome",         sub: "先生 · a quiet observer of your work" },
+  { id: "preferences", n: "名",  title: "Preferences",     sub: "what to call you · how sensei behaves · sharing" },
+  { id: "acps",        n: "連",  title: "Assistants",      sub: "plugins · skills · commands · logging" },
+  { id: "folders",     n: "庵",  title: "Folders",         sub: "where does your work live" },
+  { id: "scan",        n: "観",  title: "Scan",            sub: "watching the worker" },
+  { id: "projects",    n: "組",  title: "Projects",        sub: "one or more repos each" },
+  { id: "libraries",   n: "書",  title: "Libraries",       sub: "what sensei should wrap" },
+  { id: "registry",    n: "器",  title: "Instruments",     sub: "recommended MCPs for your stack" },
+  { id: "inference",   n: "想",  title: "Inference",       sub: "providers · models" },
+  { id: "assignments", n: "任",  title: "Assignments",     sub: "which models handle which roles" },
+  { id: "done",        n: "入",  title: "Enter",           sub: "the observatory is ready" }
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -46,7 +82,37 @@ function SetupWizard({ onDone, onExit }) {
     models:     (D.inference ? D.inference.localModels : [])
                   .reduce((a,m)=> (a[m.id] = !!m.recommended || !!m.pulled, a), {}),
     apiKeys:    (D.inference ? D.inference.providers : [])
-                  .reduce((a,p)=> (a[p.id] = "", a), {})
+                  .reduce((a,p)=> (a[p.id] = "", a), {}),
+
+    // Preferences — derived from $HOME on first read, editable in the
+    // Preferences stage and persisted via writeSenseiSettings(). The defaults
+    // here mirror SETTINGS_DEFAULTS but live independently so the wizard can
+    // be re-entered to tweak them without touching anything else.
+    prefs: (() => {
+      const seeded = (typeof readSenseiSettings === "function")
+        ? readSenseiSettings()
+        : {};
+      // Pull what looks like a username out of $HOME ("/Users/keiko" → "keiko").
+      const homeUser = (D.system && D.system.homeDir
+                          ? D.system.homeDir.split("/").filter(Boolean).pop()
+                          : "you");
+      const niceName = homeUser
+        ? homeUser.charAt(0).toUpperCase() + homeUser.slice(1)
+        : "you";
+      return {
+        displayName:             seeded.displayName             ?? niceName,
+        homeDir:                 D.system?.homeDir              ?? "~",
+        contributeLearnings:     seeded.contributeLearnings     ?? true,
+        reviewBeforeShare:       seeded.reviewBeforeShare       ?? true,
+        shareSchedule:           seeded.shareSchedule           ?? "weekly-saturday",
+        downloadCollective:      seeded.downloadCollective      ?? "weekly",
+        correctionAggressiveness:seeded.correctionAggressiveness?? "balanced",
+        digestCadence:           seeded.digestCadence           ?? "daily",
+        nudgeOnRegression:       seeded.nudgeOnRegression       ?? true,
+        anonymizedTelemetry:     seeded.anonymizedTelemetry     ?? false,
+        showWelcome:             seeded.showWelcome             ?? true,
+      };
+    })(),
   });
   const upd = (patch) => setState(prev => ({ ...prev, ...patch }));
 
@@ -72,10 +138,18 @@ function SetupWizard({ onDone, onExit }) {
             {stage.id === "registry"   && <WizRegistry state={state} upd={upd}/>}
             {stage.id === "inference"   && <WizInference state={state} upd={upd}/>}
             {stage.id === "assignments" && <WizAssignments state={state} upd={upd}/>}
+            {stage.id === "preferences" && <WizPreferences state={state} upd={upd}/>}
             {stage.id === "done"        && <WizDone state={state}/>}
           </div>
           <WizBottom stage={stage} stageIdx={stageIdx} total={WIZ_STAGES.length}
-                     back={back} next={next} onDone={onDone} state={state}/>
+                     back={back} next={next}
+                     onDone={() => {
+                       // Persist whatever the user landed on in Preferences
+                       // before handing control back to the host.
+                       writeSenseiSettings(state.prefs || {});
+                       onDone && onDone();
+                     }}
+                     state={state}/>
         </div>
       </div>
     </div>
@@ -141,7 +215,9 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                     onClick={() => setStageIdx(i)}
                     disabled={i > stageIdx}
                     style={{
-                      display: 'grid', gridTemplateColumns: '24px 1fr', gap: 10,
+                      display: 'grid',
+                      gridTemplateColumns: '24px 1fr 14px',
+                      gap: 10, alignItems: 'center',
                       padding: isCur ? '10px 10px' : '7px 10px',
                       borderRadius: 6, textAlign: 'left',
                       background: isCur ? 'var(--paper)' : 'transparent',
@@ -150,10 +226,14 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                       cursor: i > stageIdx ? 'default' : 'pointer',
                       transition: 'all .14s'
                     }}>
+              {/* Always show the stage's kanji label so re-entering the
+                  wizard reads as the same stepper, not a column of ✓s. */}
               <span className="kanji" style={{
                 fontSize: 14, textAlign: 'center',
-                color: isCur ? 'var(--shu)' : isDone ? 'var(--jade)' : 'var(--sumi-4)'
-              }}>{isDone ? "✓" : s.n}</span>
+                color: isCur  ? 'var(--shu)'
+                     : isDone ? 'var(--sumi-2)'
+                              : 'var(--sumi-4)'
+              }}>{s.n}</span>
               <div style={{ overflow: 'hidden' }}>
                 <div style={{ fontSize: 13 }}>{s.title}</div>
                 {isCur && (
@@ -162,6 +242,14 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                   </div>
                 )}
               </div>
+              {/* Completion tick lives on the right rail — kanji stays the
+                  identity; tick is the status. */}
+              <span style={{
+                fontSize: 11, textAlign: 'center', lineHeight: 1,
+                color: 'var(--jade)',
+                opacity: isDone ? 1 : 0,
+                transition: 'opacity .14s'
+              }}>✓</span>
             </button>
           );
         })}
@@ -183,6 +271,10 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, state }) {
   const canAdvance = (() => {
     if (stage.id === "folders") return state.folders.length > 0;
     if (stage.id === "scan") return state.scan.done;
+    if (stage.id === "preferences") {
+      // Don't let the user step in nameless — sensei has to call you something.
+      return !!(state.prefs && state.prefs.displayName && state.prefs.displayName.trim());
+    }
     return true;
   })();
 
@@ -238,7 +330,7 @@ function WizWelcome() {
   return (
     <div style={{ maxWidth: 680, margin: '10px auto 0' }}>
       <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase', marginBottom: 8 }}>一 · Welcome</div>
+                    textTransform: 'uppercase', marginBottom: 8 }}>礼 · Welcome</div>
       <h1 className="display" style={{ fontSize: 54, fontWeight: 300, lineHeight: 1.08,
                     margin: '0 0 32px', letterSpacing: '-0.02em' }}>
         A teacher does not<br/>
@@ -427,7 +519,7 @@ function WizAcps({ state, upd }) {
   const D = window.SENSEI_SETUP;
   return (
     <div style={{ maxWidth: 820, margin: '0 auto' }}>
-      <WizHeader n="三" title="Assistants" tagline="Registers plugins, skills, commands, agents, logging and metrics."/>
+      <WizHeader n="連" title="Assistants" tagline="Registers plugins, skills, commands, agents, logging and metrics."/>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         {D.acps.map(a => {
@@ -480,7 +572,7 @@ function WizFolders({ state, upd }) {
 
   return (
     <div style={{ maxWidth: 820, margin: '0 auto' }}>
-      <WizHeader n="四" title="Folders" tagline="Where your work lives. Sensei recurses and finds repos."/>
+      <WizHeader n="庵" title="Folders" tagline="Where your work lives. Sensei recurses and finds repos."/>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         <input value={state.newFolder}
@@ -571,7 +663,7 @@ function WizScan({ state, upd }) {
   if (!started) {
     return (
       <div style={{ maxWidth: 820, margin: '0 auto' }}>
-        <WizHeader n="五" title="Scan" tagline={`Ready to scan ${state.folders.length} ${state.folders.length === 1 ? "root" : "roots"}.`}/>
+        <WizHeader n="観" title="Scan" tagline={`Ready to scan ${state.folders.length} ${state.folders.length === 1 ? "root" : "roots"}.`}/>
         <div style={{ padding: '50px 40px', background: 'var(--paper-2)',
                        borderRadius: 10, border: 'var(--hairline)', textAlign: 'center' }}>
           <div className="kanji" style={{ fontSize: 60, color: 'var(--shu)', opacity: 0.4,
@@ -659,7 +751,7 @@ function WizScan({ state, upd }) {
 
   return (
     <div style={{ maxWidth: 1000, margin: '0 auto' }}>
-      <WizHeader n="五" title={done ? "Scan complete" : "Scanning"}
+      <WizHeader n="観" title={done ? "Scan complete" : "Scanning"}
                  tagline={done ? "The map is drawn." : "Workers recurse. Repos surface."}/>
 
       {/* Stats strip */}
@@ -970,7 +1062,7 @@ function WizProjects({ state, upd }) {
 
   return (
     <div style={{ maxWidth: 940, margin: '0 auto' }}>
-      <WizHeader n="六" title="Projects"
+      <WizHeader n="組" title="Projects"
                  tagline="A project has one or more repos. Edit, split, or confirm."/>
 
       <div style={{ fontSize: 12, color: 'var(--sumi-3)', marginBottom: 18 }}>
@@ -1342,7 +1434,7 @@ function WizLibraries({ state, upd }) {
 
   return (
     <div>
-      <WizHeader n="七" title="Libraries"
+      <WizHeader n="書" title="Libraries"
                  tagline="Libraries without their own MCP — sensei indexes docs & code and wraps them with its own tools. Anything with a proper MCP (like Postgres or Stripe) comes in the next step."/>
 
       {/* Summary bar */}
@@ -1546,7 +1638,7 @@ function WizRegistry({ state, upd }) {
 
   return (
     <div>
-      <WizHeader n="七" title="Instruments"
+      <WizHeader n="器" title="Instruments"
                  tagline="Tools sensei can reach for — recommended based on what's in your stack. Each MCP brings its own capabilities, no wrapping needed."/>
 
       {/* Detected stack summary */}
@@ -1702,7 +1794,234 @@ const wizInputStyle = {
 // WizInference lives in lib/wiz-inference.jsx — loaded via <script> tag after this file.
 // Expects window.SENSEI_SETUP.inference (system, providers, rolePriority, addable).
 
-// ─── 9 Done ─────────────────────────────────────────────────
+// ─── 9 Preferences ──────────────────────────────────────────
+// Pre-flight tweaks before stepping into the observatory. The display name
+// is seeded from $HOME (system.homeDir → username), but the user can override
+// it. Telemetry, sharing cadence, and sensei's tone all live here so they
+// can be revisited any time by re-opening the wizard.
+function WizPreferences({ state, upd }) {
+  const D = window.SENSEI_SETUP;
+  const p = state.prefs || {};
+  const setP = (patch) => upd({ prefs: { ...p, ...patch } });
+
+  // Hover-sourced display-name suggestions: literal $HOME basename, plus a
+  // friendly ("Keiko") and lowercased variant. The user can also type freely.
+  const homeBase = (D.system?.homeDir || "").split("/").filter(Boolean).pop() || "";
+  const suggestions = Array.from(new Set([
+    homeBase ? homeBase.charAt(0).toUpperCase() + homeBase.slice(1) : "",
+    homeBase,
+    D.system?.username || ""
+  ].filter(Boolean)));
+
+  // Reusable Section / Row primitives kept local to this stage so the
+  // wizard file stays self-contained.
+  const Section = ({ kanji, title, sub, children }) => (
+    <section style={{ paddingTop: 24, paddingBottom: 4,
+                       borderTop: 'var(--hairline)' }}>
+      <header style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14 }}>
+        <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)',
+                                           lineHeight: 1, width: 30 }}>{kanji}</span>
+        <div>
+          <h3 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0,
+                          color: 'var(--sumi)' }}>{title}</h3>
+          {sub && (
+            <p style={{ fontSize: 12, color: 'var(--sumi-3)', margin: '3px 0 0',
+                          maxWidth: 540, lineHeight: 1.5 }}>{sub}</p>
+          )}
+        </div>
+      </header>
+      <div style={{ paddingLeft: 44 }}>{children}</div>
+    </section>
+  );
+  const Row = ({ label, hint, children }) => (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 32,
+                   alignItems: 'center', padding: '11px 0',
+                   borderBottom: '1px solid var(--paper-edge)' }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{label}</div>
+        {hint && <div style={{ fontSize: 11.5, color: 'var(--sumi-3)', marginTop: 3,
+                                 lineHeight: 1.45, maxWidth: 460 }}>{hint}</div>}
+      </div>
+      <div style={{ flexShrink: 0 }}>{children}</div>
+    </div>
+  );
+  const Toggle = ({ value, onChange }) => (
+    <button onClick={() => onChange(!value)}
+            style={{ width: 36, height: 20, borderRadius: 999,
+                      background: value ? 'var(--shu)' : 'var(--paper-edge)',
+                      position: 'relative', cursor: 'pointer',
+                      transition: 'background 0.15s', padding: 0,
+                      border: 'none' }}>
+      <span style={{ position: 'absolute', top: 2, left: value ? 18 : 2,
+                       width: 16, height: 16, borderRadius: '50%',
+                       background: 'var(--paper)',
+                       transition: 'left 0.18s ease',
+                       boxShadow: '0 1px 3px rgba(0,0,0,0.18)' }}/>
+    </button>
+  );
+  const Segment = ({ value, onChange, options }) => (
+    <div style={{ display: 'inline-flex', border: 'var(--hairline)',
+                   borderRadius: 5, overflow: 'hidden' }}>
+      {options.map((opt, i) => (
+        <button key={opt.value} onClick={() => onChange(opt.value)}
+                style={{ padding: '6px 12px', fontSize: 11.5,
+                          borderLeft: i === 0 ? 'none' : 'var(--hairline)',
+                          background: value === opt.value ? 'var(--paper-3)' : 'var(--paper)',
+                          color: value === opt.value ? 'var(--sumi)' : 'var(--sumi-3)',
+                          cursor: 'pointer' }}>
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+  const Sel = ({ value, onChange, options }) => (
+    <select value={value} onChange={e => onChange(e.target.value)}
+            style={{ fontSize: 12, padding: '6px 10px', border: 'var(--hairline)',
+                      borderRadius: 5, background: 'var(--paper)',
+                      color: 'var(--sumi)', cursor: 'pointer',
+                      fontFamily: 'inherit' }}>
+      {options.map(o =>
+        <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+
+  return (
+    <div style={{ maxWidth: 760, margin: '0 auto' }}>
+      <WizHeader n="名" title="Preferences"
+                 tagline="A few small choices before you step in. Anything here can be changed later by re-opening this wizard."/>
+
+      {/* ── What should sensei call you ──────────────────────────── */}
+      <Section kanji="名" title="What should sensei call you?"
+               sub={`We pulled this from your home folder · ${D.system?.homeDir || "~"}. Change it to whatever feels right.`}>
+        <div style={{ padding: '6px 0 14px' }}>
+          <input
+            value={p.displayName || ""}
+            onChange={e => setP({ displayName: e.target.value })}
+            placeholder="your name"
+            style={{ width: '100%', padding: '11px 14px', fontSize: 16,
+                      border: 'var(--hairline)', borderRadius: 6,
+                      background: 'var(--paper)', color: 'var(--sumi)',
+                      fontFamily: 'inherit', outline: 'none' }}
+            onFocus={e => e.target.style.borderColor = 'var(--shu)'}
+            onBlur={e => e.target.style.borderColor = ''}
+          />
+          {suggestions.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10,
+                           fontSize: 11, color: 'var(--sumi-3)' }}>
+              <span style={{ letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                from $HOME
+              </span>
+              {suggestions.map(s => (
+                <button key={s} onClick={() => setP({ displayName: s })}
+                        style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4,
+                                  border: 'var(--hairline)',
+                                  background: p.displayName === s ? 'var(--paper-3)' : 'var(--paper)',
+                                  color: 'var(--sumi-2)', cursor: 'pointer' }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+          <p style={{ fontSize: 12, color: 'var(--sumi-3)', margin: '14px 0 0',
+                       fontStyle: 'italic', lineHeight: 1.55 }}>
+            Sensei will greet you by this name in the morning digest and address
+            you directly when raising a teaching. <span style={{ color: 'var(--sumi-2)' }}>
+            "{p.displayName || homeBase || "you"}, three sessions on api-gateway repeated the same correction."</span>
+          </p>
+        </div>
+      </Section>
+
+      {/* ── Shared learnings ─────────────────────────────────────── */}
+      <Section kanji="共" title="Shared learnings"
+               sub="Sensei can contribute the patterns it finds to a collective pool — and pull what others have learned back into your library.">
+        <Row label="Contribute my learnings"
+             hint="Anonymized patterns only. No code, no commit messages, no project names.">
+          <Toggle value={p.contributeLearnings}
+                   onChange={v => setP({ contributeLearnings: v })}/>
+        </Row>
+        <Row label="Review before sharing"
+             hint="Each learning shows up in a queue for your approval before it leaves your machine.">
+          <Toggle value={p.reviewBeforeShare}
+                   onChange={v => setP({ reviewBeforeShare: v })}/>
+        </Row>
+        <Row label="Sharing schedule">
+          <Sel value={p.shareSchedule}
+                onChange={v => setP({ shareSchedule: v })}
+                options={[
+                  { value: "off",             label: "Off · manual only" },
+                  { value: "daily",           label: "Daily" },
+                  { value: "weekly-saturday", label: "Every Saturday" },
+                  { value: "monthly",         label: "Monthly" }
+                ]}/>
+        </Row>
+        <Row label="Download collective learnings"
+             hint="Reviewed before they enter your library.">
+          <Sel value={p.downloadCollective}
+                onChange={v => setP({ downloadCollective: v })}
+                options={[
+                  { value: "never",     label: "Never" },
+                  { value: "weekly",    label: "Weekly" },
+                  { value: "daily",     label: "Daily" },
+                  { value: "on-demand", label: "On demand" }
+                ]}/>
+        </Row>
+      </Section>
+
+      {/* ── Sensei behavior ──────────────────────────────────────── */}
+      <Section kanji="師" title="Sensei behavior"
+               sub="How forward sensei is — when it nudges, how it phrases corrections.">
+        <Row label="Correction tone"
+             hint="How direct sensei is when something repeats.">
+          <Segment value={p.correctionAggressiveness}
+                    onChange={v => setP({ correctionAggressiveness: v })}
+                    options={[
+                      { value: "gentle",   label: "Gentle" },
+                      { value: "balanced", label: "Balanced" },
+                      { value: "direct",   label: "Direct" }
+                    ]}/>
+        </Row>
+        <Row label="Morning digest"
+             hint="The Today view. Off keeps the dashboard quiet.">
+          <Segment value={p.digestCadence}
+                    onChange={v => setP({ digestCadence: v })}
+                    options={[
+                      { value: "off",    label: "Off" },
+                      { value: "daily",  label: "Daily" },
+                      { value: "weekly", label: "Weekly" }
+                    ]}/>
+        </Row>
+        <Row label="Nudge on regression"
+             hint="If FTR drops sharply on a project, sensei surfaces it on Today.">
+          <Toggle value={p.nudgeOnRegression}
+                   onChange={v => setP({ nudgeOnRegression: v })}/>
+        </Row>
+      </Section>
+
+      {/* ── Telemetry ────────────────────────────────────────────── */}
+      <Section kanji="守" title="Telemetry"
+               sub="Help us improve sensei itself — separate from shared learnings, this is about the app, not your work.">
+        <Row label="Anonymized usage telemetry"
+             hint="Crashes, performance, which views you visit. Never code, prompts, or session content. Off by default.">
+          <Toggle value={p.anonymizedTelemetry}
+                   onChange={v => setP({ anonymizedTelemetry: v })}/>
+        </Row>
+        <Row label="Show welcome message on first entry"
+             hint="The greeting toast that appears when you first open the observatory each day.">
+          <Toggle value={p.showWelcome}
+                   onChange={v => setP({ showWelcome: v })}/>
+        </Row>
+      </Section>
+
+      <p style={{ fontSize: 12, color: 'var(--sumi-3)', margin: '28px 0 0',
+                   fontStyle: 'italic', lineHeight: 1.6, textAlign: 'center' }}>
+        These save when you press <span style={{ color: 'var(--sumi-2)' }}>Enter observatory</span>.
+        Re-open this wizard from the sidebar's <span style={{ color: 'var(--sumi-2)' }}>調 Configure</span> link to change them later.
+      </p>
+    </div>
+  );
+}
+
+
 function WizDone({ state }) {
   const confirmedSols = state.solutions.filter(s => s.confirmed);
   const repoCount = confirmedSols.reduce((a, s) => a + s.projects.length, 0);
@@ -1737,7 +2056,7 @@ function WizDone({ state }) {
 
       <p className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)',
                      marginTop: 36, fontStyle: 'italic' }}>
-        一 · the first session is always the teacher
+        師 · the first session is always the teacher
       </p>
     </div>
   );
@@ -1882,11 +2201,21 @@ function EmptyObservatoryApp({ onBeginSetup }) {
   );
 }
 
-// Combined artboard: empty observatory → clicking "begin setup" enters wizard
+// Combined artboard: empty observatory → click "begin setup" → walk the
+// wizard → "Enter Observatory" lands in the early · still-listening state
+// (welcome toast included), mirroring the live Configure flow inside the
+// observatory shell.
 function EmptyToWizardApp() {
   const [mode, setMode] = useS("empty"); // "empty" | "wizard" | "entered"
   if (mode === "wizard") {
-    return <SetupWizard onExit={() => setMode("empty")} onDone={() => setMode("empty")}/>;
+    return <SetupWizard onExit={() => setMode("empty")}
+                         onDone={() => setMode("entered")}/>;
+  }
+  if (mode === "entered" && window.ObservatoryDaily) {
+    // stateMode="early" + firstEntry={true} → freshly-configured observatory
+    // with the welcome toast surfaced.
+    return <window.ObservatoryDaily stateMode="early" firstEntry={true}
+                                     onBack={() => setMode("empty")}/>;
   }
   return <EmptyObservatoryApp onBeginSetup={() => setMode("wizard")}/>;
 }
