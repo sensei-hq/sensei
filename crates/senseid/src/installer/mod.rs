@@ -21,8 +21,7 @@ pub(super) fn cache_dir() -> PathBuf { crate::paths::cache_dir() }
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub(super) const MARKETPLACE_REPO: &str =
-    "https://raw.githubusercontent.com/mizukisu/sensei-marketplace/main";
+pub(super) use crate::paths::MARKETPLACE_RAW_URL as MARKETPLACE_REPO;
 pub(super) const MARKETPLACE_CATALOG: &str = "catalog.json";
 
 // ── Catalog types ────────────────────────────────────────────────────────────
