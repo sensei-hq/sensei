@@ -77,7 +77,7 @@ Homebrew formula and cask for macOS installation.
 | `Formula/sensei.rb` | Installs sensei-cli, senseid daemon, sensei-mcp from release binaries |
 | `Casks/sensei-app.rb` | Installs the desktop app |
 
-### [sensei](https://github.com/sensei-hq/sensei) — website
+### [website](https://github.com/sensei-hq/website) — website
 
 Marketing website built with SvelteKit + Rokkit UI.
 
