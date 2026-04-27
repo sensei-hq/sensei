@@ -3,14 +3,22 @@ use std::sync::Arc;
 use gateway::adapters::noop::NoopAdapter;
 use gateway::adapters::{AdapterRegistry, InferenceAdapter};
 use gateway::circuit_breaker::{CircuitBreakerConfig, CircuitBreakerManager};
-use gateway::types::capability::Capability;
-use gateway::types::config::*;
+use gateway::types::config::GatewayConfig;
 use gateway::Gateway;
 
-/// Initialize the gateway with available providers.
+/// Initialize the gateway with detected adapters but NO config.
 ///
-/// Probes Ollama, checks env vars for external providers, then builds a
-/// default fallback-chain config for text chat and embedding.
+/// The gateway starts unconfigured — it will return `NotConfigured` for any
+/// inference calls until config is set via `gateway.update_config()`.
+/// Config comes from the database (settings/services tables), set during
+/// `sensei init` or through the API.
+///
+/// Adapters (providers) are auto-detected at startup:
+/// - Ollama: probed at localhost:11434
+/// - Anthropic: ANTHROPIC_API_KEY env var
+/// - OpenAI: OPENAI_API_KEY env var
+/// - Grok: XAI_API_KEY env var
+/// - Noop: always registered as graceful degradation fallback
 pub async fn init_gateway() -> Arc<Gateway> {
     let adapters = AdapterRegistry::new();
 
@@ -73,16 +81,19 @@ pub async fn init_gateway() -> Arc<Gateway> {
         }
     }
 
-    // Build a minimal default config.
-    // In production this will load from the DB.
-    let config = build_default_config();
+    // Start with EMPTY config — no routers, models, or chains.
+    // Config must be set via update_config() after loading from DB.
+    let config = GatewayConfig::default();
 
     let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
 
     let gw = Gateway::new(config, adapters, cb);
 
     let adapter_list = gw.list_adapters().await;
-    tracing::info!("Gateway initialized with adapters: {:?}", adapter_list);
+    tracing::info!(
+        "Gateway initialized (unconfigured) with adapters: {:?}",
+        adapter_list
+    );
 
     Arc::new(gw)
 }
@@ -105,60 +116,17 @@ async fn probe_ollama() -> bool {
 /// Create a lightweight gateway for tests (noop adapter only, no HTTP probes).
 #[cfg(test)]
 pub async fn init_gateway_test() -> Arc<Gateway> {
+    use gateway::types::capability::Capability;
+    use gateway::types::config::*;
+    use std::collections::HashMap;
+
     let adapters = AdapterRegistry::new();
     adapters
         .register(Arc::new(NoopAdapter) as Arc<dyn InferenceAdapter>)
         .await;
-    let config = build_default_config();
-    let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
-    Arc::new(Gateway::new(config, adapters, cb))
-}
 
-/// Build a default gateway config with common chains.
-fn build_default_config() -> GatewayConfig {
-    use std::collections::HashMap;
-
+    // Tests need a minimal config so execute() doesn't return NotConfigured
     let mut routers = HashMap::new();
-    routers.insert(
-        "ollama".into(),
-        RouterConfig {
-            url: "http://localhost:11434".into(),
-            api_key_env: None,
-            enabled: true,
-            timeout_ms: Some(30_000),
-            headers: HashMap::new(),
-        },
-    );
-    routers.insert(
-        "anthropic".into(),
-        RouterConfig {
-            url: "https://api.anthropic.com".into(),
-            api_key_env: Some("ANTHROPIC_API_KEY".into()),
-            enabled: true,
-            timeout_ms: Some(60_000),
-            headers: HashMap::new(),
-        },
-    );
-    routers.insert(
-        "openai".into(),
-        RouterConfig {
-            url: "https://api.openai.com".into(),
-            api_key_env: Some("OPENAI_API_KEY".into()),
-            enabled: true,
-            timeout_ms: Some(60_000),
-            headers: HashMap::new(),
-        },
-    );
-    routers.insert(
-        "grok".into(),
-        RouterConfig {
-            url: "https://api.x.ai".into(),
-            api_key_env: Some("XAI_API_KEY".into()),
-            enabled: true,
-            timeout_ms: Some(60_000),
-            headers: HashMap::new(),
-        },
-    );
     routers.insert(
         "noop".into(),
         RouterConfig {
@@ -171,32 +139,6 @@ fn build_default_config() -> GatewayConfig {
     );
 
     let mut models = HashMap::new();
-    // Local models (Ollama)
-    models.insert(
-        "gemma3:27b".into(),
-        ModelConfig {
-            id: "gemma3:27b".into(),
-            api_model_id: None,
-            provider: "ollama".into(),
-            capabilities: vec![Capability::TextChat, Capability::TextComplete],
-            context_window: 8192,
-            max_output_tokens: 2048,
-            pricing: None,
-        },
-    );
-    models.insert(
-        "all-minilm:l6-v2".into(),
-        ModelConfig {
-            id: "all-minilm:l6-v2".into(),
-            api_model_id: None,
-            provider: "ollama".into(),
-            capabilities: vec![Capability::TextEmbed],
-            context_window: 512,
-            max_output_tokens: 0,
-            pricing: None,
-        },
-    );
-    // Noop fallback
     models.insert(
         "noop".into(),
         ModelConfig {
@@ -211,60 +153,26 @@ fn build_default_config() -> GatewayConfig {
     );
 
     let mut chains = HashMap::new();
-    // Text chat chain: local -> noop
     chains.insert(
         "text_chat".into(),
         FallbackChainConfig {
             id: "text_chat".into(),
             capability: Capability::TextChat,
-            models: vec![
-                ChainEntry {
-                    model: "gemma3:27b".into(),
-                    router: Some("ollama".into()),
-                    api_model_id: None,
-                    priority: 1,
-                },
-                ChainEntry {
-                    model: "noop".into(),
-                    router: Some("noop".into()),
-                    api_model_id: None,
-                    priority: 99,
-                },
-            ],
-            fallback_triggers: vec![
-                FallbackTrigger::Timeout,
-                FallbackTrigger::ProviderError,
-                FallbackTrigger::ModelUnavailable,
-            ],
-        },
-    );
-    // Embed chain: local only
-    chains.insert(
-        "text_embed".into(),
-        FallbackChainConfig {
-            id: "text_embed".into(),
-            capability: Capability::TextEmbed,
-            models: vec![
-                ChainEntry {
-                    model: "all-minilm:l6-v2".into(),
-                    router: Some("ollama".into()),
-                    api_model_id: None,
-                    priority: 1,
-                },
-                ChainEntry {
-                    model: "noop".into(),
-                    router: Some("noop".into()),
-                    api_model_id: None,
-                    priority: 99,
-                },
-            ],
-            fallback_triggers: vec![FallbackTrigger::Timeout, FallbackTrigger::ModelUnavailable],
+            models: vec![ChainEntry {
+                model: "noop".into(),
+                router: Some("noop".into()),
+                api_model_id: None,
+                priority: 1,
+            }],
+            fallback_triggers: vec![],
         },
     );
 
-    GatewayConfig {
+    let config = GatewayConfig {
         routers,
         models,
         chains,
-    }
+    };
+    let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
+    Arc::new(Gateway::new(config, adapters, cb))
 }
