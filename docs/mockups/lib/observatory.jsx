@@ -128,38 +128,36 @@ function ObsSparkline({ data, width = 120, height = 30, color = 'var(--shu)' }) 
   );
 }
 
-function ObsFtrRing({ value, delta, size = 110 }) {
-  const r = (size - 10) / 2;
-  const cx = size/2, cy = size/2;
-  const start = -140, sweep = 300;
-  const toXY = (deg) => {
-    const rad = (deg * Math.PI) / 180;
-    return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
-  };
-  const arcPath = (a0, a1) => {
-    const [x0, y0] = toXY(a0);
-    const [x1, y1] = toXY(a1);
-    const large = a1 - a0 > 180 ? 1 : 0;
-    return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
-  };
-  const endAngle = start + sweep * Math.max(0.02, Math.min(0.99, value));
+// 14-day FTR strip — one tall bar per day, height = FTR rate.
+// Shows the actual shape of the last two weeks, not just a single average.
+function ObsFtrStrip({ data, value, delta, dim = false }) {
+  const w = 168, h = 56, n = data.length;
+  const gap = 2, barW = (w - gap * (n - 1)) / n;
+  const baseColor = dim ? 'var(--sumi-3)' : 'var(--shu)';
+  const bgColor   = dim ? 'var(--sumi-4)' : 'var(--sumi-5)';
   return (
-    <svg width={size} height={size} style={{ display: 'block' }}>
-      <path d={arcPath(start, start + sweep)}
-            stroke="currentColor" strokeOpacity="0.1"
-            strokeWidth="8" strokeLinecap="round" fill="none"/>
-      <path d={arcPath(start, endAngle)}
-            stroke="var(--shu)" strokeWidth="8" strokeLinecap="round" fill="none"/>
-      <circle cx={toXY(start)[0]} cy={toXY(start)[1]} r="4.5" fill="var(--shu)"/>
-      <text x={cx} y={cy - 4} textAnchor="middle" dominantBaseline="central"
-             fontFamily="var(--font-display)" fontSize={size * 0.28} fontWeight="400">
-        {Math.round(value * 100)}
-      </text>
-      <text x={cx} y={cy + size*0.18} textAnchor="middle" dominantBaseline="central"
-             fontFamily="var(--font-ui)" fontSize={size * 0.09}
-             letterSpacing="0.14em" fill="var(--sumi-3)">
-        FTR · 14d
-      </text>
+    <svg width={w} height={h + 14} style={{ display: 'block', overflow: 'visible' }}>
+      {/* faint baseline rule at 50% to anchor reading */}
+      <line x1="0" x2={w} y1={h - h*0.5} y2={h - h*0.5}
+            stroke="var(--sumi-5)" strokeDasharray="2 3"/>
+      {data.map((v, i) => {
+        const bh = Math.max(3, v * h);
+        const isLast = i === n - 1;
+        return (
+          <g key={i}>
+            <rect x={i * (barW + gap)} y={0} width={barW} height={h}
+                  fill={bgColor} opacity="0.35"/>
+            <rect x={i * (barW + gap)} y={h - bh} width={barW} height={bh}
+                  fill={isLast ? baseColor : bgColor}
+                  opacity={isLast ? 1 : 0.85}/>
+          </g>
+        );
+      })}
+      {/* day-of-week tick markers — only first, mid, last */}
+      <text x={0} y={h + 11} fontSize="9" fill="var(--sumi-3)"
+             fontFamily="var(--font-ui)" letterSpacing="0.08em">14d ago</text>
+      <text x={w} y={h + 11} fontSize="9" fill="var(--sumi-3)" textAnchor="end"
+             fontFamily="var(--font-ui)" letterSpacing="0.08em">today</text>
     </svg>
   );
 }
@@ -169,7 +167,15 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
   const [mode, setMode] = oS(stateMode);       // "mature" | "early"
   const [section, setSection] = oS("home");    // "home" | "projects" | "project" | "sessions" | "patterns" | "libraries" | "registry" | "teachings" | "settings"
   const [activeProjectId, setActiveProjectId] = oS(null);
-  const [toast, setToast] = oS(firstEntry ? "welcome" : null);
+  const [toast, setToast] = oS(() => {
+    if (!firstEntry) return null;
+    // Honor the "Don't show again" preference from Settings.
+    try {
+      const raw = localStorage.getItem("sensei-settings");
+      if (raw && JSON.parse(raw).showWelcome === false) return null;
+    } catch {}
+    return "welcome";
+  });
   const D = window.OBS_DATA;
 
   const openProject = (id) => { setActiveProjectId(id); setSection("project"); };
@@ -184,6 +190,24 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
   const hero = D.hero[mode];
   const insights = D.insights[mode];
   const adopted = D.adopted[mode];
+
+  // Configure is a *redirect* to the setup wizard — not an embedded view.
+  // The wizard brings its own Tauri chrome and full-bleed layout, so we
+  // short-circuit the observatory shell entirely.
+  //   • onExit  → user bailed; return to home in their current mode
+  //   • onDone  → user completed setup; drop them in "early · still
+  //               listening" with the welcome toast, mirroring what the
+  //               First-entry-from-setup artboard shows.
+  if (section === "configure") {
+    return (
+      <SetupWizard onExit={() => setSection("home")}
+                    onDone={() => {
+                      setMode("early");
+                      setToast("welcome");
+                      setSection("home");
+                    }}/>
+    );
+  }
 
   return (
     <div className="sensei" data-screen-label="Observatory · Daily"
@@ -201,17 +225,20 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
           {section === "projects"  && <ProjectsIndexA embedded={true} onOpenProject={openProject}/>}
           {section === "project"   && <ProjectPageTopTabs embedded={true} projectId={activeProjectId}
                                                           onBack={() => setSection("projects")}/>}
+          {section === "sessions"  && <SessionsDigestZen/>}
           {section === "libraries" && <LibrariesVariantA/>}
-          {section === "learnings" && <LearningsPage/>}
+          {section === "insights" && <LearningsTriage/>}
+          {section === "memories" && <LearningsAnatomyV2/>}
           {section === "instruments-playground" && <InstrumentsPlaygroundSimple/>}
           {section === "instruments-replay"     && <InstrumentsReplaySimple/>}
-          {section === "instruments-insights"   && <InstrumentsInsightsSimple/>}
+          {section === "instruments-health"     && <InstrumentsHealthSimple/>}
           {section !== "home" && section !== "projects" && section !== "project" &&
+           section !== "sessions" &&
            section !== "libraries" &&
-           section !== "learnings" &&
+           section !== "insights" && section !== "memories" &&
            section !== "instruments-playground" &&
            section !== "instruments-replay" &&
-           section !== "instruments-insights" &&
+           section !== "instruments-health" &&
             <ObsPlaceholder section={section} onBack={() => setSection("home")}/>}
 
           {toast === "welcome" && (
@@ -262,7 +289,8 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
           <NavItem id="home"      kanji="家" label="Today"/>
           <NavItem id="projects"  kanji="場" label="Projects"   badge={D.projects.active.length + D.projects.recent.length}/>
           <NavItem id="sessions"  kanji="録" label="Sessions"   badge="41"/>
-          <NavItem id="learnings" kanji="学" label="Learnings"  badge="6"/>
+          <NavItem id="insights"  kanji="今" label="Insights"   badge="6"/>
+          <NavItem id="memories"  kanji="覚" label="Memories"   badge="24"/>
           <NavItem id="libraries" kanji="庫" label="Libraries"  badge="14"/>
           <div style={{ padding: '2px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
@@ -277,10 +305,10 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
                            paddingLeft: 24 }}>
               <NavItem id="instruments-playground" kanji="試" label="Playground"/>
               <NavItem id="instruments-replay"     kanji="録" label="Replay"/>
-              <NavItem id="instruments-insights"   kanji="照" label="Insights"/>
+              <NavItem id="instruments-health"     kanji="健" label="Health"/>
             </div>
           </div>
-          <NavItem id="settings"  kanji="設" label="Settings"/>
+          <NavItem id="configure" kanji="調" label="Configure"/>
         </div>
       </div>
 
@@ -378,23 +406,43 @@ function ObsHome({ mode, hero, insights, adopted, D }) {
           </div>
           <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: 0,
                         letterSpacing: '-0.01em' }}>
-            Good morning, Aiko.
+            Good morning, {(() => {
+              // Honor whatever name the user committed in the wizard's
+              // Preferences stage. Falls back to the prototype's default
+              // persona "Aiko" when no override is stored.
+              try {
+                const raw = localStorage.getItem("sensei-settings");
+                const n = raw && JSON.parse(raw).displayName;
+                if (n && n.trim()) return n.trim();
+              } catch {}
+              return "Aiko";
+            })()}.
           </h1>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16,
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 22,
                        color: mode === "early" ? 'var(--sumi-3)' : 'var(--sumi-2)' }}>
-          <ObsFtrRing value={D.ftr.value} delta={D.ftr.delta} size={86}/>
-          <div style={{ minWidth: 150 }}>
-            <div style={{ fontSize: 11, color: 'var(--sumi-3)', marginBottom: 4 }}>
-              First-Try-Right · 14 days
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, letterSpacing: '0.18em', color: 'var(--sumi-3)',
+                           textTransform: 'uppercase' }}>
+              First-Try-Right · 14d
             </div>
-            <ObsSparkline data={D.ftr.trend14} width={150} height={36}
-                           color={mode === "early" ? 'var(--sumi-3)' : 'var(--shu)'}/>
-            <div style={{ fontSize: 11, color: D.ftr.delta >= 0 ? 'var(--jade)' : 'var(--amber)',
-                           marginTop: 3 }} className="mono">
-              {D.ftr.delta >= 0 ? "↑" : "↓"} {Math.abs(Math.round(D.ftr.delta * 100))}% vs prior
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8,
+                           justifyContent: 'flex-end', marginTop: 4 }}>
+              <span className="display"
+                     style={{ fontSize: 34, fontWeight: 400, lineHeight: 1,
+                               color: mode === "early" ? 'var(--sumi-3)' : 'var(--sumi)' }}>
+                {Math.round(D.ftr.value * 100)}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--sumi-3)' }}>%</span>
+              <span className="mono"
+                     style={{ fontSize: 11, marginLeft: 4,
+                               color: D.ftr.delta >= 0 ? 'var(--jade)' : 'var(--amber)' }}>
+                {D.ftr.delta >= 0 ? "↑" : "↓"} {Math.abs(Math.round(D.ftr.delta * 100))}%
+              </span>
             </div>
           </div>
+          <ObsFtrStrip data={D.ftr.trend14} value={D.ftr.value}
+                        delta={D.ftr.delta} dim={mode === "early"}/>
         </div>
       </div>
 
@@ -658,6 +706,28 @@ function ObsPlaceholder({ section, onBack }) {
 }
 
 function FirstEntryToast({ onDismiss, mode }) {
+  // Read current settings to seed the "don't show again" checkbox.
+  const init = (() => {
+    try {
+      const raw = localStorage.getItem("sensei-settings");
+      if (!raw) return false;
+      return JSON.parse(raw).showWelcome === false;
+    } catch { return false; }
+  })();
+  const [hide, setHide] = oS(init);
+
+  const toggleHide = () => {
+    const next = !hide;
+    setHide(next);
+    try {
+      const raw = localStorage.getItem("sensei-settings");
+      const cur = raw ? JSON.parse(raw) : {};
+      const updated = { ...cur, showWelcome: !next };
+      localStorage.setItem("sensei-settings", JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent("sensei-settings-changed"));
+    } catch {}
+  };
+
   return (
     <div style={{
       position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)',
@@ -678,8 +748,16 @@ function FirstEntryToast({ onDismiss, mode }) {
             : "Three projects · 81 sessions watched · 3 teachings adopted so far."}
         </div>
       </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6,
+                       fontSize: 10.5, color: 'var(--paper-edge)',
+                       opacity: 0.85, cursor: 'pointer', marginLeft: 8,
+                       paddingLeft: 12, borderLeft: '1px solid rgba(255,255,255,0.18)' }}>
+        <input type="checkbox" checked={hide} onChange={toggleHide}
+                style={{ accentColor: 'var(--shu)', cursor: 'pointer' }}/>
+        Don't show again
+      </label>
       <button onClick={onDismiss} style={{ fontSize: 11, color: 'var(--sumi-4)',
-                padding: '4px 8px', marginLeft: 8 }}>dismiss</button>
+                padding: '4px 8px', marginLeft: 4 }}>dismiss</button>
       <style>{`@keyframes toast-in {
         from { opacity: 0; transform: translate(-50%, -12px) }
         to { opacity: 1; transform: translateX(-50%) }
@@ -691,7 +769,12 @@ function FirstEntryToast({ onDismiss, mode }) {
 // ─── Harness for design canvas ───────────────────────────────
 function ObservatoryDailyApp()       { return <ObservatoryDaily stateMode="mature"/>; }
 function ObservatoryEarlyApp()       { return <ObservatoryDaily stateMode="early"/>;  }
-function ObservatoryEntryApp()       { return <ObservatoryDaily stateMode="mature" firstEntry={true}/>; }
+// First entry from setup lands you in the "early · still listening" state —
+// the system has just been configured, no sessions watched yet, sensei is
+// quiet on purpose. This matches what the user sees if they finish the
+// wizard inside the actual observatory shell (Configure → Done) and is
+// the dedicated artboard for that moment.
+function ObservatoryEntryApp()       { return <ObservatoryDaily stateMode="early"  firstEntry={true}/>; }
 
 Object.assign(window, {
   ObservatoryDaily, ObservatoryDailyApp, ObservatoryEarlyApp, ObservatoryEntryApp

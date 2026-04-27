@@ -99,7 +99,7 @@
             <div class="repo-pill">
               <span class="repo-name">{repo.name}</span>
               <span class="repo-files">{repo.files}f</span>
-              <!-- svelte-ignore a11y_no_onchange -->
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
               <select
                 class="role-select"
                 value={rid}
