@@ -7,11 +7,13 @@ use crate::api::state::AppState;
 use gateway::purpose::*;
 use gateway::types::capability::Capability;
 
-/// GET /api/gateway/status — returns registered adapters and overall status.
+/// GET /api/gateway/status — returns registered adapters and configuration state.
 pub(crate) async fn gateway_status(State(state): State<AppState>) -> Json<Value> {
     let adapters = state.gateway.list_adapters().await;
+    let configured = state.gateway.is_configured().await;
     Json(json!({
-        "status": "ok",
+        "status": if configured { "ready" } else { "not_configured" },
+        "configured": configured,
         "adapters": adapters,
     }))
 }
