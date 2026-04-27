@@ -1,8 +1,11 @@
 @import '@unocss/reset/tailwind.css';
 @import '@rokkit/themes/base.css';
 @import '@rokkit/themes/rokkit.css';
+@import '$lib/tokens.css';
 
 html, body {
-  background-color: rgb(var(--color-surface-z0));
-  height: 100%;
+  background: var(--paper);
+  color: var(--sumi);
+  min-height: 100%;
+  font-family: var(--font-ui);
 }
