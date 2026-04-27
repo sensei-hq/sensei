@@ -1,27 +1,16 @@
-node_modules/
-dist/
-.index/
-*.json.bak
-bun.lockb
-
-# Benchmark workdirs
-sensei-bench/
-sensei-bench-*/
-
-# Benchmark raw results (summaries are committed manually)
-results/**/*.json
-results/**/a/
-results/**/b/
-results/**/c/
-
-# Secrets
-.env
-database/.env.local
-
-# Superpowers plugin cache
-.superpowers/
-
-.playwright-mcp/
+# Binary/media — keep docs as text only
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+*.zip
+*.tar.gz
 
 # OS
 .DS_Store
@@ -29,10 +18,6 @@ database/.env.local
 # Editor
 .vscode/
 .idea/
-coverage
-firebase-debug.log
-.worktrees/
-.cocoindex_code
-.claude-flow/
-target/
-*.png
+
+# Secrets
+.env
