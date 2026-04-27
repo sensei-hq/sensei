@@ -104,17 +104,29 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn repo_root() -> PathBuf {
+    fn workspace_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent().unwrap().parent().unwrap().to_path_buf()
     }
 
+    fn fixtures() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    }
+
     fn process_code_file(rel: &str) -> FileProcessResult {
-        let root = repo_root();
+        let root = workspace_root();
         let abs = root.join(rel);
         let content = std::fs::read_to_string(&abs).expect(&format!("File not found: {}", abs.display()));
         let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
         process(&abs.to_string_lossy(), rel, ext, &content, "sensei").expect("should process")
+    }
+
+    fn process_fixture(rel: &str) -> FileProcessResult {
+        let root = fixtures();
+        let abs = root.join(rel);
+        let content = std::fs::read_to_string(&abs).expect(&format!("Fixture not found: {}", abs.display()));
+        let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
+        process(&abs.to_string_lossy(), rel, ext, &content, "test").expect("should process")
     }
 
     #[test]
@@ -138,10 +150,9 @@ mod tests {
 
     #[test]
     fn svelte_component_step_header() {
-        let r = process_code_file("apps/desktop/src/lib/setup/wizard/StepHeader.svelte");
+        let r = process_fixture("code/StepHeader.svelte");
         assert_eq!(r.language.as_deref(), Some("svelte"));
 
-        // Should find component symbol
         let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
         assert_eq!(components.len(), 1, "should find exactly 1 component");
         assert_eq!(components[0].name, "StepHeader");
@@ -149,24 +160,21 @@ mod tests {
 
     #[test]
     fn svelte_ts_appstate() {
-        let r = process_code_file("apps/desktop/src/lib/appstate.svelte.ts");
-        // .svelte.ts files are TypeScript
+        let r = process_fixture("code/appstate.svelte.ts");
         assert!(r.language.as_deref() == Some("typescript") || r.language.as_deref() == Some("javascript"));
 
-        // Should find exported functions (getPort, loadAppState, etc.)
         let fns: Vec<_> = r.symbols.iter().filter(|s| s.kind == "function").collect();
-        assert!(fns.len() > 0, "should find functions");
+        assert!(!fns.is_empty(), "should find functions");
         let names: Vec<&str> = fns.iter().map(|f| f.name.as_str()).collect();
-        assert!(names.contains(&"getPort") || names.contains(&"loadAppState"),
-            "should find getPort or loadAppState, got {:?}", names);
+        assert!(names.contains(&"resetState"),
+            "should find resetState, got {:?}", names);
     }
 
     #[test]
     fn page_svelte_route() {
-        let r = process_code_file("apps/desktop/src/routes/(app)/observatory/+page.svelte");
+        let r = process_fixture("code/+page.svelte");
         assert_eq!(r.language.as_deref(), Some("svelte"));
 
-        // Should find the page component
         let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
         assert_eq!(components.len(), 1);
     }
@@ -210,7 +218,7 @@ mod tests {
 
     #[test]
     fn c_file_with_adapter() {
-        let root = repo_root();
+        let root = workspace_root();
         let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
         if !abs.exists() { return; }
         let content = std::fs::read_to_string(&abs).unwrap();

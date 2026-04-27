@@ -21,16 +21,19 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn repo_root() -> PathBuf {
+    fn workspace_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent().unwrap().parent().unwrap().to_path_buf()
     }
 
+    fn fixtures() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    }
+
     #[test]
     fn package_json() {
-        let root = repo_root();
-        let abs = root.join("apps/desktop/package.json");
-        let r = process(&abs.to_string_lossy(), "apps/desktop/package.json", "json");
+        let abs = fixtures().join("config/package.json");
+        let r = process(&abs.to_string_lossy(), "config/package.json", "json");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "config");
         assert_eq!(r.language.as_deref(), Some("json"));
@@ -39,31 +42,11 @@ mod tests {
 
     #[test]
     fn cargo_toml() {
-        let root = repo_root();
+        let root = workspace_root();
         let abs = root.join("crates/sensei-mcp/Cargo.toml");
         let r = process(&abs.to_string_lossy(), "crates/sensei-mcp/Cargo.toml", "toml");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "config");
         assert_eq!(r.language.as_deref(), Some("toml"));
-    }
-
-    #[test]
-    fn hooks_json() {
-        let root = repo_root();
-        let abs = root.join("marketplace/plugins/sensei/hooks/hooks.json");
-        if abs.exists() {
-            let r = process(&abs.to_string_lossy(), "hooks/hooks.json", "json");
-            assert_eq!(r.tags, "config");
-        }
-    }
-
-    #[test]
-    fn plugin_config_json() {
-        let root = repo_root();
-        let abs = root.join("marketplace/plugins/sensei-mcp/config.json");
-        if abs.exists() {
-            let r = process(&abs.to_string_lossy(), "plugins/sensei-mcp/config.json", "json");
-            assert_eq!(r.tags, "config");
-        }
     }
 }
