@@ -1,0 +1,26 @@
+project:
+  name: sensei
+  note: >
+    Two active database backends. PostgreSQL (legacy, SaaS model — preserved for reference
+    and potential future team use). SQLite (current, local-first model — active development).
+
+  database: PostgreSQL
+  extensionSchema: extensions
+  staging:
+    - staging
+schemas:
+  - extensions
+  - staging
+  - sensei
+  - history
+  - inference
+  - gateway
+
+extensions:
+  - uuid-ossp
+  - vector
+import:
+  options:
+    truncate: true
+    nullValue: ""
+  after: ~
