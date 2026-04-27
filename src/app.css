@@ -1,0 +1,41 @@
+@import '@unocss/reset/tailwind.css';
+@import '@rokkit/themes/base.css';
+@import '@rokkit/themes/frosted.css';
+@import '$lib/tokens.css';
+
+/* Follow OS dark/light */
+:root {
+  color-scheme: light dark;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  color: var(--sumi);
+  background: var(--paper);
+}
+
+/* Tauri drag regions */
+.drag-region { -webkit-app-region: drag; app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
+
+/* Sidebar vibrancy */
+.sidebar-vibrancy {
+  background: color-mix(in srgb, var(--paper-2) 85%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Ink dot — small decorative accent dot */
+.ink-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--shu);
+}
+
+/* Selection */
+::selection { background: var(--shu-soft); }
