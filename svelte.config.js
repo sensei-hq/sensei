@@ -6,6 +6,9 @@ const config = {
 		adapter: adapter({ fallback: null }),
 		paths: {
 			base: process.env.BASE_PATH || ''
+		},
+		prerender: {
+			handleMissingId: 'warn'
 		}
 	},
 	vitePlugin: {
