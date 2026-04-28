@@ -1,38 +1,101 @@
+//! Health endpoints — basic liveness and full component status.
+
 use axum::response::Json;
 use serde::Serialize;
+use sensei_bootstrap::{self as bootstrap, ComponentStatus, HardwareInfo};
+use std::time::Instant;
+
+static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// Initialize the start time. Call once at daemon startup.
+pub(crate) fn init_uptime() {
+    START_TIME.get_or_init(Instant::now);
+}
+
+fn uptime_seconds() -> u64 {
+    START_TIME.get().map(|t| t.elapsed().as_secs()).unwrap_or(0)
+}
+
+// ── GET /health ─────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 pub(crate) struct HealthResponse {
-    ok: bool,
+    status: &'static str,
     name: &'static str,
     version: &'static str,
+    uptime_seconds: u64,
+    components: ComponentSummary,
+}
+
+#[derive(Serialize)]
+struct ComponentSummary {
+    postgresql: ComponentBrief,
+    ollama: ComponentBrief,
+    database: ComponentBrief,
+    models: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ComponentBrief {
+    state: String,
+    version: Option<String>,
+}
+
+impl From<&ComponentStatus> for ComponentBrief {
+    fn from(s: &ComponentStatus) -> Self {
+        let state = match &s.state {
+            bootstrap::ComponentState::Ready => "ready".to_string(),
+            bootstrap::ComponentState::Failed { .. } => "failed".to_string(),
+            bootstrap::ComponentState::Skipped => "skipped".to_string(),
+            _ => "unknown".to_string(),
+        };
+        Self { state, version: s.version.clone() }
+    }
 }
 
 pub(crate) async fn health() -> Json<HealthResponse> {
+    let (pg, ollama, db, models) = tokio::task::spawn_blocking(|| {
+        let pg = bootstrap::service::check("postgresql", bootstrap::POSTGRES_PORT);
+        let ollama = bootstrap::service::check("ollama", bootstrap::OLLAMA_PORT);
+        let db = bootstrap::database::check(None);
+        let models = bootstrap::models::list();
+        (pg, ollama, db, models)
+    }).await.unwrap();
+
     Json(HealthResponse {
-        ok: true,
+        status: if pg.is_ready() && db.is_ready() { "healthy" } else { "degraded" },
         name: "senseid",
         version: env!("CARGO_PKG_VERSION"),
+        uptime_seconds: uptime_seconds(),
+        components: ComponentSummary {
+            postgresql: ComponentBrief::from(&pg),
+            ollama: ComponentBrief::from(&ollama),
+            database: ComponentBrief::from(&db),
+            models,
+        },
     })
 }
 
-/// Component health — checks if CLI, MCP bridge, and daemon binaries are available.
-pub(crate) async fn health_components() -> Json<serde_json::Value> {
-    let version = env!("CARGO_PKG_VERSION");
+// ── GET /api/health/components ──────────────────────────────────────────────
 
-    let cli_status = check_binary("sensei");
-    let mcp_status = check_binary("sensei-mcp");
-
-    Json(serde_json::json!({
-        "components": [
-            { "id": "cli",    "name": "sensei-cli",    "version": cli_status.1, "status": cli_status.0, "icon": "令" },
-            { "id": "mcp",    "name": "MCP bridge",    "version": mcp_status.1, "status": mcp_status.0, "icon": "橋" },
-            { "id": "daemon", "name": "sensei-daemon", "version": version,      "status": "ready",       "icon": "守" },
-        ]
-    }))
+#[derive(Serialize)]
+pub(crate) struct FullHealthResponse {
+    data: Vec<ComponentStatus>,
+    hardware: HardwareInfo,
+    ready: bool,
 }
 
-/// Watcher status — shows watched roots, exclusions, and watcher state.
+pub(crate) async fn health_components() -> Json<FullHealthResponse> {
+    let result = tokio::task::spawn_blocking(bootstrap::run).await.unwrap();
+    Json(FullHealthResponse {
+        data: result.components,
+        hardware: result.hardware,
+        ready: result.ready,
+    })
+}
+
+// ── Watcher endpoints (unchanged) ───────────────────────────────────────────
+
 pub(crate) async fn watcher_status() -> Json<serde_json::Value> {
     let queue = std::sync::Arc::new(crate::tasks::queue::TaskQueue::new());
     let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
@@ -51,7 +114,6 @@ pub(crate) async fn watcher_status() -> Json<serde_json::Value> {
     }
 }
 
-/// Unregister a root from the watcher.
 pub(crate) async fn watcher_unregister(
     axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
@@ -69,36 +131,4 @@ pub(crate) async fn watcher_unregister(
     } else {
         Json(serde_json::json!({ "error": "lock poisoned" }))
     }
-}
-
-pub(crate) fn check_binary(name: &str) -> (&'static str, Option<String>) {
-    // Check if binary exists on PATH or in known locations
-    let paths = [
-        std::path::PathBuf::from(format!("/opt/homebrew/bin/{}", name)),
-        std::path::PathBuf::from(format!("/usr/local/bin/{}", name)),
-    ];
-
-    // Check PATH first
-    if std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|dir| dir.join(name).is_file()))
-        .unwrap_or(false)
-    {
-        // Try to get version
-        let version = std::process::Command::new(name)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string());
-        return ("ready", version);
-    }
-
-    // Check known paths
-    for path in &paths {
-        if path.is_file() {
-            return ("ready", None);
-        }
-    }
-
-    ("missing", None)
 }

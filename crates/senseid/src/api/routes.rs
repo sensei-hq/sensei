@@ -156,8 +156,10 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["ok"], true);
         assert_eq!(json["name"], "senseid");
+        assert!(json["version"].is_string());
+        assert!(json["components"].is_object());
+        assert!(json["status"].as_str() == Some("healthy") || json["status"].as_str() == Some("degraded"));
     }
 
     #[tokio::test]
