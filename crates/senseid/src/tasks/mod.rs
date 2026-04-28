@@ -1,7 +1,7 @@
 //! Hierarchical task queue for scanning, indexing, and watching.
 //!
 //! Tasks form a dependency tree:
-//!   scan_root → process_repo → process_folder → process_file → resolve_edges → build_connections
+//!   scan_root → process_git_folder → process_folder → process_file → resolve_edges → build_connections
 //!
 //! Barrier tasks (resolve_edges, build_connections) wait for all dependencies to complete.
 
@@ -20,7 +20,7 @@ use std::time::Instant;
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     ScanRoot,
-    ProcessRepo,
+    ProcessGitFolder,
     ProcessFolder,
     ProcessFile,
     DeleteFile,
@@ -37,7 +37,7 @@ impl std::fmt::Display for TaskKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ScanRoot => write!(f, "scan_root"),
-            Self::ProcessRepo => write!(f, "process_repo"),
+            Self::ProcessGitFolder => write!(f, "process_git_folder"),
             Self::ProcessFolder => write!(f, "process_folder"),
             Self::ProcessFile => write!(f, "process_file"),
             Self::DeleteFile => write!(f, "delete_file"),
@@ -68,8 +68,8 @@ pub enum TaskStatus {
 pub struct Task {
     pub id: u64,
     pub kind: TaskKind,
-    pub repo_id: String,
-    pub path: String,                    // file/folder/root path
+    pub folder_path: String,             // git folder abs path — used for grouping and DB lookups
+    pub path: String,                    // file/folder/root path (what this task operates on)
     pub parent_task_id: Option<u64>,     // for hierarchy tracking
     pub module_id: Option<String>,       // for process_file: which module this file belongs to
     pub branch: Option<String>,          // git branch name (for branch-aware indexing)
@@ -83,11 +83,11 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(kind: TaskKind, repo_id: &str, path: &str) -> Self {
+    pub fn new(kind: TaskKind, folder_path: &str, path: &str) -> Self {
         Self {
             id: 0, // assigned by queue
             kind,
-            repo_id: repo_id.to_string(),
+            folder_path: folder_path.to_string(),
             path: path.to_string(),
             parent_task_id: None,
             module_id: None,
@@ -123,6 +123,14 @@ impl Task {
         self
     }
 
+    /// Derive folder name from folder_path (basename).
+    pub fn folder_name(&self) -> &str {
+        std::path::Path::new(&self.folder_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+    }
+
     pub fn blocked_by(mut self, deps: Vec<u64>) -> Self {
         if !deps.is_empty() {
             self.status = TaskStatus::Blocked;
@@ -148,9 +156,11 @@ mod tests {
 
     #[test]
     fn task_creation() {
-        let t = Task::new(TaskKind::ProcessFile, "myrepo", "/path/to/file.ts");
+        let t = Task::new(TaskKind::ProcessFile, "/code/myrepo", "/code/myrepo/src/file.ts");
         assert_eq!(t.kind, TaskKind::ProcessFile);
-        assert_eq!(t.repo_id, "myrepo");
+        assert_eq!(t.folder_path, "/code/myrepo");
+        assert_eq!(t.path, "/code/myrepo/src/file.ts");
+        assert_eq!(t.folder_name(), "myrepo");
         assert_eq!(t.status, TaskStatus::Pending);
         assert!(t.is_runnable());
         assert!(!t.is_barrier());
@@ -158,7 +168,7 @@ mod tests {
 
     #[test]
     fn blocked_task() {
-        let t = Task::new(TaskKind::ResolveEdges, "myrepo", "")
+        let t = Task::new(TaskKind::ResolveEdges, "/code/myrepo", "/code/myrepo")
             .blocked_by(vec![1, 2, 3]);
         assert_eq!(t.status, TaskStatus::Blocked);
         assert!(!t.is_runnable());
@@ -168,7 +178,7 @@ mod tests {
 
     #[test]
     fn task_with_parent_and_module() {
-        let t = Task::new(TaskKind::ProcessFile, "repo", "src/main.ts")
+        let t = Task::new(TaskKind::ProcessFile, "/code/repo", "/code/repo/src/main.ts")
             .with_parent(42)
             .with_module("mod:repo:src");
         assert_eq!(t.parent_task_id, Some(42));
