@@ -3,9 +3,9 @@
  * Uses Svelte 5 $state for reactivity. Implements StateStore<T> interface.
  */
 
-import type { StateStore, StateEvent } from './types.js';
+import type { StateEvent } from './types.js';
 
-export class Store<T extends { id: string }> implements StateStore<T> {
+export class Store<T extends { id: string }> {
   items = $state<T[]>([]);
 
   constructor(initial: T[] = []) {
