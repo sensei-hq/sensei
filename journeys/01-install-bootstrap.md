@@ -4,6 +4,8 @@ type: user-journey
 covers: [26, 03]
 triggers: [08-system-pipelines/01-indexing-pipeline]
 screens: [bootstrap, homebrew-missing]
+mockups:
+  - ../mockups/lib/bootstrap.jsx
 ---
 
 # Journey 1: Install & Bootstrap
