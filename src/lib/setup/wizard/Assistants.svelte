@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { WizardState, WizUpdate, AssistantEntry, WizStage } from '../types.js';
   import { senseiApi } from '$lib/api.js';
-  import { getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import StepHeader from './StepHeader.svelte';
 
   let { wizState, update, stage }: {
@@ -30,7 +30,7 @@
 
   onMount(async () => {
     try {
-      const api = senseiApi(getPort());
+      const api = senseiApi(appState.port);
       const families = await api.detectAssistantFamilies();
       if (families.length > 0) {
         assistants = families.map(f => ({
