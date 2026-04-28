@@ -4,6 +4,10 @@ type: user-journey
 covers: [30, 27, 11]
 triggers: [08-system-pipelines/02-session-lifecycle]
 screens: [dashboard-memory-panel, project-memory-view, memory-detail, memory-consolidation, context-pack-tool]
+mockups:
+  - ../mockups/lib/learnings.jsx
+  - ../mockups/lib/learnings-v2.jsx
+  - ../mockups/lib/learnings-anatomy-v2.jsx
 ---
 
 # Journey 9: Memory & Learning

@@ -4,6 +4,19 @@ type: user-journey
 covers: [08, 15, 17, 09, 13, 25, 10]
 triggers: [08-system-pipelines/01-indexing-pipeline, 08-system-pipelines/03-workspace-intelligence]
 screens: [project-overview, code-graph, patterns, anti-patterns, sessions, session-replay, libraries, library-detail, mcp-playground, doc-traceability, pattern-catalog]
+mockups:
+  - ../mockups/lib/project-pages.jsx
+  - ../mockups/lib/project-filter.jsx
+  - ../mockups/lib/project-shared.jsx
+  - ../mockups/lib/sessions-zen.jsx
+  - ../mockups/lib/sessions.jsx
+  - ../mockups/lib/libraries.jsx
+  - ../mockups/lib/instruments.jsx
+  - ../mockups/lib/instruments-simple.jsx
+  - ../mockups/lib/mcp-replay-insights.jsx
+  - ../mockups/lib/learnings.jsx
+  - ../mockups/lib/learnings-v2.jsx
+  - ../mockups/lib/learnings-anatomy-v2.jsx
 ---
 
 # Journey 5: Understand the Codebase
