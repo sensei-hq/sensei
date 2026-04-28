@@ -1,17 +1,17 @@
 set search_path to sensei, extensions;
 
 create or replace view parent_folders as
-select id
-     , root_id
-     , name
-     , path
-     , abs_path
-     , icons
-     , props
-     , tags
-     , modified_at
-  from folders
- where kind = 'parent';
+select f.id
+     , f.root_id
+     , f.name
+     , f.path
+     , f.abs_path
+     , f.icons
+     , f.props
+     , f.tags
+     , f.modified_at
+  from folders f
+ where f.parent_id is null;
 
 comment on view parent_folders is
-'Convenience view over folders for organisational parent directories (depth 1 from root).';
+'Convenience view: top-level folders directly under a watch root (parent_id is null).';

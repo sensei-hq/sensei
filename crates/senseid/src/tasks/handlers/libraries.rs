@@ -8,13 +8,14 @@ use crate::languages;
 
 /// Classify imports as internal vs external libraries. Update project.libs.
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let repo_id = &task.repo_id;
+    let folder_name = task.folder_name();
+    let folder_path = &task.folder_path;
 
     let mut lib_set = std::collections::HashSet::new();
 
     // Re-read source files and extract non-relative imports
     // This is expensive but accurate. TODO: store raw imports in a metadata field.
-    let repo_path_str = ctx.pg().get_repo_by_name(repo_id).await
+    let repo_path_str = ctx.pg().get_repo_by_name(folder_name).await
         .ok().flatten()
         .and_then(|r| r["abs_path"].as_str().map(String::from))
         .unwrap_or_default();
@@ -85,14 +86,14 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         .collect();
 
     // Update folder libs via PgStore
-    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     if let Some(folder) = folder {
         if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
             ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
         }
     }
 
-    tracing::info!("resolve_libs: {} — {} external libs detected", repo_id, libs.len());
+    tracing::info!("resolve_libs: {} — {} external libs detected", folder_name, libs.len());
     Ok(())
 }
 
