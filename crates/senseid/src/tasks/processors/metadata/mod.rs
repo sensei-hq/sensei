@@ -1,7 +1,7 @@
 //! Repo-level metadata scanners — icon detection, external link extraction, solution matching.
 //!
 //! Each scanner is a pure function that takes a repo path and returns structured results.
-//! Called from process_repo after file discovery, before task enqueuing.
+//! Called from process_git_folder after file discovery, before task enqueuing.
 
 mod icons;
 mod external_links;
