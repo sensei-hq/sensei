@@ -21,3 +21,4 @@
 
 # Secrets
 .env
+!logo.png
