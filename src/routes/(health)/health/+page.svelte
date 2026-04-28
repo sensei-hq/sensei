@@ -2,17 +2,17 @@
   import { goto } from '$app/navigation';
   import { appState } from '$lib/appstate.svelte.js';
   import { runBootstrap, installComponent, startComponent, createDatabase } from '$lib/bootstrap.js';
-  import { stateLabel, isReady as stateIsReady, isFailed, errorMessage, type ComponentStatus, type ComponentState } from '$lib/bootstrap.js';
-  import * as state from '$lib/bootstrap-state.svelte.js';
+  import { stateLabel, isFailed, errorMessage, type ComponentStatus, type ComponentState } from '$lib/bootstrap.js';
+  import { bootstrapState as bs } from '$lib/bootstrap-state.svelte.js';
 
   // ── Lifecycle ──────────────────────────────────────────────
 
   async function check() {
-    state.setLoading(true);
+    bs.setLoading(true);
     const result = await runBootstrap();
-    state.applyResult(result);
+    bs.applyResult(result);
 
-    if (state.isReady()) advance();
+    if (bs.ready) advance();
   }
 
   function advance() {
@@ -28,38 +28,38 @@
   // ── Actions (call API, feed results to state) ──────────────
 
   async function handleInstall(name: string) {
-    state.setActionInProgress(name);
+    bs.setAction(name);
     try {
       const result = await installComponent(name);
-      state.updateComponent(name, result);
+      bs.updateComponent(name, result);
     } catch { /* re-check will show status */ }
-    state.setActionInProgress(null);
+    bs.setAction(null);
     await check();
   }
 
   async function handleStart(name: string) {
-    state.setActionInProgress(name);
+    bs.setAction(name);
     try {
       const result = await startComponent(name);
-      state.updateComponent(name, result);
+      bs.updateComponent(name, result);
     } catch { /* re-check will show status */ }
-    state.setActionInProgress(null);
+    bs.setAction(null);
     await check();
   }
 
   async function handleCreateDb() {
-    state.setActionInProgress('database');
+    bs.setAction('database');
     try {
       const result = await createDatabase();
-      state.updateComponent('database', result);
+      bs.updateComponent('database', result);
     } catch { /* re-check will show status */ }
-    state.setActionInProgress(null);
+    bs.setAction(null);
     await check();
   }
 
   async function handleSkip(name: string) {
-    state.skipComponent(name);
-    if (state.isReady()) advance();
+    bs.skipComponent(name);
+    if (bs.ready) advance();
   }
 
   // ── Visual helpers ─────────────────────────────────────────
@@ -107,22 +107,17 @@
     else handleInstall(comp.name);
   }
 
-  // ── Read from state ────────────────────────────────────────
-
-  const components = $derived(state.getComponents());
-  const hardware = $derived(state.getHardware());
-  const loading = $derived(state.isLoading());
-  const ready = $derived(state.isReady());
-  const actionInProgress = $derived(state.getActionInProgress());
+  // State is imported directly from bootstrap-state.svelte.js:
+  // components, hardware, loading, ready, actionInProgress
 </script>
 
 <div class="bootstrap">
   <span class="kanji hero-kanji">整</span>
 
   <h1 class="display hero-title">
-    {#if loading}
+    {#if bs.loading}
       Checking prerequisites…
-    {:else if ready}
+    {:else if bs.ready}
       All set.
     {:else}
       Getting ready.
@@ -130,18 +125,18 @@
   </h1>
 
   <p class="hero-sub">
-    {#if loading}
+    {#if bs.loading}
       Verifying components.
-    {:else if ready}
+    {:else if bs.ready}
       Everything looks healthy.
     {:else}
       Some components need attention.
     {/if}
   </p>
 
-  {#if components.length > 0}
+  {#if bs.components.length > 0}
     <div class="components">
-      {#each components as comp (comp.name)}
+      {#each bs.components as comp (comp.name)}
         <div class="comp-row">
           <span class="comp-dot" style="color: {stateColor(comp.state)}">
             {#if isPulsing(comp.state)}
@@ -169,9 +164,9 @@
               <button
                 class="btn-outline btn-sm"
                 onclick={() => handleAction(comp)}
-                disabled={actionInProgress === comp.name}
+                disabled={bs.actionInProgress === comp.name}
               >
-                {actionInProgress === comp.name ? 'Working…' : actionLabel(comp)}
+                {bs.actionInProgress === comp.name ? 'Working…' : actionLabel(comp)}
               </button>
             {/if}
             {#if isFailed(comp.state) && isSkippable(comp.name)}
@@ -184,16 +179,16 @@
       {/each}
     </div>
 
-    {#if hardware.ram_gb > 0}
+    {#if bs.hardware.ram_gb > 0}
       <div class="hw-info">
-        {hardware.ram_gb}GB RAM · {hardware.cpu_cores} cores
-        {#if hardware.gpu} · {hardware.gpu}{/if}
-        · {hardware.recommended_tier} tier
+        {bs.hardware.ram_gb}GB RAM · {bs.hardware.cpu_cores} cores
+        {#if bs.hardware.gpu} · {bs.hardware.gpu}{/if}
+        · {bs.hardware.recommended_tier} tier
       </div>
     {/if}
   {/if}
 
-  {#if !loading && !ready}
+  {#if !bs.loading && !bs.ready}
     <button class="btn-solid" onclick={check} style="margin-top: 24px;">
       Recheck
     </button>
