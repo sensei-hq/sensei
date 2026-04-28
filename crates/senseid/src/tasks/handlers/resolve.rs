@@ -7,13 +7,14 @@ use super::super::Task;
 
 /// Resolve unresolved edges by matching target_name against existing nodes.
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let repo_id = &task.repo_id;
-    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder_name = task.folder_name();
+    let folder_path = &task.folder_path;
+    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = match folder.as_ref()
         .and_then(|f| f["id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok()) {
         Some(id) => id,
-        None => { tracing::warn!("resolve_edges: {} — folder not found", repo_id); return Ok(()); }
+        None => { tracing::warn!("resolve_edges: {} — folder not found", folder_name); return Ok(()); }
     };
 
     // Get all unresolved edges (target_id IS NULL, target_name IS NOT NULL)
@@ -68,7 +69,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
         }
     }
 
-    tracing::info!("resolve_edges: {} — {} unresolved, {} resolved", repo_id, unresolved.len(), resolved);
+    tracing::info!("resolve_edges: {} — {} unresolved, {} resolved", folder_name, unresolved.len(), resolved);
     Ok(())
 }
 
@@ -76,13 +77,14 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
 
 /// Build doc↔code traceability edges and mark as indexed.
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let repo_id = &task.repo_id;
-    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder_name = task.folder_name();
+    let folder_path = &task.folder_path;
+    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = match folder.as_ref()
         .and_then(|f| f["id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok()) {
         Some(id) => id,
-        None => { tracing::info!("build_connections: {} — folder not found", repo_id); return Ok(()); }
+        None => { tracing::info!("build_connections: {} — folder not found", folder_name); return Ok(()); }
     };
 
     let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_default();
@@ -141,7 +143,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
     // Mark as indexed
     ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
 
-    tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", repo_id, edges_created, libs.len());
+    tracing::info!("build_connections: {} — {} traceability edges, {} libs detected", folder_name, edges_created, libs.len());
     Ok(())
 }
 
@@ -150,8 +152,9 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
 /// Re-evaluate cross-repo edges after a branch switch or repo update.
 /// Detects shared symbols across repos in the same project.
 pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let repo_id = &task.repo_id;
-    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder_name = task.folder_name();
+    let folder_path = &task.folder_path;
+    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = folder.as_ref()
         .and_then(|f| f["id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
@@ -181,17 +184,17 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
                 }
             }
         }
-        tracing::info!("reconcile_connections: {} — {} traceability edges", repo_id, edges);
+        tracing::info!("reconcile_connections: {} — {} traceability edges", folder_name, edges);
     }
 
     // Cross-repo analysis requires a project with 2+ repos
     if project_id.is_none() {
-        tracing::info!("reconcile_connections: {} not in any project", repo_id);
+        tracing::info!("reconcile_connections: {} not in any project", folder_name);
         return Ok(());
     }
 
     let project_id = project_id.unwrap();
-    tracing::info!("reconcile_connections: {} — project {}", repo_id, project_id);
+    tracing::info!("reconcile_connections: {} — project {}", folder_name, project_id);
     Ok(())
 }
 
@@ -224,29 +227,30 @@ mod tests {
     #[tokio::test]
     async fn resolve_edges_succeeds() {
         let ctx = make_ctx().await;
-        let repo_id = "test-repo";
+        let folder_name = "test-repo";
+        let folder_path = "/tmp/repo";
 
-        // Register project (resolve_edges reads project path)
         {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/repo").await.unwrap();
+            let root_id = ctx.pg().add_watch_root(folder_path, "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, folder_name, folder_path).await.unwrap();
         }
 
-        let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
+        let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
         resolve_edges(&ctx, &task).await.unwrap();
     }
 
     #[tokio::test]
     async fn resolve_edges_with_no_refs_is_noop() {
         let ctx = make_ctx().await;
-        let repo_id = "test-repo";
+        let folder_name = "test-repo";
+        let folder_path = "/tmp/repo";
 
         {
-            let root_id = ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/repo").await.unwrap();
+            let root_id = ctx.pg().add_watch_root(folder_path, "test", &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, folder_name, folder_path).await.unwrap();
         }
 
-        let task = Task::new(TaskKind::ResolveEdges, repo_id, "");
+        let task = Task::new(TaskKind::ResolveEdges, folder_path, folder_path);
         resolve_edges(&ctx, &task).await.unwrap();
     }
 }

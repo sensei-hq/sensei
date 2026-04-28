@@ -234,7 +234,7 @@ fn find_git_repos(dir: &Path, depth: u32, max_depth: u32, repos: &mut Vec<(Strin
 
 /// Handle a git branch switch: snapshot current graph, reindex for new branch.
 pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let repo_id = &task.repo_id;
+    let repo_id = &task.folder_path;
     let new_branch = task.branch.as_deref().ok_or("branch_switch requires branch field")?;
 
     // Detect current branch from git
