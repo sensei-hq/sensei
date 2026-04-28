@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
-  import { loadAppState, getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
   let { children } = $props();
@@ -24,8 +24,8 @@
   let sidebarCollapsed = $state(false);
 
   onMount(async () => {
-    await loadAppState();
-    const api = senseiApi(getPort());
+    await appState.load();
+    const api = senseiApi(appState.port);
     const raw = await api.listProjects();
     projects = raw.map((p: any) => ({
       id: p.id,
@@ -120,7 +120,7 @@
         </div>
 
         <div class="sidebar-footer">
-          <span class="mono daemon-status">daemon · port {getPort()}</span>
+          <span class="mono daemon-status">daemon · port {appState.port}</span>
         </div>
       {/if}
     </aside>

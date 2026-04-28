@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { WizardState, WizUpdate, ScanFolder, WizStage } from '../types.js';
   import { senseiApi } from '$lib/api.js';
-  import { getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import StepHeader from './StepHeader.svelte';
 
   let { wizState, update, stage }: {
@@ -20,7 +20,7 @@
   // Load existing scan roots from daemon
   onMount(async () => {
     try {
-      const api = senseiApi(getPort());
+      const api = senseiApi(appState.port);
       const roots = await api.getScanRoots();
       if (roots.length > 0) {
         folders = roots.map((r, i) => ({

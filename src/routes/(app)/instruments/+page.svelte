@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadAppState, getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
   type Tool = { name: string; description: string; params: string[] };
@@ -14,8 +14,8 @@
   let executing = $state(false);
 
   onMount(async () => {
-    await loadAppState();
-    const api = senseiApi(getPort());
+    await appState.load();
+    const api = senseiApi(appState.port);
     const data = await api.mcpListTools();
     tools = data.tools;
     loading = false;
@@ -25,7 +25,7 @@
     if (!selectedTool) return;
     executing = true;
     toolResult = '';
-    const api = senseiApi(getPort());
+    const api = senseiApi(appState.port);
     const result = await api.mcpCallTool(selectedTool.name, toolParams);
     toolResult = JSON.stringify(result, null, 2);
     executing = false;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadAppState, getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
   type Assistant = { family: string; name: string; version?: string; configured: boolean };
@@ -13,8 +13,8 @@
   let section = $state<'general' | 'assistants' | 'inference' | 'extensions'>('general');
 
   onMount(async () => {
-    await loadAppState();
-    const api = senseiApi(getPort());
+    await appState.load();
+    const api = senseiApi(appState.port);
     const [cfg, assts, items] = await Promise.all([
       api.getConfig(),
       api.detectAssistants(),

@@ -4,7 +4,7 @@
   import { WIZ_STAGES, type WizardState, type WizUpdate } from '$lib/setup/types.js';
   import { createEmptyState, MOCK_LIBRARIES, MOCK_MCPS, MOCK_STACK } from '$lib/setup/mock.js';
   import { senseiApi } from '$lib/api.js';
-  import { getPort, setConfigValue, loadAppState } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import {
     Rail, Bottom, Welcome, Assistants,
     Folders, Scan, Projects, Libraries, Registry, Done
@@ -36,7 +36,7 @@
   const back = () => { stageIdx = Math.max(stageIdx - 1, 0); };
 
   const done = async () => {
-    await setConfigValue('setup_complete', '1');
+    await appState.setConfig('setup_complete', '1');
     goto('/observatory');
   };
 
@@ -46,8 +46,8 @@
 
   // Hydrate from daemon on mount
   onMount(async () => {
-    await loadAppState();
-    daemonPort = getPort();
+    await appState.load();
+    daemonPort = appState.port;
     api = senseiApi(daemonPort);
 
     try {

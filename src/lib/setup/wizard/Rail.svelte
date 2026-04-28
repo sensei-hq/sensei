@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WizStage } from '../types.js';
-  import { getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
 
   let { stages, currentIndex, onNavigate, onExit }: {
     stages: WizStage[];
@@ -9,7 +9,7 @@
     onExit: () => void;
   } = $props();
 
-  const port = $derived(getPort());
+  const port = $derived(appState.port);
 </script>
 
 <aside class="rail">

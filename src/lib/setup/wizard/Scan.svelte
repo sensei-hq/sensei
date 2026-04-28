@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import type { WizardState, WizUpdate } from '../types.js';
-  import { getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { getRepoStore } from '$lib/repos.svelte.js';
 
   let { wizState, update, onScan }: {
@@ -11,7 +11,7 @@
   } = $props();
 
   // Use the shared RepoStore — it handles SSE properly
-  const store = getRepoStore(getPort());
+  const store = getRepoStore(appState.port);
 
   // Local state
   let scanning = $state(false);

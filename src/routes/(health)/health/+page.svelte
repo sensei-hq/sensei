@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { isSetupComplete } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { runBootstrap, installComponent, startComponent, createDatabase } from '$lib/bootstrap.js';
   import { stateLabel, isReady as stateIsReady, isFailed, errorMessage, type ComponentStatus, type ComponentState } from '$lib/bootstrap.js';
   import * as state from '$lib/bootstrap-state.svelte.js';
@@ -16,7 +16,7 @@
   }
 
   function advance() {
-    if (isSetupComplete()) {
+    if (appState.setupComplete) {
       goto('/observatory', { replaceState: true });
     } else {
       goto('/config', { replaceState: true });
