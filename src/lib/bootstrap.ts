@@ -83,6 +83,12 @@ async function hasTauri(): Promise<boolean> {
  * falls back to Tauri commands if daemon is unreachable.
  */
 export async function runBootstrap(): Promise<BootstrapResult> {
+  // Test mode: return mock data
+  const { isTestMode, mockBootstrapPartial } = await import('./mock-data.js');
+  if (isTestMode()) {
+    return mockBootstrapPartial;
+  }
+
   // Fast path: daemon is running, ask it for component status
   try {
     const api = senseiApi(appState.port);
