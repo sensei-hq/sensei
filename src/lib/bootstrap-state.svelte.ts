@@ -18,11 +18,12 @@ export class BootstrapState {
 
   // ── Derived ────────────────────────────────────────────────
 
-  get gates(): (GateDefinition & { status: GateStatus })[] {
+  get gates() {
+    if (!this.statuses) return [];
     return GATES.map(g => ({
       ...g,
-      status: this.statuses[g.id] ?? 'pending',
-      sub: g.sub?.map(s => ({ ...s, status: this.subStatuses[s.id] ?? 'pending' })),
+      status: this.statuses[g.id] ?? 'pending' as GateStatus,
+      sub: g.sub?.map(s => ({ ...s, status: this.subStatuses?.[s.id] ?? 'pending' as GateStatus })),
     }));
   }
 
