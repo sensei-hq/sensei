@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Stage } from '$lib/stage.js';
+  import type { Stage } from '$lib/types.js';
 
   let {
     stages,
