@@ -7,7 +7,7 @@
  */
 
 import { senseiApi } from '$lib/api.js';
-import { getPort } from '$lib/appstate.svelte.js';
+import { appState } from '$lib/appstate.svelte.js';
 
 // ── Types (match bootstrap crate types) ──────────────────────────────────────
 
@@ -85,7 +85,7 @@ async function hasTauri(): Promise<boolean> {
 export async function runBootstrap(): Promise<BootstrapResult> {
   // Fast path: daemon is running, ask it for component status
   try {
-    const api = senseiApi(getPort());
+    const api = senseiApi(appState.port);
     const resp = await api.getComponents();
     if (resp && 'data' in resp) {
       return resp as unknown as BootstrapResult;

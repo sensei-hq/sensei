@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadAppState, getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
   import type { SessionData } from '$lib/types.js';
 
@@ -14,8 +14,8 @@
   let filter = $state<'all' | 'completed' | 'corrected' | 'abandoned'>('all');
 
   onMount(async () => {
-    await loadAppState();
-    const api = senseiApi(getPort());
+    await appState.load();
+    const api = senseiApi(appState.port);
     const data = await api.getSessions();
     sessions = data.sessions ?? [];
     if (data.stats) {
