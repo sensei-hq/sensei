@@ -232,6 +232,56 @@ pub fn is_monorepo(path: &Path) -> bool {
     false
 }
 
+/// Detect technology stack from config files in a git folder.
+pub fn detect_stack(path: &Path) -> Vec<String> {
+    let mut stack = vec![];
+    if path.join("Cargo.toml").exists() { stack.push("rust".into()); }
+    if let Ok(pkg) = std::fs::read_to_string(path.join("package.json")) {
+        if pkg.contains("\"svelte\"") || pkg.contains("\"@sveltejs/kit\"") { stack.push("svelte".into()); }
+        else if pkg.contains("\"react\"") { stack.push("react".into()); }
+        else if pkg.contains("\"vue\"") { stack.push("vue".into()); }
+        else if pkg.contains("\"next\"") { stack.push("nextjs".into()); }
+        else { stack.push("typescript".into()); }
+    }
+    if path.join("go.mod").exists() { stack.push("go".into()); }
+    if path.join("pyproject.toml").exists() || path.join("requirements.txt").exists() { stack.push("python".into()); }
+    if path.join("Package.swift").exists() { stack.push("swift".into()); }
+    if path.join("Gemfile").exists() { stack.push("ruby".into()); }
+    stack
+}
+
+/// Count indexable files in a git folder (respecting ignore patterns).
+/// Returns (file_paths, total_count).
+pub fn count_indexable_files(path: &Path) -> (Vec<PathBuf>, u32) {
+    let exclude = super::helpers::build_globset();
+    let mut files = Vec::new();
+
+    let walker = ignore::WalkBuilder::new(path)
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .build();
+
+    for entry in walker.flatten() {
+        if !entry.path().is_file() { continue; }
+        let rel = entry.path().strip_prefix(path).unwrap_or(entry.path());
+        let rel_str = rel.to_string_lossy();
+        if exclude.is_match(&*rel_str) { continue; }
+
+        let ext = entry.path().extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if ext.is_empty() { continue; }
+        if super::helpers::is_binary_ext(ext) { continue; }
+
+        files.push(entry.path().to_path_buf());
+    }
+
+    let count = files.len() as u32;
+    (files, count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,5 +426,72 @@ mod tests {
         assert_eq!(classified.len(), 1);
         assert_eq!(classified[0].name, "myrepo");
         assert_eq!(classified[0].kind, FolderKind::Git);
+    }
+
+    // ── Stack detection ──────────────────────────────────────────
+
+    #[test]
+    fn detect_stack_rust() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]\nname = \"x\"").unwrap();
+        assert_eq!(detect_stack(tmp.path()), vec!["rust"]);
+    }
+
+    #[test]
+    fn detect_stack_svelte() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("package.json"), r#"{"dependencies":{"svelte":"^5"}}"#).unwrap();
+        assert_eq!(detect_stack(tmp.path()), vec!["svelte"]);
+    }
+
+    #[test]
+    fn detect_stack_go() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("go.mod"), "module x\ngo 1.22").unwrap();
+        assert_eq!(detect_stack(tmp.path()), vec!["go"]);
+    }
+
+    #[test]
+    fn detect_stack_multiple() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        std::fs::write(tmp.path().join("pyproject.toml"), "[project]").unwrap();
+        let stack = detect_stack(tmp.path());
+        assert!(stack.contains(&"rust".to_string()));
+        assert!(stack.contains(&"python".to_string()));
+    }
+
+    #[test]
+    fn detect_stack_empty_for_no_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(detect_stack(tmp.path()).is_empty());
+    }
+
+    // ── File counting ────────────────────────────────────────────
+
+    #[test]
+    fn count_indexable_files_in_fixture() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        std::fs::write(tmp.path().join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "pub fn x() {}").unwrap();
+
+        let (files, count) = count_indexable_files(tmp.path());
+        assert!(count >= 2, "expected at least 2 files (main.rs, lib.rs), got {}", count);
+        assert!(files.iter().any(|f| f.to_string_lossy().contains("main.rs")));
+    }
+
+    #[test]
+    fn count_excludes_binary_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join("code.rs"), "fn x() {}").unwrap();
+        std::fs::write(tmp.path().join("image.png"), &[0u8; 10]).unwrap();
+        std::fs::write(tmp.path().join("font.woff2"), &[0u8; 10]).unwrap();
+
+        let (_, count) = count_indexable_files(tmp.path());
+        assert_eq!(count, 1, "only .rs should be counted, not .png or .woff2");
     }
 }
