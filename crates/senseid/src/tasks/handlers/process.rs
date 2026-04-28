@@ -8,7 +8,7 @@ use super::helpers::{is_binary_ext, build_globset};
 // ── Process Repo ──────────────────────────────────────────────────────────
 
 /// Process a repo: create virtual nodes, detect workspaces, enqueue folder + barrier tasks.
-pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_path = Path::new(&task.path);
     if !repo_path.exists() {
         return Err(format!("Repo path does not exist: {}", task.path));
@@ -158,10 +158,10 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 
                 for (name, subtree_path) in &subtrees {
                     let subtree_repo_id = format!("{}:{}", repo_id, name);
-                    let sub_task = Task::new(TaskKind::ProcessRepo, &subtree_repo_id, subtree_path)
+                    let sub_task = Task::new(TaskKind::ProcessGitFolder, &subtree_repo_id, subtree_path)
                         .with_parent(task.id);
                     ctx.queue.enqueue(sub_task).await;
-                    tracing::info!("process_repo: enqueued subtree {} at {}", subtree_repo_id, subtree_path);
+                    tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_repo_id, subtree_path);
                 }
             }
         }
@@ -189,7 +189,7 @@ pub async fn process_repo(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         }
     }
 
-    tracing::info!("process_repo: {} — {} dirs, {} file tasks, barrier=#{}", repo_id, dirs.len(), all_file_task_ids.len(), resolve_id);
+    tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", repo_id, dirs.len(), all_file_task_ids.len(), resolve_id);
     Ok(())
 }
 
@@ -346,10 +346,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_repo_errors_on_nonexistent_path() {
+    async fn process_git_folder_errors_on_nonexistent_path() {
         let ctx = make_ctx().await;
-        let task = Task::new(TaskKind::ProcessRepo, "test-repo", "/nonexistent/repo");
-        let result = process_repo(&ctx, &task).await;
+        let task = Task::new(TaskKind::ProcessGitFolder, "test-repo", "/nonexistent/repo");
+        let result = process_git_folder(&ctx, &task).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
     }

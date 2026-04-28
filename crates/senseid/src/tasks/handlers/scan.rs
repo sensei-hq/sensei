@@ -9,7 +9,7 @@ use crate::api::events::*;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
 
-/// Scan a root directory for git repos, register projects, enqueue process_repo tasks.
+/// Scan a root directory for git repos, register projects, enqueue process_git_folder tasks.
 pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let root = Path::new(&task.path);
     if !root.exists() {
@@ -59,8 +59,8 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         // Register each discovered repo as a folder in PG
         ctx.pg().upsert_repo(&root_id, name, path).await.ok();
 
-        // Enqueue process_repo
-        let repo_task = Task::new(TaskKind::ProcessRepo, name, path)
+        // Enqueue process_git_folder
+        let repo_task = Task::new(TaskKind::ProcessGitFolder, name, path)
             .with_parent(task.id);
         ctx.queue.enqueue(repo_task).await;
 
@@ -117,8 +117,56 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
             }));
         }
 
+        // Emit single-folder projects for ungrouped folders
+        let grouped: std::collections::HashSet<&str> = suggestions.iter()
+            .flat_map(|s| s.repo_ids.iter().map(|id| id.as_str()))
+            .collect();
+
+        for (name, path) in &repos {
+            if !grouped.contains(name.as_str()) {
+                let stack = detect_stack(Path::new(path));
+                emit(StateEvent::project_add(ScanProject {
+                    id: format!("p-{}", name),
+                    name: name.clone(),
+                    status: ProjectStatus::Scanning,
+                    folders: vec![ScanProjectFolder {
+                        id: format!("f-{}", name),
+                        name: name.clone(),
+                        path: path.clone(),
+                        stack,
+                        files_total: 0,
+                        files_completed: 0,
+                        status: FolderStatus::Queued,
+                    }],
+                    auto_detected: true,
+                    confidence: Confidence::Low,
+                }));
+            }
+        }
+
         if !suggestions.is_empty() {
             ctx.pg().set_config("solution_suggestions", &serde_json::to_string(&suggestions).unwrap_or_default()).await.ok();
+        }
+    } else {
+        // Single folder or no folders — each gets its own project
+        for (name, path) in &repos {
+            let stack = detect_stack(Path::new(path));
+            emit(StateEvent::project_add(ScanProject {
+                id: format!("p-{}", name),
+                name: name.clone(),
+                status: ProjectStatus::Scanning,
+                folders: vec![ScanProjectFolder {
+                    id: format!("f-{}", name),
+                    name: name.clone(),
+                    path: path.clone(),
+                    stack,
+                    files_total: 0,
+                    files_completed: 0,
+                    status: FolderStatus::Queued,
+                }],
+                auto_detected: true,
+                confidence: Confidence::Low,
+            }));
         }
     }
 
@@ -210,7 +258,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
     std::fs::remove_file(&manifest_path).ok();
 
     // 3. Enqueue full repo reindex + reconcile cross-repo links after
-    let repo_task = Task::new(TaskKind::ProcessRepo, repo_id, &repo_path)
+    let repo_task = Task::new(TaskKind::ProcessGitFolder, repo_id, &repo_path)
         .with_branch(new_branch);
     let repo_task_id = ctx.queue.enqueue(repo_task).await;
 
@@ -348,9 +396,9 @@ mod tests {
         let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
-        // Two ProcessRepo tasks should have been enqueued
+        // Two ProcessGitFolder tasks should have been enqueued
         let status = ctx.queue.status().await;
-        assert_eq!(status.pending, 2, "expected 2 process_repo tasks enqueued");
+        assert_eq!(status.pending, 2, "expected 2 process_git_folder tasks enqueued");
     }
 
     #[tokio::test]
@@ -365,5 +413,164 @@ mod tests {
 
         let status = ctx.queue.status().await;
         assert_eq!(status.pending, 1, "root repo itself should be enqueued");
+    }
+
+    // ── Integration: fixture → scan → capture events → log ──────────
+
+    /// Build a TaskContext with a real event_tx that we can subscribe to.
+    async fn make_ctx_with_events() -> (Arc<TaskContext>, tokio::sync::broadcast::Receiver<crate::api::events::StateEvent>) {
+        let queue = Arc::new(TaskQueue::new());
+        let gateway = crate::api::gateway_init::init_gateway_test().await;
+        let (event_tx, event_rx) = tokio::sync::broadcast::channel(256);
+        let app_state = Arc::new(SharedState {
+            task_queue: queue.clone(),
+            pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
+            gateway,
+            event_tx,
+        });
+        let ctx = Arc::new(TaskContext {
+            queue,
+            app_state,
+            _graph_path: None,
+        });
+        (ctx, event_rx)
+    }
+
+    /// Create a realistic fixture:
+    ///   /tmp/root1/
+    ///     proj_a/
+    ///       fldr_1/  (.git, Cargo.toml, src/main.rs, src/lib.rs)
+    ///       fldr_2/  (.git, package.json, index.ts, utils.ts)
+    ///       fldr_3/  (.git, go.mod, main.go)
+    ///     standalone/  (.git, README.md)
+    fn create_scan_fixture() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // proj_a/fldr_1 — Rust project
+        let f1 = root.join("proj_a/fldr_1");
+        std::fs::create_dir_all(f1.join(".git")).unwrap();
+        std::fs::create_dir_all(f1.join("src")).unwrap();
+        std::fs::write(f1.join("Cargo.toml"), "[package]\nname = \"fldr_1\"").unwrap();
+        std::fs::write(f1.join("src/main.rs"), "fn main() { println!(\"hello\"); }").unwrap();
+        std::fs::write(f1.join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
+
+        // proj_a/fldr_2 — TypeScript project
+        let f2 = root.join("proj_a/fldr_2");
+        std::fs::create_dir_all(f2.join(".git")).unwrap();
+        std::fs::write(f2.join("package.json"), r#"{"name":"fldr_2","dependencies":{"svelte":"^5.0"}}"#).unwrap();
+        std::fs::write(f2.join("index.ts"), "export const greeting = 'hello';").unwrap();
+        std::fs::write(f2.join("utils.ts"), "export function add(a: number, b: number) { return a + b; }").unwrap();
+
+        // proj_a/fldr_3 — Go project
+        let f3 = root.join("proj_a/fldr_3");
+        std::fs::create_dir_all(f3.join(".git")).unwrap();
+        std::fs::write(f3.join("go.mod"), "module fldr_3\ngo 1.22").unwrap();
+        std::fs::write(f3.join("main.go"), "package main\nfunc main() {}").unwrap();
+
+        // standalone — no sibling, separate project
+        let standalone = root.join("standalone");
+        std::fs::create_dir_all(standalone.join(".git")).unwrap();
+        std::fs::write(standalone.join("README.md"), "# Standalone").unwrap();
+
+        tmp
+    }
+
+    #[tokio::test]
+    async fn scan_fixture_captures_events_and_logs() {
+        let fixture = create_scan_fixture();
+        let (ctx, mut event_rx) = make_ctx_with_events().await;
+
+        // Run scan
+        let task = Task::new(TaskKind::ScanRoot, "", &fixture.path().to_string_lossy());
+        scan_root(&ctx, &task).await.unwrap();
+
+        // Drain events
+        let mut events = vec![];
+        while let Ok(evt) = event_rx.try_recv() {
+            events.push(evt);
+        }
+
+        // Log events to file for inspection
+        let log_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join(".sensei/logs/scan-fixture-events.jsonl");
+        std::fs::create_dir_all(log_path.parent().unwrap()).ok();
+        let mut log = String::new();
+        for evt in &events {
+            log.push_str(&serde_json::to_string_pretty(evt).unwrap());
+            log.push('\n');
+        }
+        std::fs::write(&log_path, &log).unwrap();
+        eprintln!("\n=== Events written to {} ===\n", log_path.display());
+
+        // Print events to test output
+        for (i, evt) in events.iter().enumerate() {
+            eprintln!("[{}] {} / {} / {}",
+                i,
+                serde_json::to_value(&evt.action).unwrap(),
+                evt.entity,
+                evt.data.get("message").or(evt.data.get("name")).unwrap_or(&serde_json::Value::Null),
+            );
+        }
+
+        // ── Validate ────────────────────────────────────────────
+
+        assert!(!events.is_empty(), "should have captured events");
+
+        // Activity events
+        let activities: Vec<_> = events.iter().filter(|e| e.entity == "activity").collect();
+        assert!(activities.len() >= 5, "expected at least 5 activity events, got {}", activities.len());
+
+        // Discover events: root + 4 git folders
+        let discovers: Vec<_> = activities.iter()
+            .filter(|e| e.data["level"] == "discover")
+            .collect();
+        assert!(discovers.len() >= 4, "expected at least 4 discover events (root + 3 proj_a + standalone), got {}", discovers.len());
+
+        // Queue events: 4 folders queued
+        let queues: Vec<_> = activities.iter()
+            .filter(|e| e.data["level"] == "queue")
+            .collect();
+        assert_eq!(queues.len(), 4, "expected 4 queue events (one per git folder)");
+
+        // Success event
+        let successes: Vec<_> = activities.iter()
+            .filter(|e| e.data["level"] == "success")
+            .collect();
+        assert_eq!(successes.len(), 1, "expected 1 success event");
+
+        // Project events: proj_a group + standalone
+        let projects: Vec<_> = events.iter().filter(|e| e.entity == "project").collect();
+        assert!(projects.len() >= 2, "expected at least 2 project events (proj_a + standalone), got {}", projects.len());
+
+        // Check proj_a project has 3 folders
+        let proj_a = projects.iter().find(|e| {
+            let folders = e.data["folders"].as_array();
+            folders.map(|f| f.len() >= 3).unwrap_or(false)
+        });
+        assert!(proj_a.is_some(), "expected a project with 3+ folders (proj_a)");
+
+        if let Some(proj) = proj_a {
+            let folders = proj.data["folders"].as_array().unwrap();
+
+            // Check stack detection
+            let stacks: Vec<_> = folders.iter()
+                .filter_map(|f| f["stack"].as_array())
+                .map(|s| s.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                .collect();
+            let all_stacks: Vec<&str> = stacks.iter().flat_map(|s| s.iter().copied()).collect();
+            assert!(all_stacks.contains(&"rust"), "should detect rust stack");
+            assert!(all_stacks.contains(&"svelte"), "should detect svelte stack");
+            assert!(all_stacks.contains(&"go"), "should detect go stack");
+
+            eprintln!("\nProject folders:");
+            for f in folders {
+                eprintln!("  {} — {:?}", f["name"], f["stack"]);
+            }
+        }
+
+        // Verify queued tasks
+        let status = ctx.queue.status().await;
+        assert_eq!(status.pending, 4, "expected 4 ProcessGitFolder tasks pending");
     }
 }

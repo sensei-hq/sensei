@@ -135,9 +135,12 @@ impl StateEvent {
 
 impl ActivityEvent {
     pub fn new(level: ActivityLevel, message: &str, elapsed: f64) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
         Self {
-            id: format!("a{}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()),
+            id: format!("a{}_{}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(), seq),
             level,
             message: message.to_string(),
             elapsed,

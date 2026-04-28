@@ -1,7 +1,7 @@
 //! Hierarchical task queue for scanning, indexing, and watching.
 //!
 //! Tasks form a dependency tree:
-//!   scan_root → process_repo → process_folder → process_file → resolve_edges → build_connections
+//!   scan_root → process_git_folder → process_folder → process_file → resolve_edges → build_connections
 //!
 //! Barrier tasks (resolve_edges, build_connections) wait for all dependencies to complete.
 
@@ -20,7 +20,7 @@ use std::time::Instant;
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     ScanRoot,
-    ProcessRepo,
+    ProcessGitFolder,
     ProcessFolder,
     ProcessFile,
     DeleteFile,
@@ -37,7 +37,7 @@ impl std::fmt::Display for TaskKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ScanRoot => write!(f, "scan_root"),
-            Self::ProcessRepo => write!(f, "process_repo"),
+            Self::ProcessGitFolder => write!(f, "process_git_folder"),
             Self::ProcessFolder => write!(f, "process_folder"),
             Self::ProcessFile => write!(f, "process_file"),
             Self::DeleteFile => write!(f, "delete_file"),
