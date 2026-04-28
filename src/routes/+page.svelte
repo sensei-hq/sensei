@@ -1,20 +1,15 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { loadAppState, getPort, isSetupComplete } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
+  import { loadAppState, isSetupComplete } from '$lib/appstate.svelte.js';
+  import { runBootstrap } from '$lib/bootstrap.js';
 
   onMount(async () => {
     await loadAppState();
-    const api = senseiApi(getPort());
 
-    try {
-      const health = await api.getHealth();
-      if (!health?.ok) {
-        goto('/health', { replaceState: true });
-        return;
-      }
-    } catch {
+    const result = await runBootstrap();
+
+    if (!result.ready) {
       goto('/health', { replaceState: true });
       return;
     }
