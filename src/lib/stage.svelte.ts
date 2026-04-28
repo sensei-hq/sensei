@@ -1,13 +1,12 @@
 /**
- * Svelte 5 reactive state store factory.
- * Uses $state rune for automatic reactivity in Svelte components.
- * Same interface as createStore in stage.ts, but reactive.
+ * Reactive state store factory — Svelte 5 $state backed.
+ * Single implementation used by both components and tests.
  */
 
-import type { StateStore } from './stage.js';
+import type { StateStore, StateEvent } from './stage.js';
 
-export function createReactiveStore<T extends { id: string }>(initial: T[] = []): StateStore<T> {
-  let _items = $state<T[]>(initial);
+export function createStore<T extends { id: string }>(initial: T[] = []): StateStore<T> {
+  let _items = $state<T[]>([...initial]);
 
   return {
     get items() { return _items; },
@@ -36,6 +35,15 @@ export function createReactiveStore<T extends { id: string }>(initial: T[] = [])
 
     get(id: string): T | undefined {
       return _items.find(i => i.id === id);
+    },
+
+    apply(event: StateEvent<T>) {
+      switch (event.action) {
+        case 'add':    if (event.data) this.add(event.data); break;
+        case 'update': if (event.id && event.data) this.update(event.id, event.data); break;
+        case 'remove': if (event.id) this.remove(event.id); break;
+        case 'set':    if (event.items) this.set(event.items); break;
+      }
     },
   };
 }
