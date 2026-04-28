@@ -52,6 +52,46 @@ pub enum Confidence {
     Low,
 }
 
+// ── Folder entity (separate from project) ───────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScanFolder {
+    pub id: String,
+    #[serde(rename = "projectId")]
+    pub project_id: String,
+    pub name: String,
+    pub path: String,
+    pub kind: FolderKind,
+    pub stack: Vec<String>,
+    #[serde(rename = "filesTotal")]
+    pub files_total: u32,
+    #[serde(rename = "filesCompleted")]
+    pub files_completed: u32,
+    pub status: FolderStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderKind {
+    Git,
+    WorkspaceMember,
+    Subtree,
+    Sibling,
+    Standalone,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderStatus {
+    Discovered,
+    Queued,
+    Indexing,
+    Indexed,
+    Failed,
+    Deferred,
+}
+
+/// Kept for backward compat with project events that include inline folders.
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanProjectFolder {
     pub id: String,
@@ -63,16 +103,6 @@ pub struct ScanProjectFolder {
     #[serde(rename = "filesCompleted")]
     pub files_completed: u32,
     pub status: FolderStatus,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FolderStatus {
-    Discovered,
-    Queued,
-    Indexing,
-    Indexed,
-    Failed,
 }
 
 // ── Activity entity ─────────────────────────────────────────────────────────
@@ -121,6 +151,22 @@ impl StateEvent {
             action: Action::Remove,
             entity: "project".into(),
             data: serde_json::json!({ "id": id }),
+        }
+    }
+
+    pub fn folder_add(folder: ScanFolder) -> Self {
+        Self {
+            action: Action::Add,
+            entity: "folder".into(),
+            data: serde_json::to_value(&folder).unwrap(),
+        }
+    }
+
+    pub fn folder_update(folder: ScanFolder) -> Self {
+        Self {
+            action: Action::Update,
+            entity: "folder".into(),
+            data: serde_json::to_value(&folder).unwrap(),
         }
     }
 
