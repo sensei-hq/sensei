@@ -5,7 +5,7 @@
 
 import type { StateEvent } from './types.js';
 
-export class Store<T extends { id: string }> {
+export class ReactiveStageContext<T extends { id: string }> {
   items = $state<T[]>([]);
 
   constructor(initial: T[] = []) {
