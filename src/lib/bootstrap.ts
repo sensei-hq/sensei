@@ -67,13 +67,8 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-async function hasTauri(): Promise<boolean> {
-  try {
-    const mod = await import('@tauri-apps/api/core');
-    return !!mod.invoke;
-  } catch {
-    return false;
-  }
+function hasTauri(): boolean {
+  return typeof window !== 'undefined' && !!(window as any).__TAURI__;
 }
 
 // ── Bootstrap API ────────────────────────────────────────────────────────────
@@ -84,7 +79,7 @@ async function hasTauri(): Promise<boolean> {
  */
 export async function runBootstrap(): Promise<BootstrapResult> {
   // Browser (no Tauri) → mock data for development/testing
-  if (!(await hasTauri())) {
+  if (!(hasTauri())) {
     const { mockBootstrapPartial } = await import('./mock-data.js');
     return mockBootstrapPartial;
   }
