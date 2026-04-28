@@ -43,8 +43,8 @@ mod tests {
     #[test]
     fn cargo_toml() {
         let root = workspace_root();
-        let abs = root.join("crates/sensei-mcp/Cargo.toml");
-        let r = process(&abs.to_string_lossy(), "crates/sensei-mcp/Cargo.toml", "toml");
+        let abs = root.join("crates/mcp/Cargo.toml");
+        let r = process(&abs.to_string_lossy(), "crates/mcp/Cargo.toml", "toml");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "config");
         assert_eq!(r.language.as_deref(), Some("toml"));

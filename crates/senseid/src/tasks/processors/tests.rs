@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn sensei_mcp_cargo_toml() {
         let root = workspace_root();
-        let abs = root.join("crates/sensei-mcp/Cargo.toml");
+        let abs = root.join("crates/mcp/Cargo.toml");
         assert!(abs.exists(), "sensei-mcp Cargo.toml not found");
         let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
         assert_eq!(r.kind, "file");
