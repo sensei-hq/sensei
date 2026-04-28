@@ -7,7 +7,7 @@ use super::helpers::{is_binary_ext, build_globset};
 
 // ── Process Repo ──────────────────────────────────────────────────────────
 
-/// Process a repo: create virtual nodes, detect workspaces, enqueue folder + barrier tasks.
+/// Process a git folder: detect stack, count files, create/find project, emit events, enqueue file tasks.
 pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let repo_path = Path::new(&task.path);
     if !repo_path.exists() {
@@ -16,18 +16,82 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
 
     let folder_name = task.folder_name();
     let folder_path = &task.folder_path;
+    let emit = |evt: crate::api::events::StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
 
-    // Look up folder UUID for PgStore operations
+    // ── 1. Detect stack ──────────────────────────────────────────────
+    let stack = super::scan_logic::detect_stack(repo_path);
+
+    // ── 2. Count indexable files ─────────────────────────────────────
+    let (indexable_files, files_total) = super::scan_logic::count_indexable_files(repo_path);
+
+    // ── 3. Find or create project ────────────────────────────────────
+    let parent_name = repo_path.parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or(folder_name);
+
+    // Check if a project with this parent name exists
+    let project_id = match ctx.pg().get_project_by_name(parent_name).await {
+        Ok(Some(proj)) => {
+            // Project exists — use it
+            proj["id"].as_str().unwrap_or("").to_string()
+        }
+        _ => {
+            // Create new project
+            let id = ctx.pg().create_project(parent_name, None, None).await
+                .map(|id| id.to_string())
+                .unwrap_or_else(|_| format!("p-{}", parent_name));
+
+            // Emit: project add
+            emit(crate::api::events::StateEvent::project_add(crate::api::events::ScanProject {
+                id: id.clone(),
+                name: parent_name.to_string(),
+                status: crate::api::events::ProjectStatus::Indexing,
+                folders: vec![],
+                auto_detected: true,
+                confidence: crate::api::events::Confidence::High,
+            }));
+
+            id
+        }
+    };
+
+    // ── 4. Emit: folder add with stack + file count ──────────────────
+    let folder_uuid_str = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten()
+        .and_then(|f| f["id"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| format!("f-{}", folder_name));
+
+    emit(crate::api::events::StateEvent::folder_add(crate::api::events::ScanFolder {
+        id: folder_uuid_str.clone(),
+        project_id: project_id.clone(),
+        name: folder_name.to_string(),
+        path: task.path.clone(),
+        kind: crate::api::events::FolderKind::Git,
+        stack: stack.clone(),
+        files_total,
+        files_completed: 0,
+        status: crate::api::events::FolderStatus::Queued,
+    }));
+
+    // ── 5. Emit: activity queue ──────────────────────────────────────
+    emit(crate::api::events::StateEvent::activity(crate::api::events::ActivityEvent::new(
+        crate::api::events::ActivityLevel::Queue,
+        &format!("{} · {} files queued · {}", folder_name, files_total, stack.join(", ")),
+        0.0,
+    )));
+
+    // ── 6. Attach deferred siblings to this project ──────────────────
+    // TODO: query DB for deferred folders with same parent path, update their project_id
+
+    // ── Existing logic: look up folder, clear stale data ─────────────
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_uuid = folder.as_ref()
         .and_then(|f| f["id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
-    // Clear stale hierarchy in PG
     if let Some(ref fid) = folder_uuid {
         ctx.pg().delete_nodes_by_folder(fid).await.ok();
     }
-    // TODO: clear_unresolved_refs
 
     // Detect workspace members
     let workspace_members = crate::config::detector::detect_workspace_members(repo_path);
