@@ -7,3 +7,4 @@ pub(crate) mod libraries;
 pub(crate) mod config;
 pub(crate) mod query;
 pub(crate) mod gateway;
+pub(crate) mod scan_events;

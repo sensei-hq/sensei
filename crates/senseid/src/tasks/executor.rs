@@ -77,6 +77,7 @@ mod tests {
             task_queue: queue.clone(),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
             gateway,
+            event_tx: { let (tx, _) = tokio::sync::broadcast::channel(16); tx },
         });
         Arc::new(TaskContext {
             queue,
