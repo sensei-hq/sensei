@@ -29,8 +29,7 @@ export interface StateEvent<T> {
   action: 'add' | 'update' | 'remove' | 'set';
   entity: string;
   id?: string;
-  data?: T;
-  items?: T[];
+  data?: T | T[];   // single item for add/update, array for set
 }
 
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
