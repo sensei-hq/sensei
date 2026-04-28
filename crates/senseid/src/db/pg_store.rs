@@ -1067,6 +1067,21 @@ impl PgStore {
         }))
     }
 
+    pub async fn get_project_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, description, client, maturity::text, goal, stack, links, tags, modified_at FROM sensei.projects WHERE name = $1"
+            ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(row.map(|(id, name, desc, client, maturity, goal, stack, links, tags, modified)| {
+            serde_json::json!({
+                "id": id, "name": name, "description": desc, "client": client,
+                "maturity": maturity, "goal": goal, "stack": stack, "links": links,
+                "tags": tags, "modified_at": modified.to_rfc3339(),
+            })
+        }))
+    }
+
     pub async fn list_projects(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, Option<String>, String, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
