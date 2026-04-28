@@ -1,11 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { loadAppState, isSetupComplete } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { runBootstrap } from '$lib/bootstrap.js';
 
   onMount(async () => {
-    await loadAppState();
+    await appState.load();
 
     const result = await runBootstrap();
 
@@ -14,7 +14,7 @@
       return;
     }
 
-    if (isSetupComplete()) {
+    if (appState.setupComplete) {
       goto('/observatory', { replaceState: true });
     } else {
       goto('/config', { replaceState: true });

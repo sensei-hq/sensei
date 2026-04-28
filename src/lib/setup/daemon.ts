@@ -6,7 +6,7 @@
  */
 
 import { senseiApi } from '$lib/api.js';
-import { getPort } from '$lib/appstate.svelte.js';
+import { appState } from '$lib/appstate.svelte.js';
 export type ComponentState = 'checking' | 'missing' | 'installing' | 'stopped' | 'starting' | 'ready' | 'error';
 
 export interface ComponentInfo {
@@ -65,7 +65,7 @@ export async function checkComponents(
   const emit = () => onUpdate([...components]);
   emit();
 
-  const port = getPort();
+  const port = appState.port;
   const api = senseiApi(port);
 
   // ── Step 1: Check if daemon is running ────────────────────

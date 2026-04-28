@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadAppState, getPort } from '$lib/appstate.svelte.js';
+  import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
 
   type Memory = {
@@ -20,7 +20,7 @@
   let selectedMemory = $state<Memory | null>(null);
 
   onMount(async () => {
-    await loadAppState();
+    await appState.load();
     // Memories API not yet wired — will populate when daemon supports it
     loading = false;
   });
