@@ -1,3 +1,38 @@
+// ─── Stage pattern ─────────────────────────────────────────────────────────────
+
+import type { EventManager } from './events.js';
+import type { Component } from 'svelte';
+
+export interface Stage {
+  id: string;
+  title: string;
+  icon: string;
+  description: string;
+  watermark?: boolean;
+  component: Component;
+  canAdvance: () => boolean;
+  load?: () => Promise<void>;
+  source?: EventManager<any>;
+}
+
+export interface StateStore<T extends { id: string }> {
+  items: T[];
+  add(item: T): void;
+  update(id: string, patch: Partial<T>): void;
+  remove(id: string): void;
+  set(items: T[]): void;
+  get(id: string): T | undefined;
+  apply(event: StateEvent<T>): void;
+}
+
+export interface StateEvent<T> {
+  action: 'add' | 'update' | 'remove' | 'set';
+  entity: string;
+  id?: string;
+  data?: T;
+  items?: T[];
+}
+
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
 
 export interface AssistantStatus {
