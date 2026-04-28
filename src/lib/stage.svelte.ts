@@ -40,10 +40,10 @@ export class Store<T extends { id: string }> implements StateStore<T> {
 
   apply(event: StateEvent<T>) {
     switch (event.action) {
-      case 'add':    if (event.data) this.add(event.data); break;
-      case 'update': if (event.id && event.data) this.update(event.id, event.data); break;
+      case 'add':    if (event.data && !Array.isArray(event.data)) this.add(event.data); break;
+      case 'update': if (event.id && event.data && !Array.isArray(event.data)) this.update(event.id, event.data); break;
       case 'remove': if (event.id) this.remove(event.id); break;
-      case 'set':    if (event.items) this.set(event.items); break;
+      case 'set':    if (Array.isArray(event.data)) this.set(event.data); break;
     }
   }
 }

@@ -146,7 +146,7 @@ describe('store.apply', () => {
 
   it('dispatches set event', () => {
     const store = new Store<Item>([item('1', 'old')]);
-    store.apply({ action: 'set', entity: 'item', items: [item('2', 'new')] });
+    store.apply({ action: 'set', entity: 'item', data: [item('2', 'new')] });
     expect(store.items).toHaveLength(1);
     expect(store.items[0].id).toBe('2');
   });
