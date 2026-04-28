@@ -219,11 +219,12 @@ mod tests {
     #[tokio::test]
     async fn task_context_provides_pg() {
         let ctx = make_ctx().await;
-        // Verify we can access pg
+        let unique = format!("test-ctx-{}", std::process::id());
+        let path = format!("/tmp/{}", unique);
         {
-            let root_id = ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "test", "/tmp/test").await.unwrap();
-            let p = ctx.pg().get_repo_by_name("test").await.unwrap();
+            let root_id = ctx.pg().add_watch_root(&path, &unique, &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, &unique, &path).await.unwrap();
+            let p = ctx.pg().get_repo_by_name(&unique).await.unwrap();
             assert!(p.is_some());
         }
     }
