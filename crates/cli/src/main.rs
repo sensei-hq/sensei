@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 const DAEMON_URL: &str = "http://127.0.0.1:7744";
+const BREW_TAP: &str = "sensei-hq/tap/sensei";
 
 #[derive(Parser)]
 #[command(name = "sensei", about = "Sensei — AI coding companion", version)]
@@ -283,7 +284,7 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool) {
 
     // Verify binaries
     if !which_exists("senseid") || !which_exists("sensei-mcp") {
-        eprintln!("Missing binaries. Install: brew install mizukisu/tap/sensei");
+        eprintln!("Missing binaries. Install: brew install {BREW_TAP}");
         std::process::exit(1);
     }
 
@@ -746,7 +747,7 @@ fn remove_all(purge: bool) {
         }
 
         println!(
-            "\nSensei fully removed. To reinstall: brew install mizukisu/tap/sensei && sensei init"
+            "\nSensei fully removed. To reinstall: brew install {BREW_TAP} && sensei init"
         );
     } else {
         println!("\nData preserved. To reinstall: sensei init");
@@ -766,7 +767,7 @@ fn restart_daemon(port: u16) {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
             eprintln!(
-                "Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei",
+                "Failed to run senseid: {}. Install: brew install {BREW_TAP}",
                 e
             );
             std::process::exit(1);
@@ -785,7 +786,7 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
             eprintln!(
-                "Failed to run senseid: {}. Install: brew install mizukisu/tap/sensei",
+                "Failed to run senseid: {}. Install: brew install {BREW_TAP}",
                 e
             );
             std::process::exit(1);

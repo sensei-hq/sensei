@@ -48,24 +48,29 @@ pub fn install_hooks_only() -> Result<u32, String> {
     install_hooks()
 }
 
-/// Install hook scripts from embedded marketplace content.
+/// Hook file names to install from the marketplace repo.
+const HOOK_FILES: &[&str] = &[
+    "session-start",
+    "user-prompt",
+    "pre-compact",
+    "pre-tool",
+    "post-tool",
+    "run-hook.cmd",
+];
+
+/// Install hook scripts by downloading from the marketplace GitHub repo.
 fn install_hooks() -> Result<u32, String> {
     let hooks_dir = plugin_dir().join("hooks");
     fs::create_dir_all(&hooks_dir).map_err(|e| e.to_string())?;
 
-    let hooks: &[(&str, &str)] = &[
-        ("session-start", include_str!("../../../../marketplace/plugins/sensei/hooks/session-start")),
-        ("user-prompt", include_str!("../../../../marketplace/plugins/sensei/hooks/user-prompt")),
-        ("pre-compact", include_str!("../../../../marketplace/plugins/sensei/hooks/pre-compact")),
-        ("pre-tool", include_str!("../../../../marketplace/plugins/sensei/hooks/pre-tool")),
-        ("post-tool", include_str!("../../../../marketplace/plugins/sensei/hooks/post-tool")),
-        ("run-hook.cmd", include_str!("../../../../marketplace/plugins/sensei/hooks/run-hook.cmd")),
-    ];
-
+    let cache = cache_dir();
     let mut count = 0u32;
-    for (name, content) in hooks {
+
+    for name in HOOK_FILES {
+        let repo_path = format!("plugins/sensei/hooks/{}", name);
+        let content = super::catalog::load_or_download(&cache, &repo_path)?;
         let path = hooks_dir.join(name);
-        fs::write(&path, content).map_err(|e| format!("{}: {}", name, e))?;
+        fs::write(&path, &content).map_err(|e| format!("{}: {}", name, e))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -186,25 +191,34 @@ mod tests {
         assert_eq!(json["marketplace_version"], "1.0.0");
     }
 
-    // ── install_hooks (writes to plugin_dir — tests via real dirs) ────
+    // ── install_hooks (requires network — downloads from GitHub) ────
 
     #[test]
+    fn hook_file_list_is_complete() {
+        assert_eq!(HOOK_FILES.len(), 6);
+        assert!(HOOK_FILES.contains(&"session-start"));
+        assert!(HOOK_FILES.contains(&"user-prompt"));
+        assert!(HOOK_FILES.contains(&"pre-compact"));
+        assert!(HOOK_FILES.contains(&"pre-tool"));
+        assert!(HOOK_FILES.contains(&"post-tool"));
+        assert!(HOOK_FILES.contains(&"run-hook.cmd"));
+    }
+
+    #[test]
+    #[ignore] // requires network access — run with: cargo test -- --ignored
     fn install_hooks_creates_hook_files() {
-        // install_hooks uses plugin_dir() which goes to real home;
-        // we can still verify it returns count and doesn't error.
-        // This test exercises the real path but is safe (idempotent writes).
         let result = install_hooks();
         assert!(result.is_ok());
         let count = result.unwrap();
-        assert_eq!(count, 6); // session-start, user-prompt, pre-compact, pre-tool, post-tool, run-hook.cmd
+        assert_eq!(count, 6);
     }
 
     #[cfg(unix)]
     #[test]
+    #[ignore] // requires network access
     fn install_hooks_sets_executable_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        // Run install first
         install_hooks().unwrap();
 
         let hooks_dir = plugin_dir().join("hooks");

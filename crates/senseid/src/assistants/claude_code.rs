@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use super::trait_def::{Assistant, AssistantConfigureOk};
 use super::helpers::{home, find_claude_binary};
 
-const SENSEI_MARKETPLACE_REPO: &str = "mizukisu/sensei-marketplace";
+use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
 
 pub(crate) struct ClaudeCodeAssistant;
 
