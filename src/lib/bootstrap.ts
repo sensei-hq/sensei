@@ -83,13 +83,13 @@ async function hasTauri(): Promise<boolean> {
  * falls back to Tauri commands if daemon is unreachable.
  */
 export async function runBootstrap(): Promise<BootstrapResult> {
-  // Test mode: return mock data
-  const { isTestMode, mockBootstrapPartial } = await import('./mock-data.js');
-  if (isTestMode()) {
+  // Browser (no Tauri) → mock data for development/testing
+  if (!(await hasTauri())) {
+    const { mockBootstrapPartial } = await import('./mock-data.js');
     return mockBootstrapPartial;
   }
 
-  // Fast path: daemon is running, ask it for component status
+  // Tauri app: try daemon API first (fast path)
   try {
     const api = senseiApi(appState.port);
     const resp = await api.getComponents() as any;
@@ -101,22 +101,11 @@ export async function runBootstrap(): Promise<BootstrapResult> {
       };
     }
   } catch {
-    // Daemon unreachable — fall through to Tauri
+    // Daemon unreachable — fall through to sidecar
   }
 
-  // Slow path: Tauri bootstrap commands
-  if (await hasTauri()) {
-    return tauriInvoke<BootstrapResult>('run_bootstrap');
-  }
-
-  // No Tauri, no daemon — return all-failed
-  return {
-    components: [
-      { name: 'daemon', state: { state: 'failed', error: 'Not reachable' }, version: null, detail: null },
-    ],
-    hardware: { ram_gb: 0, cpu_cores: 0, gpu: null, metal_support: false, recommended_tier: 'minimum' },
-    ready: false,
-  };
+  // Sidecar: Tauri bootstrap commands
+  return tauriInvoke<BootstrapResult>('run_bootstrap');
 }
 
 /** Install a component by name. Requires Tauri. */
