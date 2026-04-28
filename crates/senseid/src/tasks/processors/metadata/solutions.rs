@@ -22,7 +22,7 @@ pub struct SolutionMatch {
 /// 2. **Name prefix** — repos with a common name stem
 ///    (e.g., `acme-api`, `acme-ui`, `acme-shared` -> "acme")
 ///
-/// Subtree detection is handled separately in process_repo (already exists).
+/// Subtree detection is handled separately in process_git_folder (already exists).
 pub fn suggest_solutions(repos: &[(String, String)]) -> Vec<SolutionMatch> {
     let mut assigned: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut matches = Vec::new();

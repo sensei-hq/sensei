@@ -28,7 +28,7 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
             tracing::info!("[task-worker-{}] started", worker_id);
             loop {
                 let task = ctx.queue.next_task().await;
-                tracing::debug!("[task-worker-{}] running {} for {} ({})", worker_id, task.kind, task.repo_id, task.path);
+                tracing::debug!("[task-worker-{}] running {} for {} ({})", worker_id, task.kind, task.folder_path, task.path);
 
                 let result = execute_task(&ctx, &task).await;
 
@@ -50,7 +50,7 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
 async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     match task.kind {
         TaskKind::ScanRoot => handlers::scan_root(ctx, task).await,
-        TaskKind::ProcessRepo => handlers::process_repo(ctx, task).await,
+        TaskKind::ProcessGitFolder => handlers::process_git_folder(ctx, task).await,
         TaskKind::ProcessFolder => handlers::process_folder(ctx, task).await,
         TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
         TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
@@ -97,9 +97,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_task_dispatches_process_repo() {
+    async fn execute_task_dispatches_process_git_folder() {
         let ctx = make_ctx().await;
-        let task = Task::new(TaskKind::ProcessRepo, "repo", "/nonexistent/repo");
+        let task = Task::new(TaskKind::ProcessGitFolder, "repo", "/nonexistent/repo");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
@@ -219,11 +219,12 @@ mod tests {
     #[tokio::test]
     async fn task_context_provides_pg() {
         let ctx = make_ctx().await;
-        // Verify we can access pg
+        let unique = format!("test-ctx-{}", std::process::id());
+        let path = format!("/tmp/{}", unique);
         {
-            let root_id = ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "test", "/tmp/test").await.unwrap();
-            let p = ctx.pg().get_repo_by_name("test").await.unwrap();
+            let root_id = ctx.pg().add_watch_root(&path, &unique, &serde_json::json!([])).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, &unique, &path).await.unwrap();
+            let p = ctx.pg().get_repo_by_name(&unique).await.unwrap();
             assert!(p.is_some());
         }
     }
