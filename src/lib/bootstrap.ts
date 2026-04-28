@@ -86,9 +86,13 @@ export async function runBootstrap(): Promise<BootstrapResult> {
   // Fast path: daemon is running, ask it for component status
   try {
     const api = senseiApi(appState.port);
-    const resp = await api.getComponents();
-    if (resp && 'data' in resp) {
-      return resp as unknown as BootstrapResult;
+    const resp = await api.getComponents() as any;
+    if (resp && resp.data) {
+      return {
+        components: resp.data,
+        hardware: resp.hardware,
+        ready: resp.ready,
+      };
     }
   } catch {
     // Daemon unreachable — fall through to Tauri
