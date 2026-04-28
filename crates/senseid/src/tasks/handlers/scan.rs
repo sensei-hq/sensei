@@ -1,11 +1,11 @@
-//! Scan phase: discover folders, classify, group into projects, enqueue tasks.
-//! Emits StateEvent (activity + project + folder) via event_tx for SSE consumers.
+//! Scan phase: discover folders, classify, enqueue ProcessGitFolder.
+//! Only emits activity events. Project + folder events come from ProcessGitFolder.
 
 use std::path::Path;
 use std::time::Instant;
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::scan_logic::{self, FolderKind, Confidence};
+use super::scan_logic::{self, FolderKind};
 use crate::api::events::*;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
@@ -52,103 +52,36 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
                     start.elapsed().as_secs_f64(),
                 )));
             }
-            _ => {} // git folders already emitted above
+            _ => {}
         }
     }
 
-    // 3. Group into projects
-    let projects = scan_logic::group_into_projects(&classified);
-
-    // 4. Register watch root in DB
+    // 3. Register watch root in DB
     let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("root");
     let root_id = ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await
         .map_err(|e| format!("Failed to register watch root: {}", e))?;
 
-    // 5. Register projects and folders in DB, emit events, enqueue tasks
-    for proj in &projects {
-        // Create project in DB
-        let project_id = ctx.pg().create_project(&proj.name, None, None).await
-            .map(|id| id.to_string())
-            .unwrap_or_else(|_| format!("p-{}", proj.name));
-
-        // Emit: project add
-        let confidence = match proj.confidence {
-            Confidence::High => crate::api::events::Confidence::High,
-            Confidence::Medium => crate::api::events::Confidence::Medium,
-            Confidence::Low => crate::api::events::Confidence::Low,
-        };
-        emit(StateEvent::project_add(ScanProject {
-            id: project_id.clone(),
-            name: proj.name.clone(),
-            status: ProjectStatus::Scanning,
-            folders: vec![], // folders emitted separately
-            auto_detected: true,
-            confidence,
-        }));
-
-        // Register + emit each folder
-        for f in &proj.folders {
-            let folder_kind_str = match f.kind {
-                FolderKind::Git => "git",
-                FolderKind::WorkspaceMember => "workspace_member",
-                FolderKind::Subtree => "subtree",
-                FolderKind::Sibling => "sibling",
-                FolderKind::Standalone => "standalone",
-            };
-            let status_str = match f.kind {
-                FolderKind::Git | FolderKind::WorkspaceMember | FolderKind::Subtree => "discovered",
-                FolderKind::Sibling | FolderKind::Standalone => "deferred",
-            };
-
-            // Register folder in DB
+    // 4. Register non-git folders in DB as deferred (no project yet — ProcessGitFolder will create/find projects)
+    for f in &classified {
+        if matches!(f.kind, FolderKind::Sibling | FolderKind::Standalone) {
             ctx.pg().upsert_repo(&root_id, &f.name, &f.path.to_string_lossy()).await.ok();
-            // TODO: set kind, status, project_id on folder record via PgStore
-
-            // Emit: folder add
-            let folder_status = match f.kind {
-                FolderKind::Sibling | FolderKind::Standalone => FolderStatus::Discovered, // will use Deferred when added to events.rs
-                _ => FolderStatus::Discovered,
-            };
-            emit(StateEvent::folder_add(ScanFolder {
-                id: format!("f-{}", f.name),
-                project_id: project_id.clone(),
-                name: f.name.clone(),
-                path: f.path.to_string_lossy().to_string(),
-                kind: match f.kind {
-                    FolderKind::Git => crate::api::events::FolderKind::Git,
-                    FolderKind::WorkspaceMember => crate::api::events::FolderKind::WorkspaceMember,
-                    FolderKind::Subtree => crate::api::events::FolderKind::Subtree,
-                    FolderKind::Sibling => crate::api::events::FolderKind::Sibling,
-                    FolderKind::Standalone => crate::api::events::FolderKind::Standalone,
-                },
-                stack: vec![],
-                files_total: 0,
-                files_completed: 0,
-                status: folder_status,
-            }));
-
-            // Enqueue ProcessGitFolder for indexable folders
-            if matches!(f.kind, FolderKind::Git | FolderKind::Subtree) {
-                let git_task = Task::new(TaskKind::ProcessGitFolder, &f.path.to_string_lossy(), &f.path.to_string_lossy())
-                    .with_parent(task.id);
-                ctx.queue.enqueue(git_task).await;
-            }
         }
     }
 
-    // 6. Summary activity
-    let git_count = classified.iter().filter(|f| f.kind == FolderKind::Git).count();
-    let sibling_count = classified.iter().filter(|f| f.kind == FolderKind::Sibling).count();
-    let standalone_count = classified.iter().filter(|f| f.kind == FolderKind::Standalone).count();
+    // 5. Register git folders in DB and enqueue ProcessGitFolder
+    for f in &classified {
+        if matches!(f.kind, FolderKind::Git) {
+            ctx.pg().upsert_repo(&root_id, &f.name, &f.path.to_string_lossy()).await.ok();
+            let git_task = Task::new(
+                TaskKind::ProcessGitFolder,
+                &f.path.to_string_lossy(),
+                &f.path.to_string_lossy(),
+            ).with_parent(task.id);
+            ctx.queue.enqueue(git_task).await;
+        }
+    }
 
-    emit(StateEvent::activity(ActivityEvent::new(
-        ActivityLevel::Info,
-        &format!("{} git · {} sibling · {} standalone · {} projects",
-            git_count, sibling_count, standalone_count, projects.len()),
-        start.elapsed().as_secs_f64(),
-    )));
-
-    // Register with watcher
+    // 6. Register watcher
     {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
         if let Ok(mut w) = watcher.lock() {
@@ -156,8 +89,20 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         }
     }
 
-    tracing::info!("scan_root: {} git, {} sibling, {} standalone, {} projects in {}",
-        git_count, sibling_count, standalone_count, projects.len(), task.path);
+    // 7. Summary activity
+    let git_count = classified.iter().filter(|f| f.kind == FolderKind::Git).count();
+    let sibling_count = classified.iter().filter(|f| f.kind == FolderKind::Sibling).count();
+    let standalone_count = classified.iter().filter(|f| f.kind == FolderKind::Standalone).count();
+
+    emit(StateEvent::activity(ActivityEvent::new(
+        ActivityLevel::Info,
+        &format!("{} git · {} sibling · {} standalone folders discovered",
+            git_count, sibling_count, standalone_count),
+        start.elapsed().as_secs_f64(),
+    )));
+
+    tracing::info!("scan_root: {} git, {} sibling, {} standalone in {}",
+        git_count, sibling_count, standalone_count, task.path);
     Ok(())
 }
 
@@ -254,78 +199,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scan_root_discovers_and_enqueues() {
+    async fn scan_root_enqueues_only_git_folders() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("alpha/.git")).unwrap();
         std::fs::create_dir_all(tmp.path().join("beta/.git")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("notes")).unwrap(); // non-git
 
         let ctx = make_ctx().await;
         let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
         let status = ctx.queue.status().await;
-        assert_eq!(status.pending, 2, "expected 2 ProcessGitFolder tasks");
+        assert_eq!(status.pending, 2, "only git folders should be enqueued");
     }
 
     #[tokio::test]
-    async fn scan_emits_correct_events() {
+    async fn scan_emits_only_activity_events() {
         let tmp = tempfile::tempdir().unwrap();
-        // 2 git siblings + 1 non-git sibling
         std::fs::create_dir_all(tmp.path().join("proj/a/.git")).unwrap();
         std::fs::create_dir_all(tmp.path().join("proj/b/.git")).unwrap();
         std::fs::create_dir_all(tmp.path().join("proj/notes")).unwrap();
-        // 1 standalone non-git
         std::fs::create_dir_all(tmp.path().join("random")).unwrap();
 
         let (ctx, mut rx) = make_ctx_with_events().await;
         let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
         scan_root(&ctx, &task).await.unwrap();
 
-        // Drain events
         let mut events = vec![];
         while let Ok(evt) = rx.try_recv() { events.push(evt); }
 
-        // Activity: discover events
+        // ALL events must be activity — no project or folder events from ScanRoot
+        for evt in &events {
+            assert_eq!(evt.entity, "activity",
+                "ScanRoot should only emit activity events, got entity={}", evt.entity);
+        }
+
+        // Discover events: 2 git + 1 sibling + 1 standalone = 4
         let discovers: Vec<_> = events.iter()
-            .filter(|e| e.entity == "activity" && e.data["level"] == "discover")
+            .filter(|e| e.data["level"] == "discover")
             .collect();
-        assert!(discovers.len() >= 4, "expected 4+ discover events (2 git + 1 sibling + 1 standalone), got {}", discovers.len());
-
-        // Project events
-        let proj_events: Vec<_> = events.iter().filter(|e| e.entity == "project").collect();
-        assert!(proj_events.len() >= 2, "expected 2+ projects (proj group + random standalone), got {}", proj_events.len());
-
-        // Folder events
-        let folder_events: Vec<_> = events.iter().filter(|e| e.entity == "folder").collect();
-        assert!(folder_events.len() >= 4, "expected 4+ folders (2 git + 1 sibling + 1 standalone), got {}", folder_events.len());
-
-        // Check kinds
-        let git_folders: Vec<_> = folder_events.iter()
-            .filter(|e| e.data["kind"] == "git")
-            .collect();
-        assert_eq!(git_folders.len(), 2);
-
-        let sibling_folders: Vec<_> = folder_events.iter()
-            .filter(|e| e.data["kind"] == "sibling")
-            .collect();
-        assert_eq!(sibling_folders.len(), 1);
+        assert_eq!(discovers.len(), 4, "expected 4 discover events, got {}", discovers.len());
 
         // Info summary
         let infos: Vec<_> = events.iter()
-            .filter(|e| e.entity == "activity" && e.data["level"] == "info")
+            .filter(|e| e.data["level"] == "info")
             .collect();
         assert_eq!(infos.len(), 1);
-
-        // Log events
-        let log_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-            .join(".sensei/logs/scan-rewired-events.jsonl");
-        std::fs::create_dir_all(log_path.parent().unwrap()).ok();
-        let mut log = String::new();
-        for evt in &events {
-            log.push_str(&serde_json::to_string_pretty(evt).unwrap());
-            log.push('\n');
-        }
-        std::fs::write(&log_path, &log).unwrap();
-        eprintln!("Events: {}", log_path.display());
+        let msg = infos[0].data["message"].as_str().unwrap();
+        assert!(msg.contains("2 git"), "summary: {}", msg);
+        assert!(msg.contains("1 sibling"), "summary: {}", msg);
+        assert!(msg.contains("1 standalone"), "summary: {}", msg);
     }
 }
