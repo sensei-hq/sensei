@@ -83,6 +83,13 @@ export class AppState {
       if (!isNaN(stored) && stored > 0) this.port = stored;
     }
 
+    // Browser (no Tauri) → skip daemon calls
+    if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
+      this.config = {};
+      this.loaded = true;
+      return;
+    }
+
     const api = senseiApi(this.port);
     try {
       this.config = await api.getConfig();
