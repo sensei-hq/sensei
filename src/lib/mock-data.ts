@@ -9,7 +9,15 @@
 import type { BootstrapResult, ComponentStatus } from './bootstrap.js';
 
 export function isTestMode(): boolean {
-  if (typeof localStorage === 'undefined') return false;
+  if (typeof window === 'undefined') return false;
+  // URL param ?test=1 enables and persists test mode
+  if (typeof URLSearchParams !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('test') === '1') {
+      localStorage.setItem('sensei:test-mode', '1');
+      return true;
+    }
+  }
   return localStorage.getItem('sensei:test-mode') === '1';
 }
 
