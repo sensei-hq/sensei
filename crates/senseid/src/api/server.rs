@@ -28,10 +28,12 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     // Initialize inference gateway (probes Ollama, checks API keys)
     let gateway = super::gateway_init::init_gateway().await;
 
+    let (event_tx, _) = tokio::sync::broadcast::channel(1024);
     let state = Arc::new(SharedState {
         pg,
         task_queue: task_queue.clone(),
         gateway,
+        event_tx,
     });
 
     // Spawn task workers
