@@ -1,6 +1,8 @@
 # sensei docs  先生
 
-Private design documentation for sensei — an AI development intelligence platform that observes coding sessions, detects patterns, and teaches assistants to get it right the first time.
+Observe. Learn. Improve.
+
+Sensei is a development intelligence platform for AI-assisted coding. It watches your coding sessions, learns your team's patterns and conventions, and feeds that knowledge back to your AI assistant — so it gets it right the first time.
 
 ## This repo
 
