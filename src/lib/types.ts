@@ -15,11 +15,10 @@ export interface Stage {
   source?: EventManager<any>;
 }
 
-export interface StateEvent<T> {
+export interface StateEvent<T extends { id: string }> {
   action: 'add' | 'update' | 'remove' | 'set';
   entity: string;
-  id?: string;
-  data?: T | T[];   // single item for add/update, array for set
+  data: T | T[];
 }
 
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
