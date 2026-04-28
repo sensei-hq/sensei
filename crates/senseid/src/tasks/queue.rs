@@ -26,7 +26,7 @@ struct QueueState {
     running: HashMap<u64, Task>,
     completed: Vec<Task>,   // last N for history
     /// Track which repos have running tasks (for concurrency limit)
-    repo_running_count: HashMap<String, usize>,
+    folder_running_count: HashMap<String, usize>,
     /// Map of task_id → list of task_ids that depend on it
     dependents: HashMap<u64, Vec<u64>>,
 }
@@ -44,7 +44,7 @@ impl TaskQueue {
                 blocked: Vec::new(),
                 running: HashMap::new(),
                 completed: Vec::new(),
-                repo_running_count: HashMap::new(),
+                folder_running_count: HashMap::new(),
                 dependents: HashMap::new(),
             }),
             notify: Notify::new(),
@@ -139,7 +139,7 @@ impl TaskQueue {
                 // Find a pending task whose repo isn't at the concurrency limit
                 let max_repos = self.max_concurrent_repos.load(Ordering::SeqCst);
                 let pos = state.pending.iter().position(|t| {
-                    let count = state.repo_running_count.get(&t.repo_id).copied().unwrap_or(0);
+                    let count = state.folder_running_count.get(&t.folder_path).copied().unwrap_or(0);
                     count < max_repos
                 });
 
@@ -148,13 +148,13 @@ impl TaskQueue {
                     task.status = TaskStatus::Running;
                     task.started_at = Some(std::time::Instant::now());
 
-                    *state.repo_running_count.entry(task.repo_id.clone()).or_insert(0) += 1;
+                    *state.folder_running_count.entry(task.folder_path.clone()).or_insert(0) += 1;
                     let task_clone = task.clone();
                     state.running.insert(task.id, task);
 
                     let _ = self.tx.send(TaskEvent::Started {
                         task_id: task_clone.id,
-                        repo_id: task_clone.repo_id.clone(),
+                        folder_path: task_clone.folder_path.clone(),
                         kind: task_clone.kind.to_string(),
                         path: task_clone.path.clone(),
                     });
@@ -174,12 +174,12 @@ impl TaskQueue {
             task.completed_at = Some(std::time::Instant::now());
 
             // Decrement repo running count
-            if let Some(count) = state.repo_running_count.get_mut(&task.repo_id) {
+            if let Some(count) = state.folder_running_count.get_mut(&task.folder_path) {
                 *count = count.saturating_sub(1);
-                if *count == 0 { state.repo_running_count.remove(&task.repo_id); }
+                if *count == 0 { state.folder_running_count.remove(&task.folder_path); }
             }
 
-            let repo_id = task.repo_id.clone();
+            let folder_path = task.folder_path.clone();
             let kind = task.kind.to_string();
 
             // Keep last 100 completed
@@ -207,7 +207,7 @@ impl TaskQueue {
 
             let _ = self.tx.send(TaskEvent::Completed {
                 task_id,
-                repo_id,
+                folder_path,
                 kind,
             });
         }
@@ -225,12 +225,12 @@ impl TaskQueue {
             task.error = Some(error.clone());
             task.completed_at = Some(std::time::Instant::now());
 
-            if let Some(count) = state.repo_running_count.get_mut(&task.repo_id) {
+            if let Some(count) = state.folder_running_count.get_mut(&task.folder_path) {
                 *count = count.saturating_sub(1);
-                if *count == 0 { state.repo_running_count.remove(&task.repo_id); }
+                if *count == 0 { state.folder_running_count.remove(&task.folder_path); }
             }
 
-            let repo_id = task.repo_id.clone();
+            let folder_path = task.folder_path.clone();
             let kind = task.kind.to_string();
             state.completed.push(task);
 
@@ -249,7 +249,7 @@ impl TaskQueue {
 
             let _ = self.tx.send(TaskEvent::Failed {
                 task_id,
-                repo_id,
+                folder_path,
                 kind,
                 error,
             });
@@ -265,17 +265,17 @@ impl TaskQueue {
         let mut result: HashMap<String, super::progress::RepoProgress> = HashMap::new();
 
         for t in &state.pending {
-            let p = result.entry(t.repo_id.clone()).or_default();
+            let p = result.entry(t.folder_path.clone()).or_default();
             p.total += 1;
             p.pending += 1;
         }
         for t in &state.blocked {
-            let p = result.entry(t.repo_id.clone()).or_default();
+            let p = result.entry(t.folder_path.clone()).or_default();
             p.total += 1;
             p.pending += 1; // blocked counts as pending from user perspective
         }
         for t in state.running.values() {
-            let p = result.entry(t.repo_id.clone()).or_default();
+            let p = result.entry(t.folder_path.clone()).or_default();
             p.total += 1;
             p.running += 1;
             p.current_file = Some(t.path.clone());
@@ -293,7 +293,7 @@ impl TaskQueue {
             blocked: state.blocked.len(),
             running: state.running.len(),
             completed: state.completed.len(),
-            repos_active: state.repo_running_count.len(),
+            repos_active: state.folder_running_count.len(),
         }
     }
 }
@@ -434,6 +434,6 @@ mod tests {
 
         let t = q.next_task().await;
         let progress = q.progress().await;
-        assert_eq!(progress[&t.repo_id].running, 1);
+        assert_eq!(progress[&t.folder_path].running, 1);
     }
 }

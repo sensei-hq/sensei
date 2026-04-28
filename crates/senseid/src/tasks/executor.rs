@@ -28,7 +28,7 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
             tracing::info!("[task-worker-{}] started", worker_id);
             loop {
                 let task = ctx.queue.next_task().await;
-                tracing::debug!("[task-worker-{}] running {} for {} ({})", worker_id, task.kind, task.repo_id, task.path);
+                tracing::debug!("[task-worker-{}] running {} for {} ({})", worker_id, task.kind, task.folder_path, task.path);
 
                 let result = execute_task(&ctx, &task).await;
 
