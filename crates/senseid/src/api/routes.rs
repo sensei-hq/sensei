@@ -14,6 +14,7 @@ use crate::api::handlers::libraries;
 use crate::api::handlers::config;
 use crate::api::handlers::query;
 use crate::api::handlers::gateway;
+use crate::api::handlers::scan_events;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -22,6 +23,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/health/components", get(health::health_components))
         .route("/api/watcher/status", get(health::watcher_status))
         .route("/api/watcher/unregister", axum::routing::post(health::watcher_unregister))
+        // Scan events (SSE)
+        .route("/api/scan/events", get(scan_events::scan_events_sse))
         // Gateway
         .route("/api/gateway/status", get(gateway::gateway_status))
         .route("/api/gateway/infer", post(gateway::infer))
@@ -138,10 +141,12 @@ mod tests {
 
     async fn test_app() -> (Router, AppState) {
         let gateway = crate::api::gateway_init::init_gateway_test().await;
+        let (event_tx, _) = tokio::sync::broadcast::channel(256);
         let state = Arc::new(SharedState {
             task_queue: Arc::new(TaskQueue::new()),
             pg: crate::db::pg_store::PgStore::connect_test().await.unwrap(),
             gateway,
+            event_tx,
         });
         let router = create_router(state.clone());
         (router, state)
