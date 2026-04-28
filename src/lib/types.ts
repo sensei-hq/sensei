@@ -21,6 +21,39 @@ export interface StateEvent<T extends { id: string }> {
   data: T | T[];
 }
 
+// ─── Scan ──────────────────────────────────────────────────────────────────────
+
+export type FolderStatus = 'discovered' | 'queued' | 'indexing' | 'indexed' | 'failed';
+export type ProjectStatus = 'scanning' | 'indexing' | 'active' | 'failed';
+export type ActivityLevel = 'discover' | 'queue' | 'process' | 'info' | 'success' | 'error';
+
+export interface ScanProjectFolder {
+  id: string;
+  name: string;
+  path: string;
+  stack: string[];
+  filesTotal: number;
+  filesCompleted: number;
+  status: FolderStatus;
+}
+
+export interface ScanProject {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  folders: ScanProjectFolder[];
+  autoDetected: boolean;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface ActivityEvent {
+  id: string;
+  level: ActivityLevel;
+  message: string;
+  elapsed: number;
+  timestamp: number;
+}
+
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
 
 export interface AssistantStatus {
