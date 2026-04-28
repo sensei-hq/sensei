@@ -67,7 +67,8 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-function hasTauri(): boolean {
+/** True when running inside Tauri app, false in browser. */
+export function hasTauri(): boolean {
   return typeof window !== 'undefined' && !!(window as any).__TAURI__;
 }
 
