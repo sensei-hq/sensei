@@ -59,6 +59,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 gateway = { path = "../../../gateway/crates/gateway" }
+sensei-bootstrap = { path = "../bootstrap" }
 
 [build-dependencies]
 cc = "1"

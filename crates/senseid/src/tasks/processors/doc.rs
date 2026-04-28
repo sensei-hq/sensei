@@ -60,6 +60,10 @@ mod tests {
             .parent().unwrap().parent().unwrap().to_path_buf()
     }
 
+    fn fixtures() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    }
+
     fn process_doc_file(rel: &str) -> FileProcessResult {
         let root = repo_root();
         let abs = root.join(rel);
@@ -67,42 +71,49 @@ mod tests {
         process(&abs.to_string_lossy(), rel, &content, "sensei", &root.to_string_lossy())
     }
 
-    fn process_subtree_doc(rel: &str, subtree: &str) -> FileProcessResult {
-        let root = repo_root();
+    fn process_doc_fixture(rel: &str) -> FileProcessResult {
+        let root = fixtures();
+        let abs = root.join(rel);
+        let content = std::fs::read_to_string(&abs).expect(&format!("Fixture not found: {}", abs.display()));
+        process(&abs.to_string_lossy(), rel, &content, "test", &root.to_string_lossy())
+    }
+
+    fn process_fixture_subtree(rel: &str, subtree: &str) -> FileProcessResult {
+        let root = fixtures();
         let subtree_root = root.join(subtree);
         let abs = root.join(rel);
         let sub_rel = abs.strip_prefix(&subtree_root).unwrap_or(&abs).to_string_lossy().to_string();
-        let content = std::fs::read_to_string(&abs).expect(&format!("not found: {}", abs.display()));
-        process(&abs.to_string_lossy(), &sub_rel, &content, &format!("sensei:{}", subtree), &subtree_root.to_string_lossy())
+        let content = std::fs::read_to_string(&abs).expect(&format!("Fixture not found: {}", abs.display()));
+        process(&abs.to_string_lossy(), &sub_rel, &content, &format!("test:{}", subtree), &subtree_root.to_string_lossy())
     }
 
     #[test]
     fn design_doc_architecture() {
-        let r = process_doc_file("docs/design/01-daemon/architecture.md");
+        let r = process_doc_fixture("docs/architecture.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("design"));
         assert!(r.title.is_some(), "should extract title from # heading");
-        assert!(r.title.as_deref().unwrap().len() > 0);
+        assert!(!r.title.as_deref().unwrap().is_empty());
     }
 
     #[test]
     fn feature_doc_workflow_commands() {
-        let r = process_doc_file("docs/features/01-workflow-commands.md");
+        let r = process_doc_fixture("docs/workflow-commands.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("feature"));
     }
 
     #[test]
     fn idea_doc_workflow_system() {
-        let r = process_doc_file("docs/ideas/01-workflow-system.md");
+        let r = process_doc_fixture("docs/idea-workflow.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
     }
 
     #[test]
     fn gap_analysis() {
-        let r = process_doc_file("docs/reference/gap-analysis.md");
+        let r = process_doc_fixture("docs/gap-analysis.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
     }
@@ -117,19 +128,16 @@ mod tests {
 
     #[test]
     fn homebrew_readme() {
-        let r = process_subtree_doc("homebrew/README.md", "homebrew");
+        let r = process_doc_fixture("docs/homebrew-readme.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("usage"));
     }
 
     #[test]
     fn marketplace_skill_is_extension() {
-        let r = process_subtree_doc(
-            "marketplace/plugins/sensei/skills/analyze/SKILL.md",
-            "marketplace",
-        );
+        let r = process_fixture_subtree("extensions/analyze-skill.md", "extensions");
         assert_eq!(r.kind, "extension", "marketplace skill should be extension, not doc");
-        assert_eq!(r.doc_type.as_deref(), Some("extension"));
+        assert_eq!(r.doc_type.as_deref(), Some("skill"));
     }
 
     #[test]
@@ -146,8 +154,7 @@ mod tests {
 
     #[test]
     fn design_doc_has_frontmatter_type() {
-        // docs/design files with frontmatter type: design should use frontmatter
-        let r = process_doc_file("docs/design/01-daemon/task-queue.md");
+        let r = process_doc_fixture("docs/task-queue.md");
         assert_eq!(r.doc_type.as_deref(), Some("design"));
     }
 
