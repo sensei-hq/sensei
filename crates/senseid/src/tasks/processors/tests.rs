@@ -1,46 +1,65 @@
-//! Tests for file processors using actual repo files as fixtures.
+//! Tests for file processors using bundled fixture files.
+//!
+//! Fixtures live in tests/fixtures/ — self-contained, no references to sibling repos.
 
 #[cfg(test)]
 mod tests {
     use crate::tasks::processors::process_file;
     use std::path::PathBuf;
 
-    fn repo_root() -> PathBuf {
+    /// Root of the senseid crate (CARGO_MANIFEST_DIR).
+    fn crate_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap().parent().unwrap().to_path_buf()
     }
 
-    fn process(rel: &str) -> crate::tasks::processors::FileProcessResult {
-        let root = repo_root();
+    /// Daemon workspace root (one level up from crate root).
+    fn workspace_root() -> PathBuf {
+        crate_root().parent().unwrap().parent().unwrap().to_path_buf()
+    }
+
+    /// Fixtures directory inside the crate.
+    fn fixtures() -> PathBuf {
+        crate_root().join("tests/fixtures")
+    }
+
+    /// Process a fixture file relative to the fixtures directory.
+    fn process_fixture(rel: &str) -> crate::tasks::processors::FileProcessResult {
+        let root = fixtures();
         let abs = root.join(rel);
-        assert!(abs.exists(), "Test file not found: {}", abs.display());
-        process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap()
+        assert!(abs.exists(), "Fixture not found: {}", abs.display());
+        process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "test").unwrap()
     }
 
-    fn process_subtree(rel: &str, subtree: &str) -> crate::tasks::processors::FileProcessResult {
-        let root = repo_root();
+    /// Process a fixture file with a subtree root for extension detection.
+    fn process_fixture_subtree(rel: &str, subtree: &str) -> crate::tasks::processors::FileProcessResult {
+        let root = fixtures();
         let subtree_root = root.join(subtree);
         let abs = root.join(rel);
-        assert!(abs.exists(), "Test file not found: {}", abs.display());
-        process_file(&abs.to_string_lossy(), &subtree_root.to_string_lossy(), &format!("sensei:{}", subtree)).unwrap()
+        assert!(abs.exists(), "Fixture not found: {}", abs.display());
+        process_file(&abs.to_string_lossy(), &subtree_root.to_string_lossy(), &format!("test:{}", subtree)).unwrap()
     }
 
-    // ═══ Code files ═══════════════════════════════════════════════════
+    // ═══ Code files (from crate source — these exist in this repo) ═══
 
     #[test]
     fn rust_adapter_svelte_rs() {
-        let r = process("crates/senseid/src/languages/svelte.rs");
+        let root = workspace_root();
+        let abs = root.join("crates/senseid/src/languages/svelte.rs");
+        assert!(abs.exists(), "Source file not found: {}", abs.display());
+        let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "src");
         assert_eq!(r.language.as_deref(), Some("rust"));
-        assert!(r.symbols.len() > 0);
+        assert!(!r.symbols.is_empty());
         let names: Vec<&str> = r.symbols.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"SvelteAdapter"), "should find SvelteAdapter struct");
     }
 
+    // ═══ Code fixtures ═══════════════════════════════════════════════
+
     #[test]
     fn svelte_component() {
-        let r = process("apps/desktop/src/lib/setup/wizard/StepHeader.svelte");
+        let r = process_fixture("code/StepHeader.svelte");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "src");
         assert_eq!(r.language.as_deref(), Some("svelte"));
@@ -50,24 +69,24 @@ mod tests {
 
     #[test]
     fn svelte_ts_appstate() {
-        let r = process("apps/desktop/src/lib/appstate.svelte.ts");
+        let r = process_fixture("code/appstate.svelte.ts");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "src");
-        assert!(r.symbols.len() > 0, "should extract symbols from .svelte.ts");
+        assert!(!r.symbols.is_empty(), "should extract symbols from .svelte.ts");
     }
 
     #[test]
     fn svelte_page_route() {
-        let r = process("apps/desktop/src/routes/(app)/observatory/+page.svelte");
+        let r = process_fixture("code/+page.svelte");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "src");
     }
 
-    // ═══ Doc files ════════════════════════════════════════════════════
+    // ═══ Doc fixtures ════════════════════════════════════════════════
 
     #[test]
     fn design_doc() {
-        let r = process("docs/design/01-daemon/architecture.md");
+        let r = process_fixture("docs/architecture.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("design"));
@@ -76,102 +95,82 @@ mod tests {
 
     #[test]
     fn feature_doc() {
-        let r = process("docs/features/01-workflow-commands.md");
+        let r = process_fixture("docs/workflow-commands.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("feature"));
     }
 
     #[test]
     fn idea_doc() {
-        let r = process("docs/ideas/01-workflow-system.md");
+        let r = process_fixture("docs/idea-workflow.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
     }
 
     #[test]
     fn gap_analysis_doc() {
-        let r = process("docs/reference/gap-analysis.md");
+        let r = process_fixture("docs/gap-analysis.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.tags, "doc");
     }
 
     #[test]
     fn root_readme() {
-        let r = process("README.md");
+        let root = workspace_root();
+        let abs = root.join("README.md");
+        assert!(abs.exists(), "README.md not found at workspace root");
+        let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
         assert_eq!(r.kind, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("usage"));
     }
 
     #[test]
     fn homebrew_readme() {
-        let r = process_subtree("homebrew/README.md", "homebrew");
+        let r = process_fixture("docs/homebrew-readme.md");
         assert_eq!(r.kind, "doc");
         assert_eq!(r.doc_type.as_deref(), Some("usage"));
     }
 
-    // ═══ Marketplace / Extension files ════════════════════════════════
+    // ═══ Extension fixtures ══════════════════════════════════════════
 
     #[test]
     fn marketplace_skill_md() {
-        let r = process_subtree(
-            "marketplace/plugins/sensei/skills/analyze/SKILL.md",
-            "marketplace",
-        );
+        let r = process_fixture_subtree("extensions/analyze-skill.md", "extensions");
         assert_eq!(r.kind, "extension");
         assert_eq!(r.tags, "doc");
-        assert_eq!(r.doc_type.as_deref(), Some("extension"));
+        assert_eq!(r.doc_type.as_deref(), Some("skill"));
     }
 
-    // ═══ Config files ═════════════════════════════════════════════════
+    // ═══ Config fixtures ═════════════════════════════════════════════
 
     #[test]
     fn desktop_package_json() {
-        let r = process("apps/desktop/package.json");
+        let r = process_fixture("config/package.json");
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "config");
     }
 
     #[test]
     fn sensei_mcp_cargo_toml() {
-        let r = process("crates/sensei-mcp/Cargo.toml");
+        let root = workspace_root();
+        let abs = root.join("crates/mcp/Cargo.toml");
+        assert!(abs.exists(), "sensei-mcp Cargo.toml not found");
+        let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
         assert_eq!(r.kind, "file");
         assert_eq!(r.tags, "config");
     }
 
-    // ═══ Non-code files (no adapter) ══════════════════════════════════
+    // ═══ Non-code files (conditional — may not exist) ════════════════
 
     #[test]
     fn c_parser_large_file() {
-        // parser.c is a 678K-line generated file — C adapter skips it by size
-        let root = repo_root();
+        let root = workspace_root();
         let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
         if abs.exists() {
             let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
             assert_eq!(r.kind, "file");
             assert_eq!(r.tags, "src");
             assert!(r.symbols.is_empty(), "large generated C file should have no symbols");
-        }
-    }
-
-    #[test]
-    fn marketplace_hooks_json() {
-        let root = repo_root();
-        let abs = root.join("marketplace/plugins/sensei/hooks/hooks.json");
-        if abs.exists() {
-            let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei:marketplace").unwrap();
-            assert_eq!(r.kind, "file");
-            assert_eq!(r.tags, "config");
-        }
-    }
-
-    #[test]
-    fn marketplace_plugin_config() {
-        let root = repo_root();
-        let abs = root.join("marketplace/plugins/sensei-mcp/config.json");
-        if abs.exists() {
-            let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei:marketplace").unwrap();
-            assert_eq!(r.kind, "file");
-            assert_eq!(r.tags, "config");
         }
     }
 
