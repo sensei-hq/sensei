@@ -17,7 +17,7 @@
     if (appState.setupComplete) {
       goto('/observatory', { replaceState: true });
     } else {
-      goto('/welcome', { replaceState: true });
+      goto('/setup/welcome', { replaceState: true });
     }
   });
 </script>
