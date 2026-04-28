@@ -4,6 +4,8 @@ type: user-journey
 covers: [24, 07, 10]
 triggers: [08-system-pipelines/02-session-lifecycle]
 screens: [observatory-early, observatory-mature]
+mockups:
+  - ../mockups/lib/observatory.jsx
 ---
 
 # Journey 3: Observe & Orient
