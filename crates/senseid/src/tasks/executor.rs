@@ -50,7 +50,7 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
 async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     match task.kind {
         TaskKind::ScanRoot => handlers::scan_root(ctx, task).await,
-        TaskKind::ProcessRepo => handlers::process_repo(ctx, task).await,
+        TaskKind::ProcessGitFolder => handlers::process_git_folder(ctx, task).await,
         TaskKind::ProcessFolder => handlers::process_folder(ctx, task).await,
         TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
         TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
@@ -97,9 +97,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_task_dispatches_process_repo() {
+    async fn execute_task_dispatches_process_git_folder() {
         let ctx = make_ctx().await;
-        let task = Task::new(TaskKind::ProcessRepo, "repo", "/nonexistent/repo");
+        let task = Task::new(TaskKind::ProcessGitFolder, "repo", "/nonexistent/repo");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));

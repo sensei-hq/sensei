@@ -235,7 +235,7 @@ pub(crate) async fn index_project(
     }
 
     let task = crate::tasks::Task::new(
-        crate::tasks::TaskKind::ProcessRepo, &body.repo_id, &body.repo_path,
+        crate::tasks::TaskKind::ProcessGitFolder, &body.repo_id, &body.repo_path,
     );
     let task_id = state.task_queue.enqueue(task).await;
 
