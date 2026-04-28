@@ -19,7 +19,7 @@
     if (appState.setupComplete) {
       goto('/observatory', { replaceState: true });
     } else {
-      goto('/config', { replaceState: true });
+      goto('/setup/welcome', { replaceState: true });
     }
   }
 
