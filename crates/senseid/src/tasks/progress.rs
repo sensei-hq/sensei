@@ -7,11 +7,11 @@ use serde::Serialize;
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TaskEvent {
     Queued { task_id: u64 },
-    Started { task_id: u64, repo_id: String, kind: String, path: String },
-    Completed { task_id: u64, repo_id: String, kind: String },
-    Failed { task_id: u64, repo_id: String, kind: String, error: String },
-    /// Emitted once when a repo's file tasks are first queued — carries total file count.
-    RepoQueued { repo_id: String, files_total: u32 },
+    Started { task_id: u64, folder_path: String, kind: String, path: String },
+    Completed { task_id: u64, folder_path: String, kind: String },
+    Failed { task_id: u64, folder_path: String, kind: String, error: String },
+    /// Emitted once when a folder's file tasks are first queued — carries total file count.
+    FolderQueued { folder_path: String, files_total: u32 },
 }
 
 /// Accumulated progress for a single repo.
@@ -39,9 +39,9 @@ mod tests {
 
     #[test]
     fn task_event_serializes() {
-        let evt = TaskEvent::Completed { task_id: 1, repo_id: "r".into(), kind: "process_file".into() };
+        let evt = TaskEvent::Completed { task_id: 1, folder_path: "/code/app".into(), kind: "process_file".into() };
         let json = serde_json::to_string(&evt).unwrap();
         assert!(json.contains("\"event\":\"completed\""));
-        assert!(json.contains("\"repo_id\":\"r\""));
+        assert!(json.contains("\"folder_path\":\"/code/app\""));
     }
 }

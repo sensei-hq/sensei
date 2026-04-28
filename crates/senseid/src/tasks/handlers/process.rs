@@ -14,10 +14,11 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
         return Err(format!("Repo path does not exist: {}", task.path));
     }
 
-    let repo_id = &task.repo_id;
+    let folder_name = task.folder_name();
+    let folder_path = &task.folder_path;
 
     // Look up folder UUID for PgStore operations
-    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_uuid = folder.as_ref()
         .and_then(|f| f["id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
@@ -61,7 +62,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
 
     // Enqueue folder + file tasks first, collecting all file task IDs
     let mut all_file_task_ids: Vec<u64> = Vec::new();
-    let root_pkg_id = format!("pkg:{}:(root)", repo_id);
+    let root_pkg_id = format!("pkg:{}:(root)", folder_name);
     for dir in &dirs {
         let rel_dir = dir.strip_prefix(repo_path).unwrap_or(dir)
             .to_string_lossy().to_string();
@@ -70,10 +71,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
         // Determine parent package
         let pkg_id = workspace_members.iter()
             .find(|pkg| rel_dir.starts_with(&pkg.path))
-            .map(|pkg| format!("pkg:{}:{}", repo_id, pkg.name))
+            .map(|pkg| format!("pkg:{}:{}", folder_name, pkg.name))
             .unwrap_or_else(|| root_pkg_id.clone());
 
-        let folder_task = Task::new(TaskKind::ProcessFolder, repo_id, &abs_dir)
+        let folder_task = Task::new(TaskKind::ProcessFolder, folder_path, &abs_dir)
             .with_parent(task.id);
         // Store pkg_id in module_id field for folder processing
         let mut ft = folder_task;
@@ -92,9 +93,9 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
                 if is_binary_ext(&ext) { continue; }
 
                 let rel_dir_name = if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
-                let mod_id = format!("mod:{}:{}", repo_id, rel_dir_name);
+                let mod_id = format!("mod:{}:{}", folder_name, rel_dir_name);
 
-                let file_task = Task::new(TaskKind::ProcessFile, repo_id, &entry.path().to_string_lossy())
+                let file_task = Task::new(TaskKind::ProcessFile, folder_path, &entry.path().to_string_lossy())
                     .with_parent(folder_id)
                     .with_module(&mod_id);
                 let file_id = ctx.queue.enqueue(file_task).await;
@@ -105,10 +106,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
         }
     }
 
-    // Emit RepoQueued event with file count so UI can show accurate progress
+    // Emit FolderQueued event with file count so UI can show accurate progress
     let _ = ctx.queue.sender().send(
-        crate::tasks::progress::TaskEvent::RepoQueued {
-            repo_id: repo_id.to_string(),
+        crate::tasks::progress::TaskEvent::FolderQueued {
+            folder_path: task.folder_path.clone(),
             files_total: all_file_task_ids.len() as u32,
         }
     );
@@ -119,26 +120,26 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
     // resolve won't run until all file tasks AND the sentinel complete.
     // Now create barrier tasks with REAL dependencies (no sentinel)
     let resolve_id = ctx.queue.enqueue(
-        Task::new(TaskKind::ResolveEdges, repo_id, "")
+        Task::new(TaskKind::ResolveEdges, folder_path, "")
             .with_parent(task.id)
             .blocked_by(all_file_task_ids.clone())
     ).await;
 
     let libs_id = ctx.queue.enqueue(
-        Task::new(TaskKind::ResolveLibs, repo_id, "")
+        Task::new(TaskKind::ResolveLibs, folder_path, "")
             .with_parent(task.id)
             .blocked_by(vec![resolve_id])
     ).await;
 
     ctx.queue.enqueue(
-        Task::new(TaskKind::BuildConnections, repo_id, "")
+        Task::new(TaskKind::BuildConnections, folder_path, "")
             .with_parent(task.id)
             .blocked_by(vec![libs_id])
     ).await;
 
     // Detect subtrees → register as separate repos
     {
-        let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+        let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
         if folder.is_some() {
             // Detect git subtrees
             let subtrees = crate::indexer::cross_repo::detect_git_subtrees_pub(repo_path);
@@ -151,17 +152,17 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
 
                 if let Some(root_id) = root_id {
                     for (name, subtree_path) in &subtrees {
-                        let subtree_repo_id = format!("{}:{}", repo_id, name);
-                        ctx.pg().upsert_repo(&root_id, &subtree_repo_id, subtree_path).await.ok();
+                        let subtree_folder_name = format!("{}:{}", folder_name, name);
+                        ctx.pg().upsert_repo(&root_id, &subtree_folder_name, subtree_path).await.ok();
                     }
                 }
 
                 for (name, subtree_path) in &subtrees {
-                    let subtree_repo_id = format!("{}:{}", repo_id, name);
-                    let sub_task = Task::new(TaskKind::ProcessGitFolder, &subtree_repo_id, subtree_path)
+                    let subtree_folder_name = format!("{}:{}", folder_name, name);
+                    let sub_task = Task::new(TaskKind::ProcessGitFolder, &subtree_folder_name, subtree_path)
                         .with_parent(task.id);
                     ctx.queue.enqueue(sub_task).await;
-                    tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_repo_id, subtree_path);
+                    tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_folder_name, subtree_path);
                 }
             }
         }
@@ -176,7 +177,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
         let summary = metadata::extract_summary(repo_path);
 
         // Persist metadata on the folder record via PgStore
-        let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+        let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
         if let Some(folder) = folder {
             if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
                 let meta = serde_json::json!({
@@ -189,7 +190,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
         }
     }
 
-    tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", repo_id, dirs.len(), all_file_task_ids.len(), resolve_id);
+    tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", folder_name, dirs.len(), all_file_task_ids.len(), resolve_id);
     Ok(())
 }
 
@@ -197,8 +198,9 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
 
 /// Create module node for a folder.
 pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let repo_id = &task.repo_id;
-    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder_name = task.folder_name();
+    let folder_path = &task.folder_path;
+    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = folder.as_ref()
         .and_then(|f| f["id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
@@ -223,19 +225,20 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
 
 /// Parse a single file using file_processor, then write results to graph.
 pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    let repo_id = &task.repo_id;
+    let folder_name = task.folder_name();
+    let folder_path = &task.folder_path;
     let abs_path = &task.path;
 
-    let repo_path_str = ctx.pg().get_repo_by_name(repo_id).await
+    let repo_path_str = ctx.pg().get_repo_by_name(folder_name).await
         .ok().flatten()
         .and_then(|r| r["abs_path"].as_str().map(String::from))
         .unwrap_or_default();
 
     // Parse the file
-    let result = crate::tasks::processors::process_file(abs_path, &repo_path_str, repo_id)?;
+    let result = crate::tasks::processors::process_file(abs_path, &repo_path_str, folder_name)?;
 
     // Write parsed symbols to PG
-    let folder = ctx.pg().get_repo_by_name(repo_id).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     if let Some(folder) = folder {
         if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
             // Write file node
@@ -295,7 +298,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 
 pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     // Look up folder UUID for PgStore operations
-    let folder = ctx.pg().get_repo_by_name(&task.repo_id).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder {
         if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
             ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
@@ -307,7 +310,7 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 
 pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     // Look up folder UUID for PgStore operations
-    let folder = ctx.pg().get_repo_by_name(&task.repo_id).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder {
         if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
             // Delete all nodes whose file path starts with the deleted folder path
@@ -348,7 +351,7 @@ mod tests {
     #[tokio::test]
     async fn process_git_folder_errors_on_nonexistent_path() {
         let ctx = make_ctx().await;
-        let task = Task::new(TaskKind::ProcessGitFolder, "test-repo", "/nonexistent/repo");
+        let task = Task::new(TaskKind::ProcessGitFolder, "/nonexistent/repo", "/nonexistent/repo");
         let result = process_git_folder(&ctx, &task).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
@@ -361,18 +364,18 @@ mod tests {
         std::fs::create_dir_all(&src_dir).unwrap();
 
         let ctx = make_ctx().await;
-        let repo_id = "test-repo";
+        let folder_name = "test-repo";
         let repo_path = tmp.path().to_string_lossy().to_string();
 
         // Register the project so process_folder can look up its path
         {
             let root_id = ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, repo_id, &repo_path).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, folder_name, &repo_path).await.unwrap();
         }
 
-        let pkg_id = format!("pkg:{}:(root)", repo_id);
+        let pkg_id = format!("pkg:{}:(root)", folder_name);
 
-        let mut task = Task::new(TaskKind::ProcessFolder, repo_id, &src_dir.to_string_lossy());
+        let mut task = Task::new(TaskKind::ProcessFolder, &repo_path, &src_dir.to_string_lossy());
         task.module_id = Some(pkg_id.clone());
 
         process_folder(&ctx, &task).await.unwrap();
@@ -383,15 +386,15 @@ mod tests {
     #[tokio::test]
     async fn delete_file_succeeds() {
         let ctx = make_ctx().await;
-        let repo_id = "test-repo";
+        let folder_name = "test-repo";
 
         // Register a project
         {
             let root_id = ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, repo_id, "/tmp/test").await.unwrap();
+            ctx.pg().upsert_repo(&root_id, folder_name, "/tmp/test").await.unwrap();
         }
 
-        let task = Task::new(TaskKind::DeleteFile, repo_id, "/tmp/a.rs");
+        let task = Task::new(TaskKind::DeleteFile, "/tmp/test", "/tmp/a.rs");
         let result = delete_file(&ctx, &task).await;
         assert!(result.is_ok());
     }
@@ -399,16 +402,16 @@ mod tests {
     #[tokio::test]
     async fn delete_folder_removes_module_and_child_nodes() {
         let ctx = make_ctx().await;
-        let repo_id = "test-repo";
+        let folder_name = "test-repo";
         let repo_path = "/tmp/myrepo";
 
         // Register project
         {
             let root_id = ctx.pg().add_watch_root(repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, repo_id, repo_path).await.unwrap();
+            ctx.pg().upsert_repo(&root_id, folder_name, repo_path).await.unwrap();
         }
 
-        let task = Task::new(TaskKind::DeleteFolder, repo_id, "/tmp/myrepo/src");
+        let task = Task::new(TaskKind::DeleteFolder, repo_path, "/tmp/myrepo/src");
         delete_folder(&ctx, &task).await.unwrap();
     }
 }
