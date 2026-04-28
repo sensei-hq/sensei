@@ -1,6 +1,6 @@
 /**
- * Base state store class — all screen stores extend this.
- * Uses Svelte 5 $state for reactivity. Implements StateStore<T> interface.
+ * ReactiveStageContext<T> — base class for all stage state.
+ * Every method handles both single item and array.
  */
 
 import type { StateEvent } from './types.js';
@@ -12,26 +12,38 @@ export class ReactiveStageContext<T extends { id: string }> {
     this.items = [...initial];
   }
 
-  add(item: T) {
-    if (!this.items.find(i => i.id === item.id)) {
-      this.items = [...this.items, item];
+  add(data: T | T[]) {
+    const incoming = Array.isArray(data) ? data : [data];
+    for (const item of incoming) {
+      if (!this.items.find(i => i.id === item.id)) {
+        this.items = [...this.items, item];
+      }
     }
   }
 
-  update(id: string, patch: Partial<T>) {
-    const idx = this.items.findIndex(i => i.id === id);
-    if (idx >= 0) {
-      this.items[idx] = { ...this.items[idx], ...patch };
-      this.items = [...this.items];
+  update(data: T | Partial<T> | (T | Partial<T>)[]) {
+    const incoming = Array.isArray(data) ? data : [data];
+    let changed = false;
+    for (const patch of incoming) {
+      if (!patch.id) continue;
+      const idx = this.items.findIndex(i => i.id === patch.id);
+      if (idx >= 0) {
+        this.items[idx] = { ...this.items[idx], ...patch };
+        changed = true;
+      }
     }
+    if (changed) this.items = [...this.items];
   }
 
-  remove(id: string) {
-    this.items = this.items.filter(i => i.id !== id);
+  remove(data: T | T[] | string | string[]) {
+    const ids = Array.isArray(data)
+      ? data.map(d => typeof d === 'string' ? d : d.id)
+      : [typeof data === 'string' ? data : data.id];
+    this.items = this.items.filter(i => !ids.includes(i.id));
   }
 
-  set(items: T[]) {
-    this.items = [...items];
+  set(data: T | T[]) {
+    this.items = Array.isArray(data) ? [...data] : [data];
   }
 
   get(id: string): T | undefined {
@@ -39,11 +51,6 @@ export class ReactiveStageContext<T extends { id: string }> {
   }
 
   apply(event: StateEvent<T>) {
-    switch (event.action) {
-      case 'add':    if (event.data && !Array.isArray(event.data)) this.add(event.data); break;
-      case 'update': if (event.id && event.data && !Array.isArray(event.data)) this.update(event.id, event.data); break;
-      case 'remove': if (event.id) this.remove(event.id); break;
-      case 'set':    if (Array.isArray(event.data)) this.set(event.data); break;
-    }
+    this[event.action](event.data);
   }
 }
