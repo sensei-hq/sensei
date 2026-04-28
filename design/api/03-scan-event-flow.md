@@ -199,6 +199,8 @@ ALTER TABLE folders ADD COLUMN kind text NOT NULL DEFAULT 'git'
 
 ### Events emitted
 
+ScanRoot **only emits activity events**. No project or folder events.
+
 **Per git folder discovered:**
 ```json
 { "action": "add", "entity": "activity", "data": {
@@ -217,76 +219,26 @@ ALTER TABLE folders ADD COLUMN kind text NOT NULL DEFAULT 'git'
 }}
 ```
 
-**Per project detected (project entity — no folders array):**
-```json
-{ "action": "add", "entity": "project", "data": {
-    "id": "p-lumen", "name": "lumen", "status": "scanning",
-    "autoDetected": true, "confidence": "high"
-}}
-```
-
-**Per folder in that project (folder entity — separate events):**
-```json
-{ "action": "add", "entity": "folder", "data": {
-    "id": "f-lumen-app", "projectId": "p-lumen", "name": "lumen-app", "path": "...", "kind": "git",
-    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "discovered"
-}}
-{ "action": "add", "entity": "folder", "data": {
-    "id": "f-lumen-canvas", "projectId": "p-lumen", "name": "lumen-canvas", "path": "...", "kind": "git",
-    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "discovered"
-}}
-{ "action": "add", "entity": "folder", "data": {
-    "id": "f-meeting-notes", "projectId": "p-lumen", "name": "meeting-notes", "path": "...", "kind": "sibling",
-    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "deferred"
-}}
-```
-
-**Monorepo project + folders:**
-```json
-{ "action": "add", "entity": "project", "data": {
-    "id": "p-sensei", "name": "sensei", "status": "scanning",
-    "autoDetected": true, "confidence": "high"
-}}
-{ "action": "add", "entity": "folder", "data": {
-    "id": "f-sensei", "projectId": "p-sensei", "name": "sensei", "path": "/code/sensei", "kind": "git",
-    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "discovered"
-}}
-{ "action": "add", "entity": "folder", "data": {
-    "id": "f-daemon", "projectId": "p-sensei", "name": "daemon", "path": "/code/sensei/daemon", "kind": "workspace-member",
-    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "discovered"
-}}
-{ "action": "add", "entity": "folder", "data": {
-    "id": "f-app", "projectId": "p-sensei", "name": "app", "path": "/code/sensei/app", "kind": "workspace-member",
-    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "discovered"
-}}
-```
-
-**Standalone flagged folder:**
-```json
-{ "action": "add", "entity": "project", "data": {
-    "id": "p-random-notes", "name": "random-notes", "status": "scanning",
-    "autoDetected": true, "confidence": "low"
-}}
-{ "action": "add", "entity": "folder", "data": {
-    "id": "f-random-notes", "projectId": "p-random-notes", "name": "random-notes", "path": "...", "kind": "standalone",
-    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "deferred"
-}}
-```
-
 **Summary:**
 ```json
 { "action": "add", "entity": "activity", "data": {
     "id": "<unique>", "level": "info",
-    "message": "8 git folders · 2 siblings · 1 standalone · 3 projects detected",
+    "message": "4 git · 1 sibling · 1 standalone folders discovered",
     "elapsed": 0.15, "timestamp": ...
 }}
 ```
 
 ### Not emitted by ScanRoot
+- No project events (created by ProcessGitFolder)
+- No folder events (created by ProcessGitFolder)
 - No queue events
 - No file counts
-- No stack detection (that's ProcessGitFolder's job)
-- No progress
+- No stack detection
+
+### What ScanRoot stores in DB
+- Watch root record
+- Non-git folder records (sibling/standalone) with kind and status=deferred, project_id=null
+  (ProcessGitFolder will create or find projects and attach siblings)
 
 ---
 
@@ -294,7 +246,14 @@ ALTER TABLE folders ADD COLUMN kind text NOT NULL DEFAULT 'git'
 
 ### Input
 - `path`: absolute path to the git folder (name = `basename(path)`)
-- From context: project_id this folder belongs to (set by ScanRoot, stored in DB or executor memory)
+
+### Project creation logic
+1. Compute parent directory of this git folder
+2. Query DB: "is there already a project whose folders share this parent?"
+   - Yes → use that project (add this folder to it)
+   - No → create a new project named after the parent dir
+3. Find any non-git siblings (deferred folders in DB with same parent, no project) → attach to this project
+4. Confidence: high if 2+ git folders share parent, medium if solo git, low for standalone non-git
 
 ### Behaviour
 1. Detect stack (Cargo.toml, package.json, go.mod, etc.)
@@ -308,11 +267,29 @@ ALTER TABLE folders ADD COLUMN kind text NOT NULL DEFAULT 'git'
 
 ### Events emitted
 
-**Folder update — set stack, filesTotal, status:**
+### Events emitted
+
+**Project add (if new) or project update (if existing):**
+```json
+{ "action": "add", "entity": "project", "data": {
+    "id": "<uuid>", "name": "lumen", "status": "indexing",
+    "autoDetected": true, "confidence": "high"
+}}
+```
+
+**Folder add — this git folder with stack and file count:**
+```json
+{ "action": "add", "entity": "folder", "data": {
+    "id": "<uuid>", "projectId": "<project-uuid>", "name": "lumen-app", "path": "...", "kind": "git",
+    "stack": ["typescript"], "filesTotal": 842, "filesCompleted": 0, "status": "queued"
+}}
+```
+
+**Sibling folder updates — attach deferred siblings to this project:**
 ```json
 { "action": "update", "entity": "folder", "data": {
-    "id": "f-lumen-app", "projectId": "p-lumen", "name": "lumen-app", "path": "...", "kind": "git",
-    "stack": ["typescript"], "filesTotal": 842, "filesCompleted": 0, "status": "queued"
+    "id": "<uuid>", "projectId": "<project-uuid>", "name": "meeting-notes", "path": "...", "kind": "sibling",
+    "stack": [], "filesTotal": 0, "filesCompleted": 0, "status": "deferred"
 }}
 ```
 
