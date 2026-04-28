@@ -2,7 +2,8 @@
  * Tests for the Stage pattern foundation — StateStore CRUD and event dispatch.
  */
 import { describe, it, expect } from 'vitest';
-import { createStore, applyEvent, type StateStore, type StateEvent } from './stage.js';
+import { createStore } from './stage.svelte.js';
+import type { StateEvent } from './stage.js';
 
 // ── Test entity ──────────────────────────────────────────────────────────────
 
@@ -122,49 +123,49 @@ describe('get', () => {
   });
 });
 
-// ── applyEvent ───────────────────────────────────────────────────────────────
+// ── store.apply ──────────────────────────────────────────────────────────────
 
-describe('applyEvent', () => {
+describe('store.apply', () => {
   it('dispatches add event', () => {
     const store = createStore<Item>();
-    applyEvent(store, { action: 'add', entity: 'item', data: item('1', 'alpha') });
+    store.apply({ action: 'add', entity: 'item', data: item('1', 'alpha') });
     expect(store.items).toHaveLength(1);
   });
 
   it('dispatches update event', () => {
     const store = createStore<Item>([item('1', 'alpha', 'pending')]);
-    applyEvent(store, { action: 'update', entity: 'item', id: '1', data: { id: '1', name: 'alpha', status: 'ready' } });
+    store.apply({ action: 'update', entity: 'item', id: '1', data: { id: '1', name: 'alpha', status: 'ready' } });
     expect(store.items[0].status).toBe('ready');
   });
 
   it('dispatches remove event', () => {
     const store = createStore<Item>([item('1', 'alpha')]);
-    applyEvent(store, { action: 'remove', entity: 'item', id: '1' });
+    store.apply({ action: 'remove', entity: 'item', id: '1' });
     expect(store.items).toHaveLength(0);
   });
 
   it('dispatches set event', () => {
     const store = createStore<Item>([item('1', 'old')]);
-    applyEvent(store, { action: 'set', entity: 'item', items: [item('2', 'new')] });
+    store.apply({ action: 'set', entity: 'item', items: [item('2', 'new')] });
     expect(store.items).toHaveLength(1);
     expect(store.items[0].id).toBe('2');
   });
 
   it('ignores add without data', () => {
     const store = createStore<Item>();
-    applyEvent(store, { action: 'add', entity: 'item' });
+    store.apply({ action: 'add', entity: 'item' });
     expect(store.items).toHaveLength(0);
   });
 
   it('ignores update without id', () => {
     const store = createStore<Item>([item('1', 'alpha')]);
-    applyEvent(store, { action: 'update', entity: 'item', data: item('1', 'changed') });
+    store.apply({ action: 'update', entity: 'item', data: item('1', 'changed') });
     expect(store.items[0].name).toBe('alpha'); // unchanged
   });
 
   it('ignores set without items', () => {
     const store = createStore<Item>([item('1', 'alpha')]);
-    applyEvent(store, { action: 'set', entity: 'item' });
+    store.apply({ action: 'set', entity: 'item' });
     expect(store.items).toHaveLength(1); // unchanged
   });
 });
@@ -187,7 +188,7 @@ describe('SSE simulation', () => {
     ];
 
     for (const event of events) {
-      applyEvent(store, event);
+      store.apply(event);
     }
 
     expect(store.items).toHaveLength(3);
@@ -201,8 +202,8 @@ describe('SSE simulation', () => {
       item('3', 'gamma', 'failed'),
     ]);
 
-    applyEvent(store, { action: 'remove', entity: 'item', id: '3' });
-    applyEvent(store, { action: 'add', entity: 'item', data: item('4', 'delta', 'ready') });
+    store.apply({ action: 'remove', entity: 'item', id: '3' });
+    store.apply({ action: 'add', entity: 'item', data: item('4', 'delta', 'ready') });
 
     expect(store.items).toHaveLength(3);
     expect(store.get('3')).toBeUndefined();
