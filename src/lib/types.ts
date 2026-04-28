@@ -15,16 +15,6 @@ export interface Stage {
   source?: EventManager<any>;
 }
 
-export interface StateStore<T extends { id: string }> {
-  items: T[];
-  add(item: T): void;
-  update(id: string, patch: Partial<T>): void;
-  remove(id: string): void;
-  set(items: T[]): void;
-  get(id: string): T | undefined;
-  apply(event: StateEvent<T>): void;
-}
-
 export interface StateEvent<T> {
   action: 'add' | 'update' | 'remove' | 'set';
   entity: string;
