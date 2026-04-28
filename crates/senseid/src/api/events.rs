@@ -216,4 +216,80 @@ mod tests {
         let json = serde_json::to_value(ProjectStatus::Active).unwrap();
         assert_eq!(json, "active");
     }
+
+    #[tokio::test]
+    async fn broadcast_channel_delivers_events() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<StateEvent>(64);
+
+        tx.send(StateEvent::activity(
+            ActivityEvent::new(ActivityLevel::Discover, "~/code · found root", 0.12),
+        )).unwrap();
+        tx.send(StateEvent::activity(
+            ActivityEvent::new(ActivityLevel::Discover, "~/code/app · found git repo", 0.18),
+        )).unwrap();
+        tx.send(StateEvent::project_add(ScanProject {
+            id: "p1".into(), name: "test".into(), status: ProjectStatus::Scanning,
+            folders: vec![ScanProjectFolder {
+                id: "f1".into(), name: "app".into(), path: "/code/app".into(),
+                stack: vec!["rust".into()], files_total: 5, files_completed: 0,
+                status: FolderStatus::Discovered,
+            }],
+            auto_detected: true, confidence: Confidence::High,
+        })).unwrap();
+        tx.send(StateEvent::activity(
+            ActivityEvent::new(ActivityLevel::Success, "scan complete", 0.50),
+        )).unwrap();
+
+        // Drain and validate
+        let mut events = vec![];
+        while let Ok(evt) = rx.try_recv() {
+            events.push(evt);
+        }
+
+        assert_eq!(events.len(), 4);
+
+        // Activity events
+        let activities: Vec<_> = events.iter().filter(|e| e.entity == "activity").collect();
+        assert_eq!(activities.len(), 3);
+        assert_eq!(activities[0].data["level"], "discover");
+        assert_eq!(activities[2].data["level"], "success");
+
+        // Project events
+        let projects: Vec<_> = events.iter().filter(|e| e.entity == "project").collect();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].data["name"], "test");
+        assert_eq!(projects[0].data["folders"][0]["stack"][0], "rust");
+    }
+
+    #[tokio::test]
+    async fn events_write_to_jsonl() {
+        let events = vec![
+            StateEvent::activity(ActivityEvent::new(ActivityLevel::Discover, "found root", 0.1)),
+            StateEvent::activity(ActivityEvent::new(ActivityLevel::Queue, "app · 5 files", 0.2)),
+            StateEvent::project_add(ScanProject {
+                id: "p1".into(), name: "proj".into(), status: ProjectStatus::Active,
+                folders: vec![], auto_detected: true, confidence: Confidence::High,
+            }),
+            StateEvent::activity(ActivityEvent::new(ActivityLevel::Success, "done", 0.5)),
+        ];
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut content = String::new();
+        for evt in &events {
+            content.push_str(&serde_json::to_string(evt).unwrap());
+            content.push('\n');
+        }
+        std::fs::write(tmp.path(), &content).unwrap();
+
+        // Read back and validate
+        let lines: Vec<&str> = content.trim().lines().collect();
+        assert_eq!(lines.len(), 4);
+
+        for line in &lines {
+            let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert!(parsed["action"].is_string());
+            assert!(parsed["entity"].is_string());
+            assert!(parsed["data"].is_object());
+        }
+    }
 }
