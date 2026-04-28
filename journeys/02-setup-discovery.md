@@ -4,6 +4,10 @@ type: user-journey
 covers: [24, 16, 09, 12, 20, 28]
 triggers: [08-system-pipelines/01-indexing-pipeline, 08-system-pipelines/03-workspace-intelligence]
 screens: [welcome, assistants, folders, scan, projects, libraries, mcp-registry, inference, enter]
+mockups:
+  - ../mockups/lib/setup-wizard.jsx
+  - ../mockups/lib/wiz-assignments.jsx
+  - ../mockups/lib/wiz-inference.jsx
 ---
 
 # Journey 2: Setup & Discovery
