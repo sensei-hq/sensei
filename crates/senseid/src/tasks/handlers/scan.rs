@@ -1,8 +1,11 @@
 //! Scan phase: discover git repos, register projects, handle branch switches.
+//! Emits StateEvent (activity + project) via event_tx for SSE consumers.
 
 use std::path::Path;
+use std::time::Instant;
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
+use crate::api::events::*;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
 
@@ -12,6 +15,16 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     if !root.exists() {
         return Err(format!("Root path does not exist: {}", task.path));
     }
+
+    let start = Instant::now();
+    let emit = |evt: StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
+
+    // Emit: scan started
+    emit(StateEvent::activity(ActivityEvent::new(
+        ActivityLevel::Discover,
+        &format!("{} · found root", task.path),
+        start.elapsed().as_secs_f64(),
+    )));
 
     let max_depth = 3u32;
     let mut repos = Vec::new();
@@ -27,6 +40,16 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         find_git_repos(root, 0, max_depth, &mut repos);
     }
 
+    // Emit: discover events for each found folder
+    for (name, path) in &repos {
+        emit(StateEvent::activity(ActivityEvent::new(
+            ActivityLevel::Discover,
+            &format!("{} · found git repo", path),
+            start.elapsed().as_secs_f64(),
+        )));
+        tracing::debug!("scan_root: found {}", path);
+    }
+
     // Register watch root in PG and get its UUID for folder FK
     let root_name = root.file_name().and_then(|n| n.to_str()).unwrap_or("root");
     let root_id = ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await
@@ -40,9 +63,16 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         let repo_task = Task::new(TaskKind::ProcessRepo, name, path)
             .with_parent(task.id);
         ctx.queue.enqueue(repo_task).await;
+
+        // Emit: queue event
+        emit(StateEvent::activity(ActivityEvent::new(
+            ActivityLevel::Queue,
+            &format!("{} · queued for indexing", name),
+            start.elapsed().as_secs_f64(),
+        )));
     }
 
-    // Register this root with the watcher (caller is responsible for starting)
+    // Register this root with the watcher
     {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
         if let Ok(mut w) = watcher.lock() {
@@ -50,22 +80,84 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         }
     }
 
-    // Suggest solution groupings for discovered repos (parent-folder + name-prefix)
+    // Suggest project groupings and emit project events
     if repos.len() >= 2 {
         let suggestions = crate::tasks::processors::metadata::suggest_solutions(&repos);
         for suggestion in &suggestions {
             tracing::info!(
-                "scan_root: solution suggestion '{}' ({}) — {} repos",
+                "scan_root: project suggestion '{}' ({}) — {} folders",
                 suggestion.name, suggestion.strategy, suggestion.repo_ids.len()
             );
+
+            // Build ScanProject from suggestion
+            let folders: Vec<ScanProjectFolder> = suggestion.repo_ids.iter()
+                .filter_map(|rid| {
+                    repos.iter().find(|(n, _)| n == rid).map(|(name, path)| {
+                        let stack = detect_stack(Path::new(path));
+                        ScanProjectFolder {
+                            id: format!("f-{}", name),
+                            name: name.clone(),
+                            path: path.clone(),
+                            stack,
+                            files_total: 0,
+                            files_completed: 0,
+                            status: FolderStatus::Queued,
+                        }
+                    })
+                })
+                .collect();
+
+            emit(StateEvent::project_add(ScanProject {
+                id: format!("p-{}", suggestion.name),
+                name: suggestion.name.clone(),
+                status: ProjectStatus::Scanning,
+                folders,
+                auto_detected: true,
+                confidence: Confidence::High,
+            }));
         }
+
         if !suggestions.is_empty() {
             ctx.pg().set_config("solution_suggestions", &serde_json::to_string(&suggestions).unwrap_or_default()).await.ok();
         }
     }
 
-    tracing::info!("scan_root: {} repos found in {}", repos.len(), task.path);
+    // Emit: info summary
+    emit(StateEvent::activity(ActivityEvent::new(
+        ActivityLevel::Info,
+        &format!("{} folders discovered in {}", repos.len(), task.path),
+        start.elapsed().as_secs_f64(),
+    )));
+
+    // Emit: scan complete
+    let elapsed_ms = start.elapsed().as_millis();
+    emit(StateEvent::activity(ActivityEvent::new(
+        ActivityLevel::Success,
+        &format!("scan complete · {}ms", elapsed_ms),
+        start.elapsed().as_secs_f64(),
+    )));
+
+    tracing::info!("scan_root: {} folders found in {} ({}ms)", repos.len(), task.path, elapsed_ms);
     Ok(())
+}
+
+/// Detect tech stack from files in a folder.
+fn detect_stack(path: &Path) -> Vec<String> {
+    let mut stack = vec![];
+    if path.join("Cargo.toml").exists() { stack.push("rust".into()); }
+    if path.join("package.json").exists() {
+        if let Ok(pkg) = std::fs::read_to_string(path.join("package.json")) {
+            if pkg.contains("\"svelte\"") || pkg.contains("\"@sveltejs/kit\"") { stack.push("svelte".into()); }
+            else if pkg.contains("\"react\"") { stack.push("react".into()); }
+            else if pkg.contains("\"vue\"") { stack.push("vue".into()); }
+            else { stack.push("typescript".into()); }
+        } else {
+            stack.push("node".into());
+        }
+    }
+    if path.join("go.mod").exists() { stack.push("go".into()); }
+    if path.join("pyproject.toml").exists() || path.join("requirements.txt").exists() { stack.push("python".into()); }
+    stack
 }
 
 fn find_git_repos(dir: &Path, depth: u32, max_depth: u32, repos: &mut Vec<(String, String)>) {
