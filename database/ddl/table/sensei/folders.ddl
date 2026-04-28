@@ -1,19 +1,21 @@
 set search_path to sensei, extensions;
 create table if not exists folders (
-  id                       uuid        primary key default gen_random_uuid()
-, root_id                  uuid        not null references sensei.folders_to_watch(id) on delete cascade
-, parent_id                uuid        references sensei.folders(id) on delete cascade
-, project_id               uuid        references sensei.projects(id) on delete set null
-, kind                     folder_kind not null
+  id                       uuid          primary key default gen_random_uuid()
+, root_id                  uuid          not null references sensei.folders_to_watch(id) on delete cascade
+, parent_id                uuid          references sensei.folders(id) on delete cascade
+, project_id               uuid          references sensei.projects(id) on delete set null
+, kind                     folder_kind   not null default 'git'
+, status                   folder_status not null default 'discovered'
 , role                     folder_role
-, name                     text        not null
-, path                     text        not null
-, abs_path                 text        not null unique
-, remote_urls              jsonb       not null default '[]'
-, icons                    jsonb       not null default '{}'
-, props                    jsonb       not null default '{}'
-, tags                     text[]      not null default '{}'
-, modified_at              timestamptz not null default now()
+, name                     text          not null
+, path                     text          not null
+, abs_path                 text          not null unique
+, stack                    jsonb         not null default '[]'
+, remote_urls              jsonb         not null default '[]'
+, icons                    jsonb         not null default '{}'
+, props                    jsonb         not null default '{}'
+, tags                     text[]        not null default '{}'
+, modified_at              timestamptz   not null default now()
 );
 
 create index if not exists folders_root_id_idx
@@ -25,6 +27,9 @@ create index if not exists folders_parent_id_idx
 create index if not exists folders_kind_idx
     on folders(kind);
 
+create index if not exists folders_status_idx
+    on folders(status);
+
 create index if not exists folders_project_id_idx
     on folders(project_id);
 
@@ -33,11 +38,11 @@ create index if not exists folders_tags_idx
 
 comment on table folders is
 'Content: discovered filesystem tree. Every entry was found by scanning a watched root.
-- kind: parent (depth 1 org folder), folder (depth 2 plain), git (repo), subtree (nested repo)
+- kind: git (repository), workspace_member (monorepo member), subtree (nested git repo), sibling (non-git sibling of git folders), standalone (non-git, no git siblings)
+- status: discovered (found), queued (files counted), indexing (in progress), indexed (complete), failed, deferred (not indexed — sibling/standalone)
+- stack: detected technology stack ["rust", "typescript", "svelte"] — set by ProcessGitFolder
 - path: relative to the watch root
 - abs_path: absolute path on disk (unique across all roots)
-- props: extensible jsonb — for git/subtree: {role, lang, files, loc, stack, libs, indexed_at, last_error, duplicate_of, label}
-- tags: quick-access array; controlled vocabulary in sensei.tags table
 - parent_id: null = direct child of watch root; set = child of another folder
 - project_id: FK to projects — auto-created 1:1 for git/subtree, user can merge/split';
 
@@ -50,7 +55,11 @@ comment on column folders.parent_id
 comment on column folders.project_id
      is 'Foreign key to projects — groups this folder into a project. Nullable.';
 comment on column folders.kind
-     is 'Folder classification: parent (depth 1), folder (depth 2), git (repository), subtree (nested repo).';
+     is 'Folder classification: git (repository), workspace_member (monorepo member), subtree (nested git repo), sibling (non-git sibling), standalone (non-git, no git siblings).';
+comment on column folders.status
+     is 'Indexing lifecycle: discovered → queued → indexing → indexed. Or deferred (not indexed — sibling/standalone). Or failed.';
+comment on column folders.stack
+     is 'Detected technology stack as JSON array: ["rust", "typescript"]. Set by ProcessGitFolder from config files (Cargo.toml, package.json, etc.).';
 comment on column folders.role
      is 'Project role assigned during setup: backend, frontend, library, docs, infra. Null until assigned.';
 comment on column folders.name
