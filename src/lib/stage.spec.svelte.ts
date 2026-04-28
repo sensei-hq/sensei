@@ -64,14 +64,14 @@ describe('add', () => {
 describe('update', () => {
   it('updates an existing item', () => {
     const store = new Ctx<Item>([item('1', 'alpha', 'pending')]);
-    store.update('1', { status: 'ready' });
+    store.update({ id: '1', status: 'ready' } as Item);
     expect(store.items[0].status).toBe('ready');
     expect(store.items[0].name).toBe('alpha'); // unchanged fields preserved
   });
 
   it('ignores update for nonexistent id', () => {
     const store = new Ctx<Item>([item('1', 'alpha')]);
-    store.update('999', { status: 'ready' });
+    store.update({ id: '999', status: 'ready' } as Item);
     expect(store.items).toHaveLength(1);
     expect(store.items[0].status).toBe('pending');
   });
@@ -136,13 +136,13 @@ describe('store.apply', () => {
 
   it('dispatches update event', () => {
     const store = new Ctx<Item>([item('1', 'alpha', 'pending')]);
-    store.apply({ action: 'update', entity: 'item', id: '1', data: { id: '1', name: 'alpha', status: 'ready' } });
+    store.apply({ action: 'update', entity: 'item', data: { id: '1', name: 'alpha', status: 'ready' } });
     expect(store.items[0].status).toBe('ready');
   });
 
   it('dispatches remove event', () => {
     const store = new Ctx<Item>([item('1', 'alpha')]);
-    store.apply({ action: 'remove', entity: 'item', id: '1' });
+    store.apply({ action: 'remove', entity: 'item', data: item('1', '') });
     expect(store.items).toHaveLength(0);
   });
 
@@ -153,22 +153,23 @@ describe('store.apply', () => {
     expect(store.items[0].id).toBe('2');
   });
 
-  it('ignores add without data', () => {
-    const store = new Ctx<Item>();
-    store.apply({ action: 'add', entity: 'item' });
-    expect(store.items).toHaveLength(0);
-  });
-
-  it('ignores update without id', () => {
+  it('update applies when data has id', () => {
     const store = new Ctx<Item>([item('1', 'alpha')]);
     store.apply({ action: 'update', entity: 'item', data: item('1', 'changed') });
-    expect(store.items[0].name).toBe('alpha'); // unchanged
+    expect(store.items[0].name).toBe('changed');
   });
 
-  it('ignores set without items', () => {
-    const store = new Ctx<Item>([item('1', 'alpha')]);
-    store.apply({ action: 'set', entity: 'item' });
-    expect(store.items).toHaveLength(1); // unchanged
+  it('add handles array data', () => {
+    const store = new Ctx<Item>();
+    store.apply({ action: 'add', entity: 'item', data: [item('1', 'a'), item('2', 'b')] });
+    expect(store.items).toHaveLength(2);
+  });
+
+  it('remove handles array data', () => {
+    const store = new Ctx<Item>([item('1', 'a'), item('2', 'b'), item('3', 'c')]);
+    store.apply({ action: 'remove', entity: 'item', data: [item('1', ''), item('3', '')] });
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0].id).toBe('2');
   });
 });
 
@@ -183,10 +184,10 @@ describe('SSE simulation', () => {
       { action: 'add', entity: 'item', data: item('1', 'homebrew', 'detecting') },
       { action: 'add', entity: 'item', data: item('2', 'postgresql', 'detecting') },
       { action: 'add', entity: 'item', data: item('3', 'ollama', 'detecting') },
-      { action: 'update', entity: 'item', id: '1', data: item('1', 'homebrew', 'ready') },
-      { action: 'update', entity: 'item', id: '2', data: item('2', 'postgresql', 'installing') },
-      { action: 'update', entity: 'item', id: '2', data: item('2', 'postgresql', 'ready') },
-      { action: 'update', entity: 'item', id: '3', data: item('3', 'ollama', 'ready') },
+      { action: 'update', entity: 'item', data: item('1', 'homebrew', 'ready') },
+      { action: 'update', entity: 'item', data: item('2', 'postgresql', 'installing') },
+      { action: 'update', entity: 'item', data: item('2', 'postgresql', 'ready') },
+      { action: 'update', entity: 'item', data: item('3', 'ollama', 'ready') },
     ];
 
     for (const event of events) {
@@ -204,7 +205,7 @@ describe('SSE simulation', () => {
       item('3', 'gamma', 'failed'),
     ]);
 
-    store.apply({ action: 'remove', entity: 'item', id: '3' });
+    store.apply({ action: 'remove', entity: 'item', data: item('3', '') });
     store.apply({ action: 'add', entity: 'item', data: item('4', 'delta', 'ready') });
 
     expect(store.items).toHaveLength(3);
