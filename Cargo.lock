@@ -2228,6 +2228,7 @@ dependencies = [
  "oxc_span",
  "regex",
  "reqwest",
+ "sensei-bootstrap",
  "serde",
  "serde_json",
  "serde_yaml",

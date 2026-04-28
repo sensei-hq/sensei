@@ -8,6 +8,7 @@ use super::state::SharedState;
 const DEFAULT_WORKERS: usize = 3;
 
 pub async fn start_server(port: u16) -> std::io::Result<()> {
+    super::handlers::health::init_uptime();
     let task_queue = Arc::new(TaskQueue::new());
 
     // Connect to PostgreSQL
