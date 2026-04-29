@@ -119,3 +119,38 @@ export async function missingModels(): Promise<string[]> {
   return tauriInvoke<string[]>('missing_models');
 }
 
+/** Install prerequisites via platform provider. Requires Tauri. */
+export async function installPrerequisites(): Promise<void> {
+  return tauriInvoke<void>('install_prerequisites');
+}
+
+/** Start services sequentially. Requires Tauri. */
+export async function startServices(): Promise<void> {
+  return tauriInvoke<void>('start_services');
+}
+
+/** Run database setup pipeline. Requires Tauri. */
+export async function setupDatabase(): Promise<void> {
+  return tauriInvoke<void>('setup_database');
+}
+
+/** Get platform info from the backend. Requires Tauri. */
+export async function getPlatform(): Promise<any> {
+  return tauriInvoke<any>('get_platform');
+}
+
+/**
+ * Listen for bootstrap events from the Tauri backend.
+ * Dispatches to the provided handler (which should be bs.handleEvent).
+ * Returns an unlisten function.
+ */
+export async function listenBootstrapEvents(
+  handler: (event: { action: string; entity: string; id: string; data: Record<string, unknown> }) => void,
+): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  const unlisten = await listen<any>('bootstrap', (event) => {
+    handler(event.payload);
+  });
+  return unlisten;
+}
+

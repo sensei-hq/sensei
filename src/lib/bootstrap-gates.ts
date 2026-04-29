@@ -11,7 +11,7 @@ export interface GateDefinition {
   name: string;
   detail: string;
   check: string;
-  remedy: 'install' | 'brew' | 'db' | 'daemon';
+  remedy: 'install' | 'prereq' | 'db' | 'daemon';
   sub?: SubCheckDefinition[];
 }
 
@@ -31,20 +31,20 @@ export const GATES: GateDefinition[] = [
   {
     id: 'postgres', n: '二', name: 'PostgreSQL',
     detail: 'storage · @17',
-    check: 'brew list postgresql@17',
-    remedy: 'brew',
+    check: 'which postgres',
+    remedy: 'prereq',
   },
   {
     id: 'ollama', n: '三', name: 'Ollama',
     detail: 'local models for embeddings',
-    check: 'brew list ollama',
-    remedy: 'brew',
+    check: 'which ollama',
+    remedy: 'prereq',
   },
   {
     id: 'sensei', n: '四', name: 'Sensei components',
     detail: 'MCP · CLI · daemon',
     check: 'sensei --version',
-    remedy: 'brew',
+    remedy: 'prereq',
     sub: [
       { id: 'cli', name: 'sensei-cli', check: 'sensei --version' },
       { id: 'mcp', name: 'MCP bridge', check: 'sensei-mcp --version' },
