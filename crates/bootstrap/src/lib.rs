@@ -11,6 +11,7 @@ pub mod homebrew;
 pub mod models;
 pub mod service;
 pub mod types;
+pub mod util;
 
 pub use types::*;
 
