@@ -9,6 +9,7 @@ pub mod database;
 pub mod hardware;
 pub mod homebrew;
 pub mod models;
+pub mod platform;
 pub mod service;
 pub mod types;
 pub mod util;
@@ -26,9 +27,9 @@ pub fn run() -> BootstrapResult {
 
     let components = vec![
         homebrew::check(),
-        homebrew::check_formula("sensei"),
-        homebrew::check_formula("postgresql@17"),
-        homebrew::check_formula("ollama"),
+        homebrew::check_binary("postgresql", "postgres", "--version"),
+        homebrew::check_binary("ollama", "ollama", "--version"),
+        homebrew::check_binary("sensei", "sensei", "--version"),
         service::check("postgresql", POSTGRES_PORT),
         service::check("ollama", OLLAMA_PORT),
         database::check(None),

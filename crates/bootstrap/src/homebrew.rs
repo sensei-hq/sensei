@@ -19,7 +19,7 @@ pub fn check() -> ComponentStatus {
     }
 }
 
-/// Check if a specific formula is installed.
+/// Check if a specific formula is installed via Homebrew.
 pub fn check_formula(name: &str) -> ComponentStatus {
     let brew = match brew_path() {
         Some(p) => p,
@@ -38,6 +38,56 @@ pub fn check_formula(name: &str) -> ComponentStatus {
         }
         _ => ComponentStatus::missing(name),
     }
+}
+
+/// Check if a binary exists in PATH and report its version.
+///
+/// Uses `which <binary>` to detect presence (works regardless of install method),
+/// then `<binary> <version_flag>` to extract the version string.
+/// The binary path is stored in `detail` — a `/opt/homebrew/` prefix indicates
+/// a Homebrew install; anything else means it was installed another way.
+pub fn check_binary(name: &str, binary: &str, version_flag: &str) -> ComponentStatus {
+    let path = match which_binary(binary) {
+        Some(p) => p,
+        None => return ComponentStatus::missing(name),
+    };
+
+    let version = binary_version(binary, version_flag);
+    let mut status = ComponentStatus::ready(name, version.as_deref().unwrap_or("unknown"));
+    status.detail = Some(path);
+    status
+}
+
+/// Find a binary in PATH.
+fn which_binary(name: &str) -> Option<String> {
+    let output = Command::new("which")
+        .arg(name)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Run `<binary> <flag>` and extract a version string from the output.
+fn binary_version(binary: &str, flag: &str) -> Option<String> {
+    let output = Command::new(binary)
+        .arg(flag)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let first_line = text.lines().next()?;
+    // Extract version-like token: last word, or word containing digits and dots
+    first_line
+        .split_whitespace()
+        .rev()
+        .find(|w| w.chars().any(|c| c.is_ascii_digit()))
+        .map(|v| v.to_string())
 }
 
 /// Install a formula via brew.
@@ -148,5 +198,57 @@ mod tests {
             .and_then(|l| l.strip_prefix("Homebrew "))
             .map(|v| v.trim().to_string());
         assert_eq!(parsed, Some("4.4.2".to_string()));
+    }
+
+    #[test]
+    fn which_binary_finds_ls() {
+        let result = which_binary("ls");
+        assert!(result.is_some(), "should find ls in PATH");
+    }
+
+    #[test]
+    fn which_binary_returns_none_for_nonexistent() {
+        let result = which_binary("sensei-nonexistent-binary-xyz");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn check_binary_sets_name_and_detail() {
+        // ls exists everywhere — check that name and detail (path) are set
+        let status = check_binary("test-ls", "ls", "--version");
+        assert_eq!(status.name, "test-ls");
+        // detail should contain the binary path
+        assert!(status.detail.is_some(), "detail should contain binary path");
+    }
+
+    #[test]
+    fn check_binary_nonexistent() {
+        let status = check_binary("nope", "sensei-nonexistent-binary-xyz", "--version");
+        assert!(status.is_failed());
+        assert_eq!(status.name, "nope");
+    }
+
+    #[test]
+    fn binary_version_parsing_postgres() {
+        // Simulates: "postgres (PostgreSQL) 17.2"
+        let line = "postgres (PostgreSQL) 17.2";
+        let parsed = line
+            .split_whitespace()
+            .rev()
+            .find(|w| w.chars().any(|c| c.is_ascii_digit()))
+            .map(|v| v.to_string());
+        assert_eq!(parsed, Some("17.2".to_string()));
+    }
+
+    #[test]
+    fn binary_version_parsing_ollama() {
+        // Simulates: "ollama version 0.5.4"
+        let line = "ollama version 0.5.4";
+        let parsed = line
+            .split_whitespace()
+            .rev()
+            .find(|w| w.chars().any(|c| c.is_ascii_digit()))
+            .map(|v| v.to_string());
+        assert_eq!(parsed, Some("0.5.4".to_string()));
     }
 }
