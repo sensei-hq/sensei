@@ -1,12 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
-  import { hasTauri } from '$lib/bootstrap.js';
+  import { hasTauri, installPrerequisites, getPlatform, listenBootstrapEvents } from '$lib/bootstrap.js';
   import { bootstrapState as bs } from '$lib/bootstrap-state.svelte.js';
   import { GATES } from '$lib/bootstrap-gates.js';
-  import type { GateStatus, GateDefinition } from '$lib/bootstrap-gates.js';
+  import type { GateStatus } from '$lib/bootstrap-gates.js';
 
-  // In browser mode, apply the "missing-prereqs" preset
+  // Browser mode: apply mock preset
   if (!hasTauri()) {
     bs.applyPreset({
       homebrew: 'ready', postgres: 'missing', ollama: 'missing',
@@ -14,6 +15,7 @@
     });
   }
 
+  // Auto-advance when all ready
   $effect(() => {
     if (bs.allReady) {
       setTimeout(() => {
@@ -23,13 +25,23 @@
     }
   });
 
+  // Wire Tauri events → state (via handleEvent)
+  onMount(async () => {
+    if (!hasTauri()) return;
+    try {
+      const info = await getPlatform();
+      bs.setPlatform(info);
+    } catch { /* browser fallback */ }
+    const unlisten = await listenBootstrapEvents((event) => bs.handleEvent(event));
+    return () => unlisten();
+  });
+
+  // Browser-mode retry simulation
   function retry(gateId: string) {
     bs.setGateStatus(gateId, 'checking');
-    // In browser: simulate success after delay
     if (!hasTauri()) {
       setTimeout(() => {
         bs.setGateStatus(gateId, 'ready');
-        // Unblock next pending gate
         const idx = GATES.findIndex(g => g.id === gateId);
         if (idx + 1 < GATES.length && bs.statuses[GATES[idx + 1].id] === 'pending') {
           bs.setGateStatus(GATES[idx + 1].id, 'checking');
@@ -39,6 +51,16 @@
         }
       }, 1100);
     }
+  }
+
+  async function runInstallPrereqs() {
+    if (!hasTauri()) return;
+    bs.installing = true;
+    await installPrerequisites();
+  }
+
+  function retryAll() {
+    bs.missingPrereqGates.forEach(g => retry(g.id));
   }
 
   function statusColor(s: GateStatus): string {
@@ -56,54 +78,64 @@
   }
 
   function pillLabel(s: GateStatus): string {
-    const map: Record<string, string> = { ready: 'ready', checking: 'checking', starting: 'starting', missing: 'missing', error: 'blocked', pending: 'waiting' };
+    const map: Record<string, string> = {
+      ready: 'ready', checking: 'checking', starting: 'starting',
+      missing: 'missing', error: 'blocked', pending: 'waiting',
+    };
     return map[s] ?? 'waiting';
   }
 </script>
 
 <div class="bootstrap-page">
-  <div class="content">
-    <!-- Header -->
-    <div class="header">
-      <div class="header-tag">
-        <span class="kanji" style="font-size: 22px; color: var(--shu);">支</span>
-        <span class="tag-text">bootstrap · checking the foundation</span>
+  <!-- Fixed top: header + progress rail -->
+  <div class="fixed-top">
+    <div class="content-top">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-tag">
+          <span class="kanji" style="font-size: 22px; color: var(--shu);">支</span>
+          <span class="tag-text">bootstrap · checking the foundation</span>
+        </div>
+        <h1 class="display header-title">
+          {#if bs.allReady}
+            The foundation <span style="color: var(--jade);">holds.</span>
+          {:else if bs.firstBlockedIdx >= 0}
+            A few pieces are <span style="color: var(--shu);">missing.</span>
+          {:else}
+            Checking the foundation…
+          {/if}
+        </h1>
+        <p class="header-desc">
+          {#if bs.allReady}
+            Homebrew, Postgres, Ollama, sensei components, database, and the daemon are all present. Opening the observatory.
+          {:else if bs.firstBlockedIdx >= 0}
+            Sensei needs these to run locally. Install the missing pieces below — the rest will check themselves once the foundation is in place.
+          {:else}
+            Verifying Homebrew, Postgres, Ollama, and the sensei components. This takes a few seconds on a cold start.
+          {/if}
+        </p>
       </div>
-      <h1 class="display header-title">
-        {#if bs.allReady}
-          The foundation <span style="color: var(--jade);">holds.</span>
-        {:else if bs.firstBlockedIdx >= 0}
-          A few pieces are <span style="color: var(--shu);">missing.</span>
-        {:else}
-          Checking the foundation…
-        {/if}
-      </h1>
-      <p class="header-desc">
-        {#if bs.allReady}
-          Homebrew, Postgres, Ollama, sensei components, database, and the daemon are all present. Opening the observatory.
-        {:else if bs.firstBlockedIdx >= 0}
-          Sensei needs these to run locally. Install the missing pieces below — the rest will check themselves once the foundation is in place.
-        {:else}
-          Verifying Homebrew, Postgres, Ollama, and the sensei components. This takes a few seconds on a cold start.
-        {/if}
-      </p>
-    </div>
 
-    <!-- Progress rail -->
-    <div class="progress-rail">
-      <div class="progress-count">
-        {String(bs.readyCount).padStart(2, '0')} / {String(bs.totalCount).padStart(2, '0')} ready
-      </div>
-      <div class="progress-bars">
-        {#each bs.gates as gate}
-          <span class="progress-segment" style="background: {statusColor(gate.status)}; opacity: {gate.status === 'pending' ? 0.5 : 1};"></span>
-        {/each}
+      <!-- Progress rail -->
+      <div class="progress-rail">
+        <div class="progress-count">
+          {String(bs.readyCount).padStart(2, '0')} / {String(bs.totalCount).padStart(2, '0')} ready
+        </div>
+        <div class="progress-bars">
+          {#each bs.gates as gate}
+            <span class="progress-segment" style="background: {statusColor(gate.status)}; opacity: {gate.status === 'pending' ? 0.5 : 1};"></span>
+          {/each}
+        </div>
       </div>
     </div>
+  </div>
 
+  <!-- Scrollable bottom: gate list + footer -->
+  <div class="scroll-area">
+    <div class="content-bottom">
     <!-- Gate list -->
     <div class="gate-list">
-      {#each bs.gates as gate, i (gate.id)}
+      {#each bs.visibleGates as gate, i (gate.id)}
         {@const isBlocked = gate.status === 'missing' || gate.status === 'error'}
         {@const isBusy = gate.status === 'checking' || gate.status === 'starting'}
         {@const isReady = gate.status === 'ready'}
@@ -143,39 +175,20 @@
             </div>
           {/if}
 
-          <!-- Remedy panel -->
-          {#if showRemedy}
+          <!-- Per-gate remedy (non-prereq only) -->
+          {#if showRemedy && gate.remedy !== 'prereq'}
             <div class="remedy">
               {#if gate.remedy === 'install'}
-                <div class="display remedy-title">Install Homebrew</div>
-                <p class="remedy-intro">Homebrew is the base that installs everything else. Run the command from the official installer, then return here and retry.</p>
+                <div class="display remedy-title">{bs.platformInfo.pkgmgr_remedy.title}</div>
+                <p class="remedy-intro">{bs.platformInfo.package_manager} is the base that installs everything else.</p>
                 <div class="command-block">
-                  <code>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</code>
+                  <code>{bs.platformInfo.pkgmgr_remedy.command}</code>
                 </div>
                 <div class="remedy-actions">
-                  <a href="https://brew.sh" target="_blank" rel="noreferrer" class="btn-outline btn-sm">Open brew.sh <span style="color: var(--sumi-3);">↗</span></a>
-                  <button class="btn-solid btn-sm" onclick={() => retry(gate.id)}>I've installed it — retry</button>
-                </div>
-
-              {:else if gate.remedy === 'brew'}
-                <div class="display remedy-title">Install {gate.name.toLowerCase()} via Homebrew</div>
-                <p class="remedy-intro">
-                  {#if gate.id === 'sensei'}
-                    sensei-cli, the MCP bridge, and the daemon install together from the sensei tap.
-                  {:else}
-                    One line. Homebrew will handle dependencies.
+                  {#if bs.platformInfo.pkgmgr_remedy.url}
+                    <a href={bs.platformInfo.pkgmgr_remedy.url} target="_blank" rel="noreferrer" class="btn-outline btn-sm">Learn more <span style="color: var(--sumi-3);">↗</span></a>
                   {/if}
-                </p>
-                <div class="command-block">
-                  <code>
-                    {#if gate.id === 'sensei'}brew install sensei-hq/tap/sensei
-                    {:else if gate.id === 'postgres'}brew install postgresql@17 && brew services start postgresql@17
-                    {:else}brew install ollama && brew services start ollama
-                    {/if}
-                  </code>
-                </div>
-                <div class="remedy-actions">
-                  <button class="btn-solid btn-sm" onclick={() => retry(gate.id)}>Retry check</button>
+                  <button class="btn-solid btn-sm" onclick={() => retry(gate.id)}>I've installed it — retry</button>
                 </div>
 
               {:else if gate.remedy === 'db'}
@@ -201,6 +214,36 @@
       {/each}
     </div>
 
+    <!-- Consolidated prereq remedy -->
+    {#if bs.needsPrereqInstall}
+      <div class="brew-remedy">
+        <div class="display remedy-title">{bs.platformInfo.prereq_remedy.title}</div>
+        <div class="missing-list">
+          {#each bs.missingPrereqGates as gate}
+            <span class="missing-tag">{gate.name}</span>
+          {/each}
+        </div>
+        <p class="remedy-intro">
+          One command installs everything. Already-installed items are skipped.
+        </p>
+        {#if hasTauri()}
+          <div class="remedy-actions">
+            <button class="btn-solid btn-sm" onclick={runInstallPrereqs} disabled={bs.installing}>
+              {bs.installing ? 'Installing…' : 'Install all'}
+            </button>
+            <button class="btn-outline btn-sm" onclick={retryAll}>Retry checks</button>
+          </div>
+        {:else}
+          <div class="command-block">
+            <code>{bs.platformInfo.prereq_remedy.command}</code>
+          </div>
+          <div class="remedy-actions">
+            <button class="btn-solid btn-sm" onclick={retryAll}>Retry checks</button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Footer -->
     <div class="footer">
       <div class="footer-note">
@@ -210,19 +253,36 @@
         <button class="btn-solid" onclick={() => goto('/setup/welcome')}>Continue →</button>
       {/if}
     </div>
+    </div>
   </div>
 </div>
 
 <style>
   .bootstrap-page {
-    height: 100vh; overflow: auto;
+    flex: 1; min-height: 0; overflow: hidden;
     background: var(--paper); color: var(--sumi);
     font-family: var(--font-ui);
+    display: flex; flex-direction: column;
   }
-  .content {
+  .fixed-top {
+    flex-shrink: 0;
+    background: var(--paper);
+    padding: 56px 40px 0;
+  }
+  .content-top {
     max-width: 760px; width: 100%;
-    margin: 0 auto; padding: 56px 40px 48px;
+    margin: 0 auto;
     display: flex; flex-direction: column; gap: 40px;
+    padding-bottom: 40px;
+  }
+  .scroll-area {
+    flex: 1; min-height: 0;
+    overflow-y: auto;
+    padding: 0 40px 48px;
+  }
+  .content-bottom {
+    max-width: 760px; width: 100%;
+    margin: 0 auto;
   }
 
   /* Header */
@@ -280,7 +340,22 @@
   .sub-name { font-size: 12px; color: var(--sumi-2); }
   .sub-check { font-size: 11px; color: var(--sumi-4); }
 
-  /* Remedy */
+  /* Consolidated brew remedy */
+  .brew-remedy {
+    margin-top: 24px; padding: 20px 24px;
+    background: var(--paper-2); border: var(--hairline); border-radius: 6px;
+  }
+  .missing-list {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    margin: 8px 0 12px;
+  }
+  .missing-tag {
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--shu); background: rgba(192,71,45,.08);
+    padding: 3px 8px; border-radius: 3px;
+  }
+
+  /* Per-gate remedy */
   .remedy {
     margin-top: 16px; margin-left: 48px; padding: 18px 20px;
     background: var(--paper-2); border: var(--hairline); border-radius: 6px;

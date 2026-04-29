@@ -5,6 +5,20 @@
 
 import { GATES, type GateStatus, type GateDefinition } from './bootstrap-gates.js';
 
+export interface PlatformInfo {
+  platform: 'macos' | 'linux' | 'windows';
+  package_manager: string;
+  prereq_remedy: { title: string; command: string; url?: string };
+  pkgmgr_remedy: { title: string; command: string; url?: string };
+}
+
+export interface BootstrapEvent {
+  action: 'update' | 'set';
+  entity: 'gate' | 'phase';
+  id: string;
+  data: Record<string, unknown>;
+}
+
 export class BootstrapState {
   statuses = $state<Record<string, GateStatus>>(
     Object.fromEntries(GATES.map(g => [g.id, 'pending' as GateStatus]))
@@ -14,14 +28,37 @@ export class BootstrapState {
     cli: 'pending', mcp: 'pending', daemon: 'pending',
   });
 
-  dbUrl = $state('postgresql://localhost:5432/sensei');
+  installing = $state(false);
 
-  // ── Derived ────────────────────────────────────────────────
+  platformInfo = $state<PlatformInfo>({
+    platform: 'macos',
+    package_manager: 'Homebrew',
+    prereq_remedy: { title: 'Install missing components', command: '' },
+    pkgmgr_remedy: { title: 'Install Homebrew', command: '' },
+  });
+
+  // ── Event handler (single entry point for all events) ─────
+
+  handleEvent(event: BootstrapEvent) {
+    if (event.action === 'update' && event.entity === 'gate') {
+      const status = event.data.status as GateStatus;
+      // Map backend gate IDs to frontend gate IDs
+      const id = event.id === 'postgresql' ? 'postgres' : event.id;
+      this.statuses = { ...this.statuses, [id]: status };
+    }
+    if (event.action === 'set' && event.entity === 'phase') {
+      if (event.data.complete) {
+        this.installing = false;
+      }
+    }
+  }
+
+  // ── Derived ───────────────────────────────────────────────
 
   get gates() {
-    if (!this.statuses) return [];
     return GATES.map(g => ({
       ...g,
+      name: g.id === 'homebrew' ? this.platformInfo.package_manager : g.name,
       status: this.statuses[g.id] ?? 'pending' as GateStatus,
       sub: g.sub?.map(s => ({ ...s, status: this.subStatuses?.[s.id] ?? 'pending' as GateStatus })),
     }));
@@ -31,9 +68,7 @@ export class BootstrapState {
     return GATES.filter(g => this.statuses[g.id] === 'ready').length;
   }
 
-  get totalCount(): number {
-    return GATES.length;
-  }
+  get totalCount(): number { return GATES.length; }
 
   get allReady(): boolean {
     return GATES.every(g => this.statuses[g.id] === 'ready');
@@ -50,7 +85,21 @@ export class BootstrapState {
     return Object.values(this.statuses).some(s => s === 'checking' || s === 'starting');
   }
 
-  // ── Mutations ──────────────────────────────────────────────
+  get missingPrereqGates() {
+    return this.gates.filter(g => g.remedy === 'prereq' && (g.status === 'missing' || g.status === 'error'));
+  }
+
+  get needsPrereqInstall(): boolean {
+    return this.missingPrereqGates.length > 0;
+  }
+
+  get visibleGates() {
+    return this.needsPrereqInstall
+      ? this.gates.filter(g => g.id === 'homebrew')
+      : this.gates;
+  }
+
+  // ── Mutations (used by page for browser-mode simulation only) ──
 
   setGateStatus(id: string, status: GateStatus) {
     this.statuses = { ...this.statuses, [id]: status };
@@ -58,7 +107,6 @@ export class BootstrapState {
 
   setSubStatus(id: string, status: GateStatus) {
     this.subStatuses = { ...this.subStatuses, [id]: status };
-    // Derive sensei gate status from sub-checks
     const allSubReady = ['cli', 'mcp', 'daemon'].every(k => this.subStatuses[k] === 'ready');
     const anySubMissing = ['cli', 'mcp', 'daemon'].some(k => this.subStatuses[k] === 'missing' || this.subStatuses[k] === 'error');
     const anySubChecking = ['cli', 'mcp', 'daemon'].some(k => this.subStatuses[k] === 'checking');
@@ -67,17 +115,12 @@ export class BootstrapState {
     else if (anySubChecking) this.setGateStatus('sensei', 'checking');
   }
 
-  /** Apply a preset (for mock/test scenarios). */
-  applyPreset(preset: Record<string, GateStatus>) {
-    this.statuses = { ...this.statuses, ...preset };
+  setPlatform(info: PlatformInfo) {
+    this.platformInfo = info;
   }
 
-  /** Set all gates to checking. */
-  startChecking() {
-    const first = GATES[0].id;
-    this.statuses = Object.fromEntries(
-      GATES.map((g, i) => [g.id, i === 0 ? 'checking' as GateStatus : 'pending' as GateStatus])
-    );
+  applyPreset(preset: Record<string, GateStatus>) {
+    this.statuses = { ...this.statuses, ...preset };
   }
 }
 
