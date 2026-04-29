@@ -14,7 +14,8 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
-    "test:tauri": "bunx wdio run e2e/tauri/wdio.conf.ts",
+    "test:sidecar": "cd src-tauri && cargo test --test bootstrap_integration",
+    "test:tauri": "wdio run e2e/tauri/wdio.conf.ts",
     "test:tauri:build": "bun run build && cargo build --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
@@ -51,6 +52,7 @@
     "@unocss/extractor-svelte": "^66.6.7",
     "@unocss/reset": "^66.6.7",
     "@unocss/vite": "^66.6.7",
+    "@wdio/cli": "^9.27.0",
     "@wdio/local-runner": "^9.27.0",
     "@wdio/mocha-framework": "^9.27.0",
     "dotenv": "^17.4.2",
