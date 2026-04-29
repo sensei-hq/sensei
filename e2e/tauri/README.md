@@ -1,35 +1,44 @@
 # Tauri E2E Tests
 
-Tests the compiled Sensei desktop app with real sidecar commands.
+## Current state
 
-## Prerequisites
+**`tauri-driver` does not support macOS 26 (Tahoe)** as of v2.0.5.
+Full WebView-level E2E testing is blocked until upstream fixes this.
+
+## What works now
+
+### Rust integration tests (Tier 1)
+
+Tests the actual sidecar logic — real binary detection, port probes, platform provider, event contract shapes — without the Tauri runtime or WebView.
 
 ```sh
-cargo install tauri-driver
-safaridriver --enable  # macOS: may need sudo, run once
+cd src-tauri && cargo test --test bootstrap_integration
 ```
 
-## How it works
+18 tests covering:
+- `run_bootstrap` returns real component statuses
+- Binary detection (`which postgres`, `which ollama`, etc.)
+- Port probing
+- Database checks
+- Platform provider + remedies
+- Event payload contract (JSON shapes match frontend expectations)
 
-1. `bun run build` — builds the SvelteKit frontend to `build/`
-2. `cargo build` — builds the Tauri app in debug mode
-3. `tauri-driver` — starts a WebDriver server that proxies to the Tauri WebView
-4. WebdriverIO connects to the WebDriver server and drives the app
+### Browser E2E with Playwright (Tier 2)
 
-## Running
+Tests the UI rendering with mock data (no real sidecar).
+
+```sh
+bun run test:e2e
+```
+
+## When tauri-driver gets macOS 26 support
+
+Re-enable `wdio.conf.ts` and `bootstrap.spec.ts`:
 
 ```sh
 bun run test:tauri
 ```
 
-## Architecture
+This will launch the compiled app via tauri-driver and drive the WebView with WebdriverIO, exercising real Tauri invoke commands from the UI.
 
-```
-WebdriverIO test  →  tauri-driver (:4444)  →  Tauri app (WebView)
-                                                   ↓
-                                              sidecar commands
-                                              (real brew, psql, etc.)
-```
-
-The tests exercise the actual sidecar commands — binary detection, port probing,
-service management — not browser-mode mocks.
+Track: https://github.com/tauri-apps/tauri/issues — search for "tauri-driver macOS"
