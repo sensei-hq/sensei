@@ -40,10 +40,14 @@
   });
 
   // Map bootstrap component state to gate status
-  function componentStateToGateStatus(state: { state: string }): GateStatus {
-    switch (state.state) {
+  function componentStateToGateStatus(comp: { state: { state: string; error?: string } }): GateStatus {
+    switch (comp.state.state) {
       case 'ready': return 'ready';
-      case 'failed': return 'missing';
+      case 'failed': {
+        // "not installed" = binary missing, anything else = service error
+        const err = comp.state.error ?? '';
+        return err.includes('not installed') ? 'missing' : 'error';
+      }
       case 'detecting': return 'checking';
       case 'installing': return 'checking';
       case 'starting': return 'starting';
@@ -83,7 +87,7 @@
       for (const comp of result.components) {
         const gateId = componentNameToGateId(comp.name);
         if (gateId) {
-          bs.setGateStatus(gateId, componentStateToGateStatus(comp.state));
+          bs.setGateStatus(gateId, componentStateToGateStatus(comp));
         }
       }
 
