@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
-  import { hasTauri, installPrerequisites, getPlatform, listenBootstrapEvents } from '$lib/bootstrap.js';
+  import { hasTauri, installPrerequisites, startServices, setupDatabase, getPlatform, listenBootstrapEvents, runBootstrap } from '$lib/bootstrap.js';
   import { bootstrapState as bs } from '$lib/bootstrap-state.svelte.js';
   import { GATES } from '$lib/bootstrap-gates.js';
   import type { GateStatus } from '$lib/bootstrap-gates.js';
@@ -25,14 +25,77 @@
     }
   });
 
-  // Wire Tauri events → state (via handleEvent)
+  // Auto-trigger Phase 3 (database) when services are ready but DB isn't
+  let dbPhaseTriggered = false;
+  $effect(() => {
+    if (!hasTauri() || dbPhaseTriggered) return;
+    const servicesReady =
+      (bs.statuses['postgres'] === 'ready' || bs.statuses['homebrew'] === 'ready') &&
+      bs.statuses['senseid'] === 'ready';
+    const dbNotReady = bs.statuses['database'] !== 'ready';
+    if (servicesReady && dbNotReady) {
+      dbPhaseTriggered = true;
+      setupDatabase();
+    }
+  });
+
+  // Map bootstrap component state to gate status
+  function componentStateToGateStatus(state: { state: string }): GateStatus {
+    switch (state.state) {
+      case 'ready': return 'ready';
+      case 'failed': return 'missing';
+      case 'detecting': return 'checking';
+      case 'installing': return 'checking';
+      case 'starting': return 'starting';
+      default: return 'pending';
+    }
+  }
+
+  // Map bootstrap component name to gate ID
+  function componentNameToGateId(name: string): string | null {
+    const map: Record<string, string> = {
+      'homebrew': 'homebrew',
+      'postgresql': 'postgres',
+      'ollama': 'ollama',
+      'sensei': 'sensei',
+      'database': 'database',
+      'daemon': 'senseid',
+    };
+    return map[name] ?? null;
+  }
+
+  // Wire Tauri events → state (via handleEvent) + run Phase 0 detection
   onMount(async () => {
     if (!hasTauri()) return;
+
+    // Load platform info
     try {
       const info = await getPlatform();
       bs.setPlatform(info);
     } catch { /* browser fallback */ }
+
+    // Subscribe to phase events
     const unlisten = await listenBootstrapEvents((event) => bs.handleEvent(event));
+
+    // Phase 0: Run detection and apply results to state
+    try {
+      const result = await runBootstrap();
+      for (const comp of result.components) {
+        const gateId = componentNameToGateId(comp.name);
+        if (gateId) {
+          bs.setGateStatus(gateId, componentStateToGateStatus(comp.state));
+        }
+      }
+
+      // Auto-progress: if prereqs are present, start services
+      if (!bs.needsPrereqInstall && !bs.allReady) {
+        // Prereqs installed — auto-trigger Phase 2 (services)
+        await startServices();
+      }
+    } catch {
+      // Detection failed — gates stay pending, user sees waiting state
+    }
+
     return () => unlisten();
   });
 
