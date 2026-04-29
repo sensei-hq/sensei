@@ -58,6 +58,47 @@ fn parse_version_from_line(line: &str) -> Option<String> {
         .map(|v| v.to_string())
 }
 
+/// Check if a binary exists AND its service is running on a port.
+///
+/// Returns `missing` if the binary isn't found, `failed` if the binary
+/// exists but the port isn't responsive, and `ready` if both pass.
+/// This produces a single status for components that have both a binary
+/// and a service (e.g. postgresql, ollama).
+pub fn check_binary_and_service(
+    name: &str,
+    binary: &str,
+    version_flag: &str,
+    port: u16,
+) -> ComponentStatus {
+    // Binary must exist first
+    let path = match which_binary(binary) {
+        Some(p) => p,
+        None => return ComponentStatus::missing(name),
+    };
+
+    let version = binary_version(binary, version_flag);
+
+    // Then check the service port
+    if !probe_port(port) {
+        let mut status = ComponentStatus::failed(
+            name,
+            &format!("installed at {} but service not running on port {}", path, port),
+        );
+        status.version = version;
+        status.detail = Some(path);
+        return status;
+    }
+
+    // Both binary and service are good
+    let svc_version = fetch_service_version(name, port);
+    let mut status = ComponentStatus::ready(
+        name,
+        svc_version.as_deref().or(version.as_deref()).unwrap_or("unknown"),
+    );
+    status.detail = Some(path);
+    status
+}
+
 /// Check if a binary exists in PATH and report its version.
 ///
 /// Combines [`which_binary`] + [`binary_version`].
