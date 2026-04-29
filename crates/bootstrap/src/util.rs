@@ -142,14 +142,14 @@ pub fn fetch_service_version(name: &str, port: u16) -> Option<String> {
 
 /// Start the sensei daemon on the given port.
 ///
-/// Locates `senseid` via [`which_binary`], spawns `senseid serve --port {port}`,
+/// Locates `senseid` via [`which_binary`], spawns `senseid --port {port}`,
 /// waits 500ms, then probes the port. Returns `ready` if the port responds,
 /// or a `Starting` state if the daemon was spawned but hasn't bound yet.
 pub fn start_daemon(port: u16) -> Result<ComponentStatus, String> {
     let binary = which_binary("senseid").ok_or("senseid binary not found in PATH")?;
 
     Command::new(&binary)
-        .args(["serve", "--port", &port.to_string()])
+        .args(["--port", &port.to_string()])
         .spawn()
         .map_err(|e| format!("failed to start senseid: {e}"))?;
 
