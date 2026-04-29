@@ -14,6 +14,10 @@ pub fn run() {
             commands::bootstrap::detect_hardware,
             commands::bootstrap::list_models,
             commands::bootstrap::missing_models,
+            commands::bootstrap::get_platform,
+            commands::bootstrap::install_prerequisites,
+            commands::bootstrap::start_services,
+            commands::bootstrap::setup_database,
             // Assistants (detection, MCP config)
             commands::assistants::detect_assistants,
             commands::assistants::configure_mcp,
