@@ -10,31 +10,52 @@ use std::time::Duration;
 
 use crate::types::{ComponentState, ComponentStatus};
 
-/// Find a binary in PATH.
+/// Well-known binary directories to search when PATH is limited.
+/// macOS .app bundles inherit a minimal PATH that excludes Homebrew.
+const EXTRA_PATHS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+];
+
+/// Find a binary in PATH (and well-known locations).
 ///
-/// Uses `which` on unix and `where` on windows. Returns the full path
-/// if the binary is found, `None` otherwise.
+/// Uses `which` on unix and `where` on windows. If that fails, checks
+/// [`EXTRA_PATHS`] directly — this handles macOS .app bundles where the
+/// process PATH doesn't include `/opt/homebrew/bin`.
+///
+/// Returns the full path if the binary is found, `None` otherwise.
 pub fn which_binary(name: &str) -> Option<String> {
+    // Try system which/where first
     #[cfg(unix)]
     let cmd = "which";
     #[cfg(windows)]
     let cmd = "where";
 
-    let output = Command::new(cmd).arg(name).output().ok()?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .next()?
-            .trim()
-            .to_string();
-        if path.is_empty() {
-            None
-        } else {
-            Some(path)
+    if let Ok(output) = Command::new(cmd).arg(name).output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
         }
-    } else {
-        None
     }
+
+    // Fallback: check well-known directories directly
+    for dir in EXTRA_PATHS {
+        let candidate = format!("{dir}/{name}");
+        if std::path::Path::new(&candidate).exists() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 /// Run `<binary> <flag>` and extract a version string from the first line.
