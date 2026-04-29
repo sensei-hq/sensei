@@ -5,14 +5,16 @@
   import { runBootstrap } from '$lib/bootstrap.js';
 
   onMount(async () => {
-    await appState.load();
-
+    // Run sidecar detection first — daemon may not be running
     const result = await runBootstrap();
 
     if (!result.ready) {
       goto('/health', { replaceState: true });
       return;
     }
+
+    // Daemon is running (bootstrap passed) — safe to load config
+    await appState.load();
 
     if (appState.setupComplete) {
       goto('/observatory', { replaceState: true });

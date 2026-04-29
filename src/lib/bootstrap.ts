@@ -6,8 +6,8 @@
  * - HTTP mode: fetch('/api/health/components') → daemon reports component status
  */
 
-import { senseiApi } from '$lib/api.js';
-import { appState } from '$lib/appstate.svelte.js';
+// senseiApi is used by post-bootstrap screens (wizard, observatory) — not here.
+// Bootstrap always uses the Tauri sidecar directly.
 
 // ── Types (match bootstrap crate types) ──────────────────────────────────────
 
@@ -75,32 +75,19 @@ export function hasTauri(): boolean {
 // ── Bootstrap API ────────────────────────────────────────────────────────────
 
 /**
- * Run the full bootstrap check. Tries daemon API first (fast path),
- * falls back to Tauri commands if daemon is unreachable.
+ * Run the full bootstrap check via Tauri sidecar.
+ *
+ * Always uses the sidecar (not the daemon API) because during bootstrap
+ * the daemon may not be running yet. The daemon fast-path is used by
+ * post-bootstrap screens that know the daemon is up.
  */
 export async function runBootstrap(): Promise<BootstrapResult> {
   // Browser (no Tauri) → mock data for development/testing
-  if (!(hasTauri())) {
+  if (!hasTauri()) {
     const { mockBootstrapPartial } = await import('./mock-data.js');
     return mockBootstrapPartial;
   }
 
-  // Tauri app: try daemon API first (fast path)
-  try {
-    const api = senseiApi(appState.port);
-    const resp = await api.getComponents() as any;
-    if (resp && resp.data) {
-      return {
-        components: resp.data,
-        hardware: resp.hardware,
-        ready: resp.ready,
-      };
-    }
-  } catch {
-    // Daemon unreachable — fall through to sidecar
-  }
-
-  // Sidecar: Tauri bootstrap commands
   return tauriInvoke<BootstrapResult>('run_bootstrap');
 }
 
