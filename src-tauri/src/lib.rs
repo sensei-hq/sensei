@@ -11,13 +11,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Bootstrap (prereqs, hardware, models)
             commands::bootstrap::run_bootstrap,
-            commands::bootstrap::check_all_components,
-            commands::bootstrap::install_component,
-            commands::bootstrap::start_component,
             commands::bootstrap::detect_hardware,
             commands::bootstrap::list_models,
             commands::bootstrap::missing_models,
-            commands::bootstrap::create_database,
             // Assistants (detection, MCP config)
             commands::assistants::detect_assistants,
             commands::assistants::configure_mcp,
