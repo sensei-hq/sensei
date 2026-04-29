@@ -30,18 +30,17 @@ pub fn run() -> BootstrapResult {
     let prov = platform::detect();
 
     let components = vec![
-        // Gate 1: package manager
+        // Gate 一: package manager
         prov.check_package_manager(),
-        // Gate 2: binaries (cross-platform)
-        util::check_binary("postgresql", "postgres", "--version"),
-        util::check_binary("ollama", "ollama", "--version"),
+        // Gate 二: PostgreSQL (binary + service combined)
+        util::check_binary_and_service("postgresql", "postgres", "--version", POSTGRES_PORT),
+        // Gate 三: Ollama (binary + service combined)
+        util::check_binary_and_service("ollama", "ollama", "--version", OLLAMA_PORT),
+        // Gate 四: Sensei CLI (binary only — no service)
         util::check_binary("sensei", "sensei", "--version"),
-        // Gate 3: services (port probes)
-        util::check_service("postgresql", POSTGRES_PORT),
-        util::check_service("ollama", OLLAMA_PORT),
-        // Gate 4: database
+        // Gate 五: Database
         database::check(None),
-        // Gate 5: daemon service
+        // Gate 六: Daemon (service only — binary checked via sensei gate)
         util::check_service("daemon", DAEMON_PORT),
     ];
 
