@@ -104,21 +104,6 @@ export async function runBootstrap(): Promise<BootstrapResult> {
   return tauriInvoke<BootstrapResult>('run_bootstrap');
 }
 
-/** Install a component by name. Requires Tauri. */
-export async function installComponent(name: string): Promise<ComponentStatus> {
-  return tauriInvoke<ComponentStatus>('install_component', { name });
-}
-
-/** Start a service by name. Requires Tauri. */
-export async function startComponent(name: string): Promise<ComponentStatus> {
-  return tauriInvoke<ComponentStatus>('start_component', { name });
-}
-
-/** Create the sensei database. Requires Tauri. */
-export async function createDatabase(): Promise<ComponentStatus> {
-  return tauriInvoke<ComponentStatus>('create_database');
-}
-
 /** Get hardware info. Requires Tauri. */
 export async function detectHardware(): Promise<HardwareInfo> {
   return tauriInvoke<HardwareInfo>('detect_hardware');
@@ -133,3 +118,4 @@ export async function listModels(): Promise<string[]> {
 export async function missingModels(): Promise<string[]> {
   return tauriInvoke<string[]>('missing_models');
 }
+
