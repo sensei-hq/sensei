@@ -33,8 +33,8 @@ export class BootstrapState {
   platformInfo = $state<PlatformInfo>({
     platform: 'macos',
     package_manager: 'Homebrew',
-    prereq_remedy: { title: 'Install missing components', command: '' },
-    pkgmgr_remedy: { title: 'Install Homebrew', command: '' },
+    prereq_remedy: { title: 'Install missing components', command: 'curl -fsSL https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile | brew bundle --file=-', url: 'https://github.com/sensei-hq/homebrew-tap' },
+    pkgmgr_remedy: { title: 'Install Homebrew', command: '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"', url: 'https://brew.sh' },
   });
 
   // ── Event handler (single entry point for all events) ─────
