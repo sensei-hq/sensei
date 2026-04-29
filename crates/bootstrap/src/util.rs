@@ -210,13 +210,32 @@ pub fn fetch_service_version(name: &str, port: u16) -> Option<String> {
 pub fn start_daemon(port: u16) -> Result<ComponentStatus, String> {
     let binary = which_binary("senseid").ok_or("senseid binary not found in PATH")?;
 
-    Command::new(&binary)
-        .args(["--port", &port.to_string()])
-        .spawn()
-        .map_err(|e| format!("failed to start senseid: {e}"))?;
+    // Use `senseid start` which daemonizes itself, or fall back to
+    // detached foreground mode. Detach stdio so the process survives
+    // after the parent thread exits.
+    let result = Command::new(&binary)
+        .args(["start", "--port", &port.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn();
+
+    match result {
+        Ok(_) => {}
+        Err(_) => {
+            // Fallback: foreground mode, fully detached
+            Command::new(&binary)
+                .args(["--port", &port.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .stdin(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| format!("failed to start senseid: {e}"))?;
+        }
+    }
 
     // Give it a moment to bind
-    std::thread::sleep(Duration::from_millis(500));
+    std::thread::sleep(Duration::from_millis(2000));
 
     if probe_port(port) {
         let version = fetch_service_version("daemon", port);
