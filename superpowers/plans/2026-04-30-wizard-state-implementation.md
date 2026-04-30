@@ -641,58 +641,37 @@ export class WizardState {
     this.instruments = { mcps: [...data.mcps] };
   }
 
+  // ── Commit handlers — one entry per stage ──
+
+  private commitHandlers: Record<string, (ws: WizardState, api: ReturnType<typeof senseiApi>) => Promise<void>> = {
+    welcome:     async () => {},
+    preferences: async (ws, api) => { await api.setConfig(ws.prefsToConfig()); },
+    assistants:  async (ws, api) => {
+      const ids = ws.assistants.assistants.filter(a => a.selected).map(a => a.id);
+      await api.configureAssistants(ids);
+    },
+    roots:       async (ws, api) => {
+      for (const root of ws.roots.roots) {
+        if (!root.scanned) await api.scanFolder(root.path);
+      }
+    },
+    scan:        async () => {},
+    projects:    async (ws, api) => {
+      for (const p of ws.projects.projects) await api.updateProject(p.id, p);
+    },
+    libraries:   async () => {},   // TBD: api.configureLibs
+    instruments: async () => {},   // TBD: api.configureMcps
+    inference:   async () => {},   // DEFERRED
+    assignments: async () => {},   // DEFERRED
+    done:        async () => { await appState.setSetupComplete(); },
+  };
+
   async commitStage(stageId: string): Promise<boolean> {
     const api = senseiApi(appState.port);
+    const handler = this.commitHandlers[stageId];
+    if (!handler) return true;
     try {
-      switch (stageId) {
-        case 'welcome':
-          break;
-
-        case 'preferences':
-          await api.setConfig(this.prefsToConfig());
-          break;
-
-        case 'assistants': {
-          const selected = this.assistants.assistants.filter(a => a.selected).map(a => a.id);
-          await api.configureAssistants(selected);
-          break;
-        }
-
-        case 'roots':
-          for (const root of this.roots.roots) {
-            if (!root.scanned) {
-              await api.scanFolder(root.path);
-            }
-          }
-          break;
-
-        case 'scan':
-          break;
-
-        case 'projects':
-          for (const project of this.projects.projects) {
-            await api.updateProject(project.id, project);
-          }
-          break;
-
-        case 'libraries':
-          // TBD: api.configureLibs(this.libraries.libs)
-          break;
-
-        case 'instruments':
-          // TBD: api.configureMcps(this.instruments.mcps)
-          break;
-
-        case 'inference':
-        case 'assignments':
-          // DEFERRED
-          break;
-
-        case 'done':
-          await appState.setSetupComplete();
-          break;
-      }
-
+      await handler(this, api);
       await api.setConfig({ [`setup.${stageId}`]: 'done' });
       this.completion[stageId] = 'done';
       return true;
