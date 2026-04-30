@@ -10,6 +10,20 @@ use std::time::Duration;
 
 use crate::types::{ComponentState, ComponentStatus};
 
+/// Build a PATH string that includes well-known directories.
+/// Used when spawning child processes from a macOS .app bundle
+/// where the inherited PATH is minimal.
+pub fn enrich_path() -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut parts: Vec<&str> = current.split(':').collect();
+    for extra in EXTRA_PATHS {
+        if !parts.contains(extra) {
+            parts.push(extra);
+        }
+    }
+    parts.join(":")
+}
+
 /// Well-known binary directories to search when PATH is limited.
 /// macOS .app bundles inherit a minimal PATH that excludes Homebrew.
 const EXTRA_PATHS: &[&str] = &[
@@ -63,7 +77,7 @@ pub fn which_binary(name: &str) -> Option<String> {
 /// Scans tokens right-to-left for the first one containing a digit.
 /// For example `"postgres (PostgreSQL) 17.2"` yields `"17.2"`.
 pub fn binary_version(binary: &str, flag: &str) -> Option<String> {
-    let output = Command::new(binary).arg(flag).output().ok()?;
+    let output = Command::new(binary).arg(flag).env("PATH", enrich_path()).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -210,28 +224,21 @@ pub fn fetch_service_version(name: &str, port: u16) -> Option<String> {
 pub fn start_daemon(port: u16) -> Result<ComponentStatus, String> {
     let binary = which_binary("senseid").ok_or("senseid binary not found in PATH")?;
 
-    // Use `senseid start` which daemonizes itself, or fall back to
-    // detached foreground mode. Detach stdio so the process survives
-    // after the parent thread exits.
-    let result = Command::new(&binary)
-        .args(["start", "--port", &port.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .stdin(std::process::Stdio::null())
-        .spawn();
+    // Build a PATH that includes Homebrew so the daemon can find psql, etc.
+    let enriched_path = enrich_path();
 
-    match result {
-        Ok(_) => {}
-        Err(_) => {
-            // Fallback: foreground mode, fully detached
-            Command::new(&binary)
-                .args(["--port", &port.to_string()])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .stdin(std::process::Stdio::null())
-                .spawn()
-                .map_err(|e| format!("failed to start senseid: {e}"))?;
-        }
+    // Use `senseid start` which daemonizes itself.
+    let output = Command::new(&binary)
+        .args(["start", "--port", &port.to_string()])
+        .env("PATH", &enriched_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to start senseid: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!("senseid start failed: {stderr}"));
     }
 
     // Give it a moment to bind
