@@ -42,14 +42,14 @@ class WizardState {
     shareSchedule: 'weekly-saturday', correctionAggressiveness: 'balanced',
     digestCadence: 'daily', nudgeOnRegression: true, anonymizedTelemetry: false,
   });
-  assistants  = $state<AssistantsSlice>({ families: [], selected: {} });
+  assistants  = $state<AssistantsSlice>({ assistants: [] });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });
   scan        = $state<ScanSlice>({ baseline: null, started: false, done: false });
-  projects    = $state<ProjectsSlice>({ projects: [], roles: {} });
-  libraries   = $state<LibrariesSlice>({ libs: [], enabled: {}, extras: [] });
-  instruments = $state<InstrumentsSlice>({ entries: [], enabled: {}, stack: null });
-  inference   = $state<InferenceSlice>({ hardware: null, models: {}, apiKeys: {} });
-  assignments = $state<AssignmentsSlice>({ mapping: {} });
+  projects    = $state<ProjectsSlice>({ projects: [] });
+  libraries   = $state<LibrariesSlice>({ libs: [] });
+  instruments = $state<InstrumentsSlice>({ mcps: [] });
+  inference   = $state<InferenceSlice>({});    // DEFERRED — needs gateway integration design
+  assignments = $state<AssignmentsSlice>({});  // DEFERRED — needs gateway integration design
 
   // ── Derived ──
   get firstPendingStage(): string    // first stage where completion !== 'done'
@@ -83,8 +83,7 @@ interface PreferencesSlice {
 }
 
 interface AssistantsSlice {
-  families: DaemonAssistantFamily[];
-  selected: Record<string, boolean>;  // id → toggled on (Record for Svelte 5 reactivity)
+  assistants: DaemonAssistantFamily[];  // each has .selected, defaults to .installed on hydrate
 }
 
 interface RootsSlice {
@@ -102,33 +101,33 @@ interface ScanBaseline {
   rootCount: number;
   repoCount: number;
   fileCount: number;
+  scannedRootIds: string[];   // roots already scanned — new ones show as delta
 }
 
 interface ProjectsSlice {
-  projects: DaemonProject[];
-  roles: Record<string, string>;   // folderId → role
+  projects: DaemonProject[];  // role lives on each folder entry inside the project
 }
 
 interface LibrariesSlice {
-  libs: DaemonLibEntry[];
-  enabled: Record<string, boolean>;
-  extras: { id: string; name: string; url: string }[];
+  libs: DaemonLibEntry[];     // single list — auto-detected (source: 'Cargo.toml') and user-added (source: 'url') are the same entity, each has .enabled toggle
 }
 
 interface InstrumentsSlice {
-  entries: DaemonMcpEntry[];
-  enabled: Record<string, boolean>;
-  stack: DaemonDetectedStack | null;
+  mcps: DaemonMcpEntry[];    // globally available MCPs; .recommended set by daemon based on cross-project utility; user toggles .selected
 }
 
 interface InferenceSlice {
-  hardware: DaemonHardwareInfo | null;
-  models: Record<string, boolean>;
-  apiKeys: Record<string, string>;
+  // DEFERRED — needs gateway integration design.
+  // Will cover: hardware detection, local model selection (Ollama),
+  // external provider API keys, and model pull triggers.
+  // Parked until gateway provider/model/router design is finalized.
 }
 
 interface AssignmentsSlice {
-  mapping: Record<string, string>;  // role → modelId
+  // DEFERRED — needs gateway integration design.
+  // Will cover: role → fallback chain mapping, router configuration,
+  // provider credentials, model selection per role.
+  // Depends on inference slice design.
 }
 ```
 
@@ -152,6 +151,7 @@ interface DaemonAssistantFamily {
   id: string;
   name: string;
   installed: boolean;
+  selected: boolean;              // user toggle — defaults to installed on hydrate
   config_path: string | null;
   version: string | null;
   install_path: string | null;
@@ -176,6 +176,7 @@ interface DaemonLibEntry {
   usage: number;
   source: string;
   docs: 'indexed' | 'partial' | 'schema' | 'none';
+  enabled: boolean;            // user toggle — defaults to true for detected libs on hydrate
 }
 
 interface DaemonMcpEntry {
@@ -187,20 +188,9 @@ interface DaemonMcpEntry {
   tools: number;
   verified: boolean;
   installed: boolean;
-  recommended: boolean;
-}
-
-interface DaemonDetectedStack {
-  languages: string[];
-  frameworks: string[];
-  runtimes: string[];
-  services: string[];
-}
-
-interface DaemonHardwareInfo {
-  ram_gb: number;
-  gpu: string | null;
-  recommended_tier: string;
+  recommended: boolean;        // globally recommended (cross-project utility)
+  selected: boolean;           // user toggle — defaults to installed || recommended on hydrate
+  project_count: number;       // how many projects would benefit — informational
 }
 
 // Bundle returned by layout load
@@ -211,9 +201,8 @@ interface WizardLoadData {
   roots: DaemonWatchRoot[];
   projects: DaemonProject[];
   libraries: { total: number; libs: DaemonLibEntry[] };
-  instruments: DaemonMcpEntry[];
-  stack: DaemonDetectedStack | null;
-  hardware: DaemonHardwareInfo | null;
+  mcps: DaemonMcpEntry[];
+  // inference + assignments data — DEFERRED until gateway design is finalized
 }
 ```
 
@@ -230,7 +219,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     api.getScanRoots(),
     api.listProjects(),
     api.getLibs(),
-    // instruments, hardware, stack — add when daemon endpoints exist
+    // api.getMcpRegistry() — add when daemon endpoint exists
   ]);
 
   return {
@@ -240,9 +229,8 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     roots,
     projects,
     libraries: libs,
-    instruments: [],           // TBD: daemon endpoint
-    stack: null,               // TBD: daemon endpoint
-    hardware: null,            // TBD: daemon endpoint
+    mcps: [],                  // TBD: daemon endpoint
+    // inference + assignments — DEFERRED
   };
 }
 
@@ -294,8 +282,8 @@ Each stage has a commit action. `commitStage(id)` dispatches to the right one:
 | projects | Confirm groupings + roles | `PUT /api/projects/:id` per project |
 | libraries | Toggle lib indexing | `PUT /api/libs/configure` (TBD) |
 | instruments | Toggle MCP selections | `POST /api/mcp/configure` (TBD) |
-| inference | Save model + key selections | `PUT /api/config` (batch keys) |
-| assignments | Save role→model mapping | `PUT /api/config` (batch keys) |
+| inference | DEFERRED | — |
+| assignments | DEFERRED | — |
 
 Every commit ends with: `api.setConfig({ 'setup.{stageId}': 'done' })`.
 
@@ -390,12 +378,11 @@ Endpoints that need to be added or updated on the daemon side:
 | `POST /api/scan/roots` (add root with exclusions) | Missing — currently `POST /api/scan` implicitly adds | Roots stage commit |
 | `PUT /api/scan/roots/:id` (update exclusions) | Missing | Roots stage — edit exclusions |
 | `DELETE /api/scan/roots/:id` (remove root) | Exists in DB (`remove_watch_root`) but no HTTP route | Roots stage |
-| `GET /api/mcp/available` (list MCP registry) | Missing | Instruments stage |
-| `POST /api/mcp/configure` (toggle MCPs) | Missing | Instruments stage commit |
+| `GET /api/mcp/registry` (list available MCPs with project_count) | Missing | Instruments stage |
+| `POST /api/mcp/configure` (toggle global MCP selections) | Missing | Instruments stage commit |
 | `PUT /api/libs/configure` (toggle lib indexing) | Missing | Libraries stage commit |
-| `GET /api/system/hardware` (RAM, GPU) | Missing | Inference stage |
-| `GET /api/inference/models` (available models) | Missing | Inference stage |
 | SSE scan events — incremental mode | Needs update — should include baseline counts | Scan stage re-entry |
+| Inference + assignments endpoints | DEFERRED — depends on gateway integration design | — |
 
 These can be built incrementally as each stage is implemented.
 
