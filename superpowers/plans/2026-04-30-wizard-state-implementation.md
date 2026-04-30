@@ -141,7 +141,7 @@ export interface PreferencesData {
   anonymizedTelemetry: boolean;
 }
 
-/** Bundle returned by layout load. */
+/** Bundle returned by layout load — assembled from parallel daemon fetches. */
 export interface WizardLoadData {
   completion: Record<string, 'pending' | 'done'>;
   preferences: PreferencesData;
@@ -151,6 +151,9 @@ export interface WizardLoadData {
   libraries: { total: number; libs: DaemonLibEntry[] };
   mcps: DaemonMcpEntry[];
 }
+
+// Note: daemon config table uses jsonb — getConfig() returns Record<string, unknown>.
+// extractCompletion and extractPreferences handle the parsing.
 ```
 
 - [ ] **Step 2: Write mock factory functions**
@@ -645,7 +648,7 @@ export class WizardState {
 
   private commitHandlers: Record<string, (ws: WizardState, api: ReturnType<typeof senseiApi>) => Promise<void>> = {
     welcome:     async () => {},
-    preferences: async (ws, api) => { await api.setConfig(ws.prefsToConfig()); },
+    preferences: async (ws, api) => { await api.setConfig({ 'setup.preferences': ws.preferences }); },
     assistants:  async (ws, api) => {
       const ids = ws.assistants.assistants.filter(a => a.selected).map(a => a.id);
       await api.configureAssistants(ids);
@@ -680,18 +683,6 @@ export class WizardState {
     }
   }
 
-  private prefsToConfig(): Record<string, string> {
-    return {
-      'pref.displayName': this.preferences.displayName,
-      'pref.contributeLearnings': String(this.preferences.contributeLearnings),
-      'pref.reviewBeforeShare': String(this.preferences.reviewBeforeShare),
-      'pref.shareSchedule': this.preferences.shareSchedule,
-      'pref.correctionAggressiveness': this.preferences.correctionAggressiveness,
-      'pref.digestCadence': this.preferences.digestCadence,
-      'pref.nudgeOnRegression': String(this.preferences.nudgeOnRegression),
-      'pref.anonymizedTelemetry': String(this.preferences.anonymizedTelemetry),
-    };
-  }
 }
 
 export const wizardState = new WizardState();
@@ -748,17 +739,15 @@ describe('extractCompletion', () => {
 });
 
 describe('extractPreferences', () => {
-  it('returns defaults when no config keys', () => {
+  it('returns defaults when no config key', () => {
     const result = extractPreferences({});
     expect(result.displayName).toBe('');
     expect(result.contributeLearnings).toBe(true);
   });
 
-  it('parses config keys into PreferencesData', () => {
+  it('returns stored object when config key exists', () => {
     const result = extractPreferences({
-      'pref.displayName': 'Jerry',
-      'pref.contributeLearnings': 'false',
-      'pref.anonymizedTelemetry': 'true',
+      'setup.preferences': { displayName: 'Jerry', contributeLearnings: false, anonymizedTelemetry: true },
     });
     expect(result.displayName).toBe('Jerry');
     expect(result.contributeLearnings).toBe(false);
@@ -792,7 +781,11 @@ const PREF_DEFAULTS: PreferencesData = {
   digestCadence: 'daily', nudgeOnRegression: true, anonymizedTelemetry: false,
 };
 
-export function extractCompletion(config: Record<string, string>): Record<string, 'pending' | 'done'> {
+// Config table uses jsonb — values are native JSON, not strings.
+// Completion keys: config['setup.welcome'] === 'done'
+// Preferences: config['setup.preferences'] === { displayName: '...', ... }
+
+export function extractCompletion(config: Record<string, unknown>): Record<string, 'pending' | 'done'> {
   const result: Record<string, 'pending' | 'done'> = {};
   for (const s of STAGES) {
     result[s] = config[`setup.${s}`] === 'done' ? 'done' : 'pending';
@@ -800,23 +793,12 @@ export function extractCompletion(config: Record<string, string>): Record<string
   return result;
 }
 
-export function extractPreferences(config: Record<string, string>): PreferencesData {
-  const str = (key: string, fallback: string) => config[`pref.${key}`] ?? fallback;
-  const bool = (key: string, fallback: boolean) => {
-    const v = config[`pref.${key}`];
-    return v === undefined ? fallback : v === 'true';
-  };
-
-  return {
-    displayName:             str('displayName', PREF_DEFAULTS.displayName),
-    contributeLearnings:     bool('contributeLearnings', PREF_DEFAULTS.contributeLearnings),
-    reviewBeforeShare:       bool('reviewBeforeShare', PREF_DEFAULTS.reviewBeforeShare),
-    shareSchedule:           str('shareSchedule', PREF_DEFAULTS.shareSchedule),
-    correctionAggressiveness:str('correctionAggressiveness', PREF_DEFAULTS.correctionAggressiveness),
-    digestCadence:           str('digestCadence', PREF_DEFAULTS.digestCadence),
-    nudgeOnRegression:       bool('nudgeOnRegression', PREF_DEFAULTS.nudgeOnRegression),
-    anonymizedTelemetry:     bool('anonymizedTelemetry', PREF_DEFAULTS.anonymizedTelemetry),
-  };
+export function extractPreferences(config: Record<string, unknown>): PreferencesData {
+  const stored = config['setup.preferences'];
+  if (stored && typeof stored === 'object') {
+    return { ...PREF_DEFAULTS, ...(stored as Partial<PreferencesData>) };
+  }
+  return { ...PREF_DEFAULTS };
 }
 
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
