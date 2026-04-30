@@ -91,10 +91,22 @@
         }
       }
 
-      // Auto-progress: if prereqs are present, start services
+      // Auto-progress: if prereqs are present, start services + re-check
       if (!bs.needsPrereqInstall && !bs.allReady) {
-        // Prereqs installed — auto-trigger Phase 2 (services)
         await startServices();
+
+        // After start_services completes (background thread), wait and re-detect
+        // to catch services that came up after the initial poll
+        setTimeout(async () => {
+          if (bs.allReady) return;
+          try {
+            const recheck = await runBootstrap();
+            for (const comp of recheck.components) {
+              const id = componentNameToGateId(comp.name);
+              if (id) bs.setGateStatus(id, componentStateToGateStatus(comp));
+            }
+          } catch { /* ignore */ }
+        }, 5000);
       }
     } catch {
       // Detection failed — gates stay pending, user sees waiting state
