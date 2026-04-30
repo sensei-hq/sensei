@@ -103,10 +103,12 @@
     return () => unlisten();
   });
 
-  // Browser-mode retry simulation
-  function retry(gateId: string) {
+  // Retry: re-run detection and auto-progress
+  async function retry(gateId: string) {
     bs.setGateStatus(gateId, 'checking');
+
     if (!hasTauri()) {
+      // Browser-mode simulation
       setTimeout(() => {
         bs.setGateStatus(gateId, 'ready');
         const idx = GATES.findIndex(g => g.id === gateId);
@@ -117,7 +119,20 @@
           }, 900);
         }
       }, 1100);
+      return;
     }
+
+    // Tauri mode: re-run full detection and auto-progress
+    try {
+      const result = await runBootstrap();
+      for (const comp of result.components) {
+        const id = componentNameToGateId(comp.name);
+        if (id) bs.setGateStatus(id, componentStateToGateStatus(comp));
+      }
+      if (!bs.needsPrereqInstall && !bs.allReady) {
+        await startServices();
+      }
+    } catch { /* detection failed — gate stays checking */ }
   }
 
   async function runInstallPrereqs() {
