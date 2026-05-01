@@ -69,50 +69,53 @@
   }
 
   // Wire Tauri events → state (via handleEvent) + run Phase 0 detection
-  onMount(async () => {
+  let unlistenFn: (() => void) | undefined;
+  onMount(() => {
     if (!hasTauri()) return;
 
-    // Load platform info
-    try {
-      const info = await getPlatform();
-      bs.setPlatform(info);
-    } catch { /* browser fallback */ }
+    (async () => {
+      // Load platform info
+      try {
+        const info = await getPlatform();
+        bs.setPlatform(info);
+      } catch { /* browser fallback */ }
 
-    // Subscribe to phase events
-    const unlisten = await listenBootstrapEvents((event) => bs.handleEvent(event));
+      // Subscribe to phase events
+      unlistenFn = await listenBootstrapEvents((event) => bs.handleEvent(event));
 
-    // Phase 0: Run detection and apply results to state
-    try {
-      const result = await runBootstrap();
-      for (const comp of result.components) {
-        const gateId = componentNameToGateId(comp.name);
-        if (gateId) {
-          bs.setGateStatus(gateId, componentStateToGateStatus(comp));
+      // Phase 0: Run detection and apply results to state
+      try {
+        const result = await runBootstrap();
+        for (const comp of result.components) {
+          const gateId = componentNameToGateId(comp.name);
+          if (gateId) {
+            bs.setGateStatus(gateId, componentStateToGateStatus(comp));
+          }
         }
+
+        // Auto-progress: if prereqs are present, start services + re-check
+        if (!bs.needsPrereqInstall && !bs.allReady) {
+          await startServices();
+
+          // After start_services completes (background thread), wait and re-detect
+          // to catch services that came up after the initial poll
+          setTimeout(async () => {
+            if (bs.allReady) return;
+            try {
+              const recheck = await runBootstrap();
+              for (const comp of recheck.components) {
+                const id = componentNameToGateId(comp.name);
+                if (id) bs.setGateStatus(id, componentStateToGateStatus(comp));
+              }
+            } catch { /* ignore */ }
+          }, 5000);
+        }
+      } catch {
+        // Detection failed — gates stay pending, user sees waiting state
       }
+    })();
 
-      // Auto-progress: if prereqs are present, start services + re-check
-      if (!bs.needsPrereqInstall && !bs.allReady) {
-        await startServices();
-
-        // After start_services completes (background thread), wait and re-detect
-        // to catch services that came up after the initial poll
-        setTimeout(async () => {
-          if (bs.allReady) return;
-          try {
-            const recheck = await runBootstrap();
-            for (const comp of recheck.components) {
-              const id = componentNameToGateId(comp.name);
-              if (id) bs.setGateStatus(id, componentStateToGateStatus(comp));
-            }
-          } catch { /* ignore */ }
-        }, 5000);
-      }
-    } catch {
-      // Detection failed — gates stay pending, user sees waiting state
-    }
-
-    return () => unlisten();
+    return () => unlistenFn?.();
   });
 
   // Retry: re-run detection and auto-progress
