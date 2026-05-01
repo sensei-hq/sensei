@@ -87,10 +87,12 @@ export interface PreferencesData {
   contributeLearnings: boolean;
   reviewBeforeShare: boolean;
   shareSchedule: string;
+  downloadCollective: string;
   correctionAggressiveness: string;
   digestCadence: string;
   nudgeOnRegression: boolean;
   anonymizedTelemetry: boolean;
+  showWelcome: boolean;
 }
 
 /** Bundle returned by layout load — assembled from parallel daemon fetches. */

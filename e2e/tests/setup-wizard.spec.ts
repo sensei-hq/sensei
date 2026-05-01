@@ -49,10 +49,65 @@ test.describe('Setup Wizard — Rail navigation', () => {
   });
 });
 
-test.describe('Setup Wizard — Preferences gate', () => {
-  test('Continue is disabled on preferences (empty displayName)', async ({ tauriPage }) => {
+test.describe('Setup Wizard — Preferences', () => {
+  test('Continue is disabled when displayName is empty', async ({ tauriPage }) => {
     await tauriPage.goto('/setup/preferences');
     const btn = tauriPage.locator('.btn-primary');
     await expect(btn).toBeDisabled();
+  });
+
+  test('renders stage header with correct title', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    await expect(tauriPage.locator('.wiz-title')).toContainText('Preferences');
+  });
+
+  test('renders all four sections', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    const sections = tauriPage.locator('.section');
+    await expect(sections).toHaveCount(4);
+  });
+
+  test('name input is present and editable', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    const input = tauriPage.locator('.name-input');
+    await expect(input).toBeVisible();
+    await input.fill('Keiko');
+    await expect(input).toHaveValue('Keiko');
+  });
+
+  test('Continue enables after typing a name', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    const btn = tauriPage.locator('.btn-primary');
+    await expect(btn).toBeDisabled();
+    await tauriPage.locator('.name-input').fill('Jerry');
+    await expect(btn).toBeEnabled();
+  });
+
+  test('clicking Continue after entering name advances to Assistants', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    await tauriPage.locator('.name-input').fill('Jerry');
+    await tauriPage.click('.btn-primary');
+    await tauriPage.waitForURL('**/setup/assistants');
+  });
+
+  test('toggles work for shared learnings', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    const toggle = tauriPage.locator('[aria-label="Toggle contribute learnings"]');
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+  });
+
+  test('segment control works for correction tone', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    await tauriPage.click('button:text("Gentle")');
+    const gentle = tauriPage.locator('button:text("Gentle")');
+    await expect(gentle).toHaveClass(/active/);
+  });
+
+  test('select works for sharing schedule', async ({ tauriPage }) => {
+    await tauriPage.goto('/setup/preferences');
+    const sel = tauriPage.locator('.sel').first();
+    await sel.selectOption('daily');
+    await expect(sel).toHaveValue('daily');
   });
 });

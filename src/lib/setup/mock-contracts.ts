@@ -58,8 +58,9 @@ export function mockMcpEntry(overrides: Partial<DaemonMcpEntry> = {}): DaemonMcp
 export function mockPreferences(overrides: Partial<PreferencesData> = {}): PreferencesData {
   return {
     displayName: 'Jerry', contributeLearnings: true, reviewBeforeShare: true,
-    shareSchedule: 'weekly-saturday', correctionAggressiveness: 'balanced',
-    digestCadence: 'daily', nudgeOnRegression: true, anonymizedTelemetry: false,
+    shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
+    correctionAggressiveness: 'balanced', digestCadence: 'daily',
+    nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
     ...overrides,
   };
 }
