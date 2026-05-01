@@ -84,8 +84,9 @@ export class WizardState {
 
   preferences = $state<PreferencesData>({
     displayName: '', contributeLearnings: true, reviewBeforeShare: true,
-    shareSchedule: 'weekly-saturday', correctionAggressiveness: 'balanced',
-    digestCadence: 'daily', nudgeOnRegression: true, anonymizedTelemetry: false,
+    shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
+    correctionAggressiveness: 'balanced', digestCadence: 'daily',
+    nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
   });
   assistants  = $state<AssistantsSlice>({ assistants: [] });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });

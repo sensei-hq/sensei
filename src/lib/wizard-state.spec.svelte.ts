@@ -156,6 +156,41 @@ describe('WizardState', () => {
     });
   });
 
+  describe('preferences slice', () => {
+    beforeEach(() => ws.hydrate(mockWizardLoadData()));
+
+    it('hydrates all preference fields', () => {
+      expect(ws.preferences.displayName).toBe('Jerry');
+      expect(ws.preferences.contributeLearnings).toBe(true);
+      expect(ws.preferences.downloadCollective).toBe('weekly');
+      expect(ws.preferences.correctionAggressiveness).toBe('balanced');
+      expect(ws.preferences.showWelcome).toBe(true);
+    });
+
+    it('allows mutation of preference fields', () => {
+      ws.preferences.displayName = 'Keiko';
+      expect(ws.preferences.displayName).toBe('Keiko');
+      ws.preferences.correctionAggressiveness = 'gentle';
+      expect(ws.preferences.correctionAggressiveness).toBe('gentle');
+    });
+
+    it('allows mutation of toggles', () => {
+      ws.preferences.contributeLearnings = false;
+      expect(ws.preferences.contributeLearnings).toBe(false);
+      ws.preferences.anonymizedTelemetry = true;
+      expect(ws.preferences.anonymizedTelemetry).toBe(true);
+    });
+
+    it('allows mutation of dropdowns', () => {
+      ws.preferences.shareSchedule = 'daily';
+      expect(ws.preferences.shareSchedule).toBe('daily');
+      ws.preferences.downloadCollective = 'never';
+      expect(ws.preferences.downloadCollective).toBe('never');
+      ws.preferences.digestCadence = 'weekly';
+      expect(ws.preferences.digestCadence).toBe('weekly');
+    });
+  });
+
   describe('isStageComplete', () => {
     it('returns false when pending', () => {
       ws.hydrate(mockWizardLoadData());

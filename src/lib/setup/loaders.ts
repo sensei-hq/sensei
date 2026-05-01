@@ -14,8 +14,9 @@ const STAGES = [
 
 const PREF_DEFAULTS: PreferencesData = {
   displayName: '', contributeLearnings: true, reviewBeforeShare: true,
-  shareSchedule: 'weekly-saturday', correctionAggressiveness: 'balanced',
-  digestCadence: 'daily', nudgeOnRegression: true, anonymizedTelemetry: false,
+  shareSchedule: 'weekly-saturday', downloadCollective: 'weekly',
+  correctionAggressiveness: 'balanced', digestCadence: 'daily',
+  nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
 };
 
 /** Parse setup.* config keys into a completion map. */
