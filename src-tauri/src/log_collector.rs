@@ -158,6 +158,7 @@ impl LogCollector {
     /// (used by bootstrap command after run_with_traces).
     pub fn write_session(&self, session: &LogSession) {
         let dir = self.log_dir.join(&session.module);
+        self.rotate_if_needed(&dir);
         if let Err(e) = std::fs::create_dir_all(&dir) {
             eprintln!("log_collector: write failed: {e}");
             return;
