@@ -9,7 +9,9 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(log_collector::LogCollector::new())
+        .manage(log_collector::LogCollector::new(
+            std::path::PathBuf::from(".sensei/logs"),
+        ))
         .invoke_handler(tauri::generate_handler![
             // Bootstrap (prereqs, hardware, models)
             commands::bootstrap::run_bootstrap,
