@@ -15,6 +15,7 @@
   ];
 
   const BOTTOM_ITEMS = [
+    { href: '/logs',     kanji: '録', label: 'Logs' },
     { href: '/settings', kanji: '設', label: 'Settings' },
   ];
 
