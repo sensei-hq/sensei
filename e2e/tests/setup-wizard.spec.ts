@@ -58,7 +58,7 @@ test.describe('Setup Wizard — Preferences', () => {
 
   test('renders stage header with correct title', async ({ tauriPage }) => {
     await tauriPage.goto('/setup/preferences');
-    await expect(tauriPage.locator('.wiz-title')).toContainText('Preferences');
+    await expect(tauriPage.locator('.stage-title')).toContainText('Preferences');
   });
 
   test('renders all four sections', async ({ tauriPage }) => {
