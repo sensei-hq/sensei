@@ -132,7 +132,7 @@ export async function getPlatform(): Promise<any> {
  * Returns an unlisten function.
  */
 export async function listenBootstrapEvents(
-  handler: (event: { action: string; entity: string; id: string; data: Record<string, unknown> }) => void,
+  handler: (event: { action: 'update' | 'set'; entity: 'gate' | 'phase'; id: string; data: Record<string, unknown> }) => void,
 ): Promise<() => void> {
   const { listen } = await import('@tauri-apps/api/event');
   const unlisten = await listen<any>('bootstrap', (event) => {
