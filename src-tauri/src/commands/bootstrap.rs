@@ -103,12 +103,22 @@ fn write_bootstrap_session(
 
     let trace_values: Vec<serde_json::Value> = traces
         .iter()
-        .map(|t| serde_json::to_value(t).unwrap_or_default())
+        .filter_map(|t| match serde_json::to_value(t) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("bootstrap: failed to serialise trace: {e}");
+                None
+            }
+        })
         .collect();
 
     use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    let session_id = format!("sess-bs-{:08x}", COUNTER.fetch_add(1, Ordering::Relaxed));
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let session_id = format!(
+        "sess-bs-{}-{:04x}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        COUNTER.fetch_add(1, Ordering::Relaxed) & 0xFFFF,
+    );
 
     let session = LogSession {
         id:          session_id,
