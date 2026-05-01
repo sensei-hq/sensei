@@ -16,8 +16,10 @@ pub fn check(db_name: Option<&str>) -> ComponentStatus {
         return ComponentStatus::failed("database", "postgresql not reachable (pg_isready failed)");
     }
 
-    if !database_exists(db) {
-        return ComponentStatus::failed("database", &format!("database '{db}' does not exist"));
+    match database_exists(db) {
+        Ok(false) => return ComponentStatus::failed("database", &format!("database '{db}' does not exist")),
+        Err(e) => return ComponentStatus::failed("database", &format!("database check failed: {e}")),
+        Ok(true) => { /* exists */ }
     }
 
     if !pgvector_installed(db) {
@@ -105,8 +107,10 @@ pub fn setup(db_name: Option<&str>) -> Result<ComponentStatus, String> {
         return Err("postgresql is not accepting connections".to_string());
     }
 
-    if !database_exists(db) {
-        create(Some(db))?;
+    match database_exists(db) {
+        Ok(true) => { /* exists, continue */ }
+        Ok(false) => { create(Some(db))?; }
+        Err(e) => { return Err(format!("database check failed: {e}")); }
     }
 
     ensure_extensions(Some(db))?;
@@ -123,35 +127,25 @@ fn pg_is_ready() -> bool {
 }
 
 /// Check if a database exists.
-fn database_exists(db_name: &str) -> bool {
+fn database_exists(db_name: &str) -> Result<bool, String> {
     let output = Command::new("psql")
         .args(["-lqt"])
-        .output();
+        .output()
+        .map_err(|e| format!("could not run psql: {e}"))?;
 
-    match output {
-        Ok(o) if o.status.success() => {
-            let text = String::from_utf8_lossy(&o.stdout);
-            let found = text.lines().any(|line| {
-                line.split('|')
-                    .next()
-                    .map(|name| name.trim() == db_name)
-                    .unwrap_or(false)
-            });
-            if !found {
-                eprintln!("[bootstrap] database_exists: '{}' not found in psql output:\n{}", db_name, text);
-            }
-            found
-        }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            eprintln!("[bootstrap] database_exists: psql -lqt failed (exit {}): {}", o.status, stderr.trim());
-            false
-        }
-        Err(e) => {
-            eprintln!("[bootstrap] database_exists: could not run psql: {e}");
-            false
-        }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("psql -lqt failed (exit {}): {}", output.status, stderr.trim()));
     }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let found = text.lines().any(|line| {
+        line.split('|')
+            .next()
+            .map(|name| name.trim() == db_name)
+            .unwrap_or(false)
+    });
+    Ok(found)
 }
 
 /// Check if pgvector extension is available in the database.
