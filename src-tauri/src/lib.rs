@@ -1,13 +1,15 @@
 //! Sensei Desktop — Tauri application entry point.
 
 mod commands;
+mod log_collector;
 
 use tauri::Manager;
 
 pub fn run() {
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(log_collector::LogCollector::new())
         .invoke_handler(tauri::generate_handler![
             // Bootstrap (prereqs, hardware, models)
             commands::bootstrap::run_bootstrap,
