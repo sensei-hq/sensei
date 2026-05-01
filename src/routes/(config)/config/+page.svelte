@@ -1,6 +1,10 @@
 <script lang="ts">
-  // Legacy route — redirects via +page.ts load function.
-  // Kept as a minimal stub to avoid SvelteKit component resolution errors.
+  import { goto } from '$app/navigation';
+  import { onMount } from 'svelte';
+
+  onMount(() => {
+    goto('/setup/welcome', { replaceState: true });
+  });
 </script>
 
-<p>Redirecting to setup...</p>
+<p>Redirecting...</p>
