@@ -125,6 +125,38 @@ impl BootstrapResult {
     }
 }
 
+/// Action classification for a diagnostic trace step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceAction {
+    /// Passive probe — binary present, port open, DB exists.
+    Check,
+    /// Active remediation — install, start service, create DB.
+    Resolve,
+    /// Human action required — displayed as an instruction.
+    Instruct,
+}
+
+/// A single diagnostic step captured during bootstrap.
+/// Pure data — no file I/O, no side effects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapTrace {
+    pub id:            String,          // counter-based id, e.g. "trace-00000001"
+    pub ts:            String,          // ISO 8601, e.g. "2026-05-01T10:00:00Z"
+    pub action_type:   TraceAction,
+    pub step:          String,          // snake_case step name, e.g. "postgres_port"
+    pub desc:          String,          // human-readable label
+    pub cmd:           String,          // command string or "tcp probe host:port"
+    pub exit:          Option<i32>,     // process exit code (None for TCP probes)
+    pub out:           String,          // stdout (trimmed)
+    pub err:           String,          // stderr (trimmed)
+    pub ms:            u64,             // wall-clock duration in milliseconds
+    pub ok:            bool,            // did this step pass?
+    pub fix_attempted: bool,            // did bootstrap attempt a fix?
+    pub fix_approach:  Option<String>,  // command/strategy used to fix
+    pub fix_ok:        Option<bool>,    // did the fix succeed?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +256,31 @@ mod tests {
         let json = serde_json::to_value(&s).unwrap();
         assert_eq!(json["state"]["state"], "failed");
         assert_eq!(json["state"]["error"], "port in use");
+    }
+
+    #[test]
+    fn bootstrap_trace_serializes() {
+        let t = BootstrapTrace {
+            id:            "trace-00000001".to_string(),
+            ts:            "2026-05-01T10:00:00Z".to_string(),
+            action_type:   TraceAction::Check,
+            step:          "postgres_binary".to_string(),
+            desc:          "Locate postgres binary".to_string(),
+            cmd:           "which postgres".to_string(),
+            exit:          Some(0),
+            out:           "/opt/homebrew/bin/postgres".to_string(),
+            err:           String::new(),
+            ms:            4,
+            ok:            true,
+            fix_attempted: false,
+            fix_approach:  None,
+            fix_ok:        None,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("\"step\":\"postgres_binary\""));
+        assert!(json.contains("\"ok\":true"));
+        let round_trip: BootstrapTrace = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip.step, t.step);
+        assert!(matches!(round_trip.action_type, TraceAction::Check));
     }
 }
