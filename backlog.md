@@ -123,12 +123,32 @@ Each screen needs daemon endpoints that return data in the shape the UI expects.
 
 ---
 
+## 5. E2E Testing Infrastructure
+
+**Crate:** [tauri-plugin-playwright](https://github.com/srsholmes/tauri-playwright) v0.2.2
+**Why:** Test wizard stages in the actual Tauri webview, not just a browser. Same test files run in browser mode (fast, mocked IPC) and Tauri mode (real webview + real daemon).
+
+| Task | Status |
+|------|--------|
+| Spike: install plugin, write one test for health→setup flow | Not started |
+| Configure browser mode (headless, mocked IPC) for CI | Not started |
+| Configure Tauri mode for local E2E | Not started |
+| Add wizard stage test fixtures | Not started |
+
+**Setup:**
+- Rust: feature flag `e2e-testing = ["tauri-plugin-playwright"]` in src-tauri/Cargo.toml
+- JS: `@srsholmes/tauri-playwright` + `@playwright/test`
+- Config: `"withGlobalTauri": true` in tauri.conf.json
+
+---
+
 ## Order of work
 
 ```
 1. Bootstrap           → Done (2026-04-29)
 2. Layout chrome       → Done (2026-04-30)
-3. Foundation (F2-F4)  → contracts, wizard state, loaders, layout wiring
+3. Foundation (F2-F4)  → Done (2026-05-01) — contracts, wizard state, loaders, layout wiring
+3a. E2E spike          → tauri-plugin-playwright setup + first test
 4. Welcome             → verify commit flow end-to-end
 5. Preferences         → match mockup → wire config API
 6. Assistants          → refactor to wizardState → wire configure API
