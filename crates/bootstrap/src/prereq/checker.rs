@@ -1,3 +1,5 @@
+//! Pluggable Checker strategies for prerequisite health verification.
+
 use crate::util;
 use crate::database;
 use crate::types::ComponentState;
@@ -124,9 +126,11 @@ mod tests {
 
     #[test]
     fn binary_checker_finds_ls() {
-        let checker = BinaryChecker::new("ls", "--color");
-        // ls exists on all platforms — just verify no panic
-        let _ = checker.check();
+        let checker = BinaryChecker::new("ls", "--version");
+        let result = checker.check();
+        assert!(result.ok, "ls should be found in PATH: {:?}", result.error);
+        assert!(result.version.is_some(), "ls check should yield a version or 'unknown'");
+        assert!(result.detail.is_some(), "detail should contain the binary path");
     }
 
     #[test]
