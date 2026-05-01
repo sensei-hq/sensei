@@ -131,14 +131,26 @@ fn database_exists(db_name: &str) -> bool {
     match output {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
-            text.lines().any(|line| {
+            let found = text.lines().any(|line| {
                 line.split('|')
                     .next()
                     .map(|name| name.trim() == db_name)
                     .unwrap_or(false)
-            })
+            });
+            if !found {
+                eprintln!("[bootstrap] database_exists: '{}' not found in psql output:\n{}", db_name, text);
+            }
+            found
         }
-        _ => false,
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!("[bootstrap] database_exists: psql -lqt failed (exit {}): {}", o.status, stderr.trim());
+            false
+        }
+        Err(e) => {
+            eprintln!("[bootstrap] database_exists: could not run psql: {e}");
+            false
+        }
     }
 }
 
