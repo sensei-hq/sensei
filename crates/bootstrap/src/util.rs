@@ -8,7 +8,9 @@ use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
-use crate::types::{ComponentState, ComponentStatus};
+use crate::types::{BootstrapTrace, ComponentState, ComponentStatus, TraceAction};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 /// Build a PATH string that includes well-known directories.
 /// Used when spawning child processes from a macOS .app bundle
@@ -260,9 +262,163 @@ pub fn start_daemon(port: u16) -> Result<ComponentStatus, String> {
     }
 }
 
+/// Generate a monotonically increasing trace ID.
+pub fn next_trace_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    format!("trace-{:08x}", COUNTER.fetch_add(1, Ordering::SeqCst))
+}
+
+/// Current time as an ISO 8601 string.
+pub fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+/// Run a shell command and return a fully-populated BootstrapTrace.
+/// No file I/O or side effects beyond the atomic trace-ID counter.
+pub fn run_traced(step: &str, desc: &str, cmd: &str, args: &[&str]) -> BootstrapTrace {
+    let ts = now_iso();
+    let start = Instant::now();
+    let result = std::process::Command::new(cmd)
+        .args(args)
+        .env("PATH", enrich_path())
+        .output();
+    let ms = start.elapsed().as_millis() as u64;
+    let cmd_str = format!("{} {}", cmd, args.join(" ")).trim().to_string();
+
+    match result {
+        Ok(output) => BootstrapTrace {
+            id:            next_trace_id(),
+            ts,
+            action_type:   TraceAction::Check,
+            step:          step.to_string(),
+            desc:          desc.to_string(),
+            cmd:           cmd_str,
+            exit:          output.status.code(),
+            out:           String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            err:           String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ms,
+            ok:            output.status.success(),
+            fix_attempted: false,
+            fix_approach:  None,
+            fix_ok:        None,
+        },
+        Err(e) => BootstrapTrace {
+            id:            next_trace_id(),
+            ts,
+            action_type:   TraceAction::Check,
+            step:          step.to_string(),
+            desc:          desc.to_string(),
+            cmd:           cmd_str,
+            exit:          Some(-1),
+            out:           String::new(),
+            err:           e.to_string(),
+            ms,
+            ok:            false,
+            fix_attempted: false,
+            fix_approach:  None,
+            fix_ok:        None,
+        },
+    }
+}
+
+/// Probe a TCP port and return a BootstrapTrace with a synthetic command string.
+/// No file I/O or side effects beyond the atomic trace-ID counter.
+pub fn probe_traced(step: &str, desc: &str, host: &str, port: u16) -> BootstrapTrace {
+    let ts = now_iso();
+    let cmd = format!("tcp probe {host}:{port}");
+    let start = Instant::now();
+    let addr_str = format!("{host}:{port}");
+    let addr = match addr_str.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            return BootstrapTrace {
+                id:            next_trace_id(),
+                ts,
+                action_type:   TraceAction::Check,
+                step:          step.to_string(),
+                desc:          desc.to_string(),
+                cmd,
+                exit:          None,
+                out:           String::new(),
+                err:           format!("invalid address {addr_str}: {e}"),
+                ms:            start.elapsed().as_millis() as u64,
+                ok:            false,
+                fix_attempted: false,
+                fix_approach:  None,
+                fix_ok:        None,
+            };
+        }
+    };
+    let ok = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok();
+    let ms = start.elapsed().as_millis() as u64;
+
+    BootstrapTrace {
+        id:            next_trace_id(),
+        ts,
+        action_type:   TraceAction::Check,
+        step:          step.to_string(),
+        desc:          desc.to_string(),
+        cmd,
+        exit:          None,
+        out:           String::new(),
+        err:           if ok { String::new() } else { format!("port {port} not reachable") },
+        ms,
+        ok,
+        fix_attempted: false,
+        fix_approach:  None,
+        fix_ok:        None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_traced_captures_echo() {
+        let t = run_traced("echo_test", "Echo hello", "echo", &["hello"]);
+        assert!(t.ok, "echo should succeed");
+        assert_eq!(t.out, "hello");
+        assert_eq!(t.err, "");
+        assert!(t.exit == Some(0));
+        assert_eq!(t.step, "echo_test");
+        assert!(t.ms < 5000, "should complete in under 5 seconds");
+        assert!(!t.id.is_empty());
+        assert!(!t.ts.is_empty());
+    }
+
+    #[test]
+    fn run_traced_captures_failure() {
+        let t = run_traced("bad_cmd", "Run nonexistent", "sensei-nonexistent-xyz-binary", &[]);
+        assert!(!t.ok);
+        assert!(!t.err.is_empty(), "error should capture the failure reason");
+        assert_eq!(t.exit, Some(-1), "spawn failure should use -1 sentinel");
+    }
+
+    #[test]
+    fn probe_traced_closed_port() {
+        let t = probe_traced("port_check", "Check port 1", "127.0.0.1", 1);
+        assert!(!t.ok);
+        assert!(t.exit.is_none(), "TCP probes have no exit code");
+        assert!(t.cmd.contains("tcp probe"));
+        assert!(t.cmd.contains("127.0.0.1:1"));
+        assert!(t.err.contains("not reachable"), "should populate err when port closed");
+    }
+
+    #[test]
+    fn next_trace_id_is_unique() {
+        let a = next_trace_id();
+        let b = next_trace_id();
+        assert_ne!(a, b);
+        assert!(a.starts_with("trace-"));
+    }
+
+    #[test]
+    fn now_iso_looks_like_rfc3339() {
+        let ts = now_iso();
+        assert!(ts.contains('T'), "should have T separator");
+        assert!(ts.ends_with('Z') || ts.contains('+'), "should have timezone");
+    }
 
     #[test]
     fn which_binary_finds_ls() {
