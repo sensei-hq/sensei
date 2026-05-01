@@ -3,8 +3,9 @@
 
 use std::process::Command;
 
-use crate::types::ComponentStatus;
+use crate::types::{BootstrapTrace, ComponentStatus};
 use crate::util;
+use crate::util::run_traced;
 
 const DEFAULT_DB_NAME: &str = "sensei";
 
@@ -28,6 +29,95 @@ pub fn check(db_name: Option<&str>) -> ComponentStatus {
 
     let version = schema_version(db);
     ComponentStatus::ready("database", &format!("schema-{}", version.unwrap_or(0)))
+}
+
+/// Check PostgreSQL reachability + sensei database existence + pgvector + schema version.
+/// Returns status and diagnostic traces. Pure function — no side effects.
+pub fn check_traced(db_name: Option<&str>) -> (ComponentStatus, Vec<BootstrapTrace>) {
+    let db = db_name.unwrap_or(DEFAULT_DB_NAME);
+    let mut traces = Vec::new();
+
+    // Step 1: pg_isready
+    let pg_t = run_traced(
+        "pg_isready",
+        "Check PostgreSQL is accepting connections",
+        "pg_isready",
+        &["--quiet"],
+    );
+    let pg_ok = pg_t.ok;
+    traces.push(pg_t);
+
+    if !pg_ok {
+        return (
+            ComponentStatus::failed("database", "postgresql not reachable (pg_isready failed)"),
+            traces,
+        );
+    }
+
+    // Step 2: database exists (psql -lqt)
+    let db_list_t = run_traced(
+        "psql_list",
+        "List databases to check existence",
+        "psql",
+        &["-lqt"],
+    );
+    let db_list_ok = db_list_t.ok;
+    let db_list_out = db_list_t.out.clone();
+    traces.push(db_list_t);
+
+    if !db_list_ok {
+        return (
+            ComponentStatus::failed("database", "psql -lqt failed"),
+            traces,
+        );
+    }
+
+    let db_exists = db_list_out.lines().any(|line| {
+        line.split('|')
+            .next()
+            .map(|n| n.trim() == db)
+            .unwrap_or(false)
+    });
+
+    if !db_exists {
+        return (
+            ComponentStatus::failed("database", &format!("database '{db}' does not exist")),
+            traces,
+        );
+    }
+
+    // Step 3: pgvector extension
+    let vec_t = run_traced(
+        "pgvector_check",
+        "Check pgvector extension installed",
+        "psql",
+        &["-d", db, "-tAc", "SELECT 1 FROM pg_extension WHERE extname = 'vector'"],
+    );
+    let vec_ok = vec_t.ok && vec_t.out.starts_with('1');
+    traces.push(vec_t);
+
+    if !vec_ok {
+        return (
+            ComponentStatus::failed("database", "pgvector extension not installed"),
+            traces,
+        );
+    }
+
+    // Step 4: schema version
+    let ver_t = run_traced(
+        "schema_version",
+        "Read schema migration version",
+        "psql",
+        &["-d", db, "-tAc", "SELECT max(version) FROM schema_migrations"],
+    );
+    let version: Option<i32> = ver_t.out.trim().parse().ok();
+    traces.push(ver_t);
+
+    let status = ComponentStatus::ready(
+        "database",
+        &format!("schema-{}", version.unwrap_or(0)),
+    );
+    (status, traces)
 }
 
 /// Create the sensei database.
@@ -182,6 +272,20 @@ fn schema_version(db_name: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_traced_returns_traces() {
+        let (status, traces) = check_traced(None);
+        // Always returns at least one trace regardless of PostgreSQL availability.
+        assert!(!traces.is_empty(), "should have at least one trace");
+        // Status is either ready or failed — never panics.
+        assert!(status.is_ready() || status.is_failed(), "status must be ready or failed");
+        // Every trace has a non-empty step and cmd.
+        for t in &traces {
+            assert!(!t.step.is_empty());
+            assert!(!t.cmd.is_empty());
+        }
+    }
 
     #[test]
     fn default_db_name_is_sensei() {
