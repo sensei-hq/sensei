@@ -9,6 +9,7 @@ pub mod database;
 pub mod hardware;
 pub mod models;
 pub mod platform;
+pub mod prereq;
 pub mod types;
 pub mod util;
 
