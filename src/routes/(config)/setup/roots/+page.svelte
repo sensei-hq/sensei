@@ -1,57 +1,57 @@
 <script lang="ts">
-  import type { FolderEntry } from './+page.js';
+  import { wizardState } from '$lib/wizard-state.svelte.js';
 
-  let { data }: { data: { folders: FolderEntry[] } } = $props();
-  let folders = $state<FolderEntry[]>([]);
-  let inputValue = $state('');
+  const roots = $derived(wizardState.roots.roots);
 
-  $effect(() => { folders = [...data.folders]; });
-
-  function addFolder() {
-    const trimmed = inputValue.trim();
-    if (!trimmed || folders.some(f => f.path === trimmed)) return;
-    folders = [...folders, { id: `f${Date.now()}`, path: trimmed, note: '', watched: false }];
-    inputValue = '';
+  function addRoot() {
+    const trimmed = wizardState.roots.newPath.trim();
+    if (!trimmed || roots.some(r => r.path === trimmed)) return;
+    wizardState.roots.roots = [...roots, {
+      id: `root-${Date.now()}`, path: trimmed, name: trimmed.split('/').pop() ?? trimmed,
+      status: 'scanning' as const, excluded: [], repos_found: 0, scanned: false,
+      modified_at: new Date().toISOString(),
+    }];
+    wizardState.roots.newPath = '';
   }
 
-  function removeFolder(id: string) {
-    folders = folders.filter(f => f.id !== id);
+  function removeRoot(id: string) {
+    wizardState.roots.roots = roots.filter(r => r.id !== id);
   }
 </script>
 
 <div class="step">
-  <p class="step-desc">Where your work lives. Sensei recurses and finds folders.</p>
+  <p class="step-desc">Where your work lives. Sensei recurses and finds repositories.</p>
 
   <div class="input-row">
     <input
       type="text"
       class="folder-input"
-      bind:value={inputValue}
-      onkeydown={(e) => { if (e.key === 'Enter') addFolder(); }}
+      bind:value={wizardState.roots.newPath}
+      onkeydown={(e) => { if (e.key === 'Enter') addRoot(); }}
       placeholder="~/Developer"
     />
-    <button class="btn-solid" onclick={addFolder}>Add</button>
+    <button class="btn-solid" onclick={addRoot}>Add</button>
   </div>
 
   <div class="folder-list">
-    {#each folders as f (f.id)}
+    {#each roots as r (r.id)}
       <div class="folder-row">
         <span class="folder-arrow">&#9656;</span>
         <div class="folder-info">
-          <div class="folder-path">{f.path}</div>
-          {#if f.note}<div class="folder-note">{f.note}</div>{/if}
+          <div class="folder-path">{r.path}</div>
+          {#if r.repos_found > 0}<div class="folder-note">{r.repos_found} repositories found</div>{/if}
         </div>
-        {#if f.watched}
+        {#if r.status === 'watching'}
           <span class="chip watching">watching</span>
         {:else}
           <span class="chip">recursive</span>
         {/if}
-        <button class="btn-remove" onclick={() => removeFolder(f.id)}>×</button>
+        <button class="btn-remove" onclick={() => removeRoot(r.id)}>×</button>
       </div>
     {/each}
   </div>
 
-  <p class="footer-note">You can manage folders and exclusions later from Settings.</p>
+  <p class="footer-note">You can manage roots and exclusions later from Settings.</p>
 </div>
 
 <style>
