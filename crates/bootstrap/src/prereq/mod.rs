@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Result of a check operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckResult {
     pub ok: bool,
     pub version: Option<String>,
@@ -44,7 +44,7 @@ impl CheckResult {
 }
 
 /// Result of a fix attempt.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixResult {
     pub approach: String,
 }
@@ -75,7 +75,7 @@ pub enum GateKind {
 }
 
 /// The status for a single gate emitted to the frontend.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GateStatus {
     Checking,
     Installing,
@@ -90,7 +90,7 @@ pub enum GateStatus {
 }
 
 /// Progress event emitted by the runner.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProgressEvent {
     Gate {
         id: String,
@@ -113,9 +113,9 @@ pub trait Prerequisite: Send + Sync {
 }
 
 pub mod checker;
-pub mod factory;
 pub mod fixer;
 pub mod generic;
+pub mod factory;
 pub mod runner;
 
 #[cfg(test)]
