@@ -36,6 +36,7 @@ export class ModuleLogger {
 
     private _sessionId = '';
     private _startPromise: Promise<void>;
+    private _closed = false;
 
     constructor(module: string) {
         this.module = module;
@@ -44,18 +45,24 @@ export class ModuleLogger {
     }
 
     private async _startSession(): Promise<void> {
-        const appVersion = '0.1.0';
-        const systemInfo = {
-            os: navigator.userAgent,
-            arch: 'unknown',
-            ram_gb: 0,
-            cpu_cores: navigator.hardwareConcurrency ?? 0,
-        };
-        this._sessionId = await invoke<string>('log_session_start', {
-            module:      this.module,
-            app_version: appVersion,
-            system_info: systemInfo,
-        });
+        try {
+            const appVersion = '0.1.0';
+            const systemInfo = {
+                os: navigator.userAgent,
+                arch: 'unknown',
+                ram_gb: 0,
+                cpu_cores: navigator.hardwareConcurrency ?? 0,
+            };
+            this._sessionId = await invoke<string>('log_session_start', {
+                module:      this.module,
+                app_version: appVersion,
+                system_info: systemInfo,
+            });
+        } catch (e) {
+            // Sidecar unavailable — logger degrades to console-only
+            console.warn('[sensei:logger] session start failed, logging to console only', e);
+            this._sessionId = '';
+        }
     }
 
     async info(
@@ -96,9 +103,11 @@ export class ModuleLogger {
         await this._startPromise;
         await invoke('log_session_end', { session_id: this._sessionId });
         _registry.delete(this.module);
+        this._closed = true;
     }
 
     private async _send(fields: Partial<LogEntry>): Promise<void> {
+        if (this._closed) return;
         await this._startPromise;
         const entry: LogEntry = {
             id:    nextEntryId(),
@@ -112,17 +121,19 @@ export class ModuleLogger {
             stack: fields.stack,
         };
 
-        if (import.meta.env.DEV) {
+        if (import.meta.env.DEV || !this._sessionId) {
             const tag = { module: this.module, layer: entry.layer };
             if (entry.level === 'error') console.error('[sensei:logger]', tag, entry.msg, entry);
             else if (entry.level === 'warn') console.warn('[sensei:logger]', tag, entry.msg, entry);
             else console.debug('[sensei:logger]', tag, entry.msg, entry);
         }
 
-        await invoke('log_entry', {
-            session_id: this._sessionId,
-            entry,
-        });
+        if (this._sessionId) {
+            await invoke('log_entry', {
+                session_id: this._sessionId,
+                entry,
+            });
+        }
     }
 }
 
@@ -141,4 +152,9 @@ export function getModuleLogger(module: string): ModuleLogger {
         _registry.set(module, logger);
     }
     return logger;
+}
+
+/** @internal — test use only */
+export function _clearRegistryForTesting(): void {
+    _registry.clear();
 }
