@@ -79,7 +79,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prereq::{CheckResult, FixResult, GateKind, Prerequisite, Remedy};
+    use crate::prereq::{CheckResult, FixResult, GateKind, Prerequisite};
     use crate::prereq::checker::Checker;
     use crate::prereq::fixer::Fixer;
     use crate::prereq::generic::GenericPrerequisite;
