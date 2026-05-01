@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PageData } from './$types';
-  import type { LogSession, BootstrapTrace } from '$lib/types.js';
+  import type { LogSession, BootstrapTrace, LogEntry } from '$lib/types.js';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { SvelteSet } from 'svelte/reactivity';
 
@@ -11,7 +11,7 @@
   let selectedId    = $state<string | null>(null);
   let showModal     = $state(false);
   let addCtx        = $state('');
-  let expandedDates = new SvelteSet(['Today']);
+  let expandedDates = $state(new SvelteSet(['Today']));
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const MODULE_META: Record<string, { kanji: string; label: string }> = {
@@ -73,8 +73,12 @@
   const activeId        = $derived(selectedId ?? data.sessions[0]?.id ?? null);
   const selectedSession = $derived(data.sessions.find(s => s.id === activeId) ?? null);
 
+  function isBootstrapTrace(t: BootstrapTrace | LogEntry): t is BootstrapTrace {
+    return 'action_type' in t;
+  }
+
   function fixCount(session: LogSession): number {
-    return (session.traces as BootstrapTrace[]).filter(t => t.fix_attempted).length;
+    return session.traces.filter(isBootstrapTrace).filter(t => t.fix_attempted).length;
   }
 
   function outcomeDot(outcome: string): string {
@@ -87,7 +91,7 @@
   }
 
   function buildBody(session: LogSession, additionalCtx: string): string {
-    const traces = session.traces as BootstrapTrace[];
+    const traces = session.traces.filter(isBootstrapTrace);
     const traceRows = traces.map(t =>
       `| ${t.step} | ${t.action_type} | \`${anonymize(t.cmd)}\` | ${fmtMs(t.ms)} | ${t.ok ? '✓' : '✗'} |`
     ).join('\n');
@@ -243,8 +247,7 @@ ${fixMd}${ctxSection}`;
           </tr>
         </thead>
         <tbody>
-          {#each selectedSession.traces as trace (trace.id)}
-            {@const t = trace as BootstrapTrace}
+          {#each selectedSession.traces.filter(isBootstrapTrace) as t (t.id)}
             <tr class:trace-fail={!t.ok}>
               <td class="step-cell">{t.step ?? ''}</td>
               <td>
@@ -260,6 +263,20 @@ ${fixMd}${ctxSection}`;
                 {:else}
                   <span class="result-fail">✗</span>
                 {/if}
+              </td>
+            </tr>
+          {/each}
+          {#each selectedSession.traces.filter(e => !isBootstrapTrace(e)) as entry (entry.id)}
+            {@const e = entry as LogEntry}
+            <tr>
+              <td class="step-cell">{e.step}</td>
+              <td><span class="badge badge-{e.level}">{e.level}</span></td>
+              <td class="cmd-cell">{e.msg}</td>
+              <td class="dur-cell">—</td>
+              <td class="result-cell">
+                {#if e.level === 'error'}<span class="result-fail">✗</span>
+                {:else if e.level === 'warn'}<span class="result-fixed">!</span>
+                {:else}<span class="result-ok">·</span>{/if}
               </td>
             </tr>
           {/each}
