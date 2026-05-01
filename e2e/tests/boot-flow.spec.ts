@@ -16,12 +16,12 @@ test.describe('Boot flow', () => {
 
   test('direct navigation to /setup/welcome works', async ({ tauriPage }) => {
     await tauriPage.goto('/setup/welcome');
-    await expect(tauriPage.locator('.wiz-header, .hero')).toBeVisible();
+    await expect(tauriPage.locator('.stage-title')).toContainText('Welcome');
   });
 
   test('direct navigation to /setup/preferences works', async ({ tauriPage }) => {
     await tauriPage.goto('/setup/preferences');
-    await expect(tauriPage.locator('.wiz-title')).toContainText('Preferences');
+    await expect(tauriPage.locator('.stage-title')).toContainText('Preferences');
   });
 
   test('direct navigation to /setup/assistants works', async ({ tauriPage }) => {
