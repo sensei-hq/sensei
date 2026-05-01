@@ -194,9 +194,7 @@
   /* ── WizHeader — matches mockup WizHeader ──── */
   .wiz-header {
     margin-bottom: 32px;
-    position: sticky; top: 0; z-index: 2;
-    background: var(--paper); padding-top: 44px; padding-bottom: 16px;
-    margin-top: -44px;
+    padding-top: 44px;
   }
   .wiz-label {
     font-size: 11px; color: var(--sumi-3); letter-spacing: 0.12em;
