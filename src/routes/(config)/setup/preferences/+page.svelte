@@ -195,7 +195,8 @@
   .wiz-header {
     margin-bottom: 32px;
     position: sticky; top: 0; z-index: 2;
-    background: var(--paper); padding-bottom: 16px;
+    background: var(--paper); padding-top: 44px; padding-bottom: 16px;
+    margin-top: -44px;
   }
   .wiz-label {
     font-size: 11px; color: var(--sumi-3); letter-spacing: 0.12em;
@@ -277,6 +278,7 @@
     border: var(--hairline); border-radius: 6px;
     background: var(--paper); color: var(--sumi);
     font-family: inherit; outline: none; flex-shrink: 0;
+    text-align: right; margin-left: auto;
   }
   .name-input:focus { border-color: var(--shu); }
 </style>
