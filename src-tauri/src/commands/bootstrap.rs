@@ -6,13 +6,14 @@
 //!   2. Run the generic runner with an event-emitting progress callback
 //!   3. Return immediately — progress arrives on the "bootstrap" channel
 
+use crate::log_collector::{LogCollector, LogSession, SystemInfo};
 use sensei_bootstrap::{
     self as bootstrap,
-    BootstrapResult, HardwareInfo,
+    BootstrapResult, BootstrapTrace, HardwareInfo,
     prereq::{GateStatus, ProgressEvent, factory, runner},
 };
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 // ---------------------------------------------------------------------------
 // Event helpers
@@ -71,9 +72,67 @@ fn dispatch(app: &tauri::AppHandle, event: ProgressEvent) {
 // Read-only commands (unchanged)
 // ---------------------------------------------------------------------------
 
+/// Run the full bootstrap check — all components + hardware detection.
+/// Traces all checks and writes a session log to disk.
 #[tauri::command]
-pub fn run_bootstrap() -> BootstrapResult {
-    bootstrap::run()
+pub fn run_bootstrap(app: tauri::AppHandle) -> BootstrapResult {
+    let (result, traces) = bootstrap::run_with_traces();
+
+    // Write session log (best-effort — never fail the bootstrap over logging)
+    write_bootstrap_session(&app, &result, &traces);
+
+    result
+}
+
+fn write_bootstrap_session(
+    app: &tauri::AppHandle,
+    result: &BootstrapResult,
+    traces: &[BootstrapTrace],
+) {
+    let system_info = collect_system_info(&result.hardware);
+
+    let outcome = if result.ready {
+        "success"
+    } else if result.components.iter().any(|c| c.is_failed()) {
+        "failed"
+    } else {
+        "partial"
+    };
+
+    let duration_ms: u64 = traces.iter().map(|t| t.ms).sum();
+
+    let trace_values: Vec<serde_json::Value> = traces
+        .iter()
+        .map(|t| serde_json::to_value(t).unwrap_or_default())
+        .collect();
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let session_id = format!("sess-bs-{:08x}", COUNTER.fetch_add(1, Ordering::Relaxed));
+
+    let session = LogSession {
+        id:          session_id,
+        module:      "bootstrap".to_string(),
+        started_at:  chrono::Utc::now().to_rfc3339(),
+        app_version: app.package_info().version.to_string(),
+        system_info,
+        outcome:     outcome.to_string(),
+        duration_ms,
+        traces:      trace_values,
+    };
+
+    let collector = app.state::<LogCollector>();
+    collector.write_session(&session);
+}
+
+fn collect_system_info(hw: &HardwareInfo) -> SystemInfo {
+    SystemInfo {
+        os:        sysinfo::System::long_os_version()
+                       .unwrap_or_else(|| "unknown".to_string()),
+        arch:      std::env::consts::ARCH.to_string(),
+        ram_gb:    hw.ram_gb as u64,
+        cpu_cores: hw.cpu_cores as usize,
+    }
 }
 
 #[tauri::command]
