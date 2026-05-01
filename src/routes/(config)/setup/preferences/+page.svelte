@@ -5,13 +5,6 @@
 </script>
 
 <div class="preferences">
-  <!-- ── Stage header (matches WizHeader from mockup) ──── -->
-  <div class="wiz-header">
-    <div class="wiz-label"><span class="kanji wiz-label-kanji">名</span> Step</div>
-    <h1 class="display wiz-title">Preferences</h1>
-    <p class="wiz-tagline">A few small choices before you step in. Anything here can be changed later.</p>
-  </div>
-
   <!-- ── Display name ─────────────────────────────────── -->
   <section class="section">
     <header class="section-header">
@@ -190,22 +183,6 @@
 
 <style>
   .preferences { max-width: 760px; }
-
-  /* ── WizHeader — matches mockup WizHeader ──── */
-  .wiz-header {
-    margin-bottom: 32px;
-    padding-top: 44px;
-  }
-  .wiz-label {
-    font-size: 11px; color: var(--sumi-3); letter-spacing: 0.12em;
-    text-transform: uppercase; margin-bottom: 8px;
-  }
-  .wiz-label-kanji { color: var(--shu); margin-right: 8px; }
-  .wiz-title {
-    font-size: 36px; font-weight: 300; letter-spacing: -0.02em;
-    margin: 0 0 6px;
-  }
-  .wiz-tagline { font-size: 14px; color: var(--sumi-3); margin: 0; }
 
   /* ── Section ─────────────────────────────── */
   .section { padding-top: 24px; padding-bottom: 4px; border-top: var(--hairline); }
