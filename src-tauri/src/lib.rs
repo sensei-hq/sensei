@@ -5,7 +5,7 @@ mod commands;
 use tauri::Manager;
 
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -40,7 +40,14 @@ pub fn run() {
             window.open_devtools();
 
             Ok(())
-        })
+        });
+
+    #[cfg(feature = "e2e-testing")]
+    {
+        builder = builder.plugin(tauri_plugin_playwright::init());
+    }
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running sensei desktop")
 }
