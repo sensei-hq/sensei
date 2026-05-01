@@ -48,9 +48,6 @@
     if (path) goto(path);
   }
 
-  function exitSetup() {
-    goto('/');
-  }
 </script>
 
 <div class="wizard">
@@ -62,8 +59,6 @@
       <div class="rail-header">
         <span class="kanji rail-logo">先生</span>
         <span class="display rail-brand">Sensei</span>
-        <span class="rail-spacer"></span>
-        <button class="rail-esc" onclick={exitSetup} title="Exit setup">ESC</button>
       </div>
 
       <div class="rail-section-label">Setup</div>
@@ -180,18 +175,6 @@
   }
   .rail-logo { font-size: 22px; color: var(--shu); }
   .rail-brand { font-size: 17px; }
-  .rail-spacer { flex: 1; }
-  .rail-esc {
-    font-size: 11px;
-    color: var(--sumi-3);
-    letter-spacing: 0.1em;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    font-family: var(--font-ui);
-  }
-  .rail-esc:hover { color: var(--sumi-2); }
 
   .rail-section-label {
     font-size: 10px;

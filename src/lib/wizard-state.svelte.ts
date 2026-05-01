@@ -127,6 +127,12 @@ export class WizardState {
     this.completion = { ...data.completion };
     this.preferences = { ...data.preferences };
 
+    // Prefill displayName from system username if empty
+    if (!this.preferences.displayName) {
+      const user = guessUserName();
+      if (user) this.preferences.displayName = user;
+    }
+
     this.assistants = {
       assistants: data.assistantFamilies.map(a => ({ ...a, selected: a.selected ?? a.installed })),
     };
@@ -163,6 +169,26 @@ export class WizardState {
       return false;
     }
   }
+}
+
+/** Best-effort username from the browser path or localStorage. */
+function guessUserName(): string {
+  try {
+    // In Tauri, document.baseURI or location might contain /Users/<name>
+    // Fallback: check localStorage for a previously stored name
+    const stored = typeof localStorage !== 'undefined'
+      ? localStorage.getItem('sensei:userName') : null;
+    if (stored) return stored;
+
+    // Try to extract from common macOS/Linux path patterns in the page URL or referrer
+    const pathMatch = (typeof location !== 'undefined' ? location.pathname : '')
+      .match(/\/Users\/([^/]+)/);
+    if (pathMatch) {
+      const name = pathMatch[1];
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+  } catch { /* ignore */ }
+  return '';
 }
 
 export const wizardState = new WizardState();
