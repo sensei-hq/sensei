@@ -370,6 +370,132 @@ pub fn probe_traced(step: &str, desc: &str, host: &str, port: u16) -> BootstrapT
     }
 }
 
+/// Check if a binary exists, returning status and traces. Pure function.
+pub fn check_binary_traced(
+    name: &str,
+    binary: &str,
+    version_flag: &str,
+) -> (ComponentStatus, Vec<BootstrapTrace>) {
+    #[cfg(unix)]
+    let which_cmd = "which";
+    #[cfg(windows)]
+    let which_cmd = "where";
+
+    let which_t = run_traced(
+        &format!("{name}_which"),
+        &format!("Locate {name} binary"),
+        which_cmd,
+        &[binary],
+    );
+
+    let path = which_binary(binary);
+    if path.is_none() {
+        let mut t = which_t;
+        t.ok = false;
+        t.err = format!("{binary} not found in PATH or known directories");
+        return (ComponentStatus::missing(name), vec![t]);
+    }
+    let path = path.unwrap();
+
+    let version_t = run_traced(
+        &format!("{name}_version"),
+        &format!("Check {name} version"),
+        binary,
+        &[version_flag],
+    );
+    let version = parse_version_from_line(&version_t.out);
+
+    // If which command failed (EXTRA_PATHS fallback found it), fix the trace
+    let mut which_final = which_t;
+    if !which_final.ok {
+        which_final.ok = true;
+        which_final.out = path.clone();
+    }
+
+    let mut status = ComponentStatus::ready(name, version.as_deref().unwrap_or("unknown"));
+    status.detail = Some(path);
+    (status, vec![which_final, version_t])
+}
+
+/// Check binary + service port, returning status and traces. Pure function.
+pub fn check_binary_and_service_traced(
+    name: &str,
+    binary: &str,
+    _version_flag: &str,
+    port: u16,
+) -> (ComponentStatus, Vec<BootstrapTrace>) {
+    #[cfg(unix)]
+    let which_cmd = "which";
+    #[cfg(windows)]
+    let which_cmd = "where";
+
+    let which_t = run_traced(
+        &format!("{name}_which"),
+        &format!("Locate {name} binary"),
+        which_cmd,
+        &[binary],
+    );
+
+    let path = which_binary(binary);
+    if path.is_none() {
+        let mut t = which_t;
+        t.ok = false;
+        t.err = format!("{binary} not found in PATH or known directories");
+        return (ComponentStatus::missing(name), vec![t]);
+    }
+    let path = path.unwrap();
+
+    let mut which_final = which_t;
+    if !which_final.ok {
+        which_final.ok = true;
+        which_final.out = path.clone();
+    }
+
+    let port_t = probe_traced(
+        &format!("{name}_port"),
+        &format!("Check {name} service on port {port}"),
+        "127.0.0.1",
+        port,
+    );
+    let port_ok = port_t.ok;
+    let traces = vec![which_final, port_t];
+
+    if !port_ok {
+        let mut status = ComponentStatus::failed(
+            name,
+            &format!("installed at {path} but service not running on port {port}"),
+        );
+        status.detail = Some(path);
+        return (status, traces);
+    }
+
+    let svc_version = fetch_service_version(name, port);
+    let mut status = ComponentStatus::ready(
+        name,
+        svc_version.as_deref().unwrap_or("unknown"),
+    );
+    status.detail = Some(path);
+    (status, traces)
+}
+
+/// Check a service port only, returning status and a trace. Pure function.
+pub fn check_service_traced(name: &str, port: u16) -> (ComponentStatus, Vec<BootstrapTrace>) {
+    let port_t = probe_traced(
+        &format!("{name}_port"),
+        &format!("Check {name} on port {port}"),
+        "127.0.0.1",
+        port,
+    );
+    if port_t.ok {
+        let version = fetch_service_version(name, port);
+        let status = ComponentStatus::ready(name, version.as_deref().unwrap_or("unknown"));
+        (status, vec![port_t])
+    } else {
+        let status = ComponentStatus::failed(name, &format!("not reachable on port {port}"));
+        (status, vec![port_t])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,5 +581,40 @@ mod tests {
     fn version_parsing_ollama() {
         let parsed = parse_version_from_line("ollama version 0.5.4");
         assert_eq!(parsed, Some("0.5.4".to_string()));
+    }
+
+    #[test]
+    fn check_binary_traced_finds_ls() {
+        let (status, traces) = check_binary_traced("ls", "ls", "--help");
+        // ls exists everywhere — expect ready
+        assert!(status.is_ready(), "ls should be found");
+        assert!(!traces.is_empty(), "should have at least one trace");
+        assert!(traces.iter().any(|t| t.step.contains("ls")));
+    }
+
+    #[test]
+    fn check_binary_traced_missing() {
+        let (status, traces) = check_binary_traced(
+            "nope", "sensei-nonexistent-xyz", "--version"
+        );
+        assert!(status.is_failed(), "nonexistent binary should fail");
+        assert!(!traces.is_empty());
+    }
+
+    #[test]
+    fn check_service_traced_closed_port() {
+        let (status, traces) = check_service_traced("nope_service", 1);
+        assert!(status.is_failed());
+        assert!(!traces.is_empty());
+        assert!(traces.iter().any(|t| t.cmd.contains("tcp probe")));
+    }
+
+    #[test]
+    fn check_binary_and_service_traced_missing_binary() {
+        let (status, traces) = check_binary_and_service_traced(
+            "nope", "sensei-nonexistent-xyz", "--version", 1
+        );
+        assert!(status.is_failed());
+        assert!(!traces.is_empty());
     }
 }
