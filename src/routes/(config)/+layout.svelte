@@ -4,9 +4,10 @@
   import { onMount } from 'svelte';
   import { STAGES, stageIndex, nextStagePath, prevStagePath } from './stages.js';
   import { wizardState } from '$lib/wizard-state.svelte.js';
-  import type { WizardLoadData } from '$lib/setup/contracts.js';
+  import { loadWizardData } from '$lib/setup/loaders.js';
+  import { appState } from '$lib/appstate.svelte.js';
 
-  let { children, data }: { children: any; data: WizardLoadData } = $props();
+  let { children } = $props();
 
   const currentIdx = $derived(stageIndex(page.url.pathname));
   const stage = $derived(STAGES[currentIdx]);
@@ -15,9 +16,12 @@
   const total = STAGES.length;
   const canAdvance = $derived(wizardState.canAdvance(stage?.id ?? ''));
   let committing = $state(false);
+  let loaded = $state(false);
 
-  onMount(() => {
+  onMount(async () => {
+    const data = await loadWizardData(appState.port);
     wizardState.hydrate(data);
+    loaded = true;
   });
 
   async function next() {
