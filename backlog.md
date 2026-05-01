@@ -86,7 +86,66 @@ Each stage: read mockup → build component from `wizardState` → unit tests �
 
 ---
 
-## 3. Daemon Scan Pipeline
+## 3. Bootstrap Diagnostic Logging + Debug Mode
+
+**Priority:** High — needed for debugging DMG/installed app issues
+
+### Structured Trace Logging (bootstrap crate)
+
+Every bootstrap check returns a `BootstrapTrace`:
+```rust
+struct BootstrapTrace {
+    step: String,           // "pg_is_ready", "database_exists", "create_database"
+    command: String,         // "pg_isready --quiet"
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    duration_ms: u64,
+    success: bool,
+}
+```
+
+- `check()` and `setup()` accumulate traces alongside results
+- Every `Command::new()` call wrapped in a trace-capturing helper
+- Traces returned to Tauri sidecar and emitted as events
+
+### Log Viewer Screen (app)
+
+- New route: `(app)/log` or `(health)/log`
+- Shows bootstrap steps as a timeline: step name, command, result, duration
+- Color-coded: green (success), red (failure), yellow (warning)
+- Expandable: click a step to see full stdout/stderr
+- **Submit button**: creates a GitHub issue in `sensei-hq/app` with:
+  - System info (macOS version, chip, RAM)
+  - Bootstrap trace log
+  - App version
+  - Uses `gh` CLI or GitHub API via Tauri command
+
+### App Menu
+
+- Add `View > Log` menu item (Tauri menu API)
+- Opens the log viewer screen
+
+### Debug Mode
+
+- CLI flag: `--debug` enables verbose logging
+- Or: Settings toggle in the app
+- When active: toast notifications on gate failures with error details
+- Trace log always captured, debug mode just surfaces it in the UI
+
+### Scope
+
+| Component | Work |
+|-----------|------|
+| `daemon/crates/bootstrap` | `BootstrapTrace` struct, trace-capturing helper, update all checks |
+| `app/src-tauri/src/commands/bootstrap.rs` | Expose traces via Tauri command |
+| `app/src/routes/` | Log viewer page |
+| `app/src-tauri/` | Menu item, `--debug` flag |
+| Tests | Trace struct tests, log viewer E2E |
+
+---
+
+## 4. Daemon Scan Pipeline
 
 **Spec:** [design/api/03-scan-event-flow.md](./design/api/03-scan-event-flow.md)
 
@@ -130,10 +189,10 @@ Each screen needs daemon endpoints that return data in the shape the UI expects.
 
 | Task | Status |
 |------|--------|
-| Spike: install plugin, write one test for health→setup flow | Not started |
-| Configure browser mode (headless, mocked IPC) for CI | Not started |
+| Spike: install plugin, write one test for health→setup flow | Done (2026-05-01) |
+| Configure browser mode (headless, mocked IPC) for CI | Done — 21 tests passing |
 | Configure Tauri mode for local E2E | Not started |
-| Add wizard stage test fixtures | Not started |
+| Add wizard stage test fixtures | Done — fixtures.ts with IPC mocks |
 
 **Setup:**
 - Rust: feature flag `e2e-testing = ["tauri-plugin-playwright"]` in src-tauri/Cargo.toml
@@ -145,20 +204,20 @@ Each screen needs daemon endpoints that return data in the shape the UI expects.
 ## Order of work
 
 ```
-1. Bootstrap           → Done (2026-04-29)
-2. Layout chrome       → Done (2026-04-30)
-3. Foundation (F2-F4)  → Done (2026-05-01) — contracts, wizard state, loaders, layout wiring
-3a. E2E spike          → tauri-plugin-playwright setup + first test
-4. Welcome             → verify commit flow end-to-end
-5. Preferences         → match mockup → wire config API
-6. Assistants          → refactor to wizardState → wire configure API
-7. Roots               → refactor + exclusions → wire scan roots API
-8. Scan                → baseline + incremental → wire SSE
-9. Projects            → match mockup → wire project CRUD
-10. Libraries          → match mockup → wire libs API
-11. Instruments        → match mockup → wire MCP registry API
-12. Done               → wire commitAll
-13. Daemon pipeline    → complete scan events (parallel with UI)
+1.  Bootstrap           → Done (2026-04-29)
+2.  Layout chrome       → Done (2026-04-30)
+3.  Foundation (F2-F4)  → Done (2026-05-01) — contracts, wizard state, loaders, layout wiring
+3a. E2E spike           → Done (2026-05-01) — 21 browser-mode tests passing
+3b. Preferences stage   → Done (2026-05-01) — UI + unit + E2E tests
+4.  Bootstrap logging   → structured trace, log viewer, debug mode, GitHub submit
+5.  Assistants          → refactor to wizardState → wire configure API
+6.  Roots              → refactor + exclusions → wire scan roots API
+7.  Scan               → baseline + incremental → wire SSE
+8.  Projects           → match mockup → wire project CRUD
+9.  Libraries          → match mockup → wire libs API
+10. Instruments        → match mockup → wire MCP registry API
+11. Done               → wire commitAll
+12. Daemon pipeline    → complete scan events (parallel with UI)
 ```
 
 Each step: mockup → state → component → API → test. No skipping.
