@@ -8,6 +8,7 @@
 /// Register once via `.manage(LogCollector::new())` in lib.rs.
 pub struct LogCollector;
 
+#[allow(dead_code)] // stub — all methods will be called once the logging session lands
 impl LogCollector {
     pub fn new() -> Self {
         Self
