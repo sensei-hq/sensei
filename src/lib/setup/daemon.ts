@@ -197,12 +197,12 @@ export async function installViaBrew(
 ): Promise<boolean> {
   const isTauri = await hasTauri();
   if (!isTauri) {
-    onUpdate('Install manually: brew install mizukisu/tap/sensei');
+    onUpdate('Install manually: brew install sensei-hq/tap/sensei');
     return false;
   }
 
   onUpdate('Installing via homebrew...');
-  const result = await tauriExec('brew', ['install', 'mizukisu/tap/sensei']);
+  const result = await tauriExec('brew', ['install', 'sensei-hq/tap/sensei']);
   if (result.code === 0) {
     onUpdate('Installed successfully');
     return true;
