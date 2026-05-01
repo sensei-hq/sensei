@@ -460,8 +460,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -3545,6 +3547,7 @@ dependencies = [
 name = "sensei-bootstrap"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3556,15 +3559,18 @@ dependencies = [
 name = "sensei-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "sensei-bootstrap",
  "serde",
  "serde_json",
  "shellexpand",
+ "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "tauri-plugin-playwright",
  "tauri-plugin-shell",
+ "tempfile",
  "ureq",
  "window-vibrancy 0.5.3",
 ]
