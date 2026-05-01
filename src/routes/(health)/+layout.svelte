@@ -26,9 +26,8 @@
   }
   .health-main {
     flex: 1;
+    min-height: 0;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 64px;
+    flex-direction: column;
   }
 </style>
