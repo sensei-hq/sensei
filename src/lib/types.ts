@@ -419,3 +419,52 @@ export interface IndexError {
   adapter?: string;
   timestamp: string;
 }
+
+// ── Diagnostic Log Types ──────────────────────────────────────────────────
+
+export interface SystemInfo {
+    os:        string;
+    arch:      string;
+    ram_gb:    number;
+    cpu_cores: number;
+}
+
+export interface LogEntry {
+    id:     string;
+    ts:     string;
+    level:  'info' | 'warn' | 'error';
+    layer:  'ui' | 'api' | 'sidecar' | 'data_load';
+    step:   string;
+    msg:    string;
+    data?:  Record<string, unknown>;
+    err?:   string;
+    stack?: string;
+}
+
+export interface BootstrapTrace {
+    id:            string;
+    ts:            string;
+    action_type:   'check' | 'resolve' | 'instruct';
+    step:          string;
+    desc:          string;
+    cmd:           string;
+    exit:          number | null;
+    out:           string;
+    err:           string;
+    ms:            number;
+    ok:            boolean;
+    fix_attempted: boolean;
+    fix_approach:  string | null;
+    fix_ok:        boolean | null;
+}
+
+export interface LogSession {
+    id:          string;
+    module:      string;
+    started_at:  string;
+    app_version: string;
+    system_info: SystemInfo;
+    outcome:     'success' | 'partial' | 'failed';
+    duration_ms: number;
+    traces:      (BootstrapTrace | LogEntry)[];
+}
