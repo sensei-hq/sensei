@@ -49,7 +49,7 @@ pub fn run() {
             let log_dir = app
                 .path()
                 .app_data_dir()
-                .expect("failed to get app data dir")
+                .map_err(|e| format!("failed to get app data dir: {e}"))?
                 .join("sensei")
                 .join("logs");
             app.manage(LogCollector::new(log_dir));
