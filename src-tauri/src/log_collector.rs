@@ -79,19 +79,19 @@ impl LogCollector {
     /// Start a new incremental session. Returns the generated session ID.
     pub fn start_session(
         &self,
-        module: String,
-        app_version: String,
+        module: &str,
+        app_version: &str,
         system_info: SystemInfo,
     ) -> String {
         let session_id = next_session_id();
-        let dir = self.log_dir.join(&module);
+        let dir = self.log_dir.join(module);
         self.rotate_if_needed(&dir);
 
         let session = ActiveSession {
-            module,
+            module:        module.to_string(),
             started_at:    chrono::Utc::now().to_rfc3339(),
             start_instant: Instant::now(),
-            app_version,
+            app_version:   app_version.to_string(),
             system_info,
             entries:       Vec::new(),
             max_level:     0,
@@ -120,12 +120,16 @@ impl LogCollector {
     }
 
     /// Finalize an incremental session and write it to disk.
-    pub fn end_session(&self, session_id: &str) -> Result<(), String> {
+    pub fn end_session(&self, session_id: &str) {
         let session = {
             let mut sessions = self.sessions.lock().unwrap();
-            sessions
-                .remove(session_id)
-                .ok_or_else(|| format!("session {session_id} not found"))?
+            match sessions.remove(session_id) {
+                Some(s) => s,
+                None => {
+                    eprintln!("log_collector: session {session_id} not found");
+                    return;
+                }
+            }
         };
 
         let outcome = match session.max_level {
@@ -134,7 +138,6 @@ impl LogCollector {
             _ => "success",
         };
         let duration_ms = session.start_instant.elapsed().as_millis() as u64;
-        let module = session.module.clone();
 
         let log_session = LogSession {
             id:          session_id.to_string(),
@@ -147,21 +150,25 @@ impl LogCollector {
             traces:      session.entries,
         };
 
-        self.write_session(&module, session_id, &log_session)
+        self.write_session(&log_session);
     }
 
     /// Write a pre-built session atomically (used by bootstrap command after run_with_traces).
-    pub fn write_session(
-        &self,
-        module: &str,
-        session_id: &str,
-        session: &LogSession,
-    ) -> Result<(), String> {
-        let dir = self.log_dir.join(module);
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let path = dir.join(format!("{session_id}.json"));
-        let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
-        std::fs::write(&path, json).map_err(|e| e.to_string())
+    pub fn write_session(&self, session: &LogSession) {
+        let dir = self.log_dir.join(&session.module);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("log_collector: write failed: {e}");
+            return;
+        }
+        let path = dir.join(format!("{}.json", session.id));
+        match serde_json::to_string_pretty(session) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    eprintln!("log_collector: write failed: {e}");
+                }
+            }
+            Err(e) => eprintln!("log_collector: write failed: {e}"),
+        }
     }
 
     /// Read all sessions, optionally filtered by module, newest-first.
@@ -245,8 +252,8 @@ mod tests {
         let collector = LogCollector::new(tmp.path().to_path_buf());
 
         let sid = collector.start_session(
-            "wizard".to_string(),
-            "0.1.0".to_string(),
+            "wizard",
+            "0.1.0",
             make_sys_info(),
         );
         assert!(sid.starts_with("sess-"));
@@ -263,7 +270,7 @@ mod tests {
             stack: None,
         };
         collector.append_entry(&sid, entry);
-        collector.end_session(&sid).unwrap();
+        collector.end_session(&sid);
 
         let path = tmp.path().join("wizard").join(format!("{sid}.json"));
         assert!(path.exists(), "session file should be written");
@@ -278,7 +285,7 @@ mod tests {
     fn error_entry_sets_outcome_failed() {
         let tmp = TempDir::new().unwrap();
         let collector = LogCollector::new(tmp.path().to_path_buf());
-        let sid = collector.start_session("wizard".to_string(), "0.1.0".to_string(), make_sys_info());
+        let sid = collector.start_session("wizard", "0.1.0", make_sys_info());
 
         collector.append_entry(&sid, LogEntry {
             id: "e1".to_string(), ts: "2026-05-01T10:00:00Z".to_string(),
@@ -287,7 +294,7 @@ mod tests {
             data: None, err: Some("timeout".to_string()), stack: None,
         });
 
-        collector.end_session(&sid).unwrap();
+        collector.end_session(&sid);
         let path = tmp.path().join("wizard").join(format!("{sid}.json"));
         let session: LogSession = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(session.outcome, "failed");
@@ -307,7 +314,7 @@ mod tests {
             duration_ms: 1234,
             traces:      vec![],
         };
-        collector.write_session("bootstrap", "sess-00000001", &session).unwrap();
+        collector.write_session(&session);
         let path = tmp.path().join("bootstrap").join("sess-00000001.json");
         assert!(path.exists());
     }
@@ -333,8 +340,8 @@ mod tests {
         }
 
         // Now start a session (which triggers rotation)
-        let sid = collector.start_session("bootstrap".to_string(), "0.1.0".to_string(), make_sys_info());
-        collector.end_session(&sid).ok();
+        let sid = collector.start_session("bootstrap", "0.1.0", make_sys_info());
+        collector.end_session(&sid);
 
         let count = std::fs::read_dir(&dir).unwrap()
             .filter_map(|e| e.ok())
@@ -353,11 +360,11 @@ mod tests {
             .enumerate()
         {
             let sid = format!("sess-0000000{i}");
-            collector.write_session("bootstrap", &sid, &LogSession {
+            collector.write_session(&LogSession {
                 id: sid.clone(), module: "bootstrap".to_string(), started_at: ts.to_string(),
                 app_version: "0.1.0".to_string(), system_info: make_sys_info(),
                 outcome: "success".to_string(), duration_ms: 100, traces: vec![],
-            }).unwrap();
+            });
         }
 
         let sessions = collector.read_sessions(Some("bootstrap"));
