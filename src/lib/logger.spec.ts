@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getModuleLogger } from './logger.js';
+import { getModuleLogger, _clearRegistryForTesting } from './logger.js';
 
 // Mock @tauri-apps/api/core before importing logger
 vi.mock('@tauri-apps/api/core', () => ({
@@ -12,6 +12,7 @@ const mockInvoke = vi.mocked(invoke);
 
 beforeEach(() => {
     mockInvoke.mockReset();
+    _clearRegistryForTesting();
 });
 
 describe('getModuleLogger', () => {
