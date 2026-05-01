@@ -1,29 +1,51 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { appState } from '$lib/appstate.svelte.js';
+  import { onMount } from 'svelte';
   import { STAGES, stageIndex, nextStagePath, prevStagePath } from './stages.js';
+  import { wizardState } from '$lib/wizard-state.svelte.js';
+  import type { WizardLoadData } from '$lib/setup/contracts.js';
 
-  let { children } = $props();
+  let { children, data }: { children: any; data: WizardLoadData } = $props();
 
   const currentIdx = $derived(stageIndex(page.url.pathname));
   const stage = $derived(STAGES[currentIdx]);
   const isFirst = $derived(currentIdx === 0);
   const isLast = $derived(currentIdx === STAGES.length - 1);
+  const total = STAGES.length;
+  const canAdvance = $derived(wizardState.canAdvance(stage?.id ?? ''));
+  let committing = $state(false);
 
-  function next() {
+  onMount(() => {
+    wizardState.hydrate(data);
+  });
+
+  async function next() {
+    if (committing) return;
+    if (!canAdvance) return;
+
+    committing = true;
     if (isLast) {
-      appState.setSetupComplete();
+      await wizardState.commitStage('done');
+      committing = false;
       goto('/observatory');
       return;
     }
-    const path = nextStagePath(page.url.pathname);
-    if (path) goto(path);
+    const ok = await wizardState.commitStage(stage.id);
+    committing = false;
+    if (ok) {
+      const path = nextStagePath(page.url.pathname);
+      if (path) goto(path);
+    }
   }
 
   function back() {
     const path = prevStagePath(page.url.pathname);
     if (path) goto(path);
+  }
+
+  function exitSetup() {
+    goto('/');
   }
 </script>
 
@@ -32,20 +54,50 @@
 
   <div class="body">
     <!-- Rail -->
-    <nav class="rail">
-      {#each STAGES as s, i (s.id)}
-        <button
-          class="rail-item"
-          class:active={i === currentIdx}
-          class:done={i < currentIdx}
-          onclick={() => { if (i <= currentIdx) goto(s.path); }}
-          disabled={i > currentIdx}
-        >
-          <span class="rail-icon kanji">{s.icon}</span>
-          <span class="rail-label">{s.title}</span>
-        </button>
-      {/each}
-    </nav>
+    <aside class="rail">
+      <div class="rail-header">
+        <span class="kanji rail-logo">先生</span>
+        <span class="display rail-brand">Sensei</span>
+        <span class="rail-spacer"></span>
+        <button class="rail-esc" onclick={exitSetup} title="Exit setup">ESC</button>
+      </div>
+
+      <div class="rail-section-label">Setup</div>
+
+      <div class="rail-stages">
+        {#each STAGES as s, i (s.id)}
+          {@const isCur = i === currentIdx}
+          {@const isDone = wizardState.isStageComplete(s.id)}
+          {@const isNavigable = isDone || isCur}
+          <button
+            class="rail-item"
+            class:active={isCur}
+            class:done={isDone}
+            onclick={() => { if (isNavigable) goto(s.path); }}
+            disabled={!isNavigable}
+          >
+            <span class="kanji rail-kanji" class:active={isCur} class:done={isDone}>{s.icon}</span>
+            <div class="rail-text">
+              <div class="rail-title">{s.title}</div>
+              {#if isCur}
+                <div class="mono rail-sub">{s.sub}</div>
+              {/if}
+            </div>
+            <span class="rail-tick" class:visible={isDone}>✓</span>
+          </button>
+        {/each}
+      </div>
+
+      <div class="rail-footer">
+        <div class="services-status">
+          <span class="services-dot"></span>
+          <div class="services-text">
+            <div class="services-label">Services</div>
+            <div class="services-value">all green</div>
+          </div>
+        </div>
+      </div>
+    </aside>
 
     <!-- Content -->
     <div class="main">
@@ -60,15 +112,26 @@
 
       <!-- Bottom nav -->
       <div class="bottom">
-        <div class="bottom-progress">
-          {currentIdx + 1} / {STAGES.length}
+        <div class="bottom-left">
+          <span class="bottom-counter">
+            {String(currentIdx + 1).padStart(2, '0')}
+            <span class="bottom-counter-dim">/ {total}</span>
+          </span>
+          <span class="bottom-stage-title">{stage.title}</span>
         </div>
+
+        <div class="bottom-ticks">
+          {#each Array(total) as _, i}
+            <span class="bottom-tick" class:filled={i <= currentIdx}></span>
+          {/each}
+        </div>
+
         <div class="bottom-buttons">
-          {#if !isFirst}
-            <button class="btn-outline" onclick={back}>Back</button>
-          {/if}
-          <button class="btn-solid" onclick={next}>
-            {isLast ? 'Enter Observatory' : 'Continue'}
+          <button class="btn-back" onclick={back} disabled={isFirst}>
+            ← Back
+          </button>
+          <button class="btn-primary" onclick={next} disabled={!canAdvance || committing}>
+            {committing ? 'Saving...' : isLast ? 'Enter observatory →' : 'Continue →'}
           </button>
         </div>
       </div>
@@ -91,7 +154,7 @@
   .body {
     flex: 1;
     display: grid;
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: 260px 1fr;
     min-height: 0;
   }
 
@@ -99,37 +162,120 @@
   .rail {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 20px 16px;
+    padding: 26px 22px;
     border-right: var(--hairline);
     background: var(--paper-2);
-    overflow-y: auto;
+    overflow: hidden;
+  }
+
+  .rail-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 28px;
+  }
+  .rail-logo { font-size: 22px; color: var(--shu); }
+  .rail-brand { font-size: 17px; }
+  .rail-spacer { flex: 1; }
+  .rail-esc {
+    font-size: 11px;
+    color: var(--sumi-3);
+    letter-spacing: 0.1em;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-family: var(--font-ui);
+  }
+  .rail-esc:hover { color: var(--sumi-2); }
+
+  .rail-section-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--sumi-3);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .rail-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
 
   .rail-item {
+    display: grid;
+    grid-template-columns: 24px 1fr 14px;
+    gap: 10px;
+    align-items: center;
+    padding: 7px 10px;
+    border-radius: 6px;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--sumi-4);
+    cursor: default;
+    transition: all 0.14s;
+    font-family: var(--font-ui);
+    font-size: 13px;
+  }
+  .rail-item:not(:disabled) { cursor: pointer; }
+  .rail-item:disabled { cursor: default; }
+  .rail-item.active {
+    padding: 10px;
+    background: var(--paper);
+    border: var(--hairline);
+    color: var(--sumi);
+  }
+  .rail-item.done { color: var(--sumi-2); }
+
+  .rail-kanji {
+    font-size: 14px;
+    text-align: center;
+    color: var(--sumi-4);
+  }
+  .rail-kanji.active { color: var(--shu); }
+  .rail-kanji.done { color: var(--sumi-2); }
+
+  .rail-text { overflow: hidden; }
+  .rail-title { font-size: 13px; }
+  .rail-sub { font-size: 10px; color: var(--sumi-3); margin-top: 2px; }
+
+  .rail-tick {
+    font-size: 11px;
+    text-align: center;
+    line-height: 1;
+    color: var(--jade);
+    opacity: 0;
+    transition: opacity 0.14s;
+  }
+  .rail-tick.visible { opacity: 1; }
+
+  .rail-footer {
+    margin-top: auto;
+    border-top: var(--hairline);
+    padding-top: 12px;
+  }
+
+  .services-status {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 12px;
-    border: none;
-    background: none;
-    border-radius: var(--radius);
-    cursor: pointer;
-    text-align: left;
-    color: var(--sumi-3);
-    font-family: var(--font-ui);
-    font-size: 13px;
-    transition: background 0.12s, color 0.12s;
   }
-
-  .rail-item:hover:not(:disabled) { background: var(--paper-3); }
-  .rail-item:disabled { cursor: default; opacity: 0.4; }
-  .rail-item.active { color: var(--sumi); background: var(--paper); }
-  .rail-item.done { color: var(--sumi-2); }
-
-  .rail-icon { font-size: 18px; color: var(--shu); opacity: 0.6; }
-  .rail-item.active .rail-icon { opacity: 1; }
-  .rail-label { font-weight: 500; }
+  .services-dot {
+    width: 7px; height: 7px;
+    border-radius: 4px;
+    background: var(--matcha);
+    flex-shrink: 0;
+  }
+  .services-text { font-size: 11px; color: var(--sumi-2); line-height: 1.4; }
+  .services-label {
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 10px;
+    color: var(--sumi-3);
+  }
+  .services-value { margin-top: 2px; }
 
   /* ── Content ──────────────────────────────────── */
   .main {
@@ -163,17 +309,69 @@
   .bottom {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 16px 64px;
+    gap: 20px;
+    padding: 14px 64px;
     border-top: var(--hairline);
+    background: var(--paper);
     flex-shrink: 0;
   }
 
-  .bottom-progress {
+  .bottom-left {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .bottom-counter {
     font-size: 11px;
-    color: var(--sumi-4);
-    font-family: var(--font-mono);
+    letter-spacing: 0.12em;
+    color: var(--sumi-3);
+    text-transform: uppercase;
+  }
+  .bottom-counter-dim { color: var(--sumi-4); }
+  .bottom-stage-title {
+    font-size: 13px;
+    color: var(--sumi-2);
   }
 
-  .bottom-buttons { display: flex; gap: 8px; }
+  .bottom-ticks {
+    flex: 1;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .bottom-tick {
+    flex: 1;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--paper-edge);
+    transition: background 0.2s;
+  }
+  .bottom-tick.filled { background: var(--sumi); }
+
+  .bottom-buttons { display: flex; gap: 8px; align-items: center; }
+
+  .btn-back {
+    font-size: 12px;
+    color: var(--sumi-2);
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--font-ui);
+  }
+  .btn-back:disabled { color: var(--sumi-4); cursor: default; }
+
+  .btn-primary {
+    font-size: 13px;
+    background: var(--sumi);
+    color: var(--paper);
+    padding: 10px 22px;
+    border-radius: 6px;
+    border: none;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+  }
+  .btn-primary:hover:not(:disabled) { opacity: 0.9; }
+  .btn-primary:disabled { background: var(--paper-edge); color: var(--sumi-3); cursor: default; }
 </style>

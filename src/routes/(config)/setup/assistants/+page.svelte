@@ -1,22 +1,15 @@
 <script lang="ts">
-  import type { AssistantEntry } from './+page.js';
+  import { wizardState } from '$lib/wizard-state.svelte.js';
 
-  let { data }: { data: { assistants: AssistantEntry[] } } = $props();
-  let selected = $state<Set<string>>(new Set());
-
-  // Auto-select installed assistants
-  $effect(() => {
-    const installed = data.assistants.filter((a: AssistantEntry) => a.installed).map((a: AssistantEntry) => a.id);
-    selected = new Set(installed);
-  });
+  const assistants = $derived(wizardState.assistants.assistants);
 
   function toggle(id: string) {
-    if (selected.has(id)) {
-      selected.delete(id);
-    } else {
-      selected.add(id);
-    }
-    selected = new Set(selected);
+    const asst = assistants.find(a => a.id === id);
+    if (asst) asst.selected = !asst.selected;
+  }
+
+  function shortPath(p: string): string {
+    return p.replace(/^\/Users\/[^/]+/, '~');
   }
 </script>
 
@@ -26,8 +19,7 @@
   </p>
 
   <div class="grid">
-    {#each data.assistants as asst (asst.id)}
-      {@const checked = selected.has(asst.id)}
+    {#each assistants as asst (asst.id)}
       <button
         class="card"
         class:card-found={asst.installed}
@@ -36,20 +28,20 @@
       >
         <div class="card-body">
           <span class="card-name">{asst.name}</span>
-          {#if asst.installed && asst.configPath}
-            <span class="card-path">{asst.configPath}</span>
+          {#if asst.installed && asst.config_path}
+            <span class="card-path">{shortPath(asst.config_path)}</span>
           {:else}
             <span class="card-notfound">not found</span>
           {/if}
         </div>
-        <div class="checkbox" class:checked>
-          {#if checked}<span class="check">&#10003;</span>{/if}
+        <div class="checkbox" class:checked={asst.selected}>
+          {#if asst.selected}<span class="check">&#10003;</span>{/if}
         </div>
       </button>
     {/each}
   </div>
 
-  {#if data.assistants.length === 0}
+  {#if assistants.length === 0}
     <p class="empty">No AI coding assistants detected. Make sure the daemon is running.</p>
   {/if}
 </div>
