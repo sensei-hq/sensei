@@ -1,13 +1,16 @@
 project:
   name: sensei
-  note: >
-    Two active database backends. PostgreSQL (legacy, SaaS model — preserved for reference
-    and potential future team use). SQLite (current, local-first model — active development).
-
-  database: PostgreSQL
-  extensionSchema: extensions
-  staging:
-    - staging
+  note: Database structure for sensei the app.
+source:
+  dialect: postgresql
+target:
+  postgres:
+    url: $DATABASE_URL
+    extensions:
+      - name: uuid-ossp
+        schema: extensions
+      - name: vector
+        schema: extensions
 schemas:
   - extensions
   - staging
@@ -15,12 +18,10 @@ schemas:
   - history
   - inference
   - gateway
-
-extensions:
-  - uuid-ossp
-  - vector
 import:
+  staging:
+    - staging
   options:
     truncate: true
-    nullValue: ""
-  after: ~
+    null_value: ""
+ignore: []

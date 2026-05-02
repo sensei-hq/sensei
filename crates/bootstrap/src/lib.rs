@@ -69,7 +69,7 @@ pub fn run_with_traces() -> (BootstrapResult, Vec<BootstrapTrace>) {
     let h3 = std::thread::spawn(|| {
         util::check_binary_traced("sensei", "sensei", "--version")
     });
-    let h4 = std::thread::spawn(|| database::check_traced(None));
+    let h4 = std::thread::spawn(|| database::check_traced());
     let h5 = std::thread::spawn(|| util::check_service_traced("daemon", DAEMON_PORT));
 
     // Collate in gate order
@@ -116,7 +116,7 @@ pub fn run() -> BootstrapResult {
         // Gate 四: Sensei CLI (binary only — no service)
         util::check_binary("sensei", "sensei", "--version"),
         // Gate 五: Database
-        database::check(None),
+        database::check(),
         // Gate 六: Daemon (service only — binary checked via sensei gate)
         util::check_service("daemon", DAEMON_PORT),
     ];
