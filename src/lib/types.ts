@@ -1,3 +1,59 @@
+// ─── Stage pattern ─────────────────────────────────────────────────────────────
+
+import type { EventManager } from './events.js';
+import type { Component } from 'svelte';
+
+export interface Stage {
+  id: string;
+  title: string;
+  icon: string;
+  description: string;
+  watermark?: boolean;
+  component: Component;
+  canAdvance: () => boolean;
+  load?: () => Promise<void>;
+  source?: EventManager<any>;
+}
+
+export interface StateEvent<T extends { id: string }> {
+  action: 'add' | 'update' | 'remove' | 'set';
+  entity: string;
+  data: T | T[];
+}
+
+// ─── Scan ──────────────────────────────────────────────────────────────────────
+
+export type FolderStatus = 'discovered' | 'queued' | 'indexing' | 'indexed' | 'failed';
+export type ProjectStatus = 'scanning' | 'indexing' | 'active' | 'failed';
+export type ActivityLevel = 'discover' | 'queue' | 'process' | 'info' | 'success' | 'error';
+
+export interface ScanProjectFolder {
+  id: string;
+  name: string;
+  path: string;
+  stack: string[];
+  filesTotal: number;
+  filesCompleted: number;
+  status: FolderStatus;
+}
+
+export interface ScanProject {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  folders: ScanProjectFolder[];
+  autoDetected: boolean;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface ActivityEvent {
+  id: string;
+  level: ActivityLevel;
+  message: string;
+  elapsed: number;
+  timestamp: number;
+}
+
 // ─── Assistants (AI coding tools) ──────────────────────────────────────────────
 
 export interface AssistantStatus {
@@ -362,4 +418,53 @@ export interface IndexError {
   error: string;
   adapter?: string;
   timestamp: string;
+}
+
+// ── Diagnostic Log Types ──────────────────────────────────────────────────
+
+export interface SystemInfo {
+    os:        string;
+    arch:      string;
+    ram_gb:    number;
+    cpu_cores: number;
+}
+
+export interface LogEntry {
+    id:     string;
+    ts:     string;
+    level:  'info' | 'warn' | 'error';
+    layer:  'ui' | 'api' | 'sidecar' | 'data_load';
+    step:   string;
+    msg:    string;
+    data?:  Record<string, unknown>;
+    err?:   string;
+    stack?: string;
+}
+
+export interface BootstrapTrace {
+    id:            string;
+    ts:            string;
+    action_type:   'check' | 'resolve' | 'instruct';
+    step:          string;
+    desc:          string;
+    cmd:           string;
+    exit:          number | null;
+    out:           string;
+    err:           string;
+    ms:            number;
+    ok:            boolean;
+    fix_attempted: boolean;
+    fix_approach:  string | null;
+    fix_ok:        boolean | null;
+}
+
+export interface LogSession {
+    id:          string;
+    module:      string;
+    started_at:  string;
+    app_version: string;
+    system_info: SystemInfo;
+    outcome:     'success' | 'partial' | 'failed';
+    duration_ms: number;
+    traces:      (BootstrapTrace | LogEntry)[];
 }

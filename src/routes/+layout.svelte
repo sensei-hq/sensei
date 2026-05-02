@@ -2,6 +2,7 @@
   import 'uno.css';
   import '../app.css';
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
 
   let { children } = $props();
 
@@ -60,7 +61,18 @@
     applyColorScheme();
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     mq.addEventListener('change', applyColorScheme);
-    return () => mq.removeEventListener('change', applyColorScheme);
+
+    let unlisten: (() => void) | undefined;
+    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+      import('@tauri-apps/api/event').then(({ listen }) => {
+        listen<void>('open-logs', () => { goto('/logs'); }).then(fn => { unlisten = fn; });
+      });
+    }
+
+    return () => {
+      mq.removeEventListener('change', applyColorScheme);
+      unlisten?.();
+    };
   });
 </script>
 
