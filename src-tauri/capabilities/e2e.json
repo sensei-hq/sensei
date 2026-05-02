@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "e2e",
+  "description": "E2E testing capabilities for tauri-plugin-playwright",
+  "windows": ["main"],
+  "permissions": ["playwright:default"]
+}

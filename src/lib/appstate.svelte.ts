@@ -1,138 +1,120 @@
 /**
- * Centralized app state — replaces all localStorage usage.
- * Only `sensei:port` remains in localStorage (needed to find the daemon).
+ * Application state — singleton class managing daemon config and port.
+ * Only `sensei:port` stays in localStorage (needed to find the daemon).
  * Everything else is stored on the daemon via /api/config.
  */
 import { senseiApi } from './api.js';
 
-// ── State ────────────────────────────────────────────────────────────────────
+export class AppState {
+  port = $state(7744);
+  config = $state<Record<string, string>>({});
+  loaded = $state(false);
 
-let _port = $state(7744);
-let _config = $state<Record<string, string>>({});
-let _loaded = $state(false);
+  get activeProjectId(): string | null {
+    return this.config['active_project'] || this.config['active_solution'] || null;
+  }
 
-// ── Getters ──────────────────────────────────────────────────────────────────
+  get sidebarMaxItems(): number {
+    return parseInt(this.config['sidebar_max_items'] ?? '5', 10);
+  }
 
-export function getPort(): number { return _port; }
-export function isAppLoaded(): boolean { return _loaded; }
+  get globalSkills(): string[] {
+    try {
+      return JSON.parse(this.config['global_skills'] ?? '["zero-errors-policy","managing-project-sessions","pattern-based-development"]');
+    } catch { return []; }
+  }
 
-export function getConfigValue(key: string, fallback = ''): string {
-  return _config[key] ?? fallback;
-}
+  get setupComplete(): boolean {
+    return this.config['setup_complete'] === '1';
+  }
 
-export function getActiveProjectId(): string | null {
-  return _config['active_project'] || _config['active_solution'] || null;
-}
-/** @deprecated Use getActiveProjectId */
-export function getActiveSolutionId(): string | null { return getActiveProjectId(); }
+  get dismissedSuggestions(): string[] {
+    try {
+      return JSON.parse(this.config['dismissed_suggestions'] ?? '[]');
+    } catch { return []; }
+  }
 
-export function getSidebarMaxItems(): number {
-  return parseInt(_config['sidebar_max_items'] ?? '5', 10);
-}
+  async setPort(port: number) {
+    this.port = port;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('sensei:port', String(port));
+    }
+  }
 
-export function getGlobalSkills(): string[] {
-  try {
-    return JSON.parse(_config['global_skills'] ?? '["zero-errors-policy","managing-project-sessions","pattern-based-development"]');
-  } catch { return []; }
-}
+  async setConfig(key: string, value: string) {
+    this.config = { ...this.config, [key]: value };
+    const api = senseiApi(this.port);
+    await api.setConfig({ [key]: value });
+  }
 
-export function isSetupComplete(): boolean {
-  return _config['setup_complete'] === '1';
-}
+  async setActiveProjectId(id: string | null) {
+    if (id) {
+      await this.setConfig('active_project', id);
+    } else {
+      delete this.config['active_project'];
+      this.config = { ...this.config };
+      const api = senseiApi(this.port);
+      await api.deleteConfig('active_project');
+    }
+  }
 
-export function getDismissedSuggestions(): string[] {
-  try {
-    return JSON.parse(_config['dismissed_suggestions'] ?? '[]');
-  } catch { return []; }
-}
+  async setSidebarMaxItems(val: number) {
+    await this.setConfig('sidebar_max_items', String(Math.max(1, Math.min(20, val))));
+  }
 
-// ── Setters ──────────────────────────────────────────────────────────────────
+  async setGlobalSkills(skills: string[]) {
+    await this.setConfig('global_skills', JSON.stringify(skills));
+  }
 
-export async function setPort(port: number) {
-  _port = port;
-  // Port stays in localStorage — it's needed to find the daemon
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('sensei:port', String(port));
+  async setSetupComplete() {
+    await this.setConfig('setup_complete', '1');
+  }
+
+  async dismissSuggestion(id: string) {
+    const current = this.dismissedSuggestions;
+    if (!current.includes(id)) {
+      await this.setConfig('dismissed_suggestions', JSON.stringify([...current, id]));
+    }
+  }
+
+  async load() {
+    if (typeof localStorage !== 'undefined') {
+      const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
+      if (!isNaN(stored) && stored > 0) this.port = stored;
+    }
+
+    // Browser (no Tauri) → skip daemon calls
+    if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
+      this.config = {};
+      this.loaded = true;
+      return;
+    }
+
+    const api = senseiApi(this.port);
+    try {
+      this.config = await api.getConfig();
+    } catch {
+      this.config = {};
+    }
+
+    this.loaded = true;
+  }
+
+  async reset() {
+    try {
+      await fetch(`http://127.0.0.1:${this.port}/api/reset`, { method: 'POST' });
+    } catch { /* non-fatal */ }
+
+    this.config = {};
+    this.loaded = false;
+
+    if (typeof localStorage !== 'undefined') {
+      const port = localStorage.getItem('sensei:port');
+      localStorage.clear();
+      if (port) localStorage.setItem('sensei:port', port);
+    }
   }
 }
 
-export async function setConfigValue(key: string, value: string) {
-  _config[key] = value;
-  _config = { ..._config };
-  const api = senseiApi(_port);
-  await api.setConfig({ [key]: value });
-}
-
-export async function setActiveProjectId(id: string | null) {
-  if (id) {
-    await setConfigValue('active_project', id);
-  } else {
-    delete _config['active_project'];
-    _config = { ..._config };
-    const api = senseiApi(_port);
-    await api.deleteConfig('active_project');
-  }
-}
-/** @deprecated Use setActiveProjectId */
-export async function setActiveSolutionId(id: string | null) { return setActiveProjectId(id); }
-
-export async function setSidebarMaxItems(val: number) {
-  await setConfigValue('sidebar_max_items', String(Math.max(1, Math.min(20, val))));
-}
-
-export async function setGlobalSkills(skills: string[]) {
-  await setConfigValue('global_skills', JSON.stringify(skills));
-}
-
-export async function setSetupComplete() {
-  await setConfigValue('setup_complete', '1');
-}
-
-export async function dismissSuggestion(id: string) {
-  const current = getDismissedSuggestions();
-  if (!current.includes(id)) {
-    await setConfigValue('dismissed_suggestions', JSON.stringify([...current, id]));
-  }
-}
-
-// ── Lifecycle ────────────────────────────────────────────────────────────────
-
-/** Load config from daemon. Call once on app startup. */
-export async function loadAppState() {
-  // Read port from localStorage (only thing that stays local)
-  if (typeof localStorage !== 'undefined') {
-    const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
-    if (!isNaN(stored) && stored > 0) _port = stored;
-  }
-
-  // Fetch all config from daemon
-  const api = senseiApi(_port);
-  try {
-    _config = await api.getConfig();
-  } catch {
-    // Daemon not running — use defaults
-    _config = {};
-  }
-
-  _loaded = true;
-}
-
-/** Reset all config (for workspace reset). Clears everything on daemon + local. */
-export async function resetAppState() {
-  const api = senseiApi(_port);
-
-  // Single daemon call clears everything: projects, solutions, config, graph, manifests
-  try {
-    await fetch(`http://127.0.0.1:${_port}/api/reset`, { method: 'POST' });
-  } catch { /* non-fatal */ }
-
-  _config = {};
-  _loaded = false;
-
-  // Clear all localStorage (preserve port)
-  if (typeof localStorage !== 'undefined') {
-    const port = localStorage.getItem('sensei:port');
-    localStorage.clear();
-    if (port) localStorage.setItem('sensei:port', port);
-  }
-}
+/** Singleton instance — import and use directly. */
+export const appState = new AppState();
