@@ -58,7 +58,7 @@ fn dispatch(app: &tauri::AppHandle, event: ProgressEvent) {
                 GateStatus::Installing          => ("installing", None, None),
                 GateStatus::Starting            => ("starting",   None, None),
                 GateStatus::Ready { version, detail } => ("ready", version, detail),
-                GateStatus::Failed { error }    => ("error",      None, Some(error)),
+                GateStatus::Failed { error }    => ("blocked",    None, Some(error)),
             };
             emit_gate(app, &id, s, version.as_deref(), detail.as_deref());
         }

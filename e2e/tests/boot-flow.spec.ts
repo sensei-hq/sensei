@@ -4,38 +4,39 @@
  */
 
 import { test, expect } from '../fixtures';
+import { navigateTo } from '../helpers';
 
 test.describe('Boot flow', () => {
   test('health page loads without errors', async ({ tauriPage }) => {
-    await tauriPage.goto('/health');
-    // Health page should render — even if gates aren't met, it shouldn't crash
-    // Just verify the page navigated successfully
+    await navigateTo(tauriPage, '/health');
+    // Health page auto-advances to /setup/welcome or /observatory when all
+    // gates are ready. Accept either outcome — we just verify no crash.
     const url = await tauriPage.url();
-    expect(url).toContain('/health');
+    expect(url).toMatch(/\/(health|setup|observatory)/);
   });
 
   test('direct navigation to /setup/welcome works', async ({ tauriPage }) => {
-    await tauriPage.goto('/setup/welcome');
+    await navigateTo(tauriPage, '/setup/welcome');
     await expect(tauriPage.locator('.stage-title')).toContainText('Welcome');
   });
 
   test('direct navigation to /setup/preferences works', async ({ tauriPage }) => {
-    await tauriPage.goto('/setup/preferences');
+    await navigateTo(tauriPage, '/setup/preferences');
     await expect(tauriPage.locator('.stage-title')).toContainText('Preferences');
   });
 
   test('direct navigation to /setup/assistants works', async ({ tauriPage }) => {
-    await tauriPage.goto('/setup/assistants');
+    await navigateTo(tauriPage, '/setup/assistants');
     await expect(tauriPage.locator('.assistants')).toBeVisible();
   });
 
   test('direct navigation to /setup/roots works', async ({ tauriPage }) => {
-    await tauriPage.goto('/setup/roots');
+    await navigateTo(tauriPage, '/setup/roots');
     await expect(tauriPage.locator('.step')).toBeVisible();
   });
 
   test('direct navigation to /config redirects to /setup/welcome', async ({ tauriPage }) => {
-    await tauriPage.goto('/config');
-    await tauriPage.waitForURL('**/setup/welcome');
+    await navigateTo(tauriPage, '/config');
+    await tauriPage.waitForURL('/setup/welcome');
   });
 });

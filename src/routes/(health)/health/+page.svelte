@@ -11,7 +11,7 @@
   if (!hasTauri()) {
     bs.applyPreset({
       homebrew: 'ready', postgres: 'missing', ollama: 'missing',
-      sensei: 'missing', database: 'pending', senseid: 'pending',
+      sensei: 'missing', database: 'waiting', senseid: 'waiting',
     });
   }
 
@@ -46,12 +46,12 @@
       case 'failed': {
         // "not installed" = binary missing, anything else = service error
         const err = comp.state.error ?? '';
-        return err.includes('not installed') ? 'missing' : 'error';
+        return err.includes('not installed') ? 'missing' : 'blocked';
       }
       case 'detecting': return 'checking';
       case 'installing': return 'checking';
       case 'starting': return 'starting';
-      default: return 'pending';
+      default: return 'waiting';
     }
   }
 
@@ -127,7 +127,7 @@
       setTimeout(() => {
         bs.setGateStatus(gateId, 'ready');
         const idx = GATES.findIndex(g => g.id === gateId);
-        if (idx + 1 < GATES.length && bs.statuses[GATES[idx + 1].id] === 'pending') {
+        if (idx + 1 < GATES.length && bs.statuses[GATES[idx + 1].id] === 'waiting') {
           bs.setGateStatus(GATES[idx + 1].id, 'checking');
           setTimeout(() => {
             GATES.slice(idx + 1).forEach(g => bs.setGateStatus(g.id, 'ready'));
@@ -162,24 +162,16 @@
 
   function statusColor(s: GateStatus): string {
     if (s === 'ready') return 'var(--jade)';
-    if (s === 'missing' || s === 'error') return 'var(--shu)';
-    if (s === 'checking' || s === 'starting') return 'var(--sumi-2)';
+    if (s === 'missing' || s === 'blocked') return 'var(--shu)';
+    if (s === 'checking' || s === 'installing' || s === 'starting') return 'var(--sumi-2)';
     return 'var(--sumi-4)';
   }
 
   function pillBg(s: GateStatus): string {
     if (s === 'ready') return 'rgba(122,158,98,.10)';
-    if (s === 'missing' || s === 'error') return 'rgba(192,71,45,.08)';
-    if (s === 'checking' || s === 'starting') return 'var(--paper-2)';
+    if (s === 'missing' || s === 'blocked') return 'rgba(192,71,45,.08)';
+    if (s === 'checking' || s === 'installing' || s === 'starting') return 'var(--paper-2)';
     return 'transparent';
-  }
-
-  function pillLabel(s: GateStatus): string {
-    const map: Record<string, string> = {
-      ready: 'ready', checking: 'checking', starting: 'starting',
-      missing: 'missing', error: 'blocked', pending: 'waiting',
-    };
-    return map[s] ?? 'waiting';
   }
 </script>
 
@@ -220,7 +212,7 @@
         </div>
         <div class="progress-bars">
           {#each bs.gates as gate}
-            <span class="progress-segment" style="background: {statusColor(gate.status)}; opacity: {gate.status === 'pending' ? 0.5 : 1};"></span>
+            <span class="progress-segment" style="background: {statusColor(gate.status)}; opacity: {gate.status === 'waiting' ? 0.5 : 1};"></span>
           {/each}
         </div>
       </div>
@@ -233,10 +225,10 @@
     <!-- Gate list -->
     <div class="gate-list">
       {#each bs.visibleGates as gate, i (gate.id)}
-        {@const isBlocked = gate.status === 'missing' || gate.status === 'error'}
-        {@const isBusy = gate.status === 'checking' || gate.status === 'starting'}
+        {@const isBlocked = gate.status === 'missing' || gate.status === 'blocked'}
+        {@const isBusy = gate.status === 'checking' || gate.status === 'installing' || gate.status === 'starting'}
         {@const isReady = gate.status === 'ready'}
-        {@const isPending = gate.status === 'pending'}
+        {@const isPending = gate.status === 'waiting'}
         {@const showRemedy = i === bs.firstBlockedIdx && isBlocked}
 
         <div class="gate-row" class:pending={isPending}>
@@ -254,7 +246,7 @@
               {#if isBusy}<span class="spinner"></span>{/if}
               {#if isReady}<span style="font-size: 10px;">✓</span>{/if}
               {#if isBlocked}<span style="font-size: 12px;">·</span>{/if}
-              {pillLabel(gate.status)}
+              {gate.status}
             </div>
           </div>
 

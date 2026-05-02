@@ -3,7 +3,7 @@
  * Static data. Status is managed by BootstrapState class.
  */
 
-export type GateStatus = 'pending' | 'checking' | 'ready' | 'missing' | 'error' | 'starting';
+export type GateStatus = 'waiting' | 'checking' | 'installing' | 'ready' | 'missing' | 'blocked' | 'starting';
 
 export interface GateDefinition {
   id: string;
