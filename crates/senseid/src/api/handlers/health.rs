@@ -55,8 +55,8 @@ impl From<&ComponentStatus> for ComponentBrief {
 
 pub(crate) async fn health() -> Json<HealthResponse> {
     let (pg, ollama, db, models) = tokio::task::spawn_blocking(|| {
-        let pg = bootstrap::service::check("postgresql", bootstrap::POSTGRES_PORT);
-        let ollama = bootstrap::service::check("ollama", bootstrap::OLLAMA_PORT);
+        let pg = bootstrap::util::check_service("postgresql", bootstrap::POSTGRES_PORT);
+        let ollama = bootstrap::util::check_service("ollama", bootstrap::OLLAMA_PORT);
         let db = bootstrap::database::check(None);
         let models = bootstrap::models::list();
         (pg, ollama, db, models)
