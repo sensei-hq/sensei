@@ -15,14 +15,14 @@ Sensei is a local-first code intelligence platform that indexes your repositorie
 ## Install
 
 ```sh
-brew install mizukisu/tap/sensei
+brew install sensei-hq/tap/sensei
 sensei configure
 sensei install
 sensei start
 sensei scan ~/Developer
 ```
 
-Or download binaries from: https://github.com/mizukisu/sensei-releases/releases
+Or download binaries from: https://github.com/sensei-hq/sensei-releases/releases
 
 ## CLI Commands
 
@@ -77,7 +77,7 @@ All data stored locally at ~/.sensei/. Nothing sent to external servers.
 
 ## Links
 
-- Source: https://github.com/mizukisu/sensei-dev
-- Releases: https://github.com/mizukisu/sensei-releases
-- Homebrew: brew install mizukisu/tap/sensei
+- Source: https://github.com/sensei-hq/sensei
+- Releases: https://github.com/sensei-hq/sensei-releases
+- Homebrew: brew install sensei-hq/tap/sensei
 - License: MIT

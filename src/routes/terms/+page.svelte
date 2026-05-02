@@ -25,7 +25,7 @@
       <h2>License</h2>
       <p>
         Sensei is proprietary software. The source code is available for reference at
-        <a href="https://github.com/mizukisu/sensei-dev">github.com/mizukisu/sensei-dev</a>.
+        <a href="https://github.com/sensei-hq/sensei">github.com/sensei-hq/sensei</a>.
         Use of the software is subject to the license terms in the repository.
       </p>
 
@@ -69,7 +69,7 @@
       <h2>Contact</h2>
       <p>
         Questions about these terms can be directed to the project maintainers via
-        <a href="https://github.com/mizukisu/sensei-dev/issues">GitHub Issues</a>.
+        <a href="https://github.com/sensei-hq/sensei/issues">GitHub Issues</a>.
       </p>
     </div>
   </div>
