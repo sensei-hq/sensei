@@ -80,7 +80,7 @@
       <h2>Contact</h2>
       <p>
         Questions about this policy can be directed to the project maintainers via
-        <a href="https://github.com/mizukisu/sensei-dev/issues">GitHub Issues</a>.
+        <a href="https://github.com/sensei-hq/sensei/issues">GitHub Issues</a>.
       </p>
     </div>
   </div>
