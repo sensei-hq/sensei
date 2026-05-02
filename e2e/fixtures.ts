@@ -32,5 +32,5 @@ export const { test, expect } = createTauriTest({
       recommended_tier: 'recommended',
     }),
   },
-  mcpSocket: '/tmp/sensei-playwright.sock',
+  mcpSocket: '/tmp/tauri-playwright.sock',
 });

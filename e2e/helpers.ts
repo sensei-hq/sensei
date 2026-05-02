@@ -112,6 +112,30 @@ export async function setAppPort(page: import('@playwright/test').Page): Promise
   }, PORT);
 }
 
+/**
+ * Navigate to a route using SvelteKit's client-side router.
+ *
+ * WKWebView (Tauri/WebKit) breaks after a full page reload — the initial
+ * SvelteKit mount produces empty DOM. Using SvelteKit's own goto() avoids
+ * the reload entirely, so components render correctly.
+ *
+ * Safe in browser mode too: the import resolves via Vite's dev server.
+ */
+export async function navigateTo(
+  tauriPage: { evaluate: (script: string) => Promise<unknown> },
+  route: string,
+): Promise<void> {
+  await tauriPage.evaluate(`
+    (async function() {
+      await new Promise(r => setTimeout(r, 200));
+      var nav = await import('/node_modules/@sveltejs/kit/src/runtime/app/navigation.js');
+      await nav.goto(${JSON.stringify(route)});
+    })()
+  `);
+  // Give the new route's components time to mount
+  await sleep(800);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }

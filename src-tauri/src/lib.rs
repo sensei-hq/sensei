@@ -7,7 +7,7 @@ use log_collector::LogCollector;
 use tauri::{Emitter, Manager};
 
 pub fn run() {
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -54,16 +54,35 @@ pub fn run() {
                 .join("logs");
             app.manage(LogCollector::new(log_dir));
 
-            // ── Menu: View > Diagnostic Logs ──────────────────────────────
+            // ── Menu ──────────────────────────────────────────────────────────
+            // On macOS the FIRST submenu in MenuBuilder becomes the application
+            // menu (the one shown with the app name). We must include it explicitly
+            // so that "View" appears as a separate second item in the menu bar,
+            // not as the application menu itself.
             use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+
+            let app_submenu = SubmenuBuilder::new(app, "Sensei")
+                .about(None)
+                .separator()
+                .services()
+                .separator()
+                .hide()
+                .hide_others()
+                .show_all()
+                .separator()
+                .quit()
+                .build()?;
+
             let logs_item = MenuItemBuilder::with_id("open-logs", "Diagnostic Logs")
                 .accelerator("CmdOrCtrl+Shift+L")
                 .build(app)?;
             let view_menu = SubmenuBuilder::new(app, "View")
                 .item(&logs_item)
                 .build()?;
+
             let menu = MenuBuilder::new(app)
-                .item(&view_menu)
+                .item(&app_submenu)   // ← app menu first (shown as "Sensei")
+                .item(&view_menu)     // ← View appears as a second menu bar item
                 .build()?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
@@ -75,10 +94,9 @@ pub fn run() {
             Ok(())
         });
 
+    // Shadow with mut only when the e2e-testing feature needs to add the plugin
     #[cfg(feature = "e2e-testing")]
-    {
-        builder = builder.plugin(tauri_plugin_playwright::init());
-    }
+    let builder = builder.plugin(tauri_plugin_playwright::init());
 
     builder
         .run(tauri::generate_context!())
