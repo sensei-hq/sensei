@@ -8,7 +8,7 @@ reference: /Users/Jerry/Developer/strategos/packages/gateway
 moved_to: /Users/Jerry/Developer/gateway
 ---
 
-> **Note:** The gateway has been extracted to its own repository: [`mizukisu/gateway`](https://github.com/mizukisu/gateway). Full documentation (ideas, journeys, design) lives there. This doc remains as the sensei-side reference for the integration points (MOE consensus wrapper, MCP exposure, daemon wiring).
+> **Note:** The gateway has been extracted to its own repository: [`sensei-hq/gateway`](https://github.com/sensei-hq/gateway). Full documentation (ideas, journeys, design) lives there. This doc remains as the sensei-side reference for the integration points (MOE consensus wrapper, MCP exposure, daemon wiring).
 
 # Inference Gateway
 
