@@ -128,7 +128,7 @@ pub struct DatabaseSetupFixer;
 
 impl Fixer for DatabaseSetupFixer {
     fn fix(&self) -> Result<FixResult, String> {
-        crate::database::setup(None).map(|status| {
+        crate::database::setup().map(|status| {
             FixResult::new(format!(
                 "database setup complete: {}",
                 status.version.as_deref().unwrap_or("unknown")

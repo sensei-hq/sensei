@@ -101,7 +101,7 @@ pub struct DatabaseChecker;
 
 impl Checker for DatabaseChecker {
     fn check(&self) -> CheckResult {
-        let status = database::check(None);
+        let status = database::check();
         if status.is_ready() {
             CheckResult::ok(status.version.as_deref().unwrap_or("unknown"))
         } else if let ComponentState::Failed { ref error } = status.state {
