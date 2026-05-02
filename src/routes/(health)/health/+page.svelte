@@ -1,361 +1,475 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { isSetupComplete } from '$lib/appstate.svelte.js';
-  import {
-    runBootstrap, installComponent, startComponent, createDatabase,
-    type BootstrapResult, type ComponentStatus, type ComponentState,
-    stateLabel, isReady, isFailed, errorMessage,
-  } from '$lib/bootstrap.js';
+  import { onMount } from 'svelte';
+  import { appState } from '$lib/appstate.svelte.js';
+  import { hasTauri, installPrerequisites, startServices, setupDatabase, getPlatform, listenBootstrapEvents, runBootstrap } from '$lib/bootstrap.js';
+  import { bootstrapState as bs } from '$lib/bootstrap-state.svelte.js';
+  import { GATES } from '$lib/bootstrap-gates.js';
+  import type { GateStatus } from '$lib/bootstrap-gates.js';
 
-  let result = $state<BootstrapResult | null>(null);
-  let loading = $state(true);
-  let actionInProgress = $state<string | null>(null);
+  // Browser mode: apply mock preset
+  if (!hasTauri()) {
+    bs.applyPreset({
+      homebrew: 'ready', postgres: 'missing', ollama: 'missing',
+      sensei: 'missing', database: 'waiting', senseid: 'waiting',
+    });
+  }
 
-  // ── Lifecycle ──────────────────────────────────────────────
-
-  async function check() {
-    loading = true;
-    result = await runBootstrap();
-    loading = false;
-
-    if (result.ready) {
-      advance();
+  // Auto-advance when all ready
+  $effect(() => {
+    if (bs.allReady) {
+      setTimeout(() => {
+        if (appState.setupComplete) goto('/observatory', { replaceState: true });
+        else goto('/setup/welcome', { replaceState: true });
+      }, 900);
     }
-  }
+  });
 
-  function advance() {
-    if (isSetupComplete()) {
-      goto('/observatory', { replaceState: true });
-    } else {
-      goto('/config', { replaceState: true });
+  // Auto-trigger Phase 3 (database) when services are ready but DB isn't
+  let dbPhaseTriggered = false;
+  $effect(() => {
+    if (!hasTauri() || dbPhaseTriggered) return;
+    const servicesReady =
+      (bs.statuses['postgres'] === 'ready' || bs.statuses['homebrew'] === 'ready') &&
+      bs.statuses['senseid'] === 'ready';
+    const dbNotReady = bs.statuses['database'] !== 'ready';
+    if (servicesReady && dbNotReady) {
+      dbPhaseTriggered = true;
+      setupDatabase();
     }
-  }
+  });
 
-  // Auto-check on mount
-  $effect(() => { check(); });
-
-  // ── Actions ────────────────────────────────────────────────
-
-  async function handleInstall(name: string) {
-    actionInProgress = name;
-    try {
-      await installComponent(name);
-    } catch { /* re-check will show status */ }
-    actionInProgress = null;
-    await check();
-  }
-
-  async function handleStart(name: string) {
-    actionInProgress = name;
-    try {
-      await startComponent(name);
-    } catch { /* re-check will show status */ }
-    actionInProgress = null;
-    await check();
-  }
-
-  async function handleCreateDb() {
-    actionInProgress = 'database';
-    try {
-      await createDatabase();
-    } catch { /* re-check will show status */ }
-    actionInProgress = null;
-    await check();
-  }
-
-  async function handleSkip(name: string) {
-    if (!result) return;
-    const idx = result.components.findIndex(c => c.name === name);
-    if (idx >= 0) {
-      result.components[idx].state = { state: 'skipped' };
-      result = { ...result };
-      // Check if all ready/skipped now
-      const allDone = result.components.every(c =>
-        isReady(c.state) || c.state.state === 'skipped'
-      );
-      if (allDone) {
-        result.ready = true;
-        advance();
+  // Map bootstrap component state to gate status
+  function componentStateToGateStatus(comp: { state: { state: string; error?: string } }): GateStatus {
+    switch (comp.state.state) {
+      case 'ready': return 'ready';
+      case 'failed': {
+        // "not installed" = binary missing, anything else = service error
+        const err = comp.state.error ?? '';
+        return err.includes('not installed') ? 'missing' : 'blocked';
       }
+      case 'detecting': return 'checking';
+      case 'installing': return 'checking';
+      case 'starting': return 'starting';
+      default: return 'waiting';
     }
   }
 
-  // ── Visual helpers ─────────────────────────────────────────
+  // Map bootstrap component name to gate ID
+  function componentNameToGateId(name: string): string | null {
+    const map: Record<string, string> = {
+      'homebrew': 'homebrew',
+      'postgresql': 'postgres',
+      'ollama': 'ollama',
+      'sensei': 'sensei',
+      'database': 'database',
+      'daemon': 'senseid',
+    };
+    return map[name] ?? null;
+  }
 
-  function stateColor(s: ComponentState): string {
-    switch (s.state) {
-      case 'ready': return 'var(--jade)';
-      case 'failed': return 'var(--amber)';
-      case 'skipped': return 'var(--sumi-4)';
-      case 'detecting':
-      case 'installing':
-      case 'starting':
-      case 'upgrading':
-      case 'pulling': return 'var(--shu)';
-      default: return 'var(--sumi-3)';
+  // Wire Tauri events → state (via handleEvent) + run Phase 0 detection
+  let unlistenFn: (() => void) | undefined;
+  onMount(() => {
+    if (!hasTauri()) return;
+
+    (async () => {
+      // Load platform info
+      try {
+        const info = await getPlatform();
+        bs.setPlatform(info);
+      } catch { /* browser fallback */ }
+
+      // Subscribe to phase events
+      unlistenFn = await listenBootstrapEvents((event) => bs.handleEvent(event));
+
+      // Phase 0: Run detection and apply results to state
+      try {
+        const result = await runBootstrap();
+        for (const comp of result.components) {
+          const gateId = componentNameToGateId(comp.name);
+          if (gateId) {
+            bs.setGateStatus(gateId, componentStateToGateStatus(comp));
+          }
+        }
+
+        // Auto-progress: if prereqs are present, start services + re-check
+        if (!bs.needsPrereqInstall && !bs.allReady) {
+          await startServices();
+
+          // After start_services completes (background thread), wait and re-detect
+          // to catch services that came up after the initial poll
+          setTimeout(async () => {
+            if (bs.allReady) return;
+            try {
+              const recheck = await runBootstrap();
+              for (const comp of recheck.components) {
+                const id = componentNameToGateId(comp.name);
+                if (id) bs.setGateStatus(id, componentStateToGateStatus(comp));
+              }
+            } catch { /* ignore */ }
+          }, 5000);
+        }
+      } catch {
+        // Detection failed — gates stay pending, user sees waiting state
+      }
+    })();
+
+    return () => unlistenFn?.();
+  });
+
+  // Retry: re-run detection and auto-progress
+  async function retry(gateId: string) {
+    bs.setGateStatus(gateId, 'checking');
+
+    if (!hasTauri()) {
+      // Browser-mode simulation
+      setTimeout(() => {
+        bs.setGateStatus(gateId, 'ready');
+        const idx = GATES.findIndex(g => g.id === gateId);
+        if (idx + 1 < GATES.length && bs.statuses[GATES[idx + 1].id] === 'waiting') {
+          bs.setGateStatus(GATES[idx + 1].id, 'checking');
+          setTimeout(() => {
+            GATES.slice(idx + 1).forEach(g => bs.setGateStatus(g.id, 'ready'));
+          }, 900);
+        }
+      }, 1100);
+      return;
     }
+
+    // Tauri mode: re-run full detection and auto-progress
+    try {
+      const result = await runBootstrap();
+      for (const comp of result.components) {
+        const id = componentNameToGateId(comp.name);
+        if (id) bs.setGateStatus(id, componentStateToGateStatus(comp));
+      }
+      if (!bs.needsPrereqInstall && !bs.allReady) {
+        await startServices();
+      }
+    } catch { /* detection failed — gate stays checking */ }
   }
 
-  function stateIcon(s: ComponentState): string {
-    switch (s.state) {
-      case 'ready': return '\u25CF';    // ●
-      case 'failed': return '\u25C6';   // ◆
-      case 'skipped': return '\u25CB';  // ○
-      default: return '\u25CE';         // ◎
-    }
+  async function runInstallPrereqs() {
+    if (!hasTauri()) return;
+    bs.installing = true;
+    await installPrerequisites();
   }
 
-  function isSkippable(name: string): boolean {
-    return name === 'ollama' || name.startsWith('gemma') || name.startsWith('qwen');
+  function retryAll() {
+    bs.missingPrereqGates.forEach(g => retry(g.id));
   }
 
-  function actionLabel(c: ComponentStatus): string | null {
-    if (!isFailed(c.state)) return null;
-    const err = errorMessage(c.state) ?? '';
-    if (err.includes('not installed')) return 'Install';
-    if (err.includes('not reachable') || err.includes('not running')) return 'Start';
-    if (err.includes('does not exist')) return 'Create';
-    return 'Fix';
+  function statusColor(s: GateStatus): string {
+    if (s === 'ready') return 'var(--jade)';
+    if (s === 'missing' || s === 'blocked') return 'var(--shu)';
+    if (s === 'checking' || s === 'installing' || s === 'starting') return 'var(--sumi-2)';
+    return 'var(--sumi-4)';
   }
 
-  function handleAction(c: ComponentStatus) {
-    const label = actionLabel(c);
-    if (!label) return;
-    if (label === 'Install') handleInstall(c.name);
-    else if (label === 'Start') handleStart(c.name);
-    else if (label === 'Create') handleCreateDb();
-    else handleInstall(c.name); // fallback
+  function pillBg(s: GateStatus): string {
+    if (s === 'ready') return 'rgba(122,158,98,.10)';
+    if (s === 'missing' || s === 'blocked') return 'rgba(192,71,45,.08)';
+    if (s === 'checking' || s === 'installing' || s === 'starting') return 'var(--paper-2)';
+    return 'transparent';
   }
 </script>
 
-<div class="bootstrap">
-  <span class="kanji hero-kanji">整</span>
+<div class="bootstrap-page">
+  <!-- Fixed top: header + progress rail -->
+  <div class="fixed-top">
+    <div class="content-top">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-tag">
+          <span class="kanji" style="font-size: 22px; color: var(--shu);">支</span>
+          <span class="tag-text">bootstrap · checking the foundation</span>
+        </div>
+        <h1 class="display header-title">
+          {#if bs.allReady}
+            The foundation <span style="color: var(--jade);">holds.</span>
+          {:else if bs.firstBlockedIdx >= 0}
+            A few pieces are <span style="color: var(--shu);">missing.</span>
+          {:else}
+            Checking the foundation…
+          {/if}
+        </h1>
+        <p class="header-desc">
+          {#if bs.allReady}
+            Homebrew, Postgres, Ollama, sensei components, database, and the daemon are all present. Opening the observatory.
+          {:else if bs.firstBlockedIdx >= 0}
+            Sensei needs these to run locally. Install the missing pieces below — the rest will check themselves once the foundation is in place.
+          {:else}
+            Verifying Homebrew, Postgres, Ollama, and the sensei components. This takes a few seconds on a cold start.
+          {/if}
+        </p>
+      </div>
 
-  <h1 class="display hero-title">
-    {#if loading}
-      Checking prerequisites…
-    {:else if result?.ready}
-      All set.
-    {:else}
-      Getting ready.
-    {/if}
-  </h1>
+      <!-- Progress rail -->
+      <div class="progress-rail">
+        <div class="progress-count">
+          {String(bs.readyCount).padStart(2, '0')} / {String(bs.totalCount).padStart(2, '0')} ready
+        </div>
+        <div class="progress-bars">
+          {#each bs.gates as gate}
+            <span class="progress-segment" style="background: {statusColor(gate.status)}; opacity: {gate.status === 'waiting' ? 0.5 : 1};"></span>
+          {/each}
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <p class="hero-sub">
-    {#if loading}
-      Verifying components.
-    {:else if result?.ready}
-      Everything looks healthy.
-    {:else}
-      Some components need attention.
-    {/if}
-  </p>
+  <!-- Scrollable bottom: gate list + footer -->
+  <div class="scroll-area">
+    <div class="content-bottom">
+    <!-- Gate list -->
+    <div class="gate-list">
+      {#each bs.visibleGates as gate, i (gate.id)}
+        {@const isBlocked = gate.status === 'missing' || gate.status === 'blocked'}
+        {@const isBusy = gate.status === 'checking' || gate.status === 'installing' || gate.status === 'starting'}
+        {@const isReady = gate.status === 'ready'}
+        {@const isPending = gate.status === 'waiting'}
+        {@const showRemedy = i === bs.firstBlockedIdx && isBlocked}
 
-  {#if result}
-    <div class="components">
-      {#each result.components as comp (comp.name)}
-        <div class="comp-row">
-          <span class="comp-dot" style="color: {stateColor(comp.state)}">
-            {#if comp.state.state === 'installing' || comp.state.state === 'starting' || comp.state.state === 'detecting'}
-              <span class="pulse">{stateIcon(comp.state)}</span>
-            {:else}
-              {stateIcon(comp.state)}
-            {/if}
-          </span>
-
-          <div class="comp-info">
-            <span class="comp-name">{comp.name}</span>
-            {#if comp.version}
-              <span class="comp-version">{comp.version}</span>
-            {/if}
-            <span class="comp-state" style="color: {stateColor(comp.state)}">
-              {stateLabel(comp.state)}
-            </span>
-            {#if isFailed(comp.state)}
-              <span class="comp-error">{errorMessage(comp.state)}</span>
-            {/if}
+        <div class="gate-row" class:pending={isPending}>
+          <!-- Main row -->
+          <div class="gate-main">
+            <div class="kanji gate-n" style="color: {statusColor(gate.status)};">{gate.n}</div>
+            <div class="gate-info">
+              <div class="gate-name-row">
+                <span class="display gate-name">{gate.name}</span>
+                <span class="gate-detail">· {gate.detail}</span>
+              </div>
+              <div class="mono gate-check">{gate.check}</div>
+            </div>
+            <div class="status-pill" style="color: {statusColor(gate.status)}; background: {pillBg(gate.status)};">
+              {#if isBusy}<span class="spinner"></span>{/if}
+              {#if isReady}<span style="font-size: 10px;">✓</span>{/if}
+              {#if isBlocked}<span style="font-size: 12px;">·</span>{/if}
+              {gate.status}
+            </div>
           </div>
 
-          <div class="comp-actions">
-            {#if isFailed(comp.state) && actionLabel(comp)}
-              <button
-                class="btn-outline btn-sm"
-                onclick={() => handleAction(comp)}
-                disabled={actionInProgress === comp.name}
-              >
-                {actionInProgress === comp.name ? 'Working…' : actionLabel(comp)}
-              </button>
-            {/if}
-            {#if isFailed(comp.state) && isSkippable(comp.name)}
-              <button class="btn-text btn-sm" onclick={() => handleSkip(comp.name)}>
-                Skip
-              </button>
-            {/if}
-          </div>
+          <!-- Sub-checks (sensei components) -->
+          {#if gate.sub && (isBusy || isBlocked || isReady)}
+            <div class="sub-checks">
+              {#each gate.sub as sub}
+                {@const subStatus = isReady ? 'ready' : isBusy ? 'checking' : 'missing'}
+                <div class="sub-row">
+                  <span class="sub-dot" style="background: {statusColor(subStatus)};"></span>
+                  <span class="sub-name">{sub.name}</span>
+                  <span class="mono sub-check">{sub.check}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- Per-gate remedy (non-prereq only) -->
+          {#if showRemedy && gate.remedy !== 'prereq'}
+            <div class="remedy">
+              {#if gate.remedy === 'install'}
+                <div class="display remedy-title">{bs.platformInfo.pkgmgr_remedy.title}</div>
+                <p class="remedy-intro">{bs.platformInfo.package_manager} is the base that installs everything else.</p>
+                <div class="command-block">
+                  <code>{bs.platformInfo.pkgmgr_remedy.command}</code>
+                </div>
+                <div class="remedy-actions">
+                  {#if bs.platformInfo.pkgmgr_remedy.url}
+                    <a href={bs.platformInfo.pkgmgr_remedy.url} target="_blank" rel="noreferrer" class="btn-outline btn-sm">Learn more <span style="color: var(--sumi-3);">↗</span></a>
+                  {/if}
+                  <button class="btn-solid btn-sm" onclick={() => retry(gate.id)}>I've installed it — retry</button>
+                </div>
+
+              {:else if gate.remedy === 'db'}
+                <div class="display remedy-title">Could not create the sensei database</div>
+                <p class="remedy-intro">Postgres is running but sensei couldn't create its database automatically.</p>
+                <div class="command-block">
+                  <code>createdb sensei && psql sensei -c 'CREATE EXTENSION IF NOT EXISTS vector;'</code>
+                </div>
+                <div class="remedy-actions">
+                  <button class="btn-solid btn-sm" onclick={() => retry(gate.id)}>Retry</button>
+                </div>
+
+              {:else if gate.remedy === 'daemon'}
+                <div class="display remedy-title">Daemon failed to start</div>
+                <p class="remedy-intro">The database is reachable but the daemon did not come up.</p>
+                <div class="remedy-actions">
+                  <button class="btn-solid btn-sm" onclick={() => retry(gate.id)}>Retry</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/each}
     </div>
 
-    {#if result.hardware.ram_gb > 0}
-      <div class="hw-info">
-        {result.hardware.ram_gb}GB RAM · {result.hardware.cpu_cores} cores
-        {#if result.hardware.gpu} · {result.hardware.gpu}{/if}
-        · {result.hardware.recommended_tier} tier
+    <!-- Consolidated prereq remedy -->
+    {#if bs.needsPrereqInstall}
+      <div class="brew-remedy">
+        <div class="display remedy-title">{bs.platformInfo.prereq_remedy.title}</div>
+        <div class="missing-list">
+          {#each bs.missingPrereqGates as gate}
+            <span class="missing-tag">{gate.name}</span>
+          {/each}
+        </div>
+        <p class="remedy-intro">
+          One command installs everything. Already-installed items are skipped.
+        </p>
+        {#if hasTauri()}
+          <div class="remedy-actions">
+            <button class="btn-solid btn-sm" onclick={runInstallPrereqs} disabled={bs.installing}>
+              {bs.installing ? 'Installing…' : 'Install all'}
+            </button>
+            <button class="btn-outline btn-sm" onclick={retryAll}>Retry checks</button>
+          </div>
+        {:else}
+          <div class="command-block">
+            <code>{bs.platformInfo.prereq_remedy.command}</code>
+          </div>
+          <div class="remedy-actions">
+            <button class="btn-solid btn-sm" onclick={retryAll}>Retry checks</button>
+          </div>
+        {/if}
       </div>
     {/if}
-  {/if}
 
-  {#if !loading && !result?.ready}
-    <button class="btn-solid" onclick={check} style="margin-top: 24px;">
-      Recheck
-    </button>
-  {/if}
-
-  <p class="hint">Nothing leaves localhost.</p>
+    <!-- Footer -->
+    <div class="footer">
+      <div class="footer-note">
+        Bootstrap runs on every launch. Once a gate is green it stays that way — the next startup is quick.
+      </div>
+      {#if bs.allReady}
+        <button class="btn-solid" onclick={() => goto('/setup/welcome')}>Continue →</button>
+      {/if}
+    </div>
+    </div>
+  </div>
 </div>
 
 <style>
-  .bootstrap {
-    text-align: center;
-    max-width: 520px;
-    width: 100%;
-  }
-
-  .hero-kanji {
-    font-size: 56px;
-    color: var(--shu);
-    opacity: 0.3;
-    display: block;
-    margin-bottom: 16px;
-  }
-
-  .hero-title {
-    font-size: 26px;
-    font-weight: 300;
-    margin: 0 0 8px;
-    letter-spacing: -0.01em;
-  }
-
-  .hero-sub {
-    font-size: 13px;
-    color: var(--sumi-3);
-    margin: 0 0 28px;
-  }
-
-  /* ── Component list ──────────────────────────────── */
-
-  .components {
-    text-align: left;
-    border: var(--hairline);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    background: var(--paper);
-  }
-
-  .comp-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    border-bottom: var(--ink-line);
-  }
-
-  .comp-row:last-child {
-    border-bottom: none;
-  }
-
-  .comp-dot {
-    font-size: 12px;
-    flex-shrink: 0;
-    width: 16px;
-    text-align: center;
-  }
-
-  .comp-info {
-    flex: 1;
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    flex-wrap: wrap;
-    min-width: 0;
-  }
-
-  .comp-name {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--sumi);
-  }
-
-  .comp-version {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--sumi-3);
-  }
-
-  .comp-state {
-    font-size: 11px;
-    letter-spacing: 0.03em;
-  }
-
-  .comp-error {
-    font-size: 11px;
-    color: var(--amber);
-    width: 100%;
-  }
-
-  .comp-actions {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-
-  /* ── Hardware info ───────────────────────────────── */
-
-  .hw-info {
-    margin-top: 16px;
-    font-size: 11px;
-    color: var(--sumi-4);
-    letter-spacing: 0.02em;
-  }
-
-  /* ── Button sizes ────────────────────────────────── */
-
-  .btn-sm {
-    padding: 4px 10px;
-    font-size: 11px;
-  }
-
-  .btn-text {
-    background: none;
-    border: none;
-    color: var(--sumi-3);
-    font-size: 11px;
-    cursor: pointer;
-    padding: 4px 8px;
+  .bootstrap-page {
+    flex: 1; min-height: 0; overflow: hidden;
+    background: var(--paper); color: var(--sumi);
     font-family: var(--font-ui);
+    display: flex; flex-direction: column;
+  }
+  .fixed-top {
+    flex-shrink: 0;
+    background: var(--paper);
+    padding: 56px 40px 0;
+  }
+  .content-top {
+    max-width: 760px; width: 100%;
+    margin: 0 auto;
+    display: flex; flex-direction: column; gap: 40px;
+    padding-bottom: 40px;
+  }
+  .scroll-area {
+    flex: 1; min-height: 0;
+    overflow-y: auto;
+    padding: 0 40px 48px;
+  }
+  .content-bottom {
+    max-width: 760px; width: 100%;
+    margin: 0 auto;
   }
 
-  .btn-text:hover {
-    color: var(--sumi-2);
+  /* Header */
+  .header-tag { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .tag-text { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sumi-3); }
+  .header-title { font-size: 38px; font-weight: 300; line-height: 1.12; margin: 0 0 14px; letter-spacing: -0.015em; }
+  .header-desc { font-size: 14px; color: var(--sumi-3); line-height: 1.7; margin: 0; max-width: 540px; }
+
+  /* Progress rail */
+  .progress-rail { display: flex; align-items: center; gap: 12px; }
+  .progress-count { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sumi-4); font-feature-settings: "tnum"; white-space: nowrap; }
+  .progress-bars { flex: 1; display: flex; gap: 3px; }
+  .progress-segment { flex: 1; height: 2px; border-radius: 1px; transition: background 0.3s; }
+
+  /* Gate list */
+  .gate-list { display: flex; flex-direction: column; border-top: var(--hairline); }
+
+  .gate-row { border-bottom: var(--hairline); padding: 16px 0; transition: opacity 0.3s; }
+  .gate-row.pending { opacity: 0.42; }
+
+  .gate-main { display: grid; grid-template-columns: 32px 1fr auto; gap: 16px; align-items: center; }
+  .gate-n { font-size: 22px; text-align: center; }
+  .gate-name-row { display: flex; align-items: baseline; gap: 10px; }
+  .gate-name { font-size: 17px; font-weight: 400; }
+  .gate-detail { font-size: 12px; color: var(--sumi-4); }
+  .gate-check { font-size: 11px; color: var(--sumi-4); margin-top: 4px; }
+
+  /* Status pill */
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 4px;
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+    font-feature-settings: "tnum";
   }
 
-  .hint {
-    margin-top: 20px;
-    font-size: 10px;
-    color: var(--sumi-4);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+  /* Spinner */
+  .spinner {
+    display: inline-block; width: 10px; height: 10px; position: relative;
+  }
+  .spinner::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    border: 1.5px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Sub-checks */
+  .sub-checks {
+    margin-top: 12px; margin-left: 48px;
+    display: flex; flex-direction: column; gap: 4px;
+    padding-left: 14px; border-left: 1px dashed var(--paper-edge);
+  }
+  .sub-row { display: flex; align-items: center; gap: 10px; }
+  .sub-dot { width: 6px; height: 6px; border-radius: 3px; display: inline-block; }
+  .sub-name { font-size: 12px; color: var(--sumi-2); }
+  .sub-check { font-size: 11px; color: var(--sumi-4); }
+
+  /* Consolidated brew remedy */
+  .brew-remedy {
+    margin-top: 24px; padding: 20px 24px;
+    background: var(--paper-2); border: var(--hairline); border-radius: 6px;
+  }
+  .missing-list {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    margin: 8px 0 12px;
+  }
+  .missing-tag {
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--shu); background: rgba(192,71,45,.08);
+    padding: 3px 8px; border-radius: 3px;
   }
 
-  /* ── Pulse animation ─────────────────────────────── */
+  /* Per-gate remedy */
+  .remedy {
+    margin-top: 16px; margin-left: 48px; padding: 18px 20px;
+    background: var(--paper-2); border: var(--hairline); border-radius: 6px;
+  }
+  .remedy-title { font-size: 15px; margin-bottom: 4px; }
+  .remedy-intro { font-size: 13px; color: var(--sumi-3); line-height: 1.6; margin: 0 0 14px; }
 
-  .pulse {
-    animation: pulse 1.2s ease-in-out infinite;
+  .command-block {
+    background: var(--paper); border: var(--hairline); border-radius: 5px;
+    padding: 10px 12px; margin-bottom: 12px;
+  }
+  .command-block code {
+    font-family: var(--font-mono); font-size: 12px; color: var(--sumi);
+    word-break: break-all;
   }
 
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+  .remedy-actions { display: flex; gap: 10px; align-items: center; }
+
+  /* Footer */
+  .footer {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    padding-top: 22px; border-top: var(--hairline);
   }
+  .footer-note { font-size: 11px; color: var(--sumi-4); line-height: 1.6; }
+
+  /* Button overrides for small size */
+  .btn-sm { padding: 8px 14px !important; font-size: 12px !important; }
 </style>
