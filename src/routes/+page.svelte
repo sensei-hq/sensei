@@ -7,8 +7,8 @@
   import MockMemory from '$lib/components/mock/MockMemory.svelte';
   import MockInstruments from '$lib/components/mock/MockInstruments.svelte';
 
-  const GITHUB = 'https://github.com/mizukisu/sensei-dev';
-  const RELEASES = 'https://github.com/mizukisu/sensei-releases';
+  const GITHUB = 'https://github.com/sensei-hq/sensei';
+  const RELEASES = 'https://github.com/sensei-hq/sensei-releases';
   const RELEASE_BASE = `${RELEASES}/releases/latest/download`;
 
   // ── Platform detection ──────────────────────────────────────

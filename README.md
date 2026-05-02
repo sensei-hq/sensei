@@ -1,8 +1,8 @@
 # Sensei Website
 
-Marketing site for [Sensei](https://github.com/mizukisu/sensei-dev) — AI Development Intelligence.
+Marketing site for [Sensei](https://github.com/sensei-hq/sensei) — AI Development Intelligence.
 
-**Live:** https://mizukisu.github.io/sensei/
+**Live:** https://sensei-hq.github.io/sensei/
 
 ## Stack
 
