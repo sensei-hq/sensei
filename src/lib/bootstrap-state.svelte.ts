@@ -21,11 +21,11 @@ export interface BootstrapEvent {
 
 export class BootstrapState {
   statuses = $state<Record<string, GateStatus>>(
-    Object.fromEntries(GATES.map(g => [g.id, 'pending' as GateStatus]))
+    Object.fromEntries(GATES.map(g => [g.id, 'waiting' as GateStatus]))
   );
 
   subStatuses = $state<Record<string, GateStatus>>({
-    cli: 'pending', mcp: 'pending', daemon: 'pending',
+    cli: 'waiting', mcp: 'waiting', daemon: 'waiting',
   });
 
   installing = $state(false);
@@ -43,7 +43,8 @@ export class BootstrapState {
     if (event.action === 'update' && event.entity === 'gate') {
       const status = event.data.status as GateStatus;
       // Map backend gate IDs to frontend gate IDs
-      const id = event.id === 'postgresql' ? 'postgres' : event.id;
+      const idMap: Record<string, string> = { postgresql: 'postgres', daemon: 'senseid' };
+      const id = idMap[event.id] ?? event.id;
       this.statuses = { ...this.statuses, [id]: status };
     }
     if (event.action === 'set' && event.entity === 'phase') {
@@ -77,16 +78,16 @@ export class BootstrapState {
   get firstBlockedIdx(): number {
     return GATES.findIndex(g => {
       const s = this.statuses[g.id];
-      return s === 'missing' || s === 'error';
+      return s === 'missing' || s === 'blocked';
     });
   }
 
   get isChecking(): boolean {
-    return Object.values(this.statuses).some(s => s === 'checking' || s === 'starting');
+    return Object.values(this.statuses).some(s => s === 'checking' || s === 'installing' || s === 'starting');
   }
 
   get missingPrereqGates() {
-    return this.gates.filter(g => g.remedy === 'prereq' && (g.status === 'missing' || g.status === 'error'));
+    return this.gates.filter(g => g.remedy === 'prereq' && (g.status === 'missing' || g.status === 'blocked'));
   }
 
   get needsPrereqInstall(): boolean {
@@ -108,7 +109,7 @@ export class BootstrapState {
   setSubStatus(id: string, status: GateStatus) {
     this.subStatuses = { ...this.subStatuses, [id]: status };
     const allSubReady = ['cli', 'mcp', 'daemon'].every(k => this.subStatuses[k] === 'ready');
-    const anySubMissing = ['cli', 'mcp', 'daemon'].some(k => this.subStatuses[k] === 'missing' || this.subStatuses[k] === 'error');
+    const anySubMissing = ['cli', 'mcp', 'daemon'].some(k => this.subStatuses[k] === 'missing' || this.subStatuses[k] === 'blocked');
     const anySubChecking = ['cli', 'mcp', 'daemon'].some(k => this.subStatuses[k] === 'checking');
     if (allSubReady) this.setGateStatus('sensei', 'ready');
     else if (anySubMissing) this.setGateStatus('sensei', 'missing');
