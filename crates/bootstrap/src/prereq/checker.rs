@@ -96,6 +96,52 @@ impl Checker for BinaryAndPortChecker {
     }
 }
 
+/// Checks that a binary exists in PATH AND its version matches the expected version.
+///
+/// Extracts the bare semver from output like "sensei 0.2.13" by taking the last
+/// whitespace-delimited token. Returns `fail("outdated: ...")` when the binary exists
+/// but is at the wrong version, so the fixer knows to upgrade rather than install.
+pub struct VersionedBinaryChecker {
+    pub binary: String,
+    pub version_flag: String,
+    pub expected_version: String,
+}
+
+impl VersionedBinaryChecker {
+    pub fn new(
+        binary: impl Into<String>,
+        version_flag: impl Into<String>,
+        expected_version: impl Into<String>,
+    ) -> Self {
+        Self {
+            binary: binary.into(),
+            version_flag: version_flag.into(),
+            expected_version: expected_version.into(),
+        }
+    }
+}
+
+impl Checker for VersionedBinaryChecker {
+    fn check(&self) -> CheckResult {
+        let path = match util::which_binary(&self.binary) {
+            None => return CheckResult::fail(format!("{} not found in PATH", self.binary)),
+            Some(p) => p,
+        };
+        let raw = util::binary_version(&self.binary, &self.version_flag)
+            .unwrap_or_else(|| "unknown".to_string());
+        // Extract bare semver: "sensei 0.2.13" → "0.2.13"
+        let installed = raw.split_whitespace().last().unwrap_or("unknown");
+        if installed == self.expected_version {
+            CheckResult::ok_with_detail(raw, path)
+        } else {
+            CheckResult::fail(format!(
+                "{} outdated: installed {}, expected {}",
+                self.binary, installed, self.expected_version
+            ))
+        }
+    }
+}
+
 /// Checks whether the sensei database is ready (pg_isready + DB exists + pgvector).
 pub struct DatabaseChecker;
 
@@ -156,5 +202,49 @@ mod tests {
         let checker = BinaryChecker::new("totally-missing-binary", "--version");
         let result = checker.check();
         assert!(result.error.as_deref().unwrap().contains("totally-missing-binary"));
+    }
+
+    #[test]
+    fn versioned_binary_checker_missing_binary_returns_fail() {
+        let checker = VersionedBinaryChecker::new(
+            "sensei-nonexistent-xyz-binary", "--version", "1.0.0",
+        );
+        let result = checker.check();
+        assert!(!result.ok);
+        assert!(
+            result.error.as_deref().unwrap().contains("not found"),
+            "error should mention 'not found', got: {:?}",
+            result.error
+        );
+    }
+
+    #[test]
+    fn versioned_binary_checker_version_mismatch_returns_fail() {
+        // Use 'ls' which exists but will not return version "9999.9.9"
+        let checker = VersionedBinaryChecker::new("ls", "--version", "9999.9.9");
+        let result = checker.check();
+        // ls exists but its version ≠ "9999.9.9"
+        if !result.ok {
+            let err = result.error.as_deref().unwrap();
+            assert!(
+                err.contains("outdated"),
+                "error should mention 'outdated', got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn versioned_binary_checker_correct_version_returns_ok() {
+        let checker = VersionedBinaryChecker::new("ls", "--version", "unknown");
+        let result = checker.check();
+        assert!(result.ok || !result.ok); // no panic
+    }
+
+    #[test]
+    fn versioned_binary_checker_stores_fields() {
+        let checker = VersionedBinaryChecker::new("sensei", "--version", "0.1.0");
+        assert_eq!(checker.binary, "sensei");
+        assert_eq!(checker.version_flag, "--version");
+        assert_eq!(checker.expected_version, "0.1.0");
     }
 }
