@@ -58,6 +58,46 @@ impl Fixer for BrewFixer {
     }
 }
 
+/// Runs `brew upgrade <formula>` first (handles version bump); falls back to
+/// `brew install <formula>` for first-time installs. One fixer covers both cases.
+pub struct BrewUpgradeFixer {
+    pub brew_path: String,
+    pub formula: String,
+}
+
+impl BrewUpgradeFixer {
+    pub fn new(brew_path: impl Into<String>, formula: impl Into<String>) -> Self {
+        Self { brew_path: brew_path.into(), formula: formula.into() }
+    }
+}
+
+impl Fixer for BrewUpgradeFixer {
+    fn fix(&self) -> Result<FixResult, String> {
+        // Try upgrade first — works when formula is already installed but outdated
+        let upgrade = Command::new(&self.brew_path)
+            .args(["upgrade", &self.formula])
+            .output()
+            .map_err(|e| format!("brew upgrade failed to run: {e}"))?;
+
+        if upgrade.status.success() {
+            return Ok(FixResult::new(format!("brew upgrade {}", self.formula)));
+        }
+
+        // Fall back to install — handles first-time install
+        let install = Command::new(&self.brew_path)
+            .args(["install", &self.formula])
+            .output()
+            .map_err(|e| format!("brew install failed to run: {e}"))?;
+
+        if install.status.success() {
+            return Ok(FixResult::new(format!("brew install {}", self.formula)));
+        }
+
+        let stderr = String::from_utf8_lossy(&install.stderr).trim().to_string();
+        Err(format!("brew install {} failed: {stderr}", self.formula))
+    }
+}
+
 /// Runs `winget install --id <package> -e --silent`.
 pub struct WingetFixer {
     pub package: String,
@@ -184,5 +224,30 @@ mod tests {
         let fixer = ServiceStartFixer::new(provider, "postgresql", 5432);
         assert_eq!(fixer.service_name, "postgresql");
         assert_eq!(fixer.port, 5432);
+    }
+
+    #[test]
+    fn brew_upgrade_fixer_stores_fields() {
+        let fixer = BrewUpgradeFixer::new("/opt/homebrew/bin/brew", "sensei-hq/tap/sensei");
+        assert_eq!(fixer.brew_path, "/opt/homebrew/bin/brew");
+        assert_eq!(fixer.formula, "sensei-hq/tap/sensei");
+    }
+
+    #[test]
+    fn brew_upgrade_fixer_nonexistent_brew_returns_err() {
+        let fixer = BrewUpgradeFixer::new("/nonexistent/brew", "sensei-hq/tap/sensei");
+        let result = fixer.fix();
+        assert!(result.is_err(), "should fail when brew binary does not exist");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("brew upgrade") || err.contains("brew install"),
+            "error should mention brew operation, got: {err}"
+        );
+    }
+
+    #[test]
+    fn database_setup_fixer_stores_version() {
+        let fixer = DatabaseSetupFixer::new("0.1.0");
+        assert_eq!(fixer.app_version, "0.1.0");
     }
 }
