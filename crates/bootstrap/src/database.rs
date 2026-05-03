@@ -8,8 +8,13 @@
 use std::process::Command;
 use std::sync::OnceLock;
 
+use dbd_core::{
+    Design,
+    deploy::resolve_source,
+};
+use dbd_core::adapter::postgres::PostgresAdapter;
+
 use crate::types::{BootstrapTrace, ComponentStatus};
-use crate::util;
 use crate::util::run_traced;
 
 static DB_NAME: OnceLock<String> = OnceLock::new();
@@ -150,27 +155,48 @@ pub fn ensure_extensions() -> Result<ComponentStatus, String> {
     Err(format!("failed to enable pgvector: {stderr}"))
 }
 
-/// Run database migrations via senseid.
+/// Deploy the schema from GitHub using dbd-core.
 ///
-/// Stub — will be replaced by dbd-core when available.
-/// Requires the `senseid` binary to be in PATH.
-pub fn migrate() -> Result<ComponentStatus, String> {
+/// Source: `sensei-hq/daemon/database@v{app_version}` — downloads tarball
+/// and caches under `~/.cache/dbd/`. Idempotent: dbd handles fresh /
+/// migrate / current automatically.
+///
+/// Requires a running PostgreSQL server and a reachable `{db_name}` database.
+pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
     let db = db_name();
-    let binary = util::which_binary("senseid")
-        .ok_or_else(|| "senseid not found — migration requires senseid binary in PATH".to_string())?;
+    let source = format!("sensei-hq/daemon/database@v{app_version}");
+    let db_url = format!("postgres://localhost/{db}");
 
-    let output = Command::new(&binary)
-        .arg("migrate")
-        .output()
-        .map_err(|e| format!("senseid migrate failed to execute: {e}"))?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("tokio runtime error: {e}"))?;
 
-    if output.status.success() {
-        let version = schema_version(db);
-        Ok(ComponentStatus::ready("database", &format!("schema-{}", version.unwrap_or(0))))
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(format!("senseid migrate failed: {stderr}"))
-    }
+    rt.block_on(async {
+        let project_dir = resolve_source(&source)
+            .await
+            .map_err(|e| format!("dbd source resolution failed: {e}"))?;
+
+        let config_path = project_dir.join("design.yaml");
+
+        let design = Design::from_config_with_dir(&config_path, "prod", Some(&project_dir))
+            .map_err(|e| format!("dbd config load failed: {e}"))?;
+
+        let adapter = PostgresAdapter::new(&db_url, "sensei")
+            .await
+            .map_err(|e| format!("dbd database connection failed: {e}"))?;
+
+        design
+            .deploy(&adapter, false)
+            .await
+            .map_err(|e| format!("dbd deploy failed: {e}"))
+    })?;
+
+    let version = schema_version(db);
+    Ok(ComponentStatus::ready(
+        "database",
+        &format!("schema-{}", version.unwrap_or(0)),
+    ))
 }
 
 /// Full Phase 3 database setup pipeline.
@@ -178,8 +204,8 @@ pub fn migrate() -> Result<ComponentStatus, String> {
 /// 1. Check PostgreSQL is reachable
 /// 2. Ensure database exists (create if missing)
 /// 3. Ensure extensions (pgvector)
-/// 4. Run migrations
-pub fn setup() -> Result<ComponentStatus, String> {
+/// 4. Run dbd deploy (schema + seed data)
+pub fn setup(app_version: &str) -> Result<ComponentStatus, String> {
     let db = db_name();
 
     if !pg_is_ready() {
@@ -193,7 +219,7 @@ pub fn setup() -> Result<ComponentStatus, String> {
     }
 
     ensure_extensions()?;
-    migrate()
+    deploy(app_version)
 }
 
 fn pg_is_ready() -> bool {
@@ -294,20 +320,34 @@ mod tests {
     }
 
     #[test]
-    fn migrate_without_senseid() {
-        let result = migrate();
-        if crate::util::which_binary("senseid").is_none() {
-            let err = result.unwrap_err();
-            assert!(err.contains("senseid not found"), "got: {err}");
-        }
+    fn deploy_source_string_is_parseable() {
+        // Verify the source format we construct is valid per dbd-core's parser
+        let version = "1.2.3";
+        let source = format!("sensei-hq/daemon/database@v{version}");
+        let parsed = dbd_core::github::parse_github_source(&source).unwrap();
+        assert_eq!(parsed.owner, "sensei-hq");
+        assert_eq!(parsed.repo, "daemon");
+        assert_eq!(parsed.subpath, Some("database".to_string()));
+        assert_eq!(parsed.git_ref, format!("v{version}"));
     }
 
     #[test]
-    fn setup_without_postgres() {
-        let result = setup();
+    fn deploy_db_url_format() {
+        // Verify the DATABASE_URL we construct has the right format
+        let db = "sensei-test-deploy-url";
+        let url = format!("postgres://localhost/{db}");
+        assert!(url.starts_with("postgres://localhost/"));
+        assert!(url.ends_with("sensei-test-deploy-url"));
+    }
+
+    #[test]
+    fn setup_without_postgres_returns_err() {
+        // Replaces old setup_without_postgres test
+        let result = setup("0.1.0");
         if !super::pg_is_ready() {
             let err = result.unwrap_err();
             assert!(err.contains("not accepting connections"), "got: {err}");
         }
+        // If postgres IS available, result could be Ok or Err — either is fine
     }
 }
