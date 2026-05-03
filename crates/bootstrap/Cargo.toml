@@ -8,8 +8,9 @@ description = "Prerequisite detection, installation, and hardware profiling for 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.34"
-tokio = { version = "1", features = ["process", "time"] }
+tokio = { version = "1", features = ["process", "time", "rt"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
+dbd-core = { path = "../../../../dbd-rs/crates/dbd-core" }
 chrono = "0.4"
 
 [dev-dependencies]
