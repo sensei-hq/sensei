@@ -123,12 +123,20 @@ impl Fixer for ServiceStartFixer {
     }
 }
 
-/// Runs the full database setup pipeline (create db, extensions, migrations).
-pub struct DatabaseSetupFixer;
+/// Runs the full database setup pipeline (create db, extensions, dbd deploy).
+pub struct DatabaseSetupFixer {
+    pub app_version: String,
+}
+
+impl DatabaseSetupFixer {
+    pub fn new(app_version: impl Into<String>) -> Self {
+        Self { app_version: app_version.into() }
+    }
+}
 
 impl Fixer for DatabaseSetupFixer {
     fn fix(&self) -> Result<FixResult, String> {
-        crate::database::setup().map(|status| {
+        crate::database::setup(&self.app_version).map(|status| {
             FixResult::new(format!(
                 "database setup complete: {}",
                 status.version.as_deref().unwrap_or("unknown")
