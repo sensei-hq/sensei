@@ -7,8 +7,8 @@ use std::sync::Arc;
 use crate::{POSTGRES_PORT, OLLAMA_PORT, DAEMON_PORT};
 use crate::platform::{Platform, PlatformProvider};
 use super::{GateKind, Prerequisite};
-use super::checker::{BinaryChecker, PortChecker, DatabaseChecker};
-use super::fixer::{BrewFixer, WingetFixer, NoopFixer, ServiceStartFixer, DatabaseSetupFixer, Fixer};
+use super::checker::{BinaryChecker, PortChecker, DatabaseChecker, VersionedBinaryChecker};
+use super::fixer::{BrewFixer, BrewUpgradeFixer, WingetFixer, NoopFixer, ServiceStartFixer, DatabaseSetupFixer, Fixer};
 use super::generic::GenericPrerequisite;
 
 /// Find Homebrew binary in well-known locations.
@@ -19,34 +19,53 @@ pub fn detect_brew_path() -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Phase 1 — install binaries: postgresql, ollama, sensei CLI.
-pub fn install_prerequisites(provider: Arc<dyn PlatformProvider>) -> Vec<Box<dyn Prerequisite>> {
+/// Phase 1 — install binaries: postgresql, ollama, sensei CLI, senseid daemon.
+///
+/// sensei and senseid are version-pinned to expected_version and will be
+/// upgraded via brew if behind. postgresql and ollama use BinaryChecker only.
+pub fn install_prerequisites(
+    provider: Arc<dyn PlatformProvider>,
+    expected_version: &str,
+) -> Vec<Box<dyn Prerequisite>> {
+    let version = expected_version.to_string();
     match provider.platform() {
         Platform::MacOS | Platform::Linux => {
             let brew = detect_brew_path();
-            let mk_fixer = |formula: &str| -> Box<dyn Fixer> {
+            let mk_brew_fixer = |formula: &str| -> Box<dyn Fixer> {
                 match &brew {
                     Some(p) => Box::new(BrewFixer::new(p, formula)),
-                    None => Box::new(NoopFixer::new("Homebrew not found — install Homebrew first")),
+                    None    => Box::new(NoopFixer::new("Homebrew not found — install Homebrew first")),
+                }
+            };
+            let mk_upgrade_fixer = |formula: &str| -> Box<dyn Fixer> {
+                match &brew {
+                    Some(p) => Box::new(BrewUpgradeFixer::new(p, formula)),
+                    None    => Box::new(NoopFixer::new("Homebrew not found — install Homebrew first")),
                 }
             };
             vec![
                 Box::new(GenericPrerequisite::new(
                     "postgresql", "PostgreSQL",
                     Box::new(BinaryChecker::new("postgres", "--version")),
-                    mk_fixer("postgresql@17"),
+                    mk_brew_fixer("postgresql@17"),
                     GateKind::Install, None,
                 )),
                 Box::new(GenericPrerequisite::new(
                     "ollama", "Ollama",
                     Box::new(BinaryChecker::new("ollama", "--version")),
-                    mk_fixer("ollama"),
+                    mk_brew_fixer("ollama"),
                     GateKind::Install, None,
                 )),
                 Box::new(GenericPrerequisite::new(
                     "sensei", "Sensei CLI",
-                    Box::new(BinaryChecker::new("sensei", "--version")),
-                    mk_fixer("sensei-hq/tap/sensei"),
+                    Box::new(VersionedBinaryChecker::new("sensei", "--version", &version)),
+                    mk_upgrade_fixer("sensei-hq/tap/sensei"),
+                    GateKind::Install, None,
+                )),
+                Box::new(GenericPrerequisite::new(
+                    "senseid", "Sensei Daemon",
+                    Box::new(VersionedBinaryChecker::new("senseid", "--version", &version)),
+                    mk_upgrade_fixer("sensei-hq/tap/senseid"),
                     GateKind::Install, None,
                 )),
             ]
@@ -66,8 +85,14 @@ pub fn install_prerequisites(provider: Arc<dyn PlatformProvider>) -> Vec<Box<dyn
             )),
             Box::new(GenericPrerequisite::new(
                 "sensei", "Sensei CLI",
-                Box::new(BinaryChecker::new("sensei", "--version")),
+                Box::new(VersionedBinaryChecker::new("sensei", "--version", &version)),
                 Box::new(NoopFixer::new("Download sensei from sensei.so/download")),
+                GateKind::Install, None,
+            )),
+            Box::new(GenericPrerequisite::new(
+                "senseid", "Sensei Daemon",
+                Box::new(VersionedBinaryChecker::new("senseid", "--version", &version)),
+                Box::new(NoopFixer::new("Download senseid from sensei.so/download")),
                 GateKind::Install, None,
             )),
         ],
@@ -116,13 +141,14 @@ mod tests {
     use crate::platform;
 
     #[test]
-    fn install_prerequisites_returns_three_gates() {
+    fn install_prerequisites_returns_four_gates() {
         let provider = Arc::from(platform::detect());
-        let prereqs = install_prerequisites(provider);
-        assert_eq!(prereqs.len(), 3);
+        let prereqs = install_prerequisites(provider, "0.1.0");
+        assert_eq!(prereqs.len(), 4, "expected 4 gates: postgresql, ollama, sensei, senseid");
         assert_eq!(prereqs[0].id(), "postgresql");
         assert_eq!(prereqs[1].id(), "ollama");
         assert_eq!(prereqs[2].id(), "sensei");
+        assert_eq!(prereqs[3].id(), "senseid");
     }
 
     #[test]
@@ -145,7 +171,7 @@ mod tests {
     #[test]
     fn install_prereqs_all_have_install_kind() {
         let provider = Arc::from(platform::detect());
-        for p in install_prerequisites(provider) {
+        for p in install_prerequisites(provider, "0.1.0") {
             assert_eq!(p.gate_kind(), GateKind::Install, "{} should be Install kind", p.id());
         }
     }
