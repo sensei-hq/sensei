@@ -178,9 +178,10 @@ pub fn get_platform() -> serde_json::Value {
 
 #[tauri::command]
 pub fn install_prerequisites(app: tauri::AppHandle) -> Result<(), String> {
+    let version = app.package_info().version.to_string();
     std::thread::spawn(move || {
         let provider = Arc::from(bootstrap::provider());
-        let prereqs = factory::install_prerequisites(provider);
+        let prereqs = factory::install_prerequisites(provider, &version);
         runner::run("install", prereqs, |e| dispatch(&app, e));
     });
     Ok(())
@@ -198,8 +199,9 @@ pub fn start_services(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn setup_database(app: tauri::AppHandle) -> Result<(), String> {
+    let version = app.package_info().version.to_string();
     std::thread::spawn(move || {
-        let prereqs = factory::setup_database();
+        let prereqs = factory::setup_database(&version);
         runner::run("database", prereqs, |e| dispatch(&app, e));
     });
     Ok(())
