@@ -99,12 +99,12 @@ pub fn start_services(provider: Arc<dyn PlatformProvider>) -> Vec<Box<dyn Prereq
 }
 
 /// Phase 3 — database setup.
-pub fn setup_database() -> Vec<Box<dyn Prerequisite>> {
+pub fn setup_database(app_version: &str) -> Vec<Box<dyn Prerequisite>> {
     vec![
         Box::new(GenericPrerequisite::new(
             "database", "Sensei Database",
             Box::new(DatabaseChecker),
-            Box::new(DatabaseSetupFixer),
+            Box::new(DatabaseSetupFixer::new(app_version)),
             GateKind::Install, None,
         )),
     ]
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn setup_database_returns_one_gate() {
-        let prereqs = setup_database();
+        let prereqs = setup_database("0.1.0");
         assert_eq!(prereqs.len(), 1);
         assert_eq!(prereqs[0].id(), "database");
     }
