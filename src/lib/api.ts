@@ -120,6 +120,9 @@ export function senseiApi(port: number) {
     analyzeProject: (id: string) =>
       post<SolutionAnalysis>(`/api/projects/${enc(id)}/analyze`, {}, null as any),
 
+    getProjectFtr: (id: string) =>
+      get<{ ftr14d: number } | null>(`/api/projects/${enc(id)}/ftr`, null),
+
     // ── Indexing ─────────────────────────────────────────────────────────
     indexRepo: (repoId: string, repoPath: string, force = false) =>
       post<{ ok: boolean; queued: boolean; taskId: number }>(
