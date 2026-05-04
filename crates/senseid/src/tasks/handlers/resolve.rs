@@ -8,7 +8,7 @@ use super::super::Task;
 /// Resolve unresolved edges by matching target_name against existing nodes.
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let folder_name = task.folder_name();
-    let folder_path = &task.folder_path;
+    let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = match folder.as_ref()
         .and_then(|f| f["id"].as_str())
@@ -78,7 +78,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
 /// Build doc↔code traceability edges and mark as indexed.
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let folder_name = task.folder_name();
-    let folder_path = &task.folder_path;
+    let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = match folder.as_ref()
         .and_then(|f| f["id"].as_str())
@@ -153,7 +153,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
 /// Detects shared symbols across repos in the same project.
 pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let folder_name = task.folder_name();
-    let folder_path = &task.folder_path;
+    let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = folder.as_ref()
         .and_then(|f| f["id"].as_str())

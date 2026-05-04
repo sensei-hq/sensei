@@ -22,7 +22,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
     let stack = super::scan_logic::detect_stack(repo_path);
 
     // ── 2. Count indexable files ─────────────────────────────────────
-    let (indexable_files, files_total) = super::scan_logic::count_indexable_files(repo_path);
+    let (_indexable_files, files_total) = super::scan_logic::count_indexable_files(repo_path);
 
     // ── 3. Find or create project ────────────────────────────────────
     let parent_name = repo_path.parent()
@@ -263,7 +263,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
 /// Create module node for a folder.
 pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let folder_name = task.folder_name();
-    let folder_path = &task.folder_path;
+    let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = folder.as_ref()
         .and_then(|f| f["id"].as_str())
@@ -290,7 +290,7 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
 /// Parse a single file using file_processor, then write results to graph.
 pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let folder_name = task.folder_name();
-    let folder_path = &task.folder_path;
+    let _folder_path = &task.folder_path;
     let abs_path = &task.path;
 
     let repo_path_str = ctx.pg().get_repo_by_name(folder_name).await
