@@ -388,15 +388,29 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
     );
   }
 
-  // Brew install — single Brewfile installs all prereqs + components
+  // Brew install — sensei brewfile for prereqs + components
   if (gate.remedy === "brew") {
     return (
       <RemedyShell
-        title="Install missing components"
-        intro="One command installs PostgreSQL, Ollama, and the sensei CLI from the sensei Brewfile. Already-installed items are skipped.">
-        <CommandBlock cmd="curl -fsSL https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile | brew bundle --file=-"/>
+        title={`Install ${gate.name.toLowerCase()} via Homebrew`}
+        intro={
+          gate.id === "sensei"
+            ? "sensei-cli, the MCP bridge, and the daemon install together from the sensei brewfile."
+            : "One line. Homebrew will handle dependencies."
+        }>
+        <CommandBlock cmd={
+          gate.id === "sensei"
+            ? "brew bundle --file=$(curl -fsSL https://sensei.dev/Brewfile)"
+            : gate.id === "postgres"
+              ? "brew install postgresql@16 && brew services start postgresql@16"
+              : "brew install ollama && brew services start ollama"
+        }/>
+        <div style={{ fontSize: 11, color: 'var(--sumi-4)', lineHeight: 1.6, marginTop: 10 }}>
+          Or install everything sensei needs in one pass:
+        </div>
+        <CommandBlock cmd="brew bundle --file=$(curl -fsSL https://sensei.dev/Brewfile)" muted/>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 }}>
-          <a href="https://github.com/sensei-hq/homebrew-tap" target="_blank" rel="noreferrer"
+          <a href="https://github.com/sensei-dev/sensei" target="_blank" rel="noreferrer"
              style={{ fontSize: 12, color: 'var(--sumi)', textDecoration: 'none',
                        padding: '8px 14px', border: 'var(--hairline)', borderRadius: 5,
                        display: 'inline-flex', alignItems: 'center', gap: 6 }}>

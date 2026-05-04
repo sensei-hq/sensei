@@ -87,7 +87,7 @@ function synthesizeHistory(real) {
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────
-function SessionsDigestZen({ initialChart = "trend" }) {
+function SessionsDigestZen({ initialChart = "trend", projectFilter = null, projectLabel = null }) {
   const D = window.SESSIONS;
   const [chart, setChart] = ss2S(initialChart);
   const [range, setRange] = ss2S("7d");
@@ -99,6 +99,7 @@ function SessionsDigestZen({ initialChart = "trend" }) {
   const dayset = new Set(days);
   const enriched = allSessions
     .filter(s => dayset.has(s.when))
+    .filter(s => !projectFilter || s.project === projectFilter || s.solution === projectFilter)
     .map(s => ({ ...s, mins: parseDuration(s.duration), q: quality(s) }));
   const totals = {
     count: enriched.length,
@@ -120,7 +121,8 @@ function SessionsDigestZen({ initialChart = "trend" }) {
         onCycleMiniMode={() => setMiniMode(m => nextMode(m))}
         sessions={enriched}
         days={days}
-        checkpoints={D.checkpoints}/>
+        checkpoints={D.checkpoints}
+        projectLabel={projectFilter ? (projectLabel || projectFilter) : null}/>
 
       <ZenScrollLayout
         chart={chart} setChart={setChart}
@@ -643,7 +645,7 @@ function ZenMiniRetro({ going, notGoing, insights }) {
 // ─── Hero ─────────────────────────────────────────────────────────────
 function ZenHero({ totals, range, setRange,
                    collapsed = false, miniMode = "trend", onCycleMiniMode,
-                   sessions = [], days = [], checkpoints = [] }) {
+                   sessions = [], days = [], checkpoints = [], projectLabel = null }) {
   return (
     <div style={{ padding: '22px 40px 16px',
                    borderBottom: 'var(--hairline)',
@@ -653,15 +655,17 @@ function ZenHero({ totals, range, setRange,
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
                        textTransform: 'uppercase', marginBottom: 5 }}>
-          Observatory · Sessions
+          {projectLabel ? `Project · ${projectLabel} · Sessions` : 'Observatory · Sessions'}
         </div>
         <h1 className="display"
             style={{ fontSize: 22, fontWeight: 400, margin: 0 }}>
-          The shape of your week.
+          {projectLabel ? `Sessions in ${projectLabel}.` : 'The shape of your week.'}
         </h1>
         <p style={{ fontSize: 12, color: 'var(--sumi-2)', margin: '4px 0 0',
                      maxWidth: 720, lineHeight: 1.55 }}>
-          A retrospective. Then one quiet chart — drawn the way you want to read it.
+          {projectLabel
+            ? 'A retrospective scoped to this project. Same shape as the collective view, filtered down.'
+            : 'A retrospective. Then one quiet chart — drawn the way you want to read it.'}
         </p>
         <div style={{ marginTop: 12 }}>
           <RangeFilter value={range} onChange={setRange}/>
