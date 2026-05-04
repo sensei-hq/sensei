@@ -14,6 +14,7 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test:unit": "vitest run",
     "test:e2e": "npx playwright test --config e2e/playwright.config.ts --project=tauri",
+    "test:e2e:desktop": "playwright test --config e2e/playwright.config.ts --project=tauri",
     "test:sidecar": "cd src-tauri && cargo test --test bootstrap_integration",
     "test:playwright": "playwright test --config e2e/playwright.config.ts"
   },
