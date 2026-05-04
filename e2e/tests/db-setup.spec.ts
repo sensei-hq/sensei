@@ -16,7 +16,6 @@ test.describe('Bootstrap — database gate', () => {
     const dbPill = tauriPage
       .locator('.gate-row')
       .filter({ hasText: /database/i })
-      .first()
       .locator('.status-pill');
 
     // Wait up to 20 s for the pill to leave transient states
@@ -29,7 +28,6 @@ test.describe('Bootstrap — database gate', () => {
     const dbPill = tauriPage
       .locator('.gate-row')
       .filter({ hasText: /database/i })
-      .first()
       .locator('.status-pill');
 
     // Determine final state (allow up to 20 s)
