@@ -29,13 +29,21 @@
 const HEALTH_EXEMPT = new Set(['/health', '/logs']);
 const SETUP_PREFIX = '/setup';
 
+// VITE_BYPASS_HEALTH=true is set in tauri:vite-dev. In that mode the Tauri
+// sidecar is not embedded, so the health check cannot run. Health is treated
+// as already passed so the app is directly usable for frontend development.
+// This value is replaced at build/serve time by Vite — it is never 'true'
+// in a production or tauri:dev (binary) build.
+const BYPASS_HEALTH = import.meta.env.VITE_BYPASS_HEALTH === 'true';
+
 export function reroute({ url }: { url: URL }): string | undefined {
   const path = url.pathname;
 
   // ── Tier 1: Health gate ───────────────────────────────────────────────────
   const healthReady =
-    typeof sessionStorage !== 'undefined' &&
-    sessionStorage.getItem('sensei:health') === 'ready';
+    BYPASS_HEALTH ||
+    (typeof sessionStorage !== 'undefined' &&
+      sessionStorage.getItem('sensei:health') === 'ready');
 
   if (!healthReady) {
     // '/' is handled by root +page.svelte onMount — letting it redirect
