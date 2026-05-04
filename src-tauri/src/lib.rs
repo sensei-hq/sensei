@@ -36,7 +36,8 @@ pub fn run() {
         ])
         .setup(|app| {
             // ── Vibrancy ──────────────────────────────────────────────────
-            let window = app.get_webview_window("main").unwrap();
+            let window = app.get_webview_window("main")
+                .ok_or("window 'main' not found")?;
             #[cfg(target_os = "macos")]
             {
                 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
@@ -126,7 +127,8 @@ pub fn run() {
                         let _ = app.emit("open-logs", ());
                     }
                     "report-issue" => {
-                        let _ = tauri_plugin_opener::open_url(
+                        use tauri_plugin_opener::OpenerExt;
+                        let _ = app.opener().open_url(
                             "https://github.com/sensei-hq/sensei/issues",
                             None::<&str>,
                         );
