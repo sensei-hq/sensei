@@ -27,8 +27,9 @@ test.describe('Boot flow', () => {
     try {
       await tauriPage.waitForURL(/\/(setup\/welcome|observatory)/, { timeout: 30_000 });
     } catch {
+      // waitForURL timeout does not guarantee the URL hasn't moved — accept either outcome
       const url = await tauriPage.url();
-      expect(url).toMatch(/\/health/);
+      expect(url).toMatch(/\/(setup\/welcome|observatory|health)/);
     }
   });
 });
