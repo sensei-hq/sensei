@@ -9,8 +9,8 @@ export const load: PageLoad = async ({ params, parent }) => {
   return {
     project,
     verdicts,
-    positiveCount: verdicts.filter((r: any) => r.verdict === 'positive').length,
-    negativeCount: verdicts.filter((r: any) => r.verdict === 'negative').length,
-    pendingCount:  verdicts.filter((r: any) => r.verdict === 'pending').length,
+    positiveCount: verdicts.filter(r => r.verdict === 'positive').length,
+    negativeCount: verdicts.filter(r => r.verdict === 'negative').length,
+    pendingCount:  verdicts.filter(r => r.verdict === 'pending').length,
   };
 };
