@@ -13,12 +13,12 @@ const PROJ_SECTIONS = [
 
 function renderSection(id, project, openAction) {
   switch (id) {
-    case "overview": return <ProjOverview    project={project} openAction={openAction}/>;
-    case "graph":    return <ProjGraphLens   project={project}/>;
-    case "patterns": return <ProjPatterns    openAction={openAction}/>;
-    case "sessions": return <ProjSessions/>;
-    case "settings": return <ProjSettingsV2  project={project}/>;
-    default:         return null;
+    case "overview":     return <ProjOverview    project={project} openAction={openAction}/>;
+    case "graph":        return <ProjGraphLens   project={project}/>;
+    case "patterns":     return <ProjPatterns    openAction={openAction}/>;
+    case "sessions":     return <ProjSessions/>;
+    case "settings":     return <ProjSettingsV2  project={project}/>;
+    default:             return null;
   }
 }
 
@@ -225,8 +225,165 @@ function ProjectPageLongScroll() {
 
 Object.assign(window, {
   ProjectPageTopTabs, ProjectPageLeftRail, ProjectPageLongScroll,
+  ProjectPageSidebar,
   ProjectSettingsV1Page, ProjectSettingsV2Page
 });
+
+// ═══════════════════════════════════════════════════════════
+// Variation D — Project window with its own LEFT SIDEBAR
+// (replaces the top-tabs pattern; matches the perspective-split A
+//  layout where the project window has its own complete sidebar with
+//  Overview · Sessions · Memories · Traceability · Libraries ·
+//  Instruments · Patterns · Impact · Logs · Settings)
+// ═══════════════════════════════════════════════════════════
+function ProjectPageSidebar({ initialSection = "overview", embedded = false, onBack, onSwitchProject } = {}) {
+  const project = window.PROJECT_DATA.projects[window.PROJECT_DATA.active];
+  const [sec, setSec] = ppS(initialSection);
+  const { drawer, openAction, close } = useActionDrawer();
+
+  // Every section now renders a simplified, in-context preview.
+  const renderProjectSection = (id) => {
+    switch (id) {
+      case "overview":     return <ProjOverviewLite   project={project} openAction={openAction}/>;
+      case "sessions":     return <SessionsDigestZen
+                                      projectFilter={project.id}
+                                      projectLabel={project.name}/>;
+      case "memories":     return <ProjMemoriesLite   project={project}/>;
+      case "traceability": return <ProjTraceabilityLite project={project}/>;
+      case "libraries":    return <ProjLibrariesLite  project={project}/>;
+      case "instruments":  return <ProjInstrumentsLite project={project}/>;
+      case "patterns":     return <ProjPatterns       openAction={openAction}/>;
+      case "impact":       return <ProjImpactLite     project={project}/>;
+      case "about":        return <ProjAboutPane     project={project}/>;
+      default:             return <ProjOverviewLite   project={project} openAction={openAction}/>;
+    }
+  };
+
+  return (
+    <div className="sensei" data-screen-label="Project · Sidebar"
+         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+                  background: 'var(--paper)', overflow: 'hidden', position: 'relative' }}>
+      {!embedded && (
+        <PerspectiveChrome
+          title={`先生  ·  ${project.name}`}
+          subtitle="project window"
+          accent="var(--shu)"/>
+      )}
+
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '220px 1fr', minHeight: 0 }}>
+        {/* The same sidebar used in the perspective-split — drives section selection */}
+        <ProjectSidebarRouted project={project} active={sec} onChange={setSec}
+                              onSwitchProject={onSwitchProject}/>
+
+        <main style={{ overflow: 'auto', position: 'relative' }}>
+          {renderProjectSection(sec)}
+        </main>
+      </div>
+
+      {drawer && <ProjActionDrawer rec={drawer.rec} mode={drawer.mode} onClose={close}/>}
+    </div>
+  );
+}
+
+// Routed wrapper around the existing ProjectSidebar (so clicking a section
+// changes the right pane, instead of just rendering a static "active" mark).
+function ProjectSidebarRouted({ project, active, onChange, onSwitchProject }) {
+  // The sidebar sections list is defined in perspective-split.jsx as
+  // PROJ_SIDEBAR_SECTIONS; we re-render it here with click-handlers wired.
+  return (
+    <aside style={{ borderRight: 'var(--hairline)', padding: '22px 14px',
+                     background: 'var(--paper-2)',
+                     display: 'flex', flexDirection: 'column', gap: 18,
+                     overflow: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <div style={{ padding: '0 6px' }}>
+        <div style={{ fontSize: 9.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
+                       textTransform: 'uppercase', marginBottom: 4 }}>Project</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="kanji" style={{ fontSize: 26, color: 'var(--shu)', lineHeight: 1 }}>
+            {project.kanji}
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <div className="display" style={{ fontSize: 16, color: 'var(--sumi)',
+                          letterSpacing: '-0.01em', lineHeight: 1.1 }}>{project.name}</div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 2 }}>
+              {project.client || "lumen-systems"}
+            </div>
+          </div>
+        </div>
+        <button onClick={onSwitchProject}
+                style={{ marginTop: 10, fontSize: 10.5, color: 'var(--sumi-3)',
+                          padding: '4px 8px', border: 'var(--hairline)', borderRadius: 4,
+                          background: 'transparent', cursor: 'pointer' }}>
+          ⇆ switch project
+        </button>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--sumi-3)',
+                       textTransform: 'uppercase', padding: '0 10px 8px' }}>This project</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {[
+            { id: "overview",     kanji: "全", label: "Overview"    },
+            { id: "sessions",     kanji: "刻", label: "Sessions",     badge: "28" },
+            { id: "memories",     kanji: "覚", label: "Memories",     badge: "11" },
+            { id: "traceability", kanji: "巻", label: "Traceability", badge: "4"  },
+            { id: "libraries",    kanji: "庫", label: "Libraries",    badge: "5"  },
+            { id: "instruments",  kanji: "具", label: "Instruments",  badge: "7"  },
+            { id: "patterns",     kanji: "紋", label: "Patterns",     badge: "3"  },
+            { id: "impact",       kanji: "果", label: "Impact",       badge: "2"  },
+            { id: "about",        kanji: "識", label: "About"      },
+          ].map(s => (
+            <button key={s.id} onClick={() => onChange(s.id)}
+                    style={{
+                      display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
+                      alignItems: 'center', width: '100%',
+                      padding: '7px 10px', borderRadius: 6, textAlign: 'left',
+                      background: s.id === active ? 'var(--paper-3)' : 'transparent',
+                      color: s.id === active ? 'var(--sumi)' : 'var(--sumi-2)',
+                      fontSize: 13, cursor: 'pointer', border: 'none'
+                    }}>
+              <span className="kanji" style={{ fontSize: 13, width: 14,
+                            color: s.id === active ? 'var(--shu)' : 'var(--sumi-3)' }}>{s.kanji}</span>
+              <span>{s.label}</span>
+              {s.badge != null && (
+                <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>{s.badge}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--sumi-3)',
+                       textTransform: 'uppercase', padding: '0 10px 8px' }}>Health</div>
+        <div style={{ padding: '0 10px', fontSize: 11, color: 'var(--sumi-3)',
+                       display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>FTR · 14d</span>
+            <span className="mono" style={{ color: project.warn ? 'var(--amber)' : 'var(--sumi)' }}>
+              {Math.round((project.ftr || 0.78) * 100)}%
+            </span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Sessions · 7d</span>
+            <span className="mono" style={{ color: 'var(--sumi-2)' }}>{project.sessions7d || 28}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Drift watch</span>
+            <span className="mono" style={{ color: 'var(--amber)' }}>3 docs</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ flex: 1 }}/>
+
+      <div style={{ padding: '10px 10px 0', borderTop: 'var(--hairline)',
+                     fontSize: 10, color: 'var(--sumi-3)', lineHeight: 1.6 }}>
+        <span className="mono">scoped to this project</span>
+      </div>
+    </aside>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════
 // Settings-focused artboards — show the settings tab alone

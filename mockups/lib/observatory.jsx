@@ -226,16 +226,28 @@ function ObservatoryDaily({ stateMode = "mature", firstEntry = false, onBack }) 
           {section === "project"   && <ProjectPageTopTabs embedded={true} projectId={activeProjectId}
                                                           onBack={() => setSection("projects")}/>}
           {section === "sessions"  && <SessionsDigestZen/>}
+          {section === "logs"      && <ObsLogs/>}
           {section === "libraries" && <LibrariesVariantA/>}
           {section === "insights" && <LearningsTriage/>}
           {section === "memories" && <LearningsAnatomyV2/>}
+          {section === "upgrades" && <ObsUpgrades/>}
+          {section === "share-review"  && <ObsSharingReview/>}
+          {section === "consolidation" && <ObsConsolidation/>}
+          {section === "traceability" && <ObsTraceability/>}
+          {section === "impact"        && <ObsImpact/>}
+          {section === "impact-alert"  && <ObsNegativeAlert/>}
+          {section === "collective"    && <ObsCollectiveSettings/>}
           {section === "instruments-playground" && <InstrumentsPlaygroundSimple/>}
           {section === "instruments-replay"     && <InstrumentsReplaySimple/>}
           {section === "instruments-health"     && <InstrumentsHealthSimple/>}
           {section !== "home" && section !== "projects" && section !== "project" &&
            section !== "sessions" &&
+           section !== "logs" &&
            section !== "libraries" &&
            section !== "insights" && section !== "memories" &&
+           section !== "upgrades" && section !== "share-review" && section !== "consolidation" &&
+           section !== "traceability" && section !== "impact" && section !== "impact-alert" &&
+           section !== "collective" &&
            section !== "instruments-playground" &&
            section !== "instruments-replay" &&
            section !== "instruments-health" &&
@@ -289,8 +301,26 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
           <NavItem id="home"      kanji="家" label="Today"/>
           <NavItem id="projects"  kanji="場" label="Projects"   badge={D.projects.active.length + D.projects.recent.length}/>
           <NavItem id="sessions"  kanji="録" label="Sessions"   badge="41"/>
+          <NavItem id="logs"      kanji="診" label="Logs"/>
           <NavItem id="insights"  kanji="今" label="Insights"   badge="6"/>
-          <NavItem id="memories"  kanji="覚" label="Memories"   badge="24"/>
+          <div style={{ padding: '2px 10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
+                           alignItems: 'center', padding: '7px 0',
+                           color: 'var(--sumi-2)', fontSize: 13 }}>
+              <span className="kanji" style={{ fontSize: 13, width: 14,
+                            color: 'var(--sumi-3)' }}>覚</span>
+              <span>Memories</span>
+              <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>24</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1,
+                           paddingLeft: 24 }}>
+              <NavItem id="memories"      kanji="解" label="Anatomy"/>
+              <NavItem id="share-review"  kanji="共" label="Sharing"      badge="4"/>
+              <NavItem id="consolidation" kanji="結" label="Consolidate"  badge="3"/>
+            </div>
+          </div>
+          <NavItem id="upgrades"     kanji="贈" label="Upgrades"   badge="5"/>
+          <NavItem id="impact"       kanji="果" label="Impact"     badge="3"/>
           <NavItem id="libraries" kanji="庫" label="Libraries"  badge="14"/>
           <div style={{ padding: '2px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
@@ -308,6 +338,7 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
               <NavItem id="instruments-health"     kanji="健" label="Health"/>
             </div>
           </div>
+          <NavItem id="collective" kanji="群" label="Collective intel"/>
           <NavItem id="configure" kanji="調" label="Configure"/>
         </div>
       </div>

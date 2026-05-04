@@ -1804,24 +1804,25 @@ function WizPreferences({ state, upd }) {
   const p = state.prefs || {};
   const setP = (patch) => upd({ prefs: { ...p, ...patch } });
 
-  // Hover-sourced display-name suggestions: literal $HOME basename, plus a
-  // friendly ("Keiko") and lowercased variant. The user can also type freely.
+  // Display-name basename pulled from $HOME — used as the input's placeholder
+  // so the user sees a sensible default that they can accept by leaving the
+  // field as-is or overwrite to whatever they prefer.
   const homeBase = (D.system?.homeDir || "").split("/").filter(Boolean).pop() || "";
-  const suggestions = Array.from(new Set([
-    homeBase ? homeBase.charAt(0).toUpperCase() + homeBase.slice(1) : "",
-    homeBase,
-    D.system?.username || ""
-  ].filter(Boolean)));
 
   // Reusable Section / Row primitives kept local to this stage so the
   // wizard file stays self-contained.
-  const Section = ({ kanji, title, sub, children }) => (
+  // `right` is an optional slot rendered on the same row as the kanji + title
+  // so a section with a single control (e.g. a name input) doesn't waste a
+  // whole vertical block. When `right` is provided, the section renders as
+  // a single row; `children` is omitted.
+  const Section = ({ kanji, title, sub, children, right }) => (
     <section style={{ paddingTop: 24, paddingBottom: 4,
                        borderTop: 'var(--hairline)' }}>
-      <header style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 14 }}>
+      <header style={{ display: 'flex', alignItems: 'baseline', gap: 14,
+                        marginBottom: right ? 0 : 14 }}>
         <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)',
                                            lineHeight: 1, width: 30 }}>{kanji}</span>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <h3 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0,
                           color: 'var(--sumi)' }}>{title}</h3>
           {sub && (
@@ -1829,8 +1830,13 @@ function WizPreferences({ state, upd }) {
                           maxWidth: 540, lineHeight: 1.5 }}>{sub}</p>
           )}
         </div>
+        {right && (
+          <div style={{ flexShrink: 0, alignSelf: 'center', minWidth: 220 }}>
+            {right}
+          </div>
+        )}
       </header>
-      <div style={{ paddingLeft: 44 }}>{children}</div>
+      {!right && <div style={{ paddingLeft: 44 }}>{children}</div>}
     </section>
   );
   const Row = ({ label, hint, children }) => (
@@ -1890,46 +1896,25 @@ function WizPreferences({ state, upd }) {
       <WizHeader n="名" title="Preferences"
                  tagline="A few small choices before you step in. Anything here can be changed later by re-opening this wizard."/>
 
-      {/* ── What should sensei call you ──────────────────────────── */}
+      {/* ── What should sensei call you ──────────────────────────────
+          Inline single-row layout: kanji + title + description on the
+          left, prefilled input on the right. Prefilled with the user's
+          home folder name; no extra hint UI per design spec. */}
       <Section kanji="名" title="What should sensei call you?"
-               sub={`We pulled this from your home folder · ${D.system?.homeDir || "~"}. Change it to whatever feels right.`}>
-        <div style={{ padding: '6px 0 14px' }}>
-          <input
-            value={p.displayName || ""}
-            onChange={e => setP({ displayName: e.target.value })}
-            placeholder="your name"
-            style={{ width: '100%', padding: '11px 14px', fontSize: 16,
-                      border: 'var(--hairline)', borderRadius: 6,
-                      background: 'var(--paper)', color: 'var(--sumi)',
-                      fontFamily: 'inherit', outline: 'none' }}
-            onFocus={e => e.target.style.borderColor = 'var(--shu)'}
-            onBlur={e => e.target.style.borderColor = ''}
-          />
-          {suggestions.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10,
-                           fontSize: 11, color: 'var(--sumi-3)' }}>
-              <span style={{ letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                from $HOME
-              </span>
-              {suggestions.map(s => (
-                <button key={s} onClick={() => setP({ displayName: s })}
-                        style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4,
-                                  border: 'var(--hairline)',
-                                  background: p.displayName === s ? 'var(--paper-3)' : 'var(--paper)',
-                                  color: 'var(--sumi-2)', cursor: 'pointer' }}>
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
-          <p style={{ fontSize: 12, color: 'var(--sumi-3)', margin: '14px 0 0',
-                       fontStyle: 'italic', lineHeight: 1.55 }}>
-            Sensei will greet you by this name in the morning digest and address
-            you directly when raising a teaching. <span style={{ color: 'var(--sumi-2)' }}>
-            "{p.displayName || homeBase || "you"}, three sessions on api-gateway repeated the same correction."</span>
-          </p>
-        </div>
-      </Section>
+               sub="Pulled from your home folder. Change it to whatever feels right."
+               right={
+                 <input
+                   value={p.displayName || ""}
+                   onChange={e => setP({ displayName: e.target.value })}
+                   placeholder={homeBase || "your name"}
+                   style={{ width: 240, padding: '9px 12px', fontSize: 14,
+                             border: 'var(--hairline)', borderRadius: 5,
+                             background: 'var(--paper)', color: 'var(--sumi)',
+                             fontFamily: 'inherit', outline: 'none' }}
+                   onFocus={e => e.target.style.borderColor = 'var(--shu)'}
+                   onBlur={e => e.target.style.borderColor = ''}
+                 />
+               }/>
 
       {/* ── Shared learnings ─────────────────────────────────────── */}
       <Section kanji="共" title="Shared learnings"
@@ -2074,18 +2059,28 @@ function DoneStat({ label, value, last }) {
 
 // ─── Shared: step header ─────────────────────────────────────
 function WizHeader({ n, title, tagline }) {
+  // Sticky to the top of the stage's scroll container so the step title +
+  // tagline stay anchored as the user scrolls long stages (Preferences,
+  // Libraries, etc.). The wrapper supplies a paper background and a
+  // bottom hairline so content scrolling behind it stays legible.
   return (
-    <div style={{ marginBottom: 32 }}>
+    <div style={{
+      position: 'sticky', top: -44, zIndex: 5,
+      background: 'var(--paper)',
+      paddingTop: 4, paddingBottom: 18,
+      marginBottom: 24,
+      borderBottom: 'var(--hairline)',
+    }}>
       <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                     textTransform: 'uppercase', marginBottom: 8 }}>
+                     textTransform: 'uppercase', marginBottom: 6 }}>
         <span className="kanji" style={{ color: 'var(--shu)', marginRight: 8 }}>{n}</span>
         Step
       </div>
-      <h1 className="display" style={{ fontSize: 36, fontWeight: 300,
-                     letterSpacing: '-0.02em', margin: '0 0 6px' }}>
+      <h1 className="display" style={{ fontSize: 32, fontWeight: 300,
+                     letterSpacing: '-0.02em', margin: '0 0 4px' }}>
         {title}
       </h1>
-      <p style={{ fontSize: 14, color: 'var(--sumi-3)', margin: 0 }}>{tagline}</p>
+      <p style={{ fontSize: 13.5, color: 'var(--sumi-3)', margin: 0 }}>{tagline}</p>
     </div>
   );
 }

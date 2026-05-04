@@ -201,6 +201,70 @@ Each screen needs daemon endpoints that return data in the shape the UI expects.
 
 ---
 
+## 6. Mockup gaps — screens needing design before build
+
+Screens confirmed to have no mockup. Design (mockup → spec → plan) must precede implementation.
+
+### 6a. Observatory — Configure section
+
+**Priority:** High — "Configure" nav item in the observatory sidebar currently routes to `ObsPlaceholder`.
+
+**What to design:**
+- Global/app-level settings: display name, language, theme
+- Inference section: local model management (pull/delete/update), MOE panel composition (proposer/challenger/synthesizer roles), external provider API keys, routing preference (auto/local/external)
+- Assistants section: registered ACPs with registration status, re-register, transport config, test connection
+- Privacy / telemetry controls
+
+**Mockup file:** needs `configure.jsx` or extension of an existing settings mockup
+
+---
+
+### 6b. J7 — Extend & Customize (all screens missing)
+
+**Journey:** [journeys/07-extend-customize.md](./journeys/07-extend-customize.md)
+**Priority:** Medium — none of these screens have mockups
+
+| Screen | What to design | Mockup file (needed) |
+|--------|---------------|----------------------|
+| Extensions browser | Filter by kind (skill/command/agent/hook/plugin), scope toggle, enable/disable per project, create/import actions | `extensions.jsx` |
+| Skill editor | Frontmatter fields + markdown body editor, context preview panel, export/import as .md | `extensions.jsx` |
+| Agent editor | Tool access checklist, autonomy level, template selector, test-against-replay panel | `extensions.jsx` |
+| Persona editor | Trigger conditions (cwd glob, file types), rules list, evidence trail, context preview | `extensions.jsx` |
+| Benchmark runner | Task corpus definition, A/B variant config, results table (FTR/corrections/tokens delta), conclusion | `benchmark.jsx` |
+
+---
+
+### 6c. J5 — Pattern knowledge catalog
+
+**Journey:** [journeys/05-understand-codebase.md](./journeys/05-understand-codebase.md)
+**Priority:** Low
+
+**What to design:**
+- Catalog browser with category filters: GoF (structural/behavioral/creational), resilience, data access
+- Per pattern: name, family, description, detection status ("detected in N places" / "not present — recommended")
+- Evidence: sessions that used this pattern and FTR correlation
+- Import pattern as a project rule (suggested or rule)
+
+**Mockup file:** extend `project-shared.jsx` or new `patterns.jsx`
+
+---
+
+### 6d. J9 — Context pack tool
+
+**Journey:** [journeys/09-memory-and-learning.md](./journeys/09-memory-and-learning.md)
+**Priority:** Low
+
+**What to design:**
+- Mid-session context reset panel triggered when session feels bloated
+- Shows: current progress snapshot (what's done, pending, in-flight files)
+- Memories to reload: grouped by scope (global/project/module/task-type) with counts
+- Noise to clear: stale file reads and accumulated context
+- Execute rotation or cancel
+
+**Mockup file:** new `context-pack.jsx` or extend `learnings.jsx`
+
+---
+
 ## Order of work
 
 ```
