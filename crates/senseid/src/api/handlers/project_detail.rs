@@ -91,7 +91,7 @@ pub(crate) async fn get_project_instruments(
         .ok_or(StatusCode::NOT_FOUND)?;
     let tools = state.pg.get_project_extensions(&uuid, Some(&["skill", "command", "agent"])).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({ "instruments": tools })))
+    Ok(Json(serde_json::json!({ "tools": tools })))
 }
 
 pub(crate) async fn get_project_memories(
