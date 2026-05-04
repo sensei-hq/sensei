@@ -81,12 +81,15 @@ export class AppState {
 
   /**
    * Mark health check as passed for this session.
-   * In-memory only — the app will re-run bootstrap on next cold start.
-   * Also caches setup-complete to localStorage so the reroute hook can read
-   * it synchronously without waiting for the daemon config to load.
+   * Writes to sessionStorage (cleared on cold start by WKWebView) so the
+   * reroute hook can read it synchronously without importing this module.
+   * Also caches setup-complete to localStorage for the setup gate.
    */
   setHealthReady() {
     this.healthReady = true;
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('sensei:health', 'ready');
+    }
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('sensei:setup-complete', this.setupComplete ? '1' : '0');
     }
@@ -133,6 +136,9 @@ export class AppState {
     this.loaded = false;
     this.healthReady = false;
 
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem('sensei:health');
+    }
     if (typeof localStorage !== 'undefined') {
       const port = localStorage.getItem('sensei:port');
       localStorage.clear();
