@@ -73,7 +73,7 @@
               <button
                 type="button"
                 class="nav-item icon-only proj-item"
-                onclick={() => openProjectWindow(proj.id, proj.name)}
+                onclick={() => openProjectWindow(proj.id, proj.name).catch(console.error)}
                 title="{proj.name} ↗"
               >
                 <span class="kanji nav-kanji">{proj.kanji}</span>
@@ -108,7 +108,7 @@
                 <button
                   type="button"
                   class="nav-item proj-item"
-                  onclick={() => openProjectWindow(proj.id, proj.name)}
+                  onclick={() => openProjectWindow(proj.id, proj.name).catch(console.error)}
                   title="{proj.name} ↗ opens in its own window"
                 >
                   <span class="kanji nav-kanji" class:active>{proj.kanji}</span>
