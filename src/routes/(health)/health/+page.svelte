@@ -7,6 +7,10 @@
   import { GATES } from '$lib/bootstrap-gates.js';
   import type { GateStatus } from '$lib/bootstrap-gates.js';
 
+  // In e2e builds (VITE_SENSEI_MODE=dev baked in by globalSetup), skip auto-advance
+  // so tests can observe gate states without the page redirecting under them.
+  const isDevBuild = import.meta.env.VITE_SENSEI_MODE === 'dev';
+
   // Browser mode: apply mock preset
   if (!hasTauri()) {
     bs.applyPreset({
@@ -15,9 +19,9 @@
     });
   }
 
-  // Auto-advance when all ready
+  // Auto-advance when all ready — suppressed in dev/e2e builds so tests can observe gate states
   $effect(() => {
-    if (bs.allReady) {
+    if (bs.allReady && !isDevBuild) {
       setTimeout(() => {
         if (appState.setupComplete) goto('/observatory', { replaceState: true });
         else goto('/setup/welcome', { replaceState: true });
