@@ -119,7 +119,9 @@ export async function setAppPort(page: import('@playwright/test').Page): Promise
  * SvelteKit mount produces empty DOM. Using SvelteKit's own goto() avoids
  * the reload entirely, so components render correctly.
  *
- * Safe in browser mode too: the import resolves via Vite's dev server.
+ * Dev mode (Vite running): imports goto() via node_modules URL.
+ * Built Tauri app (no Vite): falls back to anchor click, which SvelteKit's
+ * router intercepts for client-side pushState navigation (no reload).
  */
 export async function navigateTo(
   tauriPage: { evaluate: (script: string) => Promise<unknown> },
@@ -128,11 +130,19 @@ export async function navigateTo(
   await tauriPage.evaluate(`
     (async function() {
       await new Promise(r => setTimeout(r, 200));
-      var nav = await import('/node_modules/@sveltejs/kit/src/runtime/app/navigation.js');
-      await nav.goto(${JSON.stringify(route)});
+      try {
+        var nav = await import('/node_modules/@sveltejs/kit/src/runtime/app/navigation.js');
+        await nav.goto(${JSON.stringify(route)});
+      } catch {
+        // Built Tauri app: anchor click triggers SvelteKit client-side routing
+        var a = document.createElement('a');
+        a.href = ${JSON.stringify(route)};
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
     })()
   `);
-  // Give the new route's components time to mount
   await sleep(800);
 }
 

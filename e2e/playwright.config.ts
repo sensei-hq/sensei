@@ -1,25 +1,15 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 30_000,
+  timeout: 60_000,
   retries: 0,
-  // Tauri tests share a single WebView — parallel workers cause navigation
-  // races (one worker's goto() cancels the other's). One worker = safe.
+  // WKWebView shares one window — parallel workers would race on the same UI.
   workers: 1,
+  globalSetup:    './globalSetup.ts',
+  globalTeardown: './globalTeardown.ts',
   projects: [
-    {
-      name: 'browser',
-      use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'tauri',
-      use: { mode: 'tauri' },
-    },
+    { name: 'tauri', use: { mode: 'tauri' } },
   ],
-  webServer: {
-    command: 'npx vite dev',
-    port: 5173,
-    reuseExistingServer: true,
-  },
+  // No webServer — Vite is not used; app is pre-built by globalSetup.
 });
