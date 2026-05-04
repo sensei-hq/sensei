@@ -477,6 +477,7 @@ dependencies = [
 [[package]]
 name = "dbd-core"
 version = "0.2.0"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.2.0#913aa4b9230c53f951a15d72e5d48527268033db"
 dependencies = [
  "async-trait",
  "chrono",
