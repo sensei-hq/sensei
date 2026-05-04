@@ -25,15 +25,21 @@ export async function openProjectWindow(projectId: string, projectName: string):
 
   openWindowsState.set(projectId, { projectId, label, projectName });
 
-  const win = new WebviewWindow(label, {
-    url: `/project/${projectId}`,
-    title: `Sensei · ${projectName}`,
-    width: 1200,
-    height: 820,
-    minWidth: 900,
-    minHeight: 600,
-    decorations: false,
-  });
+  let win: WebviewWindow;
+  try {
+    win = new WebviewWindow(label, {
+      url: `/project/${projectId}`,
+      title: `Sensei · ${projectName}`,
+      width: 1200,
+      height: 820,
+      minWidth: 900,
+      minHeight: 600,
+      decorations: false,
+    });
+  } catch (err) {
+    openWindowsState.delete(projectId);
+    throw err;
+  }
 
   await win.once('tauri://destroyed', () => {
     openWindowsState.delete(projectId);
