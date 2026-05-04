@@ -1110,6 +1110,181 @@ impl PgStore {
         Ok(())
     }
 
+    pub async fn get_project_libraries(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        // Query the resolved view directly — it already joins libraries internally
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, bool, serde_json::Value, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, ecosystem::text, description, enabled, project_props, scope
+                 FROM sensei.project_libraries_resolved
+                 WHERE (scoped_project_id = $1 OR scoped_project_id IS NULL)
+                   AND enabled = true
+                 ORDER BY scope DESC, name"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, ecosystem, desc, enabled, props, scope)| {
+            serde_json::json!({
+                "id": id, "name": name, "ecosystem": ecosystem,
+                "description": desc, "enabled": enabled,
+                "project_props": props, "scope": scope,
+            })
+        }).collect())
+    }
+
+    pub async fn get_project_extensions(&self, project_id: &uuid::Uuid, kind_filter: Option<&[&str]>) -> Result<Vec<serde_json::Value>, String> {
+        // Query the resolved view directly — it already joins extensions internally
+        let rows: Vec<(uuid::Uuid, String, String, bool, serde_json::Value, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, kind::text, enabled, project_props, scope
+                 FROM sensei.project_extensions_resolved
+                 WHERE (scoped_project_id = $1 OR scoped_project_id IS NULL)
+                   AND enabled = true
+                 ORDER BY scope DESC, name"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter()
+            .filter(|(_, _, kind, _, _, _)| {
+                kind_filter.map_or(true, |f| f.contains(&kind.as_str()))
+            })
+            .map(|(id, name, kind, enabled, props, scope)| {
+                serde_json::json!({
+                    "id": id, "name": name, "kind": kind,
+                    "enabled": enabled, "project_props": props, "scope": scope,
+                })
+            }).collect())
+    }
+
+    pub async fn get_project_ftr(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let row: Option<(Option<f64>, Option<f64>, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT ftr_14d, ftr_14d_prev, sessions_7d
+                 FROM sensei.project_ftr_metrics WHERE project_id = $1"
+            ).bind(project_id)
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let (ftr_14d, ftr_14d_prev, sessions_7d) = row.unwrap_or((None, None, 0));
+
+        // 14-day daily trend array
+        let daily: Vec<(chrono::NaiveDate, Option<f64>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT date_trunc('day', started_at)::date AS day,
+                        AVG(CASE WHEN ftr THEN 1.0 ELSE 0.0 END) AS daily_ftr
+                 FROM activity.sessions
+                 WHERE project_id = $1 AND started_at > now() - interval '14d'
+                 GROUP BY day ORDER BY day"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let trend: Vec<f64> = daily.into_iter().map(|(_, v)| v.unwrap_or(0.0)).collect();
+
+        Ok(serde_json::json!({
+            "ftr14d": ftr_14d.unwrap_or(0.0),
+            "ftr14dPrev": ftr_14d_prev.unwrap_or(0.0),
+            "ftrTrend": trend,
+            "sessions7d": sessions_7d,
+        }))
+    }
+
+    pub async fn get_project_drift(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, status::text, detail, detected_at
+                 FROM sensei.project_drift WHERE project_id = $1
+                 ORDER BY detected_at DESC LIMIT 200"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let total = rows.len();
+        let drifted = rows.iter().filter(|r| r.1 == "drifted").count();
+        let broken = rows.iter().filter(|r| r.1 == "broken").count();
+        let items: Vec<_> = rows.into_iter().map(|(id, status, detail, detected_at)| {
+            serde_json::json!({ "id": id, "status": status, "detail": detail, "detectedAt": detected_at.to_rfc3339() })
+        }).collect();
+
+        Ok(serde_json::json!({ "items": items, "total": total, "drifted": drifted, "broken": broken }))
+    }
+
+    pub async fn get_project_patterns(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<String>, bool, String, f64, i64)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, family, is_anti_pattern, lifecycle::text, confidence, instance_count
+                 FROM sensei.project_patterns WHERE project_id = $1
+                 ORDER BY is_anti_pattern, name"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let (followed, anti): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| !r.3);
+        let map_row = |(id, name, family, is_anti, lifecycle, confidence, count): (uuid::Uuid, String, Option<String>, bool, String, f64, i64)| {
+            serde_json::json!({ "id": id, "name": name, "family": family, "isAntiPattern": is_anti, "lifecycle": lifecycle, "confidence": confidence, "instanceCount": count })
+        };
+        Ok(serde_json::json!({
+            "followed": followed.into_iter().map(map_row).collect::<Vec<_>>(),
+            "antiPatterns": anti.into_iter().map(map_row).collect::<Vec<_>>(),
+        }))
+    }
+
+    pub async fn get_project_memories(&self, project_id: &uuid::Uuid) -> Result<serde_json::Value, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, f64, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, title, type::text, status::text, strength, last_relevant_at
+                 FROM sensei.memories WHERE project_id = $1
+                 ORDER BY last_relevant_at DESC LIMIT 100"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let pending_share = rows.iter().filter(|r| r.3 == "pending_share").count();
+        let total = rows.len();
+        let active: Vec<_> = rows.into_iter()
+            .filter(|r| r.3 == "active")
+            .map(|(id, title, typ, status, strength, last)| {
+                serde_json::json!({ "id": id, "title": title, "type": typ, "status": status, "strength": strength, "lastRelevantAt": last.to_rfc3339() })
+            }).collect();
+
+        Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
+    }
+
+    pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, name, abs_path, kind::text FROM sensei.folders WHERE project_id = $1 ORDER BY name"
+            ).bind(project_id)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, path, kind)| {
+            serde_json::json!({ "id": id, "name": name, "path": path, "kind": kind })
+        }).collect())
+    }
+
+    pub async fn list_sessions_by_project(&self, project_id: &uuid::Uuid, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Option<bool>, String, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, task, ftr, outcome::text, started_at
+                 FROM activity.sessions WHERE project_id = $1
+                 ORDER BY started_at DESC LIMIT $2"
+            ).bind(project_id).bind(limit)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, task, ftr, outcome, started)| {
+            serde_json::json!({ "id": id, "task": task, "ftr": ftr, "outcome": outcome, "startedAt": started.to_rfc3339() })
+        }).collect())
+    }
+
+    pub async fn get_project_recommendations(&self, project_id: &uuid::Uuid, status: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, title, urgency::text, status::text, verdict::text
+                 FROM inference.recommendations WHERE project_id = $1
+                   AND ($2::text IS NULL OR status::text = $2)
+                 ORDER BY urgency DESC, created_at DESC LIMIT 50"
+            ).bind(project_id).bind(status)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict)| {
+            serde_json::json!({ "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict })
+        }).collect())
+    }
+
     // ── Index Errors ──────────────────────────────────────────────────
 
     pub async fn log_index_error(
