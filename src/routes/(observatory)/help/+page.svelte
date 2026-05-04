@@ -13,15 +13,20 @@
   <section>
     <h2>Keyboard Shortcuts</h2>
     <table class="shortcuts">
-      <tr><td>⌘N</td><td>New project</td></tr>
-      <tr><td>⌘W</td><td>Close window</td></tr>
-      <tr><td>⌘,</td><td>Preferences</td></tr>
-      <tr><td>⌘\</td><td>Toggle sidebar</td></tr>
-      <tr><td>⌘1</td><td>Today</td></tr>
-      <tr><td>⌘2</td><td>Projects</td></tr>
-      <tr><td>⌘3</td><td>Sessions</td></tr>
-      <tr><td>⌘0</td><td>Show Observatory</td></tr>
-      <tr><td>⌘?</td><td>This help window</td></tr>
+      <thead>
+        <tr><th scope="col">Shortcut</th><th scope="col">Action</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>⌘N</td><td>New project</td></tr>
+        <tr><td>⌘W</td><td>Close window</td></tr>
+        <tr><td>⌘,</td><td>Preferences</td></tr>
+        <tr><td>⌘\</td><td>Toggle sidebar</td></tr>
+        <tr><td>⌘1</td><td>Today</td></tr>
+        <tr><td>⌘2</td><td>Projects</td></tr>
+        <tr><td>⌘3</td><td>Sessions</td></tr>
+        <tr><td>⌘0</td><td>Show Observatory</td></tr>
+        <tr><td>⌘?</td><td>This help window</td></tr>
+      </tbody>
     </table>
   </section>
 
@@ -44,6 +49,7 @@
   h2 { font-size: 15px; font-weight: 700; margin: 28px 0 10px; }
   ol, ul { font-size: 14px; line-height: 1.7; padding-left: 20px; }
   .shortcuts { border-collapse: collapse; font-size: 13px; width: 100%; }
+  .shortcuts th { padding: 5px 12px 5px 0; font-size: 11px; opacity: 0.5; font-weight: 600; text-align: left; }
   .shortcuts td { padding: 5px 12px 5px 0; border-bottom: 1px solid var(--border); }
   .shortcuts td:first-child { font-family: monospace; font-size: 14px; font-weight: 600; min-width: 60px; }
   dl { font-size: 13px; }
