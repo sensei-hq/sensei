@@ -68,7 +68,13 @@ export default async function globalSetup(): Promise<void> {
   // 5. Launch Sensei.app with dev env vars
   console.log('[globalSetup] Launching Sensei.app...');
   const proc = spawn(APP_BINARY, [], {
-    env: { ...process.env, SENSEI_MODE: 'dev', SENSEI_DB_NAME: 'sensei-dev' },
+    env: {
+      ...process.env,
+      SENSEI_MODE: 'dev',
+      SENSEI_DB_NAME: 'sensei-dev',
+      // Local schema path so deploy() uses the checked-out DDL instead of GitHub download
+      SENSEI_DB_SCHEMA_PATH: join(DAEMON_REPO, 'database'),
+    },
     detached: true,
     stdio: 'ignore',
   });
