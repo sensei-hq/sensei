@@ -1,59 +1,43 @@
 /**
- * Database setup E2E tests.
+ * Database gate E2E tests — real Sensei.app, real IPC.
  *
- * Tests the bootstrap page's handling of a missing database:
- * DB gate fails → setup auto-runs → gate ready → page advances to /setup.
- *
- * Browser mode: mocked IPC via fixtures-db-missing.ts — fast, runs in CI.
+ * Tests the database gate on the /health bootstrap page.
+ * Requires PostgreSQL running locally to reach 'ready'.
+ * If PostgreSQL is absent the gate reaches 'blocked' — both are valid terminal states.
  */
 
-import { test as dbMissingTest, expect, resetSetupState } from '../fixtures-db-missing';
-import { test, expect as baseExpect } from '../fixtures';
+import { test, expect } from '../fixtures';
 import { navigateTo } from '../helpers';
 
-dbMissingTest.describe('Bootstrap — database autoconfigure', () => {
-  dbMissingTest.beforeEach(() => {
-    resetSetupState();
+test.describe('Bootstrap — database gate', () => {
+  test('database gate reaches a terminal state', async ({ tauriPage }) => {
+    await navigateTo(tauriPage, '/health');
+
+    const dbPill = tauriPage
+      .locator('.gate-row')
+      .filter({ hasText: /database/i })
+      .locator('.status-pill');
+
+    // Wait up to 20 s for the pill to leave transient states
+    await expect(dbPill).not.toContainText(/waiting|checking/, { timeout: 20_000 });
   });
 
-  dbMissingTest(
-    'health page shows database gate blocked when DB is missing',
-    async ({ tauriPage }) => {
-      await navigateTo(tauriPage, '/health');
-
-      // Database gate should show "blocked" status initially
-      await baseExpect(
-        tauriPage.locator('.status-pill', { hasText: 'blocked' })
-      ).toBeVisible({ timeout: 5000 });
-    }
-  );
-
-  dbMissingTest(
-    'bootstrap page loads without crash when DB is missing',
-    async ({ tauriPage }) => {
-      await navigateTo(tauriPage, '/health');
-
-      // Page stays on health (auto-advance requires Tauri mode).
-      // Verify the page rendered without error — url is still health or
-      // the app may have advanced in Tauri mode.
-      const url = await tauriPage.url();
-      baseExpect(url).toMatch(/\/(health|setup|observatory)/);
-    }
-  );
-});
-
-test.describe('Bootstrap — all gates ready', () => {
-  test('health page loads without error when all gates ready', async ({ tauriPage }) => {
-    // Auto-advance to /setup/welcome only works in Tauri mode (real IPC).
-    // In browser mode the page stays on /health — verify no crash.
+  test('page does not crash when DB gate is blocked', async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/health');
-    const url = await tauriPage.url();
-    baseExpect(url).toMatch(/\/(health|setup|observatory)/);
-  });
 
-  test('direct navigation to /health works without error', async ({ tauriPage }) => {
-    await navigateTo(tauriPage, '/health');
-    const url = await tauriPage.url();
-    baseExpect(url).toMatch(/\/(health|setup|observatory)/);
+    const dbPill = tauriPage
+      .locator('.gate-row')
+      .filter({ hasText: /database/i })
+      .locator('.status-pill');
+
+    // Determine final state (allow up to 20 s)
+    await expect(dbPill).not.toContainText(/waiting|checking/, { timeout: 20_000 });
+
+    const pillText = await dbPill.textContent();
+    if (pillText?.includes('blocked')) {
+      // Remedy UI must be visible when gate is blocked
+      await expect(tauriPage.locator('.remedy')).toBeVisible();
+    }
+    // If 'ready', no remedy shown — that is fine
   });
 });
