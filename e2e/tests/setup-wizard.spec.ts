@@ -119,16 +119,13 @@ test.describe('Setup Wizard — Preferences', () => {
 
   test('select works for sharing schedule', async ({ tauriPage }) => {
     // Two .sel elements exist (sharing schedule + download collective).
-    // Use evaluate to target the first one directly, avoiding .first() / .nth(0)
-    // which TauriPage may translate to an invalid :nth-match(0) selector.
-    await tauriPage.evaluate(`
-      const sel = document.querySelectorAll('.sel')[0];
-      sel.value = 'daily';
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-    `);
-    const val = await tauriPage.evaluate(
-      `document.querySelectorAll('.sel')[0].value`
-    );
+    // nth(0) sets jsFind=querySelectorAll('.sel')[0] (0-indexed) — correct.
+    // Use the locator's selectOption/inputValue API (generates async _actionScript)
+    // rather than a synchronous page.evaluate, which can hang when dispatchEvent
+    // triggers Svelte state updates that block the eval socket response.
+    const sel = tauriPage.locator('.sel').nth(0);
+    await sel.selectOption('daily');
+    const val = await sel.inputValue();
     expect(val).toBe('daily');
   });
 });
