@@ -4,15 +4,15 @@
   let { data, children } = $props();
 
   const SECTIONS = [
-    { id: 'overview',      kanji: '観', label: 'Overview',      href: () => `/project/${data.projectId}/overview` },
-    { id: 'sessions',      kanji: '刻', label: 'Sessions',      href: () => `/project/${data.projectId}/sessions` },
+    { id: 'overview',      kanji: '見', label: 'Overview',      href: () => `/project/${data.projectId}/overview` },
+    { id: 'sessions',      kanji: '録', label: 'Sessions',      href: () => `/project/${data.projectId}/sessions` },
     { id: 'memories',      kanji: '憶', label: 'Memories',      href: () => `/project/${data.projectId}/memories` },
     { id: 'traceability',  kanji: '跡', label: 'Traceability',  href: () => `/project/${data.projectId}/traceability` },
-    { id: 'libraries',     kanji: '書', label: 'Libraries',     href: () => `/project/${data.projectId}/libraries` },
-    { id: 'instruments',   kanji: '具', label: 'Instruments',   href: () => `/project/${data.projectId}/instruments` },
+    { id: 'libraries',     kanji: '蔵', label: 'Libraries',     href: () => `/project/${data.projectId}/libraries` },
+    { id: 'instruments',   kanji: '器', label: 'Instruments',   href: () => `/project/${data.projectId}/instruments` },
     { id: 'patterns',      kanji: '型', label: 'Patterns',      href: () => `/project/${data.projectId}/patterns` },
     { id: 'impact',        kanji: '響', label: 'Impact',        href: () => `/project/${data.projectId}/impact` },
-    { id: 'about',         kanji: '事', label: 'About',         href: () => `/project/${data.projectId}/about` },
+    { id: 'about',         kanji: '情', label: 'About',         href: () => `/project/${data.projectId}/about` },
   ];
 
   function isActive(sectionId: string): boolean {
