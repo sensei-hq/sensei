@@ -14,7 +14,7 @@ const APP_BINARY      = join(
 );
 const SOCKET   = '/tmp/tauri-playwright.sock';
 const PID_FILE = '/tmp/sensei-e2e-pid';
-const HOME     = process.env.HOME ?? '';
+const HOME = process.env.HOME ?? '';
 const SYMLINK  = join(HOME, '.local/bin/senseid');
 
 function sleep(ms: number): Promise<void> {
@@ -36,6 +36,11 @@ function swapSymlink(target: string, link: string): void {
 }
 
 export default async function globalSetup(): Promise<void> {
+  // Validate HOME environment variable
+  if (!process.env.HOME) {
+    throw new Error('$HOME is not set — cannot resolve senseid symlink path');
+  }
+
   // 1. Build senseid daemon (debug)
   console.log('[globalSetup] Building senseid...');
   execFileSync('cargo', ['build', '-p', 'senseid'], {
@@ -54,6 +59,9 @@ export default async function globalSetup(): Promise<void> {
   try { execFileSync('/usr/bin/pkill', ['-x', 'senseid'], { stdio: 'ignore' }); } catch { /* not running */ }
   await sleep(500);
 
+  // 3.5. Remove stale socket from any previous run
+  try { unlinkSync(SOCKET); } catch { /* did not exist */ }
+
   // 4. Swap symlink to debug binary
   swapSymlink(SENSEID_DEBUG, SYMLINK);
 
@@ -64,6 +72,13 @@ export default async function globalSetup(): Promise<void> {
     detached: true,
     stdio: 'ignore',
   });
+
+  await new Promise<void>((resolve, reject) => {
+    proc.once('error', reject);
+    proc.once('spawn', resolve);
+  });
+
+  if (proc.pid == null) throw new Error(`Failed to get PID for ${APP_BINARY}`);
   proc.unref();
   writeFileSync(PID_FILE, String(proc.pid));
 
