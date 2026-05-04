@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
@@ -38,7 +38,7 @@
   });
 
   function isActive(href: string): boolean {
-    return $page.url.pathname === href || $page.url.pathname.startsWith(href + '/');
+    return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
   }
 </script>
 
