@@ -47,7 +47,7 @@
   .help-page { padding: 32px; max-width: 640px; }
   h1 { font-size: 22px; margin-bottom: 24px; }
   h2 { font-size: 15px; font-weight: 700; margin: 28px 0 10px; }
-  ol, ul { font-size: 14px; line-height: 1.7; padding-left: 20px; }
+  ol { font-size: 14px; line-height: 1.7; padding-left: 20px; }
   .shortcuts { border-collapse: collapse; font-size: 13px; width: 100%; }
   .shortcuts th { padding: 5px 12px 5px 0; font-size: 11px; opacity: 0.5; font-weight: 600; text-align: left; }
   .shortcuts td { padding: 5px 12px 5px 0; border-bottom: 1px solid var(--border); }
