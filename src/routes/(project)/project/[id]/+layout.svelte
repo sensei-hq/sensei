@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
 
   let { data, children } = $props();
 
@@ -16,7 +16,7 @@
   ];
 
   function isActive(sectionId: string): boolean {
-    return $page.url.pathname.includes(`/${sectionId}`);
+    return page.url.pathname.startsWith(`/project/${data.projectId}/${sectionId}`);
   }
 
   let kanji = $derived(data.project?.icon?.value ?? '場');
@@ -41,11 +41,11 @@
         <span class="stat-label">FTR 14d</span>
       </div>
 
-      <nav class="proj-nav">
+      <nav class="proj-nav" aria-label="Project sections">
         {#each SECTIONS as section (section.id)}
           {@const active = isActive(section.id)}
           <a href={section.href()} class="proj-nav-item" class:active>
-            <span class="kanji">{section.kanji}</span>
+            <span class="kanji" aria-hidden="true">{section.kanji}</span>
             <span class="label">{section.label}</span>
           </a>
         {/each}
