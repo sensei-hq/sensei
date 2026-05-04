@@ -138,7 +138,7 @@ export async function navigateTo(
         var a = document.createElement('a');
         a.href = ${JSON.stringify(route)};
         document.body.appendChild(a);
-        a.click();
+        a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         document.body.removeChild(a);
       }
     })()
