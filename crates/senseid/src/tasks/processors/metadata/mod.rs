@@ -12,5 +12,4 @@ mod summary;
 // `crate::tasks::processors::metadata::X` continue to work.
 pub use icons::scan_icons;
 pub use external_links::scan_external_links;
-pub use solutions::suggest_solutions;
 pub use summary::extract_summary;

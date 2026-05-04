@@ -1,4 +1,5 @@
 //! StateEvent types for SSE — matches the app's StateEvent<T> interface.
+#![allow(dead_code)]
 //!
 //! Single event shape for all SSE streams. Entity field routes to the right
 //! state context on the client side.
