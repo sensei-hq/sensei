@@ -19,8 +19,13 @@ function swapSymlink(target: string, link: string): void {
 export default async function globalTeardown(): Promise<void> {
   // 1. Kill Sensei.app by saved PID
   if (existsSync(PID_FILE)) {
-    const pid = readFileSync(PID_FILE, 'utf8').trim();
-    try { process.kill(parseInt(pid, 10)); } catch { /* already exited */ }
+    const raw = readFileSync(PID_FILE, 'utf8').trim();
+    const pid = Number(raw);
+    if (Number.isInteger(pid) && pid > 0) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already exited */ }
+    } else {
+      console.error(`[globalTeardown] invalid PID file contents: ${JSON.stringify(raw)}`);
+    }
     unlinkSync(PID_FILE);
   }
 
