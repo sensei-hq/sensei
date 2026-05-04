@@ -1,4 +1,5 @@
 //! Solution grouping — suggest which repos belong together.
+#![allow(dead_code)]
 
 use std::path::Path;
 use serde::Serialize;

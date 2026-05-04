@@ -9,7 +9,7 @@ use crate::languages;
 /// Classify imports as internal vs external libraries. Update project.libs.
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     let folder_name = task.folder_name();
-    let folder_path = &task.folder_path;
+    let _folder_path = &task.folder_path;
 
     let mut lib_set = std::collections::HashSet::new();
 
