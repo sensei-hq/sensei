@@ -57,12 +57,13 @@ pub fn run() {
             // ── Menu ──────────────────────────────────────────────────────────
             // On macOS the FIRST submenu in MenuBuilder becomes the application
             // menu (the one shown with the app name). We must include it explicitly
-            // so that "View" appears as a separate second item in the menu bar,
-            // not as the application menu itself.
+            // so that "File", "Edit", etc. appear as separate menu bar items.
             use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 
             let app_submenu = SubmenuBuilder::new(app, "Sensei")
                 .about(None)
+                .separator()
+                .text("preferences", "Preferences…")
                 .separator()
                 .services()
                 .separator()
@@ -73,21 +74,67 @@ pub fn run() {
                 .quit()
                 .build()?;
 
+            let file_menu = SubmenuBuilder::new(app, "File")
+                .text("new-project", "New Project")
+                .separator()
+                .close_window()
+                .build()?;
+
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
+
             let logs_item = MenuItemBuilder::with_id("open-logs", "Diagnostic Logs")
                 .accelerator("CmdOrCtrl+Shift+L")
                 .build(app)?;
             let view_menu = SubmenuBuilder::new(app, "View")
+                .text("toggle-sidebar", "Toggle Sidebar")
+                .separator()
                 .item(&logs_item)
+                .build()?;
+
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .minimize()
+                .maximize()
+                .build()?;
+
+            let help_menu = SubmenuBuilder::new(app, "Help")
+                .text("shortcuts", "Keyboard Shortcuts")
+                .text("whats-new", "What's New")
+                .separator()
+                .text("report-issue", "Report an Issue")
                 .build()?;
 
             let menu = MenuBuilder::new(app)
                 .item(&app_submenu)   // ← app menu first (shown as "Sensei")
-                .item(&view_menu)     // ← View appears as a second menu bar item
+                .item(&file_menu)
+                .item(&edit_menu)
+                .item(&view_menu)
+                .item(&window_menu)
+                .item(&help_menu)
                 .build()?;
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
-                if event.id() == "open-logs" {
-                    let _ = app.emit("open-logs", ());
+                match event.id().as_ref() {
+                    "open-logs" => {
+                        let _ = app.emit("open-logs", ());
+                    }
+                    "report-issue" => {
+                        let _ = tauri_plugin_opener::open_url(
+                            "https://github.com/sensei-hq/sensei/issues",
+                            None::<&str>,
+                        );
+                    }
+                    "shortcuts" => {
+                        // TODO: open help window (Task 19)
+                    }
+                    _ => {}
                 }
             });
 
