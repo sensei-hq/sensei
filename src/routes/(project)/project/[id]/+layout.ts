@@ -1,3 +1,4 @@
+import { error } from '@sveltejs/kit';
 import { appState } from '$lib/appstate.svelte.js';
 import { senseiApi } from '$lib/api.js';
 
@@ -8,6 +9,7 @@ export async function load({ params }: { params: { id: string } }) {
     api.listProjects(),
     api.getProjectFtr(params.id),
   ]);
-  const project = projects.find((p: any) => p.id === params.id) ?? null;
+  const project = projects.find((p: any) => p.id === params.id);
+  if (!project) throw error(404, `Project ${params.id} not found`);
   return { project, ftrMetrics, projectId: params.id };
 }
