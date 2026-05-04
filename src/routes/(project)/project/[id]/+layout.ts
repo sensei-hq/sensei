@@ -1,8 +1,9 @@
 import { error } from '@sveltejs/kit';
 import { appState } from '$lib/appstate.svelte.js';
 import { senseiApi } from '$lib/api.js';
+import type { LayoutLoad } from './$types.js';
 
-export async function load({ params }: { params: { id: string } }) {
+export const load: LayoutLoad = async ({ params }) => {
   await appState.load();
   const api = senseiApi(appState.port);
   const [projects, ftrMetrics] = await Promise.all([
