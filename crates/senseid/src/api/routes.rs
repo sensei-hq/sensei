@@ -15,6 +15,7 @@ use crate::api::handlers::config;
 use crate::api::handlers::query;
 use crate::api::handlers::gateway;
 use crate::api::handlers::scan_events;
+use crate::api::handlers::project_detail;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -47,6 +48,16 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
+        // Project detail endpoints (multi-window)
+        .route("/api/projects/{id}/ftr",             get(project_detail::get_project_ftr))
+        .route("/api/projects/{id}/repos",           get(project_detail::get_project_repos))
+        .route("/api/projects/{id}/drift",           get(project_detail::get_project_drift))
+        .route("/api/projects/{id}/patterns",        get(project_detail::get_project_patterns))
+        .route("/api/projects/{id}/libraries",       get(project_detail::get_project_libraries))
+        .route("/api/projects/{id}/instruments",     get(project_detail::get_project_instruments))
+        .route("/api/projects/{id}/memories",        get(project_detail::get_project_memories))
+        .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
+        .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
         // Indexing
         .route("/api/index", post(workspace::index_project))
         .route("/api/index/status", get(workspace::task_status))
