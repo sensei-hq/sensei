@@ -1,7 +1,8 @@
 /**
  * Application state — singleton class managing daemon config and port.
- * `sensei:port` and `sensei:health` stay in localStorage.
- * Everything else is stored on the daemon via /api/config.
+ * Only `sensei:port` and `sensei:setup-complete` stay in localStorage.
+ * `healthReady` is in-memory only — reset on every cold start so bootstrap
+ * always runs and ensures daemon + postgres are up before the app is usable.
  */
 import { senseiApi } from './api.js';
 
@@ -9,7 +10,10 @@ export class AppState {
   port = $state(7744);
   config = $state<Record<string, string>>({});
   loaded = $state(false);
-  /** True once bootstrap has confirmed all gates ready. Persisted to localStorage. */
+  /**
+   * True once bootstrap confirmed all gates ready in this session.
+   * In-memory only — not persisted, so bootstrap runs on every cold start.
+   */
   healthReady = $state(false);
 
   get activeProjectId(): string | null {
@@ -75,11 +79,15 @@ export class AppState {
     }
   }
 
-  /** Mark health check as passed. Persisted so the app skips the health page on next start. */
+  /**
+   * Mark health check as passed for this session.
+   * In-memory only — the app will re-run bootstrap on next cold start.
+   * Also caches setup-complete to localStorage so the reroute hook can read
+   * it synchronously without waiting for the daemon config to load.
+   */
   setHealthReady() {
     this.healthReady = true;
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sensei:health', 'ready');
       localStorage.setItem('sensei:setup-complete', this.setupComplete ? '1' : '0');
     }
   }
@@ -95,7 +103,8 @@ export class AppState {
     if (typeof localStorage !== 'undefined') {
       const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
       if (!isNaN(stored) && stored > 0) this.port = stored;
-      this.healthReady = localStorage.getItem('sensei:health') === 'ready';
+      // healthReady is intentionally NOT loaded from storage — bootstrap must
+      // run on every cold start to ensure services are up.
     }
 
     // Browser (no Tauri) → skip daemon calls
