@@ -128,7 +128,7 @@ export function senseiApi(port: number) {
       ),
 
     getProjectRepos: (id: string) =>
-      get<{ repos: Array<{ id: string; name: string; path: string; kind: string }> }>(
+      get<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
         `/api/projects/${enc(id)}/repos`, { repos: [] }
       ),
 
@@ -159,7 +159,7 @@ export function senseiApi(port: number) {
 
     getProjectRecommendations: (id: string, status?: string) =>
       get<any[]>(
-        `/api/projects/${enc(id)}/recommendations${status ? `?status=${status}` : ''}`, []
+        `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`, []
       ),
 
     getProjectSessions: (id: string, limit = 50) =>
