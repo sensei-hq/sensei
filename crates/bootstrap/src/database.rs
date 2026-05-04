@@ -26,7 +26,11 @@ pub fn db_name() -> &'static str {
     })
 }
 
-/// Check if PostgreSQL is reachable and the database exists.
+/// Check if PostgreSQL is reachable, the database exists, and the schema is deployed.
+///
+/// Schema deployment is detected by the presence of the `sensei` schema.
+/// A freshly-created (empty) database returns `failed("schema not deployed")`,
+/// which triggers `DatabaseSetupFixer` to run `deploy()`.
 pub fn check() -> ComponentStatus {
     let db = db_name();
 
@@ -44,7 +48,12 @@ pub fn check() -> ComponentStatus {
         return ComponentStatus::failed("database", "pgvector extension not installed");
     }
 
-    let version = schema_version(db);
+    // Schema is deployed when the 'sensei' schema exists in the database.
+    if !sensei_schema_exists(db) {
+        return ComponentStatus::failed("database", "schema not deployed");
+    }
+
+    let version = dbd_meta_version(db);
     ComponentStatus::ready("database", &format!("schema-{}", version.unwrap_or(0)))
 }
 
@@ -106,12 +115,26 @@ pub fn check_traced() -> (ComponentStatus, Vec<BootstrapTrace>) {
         return (ComponentStatus::failed("database", "pgvector extension not installed"), traces);
     }
 
-    // Step 4: schema version
+    // Step 4: sensei schema exists (deployed indicator)
+    let schema_t = run_traced(
+        "sensei_schema",
+        "Check sensei schema is deployed",
+        "psql",
+        &["-d", db, "-tAc", "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'sensei'"],
+    );
+    let schema_ok = schema_t.ok && schema_t.out.trim() == "1";
+    traces.push(schema_t);
+
+    if !schema_ok {
+        return (ComponentStatus::failed("database", "schema not deployed"), traces);
+    }
+
+    // Step 5: schema version from _dbd_meta
     let ver_t = run_traced(
         "schema_version",
-        "Read schema migration version",
+        "Read schema version from _dbd_meta",
         "psql",
-        &["-d", db, "-tAc", "SELECT max(version) FROM schema_migrations"],
+        &["-d", db, "-tAc", "SELECT version FROM _dbd_meta WHERE project = 'sensei'"],
     );
     let version: Option<i32> = ver_t.out.trim().parse().ok();
     traces.push(ver_t);
@@ -155,17 +178,33 @@ pub fn ensure_extensions() -> Result<ComponentStatus, String> {
     Err(format!("failed to enable pgvector: {stderr}"))
 }
 
-/// Deploy the schema from GitHub using dbd-core.
+/// Deploy the schema using dbd-core.
 ///
-/// Source: `sensei-hq/daemon/database@v{app_version}` — downloads tarball
-/// and caches under `~/.cache/dbd/`. Idempotent: dbd handles fresh /
-/// migrate / current automatically.
+/// Schema source priority:
+///   1. `SENSEI_DB_SCHEMA_PATH` env var — local directory path (dev/test override)
+///   2. `sensei-hq/daemon/database@v{app_version}` — GitHub download (production)
 ///
+/// Idempotent: dbd checks `_dbd_meta` internally and only applies pending changes.
 /// Requires a running PostgreSQL server and a reachable `{db_name}` database.
 pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
     let db = db_name();
-    let source = format!("sensei-hq/daemon/database@v{app_version}");
     let db_url = format!("postgres://localhost/{db}");
+
+    // Pre-flight: log current schema state
+    let current_v = dbd_meta_version(db);
+    eprintln!(
+        "[dbd] deploy: db={db} current_meta_version={} — deploying schema",
+        current_v.map_or_else(|| "none".to_string(), |v| v.to_string()),
+    );
+
+    // Resolve schema source: local override wins over GitHub
+    let source = match std::env::var("SENSEI_DB_SCHEMA_PATH") {
+        Ok(path) if !path.is_empty() => {
+            eprintln!("[dbd] deploy: using local schema path: {path}");
+            path
+        }
+        _ => format!("sensei-hq/daemon/database@v{app_version}"),
+    };
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -192,7 +231,7 @@ pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
             .map_err(|e| format!("dbd deploy failed: {e}"))
     })?;
 
-    let version = schema_version(db);
+    let version = dbd_meta_version(db);
     Ok(ComponentStatus::ready(
         "database",
         &format!("schema-{}", version.unwrap_or(0)),
@@ -220,6 +259,31 @@ pub fn setup(app_version: &str) -> Result<ComponentStatus, String> {
 
     ensure_extensions()?;
     deploy(app_version)
+}
+
+/// Check whether the `sensei` schema exists — indicates the schema has been deployed.
+fn sensei_schema_exists(db_name: &str) -> bool {
+    let output = Command::new("psql")
+        .args([
+            "-d", db_name,
+            "-tAc", "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'sensei'",
+        ])
+        .output();
+    matches!(output, Ok(o) if o.status.success() && o.stdout.starts_with(b"1"))
+}
+
+/// Read the deployed schema version from `_dbd_meta` (dbd's tracking table).
+/// Returns `None` if the table does not exist or has no row for project 'sensei'.
+fn dbd_meta_version(db_name: &str) -> Option<u32> {
+    let output = Command::new("psql")
+        .args([
+            "-d", db_name,
+            "-tAc", "SELECT version FROM _dbd_meta WHERE project = 'sensei'",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    String::from_utf8_lossy(&output.stdout).trim().parse::<u32>().ok()
 }
 
 fn pg_is_ready() -> bool {
@@ -255,15 +319,6 @@ fn pgvector_installed(db_name: &str) -> bool {
     matches!(output, Ok(o) if o.status.success() && o.stdout.starts_with(b"1"))
 }
 
-fn schema_version(db_name: &str) -> Option<i32> {
-    let output = Command::new("psql")
-        .args(["-d", db_name, "-tAc", "SELECT max(version) FROM schema_migrations"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() { return None; }
-    String::from_utf8_lossy(&output.stdout).trim().parse::<i32>().ok()
-}
 
 #[cfg(test)]
 mod tests {
