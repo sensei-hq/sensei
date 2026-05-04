@@ -120,8 +120,52 @@ export function senseiApi(port: number) {
     analyzeProject: (id: string) =>
       post<SolutionAnalysis>(`/api/projects/${enc(id)}/analyze`, {}, null as any),
 
+    // ── Project detail (new multi-window endpoints) ───────────────────
     getProjectFtr: (id: string) =>
-      get<{ ftr14d: number } | null>(`/api/projects/${enc(id)}/ftr`, null),
+      get<{ ftr14d: number; ftr14dPrev: number; ftrTrend: number[]; sessions7d: number }>(
+        `/api/projects/${enc(id)}/ftr`,
+        { ftr14d: 0, ftr14dPrev: 0, ftrTrend: [], sessions7d: 0 }
+      ),
+
+    getProjectRepos: (id: string) =>
+      get<{ repos: Array<{ id: string; name: string; path: string; kind: string }> }>(
+        `/api/projects/${enc(id)}/repos`, { repos: [] }
+      ),
+
+    getProjectLibraries: (id: string) =>
+      get<{ libraries: Array<{ id: string; name: string; ecosystem: string; scope: 'global' | 'project'; enabled: boolean }> }>(
+        `/api/projects/${enc(id)}/libraries`, { libraries: [] }
+      ),
+
+    getProjectInstruments: (id: string) =>
+      get<{ tools: Array<{ id: string; name: string; kind: string; scope: 'global' | 'project'; enabled: boolean }> }>(
+        `/api/projects/${enc(id)}/instruments`, { tools: [] }
+      ),
+
+    getProjectMemories: (id: string) =>
+      get<{ active: any[]; total: number; pendingShare: number }>(
+        `/api/projects/${enc(id)}/memories`, { active: [], total: 0, pendingShare: 0 }
+      ),
+
+    getProjectDrift: (id: string) =>
+      get<{ items: any[]; total: number; drifted: number; broken: number }>(
+        `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
+      ),
+
+    getProjectPatterns: (id: string) =>
+      get<{ followed: any[]; antiPatterns: any[] }>(
+        `/api/projects/${enc(id)}/patterns`, { followed: [], antiPatterns: [] }
+      ),
+
+    getProjectRecommendations: (id: string, status?: string) =>
+      get<any[]>(
+        `/api/projects/${enc(id)}/recommendations${status ? `?status=${status}` : ''}`, []
+      ),
+
+    getProjectSessions: (id: string, limit = 50) =>
+      get<{ sessions: any[] }>(
+        `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
+      ),
 
     // ── Indexing ─────────────────────────────────────────────────────────
     indexRepo: (repoId: string, repoPath: string, force = false) =>
