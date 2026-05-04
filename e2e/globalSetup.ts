@@ -49,10 +49,13 @@ export default async function globalSetup(): Promise<void> {
   });
 
   // 2. Build Sensei.app (debug + e2e-testing feature)
+  // VITE_SENSEI_MODE=dev is baked in at build time — the health page reads it to
+  // suppress auto-advance so E2E tests can observe gate states before navigating.
   console.log('[globalSetup] Building Sensei.app...');
   execFileSync('cargo', ['tauri', 'build', '--debug', '--features', 'e2e-testing'], {
     cwd: join(APP_REPO, 'src-tauri'),
     stdio: 'inherit',
+    env: { ...process.env, VITE_SENSEI_MODE: 'dev' },
   });
 
   // 3. Stop any running senseid before swapping symlink
