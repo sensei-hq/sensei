@@ -4,6 +4,10 @@
 //! The database name is resolved once from:
 //!   1. `SENSEI_DB_NAME` environment variable  (set to "sensei-dev" in dev)
 //!   2. Hard-coded fallback: "sensei"
+//!
+//! The dbd deploy environment ("prod" | "dev") is resolved from SENSEI_MODE:
+//!   SENSEI_MODE=dev  → "dev"
+//!   anything else    → "prod"
 
 use std::process::Command;
 use std::sync::OnceLock;
@@ -178,22 +182,34 @@ pub fn ensure_extensions() -> Result<ComponentStatus, String> {
     Err(format!("failed to enable pgvector: {stderr}"))
 }
 
+/// Resolve the dbd deploy environment from SENSEI_MODE.
+/// "dev" → dev seed data and relaxed constraints; "prod" → production defaults.
+fn deploy_env() -> &'static str {
+    match std::env::var("SENSEI_MODE").as_deref() {
+        Ok("dev" | "development" | "test") => "dev",
+        _ => "prod",
+    }
+}
+
 /// Deploy the schema using dbd-core.
 ///
 /// Schema source priority:
 ///   1. `SENSEI_DB_SCHEMA_PATH` env var — local directory path (dev/test override)
 ///   2. `sensei-hq/daemon/database@v{app_version}` — GitHub download (production)
 ///
+/// Deploy environment is read from `SENSEI_MODE` (dev | prod).
+///
 /// Idempotent: dbd checks `_dbd_meta` internally and only applies pending changes.
 /// Requires a running PostgreSQL server and a reachable `{db_name}` database.
 pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
     let db = db_name();
+    let env = deploy_env();
     let db_url = format!("postgres://localhost/{db}");
 
     // Pre-flight: log current schema state
     let current_v = dbd_meta_version(db);
     eprintln!(
-        "[dbd] deploy: db={db} current_meta_version={} — deploying schema",
+        "[dbd] deploy: db={db} env={env} current_meta_version={} — deploying schema",
         current_v.map_or_else(|| "none".to_string(), |v| v.to_string()),
     );
 
@@ -218,7 +234,7 @@ pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
 
         let config_path = project_dir.join("design.yaml");
 
-        let design = Design::from_config_with_dir(&config_path, "prod", Some(&project_dir))
+        let design = Design::from_config_with_dir(&config_path, env, Some(&project_dir))
             .map_err(|e| format!("dbd config load failed: {e}"))?;
 
         let adapter = PostgresAdapter::new(&db_url, "sensei")
