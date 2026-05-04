@@ -866,4 +866,4 @@ function MemoryShapeChart({ memories }) {
   );
 }
 
-Object.assign(window, { LearningsTriage, LearningsAnatomy, LearningsBrief });
+Object.assign(window, { LearningsTriage, LearningsAnatomy, LearningsBrief, FlatBtn });
