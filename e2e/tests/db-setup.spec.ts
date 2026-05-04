@@ -16,6 +16,7 @@ test.describe('Bootstrap — database gate', () => {
     const dbPill = tauriPage
       .locator('.gate-row')
       .filter({ hasText: /database/i })
+      .first()
       .locator('.status-pill');
 
     // Wait up to 20 s for the pill to leave transient states
@@ -28,13 +29,14 @@ test.describe('Bootstrap — database gate', () => {
     const dbPill = tauriPage
       .locator('.gate-row')
       .filter({ hasText: /database/i })
+      .first()
       .locator('.status-pill');
 
     // Determine final state (allow up to 20 s)
     await expect(dbPill).not.toContainText(/waiting|checking/, { timeout: 20_000 });
 
-    const pillText = await dbPill.textContent();
-    if (pillText?.includes('blocked')) {
+    const pillText = await dbPill.innerText();
+    if (pillText.includes('blocked')) {
       // Remedy UI must be visible when gate is blocked
       await expect(tauriPage.locator('.remedy')).toBeVisible();
     }
