@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
 
   type Memory = {
     id: string;
@@ -15,15 +13,9 @@
   };
 
   let memories = $state<Memory[]>([]);
-  let loading = $state(true);
+  let loading = $state(false);
   let tab = $state<'all' | 'memories' | 'patterns' | 'corrections'>('all');
   let selectedMemory = $state<Memory | null>(null);
-
-  onMount(async () => {
-    await appState.load();
-    // Memories API not yet wired — will populate when daemon supports it
-    loading = false;
-  });
 
   function strengthDots(s: number): string {
     const filled = Math.round(s);
