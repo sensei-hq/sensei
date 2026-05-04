@@ -3,7 +3,6 @@ import { appState } from '$lib/appstate.svelte.js';
 
 export async function load({ params, parent }: any) {
   const { project, ftrMetrics } = await parent();
-  await appState.load();
   const api = senseiApi(appState.port);
   const [reposData, recs, memoriesData, sessionsData] = await Promise.all([
     api.getProjectRepos(params.id),
@@ -14,10 +13,10 @@ export async function load({ params, parent }: any) {
   return {
     project,
     ftrMetrics,
-    repos: reposData.repos,
+    repos: reposData.repos ?? [],
     topRecommendation: recs[0] ?? null,
-    memoryCount: memoriesData.total,
-    memoriesPendingShare: memoriesData.pendingShare,
-    recentSessions: sessionsData.sessions,
+    memoryCount: memoriesData.total ?? 0,
+    memoriesPendingShare: memoriesData.pendingShare ?? 0,
+    recentSessions: sessionsData.sessions ?? [],
   };
 }
