@@ -3,15 +3,17 @@
   import { onMount } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
+  import { openProjectWindow } from '$lib/stores/windows.svelte.js';
 
   let { children } = $props();
 
   const NAV_ITEMS = [
     { href: '/observatory', kanji: '家', label: 'Today' },
+    { href: '/projects',    kanji: '場', label: 'Projects' },
     { href: '/sessions',    kanji: '刻', label: 'Sessions' },
-    { href: '/learnings',   kanji: '學', label: 'Learnings' },
+    { href: '/insights',    kanji: '學', label: 'Insights' },
     { href: '/libraries',   kanji: '書', label: 'Libraries' },
-    { href: '/instruments',  kanji: '具', label: 'Instruments' },
+    { href: '/instruments', kanji: '具', label: 'Instruments' },
   ];
 
   const BOTTOM_ITEMS = [
@@ -68,10 +70,14 @@
           <div class="sidebar-divider"></div>
           <nav class="sidebar-nav">
             {#each projects as proj (proj.id)}
-              {@const active = isActive(`/projects/${proj.id}`)}
-              <a href="/projects/{proj.id}" class="nav-item icon-only" class:active title={proj.name}>
-                <span class="kanji nav-kanji" class:active>{proj.kanji}</span>
-              </a>
+              <button
+                type="button"
+                class="nav-item icon-only proj-item"
+                onclick={() => openProjectWindow(proj.id, proj.name)}
+                title="{proj.name} ↗"
+              >
+                <span class="kanji nav-kanji">{proj.kanji}</span>
+              </button>
             {/each}
           </nav>
         {/if}
@@ -99,10 +105,18 @@
             <nav class="sidebar-nav">
               {#each projects as proj (proj.id)}
                 {@const active = isActive(`/projects/${proj.id}`)}
-                <a href="/projects/{proj.id}" class="nav-item" class:active>
+                <button
+                  type="button"
+                  class="nav-item proj-item"
+                  onclick={() => openProjectWindow(proj.id, proj.name)}
+                  title="{proj.name} ↗ opens in its own window"
+                >
                   <span class="kanji nav-kanji" class:active>{proj.kanji}</span>
-                  <span>{proj.name}</span>
-                </a>
+                  {#if !sidebarCollapsed}
+                    <span class="nav-label">{proj.name}</span>
+                    <span class="open-hint">↗</span>
+                  {/if}
+                </button>
               {/each}
             </nav>
           </div>
@@ -252,6 +266,9 @@
     background: var(--paper-3);
     color: var(--sumi-2);
   }
+
+  .proj-item { background: none; border: none; cursor: pointer; width: 100%; text-align: left; color: inherit; }
+  .open-hint { font-size: 10px; opacity: 0.4; margin-left: auto; }
 
   /* ── Main ─────────────────────────────────────────────── */
   .main-content {
