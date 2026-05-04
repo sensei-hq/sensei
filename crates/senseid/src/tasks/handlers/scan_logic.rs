@@ -1,5 +1,6 @@
 //! Pure scan logic — no DB, no task queue, no events.
 //! These functions are called by the scan_root handler.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 
