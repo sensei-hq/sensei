@@ -1,6 +1,6 @@
 /**
  * Application state — singleton class managing daemon config and port.
- * Only `sensei:port` stays in localStorage (needed to find the daemon).
+ * `sensei:port` and `sensei:health` stay in localStorage.
  * Everything else is stored on the daemon via /api/config.
  */
 import { senseiApi } from './api.js';
@@ -9,6 +9,8 @@ export class AppState {
   port = $state(7744);
   config = $state<Record<string, string>>({});
   loaded = $state(false);
+  /** True once bootstrap has confirmed all gates ready. Persisted to localStorage. */
+  healthReady = $state(false);
 
   get activeProjectId(): string | null {
     return this.config['active_project'] || this.config['active_solution'] || null;
@@ -68,6 +70,18 @@ export class AppState {
 
   async setSetupComplete() {
     await this.setConfig('setup_complete', '1');
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('sensei:setup-complete', '1');
+    }
+  }
+
+  /** Mark health check as passed. Persisted so the app skips the health page on next start. */
+  setHealthReady() {
+    this.healthReady = true;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('sensei:health', 'ready');
+      localStorage.setItem('sensei:setup-complete', this.setupComplete ? '1' : '0');
+    }
   }
 
   async dismissSuggestion(id: string) {
@@ -81,6 +95,7 @@ export class AppState {
     if (typeof localStorage !== 'undefined') {
       const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
       if (!isNaN(stored) && stored > 0) this.port = stored;
+      this.healthReady = localStorage.getItem('sensei:health') === 'ready';
     }
 
     // Browser (no Tauri) → skip daemon calls
@@ -107,6 +122,7 @@ export class AppState {
 
     this.config = {};
     this.loaded = false;
+    this.healthReady = false;
 
     if (typeof localStorage !== 'undefined') {
       const port = localStorage.getItem('sensei:port');

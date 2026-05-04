@@ -23,6 +23,7 @@
   $effect(() => {
     if (bs.allReady && !isDevBuild) {
       setTimeout(() => {
+        appState.setHealthReady();
         if (appState.setupComplete) goto('/observatory', { replaceState: true });
         else goto('/setup/welcome', { replaceState: true });
       }, 900);
