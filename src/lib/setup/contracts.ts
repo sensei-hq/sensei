@@ -15,15 +15,19 @@ export interface DaemonWatchRoot {
   modified_at: string;
 }
 
-/** An AI coding assistant family. */
-export interface DaemonAssistantFamily {
+/** One detected variant within an assistant family (e.g. "Claude Code", "Claude Desktop"). */
+export interface AssistantVariant {
   id: string;
   name: string;
   installed: boolean;
+}
+
+/** An AI coding assistant product family (e.g. "Claude", "Cursor"). */
+export interface DaemonAssistantFamily {
+  id: string;        // family key: "claude", "cursor", "zed", etc.
+  name: string;      // display name: "Claude", "Cursor", etc.
   selected: boolean;
-  config_path: string | null;
-  version: string | null;
-  install_path: string | null;
+  variants: AssistantVariant[];
 }
 
 /** A project with its folders. */

@@ -3,7 +3,7 @@
  */
 
 import { ReactiveStageContext } from './stage.svelte.js';
-import type { ScanProject, ScanProjectFolder, ActivityEvent } from './types.js';
+import type { ScanProject, ScanProjectFolder, ScanFolderEvent, ActivityEvent, StateEvent } from './types.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,6 +61,44 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
     }
 
     if (changed) this.items = [...this.items];
+  }
+
+  /**
+   * Apply a folder-entity SSE event. The daemon sends folder events with a
+   * projectId field for routing. On add: find the project and add/merge the
+   * folder, or create a placeholder project if the project isn't in state yet
+   * (happens on re-scans where project_add is not re-emitted). On update:
+   * delegate to the existing folder-merge logic in update().
+   */
+  applyFolder(event: StateEvent<ScanFolderEvent>) {
+    const folders = Array.isArray(event.data) ? event.data : [event.data];
+    for (const folder of folders) {
+      const { projectId, ...folderData } = folder;
+      const proj = this.items.find(p => p.id === projectId);
+
+      if (event.action === 'add') {
+        if (proj) {
+          if (!proj.folders.find(f => f.id === folder.id)) {
+            this.items = this.items.map(p =>
+              p.id === projectId ? { ...p, folders: [...p.folders, folderData] } : p
+            );
+          }
+        } else {
+          // Project not yet in state (re-scan of existing project) — create placeholder
+          this.add({
+            id: projectId,
+            name: folder.name,
+            status: 'scanning',
+            folders: [folderData],
+            autoDetected: true,
+            confidence: 'high',
+          } as ScanProject);
+        }
+      } else if (event.action === 'update') {
+        // Reuse the folder-merge logic already in update()
+        this.update({ id: projectId, folders: [folderData] } as Partial<ScanProject>);
+      }
+    }
   }
 
   // ── Derived ──────────────────────────────────────────────

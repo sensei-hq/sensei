@@ -110,15 +110,19 @@
 
         <!-- Content -->
         <div class="main">
+            <div class="stage-header">
+                <div class="stage-label">
+                    <span class="kanji stage-label-kanji">{stage.icon}</span> Step
+                </div>
+                <h1 class="display stage-title">{stage.title}</h1>
+                <p class="stage-tagline">{stage.sub}</p>
+                <!-- <hr /> -->
+            </div>
+
             <div class="content">
                 {#if stage?.watermark}
                     <span class="watermark kanji">{stage.icon}</span>
                 {/if}
-                <div class="stage-header">
-                    <div class="stage-label"><span class="kanji stage-label-kanji">{stage.icon}</span> Step</div>
-                    <h1 class="display stage-title">{stage.title}</h1>
-                    <p class="stage-tagline">{stage.sub}</p>
-                </div>
                 {@render children()}
             </div>
 
@@ -333,17 +337,22 @@
     .content {
         flex: 1;
         overflow-y: auto;
-        padding: 0 64px 32px;
+        padding: 32px 64px 32px;
         position: relative;
     }
 
     /* ── Stage header ─────────────────────────── */
     .stage-header {
-        padding-top: 44px;
-        margin-bottom: 32px;
+        flex-shrink: 0;
+        padding: 28px 64px 24px;
+        border-bottom: 1px solid var(--paper-3);
+        background: var(--paper);
         position: relative;
         z-index: 1;
     }
+    /*.stage-header > hr {
+        border-bottom: 1px solid var(--paper-3);
+    }*/
     .stage-label {
         font-size: 11px;
         color: var(--sumi-3);
