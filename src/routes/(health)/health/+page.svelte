@@ -344,7 +344,10 @@
         Bootstrap runs on every launch. Once a gate is green it stays that way — the next startup is quick.
       </div>
       {#if bs.allReady}
-        <button class="btn-solid" onclick={() => goto('/setup/welcome')}>Continue →</button>
+        <button class="btn-solid" onclick={() => {
+          appState.setHealthReady();
+          goto(appState.setupComplete ? '/observatory' : '/setup/welcome', { replaceState: true });
+        }}>Continue →</button>
       {/if}
     </div>
     </div>

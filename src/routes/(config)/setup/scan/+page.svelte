@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { senseiApi } from '$lib/api.js';
+  import { wizardState } from '$lib/wizard-state.svelte.js';
   import { EventManager } from '$lib/events.js';
   import { ScanProjectState, ScanActivityState } from '$lib/scan-state.svelte.js';
   import type { StateEvent, ScanProject, ActivityEvent } from '$lib/types.js';
@@ -12,6 +13,7 @@
   let rootCount = $state(0);
   let started = $state(false);
   let unsub: (() => void) | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   const LEVEL_COLORS: Record<string, string> = {
     discover: 'var(--sumi-3)',
@@ -21,6 +23,28 @@
     success: 'var(--jade)',
     error: 'var(--shu)',
   };
+
+  /**
+   * Poll /api/index/status until the task queue is idle (pending=0, running=0).
+   * This is the reliable signal that all scan+index tasks have finished.
+   * We wait 1.5 s before starting to poll to let the daemon enqueue tasks first.
+   */
+  function startDonePoller(api: ReturnType<typeof senseiApi>) {
+    let pollsSinceEnqueue = 0;
+    setTimeout(() => {
+      pollTimer = setInterval(async () => {
+        try {
+          const s = await api.getIndexStatus();
+          pollsSinceEnqueue++;
+          // Need at least 2 consecutive idle polls (debounce transient empty queue)
+          if (s.queue.pending === 0 && s.queue.running === 0 && pollsSinceEnqueue >= 2) {
+            wizardState.scan.done = true;
+            if (pollTimer) clearInterval(pollTimer);
+          }
+        } catch { /* daemon unreachable — keep polling */ }
+      }, 1500);
+    }, 1500);
+  }
 
   async function startScan() {
     started = true;
@@ -45,9 +69,15 @@
     for (const root of roots) {
       await api.scanFolder(root.path);
     }
+
+    // Begin polling for task queue idle — marks scan done when complete
+    startDonePoller(api);
   }
 
-  onDestroy(() => { unsub?.(); });
+  onDestroy(() => {
+    unsub?.();
+    if (pollTimer) clearInterval(pollTimer);
+  });
 </script>
 
 <div class="scan-page">

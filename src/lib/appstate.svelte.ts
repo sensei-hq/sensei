@@ -34,6 +34,10 @@ export class AppState {
     return this.config['setup_complete'] === '1';
   }
 
+  get userName(): string {
+    return this.config['user_name'] || '';
+  }
+
   get dismissedSuggestions(): string[] {
     try {
       return JSON.parse(this.config['dismissed_suggestions'] ?? '[]');
