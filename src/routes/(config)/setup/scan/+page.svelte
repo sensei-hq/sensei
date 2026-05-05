@@ -5,7 +5,7 @@
   import { wizardState } from '$lib/wizard-state.svelte.js';
   import { EventManager } from '$lib/events.js';
   import { ScanProjectState, ScanActivityState } from '$lib/scan-state.svelte.js';
-  import type { StateEvent, ScanProject, ActivityEvent } from '$lib/types.js';
+  import type { StateEvent, ScanProject, ScanFolderEvent, ActivityEvent } from '$lib/types.js';
 
   const projects = new ScanProjectState();
   const activities = new ScanActivityState();
@@ -62,11 +62,13 @@
 
     unsub = events.subscribe(event => {
       if (event.entity === 'project') projects.apply(event as StateEvent<ScanProject>);
+      if (event.entity === 'folder') projects.applyFolder(event as StateEvent<ScanFolderEvent>);
       if (event.entity === 'activity') activities.apply(event as StateEvent<ActivityEvent>);
     });
 
-    // Trigger scan for each root
-    for (const root of roots) {
+    // Only trigger scan for roots not yet scanned — already-watched roots
+    // are managed by the daemon's file watcher and don't need re-posting.
+    for (const root of roots.filter(r => !r.scanned)) {
       await api.scanFolder(root.path);
     }
 

@@ -17,8 +17,9 @@ describe('contract mock factories', () => {
   it('mockAssistant has required fields', () => {
     const a = mockAssistant();
     expect(a.id).toBeTypeOf('string');
-    expect(a.installed).toBeTypeOf('boolean');
     expect(a.selected).toBeTypeOf('boolean');
+    expect(Array.isArray(a.variants)).toBe(true);
+    expect(a.variants[0].installed).toBeTypeOf('boolean');
   });
 
   it('mockProject has folders array', () => {
