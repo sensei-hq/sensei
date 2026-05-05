@@ -2,7 +2,7 @@
 
 use axum::response::Json;
 use serde::Serialize;
-use sensei_bootstrap::{self as bootstrap, ComponentStatus, HardwareInfo};
+use sensei_bootstrap::{self as bootstrap, ComponentStatus};
 use std::time::Instant;
 
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -73,24 +73,6 @@ pub(crate) async fn health() -> Json<HealthResponse> {
             database: ComponentBrief::from(&db),
             models,
         },
-    })
-}
-
-// ── GET /api/health/components ──────────────────────────────────────────────
-
-#[derive(Serialize)]
-pub(crate) struct FullHealthResponse {
-    data: Vec<ComponentStatus>,
-    hardware: HardwareInfo,
-    ready: bool,
-}
-
-pub(crate) async fn health_components() -> Json<FullHealthResponse> {
-    let result = tokio::task::spawn_blocking(bootstrap::run).await.unwrap();
-    Json(FullHealthResponse {
-        data: result.components,
-        hardware: result.hardware,
-        ready: result.ready,
     })
 }
 
