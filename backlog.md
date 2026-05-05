@@ -265,6 +265,14 @@ Screens confirmed to have no mockup. Design (mockup → spec → plan) must prec
 
 ---
 
+## Known Issues
+
+| # | Area | Issue | Notes |
+|---|------|-------|-------|
+| K1 | Daemon — ACP config | JSONC comment loss on rewrite | `upsert_sensei_in_json` / `remove_sensei_from_json` parse with `json5` (preserves all key/value data) but serialize back with `serde_json` (strips comments). All settings values are preserved; only `// comments` and trailing commas are lost. Full fix requires a CST-preserving JSONC editor — no mature Rust crate exists. Options: (a) preserve leading comment block (prefix before `{`), (b) surgical text splice at the key range. |
+
+---
+
 ## Order of work
 
 ```
@@ -285,3 +293,159 @@ Screens confirmed to have no mockup. Design (mockup → spec → plan) must prec
 ```
 
 Each step: mockup → state → component → API → test. No skipping.
+
+---
+
+## 7. CSS Migration — inline utility classes and semantic design tokens
+
+**Priority:** Medium (quality / maintainability — do screen-by-screen alongside other work)
+**Goal:** Replace `<style>` block CSS with Tailwind/UnoCSS utility classes, eliminate
+fractional pixel values, and make all spacing / typography / color driven by the
+rokkit.config.js token system so the whole app feels consistent and cohesive.
+
+### Why this matters
+
+The app currently has ~30 distinct font-size values (9px, 9.5px, 10px, 10.5px, 11px,
+11.5px, 12px, 12.5px, 13px, 14px…) spread across per-component `<style>` blocks.
+Each screen picked its own spacing independently — `padding: 48px 48px 64px`, `gap: 10px`,
+`gap: 12px`, `margin: 0 0 6px` — with no shared constraint. The result: no screen looks
+obviously wrong but no two screens feel like they came from the same system.
+
+The fix is to collapse these into a small named type scale and a 4px-grid spacing system,
+both adjustable through config rather than scattered across dozens of style blocks.
+
+---
+
+### Phase 1 — Audit (1–2 hours, do once)
+
+| Step | What to do |
+|------|-----------|
+| A1 | Run: `grep -rh "font-size:" app/src --include="*.svelte" \| sort -u` — list every unique font-size value |
+| A2 | Run: `grep -rh "padding:\|margin:\|gap:" app/src --include="*.svelte" \| sort -u` — list every unique spacing value |
+| A3 | Run: `grep -rh "var(--paper\|var(--sumi\|var(--shu\|var(--jade\|var(--amber" app/src --include="*.svelte" \| sort -u` — list every custom token reference |
+| A4 | Map each font-size to the nearest Tailwind size: 9–10px → `text-[10px]`, 11–11.5px → `text-xs` (12px), 12–12.5px → `text-xs` or `text-[13px]`, 13px → `text-sm`, 14px → `text-sm`, 20px → `text-xl`, 24px → `text-2xl` |
+| A5 | Map spacing to 4px-grid: 6px → `gap-1.5`, 8px → `gap-2`/`p-2`, 10px → `gap-2.5`, 12px → `gap-3`/`p-3`, 14px → `p-3.5`, 16px → `p-4`, 18px → `p-4.5`, 20px → `p-5`, 24px → `p-6`, 32px → `p-8`, 48px → `p-12`, 64px → `p-16`, 80px → `p-20` |
+
+---
+
+### Phase 2 — Type scale (define once, apply everywhere)
+
+**Target type scale** (maps to Tailwind text-* utilities, configured via `font-size` in theme if needed):
+
+| Role | Size | Tailwind | Usage |
+|------|------|----------|-------|
+| display | 24px | `text-2xl` | Page titles, kanji callouts |
+| heading | 20px | `text-xl` | Section headings, empty-state titles |
+| title | 14px | `text-sm` | Card titles, step labels |
+| body | 13px | `text-[13px]` | Primary body text, descriptions |
+| caption | 12px | `text-xs` | Labels, badge text, metadata |
+| micro | 10px | `text-[10px]` | Status dots, superscripts, secondary badge content |
+
+**Steps:**
+
+| Step | What to do |
+|------|-----------|
+| T1 | Add a Tailwind text-size alias to `uno.config.js` (if needed) for `text-[13px]` so it's consistent |
+| T2 | Replace every `font-size: 13px` → `text-[13px]` (body class or utility) |
+| T3 | Replace `font-size: 9px–10.5px` → `text-[10px]` (micro) |
+| T4 | Replace `font-size: 11px–11.5px` → `text-xs` (12px, caption) |
+| T5 | Replace `font-size: 12px–12.5px` → `text-xs` (caption) |
+| T6 | Replace `font-size: 14px` → `text-sm` (title) |
+| T7 | Replace `font-size: 20px` → `text-xl` |
+| T8 | Replace `font-size: 24px` → `text-2xl` |
+| T9 | Replace `font-size: 64px` (kanji) → `text-[64px]` or a named utility |
+
+---
+
+### Phase 3 — Spacing system (apply screen-by-screen)
+
+Collapse all ad-hoc `padding/margin/gap` values to the 4px grid. Work one Svelte file at a time.
+
+| Step | What to do |
+|------|-----------|
+| S1 | Replace `<style>` block rules that only control padding/margin/gap with inline utility classes on the element |
+| S2 | Replace `padding: 24px` → `p-6`, `padding: 24px 48px` → `py-6 px-12` |
+| S3 | Replace `gap: 8px` → `gap-2`, `gap: 10px` → `gap-2.5`, `gap: 12px` → `gap-3` |
+| S4 | Replace `margin: 0 0 8px` → `mb-2`, `margin: 0 0 6px` → `mb-1.5` |
+| S5 | Remove `--space-*` custom properties from `tokens.css` as each is superseded |
+| S6 | Remove `--radius` / `--radius-lg` custom properties — use `rounded-md` / `rounded-lg` or `--radius-md` / `--radius-lg` from rokkit shape config |
+
+---
+
+### Phase 4 — Color tokens → Rokkit utilities (apply screen-by-screen)
+
+Replace custom `var(--paper-*)` / `var(--sumi-*)` references with Rokkit semantic utility classes.
+
+| Custom token | Rokkit utility |
+|--------------|---------------|
+| `var(--paper)` | `bg-surface-z0` |
+| `var(--paper-2)` | `bg-surface-z1` |
+| `var(--paper-3)` | `bg-surface-z2` |
+| `var(--paper-edge)` | `border-surface-z2` |
+| `var(--sumi)` | `text-surface-z9` |
+| `var(--sumi-2)` | `text-surface-z7` |
+| `var(--sumi-3)` | `text-surface-z5` |
+| `var(--sumi-4)` | `text-surface-z4` |
+| `var(--shu)` | `text-primary-z5` |
+| `var(--shu-soft)` | `bg-primary-z1` (or `bg-primary-z5/10`) |
+| `var(--jade)` | `text-success-z5` |
+| `var(--jade-soft)` | `bg-success-z1` |
+| `var(--amber)` | `text-warning-z5` |
+| `var(--amber-soft)` | `bg-warning-z1` |
+
+**Steps:**
+
+| Step | What to do |
+|------|-----------|
+| C1 | Replace `color: var(--sumi)` → `text-surface-z9` |
+| C2 | Replace `color: var(--sumi-3)` → `text-surface-z5` |
+| C3 | Replace `background: var(--paper)` → `bg-surface-z0` |
+| C4 | Replace `background: var(--paper-2)` → `bg-surface-z1` |
+| C5 | Replace `border: var(--hairline)` or `border: var(--border-card)` → `border border-surface-z2` |
+| C6 | Replace `color: var(--shu)` → `text-primary-z5` |
+| C7 | Replace `background: var(--shu-soft)` → `bg-primary-z1` |
+| C8 | After each screen is done, prune the token set from `tokens.css` |
+
+---
+
+### Phase 5 — Shared component CSS → Rokkit components
+
+The `.btn-solid`, `.btn-outline`, `.btn-cta` classes in `tokens.css` are hand-rolled
+versions of `@rokkit/ui` Button. Replace progressively.
+
+| Step | What to do |
+|------|-----------|
+| B1 | Replace `<button class="btn-solid">` → `<Button>` from `@rokkit/ui` |
+| B2 | Replace `<button class="btn-outline">` → `<Button variant="outline">` |
+| B3 | Replace `<button class="btn-cta">` → `<Button variant="primary">` |
+| B4 | After all references removed, delete `.btn-solid`, `.btn-outline`, `.btn-cta` from `tokens.css` |
+
+---
+
+### Phase 6 — Cleanup
+
+| Step | What to do |
+|------|-----------|
+| X1 | Delete `tokens.css` sections that are fully superseded (spacing vars, color aliases, btn-* classes) |
+| X2 | Keep `tokens.css` only for: font imports, `.display` / `.kanji` typography classes, scrollbar styling, `::selection`, dark mode OS-sync that Rokkit doesn't cover |
+| X3 | Verify dark mode still works: toggle `[data-mode="dark"]` on body and check all screens |
+| X4 | Run lint + full test suite — zero errors |
+
+---
+
+### Suggested order of screens
+
+Work top-to-bottom through the `routes/` tree, one file per session:
+
+```
+1. +layout.svelte (root)         — body/html styles, font-family
+2. (health)/+layout.svelte       — sidebar/nav chrome
+3. (health)/health/+page.svelte  — gate list cards
+4. (health)/logs/+page.svelte    — log viewer
+5. (config)/+layout.svelte       — wizard chrome
+6. setup/welcome → done          — each wizard stage in order
+7. (observatory)/observatory     — main content screens
+8. (observatory)/settings        — settings panels
+```
+
+After each screen: `bun run lint` (zero errors), smoke-test the screen in both light and dark mode.
