@@ -5,7 +5,8 @@
  */
 
 import { senseiApi } from '$lib/api.js';
-import type { PreferencesData, WizardLoadData } from './contracts.js';
+import type { AssistantFamily } from '$lib/types.js';
+import type { DaemonAssistantFamily, PreferencesData, WizardLoadData } from './contracts.js';
 
 const STAGES = [
   'welcome', 'preferences', 'assistants', 'roots', 'scan',
@@ -37,6 +38,16 @@ export function extractPreferences(config: Record<string, unknown>): Preferences
   return { ...PREF_DEFAULTS };
 }
 
+/** Map daemon AssistantFamily[] to app DaemonAssistantFamily[]. */
+function mapFamilies(families: AssistantFamily[]): DaemonAssistantFamily[] {
+  return families.map(f => ({
+    id: f.family,
+    name: f.name,
+    selected: f.installed,
+    variants: f.members.map(m => ({ id: m.id, name: m.name, installed: m.installed })),
+  }));
+}
+
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
@@ -51,16 +62,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
   return {
     completion: extractCompletion(config),
     preferences: extractPreferences(config),
-    // Normalize daemon's { family, name, installed, config_path } → DaemonAssistantFamily { id, ... }
-    assistantFamilies: (families as any[]).map((f: any) => ({
-      id: f.family ?? f.id,
-      name: f.name,
-      installed: !!f.installed,
-      selected: false,
-      config_path: f.config_path || null,
-      version: null,
-      install_path: null,
-    })),
+    assistantFamilies: mapFamilies(families),
     roots: roots as any[],
     projects: projects as any[],
     libraries: libs as any,

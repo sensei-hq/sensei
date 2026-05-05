@@ -20,11 +20,11 @@ describe('WizardState', () => {
       expect(ws.preferences.displayName).toBe('Jerry');
     });
 
-    it('populates assistants with selected defaulting to installed', () => {
+    it('populates assistants with selected defaulting to any-variant-installed', () => {
       ws.hydrate(mockWizardLoadData());
       expect(ws.assistants.assistants).toHaveLength(2);
-      expect(ws.assistants.assistants[0].selected).toBe(true);
-      expect(ws.assistants.assistants[1].selected).toBe(false);
+      expect(ws.assistants.assistants[0].selected).toBe(true);   // claude — has installed variants
+      expect(ws.assistants.assistants[1].selected).toBe(false);  // cursor — no installed variants
     });
 
     it('populates roots slice', () => {
