@@ -40,11 +40,19 @@ pub(crate) fn find_claude_binary() -> Option<PathBuf> {
     search.into_iter().find(|p| p.exists())
 }
 
-/// Read a JSON file, remove "sensei" from the object at `mcp_key`, write back.
+/// Parse a JSON or JSONC (JSON with comments) file into a serde_json::Value.
+/// Uses json5 to handle comments and trailing commas (e.g. Zed settings.json).
+/// Returns an empty object if the file is missing or unparseable.
+fn read_json_or_jsonc(path: &std::path::Path) -> Option<serde_json::Value> {
+    let s = std::fs::read_to_string(path).ok()?;
+    // json5 is a superset of JSONC — handles // and /* */ comments, trailing commas.
+    json5::from_str::<serde_json::Value>(&s).ok()
+}
+
+/// Read a JSON/JSONC file, remove "sensei" from the object at `mcp_key`, write back.
 pub(crate) fn remove_sensei_from_json(path: &std::path::Path, mcp_key: &str) -> bool {
     if !path.exists() { return false; }
-    let s = match std::fs::read_to_string(path) { Ok(s) => s, Err(_) => return false };
-    let mut v: serde_json::Value = match serde_json::from_str(&s) { Ok(v) => v, Err(_) => return false };
+    let mut v = match read_json_or_jsonc(path) { Some(v) => v, None => return false };
     if let Some(servers) = v.get_mut(mcp_key).and_then(|s| s.as_object_mut())
         && servers.remove("sensei").is_some() {
             std::fs::write(path, serde_json::to_string_pretty(&v).unwrap()).ok();
@@ -53,7 +61,8 @@ pub(crate) fn remove_sensei_from_json(path: &std::path::Path, mcp_key: &str) -> 
     false
 }
 
-/// Write sensei MCP entry into a JSON config file at the given key.
+/// Write sensei MCP entry into a JSON/JSONC config file at the given key.
+/// Preserves all existing keys — only adds or updates the "sensei" entry.
 pub(crate) fn upsert_sensei_in_json(
     path: &std::path::Path,
     mcp_key: &str,
@@ -64,9 +73,8 @@ pub(crate) fn upsert_sensei_in_json(
     }
     let mut config: serde_json::Value = path
         .exists()
-        .then(|| std::fs::read_to_string(path).ok())
+        .then(|| read_json_or_jsonc(path))
         .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::json!({}));
 
     config
