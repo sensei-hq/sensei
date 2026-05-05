@@ -21,7 +21,6 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health
         .route("/health", get(health::health))
-        .route("/api/health/components", get(health::health_components))
         .route("/api/watcher/status", get(health::watcher_status))
         .route("/api/watcher/unregister", axum::routing::post(health::watcher_unregister))
         // Scan events (SSE)
