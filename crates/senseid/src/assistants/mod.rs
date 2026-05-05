@@ -244,6 +244,80 @@ mod tests {
         assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
     }
 
+    // ── JSONC (JSON with comments) ─────────────────────────────────────────
+
+    #[test]
+    fn upsert_preserves_all_keys_in_jsonc_file() {
+        // Mirrors a real Zed settings.json: JSONC with comments, trailing commas,
+        // and unrelated top-level keys that must not be touched.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"// Zed settings
+{
+  "terminal": { "dock": "right" },
+  "mcpServers": {
+    "other-tool": { "command": "other-mcp" }, // keep this
+  },
+  "file_types": { "SQL": ["ddl", "sql"] },
+}"#).unwrap();
+
+        let entry = serde_json::json!({"command": "sensei-mcp", "args": []});
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // Sensei entry added
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        // Sibling mcpServer preserved
+        assert_eq!(content["mcpServers"]["other-tool"]["command"], "other-mcp");
+        // Unrelated top-level keys preserved
+        assert_eq!(content["terminal"]["dock"], "right");
+        assert_eq!(content["file_types"]["SQL"][0], "ddl");
+    }
+
+    #[test]
+    fn upsert_jsonc_updates_existing_sensei_without_touching_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"// existing config
+{
+  "vim_mode": false,
+  "mcpServers": {
+    // sensei was here before
+    "sensei": { "command": "old-binary" },
+    "postgres": { "command": "pg-mcp" },
+  },
+}"#).unwrap();
+
+        let entry = serde_json::json!({"command": "sensei-mcp"});
+        upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"]["postgres"]["command"], "pg-mcp");
+        assert_eq!(content["vim_mode"], false);
+    }
+
+    #[test]
+    fn remove_sensei_from_jsonc_preserves_other_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"// Zed settings
+{
+  "terminal": { "dock": "right" }, // trailing comma
+  "mcpServers": {
+    "sensei": { "command": "sensei-mcp" },
+    "svelte": { "command": "svelte-mcp" },
+  },
+}"#).unwrap();
+
+        assert!(remove_sensei_from_json(&path, "mcpServers"));
+
+        let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(content["mcpServers"]["sensei"].is_null());
+        assert_eq!(content["mcpServers"]["svelte"]["command"], "svelte-mcp");
+        assert_eq!(content["terminal"]["dock"], "right");
+    }
+
     #[test]
     fn upsert_preserves_existing_servers() {
         let dir = tempfile::tempdir().unwrap();

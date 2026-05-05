@@ -173,7 +173,7 @@ pub(crate) async fn scan_folder(
     let root_path = expanded.clone();
     let root = std::path::Path::new(&root_path);
     if !root.exists() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(serde_json::json!({"ok": false, "error": "path not found"})));
     }
 
     // Enqueue ScanRoot task — runs asynchronously via task workers
