@@ -5,7 +5,7 @@
  */
 
 import type {
-  DaemonWatchRoot, DaemonAssistantFamily, DaemonProject,
+  DaemonWatchRoot, DaemonAssistantFamily, AssistantVariant, DaemonProject,
   DaemonLibEntry, DaemonMcpEntry, PreferencesData, WizardLoadData,
 } from './contracts.js';
 
@@ -18,10 +18,22 @@ export function mockWatchRoot(overrides: Partial<DaemonWatchRoot> = {}): DaemonW
   };
 }
 
+export function mockAssistantVariant(overrides: Partial<AssistantVariant> = {}): AssistantVariant {
+  return {
+    id: 'claude-code', name: 'Claude Code', installed: true,
+    ...overrides,
+  };
+}
+
 export function mockAssistant(overrides: Partial<DaemonAssistantFamily> = {}): DaemonAssistantFamily {
   return {
-    id: 'claude-code', name: 'Claude Code', installed: true, selected: true,
-    config_path: '~/.claude/config.json', version: '1.0.0', install_path: '/usr/local/bin/claude',
+    id: 'claude',
+    name: 'Claude',
+    selected: true,
+    variants: [
+      mockAssistantVariant(),
+      mockAssistantVariant({ id: 'claude-desktop', name: 'Claude Desktop' }),
+    ],
     ...overrides,
   };
 }
@@ -76,7 +88,10 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
     preferences: mockPreferences(),
     assistantFamilies: [
       mockAssistant(),
-      mockAssistant({ id: 'cursor', name: 'Cursor', installed: false, selected: false }),
+      mockAssistant({
+        id: 'cursor', name: 'Cursor', selected: false,
+        variants: [mockAssistantVariant({ id: 'cursor', name: 'Cursor', installed: false })],
+      }),
     ],
     roots: [mockWatchRoot()],
     projects: [mockProject()],

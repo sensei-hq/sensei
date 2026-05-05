@@ -139,7 +139,10 @@ export class WizardState {
     }
 
     this.assistants = {
-      assistants: data.assistantFamilies.map(a => ({ ...a, selected: a.selected ?? a.installed })),
+      assistants: data.assistantFamilies.map(a => ({
+        ...a,
+        selected: a.selected ?? a.variants.some(v => v.installed),
+      })),
     };
 
     this.roots = { roots: [...data.roots], newPath: '' };

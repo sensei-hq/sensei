@@ -37,6 +37,11 @@ export interface ScanProjectFolder {
   status: FolderStatus;
 }
 
+/** Folder-level SSE event from daemon — includes projectId for routing. */
+export interface ScanFolderEvent extends ScanProjectFolder {
+  projectId: string;
+}
+
 export interface ScanProject {
   id: string;
   name: string;
