@@ -56,7 +56,12 @@ type CommitFn = (ws: WizardState, api: ReturnType<typeof senseiApi>) => Promise<
 
 const COMMIT_HANDLERS: Record<string, CommitFn> = {
   welcome:     async () => {},
-  preferences: async (ws, api) => { await api.setConfig({ 'setup.preferences': JSON.stringify(ws.preferences) }); },
+  preferences: async (ws, api) => {
+    await api.setConfig({
+      'setup.preferences': JSON.stringify(ws.preferences),
+      'user_name': ws.preferences.displayName,
+    });
+  },
   assistants:  async (ws, api) => {
     const ids = ws.assistants.assistants.filter(a => a.selected).map(a => a.id);
     await api.configureAssistants(ids);
@@ -123,13 +128,13 @@ export class WizardState {
 
   // ── Lifecycle ──
 
-  hydrate(data: WizardLoadData): void {
+  async hydrate(data: WizardLoadData): Promise<void> {
     this.completion = { ...data.completion };
     this.preferences = { ...data.preferences };
 
     // Prefill displayName from system username if empty
     if (!this.preferences.displayName) {
-      const user = guessUserName();
+      const user = await guessUserName();
       if (user) this.preferences.displayName = user;
     }
 
@@ -171,16 +176,26 @@ export class WizardState {
   }
 }
 
-/** Best-effort username from the browser path or localStorage. */
-function guessUserName(): string {
+/** Best-effort username — async so it can call Tauri's homeDir(). */
+async function guessUserName(): Promise<string> {
   try {
-    // In Tauri, document.baseURI or location might contain /Users/<name>
-    // Fallback: check localStorage for a previously stored name
     const stored = typeof localStorage !== 'undefined'
       ? localStorage.getItem('sensei:userName') : null;
     if (stored) return stored;
 
-    // Try to extract from common macOS/Linux path patterns in the page URL or referrer
+    // In Tauri, homeDir() returns the real home directory (e.g. /Users/jerry)
+    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+      const { homeDir } = await import('@tauri-apps/api/path');
+      const home = await homeDir();
+      // Strip trailing slash, then take the last path segment
+      const match = home.replace(/\/$/, '').match(/\/([^/]+)$/);
+      if (match) {
+        const name = match[1];
+        return name.charAt(0).toUpperCase() + name.slice(1);
+      }
+    }
+
+    // Browser fallback: try location.pathname (works outside Tauri)
     const pathMatch = (typeof location !== 'undefined' ? location.pathname : '')
       .match(/\/Users\/([^/]+)/);
     if (pathMatch) {
