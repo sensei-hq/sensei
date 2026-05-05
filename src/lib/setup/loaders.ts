@@ -51,7 +51,16 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
   return {
     completion: extractCompletion(config),
     preferences: extractPreferences(config),
-    assistantFamilies: families as any[],
+    // Normalize daemon's { family, name, installed, config_path } → DaemonAssistantFamily { id, ... }
+    assistantFamilies: (families as any[]).map((f: any) => ({
+      id: f.family ?? f.id,
+      name: f.name,
+      installed: !!f.installed,
+      selected: false,
+      config_path: f.config_path || null,
+      version: null,
+      install_path: null,
+    })),
     roots: roots as any[],
     projects: projects as any[],
     libraries: libs as any,
