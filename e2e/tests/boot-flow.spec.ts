@@ -20,14 +20,25 @@ test.describe('Boot flow', () => {
    * to '/' WITHOUT forcing /health — the health page must appear on its own.
    */
   test('cold start: / routes to health page via onMount without forced navigation', async ({ tauriPage }) => {
-    // Simulate cold start: clear health gate so reroute sees health as not ready
+    // Bootstrap runs many concurrent Tauri IPC invokes on startup. The Tauri
+    // playwright plugin sends eval results via the same IPC channel
+    // ('plugin:playwright|pw_result'). If we call evaluate() while bootstrap
+    // IPC is saturated, the response is queued and times out after 30s.
+    //
+    // Fix: navigate to /health first, wait for the bootstrap-page to render
+    // (proving the page is loaded and IPC is draining), then clear health,
+    // then navigate to '/' to test the cold-start routing.
+    await navigateTo(tauriPage, '/health');
+    await expect(tauriPage.locator('.bootstrap-page')).toBeVisible({ timeout: 15_000 });
+
+    // Clear health gate — IPC is no longer saturated at this point
     await tauriPage.evaluate(`
-      (function() {
-        try { sessionStorage.removeItem('sensei:health'); } catch { }
-      })();
+      (async function() {
+        try { sessionStorage.removeItem('sensei:health'); } catch (_e) { }
+      })()
     `);
 
-    // Navigate to root — NOT /health
+    // Navigate to root — NOT /health directly.
     // reroute() exempts '/' → root page mounts → onMount calls goto('/health')
     await navigateTo(tauriPage, '/');
 

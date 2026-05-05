@@ -25,7 +25,7 @@
 
     onMount(async () => {
         const data = await loadWizardData(appState.port);
-        wizardState.hydrate(data);
+        await wizardState.hydrate(data);
         loaded = true;
     });
 
