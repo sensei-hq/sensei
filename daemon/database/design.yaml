@@ -1,0 +1,27 @@
+project:
+  name: sensei
+  note: Database structure for sensei the app.
+source:
+  dialect: postgresql
+target:
+  postgres:
+    url: $DATABASE_URL
+    extensions:
+      - name: uuid-ossp
+        schema: extensions
+      - name: vector
+        schema: extensions
+schemas:
+  - extensions
+  - staging
+  - sensei
+  - history
+  - inference
+  - gateway
+import:
+  staging:
+    - staging
+  options:
+    truncate: true
+    null_value: ""
+ignore: []
