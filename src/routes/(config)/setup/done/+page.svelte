@@ -6,38 +6,24 @@
   ];
 </script>
 
-<div class="done">
-  <h1 class="display hero">
+<div class="max-w-[720px]">
+  <h1 class="display text-[54px] font-light leading-[1.08] m-0 mb-8 tracking-[-0.02em]">
     The observatory<br/>
-    <span class="hero-accent">is ready.</span>
+    <span class="text-primary-z5">is ready.</span>
   </h1>
 
-  <p class="body">
+  <p class="text-[16px] text-surface-z7 leading-[1.7] max-w-[560px] m-0 mb-11">
     Sensei is watching. Work normally with your AI assistants — sensei learns
     from every session and begins teaching after it has enough data.
   </p>
 
-  <div class="pillars">
+  <div class="grid grid-cols-3 gap-[18px] py-[22px] border-t border-b border-surface-z2">
     {#each stats as s}
-      <div class="pillar">
-        <div class="kanji pillar-kanji">{s.kanji}</div>
-        <div class="display pillar-title">{s.label}</div>
-        <div class="pillar-sub">{s.sub}</div>
+      <div>
+        <div class="kanji text-[26px] text-primary-z5 mb-2">{s.kanji}</div>
+        <div class="display text-[20px]">{s.label}</div>
+        <div class="text-xs text-surface-z6 mt-[3px]">{s.sub}</div>
       </div>
     {/each}
   </div>
 </div>
-
-<style>
-  .done { max-width: 720px; }
-  .hero { font-size: 54px; font-weight: 300; line-height: 1.08; margin: 0 0 32px; letter-spacing: -0.02em; }
-  .hero-accent { color: var(--shu); }
-  .body { font-size: 16px; color: var(--sumi-2); line-height: 1.7; max-width: 560px; margin: 0 0 44px; }
-  .pillars {
-    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px;
-    padding: 22px 0; border-top: var(--hairline); border-bottom: var(--hairline);
-  }
-  .pillar-kanji { font-size: 26px; color: var(--shu); margin-bottom: 8px; }
-  .pillar-title { font-size: 20px; }
-  .pillar-sub { font-size: 12px; color: var(--sumi-3); margin-top: 3px; }
-</style>
