@@ -1,41 +1,48 @@
 <script lang="ts">
-  let { data } = $props();
+    let { data } = $props();
 </script>
 
-<div class="instruments-page">
-  <header class="page-header">
-    <h2>Instruments</h2>
-    <span class="total">{data.tools.length} tools</span>
-  </header>
+<div class="px-6 py-6">
+    <header class="flex items-baseline gap-4 mb-5">
+        <h2 class="text-xl font-normal m-0">Instruments</h2>
+        <span class="text-ui opacity-60">{data.tools.length} tools</span>
+    </header>
 
-  {#if data.tools.length === 0}
-    <p class="empty-hint">No instruments associated with this project yet.</p>
-  {:else}
-    <ul class="tool-list">
-      {#each data.tools as tool (tool.id)}
-        <li class="tool-row">
-          <span class="tool-name">{tool.name}</span>
-          <span class="tool-kind">{tool.kind}</span>
-          <span class="scope-badge" class:global={tool.scope === 'global'} class:proj={tool.scope === 'project'}>
-            [{tool.scope}]
-          </span>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+    {#if data.tools.length === 0}
+        <p class="text-ui opacity-50">
+            No instruments associated with this project yet.
+        </p>
+    {:else}
+        <ul class="list-none m-0 p-0">
+            {#each data.tools as tool (tool.id)}
+                <li
+                    class="tool-row flex items-center gap-2.5 py-2 border-b border-surface-z2 text-ui"
+                >
+                    <span class="font-semibold flex-1">{tool.name}</span>
+                    <span class="opacity-50 text-xs">{tool.kind}</span>
+                    <span
+                        class="scope-badge text-2xs px-1.5 py-px rounded-md font-mono"
+                        class:global={tool.scope === "global"}
+                        class:proj={tool.scope === "project"}
+                    >
+                        [{tool.scope}]
+                    </span>
+                </li>
+            {/each}
+        </ul>
+    {/if}
 </div>
 
 <style>
-  .instruments-page { padding: 24px; }
-  .page-header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 20px; }
-  .page-header h2 { margin: 0; }
-  .total { font-size: 13px; opacity: 0.6; }
-  .tool-list { list-style: none; margin: 0; padding: 0; }
-  .tool-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-  .tool-name { font-weight: 600; flex: 1; }
-  .tool-kind { opacity: 0.5; font-size: 12px; }
-  .scope-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; font-family: monospace; }
-  .scope-badge.global { background: var(--surface-3); opacity: 0.7; }
-  .scope-badge.proj { background: color-mix(in srgb, var(--shu, #c0392b) 15%, transparent); color: var(--shu, #c0392b); }
-  .empty-hint { opacity: 0.5; font-size: 13px; }
+    .tool-row:last-child {
+        border-bottom: none;
+    }
+    .scope-badge.global {
+        background: oklch(var(--color-surface-z3) / 1);
+        opacity: 0.7;
+    }
+    .scope-badge.proj {
+        background: oklch(var(--color-primary-z5) / 0.15);
+        color: oklch(var(--color-primary-z5) / 1);
+    }
 </style>

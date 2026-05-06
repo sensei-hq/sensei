@@ -1,281 +1,242 @@
 <script lang="ts">
-  import { page } from '$app/stores';
-  import { onMount } from 'svelte';
-  import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
+    import { page } from "$app/stores";
+    import { onMount } from "svelte";
+    import { appState } from "$lib/appstate.svelte.js";
+    import { senseiApi } from "$lib/api.js";
 
-  let projectId = $derived($page.params.id);
+    let projectId = $derived($page.params.id);
 
-  type Project = {
-    id: string;
-    name: string;
-    client?: string;
-    goal?: string;
-    maturity: string;
-    stack: { languages?: string[]; frameworks?: string[]; runtimes?: string[]; services?: string[] };
-    icon?: { value?: string };
-    preferred_acp?: string;
-  };
+    type Project = {
+        id: string;
+        name: string;
+        client?: string;
+        goal?: string;
+        maturity: string;
+        stack: {
+            languages?: string[];
+            frameworks?: string[];
+            runtimes?: string[];
+            services?: string[];
+        };
+        icon?: { value?: string };
+        preferred_acp?: string;
+    };
 
-  type Repo = {
-    repo_id: string;
-    name: string;
-    path: string;
-    role?: string;
-    language?: string;
-  };
+    type Repo = {
+        repo_id: string;
+        name: string;
+        path: string;
+        role?: string;
+        language?: string;
+    };
 
-  let project = $state<Project | null>(null);
-  let repos = $state<Repo[]>([]);
-  let loading = $state(true);
-  let tab = $state<'overview' | 'graph' | 'patterns' | 'sessions' | 'settings'>('overview');
+    let project = $state<Project | null>(null);
+    let repos = $state<Repo[]>([]);
+    let loading = $state(true);
+    let tab = $state<
+        "overview" | "graph" | "patterns" | "sessions" | "settings"
+    >("overview");
 
-  onMount(async () => {
-    await appState.load();
-    const api = senseiApi(appState.port);
-    const projects = await api.listProjects();
-    project = projects.find((p: any) => p.id === projectId) ?? null;
-    const allRepos = await api.getRepos();
-    repos = allRepos.filter((r: any) => r.project_id === projectId);
-    loading = false;
-  });
+    onMount(async () => {
+        await appState.load();
+        const api = senseiApi(appState.port);
+        const projects = await api.listProjects();
+        project = projects.find((p: any) => p.id === projectId) ?? null;
+        const allRepos = await api.getRepos();
+        repos = allRepos.filter((r: any) => r.project_id === projectId);
+        loading = false;
+    });
 
-  let kanji = $derived(project?.icon?.value ?? '場');
-  let stackTags = $derived([
-    ...(project?.stack?.languages ?? []),
-    ...(project?.stack?.frameworks ?? []),
-  ]);
+    let kanji = $derived(project?.icon?.value ?? "場");
+    let stackTags = $derived([
+        ...(project?.stack?.languages ?? []),
+        ...(project?.stack?.frameworks ?? []),
+    ]);
 </script>
 
-<div class="page">
-  {#if loading}
-    <p class="hint">Loading project...</p>
-  {:else if !project}
-    <div class="empty-state">
-      <span class="kanji empty-kanji">場</span>
-      <p class="display empty-title">Project not found.</p>
-    </div>
-  {:else}
-    <!-- Project header -->
-    <header class="project-header">
-      <div class="header-top">
-        <span class="kanji header-kanji">{kanji}</span>
-        <div class="header-info">
-          <h1 class="display project-name">{project.name}</h1>
-          {#if project.client}
-            <span class="project-client">{project.client}</span>
-          {/if}
+<div class="max-w-[820px] mx-auto px-12 py-12 pb-16">
+    {#if loading}
+        <p class="text-ui text-surface-z6">Loading project...</p>
+    {:else if !project}
+        <div class="flex flex-col items-center text-center py-20 gap-4">
+            <span class="kanji text-6xl text-primary-z5 opacity-30">場</span>
+            <p class="display text-xl font-normal m-0">Project not found.</p>
         </div>
-        <span class="maturity-tag">{project.maturity}</span>
-      </div>
-      {#if project.goal}
-        <p class="project-goal">{project.goal}</p>
-      {/if}
-      {#if stackTags.length > 0}
-        <div class="stack-tags">
-          {#each stackTags as tag}
-            <span class="stack-tag">{tag}</span>
-          {/each}
-        </div>
-      {/if}
-    </header>
-
-    <!-- Tab bar -->
-    <div class="tab-bar">
-      {#each [['overview', 'Overview'], ['graph', 'Graph'], ['patterns', 'Patterns'], ['sessions', 'Sessions'], ['settings', 'Settings']] as [key, label]}
-        <button class="tab" class:active={tab === key} onclick={() => tab = key as any}>{label}</button>
-      {/each}
-    </div>
-
-    <!-- Tab content -->
-    {#if tab === 'overview'}
-      <div class="tab-content">
-        <!-- Repos -->
-        <div class="section">
-          <h3 class="section-title">Repositories</h3>
-          {#if repos.length === 0}
-            <p class="hint">No repositories linked to this project.</p>
-          {:else}
-            <div class="repo-list">
-              {#each repos as repo (repo.repo_id)}
-                <div class="repo-row">
-                  <span class="repo-name">{repo.name}</span>
-                  <span class="repo-path">{repo.path}</span>
-                  {#if repo.role}
-                    <span class="repo-role">{repo.role}</span>
-                  {/if}
+    {:else}
+        <!-- Project header -->
+        <header class="mb-7">
+            <div class="flex items-center gap-4 mb-2">
+                <span class="kanji text-4xl text-primary-z5 opacity-70"
+                    >{kanji}</span
+                >
+                <div class="flex-1">
+                    <h1 class="display text-2xl font-normal m-0">
+                        {project.name}
+                    </h1>
+                    {#if project.client}
+                        <span class="text-xs text-surface-z6"
+                            >{project.client}</span
+                        >
+                    {/if}
                 </div>
-              {/each}
+                <span
+                    class="px-3 py-1 rounded-full text-2xs bg-surface-z3 text-surface-z6 capitalize"
+                    >{project.maturity}</span
+                >
             </div>
-          {/if}
+            {#if project.goal}
+                <p class="text-sm text-surface-z7 m-0 mb-3 leading-normal">
+                    {project.goal}
+                </p>
+            {/if}
+            {#if stackTags.length > 0}
+                <div class="flex gap-1.5 flex-wrap">
+                    {#each stackTags as tag}
+                        <span
+                            class="px-2.5 py-0.75 rounded-full text-2xs bg-surface-z3 text-surface-z6"
+                            >{tag}</span
+                        >
+                    {/each}
+                </div>
+            {/if}
+        </header>
+
+        <!-- Tab bar -->
+        <div class="flex gap-0 border-b border-surface-z2 mb-7">
+            {#each [["overview", "Overview"], ["graph", "Graph"], ["patterns", "Patterns"], ["sessions", "Sessions"], ["settings", "Settings"]] as [key, label]}
+                <button
+                    class="tab px-4.5 py-2 border-none bg-none text-ui cursor-pointer border-b-2 border-transparent -mb-px text-surface-z6"
+                    class:active={tab === key}
+                    onclick={() => (tab = key as any)}>{label}</button
+                >
+            {/each}
         </div>
 
-        <!-- Recommendations placeholder -->
-        <div class="section">
-          <h3 class="section-title">Recommendations</h3>
-          <div class="placeholder-card">
-            <span class="kanji" style="font-size: 24px; color: var(--shu); opacity: 0.4;">薦</span>
-            <p class="hint">Recommendations will appear once sensei has observed enough sessions in this project.</p>
-          </div>
-        </div>
-      </div>
+        <!-- Tab content -->
+        {#if tab === "overview"}
+            <div class="flex flex-col gap-7">
+                <div>
+                    <h3 class="text-sm font-medium m-0 mb-3.5 text-surface-z9">
+                        Repositories
+                    </h3>
+                    {#if repos.length === 0}
+                        <p class="text-ui text-surface-z6">
+                            No repositories linked to this project.
+                        </p>
+                    {:else}
+                        <div class="flex flex-col gap-0.5">
+                            {#each repos as repo (repo.repo_id)}
+                                <div
+                                    class="repo-row flex items-center gap-3 px-3.5 py-2.5 rounded-md transition-colors duration-100"
+                                >
+                                    <span
+                                        class="text-ui font-medium text-surface-z9"
+                                        >{repo.name}</span
+                                    >
+                                    <span
+                                        class="text-xs text-surface-z6 font-mono flex-1"
+                                        >{repo.path}</span
+                                    >
+                                    {#if repo.role}
+                                        <span
+                                            class="text-3xs uppercase tracking-widest text-surface-z5 px-2 py-0.5 rounded-full bg-surface-z3"
+                                            >{repo.role}</span
+                                        >
+                                    {/if}
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
 
-    {:else if tab === 'graph'}
-      <div class="tab-content">
-        <div class="placeholder-card large">
-          <span class="kanji" style="font-size: 48px; color: var(--shu); opacity: 0.3;">紋</span>
-          <p class="display" style="font-size: 18px; font-weight: 400; margin: 16px 0 8px;">Code graph</p>
-          <p class="hint">Interactive code graph with three lenses: Complexity, Rework, Staleness. Nodes sized by fan-in, colored by overlay.</p>
-        </div>
-      </div>
-
-    {:else if tab === 'patterns'}
-      <div class="tab-content">
-        <div class="section">
-          <h3 class="section-title">Followed patterns</h3>
-          <p class="hint">Detected patterns (Adapter, Observer, Factory, Repository) will appear once the indexing pipeline has analyzed this project's code.</p>
-        </div>
-        <div class="section">
-          <h3 class="section-title">Anti-patterns</h3>
-          <p class="hint">Anti-patterns (duplication, god-nodes, dead code) with severity and suggested fixes will appear here after indexing.</p>
-        </div>
-      </div>
-
-    {:else if tab === 'sessions'}
-      <div class="tab-content">
-        <div class="placeholder-card">
-          <span class="kanji" style="font-size: 32px; color: var(--shu); opacity: 0.4;">刻</span>
-          <p class="hint">Sessions scoped to this project. Same format as the observatory sessions view, filtered to show only sessions in {project.name}.</p>
-        </div>
-      </div>
-
-    {:else if tab === 'settings'}
-      <div class="tab-content">
-        <div class="section">
-          <h3 class="section-title">Identity</h3>
-          <div class="settings-grid">
-            <span class="setting-label">Name</span>
-            <span class="setting-val">{project.name}</span>
-            <span class="setting-label">Client</span>
-            <span class="setting-val">{project.client ?? '—'}</span>
-            <span class="setting-label">Goal</span>
-            <span class="setting-val">{project.goal ?? '—'}</span>
-            <span class="setting-label">Preferred ACP</span>
-            <span class="setting-val">{project.preferred_acp ?? '—'}</span>
-            <span class="setting-label">Maturity</span>
-            <span class="setting-val">{project.maturity}</span>
-          </div>
-        </div>
-      </div>
+                <div>
+                    <h3 class="text-sm font-medium m-0 mb-3.5 text-surface-z9">
+                        Recommendations
+                    </h3>
+                    <div
+                        class="flex flex-col items-center gap-2 px-5 py-10 bg-surface-z2 border border-surface-z3 rounded-lg text-center"
+                    >
+                        <span class="kanji text-2xl text-primary-z5 opacity-40"
+                            >薦</span
+                        >
+                        <p
+                            class="text-ui text-surface-z6 leading-relaxed max-w-[420px] m-0"
+                        >
+                            Recommendations will appear once sensei has observed
+                            enough sessions in this project.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        {:else if tab === "graph"}
+            <div
+                class="flex flex-col items-center gap-4 px-5 py-20 bg-surface-z2 border border-surface-z3 rounded-lg text-center"
+            >
+                <span class="kanji text-5xl text-primary-z5 opacity-30">紋</span
+                >
+                <p class="display text-lg font-normal m-0">Code graph</p>
+                <p
+                    class="text-ui text-surface-z6 leading-relaxed max-w-[420px] m-0"
+                >
+                    Interactive code graph with three lenses: Complexity,
+                    Rework, Staleness. Nodes sized by fan-in, colored by
+                    overlay.
+                </p>
+            </div>
+        {:else if tab === "patterns"}
+            <div class="flex flex-col gap-7">
+                {#each [{ title: "Followed patterns", hint: "Detected patterns (Adapter, Observer, Factory, Repository) will appear once the indexing pipeline has analyzed this project's code." }, { title: "Anti-patterns", hint: "Anti-patterns (duplication, god-nodes, dead code) with severity and suggested fixes will appear here after indexing." }] as section}
+                    <div>
+                        <h3
+                            class="text-sm font-medium m-0 mb-3.5 text-surface-z9"
+                        >
+                            {section.title}
+                        </h3>
+                        <p class="text-ui text-surface-z6 leading-relaxed">
+                            {section.hint}
+                        </p>
+                    </div>
+                {/each}
+            </div>
+        {:else if tab === "sessions"}
+            <div
+                class="flex flex-col items-center gap-2 px-5 py-10 bg-surface-z2 border border-surface-z3 rounded-lg text-center"
+            >
+                <span class="kanji text-3xl text-primary-z5 opacity-40">刻</span
+                >
+                <p
+                    class="text-ui text-surface-z6 leading-relaxed max-w-[420px] m-0"
+                >
+                    Sessions scoped to this project. Same format as the
+                    observatory sessions view, filtered to show only sessions in {project.name}.
+                </p>
+            </div>
+        {:else if tab === "settings"}
+            <div>
+                <h3 class="text-sm font-medium m-0 mb-3.5 text-surface-z9">
+                    Identity
+                </h3>
+                <div class="grid grid-cols-[120px_1fr] gap-2 gap-x-4">
+                    {#each [["Name", project.name], ["Client", project.client ?? "—"], ["Goal", project.goal ?? "—"], ["Preferred ACP", project.preferred_acp ?? "—"], ["Maturity", project.maturity]] as [label, val]}
+                        <span class="text-xs text-surface-z6">{label}</span>
+                        <span class="text-ui text-surface-z9">{val}</span>
+                    {/each}
+                </div>
+            </div>
+        {/if}
     {/if}
-  {/if}
 </div>
 
 <style>
-  .page {
-    max-width: 820px;
-    margin: 0 auto;
-    padding: 48px 48px 64px;
-  }
+    .tab:hover {
+        color: oklch(var(--color-surface-z8) / 1);
+    }
+    .tab.active {
+        color: oklch(var(--color-surface-z9) / 1);
+        border-bottom-color: oklch(var(--color-primary-z5) / 1);
+    }
 
-  /* ── Header ─────────────────────────────────────────────── */
-  .project-header { margin-bottom: 28px; }
-  .header-top { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
-  .header-kanji { font-size: 36px; color: var(--shu); opacity: 0.7; }
-  .header-info { flex: 1; }
-  .project-name { font-size: 24px; font-weight: 400; margin: 0; }
-  .project-client { font-size: 12px; color: var(--sumi-3); }
-  .maturity-tag {
-    padding: 4px 12px;
-    border-radius: 100px;
-    font-size: 11px;
-    background: var(--paper-3);
-    color: var(--sumi-3);
-    text-transform: capitalize;
-  }
-  .project-goal { font-size: 14px; color: var(--sumi-2); margin: 0 0 12px; line-height: 1.5; }
-  .stack-tags { display: flex; gap: 6px; flex-wrap: wrap; }
-  .stack-tag {
-    padding: 3px 10px;
-    border-radius: 100px;
-    font-size: 11px;
-    background: var(--paper-3);
-    color: var(--sumi-3);
-  }
-
-  /* ── Tabs ────────────────────────────────────────────────── */
-  .tab-bar {
-    display: flex;
-    gap: 0;
-    border-bottom: var(--hairline);
-    margin-bottom: 28px;
-  }
-  .tab {
-    padding: 8px 18px;
-    border: none;
-    background: none;
-    color: var(--sumi-3);
-    font-size: 13px;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-  }
-  .tab:hover { color: var(--sumi-2); }
-  .tab.active { color: var(--sumi); border-bottom-color: var(--shu); }
-
-  /* ── Content ────────────────────────────────────────────── */
-  .tab-content { display: flex; flex-direction: column; gap: 28px; }
-  .section-title { font-size: 14px; margin: 0 0 14px; color: var(--sumi); }
-
-  /* ── Repos ──────────────────────────────────────────────── */
-  .repo-list { display: flex; flex-direction: column; gap: 2px; }
-  .repo-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    transition: background 0.1s;
-  }
-  .repo-row:hover { background: var(--paper-2); }
-  .repo-name { font-size: 13px; font-weight: 500; color: var(--sumi); }
-  .repo-path { font-size: 12px; color: var(--sumi-3); font-family: var(--font-mono); flex: 1; }
-  .repo-role {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--sumi-4);
-    padding: 2px 8px;
-    border-radius: 100px;
-    background: var(--paper-3);
-  }
-
-  /* ── Placeholders ───────────────────────────────────────── */
-  .placeholder-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 40px 20px;
-    background: var(--paper-2);
-    border: var(--border-card);
-    border-radius: var(--radius-lg);
-    text-align: center;
-  }
-  .placeholder-card.large { padding: 80px 20px; }
-  .hint { font-size: 13px; color: var(--sumi-3); line-height: 1.65; max-width: 420px; margin: 0; }
-
-  /* ── Settings grid ──────────────────────────────────────── */
-  .settings-grid {
-    display: grid;
-    grid-template-columns: 120px 1fr;
-    gap: 8px 16px;
-  }
-  .setting-label { font-size: 12px; color: var(--sumi-3); }
-  .setting-val { font-size: 13px; color: var(--sumi); }
-
-  /* ── Empty state ────────────────────────────────────────── */
-  .empty-state { text-align: center; padding: 80px 20px; }
-  .empty-kanji { font-size: 64px; color: var(--shu); opacity: 0.3; }
-  .empty-title { font-size: 20px; font-weight: 400; margin: 16px 0 8px; }
+    .repo-row:hover {
+        background: oklch(var(--color-surface-z2) / 1);
+    }
 </style>

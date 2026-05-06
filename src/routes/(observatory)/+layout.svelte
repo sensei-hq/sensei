@@ -1,277 +1,239 @@
 <script lang="ts">
-  import { page } from '$app/state';
-  import { onMount } from 'svelte';
-  import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
-  import { openProjectWindow } from '$lib/stores/windows.svelte.js';
+    import { page } from "$app/state";
+    import { onMount } from "svelte";
+    import { appState } from "$lib/appstate.svelte.js";
+    import { senseiApi } from "$lib/api.js";
+    import { openProjectWindow } from "$lib/stores/windows.svelte.js";
 
-  let { children } = $props();
+    let { children } = $props();
 
-  const NAV_ITEMS = [
-    { href: '/observatory', kanji: '家', label: 'Today' },
-    { href: '/projects',    kanji: '場', label: 'Projects' },
-    { href: '/sessions',    kanji: '刻', label: 'Sessions' },
-    { href: '/insights',    kanji: '學', label: 'Insights' },
-    { href: '/libraries',   kanji: '書', label: 'Libraries' },
-    { href: '/instruments', kanji: '具', label: 'Instruments' },
-  ];
+    const NAV_ITEMS = [
+        { href: "/observatory", kanji: "家", label: "Today" },
+        { href: "/projects", kanji: "場", label: "Projects" },
+        { href: "/sessions", kanji: "刻", label: "Sessions" },
+        { href: "/insights", kanji: "學", label: "Insights" },
+        { href: "/libraries", kanji: "書", label: "Libraries" },
+        { href: "/instruments", kanji: "具", label: "Instruments" },
+    ];
 
-  const BOTTOM_ITEMS = [
-    { href: '/logs',     kanji: '録', label: 'Logs' },
-    { href: '/settings', kanji: '設', label: 'Settings' },
-  ];
+    const BOTTOM_ITEMS = [
+        { href: "/logs", kanji: "録", label: "Logs" },
+        { href: "/settings", kanji: "設", label: "Settings" },
+    ];
 
-  type SidebarProject = { id: string; name: string; kanji: string };
+    type SidebarProject = { id: string; name: string; kanji: string };
 
-  let projects = $state<SidebarProject[]>([]);
-  let sidebarCollapsed = $state(false);
+    let projects = $state<SidebarProject[]>([]);
+    let sidebarCollapsed = $state(false);
 
-  onMount(async () => {
-    await appState.load();
-    const api = senseiApi(appState.port);
-    const raw = await api.listProjects();
-    projects = raw.map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      kanji: p.icon?.value ?? '場',
-    }));
-  });
+    onMount(async () => {
+        await appState.load();
+        const api = senseiApi(appState.port);
+        const raw = await api.listProjects();
+        projects = raw.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            kanji: p.icon?.value ?? "場",
+        }));
+    });
 
-  function isActive(href: string): boolean {
-    return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
-  }
+    function isActive(href: string): boolean {
+        return (
+            page.url.pathname === href ||
+            page.url.pathname.startsWith(href + "/")
+        );
+    }
 </script>
 
-<div class="app-shell">
-  <div class="drag-spacer drag-region"></div>
+<div
+    class="w-full h-screen flex flex-col bg-surface-z1 text-surface-z9 overflow-hidden"
+>
+    <div class="drag-region h-8 shrink-0"></div>
 
-  <div class="app-body" class:collapsed={sidebarCollapsed}>
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <span class="kanji" style="font-size: 20px; color: var(--shu);">先</span>
-        {#if !sidebarCollapsed}
-          <span class="display" style="font-size: 16px;">Sensei</span>
-          <button class="collapse-btn" onclick={() => sidebarCollapsed = true}>‹</button>
-        {/if}
-      </div>
+    <div
+        class="app-body flex-1 grid grid-cols-[220px_1fr] min-h-0 transition-[grid-template-columns] duration-150"
+        class:collapsed={sidebarCollapsed}
+    >
+        <!-- Sidebar -->
+        <aside
+            class="border-r border-surface-z2 px-3.5 py-5.5 bg-surface-z2 flex flex-col gap-5 overflow-auto"
+        >
+            <div class="flex items-baseline gap-2 px-1.5">
+                <span class="kanji text-xl text-primary-z5">先</span>
+                {#if !sidebarCollapsed}
+                    <span class="display text-base">Sensei</span>
+                    <button
+                        class="collapse-btn ml-auto bg-none border-none text-surface-z6 cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
+                        onclick={() => (sidebarCollapsed = true)}>‹</button
+                    >
+                {/if}
+            </div>
 
-      {#if sidebarCollapsed}
-        <nav class="sidebar-nav">
-          {#each NAV_ITEMS as item (item.href)}
-            {@const active = isActive(item.href)}
-            <a href={item.href} class="nav-item icon-only" class:active title={item.label}>
-              <span class="kanji nav-kanji" class:active>{item.kanji}</span>
-            </a>
-          {/each}
-        </nav>
+            {#if sidebarCollapsed}
+                <nav class="flex flex-col gap-px">
+                    {#each NAV_ITEMS as item (item.href)}
+                        {@const active = isActive(item.href)}
+                        <a
+                            href={item.href}
+                            class="nav-item flex items-center justify-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
+                            class:active
+                            title={item.label}
+                        >
+                            <span
+                                class="kanji text-ui w-3.5 text-surface-z6"
+                                class:nav-kanji-active={active}
+                                >{item.kanji}</span
+                            >
+                        </a>
+                    {/each}
+                </nav>
 
-        {#if projects.length > 0}
-          <div class="sidebar-divider"></div>
-          <nav class="sidebar-nav">
-            {#each projects as proj (proj.id)}
-              <button
-                type="button"
-                class="nav-item icon-only proj-item"
-                onclick={() => openProjectWindow(proj.id, proj.name).catch(console.error)}
-                title="{proj.name} ↗"
-              >
-                <span class="kanji nav-kanji">{proj.kanji}</span>
-              </button>
-            {/each}
-          </nav>
-        {/if}
+                {#if projects.length > 0}
+                    <div class="h-px bg-surface-z3 mx-2.5"></div>
+                    <nav class="flex flex-col gap-px">
+                        {#each projects as proj (proj.id)}
+                            <button
+                                type="button"
+                                class="nav-item flex items-center justify-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3 bg-none border-none cursor-pointer w-full"
+                                onclick={() =>
+                                    openProjectWindow(proj.id, proj.name).catch(
+                                        console.error,
+                                    )}
+                                title="{proj.name} ↗"
+                            >
+                                <span
+                                    class="kanji text-ui w-3.5 text-surface-z6"
+                                    >{proj.kanji}</span
+                                >
+                            </button>
+                        {/each}
+                    </nav>
+                {/if}
 
-        <div class="sidebar-footer">
-          <button class="collapse-btn" onclick={() => sidebarCollapsed = false}>›</button>
-        </div>
-      {:else}
-        <div class="sidebar-section">
-          <p class="sidebar-label">Observatory</p>
-          <nav class="sidebar-nav">
-            {#each NAV_ITEMS as item (item.href)}
-              {@const active = isActive(item.href)}
-              <a href={item.href} class="nav-item" class:active>
-                <span class="kanji nav-kanji" class:active>{item.kanji}</span>
-                <span>{item.label}</span>
-              </a>
-            {/each}
-          </nav>
-        </div>
+                <div class="mt-auto pt-2.5 border-t border-surface-z2">
+                    <button
+                        class="collapse-btn bg-none border-none text-surface-z6 cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
+                        onclick={() => (sidebarCollapsed = false)}>›</button
+                    >
+                </div>
+            {:else}
+                <div class="flex flex-col gap-0.5">
+                    <p
+                        class="text-micro tracking-label uppercase text-surface-z6 px-2.5 pb-2 m-0"
+                    >
+                        Observatory
+                    </p>
+                    <nav class="flex flex-col gap-px">
+                        {#each NAV_ITEMS as item (item.href)}
+                            {@const active = isActive(item.href)}
+                            <a
+                                href={item.href}
+                                class="nav-item flex items-center gap-2.5 px-2.5 py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
+                                class:active
+                            >
+                                <span
+                                    class="kanji text-ui w-3.5 text-surface-z6"
+                                    class:nav-kanji-active={active}
+                                    >{item.kanji}</span
+                                >
+                                <span>{item.label}</span>
+                            </a>
+                        {/each}
+                    </nav>
+                </div>
 
-        {#if projects.length > 0}
-          <div class="sidebar-section">
-            <p class="sidebar-label">Projects</p>
-            <nav class="sidebar-nav">
-              {#each projects as proj (proj.id)}
-                {@const active = isActive(`/projects/${proj.id}`)}
-                <button
-                  type="button"
-                  class="nav-item proj-item"
-                  onclick={() => openProjectWindow(proj.id, proj.name).catch(console.error)}
-                  title="{proj.name} ↗ opens in its own window"
-                >
-                  <span class="kanji nav-kanji" class:active>{proj.kanji}</span>
-                  {#if !sidebarCollapsed}
-                    <span class="nav-label">{proj.name}</span>
-                    <span class="open-hint">↗</span>
-                  {/if}
-                </button>
-              {/each}
-            </nav>
-          </div>
-        {/if}
+                {#if projects.length > 0}
+                    <div class="flex flex-col gap-0.5">
+                        <p
+                            class="text-micro tracking-label uppercase text-surface-z6 px-2.5 pb-2 m-0"
+                        >
+                            Projects
+                        </p>
+                        <nav class="flex flex-col gap-px">
+                            {#each projects as proj (proj.id)}
+                                {@const active = isActive(
+                                    `/projects/${proj.id}`,
+                                )}
+                                <button
+                                    type="button"
+                                    class="nav-item flex items-center gap-2.5 px-2.5 py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3 bg-none border-none cursor-pointer w-full text-left"
+                                    onclick={() =>
+                                        openProjectWindow(
+                                            proj.id,
+                                            proj.name,
+                                        ).catch(console.error)}
+                                    title="{proj.name} ↗ opens in its own window"
+                                >
+                                    <span
+                                        class="kanji text-ui w-3.5 text-surface-z6"
+                                        class:nav-kanji-active={active}
+                                        >{proj.kanji}</span
+                                    >
+                                    <span class="nav-label">{proj.name}</span>
+                                    <span class="text-3xs opacity-40 ml-auto"
+                                        >↗</span
+                                    >
+                                </button>
+                            {/each}
+                        </nav>
+                    </div>
+                {/if}
 
-        <div class="sidebar-section" style="margin-top: auto;">
-          <nav class="sidebar-nav">
-            {#each BOTTOM_ITEMS as item (item.href)}
-              {@const active = isActive(item.href)}
-              <a href={item.href} class="nav-item" class:active>
-                <span class="kanji nav-kanji" class:active>{item.kanji}</span>
-                <span>{item.label}</span>
-              </a>
-            {/each}
-          </nav>
-        </div>
+                <div class="flex flex-col gap-0.5 mt-auto">
+                    <nav class="flex flex-col gap-px">
+                        {#each BOTTOM_ITEMS as item (item.href)}
+                            {@const active = isActive(item.href)}
+                            <a
+                                href={item.href}
+                                class="nav-item flex items-center gap-2.5 px-2.5 py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
+                                class:active
+                            >
+                                <span
+                                    class="kanji text-ui w-3.5 text-surface-z6"
+                                    class:nav-kanji-active={active}
+                                    >{item.kanji}</span
+                                >
+                                <span>{item.label}</span>
+                            </a>
+                        {/each}
+                    </nav>
+                </div>
 
-        <div class="sidebar-footer">
-          <span class="mono daemon-status">daemon · port {appState.port}</span>
-        </div>
-      {/if}
-    </aside>
+                <div class="pt-2.5 border-t border-surface-z2">
+                    <span class="mono text-3xs text-surface-z6"
+                        >daemon · port {appState.port}</span
+                    >
+                </div>
+            {/if}
+        </aside>
 
-    <!-- Main content -->
-    <main class="main-content">
-      {@render children()}
-    </main>
-  </div>
+        <!-- Main content -->
+        <main class="overflow-auto">
+            {@render children()}
+        </main>
+    </div>
 </div>
 
 <style>
-  .app-shell {
-    width: 100%;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    background: var(--paper);
-    font-family: var(--font-ui);
-    color: var(--sumi);
-    overflow: hidden;
-  }
-  .drag-spacer {
-    height: 32px;
-    flex-shrink: 0;
-  }
-  .app-body {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 220px 1fr;
-    min-height: 0;
-    transition: grid-template-columns 0.15s ease;
-  }
-  .app-body.collapsed {
-    grid-template-columns: 52px 1fr;
-  }
+    /* Collapsed grid width */
+    .app-body.collapsed {
+        grid-template-columns: 52px 1fr;
+    }
 
-  /* ── Sidebar ──────────────────────────────────────────── */
-  .sidebar {
-    border-right: var(--hairline);
-    padding: 22px 14px;
-    background: var(--paper-2);
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    overflow: auto;
-  }
-  .sidebar-header {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 0 6px;
-  }
-  .sidebar-section {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .sidebar-label {
-    font-size: 9.5px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--sumi-3);
-    padding: 0 10px 8px;
-    margin: 0;
-  }
-  .sidebar-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: var(--radius);
-    font-size: 13px;
-    color: var(--sumi-2);
-    text-decoration: none;
-    transition: background 0.12s;
-  }
-  .nav-item:hover {
-    background: var(--paper-3);
-  }
-  .nav-item.active {
-    background: var(--paper-3);
-    color: var(--sumi);
-  }
-  .nav-kanji {
-    font-size: 13px;
-    width: 14px;
-    color: var(--sumi-3);
-  }
-  .nav-kanji.active {
-    color: var(--shu);
-  }
-  .sidebar-footer {
-    margin-top: auto;
-    padding: 10px 10px 0;
-    border-top: var(--hairline);
-  }
-  .daemon-status {
-    font-size: 10px;
-    color: var(--sumi-3);
-  }
+    /* Active nav item */
+    .nav-item.active {
+        background: oklch(var(--color-surface-z3) / 1);
+        color: oklch(var(--color-surface-z9) / 1);
+    }
 
-  .sidebar-divider {
-    height: 1px;
-    background: var(--paper-edge);
-    margin: 4px 10px;
-  }
-  .nav-item.icon-only {
-    justify-content: center;
-    padding: 7px 0;
-  }
-  .collapse-btn {
-    margin-left: auto;
-    background: none;
-    border: none;
-    color: var(--sumi-3);
-    cursor: pointer;
-    font-size: 14px;
-    padding: 2px 6px;
-    border-radius: var(--radius);
-  }
-  .collapse-btn:hover {
-    background: var(--paper-3);
-    color: var(--sumi-2);
-  }
+    /* Active nav kanji accent */
+    .nav-kanji-active {
+        color: oklch(var(--color-primary-z5) / 1);
+    }
 
-  .proj-item { background: none; border: none; cursor: pointer; width: 100%; text-align: left; color: inherit; }
-  .open-hint { font-size: 10px; opacity: 0.4; margin-left: auto; }
-
-  /* ── Main ─────────────────────────────────────────────── */
-  .main-content {
-    overflow: auto;
-  }
+    /* Collapse button hover */
+    .collapse-btn:hover {
+        background: oklch(var(--color-surface-z3) / 1);
+        color: oklch(var(--color-surface-z7) / 1);
+    }
 </style>

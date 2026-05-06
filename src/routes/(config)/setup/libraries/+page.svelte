@@ -4,9 +4,9 @@
 </script>
 
 <div class="max-w-[780px]">
-  <p class="text-sm text-surface-z6 leading-[1.6] m-0 mb-6">Libraries detected across your projects. Toggle which ones sensei should index documentation for.</p>
+  <p class="text-sm text-surface-z6 leading-relaxed m-0 mb-6">Libraries detected across your projects. Toggle which ones sensei should index documentation for.</p>
   <div class="text-center p-12 bg-surface-z2 rounded-lg border border-surface-z3">
-    <span class="kanji text-[48px] text-primary-z5 opacity-20 block mb-4">庫</span>
-    <p class="text-[13px] text-surface-z6">Libraries will be detected after indexing completes.</p>
+    <span class="kanji text-5xl text-primary-z5 opacity-20 block mb-4">庫</span>
+    <p class="text-ui text-surface-z6">Libraries will be detected after indexing completes.</p>
   </div>
 </div>

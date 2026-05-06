@@ -1,195 +1,143 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
-  import type { LibEntry } from '$lib/types.js';
+    import { onMount } from "svelte";
+    import { appState } from "$lib/appstate.svelte.js";
+    import { senseiApi } from "$lib/api.js";
+    import type { LibEntry } from "$lib/types.js";
 
-  let libs = $state<LibEntry[]>([]);
-  let loading = $state(true);
-  let search = $state('');
-  let kindFilter = $state<'all' | 'code' | 'service'>('all');
-  let selectedLib = $state<LibEntry | null>(null);
+    let libs = $state<LibEntry[]>([]);
+    let loading = $state(true);
+    let search = $state("");
+    let kindFilter = $state<"all" | "code" | "service">("all");
+    let selectedLib = $state<LibEntry | null>(null);
 
-  onMount(async () => {
-    await appState.load();
-    const api = senseiApi(appState.port);
-    const data = await api.getLibs({ shared: true });
-    libs = data.libs;
-    loading = false;
-  });
+    onMount(async () => {
+        await appState.load();
+        const api = senseiApi(appState.port);
+        const data = await api.getLibs({ shared: true });
+        libs = data.libs;
+        loading = false;
+    });
 
-  let filtered = $derived(
-    libs.filter(l => {
-      if (search && !l.name.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    })
-  );
+    let filtered = $derived(
+        libs.filter((l) => {
+            if (search && !l.name.toLowerCase().includes(search.toLowerCase()))
+                return false;
+            return true;
+        }),
+    );
 </script>
 
-<div class="page">
-  <header class="page-header">
-    <p class="date-label">Libraries</p>
-    <h1 class="display page-title">書 Libraries</h1>
-  </header>
-
-  <!-- Search + filters -->
-  <div class="toolbar">
-    <input
-      class="search-input"
-      type="text"
-      placeholder="Search libraries..."
-      bind:value={search}
-    />
-    <div class="filter-row">
-      {#each [['all', 'All'], ['code', 'Code'], ['service', 'Services']] as [key, label]}
-        <button class="filter-chip" class:active={kindFilter === key} onclick={() => kindFilter = key as any}>{label}</button>
-      {/each}
+<div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
+    <div class="mb-6">
+        <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
+            Libraries
+        </p>
+        <h1 class="display text-2xl font-normal m-0">書 Libraries</h1>
     </div>
-  </div>
 
-  {#if loading}
-    <p class="hint">Loading libraries...</p>
-  {:else if filtered.length === 0}
-    <div class="empty-state">
-      <span class="kanji empty-kanji">書</span>
-      <p class="display empty-title">No libraries indexed.</p>
-      <p class="empty-body">
-        Libraries appear once sensei scans your project dependencies.
-        Add folders in the setup wizard, and sensei will detect libraries from your manifests.
-      </p>
-    </div>
-  {:else}
-    <div class="content-grid">
-      <div class="lib-list">
-        {#each filtered as lib (lib.name)}
-          <button
-            class="lib-card"
-            class:selected={selectedLib?.name === lib.name}
-            onclick={() => selectedLib = lib}
-          >
-            <div class="lib-header">
-              <span class="lib-name">{lib.name}</span>
-              <span class="lib-count">{lib.repoCount} repo{lib.repoCount !== 1 ? 's' : ''}</span>
-            </div>
-          </button>
-        {/each}
-      </div>
-
-      {#if selectedLib}
-        <div class="lib-detail">
-          <h3 class="detail-name">{selectedLib.name}</h3>
-          <div class="detail-section">
-            <p class="detail-label">Used in</p>
-            <div class="repo-tags">
-              {#each selectedLib.repos as repo}
-                <span class="lib-tag">{repo}</span>
-              {/each}
-            </div>
-          </div>
+    <!-- Search + filters -->
+    <div class="flex items-center gap-4 mb-6">
+        <input
+            class="lib-search flex-1 px-3.5 py-2 border border-surface-z3 rounded-md bg-surface-z1 text-surface-z9 text-ui outline-none"
+            type="text"
+            placeholder="Search libraries..."
+            bind:value={search}
+        />
+        <div class="flex gap-1.5">
+            {#each [["all", "All"], ["code", "Code"], ["service", "Services"]] as [key, label]}
+                <button
+                    class="filter-chip px-3.5 py-1.25 rounded-full border border-surface-z3 bg-transparent text-xs cursor-pointer text-surface-z7"
+                    class:active={kindFilter === key}
+                    onclick={() => (kindFilter = key as any)}>{label}</button
+                >
+            {/each}
         </div>
-      {/if}
     </div>
-  {/if}
+
+    {#if loading}
+        <p class="text-ui text-surface-z6">Loading libraries...</p>
+    {:else if filtered.length === 0}
+        <div class="flex flex-col items-center text-center py-20 gap-4">
+            <span class="kanji text-6xl text-primary-z5 opacity-30">書</span>
+            <p class="display text-xl font-normal m-0">No libraries indexed.</p>
+            <p
+                class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
+            >
+                Libraries appear once sensei scans your project dependencies.
+                Add folders in the setup wizard, and sensei will detect
+                libraries from your manifests.
+            </p>
+        </div>
+    {:else}
+        <div class="grid grid-cols-[1fr_340px] gap-6">
+            <div class="flex flex-col gap-1">
+                {#each filtered as lib (lib.name)}
+                    <button
+                        class="lib-card text-left px-4 py-3.5 border border-surface-z3 rounded-md bg-surface-z1 cursor-pointer transition-colors duration-100"
+                        class:selected={selectedLib?.name === lib.name}
+                        onclick={() => (selectedLib = lib)}
+                    >
+                        <div class="flex items-baseline gap-2 mb-1.5">
+                            <span class="text-ui font-medium text-surface-z9"
+                                >{lib.name}</span
+                            >
+                            <span class="text-2xs text-surface-z6"
+                                >{lib.repoCount} repo{lib.repoCount !== 1
+                                    ? "s"
+                                    : ""}</span
+                            >
+                        </div>
+                    </button>
+                {/each}
+            </div>
+
+            {#if selectedLib}
+                <div
+                    class="p-6 bg-surface-z2 border border-surface-z3 rounded-lg sticky top-6"
+                >
+                    <h3 class="text-base font-medium m-0 mb-4">
+                        {selectedLib.name}
+                    </h3>
+                    <div>
+                        <p
+                            class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-2"
+                        >
+                            Used in
+                        </p>
+                        <div class="flex flex-wrap gap-1.5">
+                            {#each selectedLib.repos as repo}
+                                <span
+                                    class="inline-block px-2 py-0.5 rounded-full text-3xs bg-surface-z3 text-surface-z6 lowercase"
+                                    >{repo}</span
+                                >
+                            {/each}
+                        </div>
+                    </div>
+                </div>
+            {/if}
+        </div>
+    {/if}
 </div>
 
 <style>
-  .page {
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 48px 48px 64px;
-  }
-  .page-header { margin-bottom: 24px; }
-  .date-label {
-    font-size: 10.5px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--sumi-3);
-    margin: 0 0 8px;
-  }
-  .page-title { font-size: 24px; font-weight: 400; margin: 0; }
+    .lib-search:focus {
+        border-color: oklch(var(--color-surface-z6) / 1);
+    }
 
-  /* ── Toolbar ────────────────────────────────────────────── */
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 24px;
-  }
-  .search-input {
-    flex: 1;
-    padding: 8px 14px;
-    border: var(--border-input);
-    border-radius: var(--radius);
-    background: var(--paper);
-    color: var(--sumi);
-    font-size: 13px;
-    font-family: var(--font-ui);
-    outline: none;
-  }
-  .search-input:focus { border: var(--border-focus); }
-  .filter-row { display: flex; gap: 6px; }
-  .filter-chip {
-    padding: 5px 14px;
-    border-radius: 100px;
-    border: var(--border-card);
-    background: transparent;
-    color: var(--sumi-2);
-    font-size: 12px;
-    cursor: pointer;
-  }
-  .filter-chip:hover { background: var(--paper-2); }
-  .filter-chip.active { background: var(--sumi); color: var(--paper); border-color: var(--sumi); }
+    .filter-chip:hover {
+        background: oklch(var(--color-surface-z2) / 1);
+    }
+    .filter-chip.active {
+        background: oklch(var(--color-surface-z9) / 1);
+        color: oklch(var(--color-surface-z1) / 1);
+        border-color: oklch(var(--color-surface-z9) / 1);
+    }
 
-  /* ── Empty state ────────────────────────────────────────── */
-  .empty-state { text-align: center; padding: 80px 20px; }
-  .empty-kanji { font-size: 64px; color: var(--shu); opacity: 0.3; }
-  .empty-title { font-size: 20px; font-weight: 400; margin: 16px 0 8px; }
-  .empty-body { font-size: 13px; color: var(--sumi-3); max-width: 380px; margin: 0 auto; line-height: 1.65; }
-
-  /* ── Content grid ───────────────────────────────────────── */
-  .content-grid { display: grid; grid-template-columns: 1fr 340px; gap: 24px; }
-  .lib-list { display: flex; flex-direction: column; gap: 4px; }
-  .lib-card {
-    text-align: left;
-    padding: 14px 16px;
-    border: var(--border-card);
-    border-radius: var(--radius);
-    background: var(--paper);
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-  .lib-card:hover { background: var(--paper-2); }
-  .lib-card.selected { border-color: var(--sumi-3); background: var(--paper-2); }
-  .lib-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-  .lib-name { font-size: 13px; font-weight: 500; color: var(--sumi); }
-  .lib-count { font-size: 11px; color: var(--sumi-3); }
-  .lib-tag {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 100px;
-    font-size: 10px;
-    background: var(--paper-3);
-    color: var(--sumi-3);
-    text-transform: lowercase;
-  }
-
-  /* ── Detail panel ───────────────────────────────────────── */
-  .lib-detail {
-    padding: 24px;
-    background: var(--paper-2);
-    border: var(--border-card);
-    border-radius: var(--radius-lg);
-    position: sticky;
-    top: 24px;
-  }
-  .detail-name { font-size: 16px; margin: 0 0 16px; }
-  .detail-section { margin-bottom: 16px; }
-  .repo-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-  .detail-label {
-    font-size: 9.5px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--sumi-3);
-    margin: 0 0 6px;
-  }
+    .lib-card:hover {
+        background: oklch(var(--color-surface-z2) / 1);
+    }
+    .lib-card.selected {
+        border-color: oklch(var(--color-surface-z6) / 1);
+        background: oklch(var(--color-surface-z2) / 1);
+    }
 </style>
