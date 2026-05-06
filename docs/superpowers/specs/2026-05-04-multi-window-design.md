@@ -499,7 +499,7 @@ interface AboutPageData extends ProjectLayoutData {
 The `projects` table has no computed FTR. Need a view or daemon endpoint:
 
 ```sql
--- ADD TO: daemon/database/ddl/view/sensei/project_ftr_metrics.ddl
+-- ADD TO: database/ddl/view/sensei/project_ftr_metrics.ddl
 CREATE OR REPLACE VIEW sensei.project_ftr_metrics AS
 WITH daily AS (
   SELECT project_id,
@@ -531,7 +531,7 @@ For the 14-day trend array (needed by FTR strip chart) — return last 14 `daily
 
 **Option A (view — preferred):**
 ```sql
--- ADD TO: daemon/database/ddl/view/sensei/project_drift.ddl
+-- ADD TO: database/ddl/view/sensei/project_drift.ddl
 CREATE OR REPLACE VIEW sensei.project_drift AS
 SELECT di.*, f.project_id
   FROM inference.drift_items di
@@ -548,7 +548,7 @@ SELECT di.*, f.project_id
 Same structure as drift — `detected_patterns` is by `folder_id`:
 
 ```sql
--- ADD TO: daemon/database/ddl/view/sensei/project_patterns.ddl
+-- ADD TO: database/ddl/view/sensei/project_patterns.ddl
 CREATE OR REPLACE VIEW sensei.project_patterns AS
 SELECT dp.*, f.project_id
   FROM inference.detected_patterns dp
@@ -573,7 +573,7 @@ This gives you one consistent query shape across all three: `WHERE project_id = 
 The existing `referenced_libraries` table operates at the **folder level** (auto-detected from `package.json`, `Cargo.toml`, etc.) and does not model project-level or global availability. A new project-level bridge sits above it:
 
 ```sql
--- ADD TO: daemon/database/ddl/table/sensei/project_libraries.ddl
+-- ADD TO: database/ddl/table/sensei/project_libraries.ddl
 CREATE TABLE IF NOT EXISTS sensei.project_libraries (
   library_id   uuid         NOT NULL REFERENCES sensei.libraries(id) ON DELETE CASCADE,
   project_id   uuid         REFERENCES sensei.projects(id) ON DELETE CASCADE,  -- NULL = global
@@ -624,7 +624,7 @@ The `libraries_in_project` view is updated to read from `project_libraries` (not
 Same pattern for extensions (skills, commands, agents, hooks, instruments):
 
 ```sql
--- ADD TO: daemon/database/ddl/table/sensei/extension_projects.ddl
+-- ADD TO: database/ddl/table/sensei/extension_projects.ddl
 CREATE TABLE IF NOT EXISTS sensei.extension_projects (
   extension_id  uuid         NOT NULL REFERENCES sensei.extensions(id) ON DELETE CASCADE,
   project_id    uuid         REFERENCES sensei.projects(id) ON DELETE CASCADE,  -- NULL = global
@@ -686,7 +686,7 @@ The UI must display whether each library, extension, or instrument is **global**
 **`project_libraries_resolved` view** — libraries visible to a given project, with scope tag:
 
 ```sql
--- ADD TO: daemon/database/ddl/view/sensei/project_libraries_resolved.ddl
+-- ADD TO: database/ddl/view/sensei/project_libraries_resolved.ddl
 CREATE OR REPLACE VIEW sensei.project_libraries_resolved AS
 SELECT
     l.*,
@@ -715,7 +715,7 @@ ORDER BY scope DESC, name;  -- 'project' sorts before 'global'
 **`project_extensions_resolved` view** — extensions/instruments visible to a given project, with scope tag:
 
 ```sql
--- ADD TO: daemon/database/ddl/view/sensei/project_extensions_resolved.ddl
+-- ADD TO: database/ddl/view/sensei/project_extensions_resolved.ddl
 CREATE OR REPLACE VIEW sensei.project_extensions_resolved AS
 SELECT
     e.*,
@@ -1041,13 +1041,13 @@ Panel is searchable. Opens at `⌘?` or from menu. Stays open alongside other wi
 
 ### DB / SCHEMA
 
-- [ ] Add `daemon/database/ddl/table/sensei/project_libraries.ddl` — new bridge table (many-to-many lib↔project)
-- [ ] Add `daemon/database/ddl/table/sensei/extension_projects.ddl` — new bridge table (many-to-many ext↔project)
-- [ ] Add view `daemon/database/ddl/view/sensei/project_ftr_metrics.ddl`
-- [ ] Add view `daemon/database/ddl/view/sensei/project_drift.ddl`
-- [ ] Add view `daemon/database/ddl/view/sensei/project_patterns.ddl`
-- [ ] Add view `daemon/database/ddl/view/sensei/project_libraries_resolved.ddl` — joins libraries + bridge, emits `scope` column
-- [ ] Add view `daemon/database/ddl/view/sensei/project_extensions_resolved.ddl` — joins extensions + bridge, emits `scope` column
+- [ ] Add `database/ddl/table/sensei/project_libraries.ddl` — new bridge table (many-to-many lib↔project)
+- [ ] Add `database/ddl/table/sensei/extension_projects.ddl` — new bridge table (many-to-many ext↔project)
+- [ ] Add view `database/ddl/view/sensei/project_ftr_metrics.ddl`
+- [ ] Add view `database/ddl/view/sensei/project_drift.ddl`
+- [ ] Add view `database/ddl/view/sensei/project_patterns.ddl`
+- [ ] Add view `database/ddl/view/sensei/project_libraries_resolved.ddl` — joins libraries + bridge, emits `scope` column
+- [ ] Add view `database/ddl/view/sensei/project_extensions_resolved.ddl` — joins extensions + bridge, emits `scope` column
 - [ ] Reset and re-apply schema (`dbd` reset + apply)
 
 ---

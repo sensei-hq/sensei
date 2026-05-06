@@ -27,7 +27,7 @@ VERSION := $(shell cat VERSION)
 
 # Env vars for desktop app dev builds
 APP_DEV_ENV  := DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev VITE_BYPASS_HEALTH=true
-APP_BUNDLE_ENV := DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev SENSEI_DB_SCHEMA_PATH=../daemon/database
+APP_BUNDLE_ENV := DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev SENSEI_DB_SCHEMA_PATH=../database
 
 # ── Daemon ────────────────────────────────────────────────────────────────────
 
