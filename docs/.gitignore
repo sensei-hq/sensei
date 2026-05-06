@@ -3,7 +3,6 @@
 *.jpg
 *.jpeg
 *.gif
-*.svg
 *.ico
 *.pdf
 *.docx
@@ -11,14 +10,4 @@
 *.pptx
 *.zip
 *.tar.gz
-
-# OS
-.DS_Store
-
-# Editor
-.vscode/
-.idea/
-
-# Secrets
-.env
 !logo.png

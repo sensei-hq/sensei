@@ -1,4 +1,4 @@
-name: Release
+name: Release Daemon
 
 on:
   push:
@@ -40,6 +40,7 @@ jobs:
         run: cargo install cross --locked
 
       - name: Build binaries
+        working-directory: daemon
         env:
           BUILD_TARGET: ${{ matrix.target }}
           USE_CROSS: ${{ matrix.use-cross }}
@@ -51,20 +52,17 @@ jobs:
           fi
 
       - name: Package binaries
+        working-directory: daemon
         env:
           BUILD_TARGET: ${{ matrix.target }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           STAGING="release-${TAG}-${BUILD_TARGET}"
           mkdir -p "$STAGING"
-
-          for bin in senseid sensei-cli sensei-mcp; do
+          for bin in senseid sensei sensei-mcp; do
             SRC="target/${BUILD_TARGET}/release/${bin}"
-            if [ -f "$SRC" ]; then
-              cp "$SRC" "$STAGING/"
-            fi
+            [ -f "$SRC" ] && cp "$SRC" "$STAGING/"
           done
-
           tar czf "${STAGING}.tar.gz" "$STAGING"
           echo "ASSET=${STAGING}.tar.gz" >> "$GITHUB_ENV"
 
@@ -72,7 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          path: ${{ env.ASSET }}
+          path: daemon/${{ env.ASSET }}
 
   release:
     needs: build

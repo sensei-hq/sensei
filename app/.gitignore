@@ -1,8 +1,14 @@
+# SvelteKit / Vite
 .svelte-kit/
 build/
-node_modules/
 dist/
+
+# Dependencies
+node_modules/
+
+# Tauri
 src-tauri/target/
 src-tauri/gen/
-.DS_Store
+
+# Test artifacts
 test-results/
