@@ -19,13 +19,13 @@
   }
 </script>
 
-<div class="step">
-  <p class="step-desc">Where your work lives. Sensei recurses and finds repositories.</p>
+<div class="max-w-[780px]">
+  <p class="text-sm text-surface-z6 leading-[1.6] m-0 mb-6">Where your work lives. Sensei recurses and finds repositories.</p>
 
-  <div class="input-row">
+  <div class="flex gap-2 mb-6">
     <input
       type="text"
-      class="folder-input"
+      class="folder-input flex-1 min-w-0 px-3 py-2 text-[13px] font-mono text-surface-z9 bg-surface-z2 border border-surface-z3 rounded-md outline-none"
       bind:value={wizardState.roots.newPath}
       onkeydown={(e) => { if (e.key === 'Enter') addRoot(); }}
       placeholder="~/Developer"
@@ -33,64 +33,31 @@
     <button class="btn-solid" onclick={addRoot}>Add</button>
   </div>
 
-  <div class="folder-list">
+  <div class="flex flex-col gap-3 mb-8">
     {#each roots as r (r.id)}
-      <div class="folder-row">
-        <span class="folder-arrow">&#9656;</span>
-        <div class="folder-info">
-          <div class="folder-path">{r.path}</div>
-          {#if r.repos_found > 0}<div class="folder-note">{r.repos_found} repositories found</div>{/if}
+      <div class="flex items-center gap-3 px-5 py-4 bg-surface-z2 rounded-lg">
+        <span class="text-[10px] text-surface-z5">&#9656;</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-mono whitespace-nowrap overflow-hidden text-ellipsis">{r.path}</div>
+          {#if r.repos_found > 0}
+            <div class="text-xs text-surface-z6 mt-0.5">{r.repos_found} repositories found</div>
+          {/if}
         </div>
         {#if r.status === 'watching'}
-          <span class="chip watching">watching</span>
+          <span class="chip-watching text-[11px] text-success-z5 border border-success-z2 bg-success-z1 rounded-md px-2 py-[2px] whitespace-nowrap">watching</span>
         {:else}
-          <span class="chip">recursive</span>
+          <span class="text-[11px] text-surface-z6 border border-surface-z3 rounded-md px-2 py-[2px] whitespace-nowrap">recursive</span>
         {/if}
-        <button class="btn-remove" onclick={() => removeRoot(r.id)}>×</button>
+        <button class="text-[16px] text-surface-z5 bg-none border-none cursor-pointer px-1 leading-none hover:text-primary-z5" onclick={() => removeRoot(r.id)}>×</button>
       </div>
     {/each}
   </div>
 
-  <p class="footer-note">You can manage roots and exclusions later from Settings.</p>
+  <p class="text-[13px] text-surface-z6">You can manage roots and exclusions later from Settings.</p>
 </div>
 
 <style>
-  .step { max-width: 780px; }
-  .step-desc { font-size: 14px; color: var(--sumi-3); line-height: 1.6; margin: 0 0 24px; }
-
-  .input-row { display: flex; gap: var(--space-2); margin-bottom: var(--space-6); }
-  .folder-input {
-    flex: 1; min-width: 0; padding: 8px 12px; font-size: 13px;
-    font-family: var(--font-mono); color: var(--sumi);
-    background: var(--paper-2); border: var(--border-card);
-    border-radius: var(--radius); outline: none;
-  }
-  .folder-input::placeholder { color: var(--sumi-4); }
-  .folder-input:focus { border-color: var(--sumi-3); }
-
-  .folder-list { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-8); }
-  .folder-row {
-    display: flex; align-items: center; gap: var(--space-3);
-    padding: var(--space-4) var(--space-5);
-    background: var(--paper-2); border-radius: var(--radius-lg);
-  }
-  .folder-arrow { font-size: 10px; color: var(--sumi-4); }
-  .folder-info { flex: 1; min-width: 0; }
-  .folder-path { font-size: 14px; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .folder-note { font-size: 12px; color: var(--sumi-3); margin-top: 2px; }
-
-  .chip {
-    font-size: 11px; color: var(--sumi-3); border: var(--border-card);
-    border-radius: var(--radius); padding: 2px 8px; white-space: nowrap;
-  }
-  .chip.watching {
-    color: var(--jade); border-color: var(--jade-soft); background: var(--jade-soft);
-  }
-
-  .btn-remove {
-    font-size: 16px; color: var(--sumi-4); background: none; border: none;
-    cursor: pointer; padding: 4px; line-height: 1;
-  }
-  .btn-remove:hover { color: var(--shu); }
-  .footer-note { font-size: 13px; color: var(--sumi-3); }
+  /* Folder input pseudo-classes */
+  .folder-input::placeholder { color: oklch(var(--color-surface-z5) / 1); }
+  .folder-input:focus { border-color: oklch(var(--color-surface-z6) / 1); }
 </style>
