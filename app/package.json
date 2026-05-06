@@ -8,21 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev SENSEI_DB_SCHEMA_PATH=../daemon/database tauri build --debug && DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev SENSEI_DB_SCHEMA_PATH=../daemon/database ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop",
-    "tauri:vite-dev": "DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev VITE_BYPASS_HEALTH=true cargo build --manifest-path src-tauri/Cargo.toml && DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev VITE_BYPASS_HEALTH=true tauri dev",
-    "tauri:build": "tauri build",
-    "daemon:dev": "make -C ../daemon dev && make -C ../daemon install-dev",
-    "daemon:release": "make -C ../daemon release && make -C ../daemon install-release",
-    "daemon:dev:daemon": "make -C ../daemon dev-daemon",
-    "daemon:dev:cli": "make -C ../daemon dev-cli",
-    "daemon:dev:mcp": "make -C ../daemon dev-mcp",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test:unit": "vitest run",
-    "test:e2e": "npx playwright test --config e2e/playwright.config.ts --project=tauri",
-    "test:e2e:desktop": "playwright test --config e2e/playwright.config.ts --project=tauri",
-    "test:sidecar": "cd src-tauri && cargo test --test bootstrap_integration",
-    "test:playwright": "playwright test --config e2e/playwright.config.ts"
+    "test:e2e": "playwright test --config e2e/playwright.config.ts --project=tauri",
+    "test:sidecar": "cd src-tauri && cargo test --test bootstrap_integration"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",
