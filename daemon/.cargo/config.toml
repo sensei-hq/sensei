@@ -1,0 +1,10 @@
+[alias]
+# Per-crate summary (terminal)
+coverage         = "llvm-cov --package sensei-bootstrap"
+coverage-mcp     = "llvm-cov --package sensei-mcp"
+coverage-cli     = "llvm-cov --package sensei-cli"
+coverage-senseid = "llvm-cov --package senseid"
+# Workspace-wide consolidated summary (terminal)
+coverage-all     = "llvm-cov --workspace"
+# Workspace-wide HTML report — opens target/coverage/index.html
+coverage-html    = "llvm-cov --workspace --html --output-dir target/coverage"
