@@ -1,36 +1,56 @@
 <script lang="ts">
-  let { data } = $props();
+    let { data } = $props();
 </script>
-<div class="section-page">
-  <h2>Patterns</h2>
-  {#if data.followed.length > 0}
-    <section>
-      <h3 class="sub">Followed ({data.followed.length})</h3>
-      <ul class="pattern-list">
-        {#each data.followed as p (p.id)}
-          <li class="pattern-row"><span class="p-name">{p.name}</span><span class="p-lifecycle">{p.lifecycle}</span></li>
-        {/each}
-      </ul>
-    </section>
-  {/if}
-  {#if data.antiPatterns.length > 0}
-    <section>
-      <h3 class="sub anti">Anti-patterns ({data.antiPatterns.length})</h3>
-      <ul class="pattern-list">
-        {#each data.antiPatterns as p (p.id)}
-          <li class="pattern-row anti"><span class="p-name">{p.name}</span><span class="p-lifecycle">{p.lifecycle}</span></li>
-        {/each}
-      </ul>
-    </section>
-  {/if}
+
+<div class="px-6 py-6">
+    <h2 class="text-xl font-normal m-0 mb-4">Patterns</h2>
+    {#if data.followed.length > 0}
+        <section class="mb-5">
+            <h3
+                class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wider"
+            >
+                Followed ({data.followed.length})
+            </h3>
+            <ul class="list-none m-0 p-0">
+                {#each data.followed as p (p.id)}
+                    <li
+                        class="pattern-row flex gap-3 py-1.75 border-b border-surface-z2 text-ui"
+                    >
+                        <span class="flex-1">{p.name}</span>
+                        <span class="text-2xs opacity-50 font-mono"
+                            >{p.lifecycle}</span
+                        >
+                    </li>
+                {/each}
+            </ul>
+        </section>
+    {/if}
+    {#if data.antiPatterns.length > 0}
+        <section>
+            <h3
+                class="text-xs font-semibold m-0 mb-2 uppercase tracking-wider"
+                style="color: oklch(var(--color-primary-z5) / 1);"
+            >
+                Anti-patterns ({data.antiPatterns.length})
+            </h3>
+            <ul class="list-none m-0 p-0">
+                {#each data.antiPatterns as p (p.id)}
+                    <li
+                        class="pattern-row flex gap-3 py-1.75 border-b border-surface-z2 text-ui opacity-80"
+                    >
+                        <span class="flex-1">{p.name}</span>
+                        <span class="text-2xs opacity-50 font-mono"
+                            >{p.lifecycle}</span
+                        >
+                    </li>
+                {/each}
+            </ul>
+        </section>
+    {/if}
 </div>
+
 <style>
-  .section-page { padding: 24px; }
-  .sub { font-size: 12px; font-weight: 600; opacity: 0.6; margin: 16px 0 8px; text-transform: uppercase; letter-spacing: .05em; }
-  .sub.anti { color: var(--red, red); }
-  .pattern-list { list-style: none; margin: 0; padding: 0; }
-  .pattern-row { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-  .pattern-row.anti { opacity: 0.8; }
-  .p-name { flex: 1; }
-  .p-lifecycle { font-size: 11px; opacity: 0.5; font-family: monospace; }
+    .pattern-row:last-child {
+        border-bottom: none;
+    }
 </style>

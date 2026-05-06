@@ -40,15 +40,21 @@
   <!-- Rail (left sidebar) -->
   <nav class="rail">
     {#each stages as s, i (s.id)}
+      {@const isActive = i === current}
+      {@const isDone = i < current}
       <button
         class="rail-item"
-        class:active={i === current}
-        class:done={i < current}
+        class:active={isActive}
+        class:done={isDone}
         onclick={() => { if (i <= current) current = i; }}
         disabled={i > current}
       >
         <span class="rail-icon kanji">{s.icon}</span>
-        <span class="rail-label">{s.title}</span>
+        <div class="rail-text">
+          <span class="rail-label">{s.title}</span>
+          {#if isActive}<span class="rail-sub">{s.description}</span>{/if}
+        </div>
+        <span class="rail-tick" style="opacity: {isDone ? 1 : 0}">✓</span>
       </button>
     {/each}
   </nav>
@@ -98,9 +104,9 @@
     display: grid;
     grid-template-columns: 220px 1fr;
     height: 100vh;
-    background: var(--paper);
+    background: oklch(var(--color-surface-z1) / 1);
     font-family: var(--font-ui);
-    color: var(--sumi);
+    color: oklch(var(--color-surface-z9) / 1);
   }
 
   /* ── Rail ──────────────────────────────────────── */
@@ -110,34 +116,37 @@
     gap: 2px;
     padding: 52px 16px 16px;
     border-right: var(--hairline);
-    background: var(--paper-2);
+    background: oklch(var(--color-surface-z2) / 1);
     overflow-y: auto;
   }
 
   .rail-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
-    padding: 10px 12px;
-    border: none;
+    padding: 7px 10px;
+    border: 1px solid transparent;
     background: none;
     border-radius: var(--radius);
     cursor: pointer;
     text-align: left;
-    color: var(--sumi-3);
+    color: oklch(var(--color-surface-z7) / 1);
     font-family: var(--font-ui);
     font-size: 13px;
     transition: background 0.12s, color 0.12s;
   }
 
-  .rail-item:hover:not(:disabled) { background: var(--paper-3); }
+  .rail-item:hover:not(:disabled) { background: oklch(var(--color-surface-z3) / 1); }
   .rail-item:disabled { cursor: default; opacity: 0.4; }
-  .rail-item.active { color: var(--sumi); background: var(--paper); }
-  .rail-item.done { color: var(--sumi-2); }
+  .rail-item.active { color: oklch(var(--color-surface-z9) / 1); background: oklch(var(--color-surface-z1) / 1); padding: 10px 10px; border-color: oklch(var(--color-surface-z9) / 0.08); }
+  .rail-item.done { color: oklch(var(--color-surface-z8) / 1); }
 
-  .rail-icon { font-size: 18px; color: var(--shu); opacity: 0.6; }
+  .rail-icon { font-size: 14px; color: oklch(var(--color-primary-z6) / 1); opacity: 0.6; flex-shrink: 0; margin-top: 1px; }
   .rail-item.active .rail-icon { opacity: 1; }
-  .rail-label { font-weight: 500; }
+  .rail-text { flex: 1; overflow: hidden; }
+  .rail-label { font-weight: 500; display: block; line-height: 1.3; }
+  .rail-sub { display: block; font-size: 10px; font-family: var(--font-mono); color: oklch(var(--color-surface-z7) / 1); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rail-tick { font-size: 11px; line-height: 1; color: oklch(var(--color-success-z6) / 1); flex-shrink: 0; margin-top: 2px; transition: opacity 0.14s; }
 
   /* ── Content ──────────────────────────────────── */
   .stage-area {
@@ -162,7 +171,7 @@
 
   .stage-icon {
     font-size: 32px;
-    color: var(--shu);
+    color: oklch(var(--color-primary-z6) / 1);
     opacity: 0.5;
     margin-top: 2px;
   }
@@ -176,7 +185,7 @@
 
   .stage-desc {
     font-size: 13px;
-    color: var(--sumi-3);
+    color: oklch(var(--color-surface-z7) / 1);
     margin: 0;
   }
 
@@ -190,7 +199,7 @@
     right: 64px;
     bottom: 32px;
     font-size: 220px;
-    color: var(--shu);
+    color: oklch(var(--color-primary-z6) / 1);
     opacity: 0.035;
     line-height: 1;
     user-select: none;
@@ -210,7 +219,7 @@
 
   .nav-progress {
     font-size: 11px;
-    color: var(--sumi-4);
+    color: oklch(var(--color-surface-z6) / 1);
     font-family: var(--font-mono);
   }
 
