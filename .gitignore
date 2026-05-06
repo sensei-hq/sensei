@@ -7,3 +7,17 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Secrets
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Dev tools
+.superpowers/
+.playwright-mcp/
+.claude-flow/
+.worktrees/
+coverage/
+firebase-debug.log
