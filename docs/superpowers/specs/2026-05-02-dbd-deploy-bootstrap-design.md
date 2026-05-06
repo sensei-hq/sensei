@@ -11,7 +11,7 @@ status: approved
 
 Three goals:
 
-1. **Schema deployment**: Replace the `senseid migrate` stub in `database::setup()` with a real `dbd deploy` using embedded `dbd-core`. On first boot or after a version upgrade, the bootstrap crate downloads the schema from `sensei-hq/daemon/database@v{version}` and applies it (DDL + seed data) to the local PostgreSQL database.
+1. **Schema deployment**: Replace the `senseid migrate` stub in `database::setup()` with a real `dbd deploy` using embedded `dbd-core`. On first boot or after a version upgrade, the bootstrap crate downloads the schema from `sensei-hq/sensei/daemon/database@v{version}` and applies it (DDL + seed data) to the local PostgreSQL database.
 
 2. **Version upgrade gate**: Extend phase 1 (install prerequisites) to detect when the installed `sensei` CLI or `senseid` daemon binary is behind the app version, and run `brew upgrade` automatically.
 
@@ -33,7 +33,7 @@ Three goals:
 
 ### 1. Fix cache-check bug (`crates/dbd-core/src/deploy.rs`)
 
-**Bug**: `resolve_source()` checks `cache.join("design.yaml")` for the cache-hit guard. For a subpath source like `sensei-hq/daemon/database@v0.2.13`, the tarball extracts as `cache/database/design.yaml` — the check always misses and re-downloads on every run.
+**Bug**: `resolve_source()` checks `cache.join("design.yaml")` for the cache-hit guard. For a subpath source like `sensei-hq/sensei/daemon/database@v0.2.13`, the tarball extracts as `cache/database/design.yaml` — the check always misses and re-downloads on every run.
 
 **Fix**:
 
@@ -135,7 +135,7 @@ tokio = { version = "1", features = ["process", "time", "rt"] }  # add "rt"
 ```rust
 pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
     let db = db_name();
-    let source = format!("sensei-hq/daemon/database@v{app_version}");
+    let source = format!("sensei-hq/sensei/daemon/database@v{app_version}");
     let db_url = format!("postgres://localhost/{db}");
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -514,7 +514,7 @@ All three repos must be tagged consistently for version pinning to work.
               git tag vX.Y.Z && git push && git push --tags
 ```
 
-The `bump-version.sh` scripts in dbd-rs and daemon create the tags that bootstrap uses as `sensei-hq/daemon/database@vX.Y.Z`. The app reads its own version from `tauri.conf.json` at runtime and threads it through to the bootstrap factory.
+`make bump v=X.Y.Z` from the monorepo root creates the tags that bootstrap uses as `sensei-hq/sensei/daemon/database@vX.Y.Z`. The app reads its own version from `tauri.conf.json` at runtime and threads it through to the bootstrap factory.
 
 > **Future**: A single top-level release script (`release.sh X.Y.Z`) should automate all three steps and verify tags exist before building the app.
 
