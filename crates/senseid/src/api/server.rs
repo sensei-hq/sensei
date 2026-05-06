@@ -12,8 +12,14 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     let task_queue = Arc::new(TaskQueue::new());
 
     // Connect to PostgreSQL
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
+    // Debug builds (cargo build) use sensei_dev; release builds use sensei.
+    // DATABASE_URL env var overrides either.
+    let default_db = if cfg!(debug_assertions) {
+        "postgresql://localhost:5432/sensei_dev"
+    } else {
+        "postgresql://localhost:5432/sensei"
+    };
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| default_db.to_string());
     let pg = crate::db::pg_store::PgStore::connect(&database_url)
         .await
         .expect("Failed to connect to PostgreSQL");
