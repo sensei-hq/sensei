@@ -2,37 +2,30 @@
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
   let { data } = $props();
 </script>
-<div class="projects-page">
-  <h2>Projects</h2>
+
+<div class="p-6">
+  <h2 class="text-2xl font-normal m-0 mb-4">Projects</h2>
   {#if data.projects.length === 0}
-    <p class="empty-hint">No projects yet. Set up a project to get started.</p>
+    <p class="text-ui text-surface-z6 opacity-50">No projects yet. Set up a project to get started.</p>
   {:else}
-    <div class="project-grid">
+    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
       {#each data.projects as proj (proj.id)}
         <button
           type="button"
-          class="project-card"
+          class="project-card bg-surface-z2 rounded-lg p-5 flex flex-col gap-1.5 cursor-pointer border-none text-left text-inherit transition-colors duration-150"
           onclick={() => openProjectWindow(proj.id, proj.name).catch(console.error)}
         >
-          <span class="proj-kanji">{proj.icon?.value ?? '場'}</span>
-          <span class="proj-name">{proj.name}</span>
-          {#if proj.client}<span class="proj-client">{proj.client}</span>{/if}
-          <span class="proj-maturity">{proj.maturity}</span>
-          <span class="open-hint">↗</span>
+          <span class="kanji text-3xl">{proj.icon?.value ?? '場'}</span>
+          <span class="text-body font-bold text-surface-z9">{proj.name}</span>
+          {#if proj.client}<span class="text-xs text-surface-z7 opacity-60">{proj.client}</span>{/if}
+          <span class="text-2xs text-surface-z9 opacity-40 font-mono">{proj.maturity}</span>
+          <span class="text-3xs text-surface-z9 opacity-30 mt-auto">↗</span>
         </button>
       {/each}
     </div>
   {/if}
 </div>
+
 <style>
-  .projects-page { padding: 24px; }
-  .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-top: 16px; }
-  .project-card { background: var(--surface-2); border-radius: 10px; padding: 20px 16px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; border: none; text-align: left; color: inherit; transition: background .15s; }
-  .project-card:hover { background: var(--surface-3); }
-  .proj-kanji { font-size: 32px; }
-  .proj-name { font-size: 15px; font-weight: 700; }
-  .proj-client { font-size: 12px; opacity: 0.6; }
-  .proj-maturity { font-size: 11px; opacity: 0.4; font-family: monospace; }
-  .open-hint { font-size: 10px; opacity: 0.3; margin-top: auto; }
-  .empty-hint { opacity: 0.5; font-size: 13px; }
+  .project-card:hover { background: oklch(var(--color-surface-z3) / 1); }
 </style>

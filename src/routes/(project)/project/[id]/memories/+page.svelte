@@ -1,27 +1,34 @@
 <script lang="ts">
-  let { data } = $props();
+    let { data } = $props();
 </script>
-<div class="section-page">
-  <h2>Memories</h2>
-  {#if data.pendingShare > 0}
-    <div class="pending-banner">{data.pendingShare} memories pending collective share</div>
-  {/if}
-  <ul class="memory-list">
-    {#each data.memories as m (m.id)}
-      <li class="memory-row">
-        <span class="memory-title">{m.title}</span>
-        <span class="memory-type">{m.type}</span>
-        <span class="memory-strength">{Math.round((m.strength ?? 0) * 100)}%</span>
-      </li>
-    {/each}
-  </ul>
+
+<div class="px-6 py-6">
+    <h2 class="text-xl font-normal m-0 mb-4">Memories</h2>
+    {#if data.pendingShare > 0}
+        <div
+            class="text-ui px-3.5 py-2.5 rounded-md mb-4"
+            style="background: oklch(var(--color-primary-z5) / 0.10); color: oklch(var(--color-primary-z5) / 1);"
+        >
+            {data.pendingShare} memories pending collective share
+        </div>
+    {/if}
+    <ul class="list-none m-0 p-0">
+        {#each data.memories as m (m.id)}
+            <li
+                class="memory-row flex gap-3 py-2 border-b border-surface-z2 text-ui"
+            >
+                <span class="flex-1">{m.title}</span>
+                <span class="opacity-50 text-xs">{m.type}</span>
+                <span class="text-xs font-mono"
+                    >{Math.round((m.strength ?? 0) * 100)}%</span
+                >
+            </li>
+        {/each}
+    </ul>
 </div>
+
 <style>
-  .section-page { padding: 24px; }
-  .pending-banner { background: color-mix(in srgb, var(--shu,#c0392b) 12%, transparent); color: var(--shu,#c0392b); padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
-  .memory-list { list-style: none; margin: 0; padding: 0; }
-  .memory-row { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-  .memory-title { flex: 1; }
-  .memory-type { opacity: 0.5; font-size: 12px; }
-  .memory-strength { font-size: 12px; font-family: monospace; }
+    .memory-row:last-child {
+        border-bottom: none;
+    }
 </style>

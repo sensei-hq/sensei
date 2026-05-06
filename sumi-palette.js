@@ -7,61 +7,89 @@
  *   kami  — warm paper scale (light mode surface, z0→z9 = lightest→darkest)
  *   sumi  — ink scale (dark mode surface, z-flip: z0=950=dark bg, z9=100=light text)
  *
- * Key anchors matched to existing tokens.css values:
- *   kami-100 z1  → --paper      0.975 0.008 85
- *   kami-200 z2  → --paper-2    0.955 0.010 85
- *   kami-300 z3  → --paper-3    0.920 0.012 85
- *   kami-500 z5  → --sumi-4     0.750 0.008 50
- *   kami-600 z6  → --sumi-3     0.580 0.010 50
- *   kami-700 z7  → --sumi-2     0.380 0.012 50
- *   kami-900 z9  → --sumi       0.220 0.012 50
- *   shu-500  primary-z5 → --shu 0.580 0.150 35
- *   hisui-500 success-z5 → --jade 0.620 0.080 160
- *   kohaku-500 warning-z5 → --amber 0.720 0.120 75
+ * Key anchors:
+ *   Surface (kami light / sumi dark, z-flip — text at z6-z9 in both modes):
+ *     z1  kami-100 / sumi-900  page bg
+ *     z2  kami-200 / sumi-800  card bg
+ *     z3  kami-300 / sumi-700  inset
+ *     z4  kami-400 / sumi-600  border/separator
+ *     z6  kami-600 / sumi-400  faint text
+ *     z7  kami-700 / sumi-300  tertiary text
+ *     z8  kami-800 / sumi-200  secondary text
+ *     z9  kami-900 / sumi-100  primary text
+ *
+ *   Accent (z6 = semantic anchor, adaptive via flip):
+ *     primary-z6  light shu-600   0.580 0.150 35  / dark shu-400   0.700 0.150 35
+ *     success-z6  light hisui-600 0.620 0.080 160 / dark hisui-400 0.720 0.090 160
+ *     warning-z6  light kohaku-600 ~0.640          / dark kohaku-400 0.790 0.110 75
  */
 
-/** kami — warm neutral, from washi paper (z0) to sumi ink (z9/z10) */
+/** kami — warm neutral, from washi paper (z0) to sumi ink (z9/z10)
+ *
+ * Text levels start at z6 — mirrors the sumi dark scale so surface-z6/7/8/9
+ * carry identical semantics in both modes via Rokkit's z-flip:
+ *
+ *   z1  kami-100: page bg          | z1  sumi-900: page bg
+ *   z2  kami-200: card bg          | z2  sumi-800: card bg
+ *   z3  kami-300: inset            | z3  sumi-700: inset
+ *   z4  kami-400: border/separator | z4  sumi-600: border/separator
+ *   z5  kami-500: mid neutral      | z5  sumi-500: mid neutral
+ *   z6  kami-600: faint text       | z6  sumi-400: faint text
+ *   z7  kami-700: tertiary text    | z7  sumi-300: tertiary text
+ *   z8  kami-800: secondary text   | z8  sumi-200: secondary text
+ *   z9  kami-900: primary text     | z9  sumi-100: primary text
+ */
 const kami = {
   50:  '0.985 0.005 85',
   100: '0.975 0.008 85',
   200: '0.955 0.010 85',
   300: '0.920 0.012 85',
   400: '0.850 0.010 70',
-  500: '0.750 0.008 50',
-  600: '0.580 0.010 50',
-  700: '0.380 0.012 50',
-  800: '0.280 0.012 50',
+  500: '0.800 0.008 60',
+  600: '0.750 0.008 50',
+  700: '0.580 0.010 50',
+  800: '0.380 0.012 50',
   900: '0.220 0.012 50',
   950: '0.170 0.010 50',
 };
 
-/** shu — vermillion, primary accent (朱) */
+/** shu — vermillion, primary accent (朱)
+ *
+ * z6 is the semantic anchor — correct in both modes via Rokkit's flip:
+ *   light z6 → shu-600: 0.580 0.150 35  (vivid on light bg)
+ *   dark  z6 → shu-400: 0.700 0.150 35  (lighter for dark bg)
+ */
 const shu = {
   50:  '0.970 0.020 35',
   100: '0.940 0.040 35',
   200: '0.880 0.070 35',
   300: '0.800 0.100 35',
-  400: '0.700 0.130 35',
-  500: '0.580 0.150 35',
-  600: '0.500 0.140 35',
-  700: '0.420 0.120 35',
-  800: '0.350 0.100 35',
-  900: '0.280 0.080 35',
+  400: '0.700 0.150 35',
+  500: '0.640 0.150 35',
+  600: '0.580 0.150 35',
+  700: '0.500 0.135 35',
+  800: '0.400 0.110 35',
+  900: '0.300 0.085 35',
   950: '0.220 0.060 35',
 };
 
-/** hisui — jade green, success (翡翠) */
+/** hisui — jade green, success (翡翠)
+ *
+ * z6 is the semantic anchor — correct in both modes via Rokkit's flip:
+ *   light z6 → hisui-600: 0.620 0.080 160  (vivid on light bg)
+ *   dark  z6 → hisui-400: 0.720 0.090 160  (lighter for dark bg)
+ */
 const hisui = {
   50:  '0.970 0.015 160',
   100: '0.940 0.030 160',
   200: '0.880 0.050 160',
   300: '0.800 0.065 160',
-  400: '0.720 0.075 160',
-  500: '0.620 0.080 160',
-  600: '0.540 0.075 160',
-  700: '0.460 0.065 160',
-  800: '0.380 0.055 160',
-  900: '0.300 0.045 160',
+  400: '0.720 0.090 160',
+  500: '0.670 0.085 160',
+  600: '0.620 0.080 160',
+  700: '0.540 0.070 160',
+  800: '0.430 0.058 160',
+  900: '0.320 0.045 160',
   950: '0.240 0.035 160',
 };
 
@@ -85,12 +113,18 @@ const kohaku = {
  *
  * Two-pole design: light end (50–400) = warm paper whites for dark-mode text,
  * dark end (500–950) = sumi-ink tones for dark-mode backgrounds.
- * The z-flip in base.css maps z0→950 (ink bg) and z9→100 (primary text).
+ * The z-flip in base.css maps z0→950 and z9→100.
  *
- *   z0 dark (bg)    ← sumi-950: 0.170 0.010 50  (sumi ink)
- *   z1 dark (card)  ← sumi-900: 0.210 0.012 50
- *   z6 dark (faint) ← sumi-400: 0.420 0.012 85  (warm paper white)
- *   z9 dark (text)  ← sumi-100: 0.940 0.008 85  (primary text)
+ * Shifted so z1 dark = page bg (mirrors kami: z1 light = page bg):
+ *
+ *   z0 dark (body)   ← sumi-950: 0.130 0.008 50  (deepest bg, body)
+ *   z1 dark (page)   ← sumi-900: 0.170 0.010 50  (page bg = --paper dark)
+ *   z2 dark (card)   ← sumi-800: 0.210 0.012 50  (--paper-2 dark)
+ *   z3 dark (inset)  ← sumi-700: 0.250 0.012 50  (--paper-3 dark)
+ *   z4 dark (border) ← sumi-600: 0.320 0.012 50  (separator)
+ *   z5 dark (mid)    ← sumi-500: 0.380 0.010 60  (neutral midpoint, no flip)
+ *   z6 dark (faint)  ← sumi-400: 0.420 0.012 85  (--sumi-4 dark)
+ *   z9 dark (text)   ← sumi-100: 0.940 0.008 85  (--sumi dark)
  */
 const sumi = {
   50:  '0.975 0.008 85',
@@ -98,12 +132,12 @@ const sumi = {
   200: '0.780 0.008 85',
   300: '0.600 0.010 85',
   400: '0.420 0.012 85',
-  500: '0.570 0.010 50',
-  600: '0.420 0.010 50',
-  700: '0.320 0.012 50',
-  800: '0.250 0.012 50',
-  900: '0.210 0.012 50',
-  950: '0.170 0.010 50',
+  500: '0.380 0.010 60',
+  600: '0.320 0.012 50',
+  700: '0.250 0.012 50',
+  800: '0.210 0.012 50',
+  900: '0.170 0.010 50',
+  950: '0.130 0.008 50',
 };
 
 /** beni — deep crimson, danger/error (紅) */

@@ -1,36 +1,56 @@
 <script lang="ts">
-  let { data } = $props();
-  let p = $derived(data.project);
+    let { data } = $props();
+    let p = $derived(data.project);
 </script>
-<div class="section-page">
-  <h2>{p?.name ?? '—'}</h2>
-  {#if p?.client}<p class="meta">Client: {p.client}</p>{/if}
-  {#if p?.goal}<p class="goal">{p.goal}</p>{/if}
-  <section>
-    <h3 class="sub">Repos ({data.repos.length})</h3>
-    <ul class="repo-list">
-      {#each data.repos as repo (repo.id)}
-        <li class="repo-row"><span class="repo-name">{repo.name}</span><span class="repo-path">{repo.path}</span></li>
-      {/each}
-    </ul>
-  </section>
-  {#if p?.stack}
-    <section>
-      <h3 class="sub">Stack</h3>
-      <div class="stack-tags">
-        {#each [...(p.stack.languages ?? []), ...(p.stack.frameworks ?? [])] as t}<span class="tag">{t}</span>{/each}
-      </div>
+
+<div class="px-6 py-6 max-w-[600px]">
+    <h2 class="text-xl font-normal m-0 mb-3">{p?.name ?? "—"}</h2>
+    {#if p?.client}<p class="text-ui opacity-70 my-1">
+            Client: {p.client}
+        </p>{/if}
+    {#if p?.goal}<p class="text-ui opacity-70 my-1">{p.goal}</p>{/if}
+
+    <section class="mt-5">
+        <h3
+            class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wider"
+        >
+            Repos ({data.repos.length})
+        </h3>
+        <ul class="list-none m-0 p-0">
+            {#each data.repos as repo (repo.id)}
+                <li
+                    class="repo-row flex gap-3 py-1.5 text-ui border-b border-surface-z2"
+                >
+                    <span class="font-semibold">{repo.name}</span>
+                    <span
+                        class="opacity-50 text-xs font-mono overflow-hidden text-ellipsis"
+                        >{repo.path}</span
+                    >
+                </li>
+            {/each}
+        </ul>
     </section>
-  {/if}
+
+    {#if p?.stack}
+        <section class="mt-5">
+            <h3
+                class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wider"
+            >
+                Stack
+            </h3>
+            <div class="flex flex-wrap gap-1.5">
+                {#each [...(p.stack.languages ?? []), ...(p.stack.frameworks ?? [])] as t}
+                    <span class="bg-surface-z3 text-xs px-2 py-0.75 rounded-md"
+                        >{t}</span
+                    >
+                {/each}
+            </div>
+        </section>
+    {/if}
 </div>
+
 <style>
-  .section-page { padding: 24px; max-width: 600px; }
-  .meta, .goal { font-size: 13px; opacity: 0.7; margin: 4px 0; }
-  .sub { font-size: 12px; font-weight: 600; opacity: 0.6; margin: 20px 0 8px; text-transform: uppercase; letter-spacing: .05em; }
-  .repo-list { list-style: none; margin: 0; padding: 0; }
-  .repo-row { display: flex; gap: 12px; padding: 6px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
-  .repo-name { font-weight: 600; }
-  .repo-path { opacity: 0.5; font-size: 12px; font-family: monospace; overflow: hidden; text-overflow: ellipsis; }
-  .stack-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tag { background: var(--surface-3); font-size: 12px; padding: 3px 8px; border-radius: 4px; }
+    .repo-row:last-child {
+        border-bottom: none;
+    }
 </style>

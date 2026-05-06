@@ -1,252 +1,207 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
+    import { onMount } from "svelte";
+    import { appState } from "$lib/appstate.svelte.js";
+    import { senseiApi } from "$lib/api.js";
 
-  type Tool = { name: string; description: string; params: string[] };
+    type Tool = { name: string; description: string; params: string[] };
 
-  let tools = $state<Tool[]>([]);
-  let loading = $state(true);
-  let tab = $state<'playground' | 'replay' | 'insights'>('playground');
-  let selectedTool = $state<Tool | null>(null);
-  let toolResult = $state<string>('');
-  let toolParams = $state<Record<string, string>>({});
-  let executing = $state(false);
+    let tools = $state<Tool[]>([]);
+    let loading = $state(true);
+    let tab = $state<"playground" | "replay" | "insights">("playground");
+    let selectedTool = $state<Tool | null>(null);
+    let toolResult = $state<string>("");
+    let toolParams = $state<Record<string, string>>({});
+    let executing = $state(false);
 
-  onMount(async () => {
-    await appState.load();
-    const api = senseiApi(appState.port);
-    const data = await api.mcpListTools();
-    tools = data.tools;
-    loading = false;
-  });
+    onMount(async () => {
+        await appState.load();
+        const api = senseiApi(appState.port);
+        const data = await api.mcpListTools();
+        tools = data.tools;
+        loading = false;
+    });
 
-  async function executeTool() {
-    if (!selectedTool) return;
-    executing = true;
-    toolResult = '';
-    const api = senseiApi(appState.port);
-    const result = await api.mcpCallTool(selectedTool.name, toolParams);
-    toolResult = JSON.stringify(result, null, 2);
-    executing = false;
-  }
+    async function executeTool() {
+        if (!selectedTool) return;
+        executing = true;
+        toolResult = "";
+        const api = senseiApi(appState.port);
+        const result = await api.mcpCallTool(selectedTool.name, toolParams);
+        toolResult = JSON.stringify(result, null, 2);
+        executing = false;
+    }
 </script>
 
-<div class="page">
-  <header class="page-header">
-    <p class="date-label">Instruments</p>
-    <h1 class="display page-title">具 Instruments</h1>
-  </header>
-
-  <!-- Tab bar -->
-  <div class="tab-bar">
-    <button class="tab" class:active={tab === 'playground'} onclick={() => tab = 'playground'}>
-      <span class="kanji tab-kanji">具</span> Playground
-    </button>
-    <button class="tab" class:active={tab === 'replay'} onclick={() => tab = 'replay'}>
-      <span class="kanji tab-kanji">録</span> Replay
-    </button>
-    <button class="tab" class:active={tab === 'insights'} onclick={() => tab = 'insights'}>
-      <span class="kanji tab-kanji">照</span> Insights
-    </button>
-  </div>
-
-  {#if tab === 'playground'}
-    {#if loading}
-      <p class="hint">Loading tools...</p>
-    {:else if tools.length === 0}
-      <div class="empty-state">
-        <span class="kanji empty-kanji">具</span>
-        <p class="display empty-title">No MCP tools available.</p>
-        <p class="empty-body">
-          Tools appear when the sensei daemon is running and MCP services are configured.
-          Check your instruments in the setup wizard.
+<div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
+    <div class="mb-6">
+        <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
+            Instruments
         </p>
-      </div>
-    {:else}
-      <div class="playground-grid">
-        <!-- Tool list -->
-        <div class="tool-list">
-          {#each tools as tool (tool.name)}
+        <h1 class="display text-2xl font-normal m-0">具 Instruments</h1>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="flex gap-0 border-b border-surface-z2 mb-7">
+        {#each [["playground", "具", "Playground"], ["replay", "録", "Replay"], ["insights", "照", "Insights"]] as [key, kanji, label]}
             <button
-              class="tool-card"
-              class:selected={selectedTool?.name === tool.name}
-              onclick={() => { selectedTool = tool; toolParams = {}; toolResult = ''; }}
+                class="tab flex items-center gap-2 px-4.5 py-2 border-none bg-none text-ui cursor-pointer border-b-2 border-transparent -mb-px text-surface-z6"
+                class:active={tab === key}
+                onclick={() => (tab = key as any)}
             >
-              <span class="tool-name">{tool.name}</span>
-              <span class="tool-desc">{tool.description}</span>
+                <span class="kanji text-xs">{kanji}</span>
+                {label}
             </button>
-          {/each}
+        {/each}
+    </div>
+
+    {#if tab === "playground"}
+        {#if loading}
+            <p class="text-ui text-surface-z6">Loading tools...</p>
+        {:else if tools.length === 0}
+            <div class="flex flex-col items-center text-center py-20 gap-4">
+                <span class="kanji text-6xl text-primary-z5 opacity-30">具</span
+                >
+                <p class="display text-xl font-normal m-0">
+                    No MCP tools available.
+                </p>
+                <p
+                    class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
+                >
+                    Tools appear when the sensei daemon is running and MCP
+                    services are configured. Check your instruments in the setup
+                    wizard.
+                </p>
+            </div>
+        {:else}
+            <div class="grid grid-cols-[260px_1fr] gap-6">
+                <!-- Tool list -->
+                <div class="flex flex-col gap-0.5">
+                    {#each tools as tool (tool.name)}
+                        <button
+                            class="tool-card text-left px-3.5 py-2.5 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-100"
+                            class:selected={selectedTool?.name === tool.name}
+                            onclick={() => {
+                                selectedTool = tool;
+                                toolParams = {};
+                                toolResult = "";
+                            }}
+                        >
+                            <span
+                                class="block text-ui font-medium text-surface-z9 font-mono"
+                                >{tool.name}</span
+                            >
+                            <span class="block text-2xs text-surface-z6 mt-0.5"
+                                >{tool.description}</span
+                            >
+                        </button>
+                    {/each}
+                </div>
+
+                <!-- Tool detail + execution -->
+                <div
+                    class="p-6 bg-surface-z2 border border-surface-z3 rounded-lg"
+                >
+                    {#if selectedTool}
+                        <h3 class="text-base font-mono m-0 mb-1.5">
+                            {selectedTool.name}
+                        </h3>
+                        <p
+                            class="text-ui text-surface-z7 m-0 mb-5 leading-normal"
+                        >
+                            {selectedTool.description}
+                        </p>
+
+                        {#if selectedTool.params.length > 0}
+                            <div class="flex flex-col gap-3 mb-5">
+                                {#each selectedTool.params as param}
+                                    <div class="flex flex-col gap-1">
+                                        <label
+                                            class="text-2xs text-surface-z6 font-mono"
+                                            for="param-{param}">{param}</label
+                                        >
+                                        <input
+                                            id="param-{param}"
+                                            class="param-input px-3 py-2 border border-surface-z3 rounded-md bg-surface-z1 text-surface-z9 text-ui font-mono outline-none"
+                                            type="text"
+                                            placeholder={param}
+                                            bind:value={toolParams[param]}
+                                        />
+                                    </div>
+                                {/each}
+                            </div>
+                        {/if}
+
+                        <button
+                            class="btn-solid"
+                            onclick={executeTool}
+                            disabled={executing}
+                        >
+                            {executing ? "Running..." : "Execute"}
+                        </button>
+
+                        {#if toolResult}
+                            <div class="mt-5">
+                                <p
+                                    class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-2"
+                                >
+                                    Response
+                                </p>
+                                <pre
+                                    class="px-4 py-4 bg-surface-z1 border border-surface-z3 rounded-md text-xs font-mono text-surface-z9 overflow-auto max-h-[400px] whitespace-pre-wrap break-all m-0">{toolResult}</pre>
+                            </div>
+                        {/if}
+                    {:else}
+                        <p class="text-ui text-surface-z6">
+                            Select a tool to try it.
+                        </p>
+                    {/if}
+                </div>
+            </div>
+        {/if}
+    {:else if tab === "replay"}
+        <div class="flex flex-col items-center text-center py-20 gap-4">
+            <span class="kanji text-6xl text-primary-z5 opacity-30">録</span>
+            <p class="display text-xl font-normal m-0">Session replay</p>
+            <p
+                class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
+            >
+                Tool calls from your assistant sessions will appear here. Each
+                call shows the tool, arguments, response, and whether the
+                assistant used the result.
+            </p>
         </div>
-
-        <!-- Tool detail + execution -->
-        <div class="tool-detail">
-          {#if selectedTool}
-            <h3 class="tool-detail-name">{selectedTool.name}</h3>
-            <p class="tool-detail-desc">{selectedTool.description}</p>
-
-            {#if selectedTool.params.length > 0}
-              <div class="params-form">
-                {#each selectedTool.params as param}
-                  <div class="param-field">
-                    <label class="param-label" for="param-{param}">{param}</label>
-                    <input
-                      id="param-{param}"
-                      class="param-input"
-                      type="text"
-                      placeholder={param}
-                      bind:value={toolParams[param]}
-                    />
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <button class="btn-solid" onclick={executeTool} disabled={executing}>
-              {executing ? 'Running...' : 'Execute'}
-            </button>
-
-            {#if toolResult}
-              <div class="result-panel">
-                <p class="result-label">Response</p>
-                <pre class="result-code">{toolResult}</pre>
-              </div>
-            {/if}
-          {:else}
-            <p class="hint">Select a tool to try it.</p>
-          {/if}
+    {:else}
+        <div class="flex flex-col items-center text-center py-20 gap-4">
+            <span class="kanji text-6xl text-primary-z5 opacity-30">照</span>
+            <p class="display text-xl font-normal m-0">Tool insights</p>
+            <p
+                class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
+            >
+                Aggregated usage and effectiveness metrics across sessions.
+                Which tools are used most, which responses get ignored, and
+                where tool usage correlates with FTR.
+            </p>
         </div>
-      </div>
     {/if}
-  {:else if tab === 'replay'}
-    <div class="empty-state">
-      <span class="kanji empty-kanji">録</span>
-      <p class="display empty-title">Session replay</p>
-      <p class="empty-body">
-        Tool calls from your assistant sessions will appear here.
-        Each call shows the tool, arguments, response, and whether the assistant used the result.
-      </p>
-    </div>
-  {:else}
-    <div class="empty-state">
-      <span class="kanji empty-kanji">照</span>
-      <p class="display empty-title">Tool insights</p>
-      <p class="empty-body">
-        Aggregated usage and effectiveness metrics across sessions.
-        Which tools are used most, which responses get ignored, and where tool usage correlates with FTR.
-      </p>
-    </div>
-  {/if}
 </div>
 
 <style>
-  .page {
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 48px 48px 64px;
-  }
-  .page-header { margin-bottom: 24px; }
-  .date-label {
-    font-size: 10.5px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--sumi-3);
-    margin: 0 0 8px;
-  }
-  .page-title { font-size: 24px; font-weight: 400; margin: 0; }
+    .tab:hover {
+        color: oklch(var(--color-surface-z8) / 1);
+    }
+    .tab.active {
+        color: oklch(var(--color-surface-z9) / 1);
+        border-bottom-color: oklch(var(--color-primary-z5) / 1);
+    }
 
-  /* ── Tab bar ────────────────────────────────────────────── */
-  .tab-bar {
-    display: flex;
-    gap: 0;
-    border-bottom: var(--hairline);
-    margin-bottom: 28px;
-  }
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 18px;
-    border: none;
-    background: none;
-    color: var(--sumi-3);
-    font-size: 13px;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-  }
-  .tab:hover { color: var(--sumi-2); }
-  .tab.active { color: var(--sumi); border-bottom-color: var(--shu); }
-  .tab-kanji { font-size: 12px; }
+    .tool-card:hover {
+        background: oklch(var(--color-surface-z2) / 1);
+    }
+    .tool-card.selected {
+        background: oklch(var(--color-surface-z2) / 1);
+    }
 
-  /* ── Empty state ────────────────────────────────────────── */
-  .empty-state { text-align: center; padding: 80px 20px; }
-  .empty-kanji { font-size: 64px; color: var(--shu); opacity: 0.3; }
-  .empty-title { font-size: 20px; font-weight: 400; margin: 16px 0 8px; }
-  .empty-body { font-size: 13px; color: var(--sumi-3); max-width: 380px; margin: 0 auto; line-height: 1.65; }
-
-  /* ── Playground grid ────────────────────────────────────── */
-  .playground-grid { display: grid; grid-template-columns: 260px 1fr; gap: 24px; }
-  .tool-list { display: flex; flex-direction: column; gap: 2px; }
-  .tool-card {
-    text-align: left;
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-  .tool-card:hover { background: var(--paper-2); }
-  .tool-card.selected { background: var(--paper-2); }
-  .tool-name { display: block; font-size: 13px; font-weight: 500; color: var(--sumi); font-family: var(--font-mono); }
-  .tool-desc { display: block; font-size: 11px; color: var(--sumi-3); margin-top: 2px; }
-
-  /* ── Tool detail ────────────────────────────────────────── */
-  .tool-detail {
-    padding: 24px;
-    background: var(--paper-2);
-    border: var(--border-card);
-    border-radius: var(--radius-lg);
-  }
-  .tool-detail-name { font-size: 16px; font-family: var(--font-mono); margin: 0 0 6px; }
-  .tool-detail-desc { font-size: 13px; color: var(--sumi-2); margin: 0 0 20px; line-height: 1.5; }
-  .params-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
-  .param-field { display: flex; flex-direction: column; gap: 4px; }
-  .param-label { font-size: 11px; color: var(--sumi-3); font-family: var(--font-mono); }
-  .param-input {
-    padding: 8px 12px;
-    border: var(--border-input);
-    border-radius: var(--radius);
-    background: var(--paper);
-    color: var(--sumi);
-    font-size: 13px;
-    font-family: var(--font-mono);
-    outline: none;
-  }
-  .param-input:focus { border: var(--border-focus); }
-  .result-panel { margin-top: 20px; }
-  .result-label {
-    font-size: 9.5px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--sumi-3);
-    margin: 0 0 8px;
-  }
-  .result-code {
-    padding: 16px;
-    background: var(--paper);
-    border: var(--border-card);
-    border-radius: var(--radius);
-    font-size: 12px;
-    font-family: var(--font-mono);
-    color: var(--sumi);
-    overflow: auto;
-    max-height: 400px;
-    white-space: pre-wrap;
-    word-break: break-all;
-    margin: 0;
-  }
-
-  .hint { font-size: 13px; color: var(--sumi-3); }
+    .param-input:focus {
+        border-color: oklch(var(--color-surface-z6) / 1);
+    }
 </style>
