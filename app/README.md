@@ -5,33 +5,43 @@ Desktop observatory for Sensei. Built with Tauri + SvelteKit + Svelte 5.
 ## Dev
 
 ```bash
-# From monorepo root (builds daemon first)
-make install-dev
-make app-dev
-
-# Or directly from this directory
-bun install
-bun run tauri:vite-dev   # Tauri + Vite HMR
+# From monorepo root (recommended)
+make install-dev      # build daemon + install to ~/.local/bin
+make app-dev          # Tauri dev with Vite HMR (pre-compiles Rust backend)
+make app-dev-bundle   # build debug .app bundle and launch it
 ```
 
 ## Build
 
 ```bash
 # From monorepo root
-make app-release
-
-# Or directly
-bun run tauri:build
+make app-release      # production Tauri bundle
 ```
 
-## Daemon build scripts
+## Type-check
 
 ```bash
-bun run daemon:dev        # build all daemon binaries (debug)
-bun run daemon:release    # build all daemon binaries (release)
-bun run daemon:dev:daemon # build senseid only
-bun run daemon:dev:cli    # build sensei-cli only
-bun run daemon:dev:mcp    # build sensei-mcp only
+# From monorepo root
+make app-check
+
+# Or from this directory
+bun run check         # svelte-check + tsc
+bun run check:watch   # watch mode
+```
+
+## Tests
+
+```bash
+# From monorepo root
+make test-app         # unit + sidecar
+make test-app-unit    # Vitest unit tests only
+make test-app-e2e     # Playwright e2e (requires Tauri build)
+make test-app-sidecar # bootstrap integration tests
+
+# Or from this directory
+bun run test:unit
+bun run test:e2e
+bun run test:sidecar
 ```
 
 ## Routes
@@ -47,10 +57,3 @@ bun run daemon:dev:mcp    # build sensei-mcp only
 | `/instruments` | MCP playground and insights |
 | `/settings` | General, assistants, inference, extensions |
 | `/projects/[id]` | Per-project overview, graph, patterns, sessions |
-
-## Tests
-
-```bash
-bun run test:unit    # Vitest unit tests
-bun run test:e2e     # Playwright e2e (requires Tauri build)
-```
