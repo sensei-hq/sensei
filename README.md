@@ -35,6 +35,9 @@ Homebrew formulae live in [sensei-hq/homebrew-tap](https://github.com/sensei-hq/
 ## Quick start
 
 ```bash
+# First-time setup: install git hooks (runs unit tests on each commit)
+make setup-hooks
+
 # Build daemon binaries (dev) and install to ~/.local/bin
 make install-dev
 
