@@ -113,16 +113,22 @@ update:
 bump:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump v=<version>"; exit 1; fi
 	@echo "$(v)" > VERSION
-	@# Update app/package.json
+	@# Node manifests
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/package.json
-	@# Update each Rust crate that matches current version (excludes bootstrap which has its own cadence)
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' website/package.json
+	@# Daemon Rust crates (excludes bootstrap which has its own cadence)
 	@for crate in senseid cli mcp; do \
 	  f="daemon/crates/$$crate/Cargo.toml"; \
-	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" "$$f" && echo "  $$f"; \
+	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" "$$f"; \
 	done
+	@# Gateway Rust crate
+	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" gateway/crates/gateway/Cargo.toml
 	@echo "Bumped to $(v) in:"
-	@echo "  VERSION, app/package.json, daemon/crates/{senseid,cli,mcp}/Cargo.toml"
-	@echo "Review: git diff VERSION app/package.json daemon/crates/*/Cargo.toml"
+	@echo "  VERSION"
+	@echo "  app/package.json, website/package.json"
+	@echo "  daemon/crates/{senseid,cli,mcp}/Cargo.toml"
+	@echo "  gateway/crates/gateway/Cargo.toml"
+	@echo "Review: git diff VERSION app/package.json website/package.json daemon/crates/*/Cargo.toml gateway/crates/gateway/Cargo.toml"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
