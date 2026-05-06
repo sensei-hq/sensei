@@ -15,16 +15,20 @@
 ##   Homebrew tap: sensei-hq/homebrew-tap
 ##   macOS install: brew tap sensei-hq/tap && brew install sensei
 
-.PHONY: build-dev build-release install-dev install-release test update bump \
-        daemon-dev daemon-release app-dev app-release \
-        website-dev website-build clean
+.PHONY: build-dev build-release install-dev install-release \
+        daemon-dev daemon-release \
+        app-dev app-dev-bundle app-release app-check \
+        website-dev website-build \
+        test test-daemon test-app test-app-unit test-app-e2e test-app-sidecar \
+        update bump clean
 
 VERSION := $(shell cat VERSION)
 
-# ── Dev builds ────────────────────────────────────────────────────────────────
+# Env vars for desktop app dev builds
+APP_DEV_ENV  := DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev VITE_BYPASS_HEALTH=true
+APP_BUNDLE_ENV := DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev SENSEI_DB_SCHEMA_PATH=../daemon/database
 
-build-dev: daemon-dev
-	@echo "Dev build complete (daemon binaries in daemon/target/debug/)"
+# ── Daemon ────────────────────────────────────────────────────────────────────
 
 daemon-dev:
 	$(MAKE) -C daemon dev
@@ -32,22 +36,34 @@ daemon-dev:
 daemon-release:
 	$(MAKE) -C daemon release
 
-install-dev:
+install-dev: daemon-dev
 	$(MAKE) -C daemon install-dev
 
-install-release:
+install-release: daemon-release
 	$(MAKE) -C daemon install-release
 
-# ── Release builds ────────────────────────────────────────────────────────────
+build-dev: daemon-dev
+	@echo "Dev build complete — binaries in daemon/target/debug/"
 
 build-release: daemon-release
-	@echo "Release build complete (daemon binaries in daemon/target/release/)"
+	@echo "Release build complete — binaries in daemon/target/release/"
 
+# ── Desktop app ───────────────────────────────────────────────────────────────
+
+# Tauri dev with Vite HMR — pre-builds Rust backend then starts tauri dev
 app-dev:
-	cd app && bun run tauri:vite-dev
+	cd app && $(APP_DEV_ENV) cargo build --manifest-path src-tauri/Cargo.toml && $(APP_DEV_ENV) tauri dev
+
+# Build debug .app bundle and launch it (full native bundle, slower than app-dev)
+app-dev-bundle:
+	cd app && $(APP_BUNDLE_ENV) tauri build --debug && $(APP_BUNDLE_ENV) ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
 
 app-release:
-	cd app && bun run tauri:build
+	cd app && tauri build
+
+# Type-check SvelteKit sources
+app-check:
+	cd app && bun run check
 
 # ── Website ───────────────────────────────────────────────────────────────────
 
@@ -59,22 +75,29 @@ website-build:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-test: test-daemon test-app
+test: test-daemon test-app-unit test-app-sidecar
 
 test-daemon:
 	$(MAKE) -C daemon test
 
-test-app:
+test-app: test-app-unit test-app-sidecar
+
+test-app-unit:
 	cd app && bun run test:unit
 
+test-app-e2e:
+	cd app && bun run test:e2e
+
+test-app-sidecar:
+	cd app && bun run test:sidecar
+
 # ── Dependency updates ────────────────────────────────────────────────────────
-# Update all dependencies across the monorepo then run tests to verify
 
 update:
 	@echo "Updating Rust dependencies (daemon)..."
 	cargo update --manifest-path daemon/Cargo.toml
 	@echo "Updating Rust dependencies (gateway)..."
-	cargo update --manifest-path gateway/Cargo.toml
+	cargo update --manifest-path gateway/crates/gateway/Cargo.toml
 	@echo "Updating Node dependencies (app)..."
 	cd app && bun update
 	@echo "Updating Node dependencies (website)..."
@@ -82,7 +105,7 @@ update:
 	@echo "Running tests to verify updates..."
 	$(MAKE) test
 	@echo "All dependencies updated and tests passed."
-	@echo "Review changes: git diff daemon/Cargo.lock gateway/Cargo.lock app/bun.lock website/bun.lock"
+	@echo "Review: git diff daemon/Cargo.lock app/bun.lock website/bun.lock"
 
 # ── Version bump ──────────────────────────────────────────────────────────────
 # Usage: make bump v=0.3.0
