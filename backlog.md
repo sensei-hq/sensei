@@ -376,34 +376,43 @@ Collapse all ad-hoc `padding/margin/gap` values to the 4px grid. Work one Svelte
 
 Replace custom `var(--paper-*)` / `var(--sumi-*)` references with Rokkit semantic utility classes.
 
-| Custom token | Rokkit utility |
-|--------------|---------------|
-| `var(--paper)` | `bg-surface-z0` |
-| `var(--paper-2)` | `bg-surface-z1` |
-| `var(--paper-3)` | `bg-surface-z2` |
-| `var(--paper-edge)` | `border-surface-z2` |
-| `var(--sumi)` | `text-surface-z9` |
-| `var(--sumi-2)` | `text-surface-z7` |
-| `var(--sumi-3)` | `text-surface-z5` |
-| `var(--sumi-4)` | `text-surface-z4` |
-| `var(--shu)` | `text-primary-z5` |
-| `var(--shu-soft)` | `bg-primary-z1` (or `bg-primary-z5/10`) |
-| `var(--jade)` | `text-success-z5` |
-| `var(--jade-soft)` | `bg-success-z1` |
-| `var(--amber)` | `text-warning-z5` |
-| `var(--amber-soft)` | `bg-warning-z1` |
+Palette is OKLCH (`colorSpace: 'oklch'`). Dual-surface: `kami` (light) + `sumi` (dark).
+Use `oklch(var(--color-surface-z*) / alpha)` in pure-CSS contexts.
+
+| Custom token | Rokkit utility | Notes |
+|--------------|---------------|-------|
+| `var(--paper)` | `bg-surface-z1` | kami-100 = 0.975 0.008 85 — exact match |
+| `var(--paper-2)` | `bg-surface-z2` | kami-200 = 0.955 0.010 85 |
+| `var(--paper-3)` | `bg-surface-z3` | kami-300 = 0.920 0.012 85 |
+| `var(--paper-edge)` | `border border-surface-z2` | opaque approximation of alpha ink |
+| `var(--sumi)` | `text-surface-z9` | kami-900 = 0.220 0.012 50 — exact |
+| `var(--sumi-2)` | `text-surface-z7` | kami-700 = 0.380 0.012 50 — exact |
+| `var(--sumi-3)` | `text-surface-z6` | kami-600 = 0.580 0.010 50 — exact |
+| `var(--sumi-4)` | `text-surface-z5` | kami-500 = 0.750 0.008 50 — exact |
+| `var(--shu)` | `text-primary-z5` | shu-500 = 0.580 0.150 35 — exact |
+| `var(--shu-soft)` | `oklch(var(--color-primary-z5) / 0.12)` | alpha variants need CSS var |
+| `var(--jade)` → `var(--hisui)` | `text-success-z5` | hisui-500 = 0.620 0.080 160 — exact |
+| `var(--jade-soft)` | `oklch(var(--color-success-z5) / 0.14)` | |
+| `var(--amber)` → `var(--kohaku)` | `text-warning-z5` | kohaku-500 = 0.720 0.120 75 — exact |
+| `var(--amber-soft)` | `oklch(var(--color-warning-z5) / 0.15)` | |
+| `var(--hairline)` | `border border-surface-z2` | or `oklch(var(--color-surface-z9)/0.08)` |
+| `var(--border-card)` | `border border-surface-z2` | |
+| `var(--border-focus)` | `border border-surface-z6` | focus ring |
+| `var(--radius)` | `rounded-md` | soft preset = 6px |
+| `var(--radius-lg)` | `rounded-lg` | soft preset = 10px |
+| body background | `oklch(var(--color-surface-z0) / 1)` | z0 = kami-50 = 0.985, body/html only |
 
 **Steps:**
 
 | Step | What to do |
 |------|-----------|
 | C1 | Replace `color: var(--sumi)` → `text-surface-z9` |
-| C2 | Replace `color: var(--sumi-3)` → `text-surface-z5` |
-| C3 | Replace `background: var(--paper)` → `bg-surface-z0` |
-| C4 | Replace `background: var(--paper-2)` → `bg-surface-z1` |
-| C5 | Replace `border: var(--hairline)` or `border: var(--border-card)` → `border border-surface-z2` |
+| C2 | Replace `color: var(--sumi-3)` → `text-surface-z6` |
+| C3 | Replace `background: var(--paper)` → `bg-surface-z1` (body stays as `oklch(var(--color-surface-z0)/1)`) |
+| C4 | Replace `background: var(--paper-2)` → `bg-surface-z2` |
+| C5 | Replace `border: var(--hairline)` or `var(--border-card)` → `border border-surface-z2` |
 | C6 | Replace `color: var(--shu)` → `text-primary-z5` |
-| C7 | Replace `background: var(--shu-soft)` → `bg-primary-z1` |
+| C7 | Replace alpha tokens (`--shu-soft`, `--jade-soft`, `--amber-soft`) → `oklch(var(--color-*-z5) / alpha)` |
 | C8 | After each screen is done, prune the token set from `tokens.css` |
 
 ---
