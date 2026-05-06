@@ -10,8 +10,12 @@
 ## Versioning:
 ##   VERSION file is the single source of truth.
 ##   `make bump v=0.3.0` updates VERSION + all manifests.
+##
+## Distribution:
+##   Homebrew tap: sensei-hq/homebrew-tap
+##   macOS install: brew tap sensei-hq/tap && brew install sensei
 
-.PHONY: build-dev build-release install-dev install-release test bump \
+.PHONY: build-dev build-release install-dev install-release test update bump \
         daemon-dev daemon-release app-dev app-release \
         website-dev website-build clean
 
@@ -62,6 +66,23 @@ test-daemon:
 
 test-app:
 	cd app && bun run test:unit
+
+# ── Dependency updates ────────────────────────────────────────────────────────
+# Update all dependencies across the monorepo then run tests to verify
+
+update:
+	@echo "Updating Rust dependencies (daemon)..."
+	cargo update --manifest-path daemon/Cargo.toml
+	@echo "Updating Rust dependencies (gateway)..."
+	cargo update --manifest-path gateway/Cargo.toml
+	@echo "Updating Node dependencies (app)..."
+	cd app && bun update
+	@echo "Updating Node dependencies (website)..."
+	cd website && bun update
+	@echo "Running tests to verify updates..."
+	$(MAKE) test
+	@echo "All dependencies updated and tests passed."
+	@echo "Review changes: git diff daemon/Cargo.lock gateway/Cargo.lock app/bun.lock website/bun.lock"
 
 # ── Version bump ──────────────────────────────────────────────────────────────
 # Usage: make bump v=0.3.0
