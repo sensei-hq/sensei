@@ -270,6 +270,16 @@ export function senseiApi(port: number) {
       get<Record<string, unknown>>(`/api/metrics/${encodeURIComponent(project)}`, {}),
 
     // ── Scan ─────────────────────────────────────────────────────────────
+    /** Add a root to the DB immediately (synchronous). Does not start scanning. */
+    addWatchRoot: (path: string) =>
+      post<{ ok: boolean; id: string; path: string }>(
+        '/api/scan/roots', { path }, { ok: false, id: '', path },
+      ),
+
+    /** Remove a watch root from the DB by its UUID. */
+    removeWatchRoot: (id: string) =>
+      del(`/api/scan/roots/${enc(id)}`),
+
     scanFolder: (root: string, maxDepth = 3) =>
       post<{ ok: boolean; scanning: boolean }>(
         '/api/scan', { root, max_depth: maxDepth }, { ok: false, scanning: false },
