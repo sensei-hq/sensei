@@ -3,6 +3,21 @@ description: Suggest a new feature or improvement for Sensei
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Desktop app
+        - Daemon (senseid)
+        - CLI (sensei-cli)
+        - MCP server (sensei-mcp)
+        - Website
+        - Gateway
+        - Other / Unknown
+    validations:
+      required: true
+
   - type: markdown
     attributes:
       value: |
@@ -30,7 +45,6 @@ body:
     id: alternatives
     attributes:
       label: Alternatives Considered
-      description: Describe any alternative solutions or workarounds you've considered.
       placeholder: List any alternatives you've thought about.
     validations:
       required: false
