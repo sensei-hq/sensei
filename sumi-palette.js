@@ -1,149 +1,177 @@
 /**
- * Zen/Sumi color palette for Rokkit.
+ * Zen/Sumi color palette for Rokkit — OKLCH format.
  *
- * Maps the sumi aesthetic into Rokkit's 50-950 shade scale.
- * Each color has 11 stops (50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950).
+ * Values are bare "L C H" OKLCH components. Requires colorSpace: 'oklch'.
  *
- * Rokkit's z-scale then aliases these:
- *   z0=50, z1=100, z2=200, ... z9=900, z10=950 (light mode)
- *   z0=950, z1=900, ... z9=100, z10=50 (dark mode)
+ * Dual-surface design:
+ *   kami  — warm paper scale (light mode surface, z0→z9 = lightest→darkest)
+ *   sumi  — ink scale (dark mode surface, z-flip: z0=950=dark bg, z9=100=light text)
  *
- * Color mapping:
- *   sumi (surface)  → warm grey with subtle ochre undertone
- *   shu (primary)   → vermillion / terracotta — the one accent
- *   jade (success)  → muted green
- *   amber (warning) → warm amber
- *   beni (danger)   → deep crimson
- *   ai (info)       → indigo blue
- *   murasaki (secondary) → muted purple
- *   fuji (accent)   → wisteria / soft violet
+ * Key anchors matched to existing tokens.css values:
+ *   kami-100 z1  → --paper      0.975 0.008 85
+ *   kami-200 z2  → --paper-2    0.955 0.010 85
+ *   kami-300 z3  → --paper-3    0.920 0.012 85
+ *   kami-500 z5  → --sumi-4     0.750 0.008 50
+ *   kami-600 z6  → --sumi-3     0.580 0.010 50
+ *   kami-700 z7  → --sumi-2     0.380 0.012 50
+ *   kami-900 z9  → --sumi       0.220 0.012 50
+ *   shu-500  primary-z5 → --shu 0.580 0.150 35
+ *   hisui-500 success-z5 → --jade 0.620 0.080 160
+ *   kohaku-500 warning-z5 → --amber 0.720 0.120 75
  */
 
-// Sumi — warm grey surface (the paper)
-const sumi = {
-  50:  '#FAF8F5',  // paper
-  100: '#F3F0EB',  // paper-2
-  200: '#E8E3DC',  // paper-3
-  300: '#D6CFC6',  // paper-edge area
-  400: '#B5ADA2',
-  500: '#8A8278',  // sumi-3 midpoint
-  600: '#6B635A',  // sumi-2
-  700: '#524B43',
-  800: '#3D3730',  // near sumi
-  900: '#2B2620',  // sumi
-  950: '#1C1914',
+/** kami — warm neutral, from washi paper (z0) to sumi ink (z9/z10) */
+const kami = {
+  50:  '0.985 0.005 85',
+  100: '0.975 0.008 85',
+  200: '0.955 0.010 85',
+  300: '0.920 0.012 85',
+  400: '0.850 0.010 70',
+  500: '0.750 0.008 50',
+  600: '0.580 0.010 50',
+  700: '0.380 0.012 50',
+  800: '0.280 0.012 50',
+  900: '0.220 0.012 50',
+  950: '0.170 0.010 50',
 };
 
-// Shu — vermillion accent (朱)
+/** shu — vermillion, primary accent (朱) */
 const shu = {
-  50:  '#FEF3EE',
-  100: '#FDE4D8',
-  200: '#FBC5AE',
-  300: '#F8A07E',
-  400: '#F4764E',
-  500: '#E8552B',  // --shu core
-  600: '#CC3F1A',
-  700: '#A83117',
-  800: '#872A19',
-  900: '#6E2518',
-  950: '#3C100A',
+  50:  '0.970 0.020 35',
+  100: '0.940 0.040 35',
+  200: '0.880 0.070 35',
+  300: '0.800 0.100 35',
+  400: '0.700 0.130 35',
+  500: '0.580 0.150 35',
+  600: '0.500 0.140 35',
+  700: '0.420 0.120 35',
+  800: '0.350 0.100 35',
+  900: '0.280 0.080 35',
+  950: '0.220 0.060 35',
 };
 
-// Jade — positive green (翠)
-const jade = {
-  50:  '#F0FAF4',
-  100: '#DBEFE3',
-  200: '#BAE0CB',
-  300: '#8CCAA9',
-  400: '#5DAF85',
-  500: '#3C946A',  // --jade core
-  600: '#2C7754',
-  700: '#255F45',
-  800: '#214C39',
-  900: '#1D3F30',
-  950: '#0E231B',
+/** hisui — jade green, success (翡翠) */
+const hisui = {
+  50:  '0.970 0.015 160',
+  100: '0.940 0.030 160',
+  200: '0.880 0.050 160',
+  300: '0.800 0.065 160',
+  400: '0.720 0.075 160',
+  500: '0.620 0.080 160',
+  600: '0.540 0.075 160',
+  700: '0.460 0.065 160',
+  800: '0.380 0.055 160',
+  900: '0.300 0.045 160',
+  950: '0.240 0.035 160',
 };
 
-// Amber — warning (琥珀)
-const amber = {
-  50:  '#FFFBEB',
-  100: '#FFF3C6',
-  200: '#FFE588',
-  300: '#FFD24A',
-  400: '#FFBF20',
-  500: '#F59E07',  // --amber core
-  600: '#D97706',
-  700: '#B45309',
-  800: '#92400E',
-  900: '#783510',
-  950: '#451A03',
+/** kohaku — amber, warning (琥珀) */
+const kohaku = {
+  50:  '0.980 0.020 75',
+  100: '0.950 0.040 75',
+  200: '0.900 0.070 75',
+  300: '0.850 0.095 75',
+  400: '0.790 0.110 75',
+  500: '0.720 0.120 75',
+  600: '0.640 0.110 75',
+  700: '0.560 0.095 75',
+  800: '0.470 0.080 75',
+  900: '0.380 0.065 75',
+  950: '0.300 0.050 75',
 };
 
-// Beni — danger/error (紅)
+/**
+ * sumi — dark-mode surface scale.
+ *
+ * Two-pole design: light end (50–400) = warm paper whites for dark-mode text,
+ * dark end (500–950) = sumi-ink tones for dark-mode backgrounds.
+ * The z-flip in base.css maps z0→950 (ink bg) and z9→100 (primary text).
+ *
+ *   z0 dark (bg)    ← sumi-950: 0.170 0.010 50  (sumi ink)
+ *   z1 dark (card)  ← sumi-900: 0.210 0.012 50
+ *   z6 dark (faint) ← sumi-400: 0.420 0.012 85  (warm paper white)
+ *   z9 dark (text)  ← sumi-100: 0.940 0.008 85  (primary text)
+ */
+const sumi = {
+  50:  '0.975 0.008 85',
+  100: '0.940 0.008 85',
+  200: '0.780 0.008 85',
+  300: '0.600 0.010 85',
+  400: '0.420 0.012 85',
+  500: '0.570 0.010 50',
+  600: '0.420 0.010 50',
+  700: '0.320 0.012 50',
+  800: '0.250 0.012 50',
+  900: '0.210 0.012 50',
+  950: '0.170 0.010 50',
+};
+
+/** beni — deep crimson, danger/error (紅) */
 const beni = {
-  50:  '#FFF5F5',
-  100: '#FFE8E8',
-  200: '#FFC9C9',
-  300: '#FFA3A3',
-  400: '#FF6B6B',
-  500: '#E84040',
-  600: '#C82828',
-  700: '#A32020',
-  800: '#861D1D',
-  900: '#701E1E',
-  950: '#3C0A0A',
+  50:  '0.980 0.010 18',
+  100: '0.955 0.025 20',
+  200: '0.910 0.055 22',
+  300: '0.850 0.100 24',
+  400: '0.740 0.155 26',
+  500: '0.570 0.185 27',
+  600: '0.500 0.175 25',
+  700: '0.420 0.155 23',
+  800: '0.330 0.120 20',
+  900: '0.250 0.085 18',
+  950: '0.170 0.060 18',
 };
 
-// Ai — info blue (藍)
+/** ai — indigo blue, info (藍) */
 const ai = {
-  50:  '#F0F6FE',
-  100: '#DDEAFC',
-  200: '#C3DBFA',
-  300: '#9AC3F6',
-  400: '#6AA3EF',
-  500: '#4882E8',
-  600: '#3366DC',
-  700: '#2A52CA',
-  800: '#2944A4',
-  900: '#273C82',
-  950: '#1C264F',
+  50:  '0.970 0.015 250',
+  100: '0.945 0.030 251',
+  200: '0.905 0.060 252',
+  300: '0.845 0.100 253',
+  400: '0.750 0.135 254',
+  500: '0.590 0.160 254',
+  600: '0.510 0.155 254',
+  700: '0.430 0.140 254',
+  800: '0.330 0.110 254',
+  900: '0.250 0.080 254',
+  950: '0.180 0.065 255',
 };
 
-// Murasaki — secondary (紫)
+/** murasaki — muted purple, secondary (紫) */
 const murasaki = {
-  50:  '#FAF5FF',
-  100: '#F3E8FF',
-  200: '#E9D5FF',
-  300: '#D8B4FE',
-  400: '#C084FC',
-  500: '#A855F7',
-  600: '#9333EA',
-  700: '#7E22CE',
-  800: '#6B21A8',
-  900: '#581C87',
-  950: '#3B0764',
+  50:  '0.970 0.020 300',
+  100: '0.945 0.045 300',
+  200: '0.905 0.085 301',
+  300: '0.845 0.135 302',
+  400: '0.735 0.185 302',
+  500: '0.560 0.225 303',
+  600: '0.480 0.210 303',
+  700: '0.400 0.185 304',
+  800: '0.305 0.145 304',
+  900: '0.225 0.105 305',
+  950: '0.180 0.085 305',
 };
 
-// Fuji — accent wisteria (藤)
+/** fuji — wisteria violet, accent (藤) */
 const fuji = {
-  50:  '#F5F3FF',
-  100: '#EDE9FE',
-  200: '#DDD6FE',
-  300: '#C4B5FD',
-  400: '#A78BFA',
-  500: '#8B5CF6',
-  600: '#7C3AED',
-  700: '#6D28D9',
-  800: '#5B21B6',
-  900: '#4C1D95',
-  950: '#2E1065',
+  50:  '0.972 0.018 296',
+  100: '0.948 0.038 297',
+  200: '0.910 0.072 298',
+  300: '0.850 0.120 299',
+  400: '0.750 0.170 300',
+  500: '0.575 0.205 300',
+  600: '0.495 0.195 300',
+  700: '0.415 0.175 300',
+  800: '0.315 0.138 300',
+  900: '0.235 0.105 300',
+  950: '0.170 0.090 300',
 };
 
 export const sumiPalette = {
+  kami,
   sumi,
   shu,
-  jade,
-  amber,
+  hisui,
+  kohaku,
   beni,
   ai,
   murasaki,

@@ -13,9 +13,9 @@
 html, body {
   height: 100%;
   overflow: hidden;
-  font-family: var(--font-ui);
-  color: var(--sumi);
-  background: var(--paper);
+  font-family: var(--font-sans);
+  color: oklch(var(--color-surface-z9) / 1);
+  background: oklch(var(--color-surface-z0) / 1);
 }
 
 /* Tauri drag regions */
@@ -24,7 +24,7 @@ html, body {
 
 /* Sidebar vibrancy */
 .sidebar-vibrancy {
-  background: color-mix(in srgb, var(--paper-2) 85%, transparent);
+  background: color-mix(in oklch, oklch(var(--color-surface-z1) / 1) 85%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
@@ -34,8 +34,8 @@ html, body {
   display: inline-block;
   width: 6px; height: 6px;
   border-radius: 50%;
-  background: var(--shu);
+  background: oklch(var(--color-primary-z5) / 1);
 }
 
 /* Selection */
-::selection { background: var(--shu-soft); }
+::selection { background: oklch(var(--color-primary-z5) / 0.12); }

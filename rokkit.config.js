@@ -2,23 +2,26 @@ import { sumiPalette } from './sumi-palette.js';
 
 export default {
   /**
-   * Zen/Sumi OKLCH-inspired palettes — named semantic color scales.
-   * All values are sRGB hex; colorSpace defaults to 'rgb'.
+   * Zen/Sumi palettes — OKLCH bare-component format.
+   * colorSpace: 'oklch' is required so Rokkit stores CSS vars as
+   * bare L C H triplets, consumed via oklch(var(--color-*) / alpha).
    * See sumi-palette.js for full scale definitions.
    */
   palettes: sumiPalette,
+  colorSpace: 'oklch',
 
   /**
-   * Single-skin mode — one fixed colormap for this desktop app.
-   * Maps Rokkit semantic roles to the zen/sumi palette names above.
+   * Dual-surface skin:
+   *   light → kami  (warm washi paper tones, z0=lightest surface)
+   *   dark  → sumi  (ink tones, z-flip: z0=darkest bg, z9=lightest text)
    */
   skin: {
-    surface:   'sumi',      // warm grey paper/ink (the base surface scale)
+    surface:   { light: 'kami', dark: 'sumi' },
     primary:   'shu',       // vermillion — the one accent (朱)
     secondary: 'murasaki',  // muted purple (紫)
     accent:    'fuji',      // wisteria violet (藤)
-    success:   'jade',      // positive green (翠)
-    warning:   'amber',     // warm amber (琥珀)
+    success:   'hisui',     // jade green (翡翠)
+    warning:   'kohaku',    // warm amber (琥珀)
     danger:    'beni',      // deep crimson (紅)
     error:     'beni',      // alias for danger
     info:      'ai',        // indigo blue (藍)
