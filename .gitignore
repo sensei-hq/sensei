@@ -37,3 +37,4 @@ firebase-debug.log
 .claude-flow/
 target/
 *.png
+Insomnia*.yaml

@@ -132,7 +132,8 @@ pub fn create_router(state: AppState) -> Router {
         // Scan
         .route("/api/scan", post(workspace::scan_folder))
         .route("/api/scan/suggestions", get(workspace::scan_suggestions))
-        .route("/api/scan/roots", get(workspace::scan_roots))
+        .route("/api/scan/roots", get(workspace::scan_roots).post(workspace::add_watch_root))
+        .route("/api/scan/roots/{id}", delete(workspace::delete_watch_root))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)
