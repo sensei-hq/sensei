@@ -1,0 +1,24 @@
+# Binary/media — keep docs as text only
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+*.zip
+*.tar.gz
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Secrets
+.env
+!logo.png
