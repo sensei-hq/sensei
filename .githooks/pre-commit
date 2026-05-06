@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fast unit tests — no external dependencies required.
+# Full test suite (needs PostgreSQL): make test
+echo "Pre-commit: running fast unit tests..."
+echo ""
+
+make test-fast
+
+echo ""
+echo "All tests passed."

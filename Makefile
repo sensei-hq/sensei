@@ -19,8 +19,9 @@
         daemon-dev daemon-release \
         app-dev app-dev-bundle app-release app-check \
         website-dev website-build \
-        test test-daemon test-app test-app-unit test-app-e2e test-app-sidecar \
-        update bump clean
+        test test-fast test-daemon test-daemon-fast \
+        test-app test-app-unit test-app-e2e test-app-sidecar \
+        setup-hooks update bump clean
 
 VERSION := $(shell cat VERSION)
 
@@ -74,6 +75,19 @@ website-build:
 	cd website && bun run build
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
+#
+# test-fast — no external dependencies; used by the pre-commit hook
+#   - sensei-bootstrap unit tests (pure Rust, no DB)
+#   - app Vitest unit tests (no DB)
+#
+# test — full suite; requires sensei_test PostgreSQL database with full schema
+#   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
+#   or override: make test TEST_DATABASE_URL=postgresql://localhost:5432/sensei_dev
+
+test-fast: test-daemon-fast test-app-unit
+
+test-daemon-fast:
+	cd daemon && cargo test -p sensei-bootstrap
 
 test: test-daemon test-app-unit test-app-sidecar
 
@@ -90,6 +104,14 @@ test-app-e2e:
 
 test-app-sidecar:
 	cd app && bun run test:sidecar
+
+# ── Git hooks ─────────────────────────────────────────────────────────────────
+# Run once after cloning: make setup-hooks
+
+setup-hooks:
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit
+	@echo "Git hooks installed — pre-commit will run unit tests before each commit"
 
 # ── Dependency updates ────────────────────────────────────────────────────────
 
