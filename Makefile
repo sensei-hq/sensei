@@ -71,10 +71,14 @@ bump:
 	@echo "$(v)" > VERSION
 	@# Update app/package.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/package.json
-	@# Update daemon workspace Cargo.toml (top-level version field)
-	@sed -i '' 's/^version = "[^"]*"/version = "$(v)"/' daemon/Cargo.toml
-	@echo "Bumped to $(v) in VERSION, app/package.json, daemon/Cargo.toml"
-	@echo "Review and commit: git add VERSION app/package.json daemon/Cargo.toml"
+	@# Update each Rust crate that matches current version (excludes bootstrap which has its own cadence)
+	@for crate in senseid cli mcp; do \
+	  f="daemon/crates/$$crate/Cargo.toml"; \
+	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" "$$f" && echo "  $$f"; \
+	done
+	@echo "Bumped to $(v) in:"
+	@echo "  VERSION, app/package.json, daemon/crates/{senseid,cli,mcp}/Cargo.toml"
+	@echo "Review: git diff VERSION app/package.json daemon/crates/*/Cargo.toml"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
