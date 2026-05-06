@@ -54,26 +54,26 @@
     }
 </script>
 
-<div class="wizard">
-    <div class="drag-spacer drag-region"></div>
+<div class="w-full h-screen flex flex-col bg-surface-z1 text-surface-z9 overflow-hidden">
+    <div class="drag-region h-8 shrink-0"></div>
 
-    <div class="body">
+    <div class="flex-1 grid grid-cols-[260px_1fr] min-h-0">
         <!-- Rail -->
-        <aside class="rail">
-            <div class="rail-header">
-                <span class="kanji rail-logo">先生</span>
-                <span class="display rail-brand">Sensei</span>
+        <aside class="flex flex-col px-[22px] py-[26px] border-r border-surface-z2 bg-surface-z2 overflow-hidden">
+            <div class="flex items-baseline gap-2 mb-7">
+                <span class="kanji text-[22px] text-primary-z5">先生</span>
+                <span class="display text-[17px]">Sensei</span>
             </div>
 
-            <div class="rail-section-label">Setup</div>
+            <div class="text-[10px] tracking-[0.14em] text-surface-z6 uppercase mb-3.5">Setup</div>
 
-            <div class="rail-stages">
+            <div class="flex flex-col gap-[1px]">
                 {#each STAGES as s, i (s.id)}
                     {@const isCur = i === currentIdx}
                     {@const isDone = wizardState.isStageComplete(s.id)}
                     {@const isNavigable = isDone || isCur}
                     <button
-                        class="rail-item"
+                        class="rail-item grid grid-cols-[24px_1fr_14px] gap-2.5 items-center px-[10px] py-[7px] rounded-md text-left bg-transparent border border-transparent text-surface-z5 cursor-default transition-all duration-[140ms] text-[13px]"
                         class:active={isCur}
                         class:done={isDone}
                         onclick={() => {
@@ -82,73 +82,71 @@
                         disabled={!isNavigable}
                     >
                         <span
-                            class="kanji rail-kanji"
+                            class="rail-kanji kanji text-[14px] text-center text-surface-z5"
                             class:active={isCur}
                             class:done={isDone}>{s.icon}</span
                         >
-                        <div class="rail-text">
-                            <div class="rail-title">{s.title}</div>
+                        <div class="overflow-hidden">
+                            <div class="text-[13px]">{s.title}</div>
                             {#if isCur}
-                                <div class="mono rail-sub">{s.sub}</div>
+                                <div class="mono text-[10px] text-surface-z6 mt-0.5">{s.sub}</div>
                             {/if}
                         </div>
-                        <span class="rail-tick" class:visible={isDone}>✓</span>
+                        <span class="text-[11px] text-center leading-none text-success-z5 opacity-0 transition-opacity duration-[140ms]" class:opacity-100={isDone}>✓</span>
                     </button>
                 {/each}
             </div>
 
-            <div class="rail-footer">
-                <div class="services-status">
-                    <span class="services-dot"></span>
-                    <div class="services-text">
-                        <div class="services-label">Services</div>
-                        <div class="services-value">all green</div>
+            <div class="mt-auto border-t border-surface-z2 pt-3">
+                <div class="flex items-center gap-2.5">
+                    <span class="w-[7px] h-[7px] rounded-full bg-success-z5 shrink-0"></span>
+                    <div class="text-[11px] text-surface-z7 leading-[1.4]">
+                        <div class="tracking-[0.1em] uppercase text-[10px] text-surface-z6">Services</div>
+                        <div class="mt-0.5">all green</div>
                     </div>
                 </div>
             </div>
         </aside>
 
         <!-- Content -->
-        <div class="main">
-            <div class="stage-header">
-                <div class="stage-label">
-                    <span class="kanji stage-label-kanji">{stage.icon}</span> Step
+        <div class="flex flex-col min-h-0">
+            <div class="shrink-0 px-16 pt-7 pb-6 border-b border-surface-z3 bg-surface-z1 relative z-[1]">
+                <div class="text-[11px] text-surface-z6 tracking-[0.12em] uppercase mb-2">
+                    <span class="kanji text-primary-z5 mr-2">{stage.icon}</span> Step
                 </div>
-                <h1 class="display stage-title">{stage.title}</h1>
-                <p class="stage-tagline">{stage.sub}</p>
-                <!-- <hr /> -->
+                <h1 class="display text-[36px] font-light tracking-[-0.02em] m-0 mb-1.5">{stage.title}</h1>
+                <p class="text-sm text-surface-z6 m-0">{stage.sub}</p>
             </div>
 
-            <div class="content">
+            <div class="flex-1 overflow-y-auto px-16 py-8 relative">
                 {#if stage?.watermark}
-                    <span class="watermark kanji">{stage.icon}</span>
+                    <span class="watermark kanji absolute right-16 bottom-8 text-[220px] text-primary-z5 opacity-[0.035] leading-none select-none pointer-events-none z-0">{stage.icon}</span>
                 {/if}
                 {@render children()}
             </div>
 
             <!-- Bottom nav -->
-            <div class="bottom">
-                <div class="bottom-left">
-                    <span class="bottom-counter">
+            <div class="flex items-center gap-5 px-16 py-[14px] border-t border-surface-z2 bg-surface-z1 shrink-0">
+                <div class="flex items-baseline gap-3">
+                    <span class="text-[11px] tracking-[0.12em] text-surface-z6 uppercase">
                         {String(currentIdx + 1).padStart(2, "0")}
-                        <span class="bottom-counter-dim">/ {total}</span>
+                        <span class="text-surface-z5">/ {total}</span>
                     </span>
-                    <span class="bottom-stage-title">{stage.title}</span>
+                    <span class="text-[13px] text-surface-z7">{stage.title}</span>
                 </div>
 
-                <div class="bottom-ticks">
+                <div class="flex-1 flex gap-1 items-center">
                     {#each Array(total) as _, i}
-                        <span class="bottom-tick" class:filled={i <= currentIdx}
-                        ></span>
+                        <span class="flex-1 h-[2px] rounded-[1px] bg-surface-z3 transition-colors duration-200" class:bg-surface-z9={i <= currentIdx}></span>
                     {/each}
                 </div>
 
-                <div class="bottom-buttons">
-                    <button class="btn-back" onclick={back} disabled={isFirst}>
+                <div class="flex gap-2 items-center">
+                    <button class="btn-back text-[12px] text-surface-z7 px-[14px] py-2 bg-none border-none cursor-pointer" onclick={back} disabled={isFirst}>
                         ← Back
                     </button>
                     <button
-                        class="btn-primary"
+                        class="btn-primary text-[13px] bg-surface-z9 text-surface-z1 px-[22px] py-[10px] rounded-md border-none tracking-[0.2px] cursor-pointer"
                         onclick={next}
                         disabled={!canAdvance || committing}
                     >
@@ -165,314 +163,26 @@
 </div>
 
 <style>
-    .wizard {
-        width: 100%;
-        height: 100vh;
-        display: flex;
-        flex-direction: column;
-        background: var(--paper);
-        font-family: var(--font-ui);
-        color: var(--sumi);
-        overflow: hidden;
-    }
-
-    .drag-spacer {
-        height: 32px;
-        flex-shrink: 0;
-    }
-
-    .body {
-        flex: 1;
-        display: grid;
-        grid-template-columns: 260px 1fr;
-        min-height: 0;
-    }
-
-    /* ── Rail ──────────────────────────────────────── */
-    .rail {
-        display: flex;
-        flex-direction: column;
-        padding: 26px 22px;
-        border-right: var(--hairline);
-        background: var(--paper-2);
-        overflow: hidden;
-    }
-
-    .rail-header {
-        display: flex;
-        align-items: baseline;
-        gap: 8px;
-        margin-bottom: 28px;
-    }
-    .rail-logo {
-        font-size: 22px;
-        color: var(--shu);
-    }
-    .rail-brand {
-        font-size: 17px;
-    }
-
-    .rail-section-label {
-        font-size: 10px;
-        letter-spacing: 0.14em;
-        color: var(--sumi-3);
-        text-transform: uppercase;
-        margin-bottom: 14px;
-    }
-
-    .rail-stages {
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-    }
-
-    .rail-item {
-        display: grid;
-        grid-template-columns: 24px 1fr 14px;
-        gap: 10px;
-        align-items: center;
-        padding: 7px 10px;
-        border-radius: 6px;
-        text-align: left;
-        background: transparent;
-        border: 1px solid transparent;
-        color: var(--sumi-4);
-        cursor: default;
-        transition: all 0.14s;
-        font-family: var(--font-ui);
-        font-size: 13px;
-    }
-    .rail-item:not(:disabled) {
-        cursor: pointer;
-    }
-    .rail-item:disabled {
-        cursor: default;
-    }
+    /* Rail item states */
+    .rail-item:not(:disabled) { cursor: pointer; }
     .rail-item.active {
         padding: 10px;
-        background: var(--paper);
-        border: var(--hairline);
-        color: var(--sumi);
+        background: oklch(var(--color-surface-z1) / 1);
+        border-color: oklch(var(--color-surface-z2) / 1);
+        color: oklch(var(--color-surface-z9) / 1);
     }
-    .rail-item.done {
-        color: var(--sumi-2);
-    }
+    .rail-item.done { color: oklch(var(--color-surface-z7) / 1); }
 
-    .rail-kanji {
-        font-size: 14px;
-        text-align: center;
-        color: var(--sumi-4);
-    }
-    .rail-kanji.active {
-        color: var(--shu);
-    }
-    .rail-kanji.done {
-        color: var(--sumi-2);
-    }
+    /* Rail kanji states */
+    .rail-kanji.active { color: oklch(var(--color-primary-z5) / 1); }
+    .rail-kanji.done  { color: oklch(var(--color-surface-z7) / 1); }
 
-    .rail-text {
-        overflow: hidden;
-    }
-    .rail-title {
-        font-size: 13px;
-    }
-    .rail-sub {
-        font-size: 10px;
-        color: var(--sumi-3);
-        margin-top: 2px;
-    }
-
-    .rail-tick {
-        font-size: 11px;
-        text-align: center;
-        line-height: 1;
-        color: var(--jade);
-        opacity: 0;
-        transition: opacity 0.14s;
-    }
-    .rail-tick.visible {
-        opacity: 1;
-    }
-
-    .rail-footer {
-        margin-top: auto;
-        border-top: var(--hairline);
-        padding-top: 12px;
-    }
-
-    .services-status {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    .services-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 4px;
-        background: var(--matcha);
-        flex-shrink: 0;
-    }
-    .services-text {
-        font-size: 11px;
-        color: var(--sumi-2);
-        line-height: 1.4;
-    }
-    .services-label {
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        font-size: 10px;
-        color: var(--sumi-3);
-    }
-    .services-value {
-        margin-top: 2px;
-    }
-
-    /* ── Content ──────────────────────────────────── */
-    .main {
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-    }
-
-    .content {
-        flex: 1;
-        overflow-y: auto;
-        padding: 32px 64px 32px;
-        position: relative;
-    }
-
-    /* ── Stage header ─────────────────────────── */
-    .stage-header {
-        flex-shrink: 0;
-        padding: 28px 64px 24px;
-        border-bottom: 1px solid var(--paper-3);
-        background: var(--paper);
-        position: relative;
-        z-index: 1;
-    }
-    /*.stage-header > hr {
-        border-bottom: 1px solid var(--paper-3);
-    }*/
-    .stage-label {
-        font-size: 11px;
-        color: var(--sumi-3);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 8px;
-    }
-    .stage-label-kanji {
-        color: var(--shu);
-        margin-right: 8px;
-    }
-    .stage-title {
-        font-size: 36px;
-        font-weight: 300;
-        letter-spacing: -0.02em;
-        margin: 0 0 6px;
-    }
-    .stage-tagline {
-        font-size: 14px;
-        color: var(--sumi-3);
-        margin: 0;
-    }
-
-    .watermark {
-        position: absolute;
-        right: 64px;
-        bottom: 32px;
-        font-size: 220px;
-        color: var(--shu);
-        opacity: 0.035;
-        line-height: 1;
-        user-select: none;
-        pointer-events: none;
-        z-index: 0;
-    }
-
-    /* ── Bottom ───────────────────────────────────── */
-    .bottom {
-        display: flex;
-        align-items: center;
-        gap: 20px;
-        padding: 14px 64px;
-        border-top: var(--hairline);
-        background: var(--paper);
-        flex-shrink: 0;
-    }
-
-    .bottom-left {
-        display: flex;
-        align-items: baseline;
-        gap: 12px;
-    }
-    .bottom-counter {
-        font-size: 11px;
-        letter-spacing: 0.12em;
-        color: var(--sumi-3);
-        text-transform: uppercase;
-    }
-    .bottom-counter-dim {
-        color: var(--sumi-4);
-    }
-    .bottom-stage-title {
-        font-size: 13px;
-        color: var(--sumi-2);
-    }
-
-    .bottom-ticks {
-        flex: 1;
-        display: flex;
-        gap: 4px;
-        align-items: center;
-    }
-    .bottom-tick {
-        flex: 1;
-        height: 2px;
-        border-radius: 1px;
-        background: var(--paper-edge);
-        transition: background 0.2s;
-    }
-    .bottom-tick.filled {
-        background: var(--sumi);
-    }
-
-    .bottom-buttons {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-    }
-
-    .btn-back {
-        font-size: 12px;
-        color: var(--sumi-2);
-        padding: 8px 14px;
-        background: none;
-        border: none;
-        cursor: pointer;
-        font-family: var(--font-ui);
-    }
-    .btn-back:disabled {
-        color: var(--sumi-4);
-        cursor: default;
-    }
-
-    .btn-primary {
-        font-size: 13px;
-        background: var(--sumi);
-        color: var(--paper);
-        padding: 10px 22px;
-        border-radius: 6px;
-        border: none;
-        letter-spacing: 0.2px;
-        cursor: pointer;
-        font-family: var(--font-ui);
-    }
-    .btn-primary:hover:not(:disabled) {
-        opacity: 0.9;
-    }
+    /* Back/primary button disabled states */
+    .btn-back:disabled { color: oklch(var(--color-surface-z5) / 1); cursor: default; }
+    .btn-primary:hover:not(:disabled) { opacity: 0.9; }
     .btn-primary:disabled {
-        background: var(--paper-edge);
-        color: var(--sumi-3);
+        background: oklch(var(--color-surface-z3) / 1);
+        color: oklch(var(--color-surface-z6) / 1);
         cursor: default;
     }
 </style>

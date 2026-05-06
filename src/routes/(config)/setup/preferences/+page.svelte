@@ -4,18 +4,18 @@
   const prefs = $derived(wizardState.preferences);
 </script>
 
-<div class="preferences">
+<div class="max-w-[760px]">
   <!-- ── Display name ─────────────────────────────────── -->
-  <section class="section">
-    <header class="section-header">
-      <span class="kanji section-kanji">名</span>
-      <div class="section-info">
-        <h3 class="display section-title">What should sensei call you?</h3>
-        <p class="section-sub">Used in the morning digest and when raising a teaching.</p>
+  <section class="pt-6 pb-1 border-t border-surface-z2">
+    <header class="flex items-center gap-3.5 mb-3.5">
+      <span class="kanji text-[22px] text-primary-z5 leading-none w-[30px] text-center shrink-0">名</span>
+      <div class="flex-1 min-w-0">
+        <h3 class="display text-[17px] font-normal m-0 text-surface-z9">What should sensei call you?</h3>
+        <p class="text-xs text-surface-z6 mt-[3px] leading-[1.5] m-0">Used in the morning digest and when raising a teaching.</p>
       </div>
       <input
         type="text"
-        class="name-input"
+        class="name-input w-[200px] px-3 py-2 text-sm border border-surface-z2 rounded-md bg-surface-z1 text-surface-z9 outline-none shrink-0 text-right ml-auto"
         value={prefs.displayName}
         oninput={(e) => { wizardState.preferences.displayName = e.currentTarget.value; }}
         placeholder="your name"
@@ -24,42 +24,43 @@
   </section>
 
   <!-- ── Shared learnings ───────────────────────────────── -->
-  <section class="section">
-    <header class="section-header">
-      <span class="kanji section-kanji">共</span>
-      <div class="section-info">
-        <h3 class="display section-title">Shared learnings</h3>
-        <p class="section-sub">
+  <section class="pt-6 pb-1 border-t border-surface-z2">
+    <header class="flex items-center gap-3.5 mb-3.5">
+      <span class="kanji text-[22px] text-primary-z5 leading-none w-[30px] text-center shrink-0">共</span>
+      <div class="flex-1 min-w-0">
+        <h3 class="display text-[17px] font-normal m-0 text-surface-z9">Shared learnings</h3>
+        <p class="text-xs text-surface-z6 mt-[3px] leading-[1.5] m-0">
           Contribute anonymized patterns to a collective pool — and pull what others have learned.
         </p>
       </div>
     </header>
-    <div class="section-body">
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Contribute my learnings</div>
-          <div class="row-hint">Anonymized patterns only. No code, no commit messages, no project names.</div>
+    <div class="pl-11">
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Contribute my learnings</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">Anonymized patterns only. No code, no commit messages, no project names.</div>
         </div>
         <button class="toggle" class:on={prefs.contributeLearnings} aria-label="Toggle contribute learnings"
                 onclick={() => { wizardState.preferences.contributeLearnings = !prefs.contributeLearnings; }}>
           <span class="toggle-thumb"></span>
         </button>
       </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Review before sharing</div>
-          <div class="row-hint">Each learning shows up in a queue for your approval before it leaves your machine.</div>
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Review before sharing</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">Each learning shows up in a queue for your approval before it leaves your machine.</div>
         </div>
         <button class="toggle" class:on={prefs.reviewBeforeShare} aria-label="Toggle review before sharing"
                 onclick={() => { wizardState.preferences.reviewBeforeShare = !prefs.reviewBeforeShare; }}>
           <span class="toggle-thumb"></span>
         </button>
       </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Sharing schedule</div>
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Sharing schedule</div>
         </div>
-        <select class="sel" value={prefs.shareSchedule}
+        <select class="text-xs px-[10px] py-1.5 border border-surface-z2 rounded-md bg-surface-z1 text-surface-z9 cursor-pointer"
+                value={prefs.shareSchedule}
                 onchange={(e) => { wizardState.preferences.shareSchedule = e.currentTarget.value; }}>
           <option value="off">Off · manual only</option>
           <option value="daily">Daily</option>
@@ -67,12 +68,13 @@
           <option value="monthly">Monthly</option>
         </select>
       </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Download collective learnings</div>
-          <div class="row-hint">Reviewed before they enter your library.</div>
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Download collective learnings</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">Reviewed before they enter your library.</div>
         </div>
-        <select class="sel" value={prefs.downloadCollective}
+        <select class="text-xs px-[10px] py-1.5 border border-surface-z2 rounded-md bg-surface-z1 text-surface-z9 cursor-pointer"
+                value={prefs.downloadCollective}
                 onchange={(e) => { wizardState.preferences.downloadCollective = e.currentTarget.value; }}>
           <option value="never">Never</option>
           <option value="weekly">Weekly</option>
@@ -84,57 +86,57 @@
   </section>
 
   <!-- ── Sensei behavior ────────────────────────────────── -->
-  <section class="section">
-    <header class="section-header">
-      <span class="kanji section-kanji">師</span>
-      <div class="section-info">
-        <h3 class="display section-title">Sensei behavior</h3>
-        <p class="section-sub">How forward sensei is — when it nudges, how it phrases corrections.</p>
+  <section class="pt-6 pb-1 border-t border-surface-z2">
+    <header class="flex items-center gap-3.5 mb-3.5">
+      <span class="kanji text-[22px] text-primary-z5 leading-none w-[30px] text-center shrink-0">師</span>
+      <div class="flex-1 min-w-0">
+        <h3 class="display text-[17px] font-normal m-0 text-surface-z9">Sensei behavior</h3>
+        <p class="text-xs text-surface-z6 mt-[3px] leading-[1.5] m-0">How forward sensei is — when it nudges, how it phrases corrections.</p>
       </div>
     </header>
-    <div class="section-body">
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Correction tone</div>
-          <div class="row-hint">How direct sensei is when something repeats.</div>
+    <div class="pl-11">
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Correction tone</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">How direct sensei is when something repeats.</div>
         </div>
-        <div class="segment">
+        <div class="inline-flex border border-surface-z2 rounded-md overflow-hidden">
           {#each [
             { value: 'gentle', label: 'Gentle' },
             { value: 'balanced', label: 'Balanced' },
             { value: 'direct', label: 'Direct' },
           ] as opt}
             <button
-              class="segment-btn"
+              class="segment-btn px-3 py-1.5 text-[11.5px] border-none border-l border-surface-z2 bg-surface-z1 text-surface-z6 cursor-pointer"
               class:active={prefs.correctionAggressiveness === opt.value}
               onclick={() => { wizardState.preferences.correctionAggressiveness = opt.value; }}
             >{opt.label}</button>
           {/each}
         </div>
       </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Morning digest</div>
-          <div class="row-hint">The Today view. Off keeps the dashboard quiet.</div>
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Morning digest</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">The Today view. Off keeps the dashboard quiet.</div>
         </div>
-        <div class="segment">
+        <div class="inline-flex border border-surface-z2 rounded-md overflow-hidden">
           {#each [
             { value: 'off', label: 'Off' },
             { value: 'daily', label: 'Daily' },
             { value: 'weekly', label: 'Weekly' },
           ] as opt}
             <button
-              class="segment-btn"
+              class="segment-btn px-3 py-1.5 text-[11.5px] border-none border-l border-surface-z2 bg-surface-z1 text-surface-z6 cursor-pointer"
               class:active={prefs.digestCadence === opt.value}
               onclick={() => { wizardState.preferences.digestCadence = opt.value; }}
             >{opt.label}</button>
           {/each}
         </div>
       </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Nudge on regression</div>
-          <div class="row-hint">If FTR drops sharply on a project, sensei surfaces it on Today.</div>
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Nudge on regression</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">If FTR drops sharply on a project, sensei surfaces it on Today.</div>
         </div>
         <button class="toggle" class:on={prefs.nudgeOnRegression} aria-label="Toggle nudge on regression"
                 onclick={() => { wizardState.preferences.nudgeOnRegression = !prefs.nudgeOnRegression; }}>
@@ -145,32 +147,32 @@
   </section>
 
   <!-- ── Telemetry ──────────────────────────────────────── -->
-  <section class="section">
-    <header class="section-header">
-      <span class="kanji section-kanji">守</span>
-      <div class="section-info">
-        <h3 class="display section-title">Telemetry</h3>
-        <p class="section-sub">
+  <section class="pt-6 pb-1 border-t border-surface-z2">
+    <header class="flex items-center gap-3.5 mb-3.5">
+      <span class="kanji text-[22px] text-primary-z5 leading-none w-[30px] text-center shrink-0">守</span>
+      <div class="flex-1 min-w-0">
+        <h3 class="display text-[17px] font-normal m-0 text-surface-z9">Telemetry</h3>
+        <p class="text-xs text-surface-z6 mt-[3px] leading-[1.5] m-0">
           Help us improve sensei itself — separate from shared learnings, this is about
           the app, not your work.
         </p>
       </div>
     </header>
-    <div class="section-body">
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Anonymized usage telemetry</div>
-          <div class="row-hint">Crashes, performance, which views you visit. Never code, prompts, or session content.</div>
+    <div class="pl-11">
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Anonymized usage telemetry</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">Crashes, performance, which views you visit. Never code, prompts, or session content.</div>
         </div>
         <button class="toggle" class:on={prefs.anonymizedTelemetry} aria-label="Toggle anonymized telemetry"
                 onclick={() => { wizardState.preferences.anonymizedTelemetry = !prefs.anonymizedTelemetry; }}>
           <span class="toggle-thumb"></span>
         </button>
       </div>
-      <div class="row">
-        <div class="row-text">
-          <div class="row-label">Show welcome message on first entry</div>
-          <div class="row-hint">The greeting toast that appears when you first open the observatory each day.</div>
+      <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px] border-b border-surface-z3">
+        <div>
+          <div class="text-[13px] text-surface-z9">Show welcome message on first entry</div>
+          <div class="text-[11.5px] text-surface-z6 mt-[3px] leading-[1.45] max-w-[460px]">The greeting toast that appears when you first open the observatory each day.</div>
         </div>
         <button class="toggle" class:on={prefs.showWelcome} aria-label="Toggle welcome message"
                 onclick={() => { wizardState.preferences.showWelcome = !prefs.showWelcome; }}>
@@ -182,78 +184,25 @@
 </div>
 
 <style>
-  .preferences { max-width: 760px; }
-
-  /* ── Section ─────────────────────────────── */
-  .section { padding-top: 24px; padding-bottom: 4px; border-top: var(--hairline); }
-  .section-header {
-    display: flex; align-items: center; gap: 14px; margin-bottom: 14px;
-  }
-  .section-kanji { font-size: 22px; color: var(--shu); line-height: 1; width: 30px; text-align: center; flex-shrink: 0; }
-  .section-info { flex: 1; min-width: 0; }
-  .section-title { font-size: 17px; font-weight: 400; margin: 0; color: var(--sumi); }
-  .section-sub {
-    font-size: 12px; color: var(--sumi-3); margin: 3px 0 0;
-    line-height: 1.5;
-  }
-  .section-body { padding-left: 44px; }
-
-  /* ── Row ──────────────────────────────────── */
-  .row {
-    display: grid; grid-template-columns: 1fr auto; gap: 32px;
-    align-items: center; padding: 11px 0;
-    border-bottom: 1px solid var(--paper-edge);
-  }
-  .row-text { min-width: 0; }
-  .row-label { font-size: 13px; color: var(--sumi); }
-  .row-hint {
-    font-size: 11.5px; color: var(--sumi-3); margin-top: 3px;
-    line-height: 1.45; max-width: 460px;
-  }
-
-  /* ── Toggle ──────────────────────────────── */
+  /* Toggle */
   .toggle {
     width: 36px; height: 20px; border-radius: 999px; position: relative;
-    background: var(--paper-edge); cursor: pointer; padding: 0;
+    background: oklch(var(--color-surface-z3) / 1); cursor: pointer; padding: 0;
     border: none; transition: background 0.15s;
   }
-  .toggle.on { background: var(--shu); }
+  .toggle.on { background: oklch(var(--color-primary-z5) / 1); }
   .toggle-thumb {
     position: absolute; top: 2px; left: 2px;
     width: 16px; height: 16px; border-radius: 50%;
-    background: var(--paper); transition: left 0.18s ease;
+    background: oklch(var(--color-surface-z1) / 1); transition: left 0.18s ease;
     box-shadow: 0 1px 3px rgba(0,0,0,0.18);
   }
   .toggle.on .toggle-thumb { left: 18px; }
 
-  /* ── Segment ─────────────────────────────── */
-  .segment {
-    display: inline-flex; border: var(--hairline);
-    border-radius: 5px; overflow: hidden;
-  }
-  .segment-btn {
-    padding: 6px 12px; font-size: 11.5px;
-    border: none; border-left: var(--hairline);
-    background: var(--paper); color: var(--sumi-3);
-    cursor: pointer; font-family: var(--font-ui);
-  }
+  /* Segment button active state */
   .segment-btn:first-child { border-left: none; }
-  .segment-btn.active { background: var(--paper-3); color: var(--sumi); }
+  .segment-btn.active { background: oklch(var(--color-surface-z3) / 1); color: oklch(var(--color-surface-z9) / 1); }
 
-  /* ── Select ──────────────────────────────── */
-  .sel {
-    font-size: 12px; padding: 6px 10px; border: var(--hairline);
-    border-radius: 5px; background: var(--paper); color: var(--sumi);
-    cursor: pointer; font-family: inherit;
-  }
-
-  /* ── Name input (inline with section header) ── */
-  .name-input {
-    width: 200px; padding: 8px 12px; font-size: 14px;
-    border: var(--hairline); border-radius: 6px;
-    background: var(--paper); color: var(--sumi);
-    font-family: inherit; outline: none; flex-shrink: 0;
-    text-align: right; margin-left: auto;
-  }
-  .name-input:focus { border-color: var(--shu); }
+  /* Name input focus */
+  .name-input:focus { border-color: oklch(var(--color-primary-z5) / 1); }
 </style>
