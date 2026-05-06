@@ -16,7 +16,17 @@ Sensei watches your coding sessions, learns your team's patterns and conventions
 
 **[marketplace](https://github.com/sensei-hq/marketplace)** — skills, commands, agents, and hooks — is a separate repo whose version tracks this one.
 
-## Prerequisites
+## Install (macOS)
+
+```bash
+brew tap sensei-hq/tap
+brew install sensei        # CLI + daemon
+brew install --cask sensei # Desktop app
+```
+
+Homebrew formulae live in [sensei-hq/homebrew-tap](https://github.com/sensei-hq/homebrew-tap).
+
+## Prerequisites (development)
 
 - Rust stable + cargo
 - Bun
@@ -43,6 +53,13 @@ make test
 ```bash
 make bump v=0.3.0
 # Updates: VERSION, app/package.json, daemon/crates/{senseid,cli,mcp}/Cargo.toml
+```
+
+## Dependency updates
+
+```bash
+make update
+# cargo update (daemon + gateway) + bun update (app + website) + make test
 ```
 
 ## Component READMEs
