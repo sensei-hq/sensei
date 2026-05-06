@@ -67,8 +67,10 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     await api.configureAssistants(ids);
   },
   roots:       async (ws, api) => {
+    // Roots are persisted to the DB when the user clicks "Add" on the roots page.
+    // Here we trigger scanning for any roots that are in DB but not yet scanned.
     for (const root of ws.roots.roots) {
-      if (!root.scanned) await api.scanFolder(root.path);
+      if (!root.scanned && root.path) await api.scanFolder(root.path);
     }
   },
   scan:        async () => {},
