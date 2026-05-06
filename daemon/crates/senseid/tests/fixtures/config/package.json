@@ -1,0 +1,16 @@
+{
+  "name": "sensei-desktop",
+  "version": "0.9.4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "svelte": "^5.0.0"
+  }
+}

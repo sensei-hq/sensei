@@ -1,0 +1,7 @@
+{"name":"embed","capability":"embed","description":"Embedding generation — local only, no fallback to external.","max_fallback_attempts":1,"modified_at":"2026-04-23"}
+{"name":"classify","capability":"classify","description":"Prompt and pattern classification — local models, smallest first.","max_fallback_attempts":2,"modified_at":"2026-04-23"}
+{"name":"summarize","capability":"summarize","description":"L2 logic flow summaries, docstring generation — local then external fallback.","max_fallback_attempts":3,"modified_at":"2026-04-23"}
+{"name":"reasoning","capability":"reasoning","description":"Complex analysis, root cause, recommendations — local then external fallback.","max_fallback_attempts":4,"modified_at":"2026-04-23"}
+{"name":"consensus-proposer","capability":"reasoning","description":"MOE panel: proposer — strong reasoning model, proposes root cause and action.","max_fallback_attempts":2,"modified_at":"2026-04-23"}
+{"name":"consensus-challenger","capability":"reasoning","description":"MOE panel: challenger — different model family, challenges and refines proposal.","max_fallback_attempts":2,"modified_at":"2026-04-23"}
+{"name":"consensus-synthesizer","capability":"reasoning","description":"MOE panel: synthesizer — combines analyses into consensus. Can use external for higher quality.","max_fallback_attempts":3,"modified_at":"2026-04-23"}
