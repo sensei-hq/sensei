@@ -1,0 +1,408 @@
+---
+name: Desktop Observatory
+status: idea
+origin: conversation
+date: 2026-04-19
+description: Redesign the sensei desktop app as a session observatory — analytics, tools, profiles, code intelligence, and community
+---
+
+# Desktop Observatory
+
+## Problem
+
+The current desktop app is a code intelligence dashboard — graphs, communities, indexing controls. It answers "what does my code look like?" but not the questions the AI Driven Developer actually asks:
+
+- How efficient are my sessions?
+- What is Claude doing and why?
+- How fast am I burning through my quota?
+- Is this tool/library actually helping?
+- Something went wrong — how do I investigate?
+- I see problems — how do I act on them?
+
+## Vision
+
+The desktop is a **session observatory** — the place where AI-assisted developers understand, optimize, and debug their AI-powered workflow. Every screen answers a question. Every insight links to an action.
+
+## Scope Model
+
+Three levels: **Global > Solution > Project**
+
+### Global — shared across everything
+- Skills catalog (installed once, available everywhere)
+- Plugins and MCP configuration
+- Library docs (indexed once, queried from any context)
+- Tool catalog (MCP tools are daemon-wide)
+- Benchmarks (cross-solution comparison)
+- ACP configuration
+- Quota and total cost tracking
+
+### Solution — a logical product or system
+A solution groups related repositories into one unit. The developer thinks "Acme Platform" not "acme-api + acme-frontend + acme-docs."
+
+**How solutions form:**
+- Auto-detected from git subtrees (monorepo)
+- Manually created by selecting repos and assigning roles (backend, frontend, docs, infra, etc.)
+- Future: external sources plugged in (Confluence, Jira, wiki pages) as solution members alongside repos
+
+**What solutions enable:**
+- Cross-repo connections (API calls frontend, docs describe API)
+- Merged graph — see how repos interact
+- Aggregated metrics — FTR, sessions, rework across all repos in the solution
+- Shared profiles — solution-level mindsets/personas/rules that apply to all repos in the group
+- Traceability — requirements doc in repo A traces to implementation in repo B
+
+**Solution-scoped data:**
+- Aggregated session metrics across all repos in the solution
+- Cross-repo graph and architecture view
+- Solution-level profiles and rules
+- Shared libraries used across repos in the solution
+
+### Project — a single repository
+- Sessions and session metrics for this repo
+- Profiles: mindsets, personas, rules (this repo's `.sensei/`)
+- Code intelligence: graph, complexity, duplicates, dead code, doc drift
+- Indexing status
+
+### Data Source Connectors (future)
+
+Solutions today contain git repos. In the future, a solution can also include:
+
+| Source | What it provides | How it connects |
+|--------|-----------------|-----------------|
+| **Confluence** | Requirements, design docs, runbooks | TRACES_TO edges from docs to code |
+| **Jira** | Issues, epics, acceptance criteria | Links tasks to sessions, maps issues to code changes |
+| **Wiki** | Internal docs, architecture decisions | COVERS and MENTIONS edges to code |
+| **Notion** | Product specs, meeting notes | Same as Confluence |
+| **Figma** | Design files, component specs | Links designs to UI components |
+
+Design these as pluggable connectors — same interface as a repo (produces nodes + edges for the graph) but different data source. The graph doesn't care whether a node came from a git repo or Confluence — it's just a node with edges.
+
+```
+Solution "Acme Platform"
+├── repo: acme-api        (role: backend)       ← git repo
+├── repo: acme-frontend   (role: frontend)      ← git repo
+├── repo: acme-docs       (role: docs)          ← git repo
+├── folder: old-api-backup (role: reference)    ← non-git folder
+├── connector: confluence  (space: ACME)        ← future
+└── connector: jira        (project: ACME)      ← future
+```
+
+### Non-Git Folders
+
+Currently `scan_root` only discovers folders with `.git/`. This excludes:
+- Old backup copies of repos (no `.git/`)
+- Exported/archived codebases
+- Vendor/third-party source drops
+- Downloaded reference implementations
+
+These folders contain indexable code that the dedup detector could cross-reference against real repos.
+
+**Approach:**
+1. `scan_root` gains an `--include-folders` flag (or config) — if set, non-git directories with code files are registered as "unmanaged projects"
+2. Unmanaged projects get a distinct status (`unmanaged`) — no remote URL, no commit history
+3. Indexing works identically — adapters parse code, graph stores symbols
+4. Dedup detector runs across both managed and unmanaged — flags potential copies
+5. Desktop shows unmanaged projects with a different badge — user can tag as "backup of X" or "reference only"
+6. Unmanaged folders can be added to solutions with role `reference` or `archive`
+
+**What this enables:**
+- "This backup folder has 80% symbol overlap with acme-api → likely a copy"
+- "Old vendor code references patterns we still use — index it for search"
+- Developer adds a backup folder to a solution → graph shows cross-references
+
+**Implementation (daemon):**
+- `find_git_repos` becomes `find_code_folders` with a mode flag
+- `Project.status` gains `unmanaged` variant
+- No changes to indexing pipeline — it already works on any folder with code files
+
+## Information Architecture
+
+### Navigation
+
+```
+Sidebar:
+  ┌─ GLOBAL ───────────────┐
+  │ Overview                │  cross-solution dashboard
+  │ Libraries               │
+  │ Tools                   │
+  │ Skills & Plugins        │
+  │ Benchmarks              │
+  └─────────────────────────┘
+  ┌─ SOLUTIONS ─────────────┐
+  │ Acme Platform     ★  3  │  ← active solution (3 repos)
+  │ sensei-dev           1  │
+  │ Side Project         2  │
+  └─────────────────────────┘
+  Settings
+
+Clicking a solution opens solution-scoped pages:
+
+  Solution / Dashboard    aggregate metrics across all repos
+  Solution / Sessions     sessions from all repos in solution
+  Solution / Architecture merged graph, cross-repo connections
+  Solution / Profiles     solution-level mindsets/personas/rules
+  Solution / Repos        list repos, assign roles, add/remove
+
+  Within Repos, clicking a repo opens project-scoped pages:
+
+    Project / Dashboard   metrics for THIS repo
+    Project / Sessions    sessions for THIS repo
+    Project / Code        graph, complexity, duplicates, doc drift
+    Project / Profiles    repo-specific overrides
+    Project / Indexer     indexing status
+
+Header:
+  [solution selector] / [project selector]   daemon status   quota burn rate
+```
+
+### Key UX decisions
+
+1. **Solution is the primary unit** — users think "Acme Platform" not "acme-api." Sidebar lists solutions, not individual repos.
+2. **Solution context in header** — always visible, switches all solution/project pages. Format: `Acme Platform / acme-api` (breadcrumb).
+3. **Global pages have no solution/project context** — Libraries, Tools, Skills are daemon-wide.
+4. **Solution dashboard** is the landing page when a solution is selected — aggregate metrics across all its repos.
+5. **Project dashboard** is a drill-down from solution — click a repo to see repo-specific data.
+6. **Profiles cascade** — global mindsets apply everywhere, solution profiles apply to all repos in the solution, project profiles are repo-specific overrides.
+7. **Standalone projects** (not in any solution) appear as single-repo solutions in the sidebar — same pages, just with one repo.
+
+## Pages
+
+### GLOBAL PAGES
+
+### 1. Overview — "How am I doing across all projects?"
+
+The global landing page. Cross-project summary.
+
+**Per-project sparklines:**
+- Row per project: name, FTR trend, session count this week, rework rate
+- Click a project → opens project dashboard
+
+**Aggregate metrics:**
+- Total sessions across all projects
+- Global FTR (weighted by sessions)
+- Quota gauge with burn rate and projection
+
+**Quick actions:**
+- "Start session" (picks active project)
+- "View backlog"
+
+### 2. Libraries — "What docs does Claude have?" (GLOBAL)
+
+See section 4 below — unchanged, libraries are global.
+
+### 3. Tools — "What can sensei do?" (GLOBAL)
+
+See section 5 below — unchanged, MCP tools are daemon-wide.
+
+### 4. Skills & Plugins — "What's installed?" (GLOBAL)
+
+- Installed skills with enable/disable toggles
+- Installed plugins (MCP servers)
+- ACP configuration
+
+### 5. Benchmarks — "Is sensei helping?" (GLOBAL)
+
+Cross-project benchmark comparison. See section 7 below.
+
+---
+
+### PROJECT-SCOPED PAGES
+
+These pages show data for the **active project** (selected in header or sidebar).
+
+### 6. Project Dashboard — "How is THIS project doing?"
+
+The landing page when a project is selected. Answers at a glance for this project only.
+
+**Metrics cards:**
+- FTR for THIS project
+- Session count for THIS project
+- Rework rate for THIS project
+- Token usage + cost for THIS project
+
+**Tool adherence bar:**
+- % MCP tools vs fallback in this project's sessions
+- Goal: 90%+ MCP usage
+
+**Recent sessions:**
+- Last 5-10 sessions for THIS project
+- Click to drill into any session
+
+**Active context:**
+- Current task/issue from workflow state
+- Quick actions
+
+### 7. Project Sessions — "What happened in THIS project?"
+
+**List view:**
+Sortable table: date, task/issue, project, outcome, FTR, turns, corrections, tokens, cost, duration
+
+Filterable by: project, solution, outcome, date range
+
+**Session detail (drill-in):**
+
+Event timeline — every turn, tool call, phase transition, correction:
+```
+Turn 1: new_request
+Turn 2: tool_used → search("compute_metrics") → 3 results
+Turn 3: tool_used → get_callers("insert_event") → 5 callers
+Turn 4: continuation
+Turn 5: tool_used → grep (fallback!) ⚠️
+Turn 6: revision_requested — "that's wrong, use MCP"
+Turn 7: tool_used → search("insert_event") → corrected ✓
+```
+
+Profiles applied — which mindsets/personas fired, which didn't, adherence score
+
+Rules checked — which rules were followed/violated
+
+Clicking on:
+- A tool call → shows what it returned (input params + response)
+- A profile → shows its questions and whether they were answered
+- A warning → explains the issue and suggests a fix
+
+### 8. Project Code — "What does THIS project's code look like?"
+
+**Overview:**
+- Symbol count (functions, types), edge count
+- Stack and indexed status
+
+**Actionable insights (each with "Tell Claude" button):**
+- Complexity hotspots — functions with high cyclomatic complexity → "Investigate and decompose"
+- Dead code candidates — exported but never called → "Check if dead or used via HTTP"
+- Duplicates — identical functions across files → "Extract to shared util"
+- Doc drift — docs referencing changed code → "Review and update doc"
+
+**Graph visualization:**
+- Interactive code structure graph (existing GraphCanvas)
+- Communities and architecture clusters
+
+### 9. Project Profiles — "What's helping THIS project?"
+
+Lever impact table ranked by FTR/token impact — but scoped to THIS project's sessions only.
+
+Each project can have:
+- Custom mindsets (beyond the global defaults)
+- Custom personas specific to this project's users
+- Custom rules in this project's `.sensei/rules.md`
+- Project-specific skills (opted in per project)
+
+Suggestions are derived from THIS project's correction patterns.
+
+### 10. Project Indexer — "Is THIS project indexed?"
+
+Indexing status, progress, errors, re-index controls for this project only.
+
+---
+
+### Scope Reference
+
+| Page | Scope | What it shows |
+|------|-------|---------------|
+| Overview | global | Per-solution sparklines, aggregate FTR, quota |
+| Libraries | global | Indexed docs shared across everything |
+| Tools | global | MCP tool catalog, usage stats, "Try it" |
+| Skills & Plugins | global | Installed skills, plugins, ACP config |
+| Benchmarks | global | Cross-solution comparison runs |
+| Settings | global | Daemon, display, workspace |
+| Solution Dashboard | solution | Aggregate metrics across all repos in solution |
+| Solution Sessions | solution | Sessions from all repos in solution |
+| Solution Architecture | solution | Merged graph, cross-repo connections |
+| Solution Profiles | solution | Solution-level mindsets, personas, rules |
+| Solution Repos | solution | Repo list, roles, add/remove, connectors |
+| Project Dashboard | project | FTR, sessions, rework for THIS repo |
+| Project Sessions | project | Session list + detail for THIS repo |
+| Project Code | project | Graph, complexity, duplicates, doc drift |
+| Project Profiles | project | Repo-specific profile overrides |
+| Project Indexer | project | Indexing status for THIS repo |
+
+### Profile Cascade
+
+```
+Global mindsets (shipped with sensei, .sensei/mindsets/)
+  └─ Solution profiles (shared across repos in solution)
+       └─ Project profiles (repo-specific .sensei/ overrides)
+```
+
+All three levels stack. A project inherits its solution's profiles, which inherit global mindsets. A project can override or add on top.
+
+## Design Principles
+
+### 1. No insight without action
+
+Every piece of information shown must have a clear "so what?" and a clear "do this next." If the user can't act on it, don't show it. A number on screen without a recipe to improve it is decoration, not intelligence.
+
+**Test:** For every element on every page, ask: "What does the user DO with this?" If the answer is "look at it," remove it or attach an action.
+
+Examples:
+- Bad: "FTR: 83%" — a number
+- Good: "FTR: 83% ↓ — 3 corrections this week were about missing user perspective → [Create end-user persona] [View corrections]"
+- Bad: "Security Reviewer mindset: applied 0 times" — a stat
+- Good: "Security Reviewer: never triggered. [Remove] or [Lower trigger threshold]"
+
+### 2. Progressive disclosure, not information dump
+
+Show the minimum needed to decide. Details on demand. The home page has 4 numbers and a list. Clicking a number reveals the story. Clicking the story reveals the events. Never show all three layers at once.
+
+**Hierarchy:** Metric → Insight → Detail → Action
+- Metric: "Rework rate: 18%"
+- Insight: "3 of 5 corrections were about missed rules"
+- Detail: "Session #12, turn 5: Claude used grep instead of MCP search"
+- Action: "[Add rule: prefer MCP tools] [View session]"
+
+A cluttered UI means the hierarchy collapsed — detail is showing where metric should be.
+
+### 3. Three outcomes drive everything
+
+Quality (FTR), Time (turns), Cost (tokens). Every page connects back to at least one. If a feature doesn't move these numbers, question whether it belongs.
+
+### 4. Show impact, not inventory
+
+Don't list mindsets. Show which ones improved FTR and which cost tokens without helping. The user tunes levers by impact, not by reading descriptions.
+
+### 5. Suggest from data, not templates
+
+"60% of corrections were about UX" → suggests a persona. Don't offer a generic catalog of personas to browse. Surface what THIS user's sessions need.
+
+### 6. Token/cost awareness everywhere
+
+Header shows burn rate. Sessions show cost. Dashboard shows quota remaining. The user should never be surprised by their usage.
+
+### 7. Simulate before committing
+
+Test a tool call. Preview a library index. Run a benchmark on a subset. Reduce the cost of trying something new.
+
+## Personas served
+
+| Persona | Primary pages | Key question |
+|---------|--------------|--------------|
+| AI Driven Developer | Overview, Project Dashboard, Project Sessions, Project Profiles | "How efficient am I on THIS project and how do I improve?" |
+| Plugin Developer | Tools, Skills & Plugins, Libraries | "Is my plugin/skill working and helping?" |
+| API Consumer | Tools | "What tools exist and how do I use them?" |
+| Evaluator (new) | Benchmarks, Overview | "Should I adopt sensei for my team?" |
+
+## What gets removed from current app
+
+| Current page | Disposition |
+|-------------|-------------|
+| `/s/[id]/arch` | Merged into Project detail |
+| `/s/[id]/trace` | Removed — placeholder, no real data |
+| `/s/[id]/skills` | Merged into Profiles |
+| `/acp` | Merged into Settings |
+| `/catalog` | Replaced by Tools page |
+| `/graph` redirect | Removed — graph lives inside Project detail |
+| Setup wizard | Keep but simplify |
+
+## Implementation approach
+
+1. Extract shared utilities first (ftrClass, getStatus, STATUS_CLS, catalogs)
+2. Build new page shells with the revised nav
+3. Migrate data from existing pages into new structure
+4. Add new functionality incrementally (tool simulation, benchmark runner, community features)
+
+## Open questions
+
+- Should "Tell Claude" generate a clipboard prompt or open Claude Code directly?
+- How do we track mindset/persona application? (Needs daemon-side event logging)
+- Benchmark comparison requires running sessions — is this automated or manual?
+- Community features need a backend — hosted service or GitHub-based?
