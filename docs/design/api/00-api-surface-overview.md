@@ -79,8 +79,7 @@ Data requests (daemon running):
 
 Each screen gets:
 - A design doc in this directory
-- A GitHub issue in `sensei-hq/daemon` (API + crate work)
-- A GitHub issue in `sensei-hq/app` (UI + Tauri work)
+- A GitHub issue in `sensei-hq/sensei` (daemon/ for API work, app/ for UI work)
 - Issues reference each other so parallel sessions stay in sync
 
 ## API conventions

@@ -293,7 +293,7 @@ The bootstrap screen is the app's entry gate. The layout checks health on mount:
 
 ## Issues to create
 
-### Daemon repo: `sensei-hq/daemon`
+### Daemon (`sensei-hq/sensei` — `daemon/` subdirectory)
 
 **Issue 1: Create `bootstrap` crate**
 - Add `crates/bootstrap/` with prereq check modules
@@ -311,7 +311,7 @@ The bootstrap screen is the app's entry gate. The layout checks health on mount:
 - Include model list from Ollama
 - Include schema version
 
-### App repo: `sensei-hq/app`
+### App (`sensei-hq/sensei` — `app/` subdirectory)
 
 **Issue 3: Bootstrap UI screen**
 - Route: health gate in root layout
