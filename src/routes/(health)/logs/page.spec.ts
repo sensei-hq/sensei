@@ -73,10 +73,10 @@ describe('fmtMs', () => {
 // ── outcomeColor ──────────────────────────────────────────────────────────
 
 describe('outcomeColor', () => {
-    it('maps success to jade',   () => expect(outcomeColor('success')).toBe('var(--jade)'));
-    it('maps partial to amber',  () => expect(outcomeColor('partial')).toBe('var(--amber)'));
-    it('maps failed to shu',     () => expect(outcomeColor('failed')).toBe('var(--shu)'));
-    it('maps unknown to shu',    () => expect(outcomeColor('unknown')).toBe('var(--shu)'));
+    it('maps success to jade',   () => expect(outcomeColor('success')).toBe('oklch(var(--color-success-z5) / 1)'));
+    it('maps partial to amber',  () => expect(outcomeColor('partial')).toBe('oklch(var(--color-warning-z5) / 1)'));
+    it('maps failed to shu',     () => expect(outcomeColor('failed')).toBe('oklch(var(--color-primary-z5) / 1)'));
+    it('maps unknown to shu',    () => expect(outcomeColor('unknown')).toBe('oklch(var(--color-primary-z5) / 1)'));
 });
 
 // ── anonymize ─────────────────────────────────────────────────────────────
