@@ -16,10 +16,10 @@ impl PgStore {
         Ok(Self { pool })
     }
 
-    /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to local sensei.
+    /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to sensei_test.
     pub async fn connect_test() -> Result<Self, String> {
         let url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
+            .unwrap_or_else(|_| "postgresql://localhost:5432/sensei_test".to_string());
         Self::connect(&url).await
     }
 
