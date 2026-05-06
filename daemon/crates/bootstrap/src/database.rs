@@ -195,7 +195,7 @@ fn deploy_env() -> &'static str {
 ///
 /// Schema source priority:
 ///   1. `SENSEI_DB_SCHEMA_PATH` env var — local directory path (dev/test override)
-///   2. `sensei-hq/daemon/database@v{app_version}` — GitHub download (production)
+///   2. `sensei-hq/sensei/database@v{app_version}` — GitHub download (production)
 ///
 /// Deploy environment is read from `SENSEI_MODE` (dev | prod).
 ///
@@ -219,7 +219,7 @@ pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
             eprintln!("[dbd] deploy: using local schema path: {path}");
             path
         }
-        _ => format!("sensei-hq/daemon/database@v{app_version}"),
+        _ => format!("sensei-hq/sensei/database@v{app_version}"),
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -394,10 +394,10 @@ mod tests {
     fn deploy_source_string_is_parseable() {
         // Verify the source format we construct is valid per dbd-core's parser
         let version = "1.2.3";
-        let source = format!("sensei-hq/daemon/database@v{version}");
+        let source = format!("sensei-hq/sensei/database@v{version}");
         let parsed = dbd_core::github::parse_github_source(&source).unwrap();
         assert_eq!(parsed.owner, "sensei-hq");
-        assert_eq!(parsed.repo, "daemon");
+        assert_eq!(parsed.repo, "sensei");
         assert_eq!(parsed.subpath, Some("database".to_string()));
         assert_eq!(parsed.git_ref, format!("v{version}"));
     }

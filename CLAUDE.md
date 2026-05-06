@@ -38,7 +38,7 @@ make bump v=0.3.0
 
 ## Database
 
-See `daemon/database/` for DDL. Dev builds connect to `sensei_dev`; release builds connect to `sensei`.
+See `database/` for DDL. Dev builds connect to `sensei_dev`; release builds connect to `sensei`.
 `DATABASE_URL` env var always overrides.
 
 ## Rules

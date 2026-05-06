@@ -94,7 +94,7 @@ App opens
   │   pg_isready?
   │   → createdb sensei (skip if exists)
   │   → CREATE EXTENSION IF NOT EXISTS vector
-  │   → senseid migrate (via dbd-core, source: sensei-hq/sensei/daemon/database on GitHub)
+  │   → senseid migrate (via dbd-core, source: sensei-hq/sensei/database on GitHub)
   │   Success: database gate → ready
   │   Failure: show manual commands, wait for user retry
   │
@@ -274,7 +274,7 @@ First install uses the default. Custom URLs are configured later in Settings.
 
 `senseid migrate` embeds `dbd-core` (Rust library) and applies schema + seed data:
 
-- Source: `sensei-hq/sensei/daemon/database` on GitHub (fetched by dbd-core at runtime)
+- Source: `sensei-hq/sensei/database` on GitHub (fetched by dbd-core at runtime)
 - dbd-core diffs current schema against desired state and applies changes
 - Handles both fresh installs (full schema) and upgrades (incremental changes)
 - Tracks applied state — idempotent, safe to run on every launch

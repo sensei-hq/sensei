@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Embed dbd-core into the bootstrap crate so that `setup_database` downloads + applies the schema from `sensei-hq/sensei/daemon/database@v{app_version}`, and extend phase-1 gates to detect and upgrade stale sensei/senseid binaries.
+**Goal:** Embed dbd-core into the bootstrap crate so that `setup_database` downloads + applies the schema from `sensei-hq/sensei/database@v{app_version}`, and extend phase-1 gates to detect and upgrade stale sensei/senseid binaries.
 
 **Architecture:** Three sequential repo changes — fix dbd-rs first (cache bug + `Design::deploy()` method), then wire dbd-core into the bootstrap crate (new `VersionedBinaryChecker`, `BrewUpgradeFixer`, `database::deploy()`), then update the Tauri commands to thread `app_version` through and add E2E tests.
 
@@ -62,14 +62,14 @@ async fn resolve_source_cache_hit_with_subpath() {
     use crate::github::cache_dir;
     use tempfile::TempDir;
 
-    // Simulate a pre-populated cache for sensei-hq/sensei/daemon/database@test-cache-hit-v1
+    // Simulate a pre-populated cache for sensei-hq/sensei/database@test-cache-hit-v1
     let cache = cache_dir("sensei-hq", "daemon", "test-cache-hit-v1");
     let database_dir = cache.join("database");
     std::fs::create_dir_all(&database_dir).unwrap();
     std::fs::write(database_dir.join("design.yaml"), "project:\n  name: test\n").unwrap();
 
     // Should return the database/ subpath without attempting a network download
-    let result = resolve_source("sensei-hq/sensei/daemon/database@test-cache-hit-v1").await;
+    let result = resolve_source("sensei-hq/sensei/database@test-cache-hit-v1").await;
 
     // Cleanup before assertions so a failure doesn't leave files behind
     std::fs::remove_dir_all(&cache).ok();
@@ -692,7 +692,7 @@ Add to the `#[cfg(test)]` block in `database.rs`:
 fn deploy_source_string_is_parseable() {
     // Verify the source format we construct is valid per dbd-core's parser
     let version = "1.2.3";
-    let source = format!("sensei-hq/sensei/daemon/database@v{version}");
+    let source = format!("sensei-hq/sensei/database@v{version}");
     let parsed = dbd_core::github::parse_github_source(&source).unwrap();
     assert_eq!(parsed.owner, "sensei-hq");
     assert_eq!(parsed.repo, "daemon");
@@ -750,14 +750,14 @@ use dbd_core::{
 ```rust
 /// Deploy the schema from GitHub using dbd-core.
 ///
-/// Source: `sensei-hq/sensei/daemon/database@v{app_version}` — downloads tarball
+/// Source: `sensei-hq/sensei/database@v{app_version}` — downloads tarball
 /// and caches under `~/.cache/dbd/`. Idempotent: dbd handles fresh /
 /// migrate / current automatically.
 ///
 /// Requires a running PostgreSQL server and a reachable `{db_name}` database.
 pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
     let db = db_name();
-    let source = format!("sensei-hq/sensei/daemon/database@v{app_version}");
+    let source = format!("sensei-hq/sensei/database@v{app_version}");
     let db_url = format!("postgres://localhost/{db}");
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -868,7 +868,7 @@ cd /Users/Jerry/Developer/sensei/daemon
 git add crates/bootstrap/src/database.rs
 git commit -m "feat(bootstrap): replace migrate stub with dbd deploy
 
-database::deploy(app_version) downloads sensei-hq/sensei/daemon/database@v{version}
+database::deploy(app_version) downloads sensei-hq/sensei/database@v{version}
 from GitHub and applies schema via dbd-core (DDL + seed import).
 database::setup(app_version) now calls deploy instead of the old senseid
 migrate stub. migrate() removed entirely.
@@ -1436,4 +1436,4 @@ cd /Users/Jerry/Developer/sensei/daemon && ./bump-version.sh X.Y.Z && git push &
 cd /Users/Jerry/Developer/sensei/app && git tag vX.Y.Z && git push && git push --tags
 ```
 
-The bootstrap crate reads the app version at runtime from `app.package_info().version`, builds `sensei-hq/sensei/daemon/database@vX.Y.Z` as the dbd source, and runs deploy. The tag must exist on the daemon repo before the app ships.
+The bootstrap crate reads the app version at runtime from `app.package_info().version`, builds `sensei-hq/sensei/database@vX.Y.Z` as the dbd source, and runs deploy. The tag must exist on the daemon repo before the app ships.

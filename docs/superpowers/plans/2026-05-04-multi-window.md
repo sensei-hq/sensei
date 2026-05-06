@@ -15,7 +15,7 @@
 ### Task 1: `project_libraries` bridge table DDL
 
 **Files:**
-- Create: `daemon/database/ddl/table/sensei/project_libraries.ddl`
+- Create: `database/ddl/table/sensei/project_libraries.ddl`
 
 - [ ] **Step 1: Write the DDL file**
 
@@ -50,7 +50,7 @@ Populated by daemon indexer from referenced_libraries; editable by user.';
 - [ ] **Step 2: Commit**
 
 ```bash
-git add daemon/database/ddl/table/sensei/project_libraries.ddl
+git add database/ddl/table/sensei/project_libraries.ddl
 git commit -m "feat(db): add project_libraries bridge table"
 ```
 
@@ -59,7 +59,7 @@ git commit -m "feat(db): add project_libraries bridge table"
 ### Task 2: `extension_projects` bridge table DDL
 
 **Files:**
-- Create: `daemon/database/ddl/table/sensei/extension_projects.ddl`
+- Create: `database/ddl/table/sensei/extension_projects.ddl`
 
 - [ ] **Step 1: Write the DDL file**
 
@@ -94,7 +94,7 @@ extensions.scope column is a seeding hint only; this table is authoritative at r
 - [ ] **Step 2: Commit**
 
 ```bash
-git add daemon/database/ddl/table/sensei/extension_projects.ddl
+git add database/ddl/table/sensei/extension_projects.ddl
 git commit -m "feat(db): add extension_projects bridge table"
 ```
 
@@ -103,7 +103,7 @@ git commit -m "feat(db): add extension_projects bridge table"
 ### Task 3: `project_ftr_metrics` view DDL
 
 **Files:**
-- Create: `daemon/database/ddl/view/sensei/project_ftr_metrics.ddl`
+- Create: `database/ddl/view/sensei/project_ftr_metrics.ddl`
 
 - [ ] **Step 1: Write the DDL file**
 
@@ -125,7 +125,7 @@ GROUP BY s.project_id;
 - [ ] **Step 2: Commit**
 
 ```bash
-git add daemon/database/ddl/view/sensei/project_ftr_metrics.ddl
+git add database/ddl/view/sensei/project_ftr_metrics.ddl
 git commit -m "feat(db): add project_ftr_metrics view"
 ```
 
@@ -134,8 +134,8 @@ git commit -m "feat(db): add project_ftr_metrics view"
 ### Task 4: `project_drift` and `project_patterns` views DDL
 
 **Files:**
-- Create: `daemon/database/ddl/view/sensei/project_drift.ddl`
-- Create: `daemon/database/ddl/view/sensei/project_patterns.ddl`
+- Create: `database/ddl/view/sensei/project_drift.ddl`
+- Create: `database/ddl/view/sensei/project_patterns.ddl`
 
 - [ ] **Step 1: Write project_drift.ddl**
 
@@ -160,7 +160,7 @@ SELECT dp.*, f.project_id
 - [ ] **Step 3: Commit**
 
 ```bash
-git add daemon/database/ddl/view/sensei/project_drift.ddl daemon/database/ddl/view/sensei/project_patterns.ddl
+git add database/ddl/view/sensei/project_drift.ddl database/ddl/view/sensei/project_patterns.ddl
 git commit -m "feat(db): add project_drift and project_patterns views"
 ```
 
@@ -169,8 +169,8 @@ git commit -m "feat(db): add project_drift and project_patterns views"
 ### Task 5: Resolved scope-tag views DDL
 
 **Files:**
-- Create: `daemon/database/ddl/view/sensei/project_libraries_resolved.ddl`
-- Create: `daemon/database/ddl/view/sensei/project_extensions_resolved.ddl`
+- Create: `database/ddl/view/sensei/project_libraries_resolved.ddl`
+- Create: `database/ddl/view/sensei/project_extensions_resolved.ddl`
 
 - [ ] **Step 1: Write project_libraries_resolved.ddl**
 
@@ -218,7 +218,7 @@ Expected: All tables and views created without errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add daemon/database/ddl/view/sensei/project_libraries_resolved.ddl daemon/database/ddl/view/sensei/project_extensions_resolved.ddl
+git add database/ddl/view/sensei/project_libraries_resolved.ddl database/ddl/view/sensei/project_extensions_resolved.ddl
 git commit -m "feat(db): add project_libraries_resolved and project_extensions_resolved views with scope tag"
 ```
 
