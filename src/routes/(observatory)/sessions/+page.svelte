@@ -1,207 +1,159 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
-  import type { SessionData } from '$lib/types.js';
+    import { onMount } from "svelte";
+    import { appState } from "$lib/appstate.svelte.js";
+    import { senseiApi } from "$lib/api.js";
+    import type { SessionData } from "$lib/types.js";
 
-  type Session = SessionData['sessions'][number];
+    type Session = SessionData["sessions"][number];
 
-  let sessions = $state<Session[]>([]);
-  let stats = $state<{ count: number; ftr: number; corrections: number; projects: number }>({
-    count: 0, ftr: 0, corrections: 0, projects: 0,
-  });
-  let loading = $state(true);
-  let filter = $state<'all' | 'completed' | 'corrected' | 'abandoned'>('all');
+    let sessions = $state<Session[]>([]);
+    let stats = $state<{
+        count: number;
+        ftr: number;
+        corrections: number;
+        projects: number;
+    }>({
+        count: 0,
+        ftr: 0,
+        corrections: 0,
+        projects: 0,
+    });
+    let loading = $state(true);
+    let filter = $state<"all" | "completed" | "corrected" | "abandoned">("all");
 
-  onMount(async () => {
-    await appState.load();
-    const api = senseiApi(appState.port);
-    const data = await api.getSessions();
-    sessions = data.sessions ?? [];
-    if (data.stats) {
-      const s = data.stats as Record<string, number>;
-      stats = {
-        count: s.total_sessions ?? sessions.length,
-        ftr: s.ftr_rate ?? 0,
-        corrections: s.total_corrections ?? 0,
-        projects: s.project_count ?? 0,
-      };
+    onMount(async () => {
+        await appState.load();
+        const api = senseiApi(appState.port);
+        const data = await api.getSessions();
+        sessions = data.sessions ?? [];
+        if (data.stats) {
+            const s = data.stats as Record<string, number>;
+            stats = {
+                count: s.total_sessions ?? sessions.length,
+                ftr: s.ftr_rate ?? 0,
+                corrections: s.total_corrections ?? 0,
+                projects: s.project_count ?? 0,
+            };
+        }
+        loading = false;
+    });
+
+    let filtered = $derived(
+        filter === "all"
+            ? sessions
+            : sessions.filter((s) => s.outcome === filter),
+    );
+
+    function formatTime(iso: string): string {
+        if (!iso) return "";
+        const d = new Date(iso);
+        return (
+            d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+            " · " +
+            d.toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+            })
+        );
     }
-    loading = false;
-  });
-
-  let filtered = $derived(
-    filter === 'all' ? sessions : sessions.filter(s => s.outcome === filter)
-  );
-
-  function formatTime(iso: string): string {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      + ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  }
 </script>
 
-<div class="page">
-  <header class="page-header">
-    <p class="date-label">Sessions</p>
-    <h1 class="display page-title">刻 Sessions</h1>
-  </header>
+<div class="max-w-[820px] mx-auto px-12 py-12 pb-16">
+    <div class="mb-8">
+        <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
+            Sessions
+        </p>
+        <h1 class="display text-2xl font-normal m-0">刻 Sessions</h1>
+    </div>
 
-  <!-- Stats strip -->
-  <div class="stats-strip">
-    <div class="stat">
-      <span class="stat-value display">{stats.count}</span>
-      <span class="stat-label">sessions (7d)</span>
+    <!-- Stats strip -->
+    <div
+        class="flex gap-8 mb-7 px-6 py-5 bg-surface-z2 border border-surface-z3 rounded-lg"
+    >
+        {#each [{ value: stats.count, label: "sessions (7d)" }, { value: Math.round(stats.ftr * 100) + "%", label: "FTR" }, { value: stats.corrections, label: "corrections" }, { value: stats.projects, label: "projects" }] as stat}
+            <div class="flex flex-col gap-0.5">
+                <span class="display text-2xl font-normal">{stat.value}</span>
+                <span class="text-2xs text-surface-z6">{stat.label}</span>
+            </div>
+        {/each}
     </div>
-    <div class="stat">
-      <span class="stat-value display">{Math.round(stats.ftr * 100)}%</span>
-      <span class="stat-label">FTR</span>
-    </div>
-    <div class="stat">
-      <span class="stat-value display">{stats.corrections}</span>
-      <span class="stat-label">corrections</span>
-    </div>
-    <div class="stat">
-      <span class="stat-value display">{stats.projects}</span>
-      <span class="stat-label">projects</span>
-    </div>
-  </div>
 
-  <!-- Filters -->
-  <div class="filter-row">
-    {#each ['all', 'completed', 'corrected', 'abandoned'] as f}
-      <button
-        class="filter-chip"
-        class:active={filter === f}
-        onclick={() => filter = f as any}
-      >{f}</button>
-    {/each}
-  </div>
-
-  <!-- Sessions list -->
-  {#if loading}
-    <p class="hint">Loading sessions...</p>
-  {:else if filtered.length === 0}
-    <div class="empty-state">
-      <span class="kanji empty-kanji">刻</span>
-      <p class="display empty-title">No sessions yet.</p>
-      <p class="empty-body">Start a session with your assistant. Each session becomes a moment of learning.</p>
+    <!-- Filters -->
+    <div class="flex gap-1.5 mb-6">
+        {#each ["all", "completed", "corrected", "abandoned"] as f}
+            <button
+                class="filter-chip px-3.5 py-1.25 rounded-full border border-surface-z3 bg-transparent text-xs cursor-pointer text-surface-z7 capitalize"
+                class:active={filter === f}
+                onclick={() => (filter = f as any)}>{f}</button
+            >
+        {/each}
     </div>
-  {:else}
-    <div class="sessions-list">
-      {#each filtered as session (session.id)}
-        <div class="session-row">
-          <span class="ftr-dot" class:green={session.ftr === 1} class:amber={session.ftr !== 1}></span>
-          <div class="session-info">
-            <span class="session-title">{session.task || session.id.slice(0, 8)}</span>
-            <span class="session-project">{session.project || 'unknown'}</span>
-          </div>
-          <span class="session-outcome">{session.outcome ?? '—'}</span>
-          <span class="session-time">{formatTime(session.startedAt)}</span>
+
+    <!-- Sessions list -->
+    {#if loading}
+        <p class="text-ui text-surface-z6">Loading sessions...</p>
+    {:else if filtered.length === 0}
+        <div class="flex flex-col items-center text-center py-20 gap-4">
+            <span class="kanji text-6xl text-primary-z5 opacity-30">刻</span>
+            <p class="display text-xl font-normal m-0">No sessions yet.</p>
+            <p
+                class="text-ui text-surface-z6 max-w-[360px] leading-relaxed m-0"
+            >
+                Start a session with your assistant. Each session becomes a
+                moment of learning.
+            </p>
         </div>
-      {/each}
-    </div>
-  {/if}
+    {:else}
+        <div class="flex flex-col gap-px">
+            {#each filtered as session (session.id)}
+                <div
+                    class="session-row flex items-center gap-3 px-4 py-3 rounded-md transition-colors duration-100"
+                >
+                    <span
+                        class="ftr-dot w-1.75 h-1.75 rounded-full shrink-0"
+                        class:green={session.ftr === 1}
+                        class:amber={session.ftr !== 1}
+                    ></span>
+                    <div class="flex-1 flex flex-col gap-0.5 min-w-0">
+                        <span
+                            class="text-ui text-surface-z9 whitespace-nowrap overflow-hidden text-ellipsis"
+                            >{session.task || session.id.slice(0, 8)}</span
+                        >
+                        <span class="text-2xs text-surface-z6"
+                            >{session.project || "unknown"}</span
+                        >
+                    </div>
+                    <span
+                        class="text-2xs text-surface-z6 capitalize w-20 text-right"
+                        >{session.outcome ?? "—"}</span
+                    >
+                    <span class="text-2xs text-surface-z5 w-[140px] text-right"
+                        >{formatTime(session.startedAt)}</span
+                    >
+                </div>
+            {/each}
+        </div>
+    {/if}
 </div>
 
 <style>
-  .page {
-    max-width: 820px;
-    margin: 0 auto;
-    padding: 48px 48px 64px;
-  }
-  .page-header { margin-bottom: 32px; }
-  .date-label {
-    font-size: 10.5px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--sumi-3);
-    margin: 0 0 8px;
-  }
-  .page-title {
-    font-size: 24px;
-    font-weight: 400;
-    margin: 0;
-  }
+    .filter-chip:hover {
+        background: oklch(var(--color-surface-z2) / 1);
+    }
+    .filter-chip.active {
+        background: oklch(var(--color-surface-z9) / 1);
+        color: oklch(var(--color-surface-z1) / 1);
+        border-color: oklch(var(--color-surface-z9) / 1);
+    }
 
-  /* ── Stats ──────────────────────────────────────────────── */
-  .stats-strip {
-    display: flex;
-    gap: 32px;
-    margin-bottom: 28px;
-    padding: 20px 24px;
-    background: var(--paper-2);
-    border: var(--border-card);
-    border-radius: var(--radius-lg);
-  }
-  .stat { display: flex; flex-direction: column; gap: 2px; }
-  .stat-value { font-size: 22px; font-weight: 400; }
-  .stat-label { font-size: 11px; color: var(--sumi-3); }
+    .session-row:hover {
+        background: oklch(var(--color-surface-z2) / 1);
+    }
 
-  /* ── Filters ────────────────────────────────────────────── */
-  .filter-row {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 24px;
-  }
-  .filter-chip {
-    padding: 5px 14px;
-    border-radius: 100px;
-    border: var(--border-card);
-    background: transparent;
-    color: var(--sumi-2);
-    font-size: 12px;
-    cursor: pointer;
-    text-transform: capitalize;
-  }
-  .filter-chip:hover { background: var(--paper-2); }
-  .filter-chip.active {
-    background: var(--sumi);
-    color: var(--paper);
-    border-color: var(--sumi);
-  }
-
-  /* ── Empty state ────────────────────────────────────────── */
-  .empty-state {
-    text-align: center;
-    padding: 80px 20px;
-  }
-  .empty-kanji {
-    font-size: 64px;
-    color: var(--shu);
-    opacity: 0.3;
-  }
-  .empty-title { font-size: 20px; font-weight: 400; margin: 16px 0 8px; }
-  .empty-body { font-size: 13px; color: var(--sumi-3); max-width: 360px; margin: 0 auto; line-height: 1.65; }
-
-  /* ── Session rows ───────────────────────────────────────── */
-  .sessions-list { display: flex; flex-direction: column; gap: 1px; }
-  .session-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    transition: background 0.1s;
-  }
-  .session-row:hover { background: var(--paper-2); }
-  .ftr-dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .ftr-dot.green { background: var(--jade); }
-  .ftr-dot.amber { background: var(--amber); }
-  .session-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .session-title {
-    font-size: 13px;
-    color: var(--sumi);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .session-project { font-size: 11px; color: var(--sumi-3); }
-  .session-outcome { font-size: 11px; color: var(--sumi-3); text-transform: capitalize; width: 80px; text-align: right; }
-  .session-time { font-size: 11px; color: var(--sumi-4); width: 140px; text-align: right; }
+    .ftr-dot.green {
+        background: oklch(var(--color-success-z5) / 1);
+    }
+    .ftr-dot.amber {
+        background: oklch(var(--color-warning-z5) / 1);
+    }
 </style>

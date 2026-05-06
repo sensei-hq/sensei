@@ -1,59 +1,82 @@
-<div class="help-page">
-  <h1>Sensei Help</h1>
+<div class="max-w-[640px] px-8 py-8">
+    <h1 class="text-2xl font-normal m-0 mb-6">Sensei Help</h1>
 
-  <section>
-    <h2>Quick Start</h2>
-    <ol>
-      <li><strong>Scan</strong> — Point Sensei at your project folders to index them.</li>
-      <li><strong>Watch</strong> — Sensei observes your AI coding sessions and learns your patterns.</li>
-      <li><strong>Teach</strong> — Adopt recommendations to improve your first-try rate.</li>
-    </ol>
-  </section>
+    <section class="mb-7">
+        <h2 class="text-body font-bold m-0 mb-2.5">Quick Start</h2>
+        <ol class="text-sm leading-reading pl-5 m-0">
+            <li>
+                <strong>Scan</strong> — Point Sensei at your project folders to index
+                them.
+            </li>
+            <li>
+                <strong>Watch</strong> — Sensei observes your AI coding sessions and
+                learns your patterns.
+            </li>
+            <li>
+                <strong>Teach</strong> — Adopt recommendations to improve your first-try
+                rate.
+            </li>
+        </ol>
+    </section>
 
-  <section>
-    <h2>Keyboard Shortcuts</h2>
-    <table class="shortcuts">
-      <thead>
-        <tr><th scope="col">Shortcut</th><th scope="col">Action</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>⌘N</td><td>New project</td></tr>
-        <tr><td>⌘W</td><td>Close window</td></tr>
-        <tr><td>⌘,</td><td>Preferences</td></tr>
-        <tr><td>⌘\</td><td>Toggle sidebar</td></tr>
-        <tr><td>⌘1</td><td>Today</td></tr>
-        <tr><td>⌘2</td><td>Projects</td></tr>
-        <tr><td>⌘3</td><td>Sessions</td></tr>
-        <tr><td>⌘0</td><td>Show Observatory</td></tr>
-        <tr><td>⌘?</td><td>This help window</td></tr>
-      </tbody>
-    </table>
-  </section>
+    <section class="mb-7">
+        <h2 class="text-body font-bold m-0 mb-2.5">Keyboard Shortcuts</h2>
+        <table class="shortcuts border-collapse text-ui w-full">
+            <thead>
+                <tr>
+                    <th
+                        scope="col"
+                        class="text-2xs text-left py-1.25 pr-3 opacity-50 font-semibold"
+                        >Shortcut</th
+                    >
+                    <th
+                        scope="col"
+                        class="text-2xs text-left py-1.25 pr-3 opacity-50 font-semibold"
+                        >Action</th
+                    >
+                </tr>
+            </thead>
+            <tbody>
+                {#each [["⌘N", "New project"], ["⌘W", "Close window"], ["⌘,", "Preferences"], ["⌘\\", "Toggle sidebar"], ["⌘1", "Today"], ["⌘2", "Projects"], ["⌘3", "Sessions"], ["⌘0", "Show Observatory"], ["⌘?", "This help window"]] as [shortcut, action]}
+                    <tr>
+                        <td
+                            class="shortcuts-row py-1.25 pr-3 font-mono text-sm font-semibold min-w-[60px]"
+                            >{shortcut}</td
+                        >
+                        <td class="shortcuts-row py-1.25 pr-3">{action}</td>
+                    </tr>
+                {/each}
+            </tbody>
+        </table>
+    </section>
 
-  <section>
-    <h2>FAQ</h2>
-    <dl>
-      <dt>What is FTR?</dt>
-      <dd>First-Try Rate — the percentage of AI coding tasks completed without needing corrections. Higher is better.</dd>
-      <dt>What is the daemon?</dt>
-      <dd>A background process that indexes your repositories and watches for new sessions. It runs at <code>localhost:7749</code> by default.</dd>
-      <dt>What does memory scope mean?</dt>
-      <dd>Memories can be <em>project-scoped</em> (apply to one project) or shared to the <em>collective</em> (apply globally across all projects).</dd>
-    </dl>
-  </section>
+    <section>
+        <h2 class="text-body font-bold m-0 mb-2.5">FAQ</h2>
+        <dl class="text-ui m-0">
+            <dt class="font-bold mt-3">What is FTR?</dt>
+            <dd class="opacity-70 mt-1 leading-relaxed ml-0">
+                First-Try Rate — the percentage of AI coding tasks completed
+                without needing corrections. Higher is better.
+            </dd>
+            <dt class="font-bold mt-3">What is the daemon?</dt>
+            <dd class="opacity-70 mt-1 leading-relaxed ml-0">
+                A background process that indexes your repositories and watches
+                for new sessions. It runs at <code
+                    class="bg-surface-z3 px-1.25 py-px rounded-sm font-mono text-xs"
+                    >localhost:7749</code
+                > by default.
+            </dd>
+            <dt class="font-bold mt-3">What does memory scope mean?</dt>
+            <dd class="opacity-70 mt-1 leading-relaxed ml-0">
+                Memories can be <em>project-scoped</em> (apply to one project)
+                or shared to the <em>collective</em> (apply globally across all projects).
+            </dd>
+        </dl>
+    </section>
 </div>
 
 <style>
-  .help-page { padding: 32px; max-width: 640px; }
-  h1 { font-size: 22px; margin-bottom: 24px; }
-  h2 { font-size: 15px; font-weight: 700; margin: 28px 0 10px; }
-  ol { font-size: 14px; line-height: 1.7; padding-left: 20px; }
-  .shortcuts { border-collapse: collapse; font-size: 13px; width: 100%; }
-  .shortcuts th { padding: 5px 12px 5px 0; font-size: 11px; opacity: 0.5; font-weight: 600; text-align: left; }
-  .shortcuts td { padding: 5px 12px 5px 0; border-bottom: 1px solid var(--border); }
-  .shortcuts td:first-child { font-family: monospace; font-size: 14px; font-weight: 600; min-width: 60px; }
-  dl { font-size: 13px; }
-  dt { font-weight: 700; margin-top: 12px; }
-  dd { opacity: 0.7; margin: 4px 0 0 0; line-height: 1.6; }
-  code { background: var(--surface-3); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+    .shortcuts-row {
+        border-bottom: 1px solid oklch(var(--color-surface-z2) / 1);
+    }
 </style>
