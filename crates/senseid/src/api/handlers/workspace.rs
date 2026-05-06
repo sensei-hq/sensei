@@ -149,6 +149,59 @@ pub(crate) async fn remove_project_tag(
 
 // ── Scan ────────────────────────────────────────────────────────────────────
 
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~/") {
+        dirs::home_dir()
+            .map(|h| h.join(&path[2..]).to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string())
+    } else {
+        path.to_string()
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AddRootBody {
+    pub path: String,
+}
+
+/// Add a watch root to the DB immediately (synchronous) — does not start scanning.
+/// The Scan page is responsible for calling POST /api/scan to trigger the actual scan.
+pub(crate) async fn add_watch_root(
+    State(state): State<AppState>,
+    Json(body): Json<AddRootBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let expanded = expand_tilde(&body.path);
+    if expanded.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let name = std::path::Path::new(&expanded)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("root")
+        .to_string();
+    let id = state.pg
+        .add_watch_root(&expanded, &name, &serde_json::json!([]))
+        .await
+        .map_err(|e| {
+            tracing::error!("add_watch_root: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true, "id": id, "path": expanded })))
+}
+
+/// Delete a watch root by ID.
+pub(crate) async fn delete_watch_root(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.remove_watch_root(&uuid).await.map_err(|e| {
+        tracing::error!("delete_watch_root: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 #[derive(Deserialize)]
 pub(crate) struct ScanBody {
     pub root: String,
@@ -162,15 +215,11 @@ pub(crate) async fn scan_folder(
     State(state): State<AppState>,
     Json(body): Json<ScanBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Expand ~ to home directory
-    let expanded = if body.root.starts_with("~/") {
-        dirs::home_dir()
-            .map(|h| h.join(&body.root[2..]).to_string_lossy().to_string())
-            .unwrap_or(body.root.clone())
-    } else {
-        body.root.clone()
-    };
-    let root_path = expanded.clone();
+    if body.root.is_empty() {
+        tracing::warn!("scan_folder: empty root path rejected");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let root_path = expand_tilde(&body.root);
     let root = std::path::Path::new(&root_path);
     if !root.exists() {
         return Ok(Json(serde_json::json!({"ok": false, "error": "path not found"})));
