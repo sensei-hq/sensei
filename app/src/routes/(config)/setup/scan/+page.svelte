@@ -34,27 +34,35 @@
 
     /**
      * Poll /api/index/status until the task queue is idle (pending=0, running=0).
-     * This is the reliable signal that all scan+index tasks have finished.
-     * We wait 1.5 s before starting to poll to let the daemon enqueue tasks first.
+     *
+     * SSE gives us per-item progress events but no "queue idle" event, so we poll
+     * the status endpoint as the authoritative completion signal. The interval is
+     * long (1.5 s) and there is no artificial upper limit — large codebases can
+     * take hours and should not be cut short.
+     *
+     * Polling stops naturally when:
+     *   • The queue reaches idle (2 consecutive empty polls to debounce transients)
+     *   • The component is destroyed (onDestroy clears the interval)
+     *   • The user navigates away (same)
      */
     function startDonePoller(api: ReturnType<typeof senseiApi>) {
-        let pollsSinceEnqueue = 0;
+        let idlePolls = 0;
         setTimeout(() => {
             pollTimer = setInterval(async () => {
                 try {
                     const s = await api.getIndexStatus();
-                    pollsSinceEnqueue++;
-                    // Need at least 2 consecutive idle polls (debounce transient empty queue)
-                    if (
-                        s.queue.pending === 0 &&
-                        s.queue.running === 0 &&
-                        pollsSinceEnqueue >= 2
-                    ) {
-                        wizardState.scan.done = true;
-                        if (pollTimer) clearInterval(pollTimer);
+                    if (s.queue.pending === 0 && s.queue.running === 0) {
+                        idlePolls++;
+                        // Require 2 consecutive idle polls to debounce a transient empty queue
+                        if (idlePolls >= 2) {
+                            wizardState.scan.done = true;
+                            if (pollTimer) clearInterval(pollTimer);
+                        }
+                    } else {
+                        idlePolls = 0; // reset on any active work
                     }
                 } catch {
-                    /* daemon unreachable — keep polling */
+                    /* daemon temporarily unreachable — keep polling */
                 }
             }, 1500);
         }, 1500);

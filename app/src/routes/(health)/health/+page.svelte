@@ -43,18 +43,33 @@
         }
     });
 
-    // Auto-trigger Phase 3 (database) when services are ready but DB isn't
+    // Auto-trigger Phase 3 (database) when PostgreSQL is ready but DB isn't.
+    // Intentionally does NOT require senseid to be ready — the daemon depends on
+    // the DB, so we must set up the DB before the daemon can start.
     let dbPhaseTriggered = false;
     $effect(() => {
         if (!hasTauri() || dbPhaseTriggered) return;
-        const servicesReady =
-            (bs.statuses["postgres"] === "ready" ||
-                bs.statuses["homebrew"] === "ready") &&
-            bs.statuses["senseid"] === "ready";
+        const postgresReady =
+            bs.statuses["postgres"] === "ready" ||
+            bs.statuses["homebrew"] === "ready";
         const dbNotReady = bs.statuses["database"] !== "ready";
-        if (servicesReady && dbNotReady) {
+        if (postgresReady && dbNotReady) {
             dbPhaseTriggered = true;
             setupDatabase();
+        }
+    });
+
+    // After the DB is set up, restart services so the daemon can connect.
+    // This handles the cold-start case: DB missing → setupDatabase() creates it →
+    // daemon can now start. Without this re-trigger, the daemon stays stopped.
+    let daemonRestartTriggered = false;
+    $effect(() => {
+        if (!hasTauri() || daemonRestartTriggered) return;
+        const dbReady = bs.statuses["database"] === "ready";
+        const daemonNotReady = bs.statuses["senseid"] !== "ready";
+        if (dbReady && daemonNotReady) {
+            daemonRestartTriggered = true;
+            startServices();
         }
     });
 

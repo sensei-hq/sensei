@@ -85,21 +85,6 @@ export default async function globalSetup(): Promise<void> {
   // 4. Swap symlink to debug binary
   swapSymlink(SENSEID_DEBUG, SYMLINK);
 
-  // 4.5. Start dev daemon (port 7745) — Tauri app in dev mode connects here.
-  // The Tauri app's configure-assistants tests also POST directly to this port.
-  console.log('[globalSetup] Starting dev daemon on port 7745...');
-  const daemon = spawn(SENSEID_DEBUG, ['start'], {
-    env: { ...process.env, SENSEI_MODE: 'dev', DATABASE_URL: 'postgresql://localhost:5432/sensei_dev' },
-    detached: true,
-    stdio: 'ignore',
-  });
-  daemon.unref();
-
-  // Wait for daemon to be ready — TCP port check avoids HTTP URL literals.
-  console.log('[globalSetup] Waiting for dev daemon on port 7745...');
-  await waitForPort(7745, 15_000);
-  console.log('[globalSetup] Dev daemon ready.');
-
   // 5. Launch Sensei.app with dev env vars
   console.log('[globalSetup] Launching Sensei.app...');
   const proc = spawn(APP_BINARY, [], {
@@ -126,5 +111,14 @@ export default async function globalSetup(): Promise<void> {
   // 6. Wait for tauri-plugin-playwright socket (up to 60 s)
   console.log('[globalSetup] Waiting for Tauri socket...');
   await waitForSocket(SOCKET, 60_000);
-  console.log('[globalSetup] Socket ready — tests may begin.');
+  console.log('[globalSetup] Socket ready.');
+
+  // 7. Wait for the dev daemon on port 7745 (up to 120 s).
+  // The Tauri app's bootstrap health screen automatically:
+  //   • creates sensei-dev DB if missing (gate 五 — DatabaseSetupFixer → dbd deploy)
+  //   • starts senseid on port 7745 if not running (gate 六 — ServiceStartFixer)
+  // Port 7745 opening is the signal that bootstrap completed and the DB is ready.
+  console.log('[globalSetup] Waiting for dev daemon on port 7745 (bootstrap in progress)...');
+  await waitForPort(7745, 120_000);
+  console.log('[globalSetup] Dev daemon ready — tests may begin.');
 }
