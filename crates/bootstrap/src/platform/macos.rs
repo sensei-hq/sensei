@@ -8,13 +8,6 @@ use crate::util;
 
 use super::{InstallRemedy, Platform, PlatformProvider};
 
-/// Brewfile piped to `brew bundle --file=-` during prerequisite installation.
-const BREWFILE: &str = r#"tap "sensei-hq/tap", "https://github.com/sensei-hq/homebrew-tap"
-brew "postgresql@17"
-brew "ollama"
-brew "sensei-hq/tap/sensei"
-"#;
-
 /// macOS / Linux provider that delegates to Homebrew.
 pub struct MacOSProvider {
     brew_path: Option<String>,
@@ -97,30 +90,29 @@ impl PlatformProvider for MacOSProvider {
     }
 
     fn install_prerequisites(&self) -> Result<(), String> {
-        let brew = self
-            .brew_path
-            .as_deref()
+        let brew = self.brew_path.as_deref()
             .ok_or_else(|| "Homebrew is not installed".to_string())?;
 
+        let brewfile = reqwest::blocking::get(crate::config::HOMEBREW_BREWFILE_URL)
+            .map_err(|e| format!("failed to fetch Brewfile: {e}"))?
+            .text()
+            .map_err(|e| format!("failed to read Brewfile: {e}"))?;
+
         let mut child = Command::new(brew)
-            .args(["bundle", "--file=-"])
+            .args(["bundle", "--upgrade", "--file=-"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| format!("failed to spawn brew bundle: {e}"))?;
 
-        // Write the Brewfile to stdin
         if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write;
-            stdin
-                .write_all(BREWFILE.as_bytes())
+            stdin.write_all(brewfile.as_bytes())
                 .map_err(|e| format!("failed to write Brewfile to stdin: {e}"))?;
-            // stdin is dropped here, closing the pipe
         }
 
-        let output = child
-            .wait_with_output()
+        let output = child.wait_with_output()
             .map_err(|e| format!("failed to wait for brew bundle: {e}"))?;
 
         if output.status.success() {
