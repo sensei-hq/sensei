@@ -147,7 +147,7 @@ Table: `activity.hook_events`
 |--------|------|-------|
 | `id` | `bigserial` | Append-only high-write table; sequential inserts avoid B-tree splits |
 | `session_id` | `text` | Assistant's string session ID — not a DB UUID |
-| `assistant_family` | `text` | Source assistant; default `'claude'`. Values match `sensei.assistant_family` enum |
+| `assistant_family` | `sensei.assistant_family` | Source assistant; default `'claude'` |
 | `event_type` | `text` | Normalized event name (SessionStart, PreToolUse, etc.) |
 | `tool_name` | `text` | Tool name for Pre/PostToolUse; null otherwise |
 | `cwd` | `text` | Working directory at event time |
@@ -183,7 +183,7 @@ psql -d sensei_dev -c "TRUNCATE staging.hook_events;"
 
 `staging.normalize_assistant_family()` handles free-form strings ("Claude Code", "claude-code") and maps them to the enum.
 
-Since `assistant_family` is stored as `text` (not a PostgreSQL enum), `import_jsonb_to_table` can map it directly from the JSONL field. The custom `import_hook_events` procedure handles coalescing and null normalization before final insertion into `activity.hook_events`.
+`assistant_family` is a `sensei.assistant_family` enum in the final table. The staging table (`staging.hook_events`) stores it as `text` for easy loading. `dbd`'s `import_jsonb_to_table` (updated to handle custom PostgreSQL types) loads JSONL into staging directly. The `import_hook_events` procedure then casts `text → sensei.assistant_family` during the final insert.
 
 ---
 
