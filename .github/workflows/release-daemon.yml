@@ -18,12 +18,16 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-latest
+            artifact: sensei-macos-arm64
           - target: x86_64-apple-darwin
             os: macos-13
+            artifact: sensei-macos-x86_64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            artifact: sensei-linux-x86_64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            artifact: sensei-linux-arm64
             use-cross: true
 
     runs-on: ${{ matrix.os }}
@@ -55,26 +59,26 @@ jobs:
         working-directory: daemon
         env:
           BUILD_TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          STAGING="release-${TAG}-${BUILD_TARGET}"
-          mkdir -p "$STAGING"
+          mkdir -p "$ARTIFACT"
           for bin in senseid sensei sensei-mcp; do
-            SRC="target/${BUILD_TARGET}/release/${bin}"
-            [ -f "$SRC" ] && cp "$SRC" "$STAGING/"
+            src="target/${BUILD_TARGET}/release/${bin}"
+            [ -f "$src" ] && cp "$src" "$ARTIFACT/"
           done
-          tar czf "${STAGING}.tar.gz" "$STAGING"
-          echo "ASSET=${STAGING}.tar.gz" >> "$GITHUB_ENV"
+          tar czf "${ARTIFACT}.tar.gz" "$ARTIFACT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.target }}
-          path: daemon/${{ env.ASSET }}
+          name: ${{ matrix.artifact }}
+          path: daemon/${{ matrix.artifact }}.tar.gz
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -83,6 +87,7 @@ jobs:
           merge-multiple: true
 
       - name: Create GitHub Release
+        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
