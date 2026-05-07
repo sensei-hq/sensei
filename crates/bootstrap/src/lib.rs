@@ -16,8 +16,11 @@ pub mod util;
 
 pub use config::{
     SenseiConfig, SenseiMode,
-    BREW_TAP, GITHUB_ORG, GITHUB_REPO, MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
+    BREW_TAP, GITHUB_ORG, GITHUB_REPO, HOMEBREW_BREWFILE_URL, HOMEBREW_TAP_REPO,
+    MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
 };
+pub use prereq::{BootstrapReport, GateReport, GateStatus, HumanAction, ProgressEvent};
+pub use prereq::engine::{BootstrapContext, BootstrapEngine};
 pub use types::*;
 pub use types::BootstrapTrace;
 
@@ -37,6 +40,28 @@ pub fn daemon_port() -> u16 {
 /// Return the platform provider for the current OS.
 pub fn provider() -> Box<dyn platform::PlatformProvider> {
     platform::detect()
+}
+
+/// Run check_and_fix with a pre-built BootstrapContext (supports test injection).
+pub fn check_and_fix_with_context<F>(ctx: BootstrapContext, callback: F) -> BootstrapReport
+where
+    F: Fn(ProgressEvent) + Send + Sync + 'static,
+{
+    let engine = BootstrapEngine::new(std::sync::Arc::new(ctx));
+    engine.check_and_fix(callback)
+}
+
+/// Convenience: run check_and_fix using environment config (no test injection).
+pub fn check_and_fix<F>(app_version: &str, callback: F) -> BootstrapReport
+where
+    F: Fn(ProgressEvent) + Send + Sync + 'static,
+{
+    let ctx = BootstrapContext::new(
+        std::sync::Arc::from(provider()),
+        SenseiConfig::from_env(),
+        app_version.to_string(),
+    );
+    check_and_fix_with_context(ctx, callback)
 }
 
 /// Run all bootstrap checks in parallel and return both the result and diagnostic traces.
@@ -182,5 +207,27 @@ mod tests {
             matches!(p, platform::Platform::MacOS | platform::Platform::Linux | platform::Platform::Windows),
             "provider() should return a known platform"
         );
+    }
+
+    #[test]
+    fn check_and_fix_with_context_all_ready_returns_all_ok() {
+        use std::sync::Arc;
+        use crate::prereq::registry::COMPONENTS;
+        use crate::prereq::checker::Checker;
+        use crate::prereq::CheckResult;
+
+        struct OkChecker;
+        impl Checker for OkChecker { fn check(&self) -> CheckResult { CheckResult::ok("mock") } }
+
+        let mut ctx = BootstrapContext::new(
+            Arc::from(provider()),
+            SenseiConfig::from_env(),
+            "0.1.0".to_string(),
+        );
+        for spec in COMPONENTS {
+            ctx = ctx.with_checker(spec.id, Arc::new(OkChecker));
+        }
+        let report = check_and_fix_with_context(ctx, |_| {});
+        assert!(report.all_ok);
     }
 }
