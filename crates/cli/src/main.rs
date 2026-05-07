@@ -3,8 +3,24 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-const DAEMON_URL: &str = "http://127.0.0.1:7744";
 const BREW_TAP: &str = "sensei-hq/tap/sensei";
+
+/// True when this binary is named `sensei-dev` — determines port and daemon binary.
+fn is_dev() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .map(|name| name.ends_with("-dev"))
+        .unwrap_or(false)
+}
+
+fn daemon_url() -> &'static str {
+    if is_dev() { "http://127.0.0.1:7745" } else { "http://127.0.0.1:7744" }
+}
+
+fn default_port() -> u16 {
+    if is_dev() { 7745 } else { 7744 }
+}
 
 #[derive(Parser)]
 #[command(name = "sensei", about = "Sensei — AI coding companion", version)]
@@ -44,8 +60,9 @@ enum Commands {
 
     /// Start the sensei daemon
     Start {
-        #[arg(long, default_value = "7744")]
-        port: u16,
+        /// Port (default: 7744 prod, 7745 dev — inferred from binary name)
+        #[arg(long)]
+        port: Option<u16>,
     },
 
     /// Stop the sensei daemon
@@ -53,8 +70,9 @@ enum Commands {
 
     /// Restart the sensei daemon
     Restart {
-        #[arg(long, default_value = "7744")]
-        port: u16,
+        /// Port (default: 7744 prod, 7745 dev — inferred from binary name)
+        #[arg(long)]
+        port: Option<u16>,
     },
 
     /// Show daemon status
@@ -95,9 +113,9 @@ fn main() {
             name,
             purge,
         } => remove_cmd(&target, name.as_deref(), purge),
-        Commands::Start { port } => daemon_cmd("start", Some(port)),
+        Commands::Start { port } => daemon_cmd("start", Some(port.unwrap_or_else(default_port))),
         Commands::Stop => daemon_cmd("stop", None),
-        Commands::Restart { port } => restart_daemon(port),
+        Commands::Restart { port } => restart_daemon(port.unwrap_or_else(default_port)),
         Commands::Status => daemon_cmd("status", None),
         Commands::Scan { path } => scan(&path),
         Commands::AddLib { name, url } => add_lib(&name, url.as_deref()),
@@ -119,7 +137,7 @@ fn client() -> reqwest::blocking::Client {
 
 fn daemon_available() -> bool {
     client()
-        .get(format!("{}/health", DAEMON_URL))
+        .get(format!("{}/health", daemon_url()))
         .send()
         .map(|r| r.status().is_success())
         .unwrap_or(false)
@@ -132,10 +150,16 @@ fn which_exists(name: &str) -> bool {
 }
 
 fn daemon_bin() -> PathBuf {
-    if which_exists("senseid") {
-        return PathBuf::from("senseid");
+    let name = if is_dev() { "senseid-dev" } else { "senseid" };
+    if which_exists(name) {
+        return PathBuf::from(name);
     }
-    home().join(".claude/plugins/sensei/bin/senseid")
+    // Fallback: plugin bin dir (release only — dev is always from ~/.local/bin)
+    if !is_dev() {
+        let p = home().join(".claude/plugins/sensei/bin/senseid");
+        if p.exists() { return p; }
+    }
+    PathBuf::from(name)
 }
 
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -207,7 +231,7 @@ fn check_daemon_version(allow_restart: bool) {
 
 fn get_daemon_version() -> String {
     client()
-        .get(format!("{}/health", DAEMON_URL))
+        .get(format!("{}/health", daemon_url()))
         .send()
         .ok()
         .and_then(|r| r.json::<serde_json::Value>().ok())
@@ -327,7 +351,7 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
         vec![a.to_string()]
     } else {
         let detected: Vec<serde_json::Value> = client()
-            .get(format!("{}/api/assistants/detect", DAEMON_URL))
+            .get(format!("{}/api/assistants/detect", daemon_url()))
             .send()
             .ok()
             .and_then(|r| r.json().ok())
@@ -355,7 +379,7 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
         // by default (SENSEI_MARKETPLACE_REPO). Passing a local dev path causes
         // Claude Code to register a directory source that breaks on other machines.
         match client()
-            .post(format!("{}/api/assistants/configure", DAEMON_URL))
+            .post(format!("{}/api/assistants/configure", daemon_url()))
             .json(&serde_json::json!({
                 "acps": [acp_id],
             }))
@@ -640,7 +664,7 @@ fn remove_acp(name: &str) {
     ensure_daemon();
 
     match client()
-        .post(format!("{}/api/assistants/remove", DAEMON_URL))
+        .post(format!("{}/api/assistants/remove", daemon_url()))
         .json(&serde_json::json!({"acps": acps}))
         .send()
     {
@@ -688,7 +712,7 @@ fn remove_all(purge: bool) {
     ensure_daemon();
 
     match client()
-        .post(format!("{}/api/remove", DAEMON_URL))
+        .post(format!("{}/api/remove", daemon_url()))
         .json(&serde_json::json!({"purge": purge}))
         .send()
     {
@@ -740,10 +764,30 @@ fn remove_all(purge: bool) {
         let bin = daemon_bin();
         let _ = std::process::Command::new(&bin).arg("stop").status();
 
+        // Also stop dev daemon if running
+        if which_exists("senseid-dev") {
+            let _ = std::process::Command::new("senseid-dev").arg("stop").status();
+        }
+
         let sensei_dir = home().join(".sensei");
         if sensei_dir.exists() {
             fs::remove_dir_all(&sensei_dir).ok();
             println!("  ✓ Data directory removed (~/.sensei/)");
+        }
+        let sensei_dev_dir = home().join(".sensei-dev");
+        if sensei_dev_dir.exists() {
+            fs::remove_dir_all(&sensei_dev_dir).ok();
+            println!("  ✓ Dev data directory removed (~/.sensei-dev/)");
+        }
+
+        // Remove dev binaries from ~/.local/bin if present
+        let local_bin = home().join(".local/bin");
+        for name in &["senseid-dev", "sensei-dev", "sensei-mcp-dev"] {
+            let p = local_bin.join(name);
+            if p.exists() {
+                fs::remove_file(&p).ok();
+                println!("  ✓ Removed ~/.local/bin/{}", name);
+            }
         }
 
         println!(
@@ -797,7 +841,7 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
 fn scan(path: &str) {
     ensure_daemon();
     match client()
-        .post(format!("{}/api/scan", DAEMON_URL))
+        .post(format!("{}/api/scan", daemon_url()))
         .json(&serde_json::json!({"root": path, "max_depth": 4}))
         .send()
     {
@@ -817,7 +861,7 @@ fn add_lib(name: &str, url: Option<&str>) {
         body["params"]["url"] = serde_json::json!(u);
     }
     match c
-        .post(format!("{}/api/mcp/call", DAEMON_URL))
+        .post(format!("{}/api/mcp/call", daemon_url()))
         .json(&body)
         .send()
     {

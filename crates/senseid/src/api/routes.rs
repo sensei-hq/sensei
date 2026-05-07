@@ -123,6 +123,8 @@ pub fn create_router(state: AppState) -> Router {
         // Events
         .route("/api/events", post(sessions::create_event))
         .route("/api/events/{project}", get(sessions::list_events))
+        // Hook event ingestion (from sensei-hook.ts)
+        .route("/hook/event", post(sessions::ingest_hook_event))
         // Metrics
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state

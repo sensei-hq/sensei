@@ -2,7 +2,15 @@
 
 use serde_json::{json, Value};
 
-const DAEMON_URL: &str = "http://127.0.0.1:7744";
+/// Debug builds talk to the dev daemon (port 7745 / senseid-dev).
+/// Release builds talk to the release daemon (port 7744 / senseid).
+fn daemon_url() -> &'static str {
+    if cfg!(debug_assertions) {
+        "http://127.0.0.1:7745"
+    } else {
+        "http://127.0.0.1:7744"
+    }
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct AssistantStatus {
@@ -16,7 +24,7 @@ pub struct AssistantStatus {
 
 #[tauri::command]
 pub fn detect_assistants() -> Vec<String> {
-    match ureq::get(&format!("{DAEMON_URL}/api/assistants/detect")).call() {
+    match ureq::get(&format!("{daemon_url()}/api/assistants/detect")).call() {
         Ok(resp) => {
             let assistants: Vec<Value> = resp.into_json().unwrap_or_default();
             assistants.iter()
@@ -31,7 +39,7 @@ pub fn detect_assistants() -> Vec<String> {
 #[tauri::command]
 pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
     let body = json!({"acps": assistants});
-    match ureq::post(&format!("{DAEMON_URL}/api/assistants/configure"))
+    match ureq::post(&format!("{daemon_url()}/api/assistants/configure"))
         .send_json(&body)
     {
         Ok(resp) => {
@@ -56,7 +64,7 @@ pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub fn check_assistant_configs() -> Vec<AssistantStatus> {
-    match ureq::get(&format!("{DAEMON_URL}/api/assistants/detect")).call() {
+    match ureq::get(&format!("{daemon_url()}/api/assistants/detect")).call() {
         Ok(resp) => resp.into_json().unwrap_or_default(),
         Err(_) => vec![],
     }

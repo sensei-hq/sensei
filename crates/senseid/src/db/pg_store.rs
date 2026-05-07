@@ -1042,6 +1042,41 @@ impl PgStore {
         }).collect())
     }
 
+    // ── Hook events ───────────────────────────────────────────────────
+
+    /// Insert a hook event payload into activity.hook_events.
+    /// session_id is the assistant's string session ID (not a DB UUID).
+    /// assistant_family identifies the source (claude, cursor, zed, …); defaults to 'claude'.
+    pub async fn insert_hook_event(
+        &self,
+        session_id: &str,
+        assistant_family: &str,
+        event_type: &str,
+        tool_name: Option<&str>,
+        cwd: Option<&str>,
+        ts: i64,
+        success: Option<bool>,
+        payload: &serde_json::Value,
+    ) -> Result<i64, String> {
+        let row: (i64,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.hook_events \
+             (session_id, assistant_family, event_type, tool_name, cwd, ts, success, payload) \
+             VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id"
+        )
+        .bind(session_id)
+        .bind(assistant_family)
+        .bind(event_type)
+        .bind(tool_name)
+        .bind(cwd)
+        .bind(ts)
+        .bind(success)
+        .bind(payload)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     // ── Projects ──────────────────────────────────────────────────────
 
     pub async fn create_project(&self, name: &str, description: Option<&str>, client: Option<&str>) -> Result<uuid::Uuid, String> {
@@ -1955,6 +1990,62 @@ mod tests {
     async fn session_get_nonexistent() {
         let s = pg_store().await;
         assert!(s.get_session(&uuid::Uuid::new_v4()).await.unwrap().is_none());
+    }
+
+    // ── Hook events tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn hook_event_insert_and_query() {
+        let s = pg_store().await;
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let payload = serde_json::json!({
+            "session_id": session_id,
+            "hook_event_name": "PreToolUse",
+            "assistant_family": "claude",
+            "tool_name": "Read",
+            "cwd": "/tmp/test",
+        });
+        let id = s.insert_hook_event(
+            &session_id, "claude", "PreToolUse", Some("Read"), Some("/tmp/test"),
+            chrono::Utc::now().timestamp_millis(), None, &payload,
+        ).await.unwrap();
+        assert!(id > 0);
+    }
+
+    #[tokio::test]
+    async fn hook_event_post_tool_use_success() {
+        let s = pg_store().await;
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let payload = serde_json::json!({"hook_event_name": "PostToolUse", "assistant_family": "claude", "tool_name": "Bash"});
+        let id = s.insert_hook_event(
+            &session_id, "claude", "PostToolUse", Some("Bash"), None,
+            chrono::Utc::now().timestamp_millis(), Some(true), &payload,
+        ).await.unwrap();
+        assert!(id > 0);
+    }
+
+    #[tokio::test]
+    async fn hook_event_no_tool_name() {
+        let s = pg_store().await;
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let payload = serde_json::json!({"hook_event_name": "SessionStart", "assistant_family": "claude", "model": "claude-sonnet-4"});
+        let id = s.insert_hook_event(
+            &session_id, "claude", "SessionStart", None, Some("/home/user/project"),
+            chrono::Utc::now().timestamp_millis(), None, &payload,
+        ).await.unwrap();
+        assert!(id > 0);
+    }
+
+    #[tokio::test]
+    async fn hook_event_cursor_family() {
+        let s = pg_store().await;
+        let session_id = format!("cursor-session-{}", uuid::Uuid::new_v4());
+        let payload = serde_json::json!({"hook_event_name": "SessionStart", "assistant_family": "cursor"});
+        let id = s.insert_hook_event(
+            &session_id, "cursor", "SessionStart", None, Some("/home/user/project"),
+            chrono::Utc::now().timestamp_millis(), None, &payload,
+        ).await.unwrap();
+        assert!(id > 0);
     }
 
     // ── Projects tests ────────────────────────────────────────────────

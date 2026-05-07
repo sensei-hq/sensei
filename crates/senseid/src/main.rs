@@ -24,10 +24,6 @@ struct Cli {
     /// Port to listen on (default: 7744 prod, 7745 dev)
     #[arg(long)]
     port: Option<u16>,
-
-    /// Runtime mode: prod (default) or dev (uses .sensei-dev/ and port 7745)
-    #[arg(long, default_value = "prod")]
-    mode: String,
 }
 
 #[derive(Subcommand)]
@@ -36,15 +32,16 @@ enum Commands {
     Start {
         #[arg(long)]
         port: Option<u16>,
-
-        /// Runtime mode: prod or dev
-        #[arg(long, default_value = "prod")]
-        mode: String,
     },
     /// Stop the running daemon
     Stop,
     /// Show daemon status
     Status,
+    /// Restart the daemon (stop then start)
+    Restart {
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// Tail the daemon log
     Logs,
     /// Clear the log file
@@ -59,22 +56,25 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Determine mode: subcommand flag > top-level flag > SENSEI_MODE env var > prod default.
-    // init_from_env first so CLI flags can override it.
-    paths::init_from_env();
-    let effective_mode = match &cli.command {
-        Some(Commands::Start { mode, .. }) => mode.as_str(),
-        _ => cli.mode.as_str(),
-    };
-    match effective_mode.to_lowercase().as_str() {
-        "dev" | "development" | "test" => paths::set_mode(paths::Mode::Dev),
-        _ => paths::set_mode(paths::Mode::Prod),
+    // Mode is determined by binary name, then SENSEI_MODE env var (for CI overrides).
+    // Binary ending in "-dev" → Dev mode (port 7745, ~/.sensei-dev/).
+    // No --mode flag — binary name is the contract, not a runtime argument.
+    let is_dev_binary = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .map(|name| name.ends_with("-dev"))
+        .unwrap_or(false);
+
+    if is_dev_binary {
+        paths::set_mode(paths::Mode::Dev);
     }
+    // SENSEI_MODE env var can override binary-name detection (useful for CI).
+    paths::init_from_env();
 
     let default_port = paths::default_port();
 
     match cli.command {
-        Some(Commands::Start { port, .. }) => {
+        Some(Commands::Start { port }) => {
             let p = port.unwrap_or(default_port);
             start_daemon(p);
         }
@@ -83,6 +83,13 @@ async fn main() {
         }
         Some(Commands::Status) => {
             check_status(cli.port.unwrap_or(default_port)).await;
+        }
+        Some(Commands::Restart { port }) => {
+            let p = port.unwrap_or(default_port);
+            stop_daemon(p).await;
+            // Brief pause so the port is released before re-binding
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            start_daemon(p);
         }
         Some(Commands::Logs) => {
             tail_logs();
@@ -125,13 +132,10 @@ fn start_daemon(port: u16) {
         .expect("senseid: cannot open log file");
     let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
 
-    let mode_flag = match paths::mode() {
-        paths::Mode::Dev => "dev",
-        paths::Mode::Prod => "prod",
-    };
+    // Spawn self — mode is inferred from binary name, no --mode flag needed.
     let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
     let mut child = Command::new(exe)
-        .args(["--port", &port.to_string(), "--mode", mode_flag])
+        .args(["--port", &port.to_string()])
         .stdout(log_file)
         .stderr(log_err)
         .stdin(std::process::Stdio::null())

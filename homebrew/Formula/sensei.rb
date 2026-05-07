@@ -10,25 +10,29 @@ class Sensei < Formula
   homepage "https://github.com/sensei-hq/sensei"
   version "0.1.0"
 
-  # Release archives (produced by `make release` + packaging)
+  # Release archives built by GitHub Actions (release-daemon.yml).
+  # Each tarball contains a single directory named after the artifact
+  # (e.g. sensei-macos-arm64/) holding senseid, sensei, and sensei-mcp.
   if OS.mac? && Hardware::CPU.arm?
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-cli-macos-arm64.tar.gz"
+    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-macos-arm64.tar.gz"
     sha256 "REPLACE_WITH_ARM64_SHA256"
   elsif OS.mac? && Hardware::CPU.intel?
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-cli-macos-x86_64.tar.gz"
+    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-macos-x86_64.tar.gz"
     sha256 "REPLACE_WITH_X86_64_SHA256"
   elsif OS.linux? && Hardware::CPU.arm?
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-cli-linux-arm64.tar.gz"
+    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-linux-arm64.tar.gz"
     sha256 "REPLACE_WITH_LINUX_ARM64_SHA256"
   else
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-cli-linux-x86_64.tar.gz"
+    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/sensei-linux-x86_64.tar.gz"
     sha256 "REPLACE_WITH_LINUX_X86_64_SHA256"
   end
 
   def install
-    bin.install "sensei"
-    bin.install "senseid"
-    bin.install "sensei-mcp"
+    # Binaries live inside the platform-specific subdirectory in the tarball
+    arch_dir = Dir["*/"].first || ""
+    bin.install "#{arch_dir}sensei"
+    bin.install "#{arch_dir}senseid"
+    bin.install "#{arch_dir}sensei-mcp"
   end
 
   def post_install
