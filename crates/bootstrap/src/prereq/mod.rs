@@ -143,6 +143,7 @@ pub mod fixer;
 pub mod generic;
 pub mod factory;
 pub mod runner;
+pub mod registry;
 
 #[cfg(test)]
 mod tests {
