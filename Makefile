@@ -16,6 +16,10 @@
 ## Distribution:
 ##   Homebrew tap: sensei-hq/homebrew-tap (tracked as git subtree at homebrew/)
 ##   macOS install: brew tap sensei-hq/tap && brew install sensei
+##
+## Subtrees (editable in-repo, synced to their own GitHub repos):
+##   homebrew/    → sensei-hq/homebrew-tap   (make tap-push)
+##   marketplace/ → sensei-hq/marketplace    (make marketplace-push)
 
 .PHONY: build-dev build-release install-dev install-release \
         daemon-dev daemon-release \
@@ -23,7 +27,7 @@
         website-dev website-build \
         test test-fast test-daemon test-daemon-fast \
         test-app test-app-unit test-app-e2e test-app-sidecar \
-        setup-hooks update bump tap-push clean
+        setup-hooks update bump tap-push marketplace-push clean
 
 VERSION := $(shell cat VERSION)
 
@@ -161,20 +165,24 @@ bump:
 	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Formula/sensei.rb
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Casks/sensei.rb
+	@# Marketplace
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/package.json
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/catalog.json
 	@# Commit everything
 	@git add VERSION \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
 	  website/package.json \
 	  daemon/crates/senseid/Cargo.toml daemon/crates/cli/Cargo.toml daemon/crates/mcp/Cargo.toml \
 	  gateway/crates/gateway/Cargo.toml \
-	  homebrew/Formula/sensei.rb homebrew/Casks/sensei.rb
+	  homebrew/Formula/sensei.rb homebrew/Casks/sensei.rb \
+	  marketplace/package.json marketplace/catalog.json
 	@git commit -m "chore: bump to v$(v)"
 	@git tag v$(v)
 	@git push origin HEAD
 	@git push origin v$(v)
 	@echo "Pushed v$(v) — GitHub Actions will build release artifacts and update tap SHA256s"
-	@echo "Syncing formula version to homebrew-tap..."
-	@$(MAKE) tap-push
+	@echo "Syncing homebrew-tap and marketplace..."
+	@$(MAKE) tap-push marketplace-push
 
 # Sync homebrew/ files to the tap repo (sensei-hq/homebrew-tap).
 # Uses a temporary clone so it works regardless of subtree/squash history.
@@ -186,6 +194,17 @@ tap-push:
 	cd "$$tmpdir" && \
 	git add -A && \
 	git diff --cached --quiet && echo "homebrew-tap already up to date" || \
+	  (git commit -m "chore: sync from sensei monorepo" && git push origin main) && \
+	rm -rf "$$tmpdir"
+
+# Sync marketplace/ files to sensei-hq/marketplace.
+marketplace-push:
+	@tmpdir=$$(mktemp -d) && \
+	git clone git@github.com:sensei-hq/marketplace.git "$$tmpdir" 2>&1 && \
+	rsync -a --delete --exclude='.git' marketplace/ "$$tmpdir/" && \
+	cd "$$tmpdir" && \
+	git add -A && \
+	git diff --cached --quiet && echo "marketplace already up to date" || \
 	  (git commit -m "chore: sync from sensei monorepo" && git push origin main) && \
 	rm -rf "$$tmpdir"
 
