@@ -27,7 +27,7 @@ pub fn enrich_path() -> String {
 }
 
 /// Well-known binary directories to search when PATH is limited.
-/// macOS .app bundles inherit a minimal PATH that excludes Homebrew.
+/// macOS .app bundles inherit a minimal PATH that excludes Homebrew and ~/.local/bin.
 const EXTRA_PATHS: &[&str] = &[
     "/opt/homebrew/bin",
     "/opt/homebrew/sbin",
@@ -38,8 +38,8 @@ const EXTRA_PATHS: &[&str] = &[
 /// Find a binary in PATH (and well-known locations).
 ///
 /// Uses `which` on unix and `where` on windows. If that fails, checks
-/// [`EXTRA_PATHS`] directly — this handles macOS .app bundles where the
-/// process PATH doesn't include `/opt/homebrew/bin`.
+/// [`EXTRA_PATHS`] and `~/.local/bin` directly — this handles macOS .app
+/// bundles where the process PATH doesn't include Homebrew or user-local bins.
 ///
 /// Returns the full path if the binary is found, `None` otherwise.
 pub fn which_binary(name: &str) -> Option<String> {
@@ -66,6 +66,15 @@ pub fn which_binary(name: &str) -> Option<String> {
     // Fallback: check well-known directories directly
     for dir in EXTRA_PATHS {
         let candidate = format!("{dir}/{name}");
+        if std::path::Path::new(&candidate).exists() {
+            return Some(candidate);
+        }
+    }
+
+    // ~/.local/bin — used by `make install-dev` for dev builds.
+    // Cannot be a static constant because it depends on $HOME.
+    if let Ok(home) = std::env::var("HOME") {
+        let candidate = format!("{home}/.local/bin/{name}");
         if std::path::Path::new(&candidate).exists() {
             return Some(candidate);
         }

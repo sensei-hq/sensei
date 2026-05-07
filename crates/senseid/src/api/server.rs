@@ -11,18 +11,21 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     super::handlers::health::init_uptime();
     let task_queue = Arc::new(TaskQueue::new());
 
-    // Connect to PostgreSQL
-    // Debug builds (cargo build) use sensei_dev; release builds use sensei.
-    // DATABASE_URL env var overrides either.
-    let default_db = if cfg!(debug_assertions) {
-        "postgresql://localhost:5432/sensei_dev"
-    } else {
-        "postgresql://localhost:5432/sensei"
+    // Connect to PostgreSQL.
+    // All mode-sensitive values come from SenseiConfig — the single source of truth
+    // shared by bootstrap, the Tauri sidecar, and this daemon.
+    // Priority: DATABASE_URL > SENSEI_DB_NAME > SENSEI_MODE default.
+    let database_url = sensei_bootstrap::SenseiConfig::from_env().db_url;
+    let pg = match crate::db::pg_store::PgStore::connect(&database_url).await {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!(
+                "[senseid] Database unavailable ({}). Run bootstrap to set up the database, then restart.",
+                e
+            );
+            std::process::exit(1);
+        }
     };
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| default_db.to_string());
-    let pg = crate::db::pg_store::PgStore::connect(&database_url)
-        .await
-        .expect("Failed to connect to PostgreSQL");
 
     // Read max concurrent repos from PgStore config
     if let Ok(Some(max_str)) = pg.get_config("max_concurrent_repos").await {

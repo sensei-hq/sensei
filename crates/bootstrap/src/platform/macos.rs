@@ -152,7 +152,7 @@ impl PlatformProvider for MacOSProvider {
 
             // For daemon, fall back to direct binary start
             if is_daemon {
-                return util::start_daemon(crate::DAEMON_PORT);
+                return util::start_daemon(crate::daemon_port());
             }
 
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -161,7 +161,7 @@ impl PlatformProvider for MacOSProvider {
 
         // No brew — only the daemon has a fallback
         if is_daemon {
-            return util::start_daemon(crate::DAEMON_PORT);
+            return util::start_daemon(crate::daemon_port());
         }
 
         Err(format!(

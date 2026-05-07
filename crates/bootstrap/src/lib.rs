@@ -5,6 +5,7 @@
 //!
 //! Consumers: sensei-cli (`sensei doctor`), Tauri desktop app (sidecar commands).
 
+pub mod config;
 pub mod database;
 pub mod hardware;
 pub mod models;
@@ -13,13 +14,22 @@ pub mod prereq;
 pub mod types;
 pub mod util;
 
+pub use config::{SenseiConfig, SenseiMode};
 pub use types::*;
 pub use types::BootstrapTrace;
 
 /// Default ports for sensei services.
+/// `DAEMON_PORT` is the release default; use `daemon_port()` for mode-aware selection.
 pub const DAEMON_PORT: u16 = 7744;
 pub const OLLAMA_PORT: u16 = 11434;
 pub const POSTGRES_PORT: u16 = 5432;
+
+/// Return the daemon port for the current mode.
+///
+/// Delegates to [`SenseiConfig::from_env`] — single source of truth.
+pub fn daemon_port() -> u16 {
+    SenseiConfig::from_env().daemon_port
+}
 
 /// Return the platform provider for the current OS.
 pub fn provider() -> Box<dyn platform::PlatformProvider> {
@@ -70,7 +80,7 @@ pub fn run_with_traces() -> (BootstrapResult, Vec<BootstrapTrace>) {
         util::check_binary_traced("sensei", "sensei", "--version")
     });
     let h4 = std::thread::spawn(|| database::check_traced());
-    let h5 = std::thread::spawn(|| util::check_service_traced("daemon", DAEMON_PORT));
+    let h5 = std::thread::spawn(|| util::check_service_traced("daemon", daemon_port()));
 
     // Collate in gate order
     let (s0, t0) = h0.join().unwrap_or_else(|_| {
@@ -118,7 +128,7 @@ pub fn run() -> BootstrapResult {
         // Gate 五: Database
         database::check(),
         // Gate 六: Daemon (service only — binary checked via sensei gate)
-        util::check_service("daemon", DAEMON_PORT),
+        util::check_service("daemon", daemon_port()),
     ];
 
     BootstrapResult::from_checks(components, hw)

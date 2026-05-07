@@ -1,16 +1,10 @@
 //! Database checks — PostgreSQL reachability, database existence, extensions.
 //! Uses shell commands (pg_isready, psql), NOT sqlx — no database driver dependency.
 //!
-//! The database name is resolved once from:
-//!   1. `SENSEI_DB_NAME` environment variable  (set to "sensei-dev" in dev)
-//!   2. Hard-coded fallback: "sensei"
-//!
-//! The dbd deploy environment ("prod" | "dev") is resolved from SENSEI_MODE:
-//!   SENSEI_MODE=dev  → "dev"
-//!   anything else    → "prod"
+//! All mode-sensitive values (DB name, deploy environment) derive from
+//! [`crate::config::SenseiConfig`] — the single source of truth.
 
 use std::process::Command;
-use std::sync::OnceLock;
 
 use dbd_core::{
     Design,
@@ -18,16 +12,13 @@ use dbd_core::{
 };
 use dbd_core::adapter::postgres::PostgresAdapter;
 
+use crate::config::SenseiConfig;
 use crate::types::{BootstrapTrace, ComponentStatus};
 use crate::util::run_traced;
 
-static DB_NAME: OnceLock<String> = OnceLock::new();
-
-/// The active database name — resolved once from SENSEI_DB_NAME env var or "sensei".
-pub fn db_name() -> &'static str {
-    DB_NAME.get_or_init(|| {
-        std::env::var("SENSEI_DB_NAME").unwrap_or_else(|_| "sensei".to_string())
-    })
+/// The active database name — delegates to [`SenseiConfig::from_env`].
+pub fn db_name() -> String {
+    SenseiConfig::from_env().db_name
 }
 
 /// Check if PostgreSQL is reachable, the database exists, and the schema is deployed.
@@ -37,6 +28,7 @@ pub fn db_name() -> &'static str {
 /// which triggers `DatabaseSetupFixer` to run `deploy()`.
 pub fn check() -> ComponentStatus {
     let db = db_name();
+    let db = db.as_str();
 
     if !pg_is_ready() {
         return ComponentStatus::failed("database", "postgresql not reachable (pg_isready failed)");
@@ -65,6 +57,7 @@ pub fn check() -> ComponentStatus {
 /// Returns status and diagnostic traces. Pure function — no side effects.
 pub fn check_traced() -> (ComponentStatus, Vec<BootstrapTrace>) {
     let db = db_name();
+    let db = db.as_str();
     let mut traces = Vec::new();
 
     // Step 1: pg_isready
@@ -150,7 +143,7 @@ pub fn check_traced() -> (ComponentStatus, Vec<BootstrapTrace>) {
 pub fn create() -> Result<ComponentStatus, String> {
     let db = db_name();
     let output = Command::new("createdb")
-        .arg(db)
+        .arg(&db)
         .output()
         .map_err(|e| format!("createdb failed: {e}"))?;
 
@@ -170,7 +163,7 @@ pub fn create() -> Result<ComponentStatus, String> {
 pub fn ensure_extensions() -> Result<ComponentStatus, String> {
     let db = db_name();
     let output = Command::new("psql")
-        .args(["-d", db, "-c", "CREATE EXTENSION IF NOT EXISTS vector"])
+        .args(["-d", &db, "-c", "CREATE EXTENSION IF NOT EXISTS vector"])
         .output()
         .map_err(|e| format!("psql failed: {e}"))?;
 
@@ -182,28 +175,21 @@ pub fn ensure_extensions() -> Result<ComponentStatus, String> {
     Err(format!("failed to enable pgvector: {stderr}"))
 }
 
-/// Resolve the dbd deploy environment from SENSEI_MODE.
-/// "dev" → dev seed data and relaxed constraints; "prod" → production defaults.
-fn deploy_env() -> &'static str {
-    match std::env::var("SENSEI_MODE").as_deref() {
-        Ok("dev" | "development" | "test") => "dev",
-        _ => "prod",
-    }
-}
-
 /// Deploy the schema using dbd-core.
 ///
 /// Schema source priority:
 ///   1. `SENSEI_DB_SCHEMA_PATH` env var — local directory path (dev/test override)
 ///   2. `sensei-hq/sensei/database@v{app_version}` — GitHub download (production)
 ///
-/// Deploy environment is read from `SENSEI_MODE` (dev | prod).
+/// Deploy environment (dev | prod) is derived from [`SenseiConfig`].
 ///
 /// Idempotent: dbd checks `_dbd_meta` internally and only applies pending changes.
 /// Requires a running PostgreSQL server and a reachable `{db_name}` database.
 pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
-    let db = db_name();
-    let env = deploy_env();
+    let cfg = SenseiConfig::from_env();
+    let db = cfg.db_name.as_str();
+    let env = if cfg.is_dev() { "dev" } else { "prod" };
+    // Use postgres:// scheme (no user) so psql/dbd uses the OS user by default
     let db_url = format!("postgres://localhost/{db}");
 
     // Pre-flight: log current schema state
@@ -262,6 +248,7 @@ pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
 /// 4. Run dbd deploy (schema + seed data)
 pub fn setup(app_version: &str) -> Result<ComponentStatus, String> {
     let db = db_name();
+    let db = db.as_str();
 
     if !pg_is_ready() {
         return Err("postgresql is not accepting connections".to_string());
