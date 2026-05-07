@@ -4,7 +4,7 @@
 //! and register it here. Adding a new platform: add a match arm in each factory function.
 
 use std::sync::Arc;
-use crate::{POSTGRES_PORT, OLLAMA_PORT, DAEMON_PORT};
+use crate::{POSTGRES_PORT, OLLAMA_PORT, daemon_port};
 use crate::platform::{Platform, PlatformProvider};
 use super::{GateKind, Prerequisite};
 use super::checker::{BinaryChecker, PortChecker, DatabaseChecker, VersionedBinaryChecker};
@@ -116,8 +116,8 @@ pub fn start_services(provider: Arc<dyn PlatformProvider>) -> Vec<Box<dyn Prereq
         )),
         Box::new(GenericPrerequisite::new(
             "daemon", "Sensei Daemon",
-            Box::new(PortChecker::new("daemon", DAEMON_PORT)),
-            Box::new(ServiceStartFixer::new(provider, "daemon", DAEMON_PORT)),
+            Box::new(PortChecker::new("daemon", daemon_port())),
+            Box::new(ServiceStartFixer::new(provider, "daemon", daemon_port())),
             GateKind::Service, None,
         )),
     ]
