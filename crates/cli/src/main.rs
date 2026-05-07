@@ -3,6 +3,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+// Source of truth: sensei_bootstrap::config::BREW_TAP — keep in sync.
+// (CLI does not depend on bootstrap to avoid pulling in tokio/sysinfo/dbd-core.)
 const BREW_TAP: &str = "sensei-hq/tap/sensei";
 
 /// True when this binary is named `sensei-dev` — determines port and daemon binary.

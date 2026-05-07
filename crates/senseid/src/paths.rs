@@ -10,20 +10,11 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-// ── GitHub org/repo constants ───────────────────────────────────────────────
+// ── GitHub org/repo constants — re-exported from bootstrap (single source of truth) ────
 
-/// GitHub organization.
-pub const GITHUB_ORG: &str = "sensei-hq";
-
-/// Homebrew tap.
-pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
-
-/// Marketplace raw content base URL.
-pub const MARKETPLACE_RAW_URL: &str =
-    "https://raw.githubusercontent.com/sensei-hq/marketplace/main";
-
-/// Marketplace repo slug (for `claude plugin add`).
-pub const MARKETPLACE_REPO: &str = "sensei-hq/marketplace";
+pub use sensei_bootstrap::config::{
+    BREW_TAP, GITHUB_ORG, GITHUB_REPO, MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
+};
 
 /// Runtime mode — determines data directory and default port.
 #[derive(Debug, Clone, Copy, PartialEq)]

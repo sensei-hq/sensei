@@ -9,6 +9,25 @@
 
 use std::path::PathBuf;
 
+// ── Project-wide constants ────────────────────────────────────────────────────
+
+/// GitHub organization that owns all sensei repositories.
+pub const GITHUB_ORG: &str = "sensei-hq";
+
+/// GitHub repository name for the main sensei project.
+pub const GITHUB_REPO: &str = "sensei";
+
+/// Homebrew tap slug used in install/reinstall messages.
+pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
+
+/// Base raw-content URL for the marketplace repository.
+/// Append `/{path}` to download individual files.
+pub const MARKETPLACE_RAW_URL: &str =
+    "https://raw.githubusercontent.com/sensei-hq/marketplace/main";
+
+/// Marketplace repository slug (for `claude plugin add`).
+pub const MARKETPLACE_REPO: &str = "sensei-hq/marketplace";
+
 /// Runtime mode — controls ports, directory names, and database names.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SenseiMode {
@@ -108,6 +127,19 @@ impl SenseiConfig {
     /// PID file path.
     pub fn pid_path(&self) -> PathBuf {
         self.sensei_dir().join("serve.pid")
+    }
+
+    /// Resolve the database schema source for dbd-core's `resolve_source()`.
+    ///
+    /// Priority:
+    ///   1. `SENSEI_DB_SCHEMA_PATH` env var — local directory path (dev/test override).
+    ///      Must point to the directory containing `design.yaml`.
+    ///   2. GitHub path: `{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}` (production).
+    pub fn db_schema_source(version: &str) -> String {
+        std::env::var("SENSEI_DB_SCHEMA_PATH")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}"))
     }
 }
 
