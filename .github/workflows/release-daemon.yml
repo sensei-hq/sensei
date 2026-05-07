@@ -44,19 +44,17 @@ jobs:
         run: cargo install cross --locked
 
       - name: Build binaries
-        working-directory: daemon
         env:
           BUILD_TARGET: ${{ matrix.target }}
           USE_CROSS: ${{ matrix.use-cross }}
         run: |
           if [ "$USE_CROSS" = "true" ]; then
-            cross build --release --target "$BUILD_TARGET"
+            cross build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp
           else
-            cargo build --release --target "$BUILD_TARGET"
+            cargo build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp
           fi
 
       - name: Package binaries
-        working-directory: daemon
         env:
           BUILD_TARGET: ${{ matrix.target }}
           ARTIFACT: ${{ matrix.artifact }}
@@ -72,7 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: daemon/${{ matrix.artifact }}.tar.gz
+          path: ${{ matrix.artifact }}.tar.gz
 
   release:
     needs: build
