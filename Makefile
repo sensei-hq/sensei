@@ -1,11 +1,15 @@
 ## Sensei monorepo — root build coordinator
 ##
 ## Components:
-##   app/      — Tauri + SvelteKit desktop app
-##   daemon/   — Rust backend (senseid, sensei-cli, sensei-mcp)
-##   website/  — Marketing website
-##   gateway/  — LLM routing library
-##   docs/     — Documentation
+##   app/         — Tauri + SvelteKit desktop app
+##   crates/      — All Rust crates (single workspace)
+##     senseid    — HTTP daemon (API server)
+##     cli        — sensei CLI (binary: sensei)
+##     mcp        — MCP server
+##     bootstrap  — installer/prereq checker
+##     gateway    — LLM routing library
+##   website/     — Marketing website
+##   docs/        — Documentation
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
@@ -22,10 +26,10 @@
 ##   marketplace/ → sensei-hq/marketplace    (make marketplace-push)
 
 .PHONY: build-dev build-release install-dev install-release \
-        daemon-dev daemon-release \
+        crates-dev crates-release \
         app-dev app-dev-bundle app-release app-check \
         website-dev website-build \
-        test test-fast test-daemon test-daemon-fast \
+        test test-fast test-crates test-crates-fast \
         test-app test-app-unit test-app-e2e test-app-sidecar \
         setup-hooks update bump tap-push marketplace-push clean
 
@@ -38,25 +42,34 @@ endif
 include .env.dev
 export DATABASE_URL SENSEI_MODE VITE_BYPASS_HEALTH
 
-# ── Daemon ────────────────────────────────────────────────────────────────────
+# ── Rust crates ───────────────────────────────────────────────────────────────
 
-daemon-dev:
-	$(MAKE) -C daemon dev
+crates-dev:
+	cargo build -p senseid -p sensei-cli -p sensei-mcp
 
-daemon-release:
-	$(MAKE) -C daemon release
+crates-release:
+	cargo build --release -p senseid -p sensei-cli -p sensei-mcp
 
-install-dev: daemon-dev
-	$(MAKE) -C daemon install-dev
+install-dev: crates-dev
+	@mkdir -p ~/.local/bin
+	cp target/debug/senseid    ~/.local/bin/senseid
+	cp target/debug/sensei     ~/.local/bin/sensei
+	cp target/debug/sensei-mcp ~/.local/bin/sensei-mcp
+	@echo "Installed dev binaries to ~/.local/bin"
+	@echo "Make sure ~/.local/bin is before /opt/homebrew/bin in PATH"
 
-install-release: daemon-release
-	$(MAKE) -C daemon install-release
+install-release: crates-release
+	@mkdir -p ~/.local/bin
+	cp target/release/senseid    ~/.local/bin/senseid
+	cp target/release/sensei     ~/.local/bin/sensei
+	cp target/release/sensei-mcp ~/.local/bin/sensei-mcp
+	@echo "Installed release binaries to ~/.local/bin"
 
-build-dev: daemon-dev
-	@echo "Dev build complete — binaries in daemon/target/debug/"
+build-dev: crates-dev
+	@echo "Dev build complete — binaries in target/debug/"
 
-build-release: daemon-release
-	@echo "Release build complete — binaries in daemon/target/release/"
+build-release: crates-release
+	@echo "Release build complete — binaries in target/release/"
 
 # ── Desktop app ───────────────────────────────────────────────────────────────
 
@@ -93,15 +106,15 @@ website-build:
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 #   or override: make test TEST_DATABASE_URL=postgresql://localhost:5432/sensei_dev
 
-test-fast: test-daemon-fast test-app-unit
+test-fast: test-crates-fast test-app-unit
 
-test-daemon-fast:
-	cd daemon && cargo test -p sensei-bootstrap
+test-crates-fast:
+	cargo test -p sensei-bootstrap
 
-test: test-daemon test-app-unit test-app-sidecar
+test: test-crates test-app-unit test-app-sidecar
 
-test-daemon:
-	$(MAKE) -C daemon test
+test-crates:
+	cargo test --workspace
 
 test-app: test-app-unit test-app-sidecar
 
@@ -125,10 +138,8 @@ setup-hooks:
 # ── Dependency updates ────────────────────────────────────────────────────────
 
 update:
-	@echo "Updating Rust dependencies (daemon)..."
-	cargo update --manifest-path daemon/Cargo.toml
-	@echo "Updating Rust dependencies (gateway)..."
-	cargo update --manifest-path gateway/crates/gateway/Cargo.toml
+	@echo "Updating Rust dependencies..."
+	cargo update
 	@echo "Updating Node dependencies (app)..."
 	cd app && bun update
 	@echo "Updating Node dependencies (website)..."
@@ -136,14 +147,14 @@ update:
 	@echo "Running tests to verify updates..."
 	$(MAKE) test
 	@echo "All dependencies updated and tests passed."
-	@echo "Review: git diff daemon/Cargo.lock app/bun.lock website/bun.lock"
+	@echo "Review: git diff Cargo.lock app/bun.lock website/bun.lock"
 
 # ── Version bump ──────────────────────────────────────────────────────────────
 # Usage: make bump v=0.3.0
 #
 # Updates all version strings, commits, creates a git tag, pushes the commit
 # and tag (which triggers the GitHub Actions release workflows), then syncs
-# the updated Homebrew formula version to the tap via git subtree push.
+# the updated Homebrew formula version to the tap and marketplace.
 # GitHub Actions will fill in the real SHA256s once artifacts are built.
 
 bump:
@@ -155,13 +166,11 @@ bump:
 	@# Tauri app manifest + Cargo.toml
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/src-tauri/tauri.conf.json
 	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" app/src-tauri/Cargo.toml
-	@# Daemon Rust crates (excludes bootstrap which has its own cadence)
-	@for crate in senseid cli mcp; do \
-	  f="daemon/crates/$$crate/Cargo.toml"; \
+	@# Rust crates (excludes bootstrap which has its own cadence)
+	@for crate in senseid cli mcp gateway; do \
+	  f="crates/$$crate/Cargo.toml"; \
 	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" "$$f"; \
 	done
-	@# Gateway Rust crate
-	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" gateway/crates/gateway/Cargo.toml
 	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Formula/sensei.rb
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Casks/sensei.rb
@@ -172,8 +181,7 @@ bump:
 	@git add VERSION \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
 	  website/package.json \
-	  daemon/crates/senseid/Cargo.toml daemon/crates/cli/Cargo.toml daemon/crates/mcp/Cargo.toml \
-	  gateway/crates/gateway/Cargo.toml \
+	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml crates/gateway/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/sensei.rb \
 	  marketplace/package.json marketplace/catalog.json
 	@git commit -m "chore: bump to v$(v)"
@@ -211,5 +219,5 @@ marketplace-push:
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
 clean:
-	$(MAKE) -C daemon clean
+	cargo clean
 	rm -rf app/.svelte-kit app/build
