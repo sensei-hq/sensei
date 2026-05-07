@@ -20,6 +20,13 @@ pub const GITHUB_REPO: &str = "sensei";
 /// Homebrew tap slug used in install/reinstall messages.
 pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
 
+/// Raw GitHub URL for the homebrew tap Brewfile (authoritative install source).
+pub const HOMEBREW_BREWFILE_URL: &str =
+    "https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile";
+
+/// Homebrew tap repository slug (for reference/logging).
+pub const HOMEBREW_TAP_REPO: &str = "sensei-hq/homebrew-tap";
+
 /// Base raw-content URL for the marketplace repository.
 /// Append `/{path}` to download individual files.
 pub const MARKETPLACE_RAW_URL: &str =
@@ -76,7 +83,7 @@ pub struct SenseiConfig {
     /// Use this everywhere — never hard-code a URL.
     pub db_url: String,
     /// Sensei data directory suffix (`.sensei` / `.sensei-dev`).
-    dir_suffix: &'static str,
+    pub dir_suffix: &'static str,
 }
 
 impl SenseiConfig {
@@ -127,6 +134,21 @@ impl SenseiConfig {
     /// PID file path.
     pub fn pid_path(&self) -> PathBuf {
         self.sensei_dir().join("serve.pid")
+    }
+
+    /// Returns the sensei CLI binary name for the current mode.
+    pub fn sensei_binary(&self) -> &'static str {
+        if self.is_dev() { "sensei-dev" } else { "sensei" }
+    }
+
+    /// Returns the senseid daemon binary name for the current mode.
+    pub fn senseid_binary(&self) -> &'static str {
+        if self.is_dev() { "senseid-dev" } else { "senseid" }
+    }
+
+    /// Returns the sensei-mcp binary name for the current mode.
+    pub fn sensei_mcp_binary(&self) -> &'static str {
+        if self.is_dev() { "sensei-mcp-dev" } else { "sensei-mcp" }
     }
 
     /// Resolve the database schema source for dbd-core's `resolve_source()`.
@@ -194,5 +216,40 @@ mod tests {
     fn home_dir_is_not_empty() {
         let h = home_dir();
         assert!(!h.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn homebrew_brewfile_url_is_github_raw() {
+        assert!(HOMEBREW_BREWFILE_URL.starts_with("https://raw.githubusercontent.com/"));
+        assert!(HOMEBREW_BREWFILE_URL.contains("homebrew-tap"));
+        assert!(HOMEBREW_BREWFILE_URL.ends_with("Brewfile"));
+    }
+
+    #[test]
+    fn binary_names_prod() {
+        let cfg = SenseiConfig {
+            mode: SenseiMode::Prod,
+            daemon_port: 7744,
+            db_name: "sensei".to_string(),
+            db_url: "postgresql://localhost/sensei".to_string(),
+            dir_suffix: ".sensei",
+        };
+        assert_eq!(cfg.sensei_binary(), "sensei");
+        assert_eq!(cfg.senseid_binary(), "senseid");
+        assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp");
+    }
+
+    #[test]
+    fn binary_names_dev() {
+        let cfg = SenseiConfig {
+            mode: SenseiMode::Dev,
+            daemon_port: 7745,
+            db_name: "sensei_dev".to_string(),
+            db_url: "postgresql://localhost/sensei_dev".to_string(),
+            dir_suffix: ".sensei-dev",
+        };
+        assert_eq!(cfg.sensei_binary(), "sensei-dev");
+        assert_eq!(cfg.senseid_binary(), "senseid-dev");
+        assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp-dev");
     }
 }
