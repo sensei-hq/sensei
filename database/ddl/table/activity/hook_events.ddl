@@ -3,7 +3,7 @@ set search_path to activity, sensei, extensions;
 create table if not exists hook_events (
   id               bigserial         primary key
 , session_id       text              not null default ''
-, assistant_family text              not null default 'claude'
+, assistant_family assistant_family  not null default 'claude'
 , event_type       text              not null
 , tool_name        text
 , cwd              text
@@ -37,7 +37,7 @@ comment on column hook_events.id
 comment on column hook_events.session_id
      is 'Assistant session ID string. Not a FK — not a DB UUID.';
 comment on column hook_events.assistant_family
-     is 'Which assistant emitted this event: claude, cursor, zed, codex, aider, etc. Stored as text for easy import; matches sensei.assistant_family enum values.';
+     is 'Which assistant emitted this event: claude, cursor, zed, codex, aider, etc.';
 comment on column hook_events.event_type
      is 'hook_event_name from payload: SessionStart, PreToolUse, PostToolUse, Stop, etc.';
 comment on column hook_events.tool_name
