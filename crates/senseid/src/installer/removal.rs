@@ -52,16 +52,9 @@ fn remove_plugin_artifacts(result: &mut RemoveResult) {
     let agents_dir = h.join(".claude/agents");
     result.agents_removed += remove_md_files_in(&agents_dir);
 
-    // Hook config in ~/.claude/settings.json (fallback path hooks)
-    let settings_path = h.join(".claude/settings.json");
-    if settings_path.exists()
-        && let Ok(content) = fs::read_to_string(&settings_path)
-            && let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content)
-                && settings.get("hooks").is_some() {
-                    settings.as_object_mut().unwrap().remove("hooks");
-                    fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap()).ok();
-                    result.hooks_removed = true;
-                }
+    // Note: settings.json hooks are intentionally NOT touched here.
+    // Hook registration is managed by `claude plugin install/uninstall sensei`.
+    // Removing the entire "hooks" block would destroy hooks not owned by sensei.
 }
 
 /// Clear marketplace cache.

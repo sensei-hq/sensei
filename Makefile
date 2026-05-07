@@ -26,7 +26,7 @@
 ##   marketplace/ → sensei-hq/marketplace    (make marketplace-push)
 
 .PHONY: build-dev build-release install-dev install-release \
-        crates-dev crates-release \
+        crates-dev crates-release daemon-dev \
         app-dev app-dev-bundle app-release app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
@@ -52,11 +52,11 @@ crates-release:
 
 install-dev: crates-dev
 	@mkdir -p ~/.local/bin
-	cp target/debug/senseid    ~/.local/bin/senseid
-	cp target/debug/sensei     ~/.local/bin/sensei
-	cp target/debug/sensei-mcp ~/.local/bin/sensei-mcp
-	@echo "Installed dev binaries to ~/.local/bin"
-	@echo "Make sure ~/.local/bin is before /opt/homebrew/bin in PATH"
+	cp target/debug/senseid    ~/.local/bin/senseid-dev
+	cp target/debug/sensei     ~/.local/bin/sensei-dev
+	cp target/debug/sensei-mcp ~/.local/bin/sensei-mcp-dev
+	@echo "Installed dev binaries to ~/.local/bin (senseid-dev, sensei-dev, sensei-mcp-dev)"
+	@echo "Run dev daemon: make daemon-dev"
 
 install-release: crates-release
 	@mkdir -p ~/.local/bin
@@ -70,6 +70,13 @@ build-dev: crates-dev
 
 build-release: crates-release
 	@echo "Release build complete — binaries in target/release/"
+
+# Run the dev daemon directly from the build directory (port 7745, sensei_dev DB).
+# Does NOT install to ~/.local/bin — coexists alongside the release daemon on port 7744.
+# SENSEI_MODE=dev is required because the binary is named 'senseid' (not 'senseid-dev');
+# mode detection by binary name only works when the installed -dev suffix binary is used.
+daemon-dev: crates-dev
+	SENSEI_MODE=dev target/debug/senseid start
 
 # ── Desktop app ───────────────────────────────────────────────────────────────
 
