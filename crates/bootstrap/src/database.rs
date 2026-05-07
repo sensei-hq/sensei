@@ -200,13 +200,10 @@ pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
     );
 
     // Resolve schema source: local override wins over GitHub
-    let source = match std::env::var("SENSEI_DB_SCHEMA_PATH") {
-        Ok(path) if !path.is_empty() => {
-            eprintln!("[dbd] deploy: using local schema path: {path}");
-            path
-        }
-        _ => format!("sensei-hq/sensei/database@v{app_version}"),
-    };
+    let source = SenseiConfig::db_schema_source(app_version);
+    if std::env::var("SENSEI_DB_SCHEMA_PATH").is_ok() {
+        eprintln!("[dbd] deploy: using local schema path: {source}");
+    }
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -381,12 +378,15 @@ mod tests {
     fn deploy_source_string_is_parseable() {
         // Verify the source format we construct is valid per dbd-core's parser
         let version = "1.2.3";
-        let source = format!("sensei-hq/sensei/database@v{version}");
-        let parsed = dbd_core::github::parse_github_source(&source).unwrap();
-        assert_eq!(parsed.owner, "sensei-hq");
-        assert_eq!(parsed.repo, "sensei");
-        assert_eq!(parsed.subpath, Some("database".to_string()));
-        assert_eq!(parsed.git_ref, format!("v{version}"));
+        let source = SenseiConfig::db_schema_source(version);
+        // SENSEI_DB_SCHEMA_PATH is not set in unit tests → should use GitHub format
+        if std::env::var("SENSEI_DB_SCHEMA_PATH").is_err() {
+            let parsed = dbd_core::github::parse_github_source(&source).unwrap();
+            assert_eq!(parsed.owner, "sensei-hq");
+            assert_eq!(parsed.repo, "sensei");
+            assert_eq!(parsed.subpath, Some("database".to_string()));
+            assert_eq!(parsed.git_ref, format!("v{version}"));
+        }
     }
 
     #[test]
