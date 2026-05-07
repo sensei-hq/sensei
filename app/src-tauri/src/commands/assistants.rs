@@ -24,7 +24,7 @@ pub struct AssistantStatus {
 
 #[tauri::command]
 pub fn detect_assistants() -> Vec<String> {
-    match ureq::get(&format!("{daemon_url()}/api/assistants/detect")).call() {
+    match ureq::get(&format!("{}/api/assistants/detect", daemon_url())).call() {
         Ok(resp) => {
             let assistants: Vec<Value> = resp.into_json().unwrap_or_default();
             assistants.iter()
@@ -39,7 +39,7 @@ pub fn detect_assistants() -> Vec<String> {
 #[tauri::command]
 pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
     let body = json!({"acps": assistants});
-    match ureq::post(&format!("{daemon_url()}/api/assistants/configure"))
+    match ureq::post(&format!("{}/api/assistants/configure", daemon_url()))
         .send_json(&body)
     {
         Ok(resp) => {
@@ -64,7 +64,7 @@ pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub fn check_assistant_configs() -> Vec<AssistantStatus> {
-    match ureq::get(&format!("{daemon_url()}/api/assistants/detect")).call() {
+    match ureq::get(&format!("{}/api/assistants/detect", daemon_url())).call() {
         Ok(resp) => resp.into_json().unwrap_or_default(),
         Err(_) => vec![],
     }
