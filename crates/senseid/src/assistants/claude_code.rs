@@ -37,15 +37,6 @@ impl Assistant for ClaudeCodeAssistant {
     }
 
     fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
-        if crate::paths::mode() == crate::paths::Mode::Dev {
-            // Dev daemon: write sensei-hook-dev.ts entries directly to settings.json.
-            // Skills and commands are not installed (dev users already have them from
-            // the release plugin, or are testing without them).
-            write_dev_hook_entries()?;
-            return Ok(AssistantConfigureOk { plugin: true, warnings: vec![] });
-        }
-
-        // Release daemon: use Claude Code's plugin system.
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
@@ -62,7 +53,7 @@ impl Assistant for ClaudeCodeAssistant {
             }
         }
 
-        // 2. Install plugin (handles commands, skills, hooks, MCP)
+        // 2. Install plugin (skills, commands, agents, marketplace hooks, MCP)
         let install_out = std::process::Command::new(&claude_bin)
             .args(["plugin", "install", "sensei", "--scope", "user"])
             .output()
@@ -73,22 +64,28 @@ impl Assistant for ClaudeCodeAssistant {
             return Err(format!("plugin install: {}", err));
         }
 
+        // 3. Dev daemon additionally registers sensei-hook-dev.ts so the dev
+        //    daemon also receives hook events (alongside the release hooks from step 2).
+        if crate::paths::mode() == crate::paths::Mode::Dev {
+            if let Err(e) = write_dev_hook_entries() {
+                // Non-fatal: plugin install succeeded; dev hooks are best-effort.
+                return Ok(AssistantConfigureOk {
+                    plugin: true,
+                    warnings: vec![format!("dev hooks: {}", e)],
+                });
+            }
+        }
+
         Ok(AssistantConfigureOk { plugin: true, warnings: vec![] })
     }
 
     fn remove(&self) -> bool {
-        if crate::paths::mode() == crate::paths::Mode::Dev {
-            // Dev daemon: remove only the dev hook entries from settings.json.
-            // Never touch the release plugin entries.
-            return remove_dev_hook_entries();
-        }
-
-        // Release daemon: use Claude Code's plugin system.
         let claude_bin = match find_claude_binary() {
             Some(b) => b,
             None => return false,
         };
 
+        // Uninstall marketplace plugin (skills, commands, agents, marketplace hooks, MCP)
         let plugin_removed = std::process::Command::new(&claude_bin)
             .args(["plugin", "uninstall", "sensei"])
             .output()
@@ -99,6 +96,12 @@ impl Assistant for ClaudeCodeAssistant {
         let _ = std::process::Command::new(&claude_bin)
             .args(["plugin", "marketplace", "remove", "sensei-marketplace"])
             .output();
+
+        // Dev daemon additionally removes its own hook entries (sensei-hook-dev.ts).
+        // This never touches the release plugin entries — only removes the dev entries.
+        if crate::paths::mode() == crate::paths::Mode::Dev {
+            remove_dev_hook_entries();
+        }
 
         plugin_removed
     }
