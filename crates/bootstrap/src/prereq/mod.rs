@@ -144,6 +144,7 @@ pub mod generic;
 pub mod factory;
 pub mod runner;
 pub mod registry;
+pub mod engine;
 
 #[cfg(test)]
 mod tests {
