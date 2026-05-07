@@ -176,9 +176,18 @@ bump:
 	@echo "Syncing formula version to homebrew-tap..."
 	@$(MAKE) tap-push
 
-# Push the homebrew/ subtree to the tap repo (sensei-hq/homebrew-tap)
+# Sync homebrew/ files to the tap repo (sensei-hq/homebrew-tap).
+# Uses a temporary clone so it works regardless of subtree/squash history.
 tap-push:
-	git subtree push --prefix homebrew https://github.com/sensei-hq/homebrew-tap main
+	@tmpdir=$$(mktemp -d) && \
+	git clone git@github.com:sensei-hq/homebrew-tap.git "$$tmpdir" 2>&1 && \
+	cp homebrew/Formula/sensei.rb "$$tmpdir/Formula/" && \
+	cp homebrew/Casks/sensei.rb "$$tmpdir/Casks/" && \
+	cd "$$tmpdir" && \
+	git add -A && \
+	git diff --cached --quiet && echo "homebrew-tap already up to date" || \
+	  (git commit -m "chore: sync from sensei monorepo" && git push origin main) && \
+	rm -rf "$$tmpdir"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
