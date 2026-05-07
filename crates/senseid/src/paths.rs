@@ -91,13 +91,13 @@ pub fn cache_dir() -> PathBuf {
 }
 
 /// Initialize mode from environment variable SENSEI_MODE.
+/// Delegates to [`sensei_bootstrap::SenseiConfig`] for consistent mode detection.
 /// Call this at startup before any path access.
 pub fn init_from_env() {
-    if let Ok(val) = std::env::var("SENSEI_MODE") {
-        match val.to_lowercase().as_str() {
-            "dev" | "development" | "test" => set_mode(Mode::Dev),
-            _ => set_mode(Mode::Prod),
-        }
+    if sensei_bootstrap::SenseiConfig::from_env().is_dev() {
+        set_mode(Mode::Dev);
+    } else {
+        set_mode(Mode::Prod);
     }
 }
 
