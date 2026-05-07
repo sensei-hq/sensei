@@ -3,9 +3,9 @@
 #
 # Usage:
 #   brew tap sensei-hq/tap
-#   brew install --cask sensei-hq/tap/sensei
+#   brew install --cask sensei-hq/tap/senseihq
 
-cask "sensei" do
+cask "senseihq" do
   version "0.1.0"
 
   # Universal binary — runs natively on both Apple Silicon and Intel
@@ -22,10 +22,10 @@ cask "sensei" do
 
   zap trash: [
     "~/.sensei",
-    "~/Library/Application Support/dev.sensei.desktop",
-    "~/Library/Caches/dev.sensei.desktop",
-    "~/Library/Logs/dev.sensei.desktop",
-    "~/Library/Preferences/dev.sensei.desktop.plist",
-    "~/Library/Saved Application State/dev.sensei.desktop.savedState",
+    "~/Library/Application Support/com.senseihq.desktop",
+    "~/Library/Caches/com.senseihq.desktop",
+    "~/Library/Logs/com.senseihq.desktop",
+    "~/Library/Preferences/com.senseihq.desktop.plist",
+    "~/Library/Saved Application State/com.senseihq.desktop.savedState",
   ]
 end

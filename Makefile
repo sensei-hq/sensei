@@ -173,7 +173,7 @@ bump:
 	done
 	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Formula/sensei.rb
-	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Casks/sensei.rb
+	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Casks/senseihq.rb
 	@# Marketplace
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/package.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/catalog.json
@@ -182,7 +182,7 @@ bump:
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
 	  website/package.json \
 	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml crates/gateway/Cargo.toml \
-	  homebrew/Formula/sensei.rb homebrew/Casks/sensei.rb \
+	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \
 	  marketplace/package.json marketplace/catalog.json
 	@git commit -m "chore: bump to v$(v)"
 	@git tag v$(v)
@@ -198,7 +198,7 @@ tap-push:
 	@tmpdir=$$(mktemp -d) && \
 	git clone git@github.com:sensei-hq/homebrew-tap.git "$$tmpdir" 2>&1 && \
 	cp homebrew/Formula/sensei.rb "$$tmpdir/Formula/" && \
-	cp homebrew/Casks/sensei.rb "$$tmpdir/Casks/" && \
+	cp homebrew/Casks/senseihq.rb "$$tmpdir/Casks/" && \
 	cd "$$tmpdir" && \
 	git add -A && \
 	git diff --cached --quiet && echo "homebrew-tap already up to date" || \
