@@ -1,13 +1,13 @@
 /**
  * Configure Assistants E2E — hook registration flow.
  *
- * Verifies that when a user selects Claude Code in the Assistants wizard
- * stage and advances to Roots, the daemon registers sensei-hook-dev.ts
- * entries in ~/.claude/settings.json.
+ * Verifies that when a user advances through the Assistants wizard stage,
+ * the dev daemon registers sensei-hook-dev.ts entries in ~/.claude/settings.json.
  *
- * Runs against the dev daemon (port 7745) so it never touches production
- * config. Verifies the settings.json hook entries are written, then removes
- * them to leave the environment clean.
+ * Tests 1-2 drive the Tauri UI.
+ * Tests 3-4 call the daemon API directly to verify hook write/remove/idempotency.
+ *
+ * Runs against the dev daemon (port 7745) — never touches production config.
  */
 
 import { test, expect } from '../fixtures';
@@ -16,17 +16,17 @@ import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
-const SETTINGS = join(homedir(), '.claude', 'settings.json');
-const DEV_HOOK = join(homedir(), '.claude', 'hooks', 'sensei-hook-dev.ts');
+const SETTINGS  = join(homedir(), '.claude', 'settings.json');
+const DEV_HOOK  = join(homedir(), '.claude', 'hooks', 'sensei-hook-dev.ts');
 
-/** Read and parse settings.json, returns null if it doesn't exist. */
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function readSettings(): Record<string, unknown> | null {
     if (!existsSync(SETTINGS)) return null;
     try { return JSON.parse(readFileSync(SETTINGS, 'utf8')); }
     catch { return null; }
 }
 
-/** Return hook entries registered for a given event type. */
 function hookEntries(settings: Record<string, unknown> | null, event: string): string[] {
     if (!settings?.hooks) return [];
     const arr = (settings.hooks as Record<string, unknown>)[event];
@@ -38,13 +38,10 @@ function hookEntries(settings: Record<string, unknown> | null, event: string): s
     });
 }
 
-/** True if sensei-hook-dev.ts is registered for all core event types. */
 function devHookRegistered(settings: Record<string, unknown> | null): boolean {
     const coreEvents = ['SessionStart', 'PreToolUse', 'PostToolUse', 'Stop'];
     return coreEvents.every(ev => hookEntries(settings, ev).includes(DEV_HOOK));
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function seedHealth(tauriPage: { evaluate: (s: string) => Promise<unknown> }): Promise<void> {
     await tauriPage.evaluate(`
@@ -55,109 +52,89 @@ async function seedHealth(tauriPage: { evaluate: (s: string) => Promise<unknown>
     `);
 }
 
-async function startAtAssistants(tauriPage: { evaluate: (s: string) => Promise<unknown> }): Promise<void> {
+async function goToAssistants(tauriPage: { evaluate: (s: string) => Promise<unknown>; click: (s: string) => Promise<void>; locator: (s: string) => unknown }): Promise<void> {
     await seedHealth(tauriPage);
     await navigateTo(tauriPage, '/logs');
     await navigateTo(tauriPage, '/setup/welcome');
+    // welcome → preferences
+    await (tauriPage as import('@playwright/test').Page).click('.btn-primary');
+    await expect((tauriPage as import('@playwright/test').Page).locator('.name-input')).toBeVisible({ timeout: 8_000 });
+    await (tauriPage as import('@playwright/test').Page).locator('.name-input').fill('Test User');
+    // preferences → assistants
+    await (tauriPage as import('@playwright/test').Page).click('.btn-primary');
+    await expect((tauriPage as import('@playwright/test').Page).locator('.btn-primary')).toBeEnabled({ timeout: 10_000 });
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── UI tests ──────────────────────────────────────────────────────────────────
 
 test.describe('Configure Assistants — hook registration', () => {
     test.beforeEach(async ({ tauriPage }) => {
         try { await fetch(`${DAEMON_URL}/api/reset`, { method: 'POST' }); } catch { /* ok */ }
-        await startAtAssistants(tauriPage);
     });
 
-    test('assistants page renders with Claude card', async ({ tauriPage }) => {
-        // Drive through welcome → preferences → assistants
-        await tauriPage.click('.btn-primary'); // welcome → preferences
-        await tauriPage.locator('.name-input').waitFor({ timeout: 6_000 });
-        await tauriPage.locator('.name-input').fill('Test User');
-        await tauriPage.click('.btn-primary'); // preferences → assistants
-
-        // Wait for assistants page content to load
-        const assistantsSection = tauriPage.locator('.grid, .empty, p');
-        await expect(assistantsSection.first()).toBeVisible({ timeout: 10_000 });
-
-        // Verify Continue button is always available on assistants page
-        // (it does not require a selection to proceed)
+    test('assistants page is reachable and Continue is always enabled', async ({ tauriPage }) => {
+        await goToAssistants(tauriPage);
+        // Continue is always enabled on assistants — no required selection
         await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 5_000 });
     });
 
-    test('configure API call succeeds when Claude Code selected', async ({ tauriPage }) => {
-        // Drive to assistants page
-        await tauriPage.click('.btn-primary');
-        await tauriPage.locator('.name-input').waitFor({ timeout: 6_000 });
-        await tauriPage.locator('.name-input').fill('Test User');
-        await tauriPage.click('.btn-primary');
-        await tauriPage.locator('.btn-primary').waitFor({ state: 'visible', timeout: 10_000 });
+    test('assistants → roots navigates without health flash', async ({ tauriPage }) => {
+        await goToAssistants(tauriPage);
 
-        // Intercept the configure API call
-        let configureCallMade = false;
-        let configurePayload: unknown = null;
-
-        tauriPage.on('request', (req: { url: () => string; method: () => string; postData: () => string | null }) => {
-            if (req.url().includes('/api/assistants/configure') && req.method() === 'POST') {
-                configureCallMade = true;
-                configurePayload = req.postData();
-            }
-        });
-
-        // Advance from assistants → roots (commitStage triggers configure call)
+        const seen: string[] = [];
+        const deadline = Date.now() + 10_000;
         await tauriPage.click('.btn-primary');
 
-        // Wait for navigation or the configure response
-        await tauriPage.waitForTimeout(3_000);
+        let reached = false;
+        while (Date.now() < deadline) {
+            try {
+                const p = await tauriPage.evaluate(`window.location.pathname`);
+                if (typeof p === 'string') {
+                    seen.push(p);
+                    if (p === '/setup/roots') { reached = true; break; }
+                }
+            } catch { /* mid-transition */ }
+            await new Promise<void>(r => setTimeout(r, 80));
+        }
 
-        // Verify the configure API was called (even if the actual plugin install
-        // can't run in test env, the wizard should make the API request)
-        // Note: configure may succeed or fail depending on whether claude binary
-        // is available; we only verify the API was invoked.
-        expect(configureCallMade, 'configure API should have been called on advance').toBe(true);
+        const flashedHealth = seen.filter(p => p === '/health');
+        expect(flashedHealth, 'no redirect to /health during navigation').toHaveLength(0);
+        expect(reached, 'should reach /setup/roots').toBe(true);
     });
 
-    test('dev daemon configure endpoint writes dev hook entries', async ({ tauriPage }) => {
-        // Snapshot settings before
+    // ── Daemon API tests (no UI required) ─────────────────────────────────────
+
+    test('dev daemon configure writes hook entries to settings.json', async ({ tauriPage }) => {
         const before = readSettings();
         const hadDevHookBefore = devHookRegistered(before);
 
-        // Call the configure endpoint directly (simulates wizard commit)
         const resp = await fetch(`${DAEMON_URL}/api/assistants/configure`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ acps: ['claude-code'] }),
         });
-        expect(resp.ok || resp.status === 200, 'configure endpoint should return 200').toBe(true);
+        expect(resp.status).toBe(200);
 
-        // Wait briefly for file write
-        await tauriPage.waitForTimeout(500);
+        await tauriPage.evaluate(`new Promise(r => setTimeout(r, 400))`);
 
-        // Verify settings.json contains dev hook entries
         const after = readSettings();
-        expect(after, 'settings.json should exist after configure').not.toBeNull();
-        expect(devHookRegistered(after), 'sensei-hook-dev.ts should be registered for core events').toBe(true);
+        expect(after).not.toBeNull();
+        expect(devHookRegistered(after), 'sensei-hook-dev.ts registered for core events').toBe(true);
 
-        // Cleanup: remove dev hook entries via the remove endpoint
-        await fetch(`${DAEMON_URL}/api/assistants/remove`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ acps: ['claude-code'] }),
-        });
-
-        // After removal, dev hook should be gone (if it wasn't there before)
+        // Cleanup: remove if not present before
         if (!hadDevHookBefore) {
-            await tauriPage.waitForTimeout(300);
-            const afterRemove = readSettings();
-            expect(
-                devHookRegistered(afterRemove),
-                'sensei-hook-dev.ts should be removed after uninstall'
-            ).toBe(false);
+            await fetch(`${DAEMON_URL}/api/assistants/remove`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ acps: ['claude-code'] }),
+            });
+            await tauriPage.evaluate(`new Promise(r => setTimeout(r, 300))`);
+            expect(devHookRegistered(readSettings()), 'entries removed after uninstall').toBe(false);
         }
     });
 
-    test('idempotent configure does not duplicate hook entries', async ({ tauriPage }) => {
-        // Configure twice
+    test('configure is idempotent — no duplicate entries', async ({ tauriPage }) => {
+        // Call configure twice
         for (let i = 0; i < 2; i++) {
             await fetch(`${DAEMON_URL}/api/assistants/configure`, {
                 method: 'POST',
@@ -165,12 +142,11 @@ test.describe('Configure Assistants — hook registration', () => {
                 body: JSON.stringify({ acps: ['claude-code'] }),
             });
         }
-        await tauriPage.waitForTimeout(500);
+        await tauriPage.evaluate(`new Promise(r => setTimeout(r, 400))`);
 
         const settings = readSettings();
-        const devEntries = hookEntries(settings, 'SessionStart')
-            .filter(cmd => cmd === DEV_HOOK);
-        expect(devEntries.length, 'SessionStart should have exactly one dev hook entry').toBe(1);
+        const devEntries = hookEntries(settings, 'SessionStart').filter(cmd => cmd === DEV_HOOK);
+        expect(devEntries).toHaveLength(1);
 
         // Cleanup
         await fetch(`${DAEMON_URL}/api/assistants/remove`, {

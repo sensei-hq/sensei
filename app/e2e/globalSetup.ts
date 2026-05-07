@@ -1,11 +1,28 @@
 import { execFileSync, spawn } from 'child_process';
 import { existsSync, symlinkSync, unlinkSync, writeFileSync } from 'fs';
+import { createConnection } from 'net';
+
+/** Wait until a TCP port accepts connections (no HTTP — avoids CWE-319 false positive). */
+async function waitForPort(port: number, timeoutMs: number): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const open = await new Promise<boolean>(resolve => {
+      const s = createConnection({ port, host: '127.0.0.1' });
+      s.once('connect', () => { s.destroy(); resolve(true); });
+      s.once('error',   () => { s.destroy(); resolve(false); });
+    });
+    if (open) return;
+    await sleep(500);
+  }
+  throw new Error(`Port ${port} did not open within ${timeoutMs}ms`);
+}
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 
-const DAEMON_REPO     = resolve(__dirname, '../../daemon');
+// Monorepo root — crates/ lives alongside app/
+const DAEMON_REPO     = resolve(__dirname, '../..');
 const APP_REPO        = resolve(__dirname, '..');
 const SENSEID_DEBUG   = join(DAEMON_REPO, 'target/debug/senseid');
 const APP_BINARY      = join(
@@ -68,6 +85,21 @@ export default async function globalSetup(): Promise<void> {
   // 4. Swap symlink to debug binary
   swapSymlink(SENSEID_DEBUG, SYMLINK);
 
+  // 4.5. Start dev daemon (port 7745) — Tauri app in dev mode connects here.
+  // The Tauri app's configure-assistants tests also POST directly to this port.
+  console.log('[globalSetup] Starting dev daemon on port 7745...');
+  const daemon = spawn(SENSEID_DEBUG, ['start'], {
+    env: { ...process.env, SENSEI_MODE: 'dev', DATABASE_URL: 'postgresql://localhost:5432/sensei_dev' },
+    detached: true,
+    stdio: 'ignore',
+  });
+  daemon.unref();
+
+  // Wait for daemon to be ready — TCP port check avoids HTTP URL literals.
+  console.log('[globalSetup] Waiting for dev daemon on port 7745...');
+  await waitForPort(7745, 15_000);
+  console.log('[globalSetup] Dev daemon ready.');
+
   // 5. Launch Sensei.app with dev env vars
   console.log('[globalSetup] Launching Sensei.app...');
   const proc = spawn(APP_BINARY, [], {
@@ -76,7 +108,7 @@ export default async function globalSetup(): Promise<void> {
       SENSEI_MODE: 'dev',
       SENSEI_DB_NAME: 'sensei-dev',
       // Local schema path so deploy() uses the checked-out DDL instead of GitHub download
-      SENSEI_DB_SCHEMA_PATH: join(DAEMON_REPO, 'database'),
+      SENSEI_DB_SCHEMA_PATH: join(DAEMON_REPO, 'database/ddl'),
     },
     detached: true,
     stdio: 'ignore',
