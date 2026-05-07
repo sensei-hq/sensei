@@ -1061,7 +1061,7 @@ impl PgStore {
         let row: (i64,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.hook_events \
              (session_id, assistant_family, event_type, tool_name, cwd, ts, success, payload) \
-             VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id"
+             VALUES($1, $2::sensei.assistant_family, $3, $4, $5, $6, $7, $8) RETURNING id"
         )
         .bind(session_id)
         .bind(assistant_family)
