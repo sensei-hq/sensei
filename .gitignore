@@ -15,6 +15,9 @@ Thumbs.db
 !.env.test
 !.env.dev
 
+# Rust build artifacts
+target/
+
 # Dev tools
 .superpowers/
 .playwright-mcp/
