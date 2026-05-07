@@ -112,6 +112,32 @@ pub trait Prerequisite: Send + Sync {
     fn remedy(&self) -> Option<&Remedy>;
 }
 
+/// A human action required before bootstrap can continue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HumanAction {
+    pub component_id: String,
+    pub title:        String,
+    pub command:      String,
+    pub url:          Option<String>,
+}
+
+/// Final result for a single component gate after check_and_fix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateReport {
+    pub id:            String,
+    pub status:        GateStatus,
+    pub fix_attempted: bool,
+    pub fix_detail:    Option<String>,
+}
+
+/// Returned by BootstrapEngine::check_and_fix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapReport {
+    pub gates:      Vec<GateReport>,
+    pub all_ok:     bool,
+    pub blocked_on: Option<HumanAction>,
+}
+
 pub mod checker;
 pub mod fixer;
 pub mod generic;
@@ -149,5 +175,55 @@ mod tests {
     fn fix_result_stores_approach() {
         let r = FixResult::new("brew install postgresql@17");
         assert_eq!(r.approach, "brew install postgresql@17");
+    }
+
+    #[test]
+    fn human_action_stores_fields() {
+        let a = HumanAction {
+            component_id: "homebrew".to_string(),
+            title:        "Install Homebrew".to_string(),
+            command:      "/bin/bash -c install.sh".to_string(),
+            url:          Some("https://brew.sh".to_string()),
+        };
+        assert_eq!(a.component_id, "homebrew");
+        assert_eq!(a.command, "/bin/bash -c install.sh");
+        assert!(a.url.is_some());
+    }
+
+    #[test]
+    fn gate_report_fix_attempted_flag() {
+        let r = GateReport {
+            id:            "postgresql".to_string(),
+            status:        GateStatus::Ready { version: Some("17.2".into()), detail: None },
+            fix_attempted: true,
+            fix_detail:    Some("brew bundle upgraded".into()),
+        };
+        assert!(r.fix_attempted);
+        assert_eq!(r.fix_detail.as_deref(), Some("brew bundle upgraded"));
+    }
+
+    #[test]
+    fn bootstrap_report_all_ok_false_when_any_failed() {
+        let report = BootstrapReport {
+            gates: vec![
+                GateReport { id: "homebrew".to_string(), status: GateStatus::Ready { version: None, detail: None }, fix_attempted: false, fix_detail: None },
+                GateReport { id: "postgresql".to_string(), status: GateStatus::Failed { error: "not found".into() }, fix_attempted: false, fix_detail: None },
+            ],
+            all_ok:     false,
+            blocked_on: None,
+        };
+        assert!(!report.all_ok);
+        assert!(report.blocked_on.is_none());
+    }
+
+    #[test]
+    fn bootstrap_report_serializes() {
+        let report = BootstrapReport {
+            gates:      vec![],
+            all_ok:     true,
+            blocked_on: None,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"all_ok\":true"));
     }
 }
