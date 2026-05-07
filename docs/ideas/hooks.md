@@ -50,21 +50,26 @@ Every hook event row in `activity.hook_events` carries this identifier. Queries 
 
 ## Event Capture Pipeline
 
+Two hook scripts, one per mode — same pattern as the binary naming convention (`senseid` / `senseid-dev`):
+
+| Script | Installed by | Port | Fallback |
+|--------|-------------|------|----------|
+| `~/.claude/hooks/sensei-hook.ts` | `sensei plugin install` | 7744 | `~/.sensei/events.jsonl` |
+| `~/.claude/hooks/sensei-hook-dev.ts` | `sensei-dev plugin install` | 7745 | `~/.sensei-dev/events.jsonl` |
+
 ```
 Assistant (Claude Code / Cursor / Zed / ...)
     │
     ▼ hook fires (stdin: JSON payload)
-sensei-hook.ts (or equivalent per-assistant script)
-    │  enriches payload:
-    │    assistant_family: "claude"
-    │    event_type: <hook_event_name>   ← normalized column alias
     │
-    ├── POST http://localhost:7744/hook/event   (release daemon)
+    ├── sensei-hook.ts          → POST http://localhost:7744/hook/event (release)
+    │                              fallback: ~/.sensei/events.jsonl
     │
-    └── POST http://localhost:7745/hook/event   (dev daemon, if active)
-              │
-              └── fallback: append to ~/.sensei/events.jsonl
+    └── sensei-hook-dev.ts      → POST http://localhost:7745/hook/event (dev)
+                                   fallback: ~/.sensei-dev/events.jsonl
 ```
+
+Claude Code fires both entries when both are registered in `settings.json`. Each script is single-port — no fan-out, no dev-port caching. Uninstalling one mode's hook never touches the other mode's entries.
 
 ### Daemon ingestion
 
@@ -83,41 +88,11 @@ sensei-hook.ts (or equivalent per-assistant script)
 
 ---
 
-## Dual Daemon Fan-out (Dev + Release)
-
-When developing sensei itself, the dev daemon (port 7745, `~/.sensei-dev/`) runs alongside the release daemon (port 7744, `~/.sensei/`). Both receive hook events so development has real data.
-
-### Dev port caching
-
-Probing the dev port on every hook call would add latency for non-developers. The hook script uses a file-based cache at `~/.sensei/dev-port.cache` with a 30-second TTL:
-
-```
-active 1746600000000      ← "active" or "inactive", followed by epoch ms
-```
-
-- Cache hit (< 30s): use cached status, no probe
-- Cache miss: HTTP GET `http://localhost:7745/health` with 100ms timeout → update cache
-
-Non-developers never see the probe after the first miss (inactive gets cached for 30s, re-checked every 30s).
-
-### Fan-out logic
-
-```typescript
-const endpoints = devActive ? [PROD_URL, DEV_URL] : [PROD_URL];
-const results = await Promise.allSettled(endpoints.map(url => fetch(url, { body: enriched })));
-// Fall back to file only if PROD (7744) fails — dev failure is non-critical
-if (results[0].status === "rejected") {
-  appendFileSync("~/.sensei/events.jsonl", enriched + "\n");
-}
-```
-
----
-
 ## Hook Registration (Claude Code)
 
-Claude Code has no CLI to register hooks — the only method is editing `~/.claude/settings.json` directly. The `sensei plugin install` command writes the hooks block; `sensei plugin uninstall` removes it cleanly (without touching other hooks).
+Claude Code has no CLI to register hooks — the only method is editing `~/.claude/settings.json` directly. `sensei plugin install` writes the release entries; `sensei plugin uninstall` removes only the release entries. The dev binary manages its own entries independently.
 
-Example registration for all event types:
+### Release only (`sensei plugin install`)
 
 ```json
 {
@@ -136,6 +111,23 @@ Example registration for all event types:
   }
 }
 ```
+
+### Both installed (`sensei plugin install` + `sensei-dev plugin install`)
+
+Each event type gets two entries — Claude Code fires both. Each posts to its own daemon; each uninstall removes only its own entries.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "~/.claude/hooks/sensei-hook.ts" }] },
+      { "hooks": [{ "type": "command", "command": "~/.claude/hooks/sensei-hook-dev.ts" }] }
+    ]
+  }
+}
+```
+
+`sensei-dev plugin uninstall` removes only the `-dev` entries. `sensei plugin uninstall` removes only the release entries. Neither binary touches the other's registration.
 
 ---
 
