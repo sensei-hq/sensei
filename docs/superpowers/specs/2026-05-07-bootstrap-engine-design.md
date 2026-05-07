@@ -213,12 +213,18 @@ Calls `database::setup(app_version)`:
 ```
 db_schema_source(app_version) = "sensei-hq/sensei/database@v{app_version}"
 ```
-`dbd::deploy` resolves this source, reads `design.yaml`, compares internal state to `_dbd_meta`, and applies any pending migrations. The `on_complete` callback provides:
-- Schema version before and after
-- Number of migrations applied
-- Any errors encountered during migration
+`dbd::deploy` resolves this source, reads `design.yaml`, and applies pending migrations.
 
-If `on_complete` reports errors, `DatabaseSetupFixer::fix()` returns `Err(...)` with the migration error detail. On success, the detail (e.g., "schema upgraded v5→v6, 3 migrations applied" or "schema up to date at v6") is returned in `FixResult.approach` and surfaced in `GateReport.fix_detail`.
+Error and success flow:
+```rust
+match design.deploy(&adapter, false, |step| { /* progress */ }).await {
+    Ok(())  => /* on_complete already fired inside deploy — all steps succeeded */
+    Err(e)  => /* first failed step; on_complete was NOT called */
+}
+```
+
+- **On error:** `DatabaseSetupFixer::fix()` returns `Err(e.to_string())`. The engine emits `Gate{database, Failed(e)}` and records no `fix_detail`.
+- **On success:** `on_complete` has already fired inside `deploy`. `DatabaseSetupFixer::fix()` returns `Ok(FixResult { approach: "<on_complete summary>" })`. The engine re-checks (passes) and records the summary in `GateReport.fix_detail`.
 
 **Bundle → deploy coupling rule:**
 When brew bundle installs or upgrades `senseid`, `dbd::deploy` must always run for the same version. This is enforced via `senseid.post_fix_trigger: [database]`:
@@ -337,10 +343,10 @@ enum FixerResult { Succeed(String), Fail(String), HumanAction(HumanAction) }
 | Fix succeeds but recheck fails | postgresql fixer=ok, recheck=fail | — | gate=Failed (not Ready) |
 | Resume after human action | 1st call: homebrew=HumanAction; mock updated; 2nd call: homebrew=ok | — | 2nd call: all_ok |
 | senseid upgrade triggers db deploy | senseid=fail-then-pass, database initially passes | bundle=succeed | post_fix_trigger forces db fixer, deploy runs |
-| senseid upgrade, db deploy returns error | senseid fixed, dbd::deploy returns on_complete with error | db fixer fails | gate=Failed, fix_detail contains migration error |
-| senseid upgrade, db already current | senseid fixed, dbd::deploy is no-op | db fixer=no-op succeed | gate=Ready, fix_detail="schema up to date" |
+| senseid upgrade, db deploy fails | senseid fixed, dbd::deploy returns Err(e) | db fixer returns Err | gate=Failed, no fix_detail |
+| senseid upgrade, db already current | senseid fixed, dbd::deploy is no-op (Ok(())) | db fixer=succeed | gate=Ready, fix_detail="schema up to date" |
+| db deploy success populates fix_detail | db fixer runs, deploy Ok(()) | on_complete fires, summary string | GateReport.fix_detail = on_complete summary |
 | Daemon blocked by database failure | postgresql_service=fail, database=dep-blocked, daemon=dep-blocked | none | daemon gets dep-blocked status |
-| dbd on_complete with error surfaces in fix_detail | db fixer runs, on_complete has error | — | GateReport.fix_detail contains error text |
 
 ---
 
