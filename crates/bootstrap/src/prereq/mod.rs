@@ -141,7 +141,6 @@ pub struct BootstrapReport {
 pub mod checker;
 pub mod fixer;
 pub mod generic;
-pub mod factory;
 pub mod runner;
 pub mod registry;
 pub mod engine;
