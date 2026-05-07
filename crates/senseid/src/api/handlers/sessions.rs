@@ -147,6 +147,32 @@ pub(crate) async fn list_events(
     Json(serde_json::json!({"events": [], "count": 0}))
 }
 
+// ── Hook event ingestion ────────────────────────────────────────────────────
+
+/// Accepts a hook payload from any assistant and stores it in activity.hook_events.
+/// Called by hook scripts (sensei-hook.ts or equivalent) for every event type.
+/// Returns 200 OK always — hook scripts must not block on errors.
+pub(crate) async fn ingest_hook_event(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> StatusCode {
+    let event_type       = payload["hook_event_name"].as_str().unwrap_or("unknown");
+    let session_id       = payload["session_id"].as_str().unwrap_or("");
+    let assistant_family = payload["assistant_family"].as_str().unwrap_or("claude");
+    let tool_name        = payload["tool_name"].as_str();
+    let cwd              = payload["cwd"].as_str();
+    let ts               = chrono::Utc::now().timestamp_millis();
+    let success          = payload.get("exit_code")
+        .and_then(|v| v.as_i64())
+        .map(|c| c == 0);
+
+    let _ = state.pg.insert_hook_event(
+        session_id, assistant_family, event_type, tool_name, cwd, ts, success, &payload,
+    ).await;
+
+    StatusCode::OK
+}
+
 // ── Workflow State ──────────────────────────────────────────────────────────
 
 pub(crate) async fn get_workflow_state(
