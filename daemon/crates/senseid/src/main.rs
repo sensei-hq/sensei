@@ -59,15 +59,23 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Initialize mode from CLI flag or env var
-    let mode_str = cli.mode.clone();
-    init_mode(&mode_str);
+    // Determine mode: subcommand flag > top-level flag > SENSEI_MODE env var > prod default.
+    // init_from_env first so CLI flags can override it.
+    paths::init_from_env();
+    let effective_mode = match &cli.command {
+        Some(Commands::Start { mode, .. }) => mode.as_str(),
+        _ => cli.mode.as_str(),
+    };
+    match effective_mode.to_lowercase().as_str() {
+        "dev" | "development" | "test" => paths::set_mode(paths::Mode::Dev),
+        _ => paths::set_mode(paths::Mode::Prod),
+    }
+
     let default_port = paths::default_port();
 
     match cli.command {
-        Some(Commands::Start { port, mode }) => {
-            init_mode(&mode);
-            let p = port.unwrap_or(paths::default_port());
+        Some(Commands::Start { port, .. }) => {
+            let p = port.unwrap_or(default_port);
             start_daemon(p);
         }
         Some(Commands::Stop) => {
@@ -85,15 +93,6 @@ async fn main() {
         None => {
             run_foreground(cli.port.unwrap_or(default_port)).await;
         }
-    }
-}
-
-fn init_mode(mode_str: &str) {
-    // Init from env first, then CLI override
-    paths::init_from_env();
-    match mode_str.to_lowercase().as_str() {
-        "dev" | "development" | "test" => paths::set_mode(paths::Mode::Dev),
-        _ => {} // keep default (prod or from env)
     }
 }
 
@@ -126,9 +125,13 @@ fn start_daemon(port: u16) {
         .expect("senseid: cannot open log file");
     let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
 
+    let mode_flag = match paths::mode() {
+        paths::Mode::Dev => "dev",
+        paths::Mode::Prod => "prod",
+    };
     let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
     let mut child = Command::new(exe)
-        .args(["--port", &port.to_string()])
+        .args(["--port", &port.to_string(), "--mode", mode_flag])
         .stdout(log_file)
         .stderr(log_err)
         .stdin(std::process::Stdio::null())

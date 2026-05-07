@@ -1,0 +1,100 @@
+name: Update Homebrew Tap
+
+# Triggered when a release is published (after Release Daemon and Release App
+# have uploaded their artifacts).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  update-tap:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Derive version from tag
+        run: |
+          VERSION="${TAG#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Download CLI tarballs and compute SHA256s
+        run: |
+          BASE="https://github.com/sensei-hq/sensei/releases/download/${TAG}"
+          for artifact in sensei-macos-arm64 sensei-macos-x86_64 sensei-linux-arm64 sensei-linux-x86_64; do
+            curl -fsSL -o "${artifact}.tar.gz" "${BASE}/${artifact}.tar.gz"
+            sha=$(sha256sum "${artifact}.tar.gz" | cut -d' ' -f1)
+            key="SHA256_${artifact//-/_}"
+            echo "${key}=${sha}" >> "$GITHUB_ENV"
+          done
+
+      - name: Find DMG asset and compute SHA256
+        run: |
+          dmg_url=$(gh api "repos/sensei-hq/sensei/releases/tags/${TAG}" \
+            --jq '.assets[] | select(.name | endswith(".dmg")) | .browser_download_url' \
+            | head -1)
+          if [ -n "$dmg_url" ]; then
+            dmg_name=$(basename "$dmg_url")
+            curl -fsSL -o "$dmg_name" "$dmg_url"
+            sha=$(sha256sum "$dmg_name" | cut -d' ' -f1)
+            echo "SHA256_dmg=${sha}" >> "$GITHUB_ENV"
+            echo "DMG_FOUND=true" >> "$GITHUB_ENV"
+          else
+            echo "DMG_FOUND=false" >> "$GITHUB_ENV"
+            echo "No DMG in release — cask SHA256 will not be updated"
+          fi
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: sensei-hq/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Update formula (version + SHA256s)
+        run: |
+          f="tap/Formula/sensei.rb"
+          # version
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$f"
+          # sha256 values — use awk to replace by platform block
+          awk -v arm64="$SHA256_sensei_macos_arm64" \
+              -v x86_64="$SHA256_sensei_macos_x86_64" \
+              -v lnx_arm64="$SHA256_sensei_linux_arm64" \
+              -v lnx_x86_64="$SHA256_sensei_linux_x86_64" '
+            /if OS\.mac\? && Hardware::CPU\.arm\?/    { plat="mac_arm" }
+            /elsif OS\.mac\? && Hardware::CPU\.intel\?/ { plat="mac_x86" }
+            /elsif OS\.linux\? && Hardware::CPU\.arm\?/ { plat="lnx_arm" }
+            /else/                                    { plat="lnx_x86" }
+            /sha256/ {
+              gsub(/"([0-9a-f]{64}|REPLACE_WITH_[A-Z0-9_]+)"/, \
+                plat=="mac_arm"  ? "\"" arm64   "\"" : \
+                plat=="mac_x86"  ? "\"" x86_64  "\"" : \
+                plat=="lnx_arm"  ? "\"" lnx_arm64  "\"" : \
+                                   "\"" lnx_x86_64 "\"")
+            }
+            { print }
+          ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+
+      - name: Update cask (version + SHA256)
+        if: env.DMG_FOUND == 'true'
+        run: |
+          f="tap/Casks/sensei.rb"
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$f"
+          sed -i "s/sha256 \"[^\"]*\"/sha256 \"${SHA256_dmg}\"/" "$f"
+
+      - name: Commit and push
+        run: |
+          cd tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/sensei.rb Casks/sensei.rb
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "chore: update to v${VERSION}"
+            git push
+          fi
