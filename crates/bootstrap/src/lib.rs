@@ -14,7 +14,10 @@ pub mod prereq;
 pub mod types;
 pub mod util;
 
-pub use config::{SenseiConfig, SenseiMode};
+pub use config::{
+    SenseiConfig, SenseiMode,
+    BREW_TAP, GITHUB_ORG, GITHUB_REPO, MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
+};
 pub use types::*;
 pub use types::BootstrapTrace;
 

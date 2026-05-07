@@ -92,8 +92,9 @@ export default async function globalSetup(): Promise<void> {
       ...process.env,
       SENSEI_MODE: 'dev',
       SENSEI_DB_NAME: 'sensei-dev',
-      // Local schema path so deploy() uses the checked-out DDL instead of GitHub download
-      SENSEI_DB_SCHEMA_PATH: join(DAEMON_REPO, 'database/ddl'),
+      // Local schema path so deploy() uses the checked-out DDL instead of GitHub download.
+      // Must point to the directory that contains design.yaml (not the ddl/ subdirectory).
+      SENSEI_DB_SCHEMA_PATH: join(DAEMON_REPO, 'database'),
     },
     detached: true,
     stdio: 'ignore',
