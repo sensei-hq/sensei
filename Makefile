@@ -9,10 +9,12 @@
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
-##   `make bump v=0.3.0` updates VERSION + all manifests.
+##   `make bump v=0.3.0` updates VERSION + all manifests, commits, tags, and pushes.
+##   The tag push triggers GitHub Actions which build release artifacts and
+##   update the Homebrew tap SHA256s automatically.
 ##
 ## Distribution:
-##   Homebrew tap: sensei-hq/homebrew-tap
+##   Homebrew tap: sensei-hq/homebrew-tap (tracked as git subtree at homebrew/)
 ##   macOS install: brew tap sensei-hq/tap && brew install sensei
 
 .PHONY: build-dev build-release install-dev install-release \
@@ -21,13 +23,16 @@
         website-dev website-build \
         test test-fast test-daemon test-daemon-fast \
         test-app test-app-unit test-app-e2e test-app-sidecar \
-        setup-hooks update bump clean
+        setup-hooks update bump tap-push clean
 
 VERSION := $(shell cat VERSION)
 
-# Env vars for desktop app dev builds
-APP_DEV_ENV  := DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev VITE_BYPASS_HEALTH=true
-APP_BUNDLE_ENV := DATABASE_URL=postgresql://localhost:5432/sensei_dev SENSEI_MODE=dev SENSEI_DB_SCHEMA_PATH=../database
+# Load dev environment from .env.dev (DATABASE_URL, SENSEI_MODE, VITE_BYPASS_HEALTH)
+ifeq (,$(wildcard .env.dev))
+  $(error .env.dev not found — create it with DATABASE_URL, SENSEI_MODE, and VITE_BYPASS_HEALTH)
+endif
+include .env.dev
+export DATABASE_URL SENSEI_MODE VITE_BYPASS_HEALTH
 
 # ── Daemon ────────────────────────────────────────────────────────────────────
 
@@ -53,14 +58,14 @@ build-release: daemon-release
 
 # Tauri dev with Vite HMR — pre-builds Rust backend then starts tauri dev
 app-dev:
-	cd app && $(APP_DEV_ENV) cargo build --manifest-path src-tauri/Cargo.toml && $(APP_DEV_ENV) tauri dev
+	cd app && cargo build --manifest-path src-tauri/Cargo.toml && bunx tauri dev
 
 # Build debug .app bundle and launch it (full native bundle, slower than app-dev)
 app-dev-bundle:
-	cd app && $(APP_BUNDLE_ENV) tauri build --debug && $(APP_BUNDLE_ENV) ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
+	cd app && SENSEI_DB_SCHEMA_PATH=../database bunx tauri build --debug && SENSEI_DB_SCHEMA_PATH=../database ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
 
 app-release:
-	cd app && tauri build
+	cd app && bunx tauri build
 
 # Type-check SvelteKit sources
 app-check:
@@ -131,6 +136,11 @@ update:
 
 # ── Version bump ──────────────────────────────────────────────────────────────
 # Usage: make bump v=0.3.0
+#
+# Updates all version strings, commits, creates a git tag, pushes the commit
+# and tag (which triggers the GitHub Actions release workflows), then syncs
+# the updated Homebrew formula version to the tap via git subtree push.
+# GitHub Actions will fill in the real SHA256s once artifacts are built.
 
 bump:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump v=<version>"; exit 1; fi
@@ -138,6 +148,9 @@ bump:
 	@# Node manifests
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/package.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' website/package.json
+	@# Tauri app manifest + Cargo.toml
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/src-tauri/tauri.conf.json
+	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" app/src-tauri/Cargo.toml
 	@# Daemon Rust crates (excludes bootstrap which has its own cadence)
 	@for crate in senseid cli mcp; do \
 	  f="daemon/crates/$$crate/Cargo.toml"; \
@@ -145,12 +158,27 @@ bump:
 	done
 	@# Gateway Rust crate
 	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" gateway/crates/gateway/Cargo.toml
-	@echo "Bumped to $(v) in:"
-	@echo "  VERSION"
-	@echo "  app/package.json, website/package.json"
-	@echo "  daemon/crates/{senseid,cli,mcp}/Cargo.toml"
-	@echo "  gateway/crates/gateway/Cargo.toml"
-	@echo "Review: git diff VERSION app/package.json website/package.json daemon/crates/*/Cargo.toml gateway/crates/gateway/Cargo.toml"
+	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
+	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Formula/sensei.rb
+	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Casks/sensei.rb
+	@# Commit everything
+	@git add VERSION \
+	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
+	  website/package.json \
+	  daemon/crates/senseid/Cargo.toml daemon/crates/cli/Cargo.toml daemon/crates/mcp/Cargo.toml \
+	  gateway/crates/gateway/Cargo.toml \
+	  homebrew/Formula/sensei.rb homebrew/Casks/sensei.rb
+	@git commit -m "chore: bump to v$(v)"
+	@git tag v$(v)
+	@git push origin HEAD
+	@git push origin v$(v)
+	@echo "Pushed v$(v) — GitHub Actions will build release artifacts and update tap SHA256s"
+	@echo "Syncing formula version to homebrew-tap..."
+	@$(MAKE) tap-push
+
+# Push the homebrew/ subtree to the tap repo (sensei-hq/homebrew-tap)
+tap-push:
+	git subtree push --prefix homebrew https://github.com/sensei-hq/homebrew-tap main
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 

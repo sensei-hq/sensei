@@ -8,13 +8,9 @@
 cask "sensei" do
   version "0.1.0"
 
-  if Hardware::CPU.arm?
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/Sensei_aarch64.dmg"
-    sha256 "REPLACE_WITH_ARM64_DMG_SHA256"
-  else
-    url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/Sensei_x86_64.dmg"
-    sha256 "REPLACE_WITH_X86_64_DMG_SHA256"
-  end
+  # Universal binary — runs natively on both Apple Silicon and Intel
+  url "https://github.com/sensei-hq/sensei/releases/download/v#{version}/Sensei_#{version}_universal.dmg"
+  sha256 "REPLACE_WITH_DMG_SHA256"
 
   name "Sensei"
   desc "AI development intelligence desktop app"
