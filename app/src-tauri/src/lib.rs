@@ -1,6 +1,7 @@
 //! Sensei Desktop — Tauri application entry point.
 
 mod commands;
+mod flog;
 mod log_collector;
 
 use log_collector::LogCollector;
@@ -12,14 +13,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             // Bootstrap (prereqs, hardware, models)
-            commands::bootstrap::run_bootstrap,
+            commands::bootstrap::check_and_fix_bootstrap,
             commands::bootstrap::detect_hardware,
             commands::bootstrap::list_models,
             commands::bootstrap::missing_models,
             commands::bootstrap::get_platform,
-            commands::bootstrap::install_prerequisites,
-            commands::bootstrap::start_services,
-            commands::bootstrap::setup_database,
+            commands::bootstrap::get_daemon_port,
             // Assistants (detection, MCP config)
             commands::assistants::detect_assistants,
             commands::assistants::configure_mcp,
@@ -35,6 +34,14 @@ pub fn run() {
             commands::logs::get_log_sessions,
         ])
         .setup(|app| {
+            // ── Startup banner ────────────────────────────────────────────
+            flog::log(&format!(
+                "=== Sensei.app starting v={} SENSEI_MODE={:?} SENSEI_DB_NAME={:?} ===",
+                app.package_info().version,
+                std::env::var("SENSEI_MODE").unwrap_or_default(),
+                std::env::var("SENSEI_DB_NAME").unwrap_or_default(),
+            ));
+
             // ── Vibrancy ──────────────────────────────────────────────────
             let window = app.get_webview_window("main")
                 .ok_or("window 'main' not found")?;

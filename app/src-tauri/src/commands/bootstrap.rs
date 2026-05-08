@@ -1,18 +1,22 @@
 //! Bootstrap commands — prerequisite detection, installation, and hardware profiling.
 //!
-//! Phase commands delegate entirely to the prereq factory + runner.
-//! No orchestration logic lives here — commands are thin wrappers that:
-//!   1. Build a prerequisite list via the platform factory
-//!   2. Run the generic runner with an event-emitting progress callback
-//!   3. Return immediately — progress arrives on the "bootstrap" channel
+//! The single `check_and_fix_bootstrap` command replaces the old three-phase
+//! commands (run_bootstrap / install_prerequisites / start_services / setup_database).
+//! It delegates entirely to the BootstrapEngine which:
+//!   1. Checks all components in parallel (Phase A)
+//!   2. Builds a dependency-aware fix plan (Phase B)
+//!   3. Executes fixes sequentially (Phase C)
+//!   4. Returns a BootstrapReport (Phase D)
+//!
+//! Progress arrives on the "bootstrap" Tauri event channel.
 
+use crate::flog;
 use crate::log_collector::{LogCollector, LogSession, SystemInfo};
 use sensei_bootstrap::{
     self as bootstrap,
-    BootstrapResult, BootstrapTrace, HardwareInfo,
-    prereq::{GateStatus, ProgressEvent, factory, runner},
+    BootstrapReport, HardwareInfo,
+    prereq::{GateStatus, ProgressEvent},
 };
-use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 // ---------------------------------------------------------------------------
@@ -49,7 +53,7 @@ fn emit_phase_complete(app: &tauri::AppHandle, phase: &str, success: bool) {
     );
 }
 
-/// Map a ProgressEvent from the runner to Tauri events on the "bootstrap" channel.
+/// Map a ProgressEvent from the engine to Tauri events on the "bootstrap" channel.
 fn dispatch(app: &tauri::AppHandle, event: ProgressEvent) {
     match event {
         ProgressEvent::Gate { id, status } => {
@@ -60,56 +64,70 @@ fn dispatch(app: &tauri::AppHandle, event: ProgressEvent) {
                 GateStatus::Ready { version, detail } => ("ready", version, detail),
                 GateStatus::Failed { error }    => ("blocked",    None, Some(error)),
             };
+            flog::log(&format!(
+                "gate  [{id}] {s}{}{}",
+                version.as_deref().map(|v| format!(" v={v}")).unwrap_or_default(),
+                detail.as_deref().map(|d| format!(" detail={d}")).unwrap_or_default(),
+            ));
             emit_gate(app, &id, s, version.as_deref(), detail.as_deref());
         }
         ProgressEvent::PhaseComplete { phase, success } => {
+            flog::log(&format!("phase [{phase}] complete success={success}"));
             emit_phase_complete(app, &phase, success);
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Read-only commands (unchanged)
+// Bootstrap command
 // ---------------------------------------------------------------------------
 
-/// Run the full bootstrap check — all components + hardware detection.
-/// Traces all checks and writes a session log to disk.
+/// Run the full bootstrap check-and-fix pipeline.
+///
+/// Checks all prerequisites in parallel, then fixes anything broken via the
+/// dependency-aware engine. Progress is streamed as Tauri "bootstrap" events.
+/// Returns immediately — the pipeline runs on a background thread.
 #[tauri::command]
-pub fn run_bootstrap(app: tauri::AppHandle) -> BootstrapResult {
-    let (result, traces) = bootstrap::run_with_traces();
-
-    // Write session log (best-effort — never fail the bootstrap over logging)
-    write_bootstrap_session(&app, &result, &traces);
-
-    result
+pub fn check_and_fix_bootstrap(app: tauri::AppHandle) -> Result<(), String> {
+    let version = app.package_info().version.to_string();
+    flog::log(&format!("=== check_and_fix_bootstrap called v={version} ==="));
+    std::thread::spawn(move || {
+        let app_for_events = app.clone();
+        let report = bootstrap::check_and_fix(&version, move |e| dispatch(&app_for_events, e));
+        flog::log(&format!(
+            "check_and_fix_bootstrap complete: all_ok={} gates={}",
+            report.all_ok,
+            report.gates.len()
+        ));
+        for gate in &report.gates {
+            flog::log(&format!(
+                "  gate [{}] {:?} fix_attempted={}",
+                gate.id, gate.status, gate.fix_attempted
+            ));
+        }
+        write_bootstrap_session(&app, &report);
+        // Emit final report so the frontend knows the engine is done
+        let _ = app.emit("bootstrap-report", &report);
+    });
+    Ok(())
 }
 
-fn write_bootstrap_session(
-    app: &tauri::AppHandle,
-    result: &BootstrapResult,
-    traces: &[BootstrapTrace],
-) {
-    let system_info = collect_system_info(&result.hardware);
+fn write_bootstrap_session(app: &tauri::AppHandle, report: &BootstrapReport) {
+    let hw = bootstrap::hardware::detect();
+    let system_info = collect_system_info(&hw);
 
-    let outcome = if result.ready {
+    let outcome = if report.all_ok {
         "success"
-    } else if result.components.iter().any(|c| c.is_failed()) {
-        "failed"
+    } else if report.blocked_on.is_some() {
+        "blocked"
     } else {
-        "partial"
+        "failed"
     };
 
-    let duration_ms: u64 = traces.iter().map(|t| t.ms).sum();
-
-    let trace_values: Vec<serde_json::Value> = traces
+    let traces: Vec<serde_json::Value> = report
+        .gates
         .iter()
-        .filter_map(|t| match serde_json::to_value(t) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                eprintln!("bootstrap: failed to serialise trace: {e}");
-                None
-            }
-        })
+        .filter_map(|g| serde_json::to_value(g).ok())
         .collect();
 
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -127,8 +145,8 @@ fn write_bootstrap_session(
         app_version: app.package_info().version.to_string(),
         system_info,
         outcome:     outcome.to_string(),
-        duration_ms,
-        traces:      trace_values,
+        duration_ms: 0,
+        traces,
     };
 
     let collector = app.state::<LogCollector>();
@@ -144,6 +162,10 @@ fn collect_system_info(hw: &HardwareInfo) -> SystemInfo {
         cpu_cores: hw.cpu_cores as usize,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Read-only commands (hardware, models, platform, port)
+// ---------------------------------------------------------------------------
 
 #[tauri::command]
 pub fn detect_hardware() -> HardwareInfo {
@@ -172,37 +194,16 @@ pub fn get_platform() -> serde_json::Value {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Phase commands — factory + runner
-// ---------------------------------------------------------------------------
-
+/// Return the daemon port for the current runtime mode.
+///
+/// Delegates to [`SenseiConfig::from_env`] so the frontend never hard-codes a port.
+/// The frontend calls this once at startup to initialise `appState.port`.
 #[tauri::command]
-pub fn install_prerequisites(app: tauri::AppHandle) -> Result<(), String> {
-    let version = app.package_info().version.to_string();
-    std::thread::spawn(move || {
-        let provider = Arc::from(bootstrap::provider());
-        let prereqs = factory::install_prerequisites(provider, &version);
-        runner::run("install", prereqs, |e| dispatch(&app, e));
-    });
-    Ok(())
-}
-
-#[tauri::command]
-pub fn start_services(app: tauri::AppHandle) -> Result<(), String> {
-    std::thread::spawn(move || {
-        let provider = Arc::from(bootstrap::provider());
-        let prereqs = factory::start_services(provider);
-        runner::run("services", prereqs, |e| dispatch(&app, e));
-    });
-    Ok(())
-}
-
-#[tauri::command]
-pub fn setup_database(app: tauri::AppHandle) -> Result<(), String> {
-    let version = app.package_info().version.to_string();
-    std::thread::spawn(move || {
-        let prereqs = factory::setup_database(&version);
-        runner::run("database", prereqs, |e| dispatch(&app, e));
-    });
-    Ok(())
+pub fn get_daemon_port() -> u16 {
+    let cfg = sensei_bootstrap::SenseiConfig::from_env();
+    flog::log(&format!(
+        "get_daemon_port: mode={:?} port={} db={}",
+        cfg.mode, cfg.daemon_port, cfg.db_name
+    ));
+    cfg.daemon_port
 }

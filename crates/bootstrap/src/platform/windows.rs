@@ -15,6 +15,12 @@ impl WindowsProvider {
     }
 }
 
+impl Default for WindowsProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlatformProvider for WindowsProvider {
     fn platform(&self) -> Platform {
         Platform::Windows
