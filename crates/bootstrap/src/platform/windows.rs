@@ -37,10 +37,6 @@ impl PlatformProvider for WindowsProvider {
         "winget"
     }
 
-    fn install_prerequisites(&self) -> Result<(), String> {
-        Err("Windows prerequisite installation not yet implemented".to_string())
-    }
-
     fn start_service(&self, name: &str) -> Result<ComponentStatus, String> {
         Err(format!(
             "Windows service management not yet implemented for {name}"

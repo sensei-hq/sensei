@@ -36,7 +36,7 @@ pub struct ComponentSpec {
 }
 
 fn detect_brew_path() -> Option<String> {
-    ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+    crate::config::BREW_PATHS
         .iter()
         .find(|p| std::path::Path::new(p).exists())
         .map(|s| s.to_string())

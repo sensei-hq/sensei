@@ -22,7 +22,7 @@ impl Default for MacOSProvider {
 impl MacOSProvider {
     /// Create a new provider, auto-detecting the Homebrew binary location.
     pub fn new() -> Self {
-        let brew_path = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+        let brew_path = crate::config::BREW_PATHS
             .iter()
             .find(|p| Path::new(p).exists())
             .map(|p| p.to_string());
@@ -95,40 +95,6 @@ impl PlatformProvider for MacOSProvider {
         "Homebrew"
     }
 
-    fn install_prerequisites(&self) -> Result<(), String> {
-        let brew = self.brew_path.as_deref()
-            .ok_or_else(|| "Homebrew is not installed".to_string())?;
-
-        let brewfile = reqwest::blocking::get(crate::config::HOMEBREW_BREWFILE_URL)
-            .map_err(|e| format!("failed to fetch Brewfile: {e}"))?
-            .text()
-            .map_err(|e| format!("failed to read Brewfile: {e}"))?;
-
-        let mut child = Command::new(brew)
-            .args(["bundle", "--upgrade", "--file=-"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("failed to spawn brew bundle: {e}"))?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            stdin.write_all(brewfile.as_bytes())
-                .map_err(|e| format!("failed to write Brewfile to stdin: {e}"))?;
-        }
-
-        let output = child.wait_with_output()
-            .map_err(|e| format!("failed to wait for brew bundle: {e}"))?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(format!("brew bundle failed: {stderr}"))
-        }
-    }
-
     fn start_service(&self, name: &str) -> Result<ComponentStatus, String> {
         let formula = Self::formula_for(name);
         let is_daemon = matches!(name, "daemon" | "senseid");
@@ -170,10 +136,11 @@ impl PlatformProvider for MacOSProvider {
     fn prereq_install_remedy(&self) -> InstallRemedy {
         InstallRemedy {
             title: "Install missing components".to_string(),
-            command:
-                "curl -fsSL https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile | brew bundle --file=-"
-                    .to_string(),
-            url: Some("https://github.com/sensei-hq/homebrew-tap".to_string()),
+            command: format!(
+                "curl -fsSL {} | brew bundle --file=-",
+                crate::config::HOMEBREW_BREWFILE_URL
+            ),
+            url: Some(crate::config::HOMEBREW_TAP_URL.to_string()),
         }
     }
 

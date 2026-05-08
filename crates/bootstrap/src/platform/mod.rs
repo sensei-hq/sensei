@@ -41,10 +41,6 @@ pub trait PlatformProvider: Send + Sync {
     /// Human-readable name of the package manager (e.g. "Homebrew", "winget").
     fn package_manager_name(&self) -> &str;
 
-    /// Install all sensei prerequisites using the platform package manager.
-    /// Blocks until installation completes.
-    fn install_prerequisites(&self) -> Result<(), String>;
-
     /// Start a service by logical name (e.g. "postgresql", "ollama", "daemon").
     fn start_service(&self, name: &str) -> Result<ComponentStatus, String>;
 
