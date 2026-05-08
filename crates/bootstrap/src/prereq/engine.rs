@@ -264,7 +264,7 @@ impl BootstrapEngine {
                     let spec = COMPONENTS.iter().find(|s| s.id == id).unwrap();
 
                     if dep_blocked.contains(id) {
-                        let err = format!("dep-blocked: dependency not ready");
+                        let err = "dep-blocked: dependency not ready".to_string();
                         callback(ProgressEvent::Gate {
                             id:     id.to_string(),
                             status: GateStatus::Failed { error: err.clone() },

@@ -13,6 +13,12 @@ pub struct MacOSProvider {
     brew_path: Option<String>,
 }
 
+impl Default for MacOSProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MacOSProvider {
     /// Create a new provider, auto-detecting the Homebrew binary location.
     pub fn new() -> Self {
