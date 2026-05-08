@@ -33,6 +33,7 @@ const SOCKET   = '/tmp/tauri-playwright.sock';
 const PID_FILE = '/tmp/sensei-e2e-pid';
 const HOME = process.env.HOME ?? '';
 const SYMLINK  = join(HOME, '.local/bin/senseid');
+const DB_NAME  = 'sensei-dev';
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
@@ -91,9 +92,9 @@ export default async function globalSetup(): Promise<void> {
     env: {
       ...process.env,
       SENSEI_MODE: 'dev',
-      SENSEI_DB_NAME: 'sensei-dev',
-      // Local schema path so deploy() uses the checked-out DDL instead of GitHub download.
-      // Must point to the directory that contains design.yaml (not the ddl/ subdirectory).
+      SENSEI_DB_NAME: DB_NAME,
+      // Local schema path so deploy() in bootstrap uses checked-out DDL (not GitHub download).
+      // Must point to the directory containing design.yaml (not the ddl/ subdirectory).
       SENSEI_DB_SCHEMA_PATH: join(DAEMON_REPO, 'database'),
     },
     detached: true,
@@ -116,9 +117,9 @@ export default async function globalSetup(): Promise<void> {
 
   // 7. Wait for the dev daemon on port 7745 (up to 120 s).
   // The Tauri app's bootstrap health screen automatically:
-  //   • creates sensei-dev DB if missing (gate 五 — DatabaseSetupFixer → dbd deploy)
-  //   • starts senseid on port 7745 if not running (gate 六 — ServiceStartFixer)
-  // Port 7745 opening is the signal that bootstrap completed and the DB is ready.
+  //   • confirms sensei-dev DB is ready (gate 五 — already done above)
+  //   • starts senseid on port 7745 (gate 六 — ServiceStartFixer)
+  // Port 7745 opening is the signal that bootstrap completed and the daemon is ready.
   console.log('[globalSetup] Waiting for dev daemon on port 7745 (bootstrap in progress)...');
   await waitForPort(7745, 120_000);
   console.log('[globalSetup] Dev daemon ready — tests may begin.');

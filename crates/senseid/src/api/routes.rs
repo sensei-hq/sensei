@@ -129,8 +129,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state
         .route("/api/state/{project}", get(sessions::get_workflow_state).put(sessions::update_workflow_state))
-        // Reset (clears all data)
-        .route("/api/reset", post(config::reset_all))
         // Scan
         .route("/api/scan", post(workspace::scan_folder))
         .route("/api/scan/suggestions", get(workspace::scan_suggestions))
