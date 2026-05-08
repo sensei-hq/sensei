@@ -46,7 +46,7 @@ pub const HOMEBREW_TAP_URL: &str = "https://github.com/sensei-hq/homebrew-tap";
 /// Default daemon port (production).
 /// **Do not use directly.** Always use `SenseiConfig::from_env().daemon_port` —
 /// this constant is 7744 (prod only) and will be wrong in dev mode.
-pub(crate) const DAEMON_PORT: u16 = 7744;
+const DAEMON_PORT: u16 = 7744;
 
 /// Default Ollama port.
 pub const OLLAMA_PORT: u16 = 11434;
@@ -235,6 +235,13 @@ mod tests {
     fn home_dir_is_not_empty() {
         let h = home_dir();
         assert!(!h.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn port_constants() {
+        assert_eq!(DAEMON_PORT, 7744);
+        assert_eq!(OLLAMA_PORT, 11434);
+        assert_eq!(POSTGRES_PORT, 5432);
     }
 
     #[test]

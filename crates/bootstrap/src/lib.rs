@@ -189,13 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn port_constants() {
-        assert_eq!(config::DAEMON_PORT, 7744);
-        assert_eq!(OLLAMA_PORT, 11434);
-        assert_eq!(POSTGRES_PORT, 5432);
-    }
-
-    #[test]
     fn provider_returns_valid_platform() {
         let prov = provider();
         let p = prov.platform();
