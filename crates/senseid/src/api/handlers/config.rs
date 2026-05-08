@@ -213,24 +213,3 @@ pub(crate) async fn remove_all(
     }
 }
 
-// ── Reset ───────────────────────────────────────────────────────────────────
-
-pub(crate) async fn reset_all(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
-    // Clear PG tables
-    state.pg.execute_raw("DELETE FROM sensei.config").await.ok();
-    state.pg.execute_raw("DELETE FROM sensei.index_errors").await.ok();
-    state.pg.execute_raw("DELETE FROM sensei.nodes").await.ok();
-    state.pg.execute_raw("DELETE FROM sensei.folders").await.ok();
-    state.pg.execute_raw("DELETE FROM sensei.projects").await.ok();
-
-    // Clear manifest files
-    if let Some(home) = dirs::home_dir() {
-        let projects_dir = home.join(".sensei").join("projects");
-        std::fs::remove_dir_all(&projects_dir).ok();
-        std::fs::create_dir_all(&projects_dir).ok();
-    }
-
-    Json(serde_json::json!({"ok": true}))
-}

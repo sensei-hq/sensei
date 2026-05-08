@@ -85,7 +85,7 @@ app-dev:
 	cd app && cargo build --manifest-path src-tauri/Cargo.toml && bunx tauri dev
 
 # Build debug .app bundle and launch it (full native bundle, slower than app-dev)
-app-dev-bundle:
+app-dev-bundle: install-dev
 	cd app && SENSEI_DB_SCHEMA_PATH=../database bunx tauri build --debug && SENSEI_DB_SCHEMA_PATH=../database ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
 
 app-release:
@@ -128,7 +128,16 @@ test-app: test-app-unit test-app-sidecar
 test-app-unit:
 	cd app && bun run test:unit
 
-test-app-e2e:
+reset-e2e-db:
+	@echo "[e2e] Dropping sensei-dev (bootstrap will recreate and apply schema)..."
+	dropdb --if-exists sensei-dev
+	@echo "[e2e] Done — bootstrap owns the rest."
+
+# reset=true  → drop and recreate sensei-dev before running (default)
+# reset=false → skip DB reset (use existing DB)
+reset ?= true
+test-app-e2e: install-dev
+	$(if $(filter true,$(reset)),$(MAKE) reset-e2e-db)
 	cd app && bun run test:e2e
 
 test-app-sidecar:

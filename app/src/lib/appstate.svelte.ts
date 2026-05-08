@@ -132,10 +132,6 @@ export class AppState {
   }
 
   async reset() {
-    try {
-      await fetch(`http://127.0.0.1:${this.port}/api/reset`, { method: 'POST' });
-    } catch { /* non-fatal */ }
-
     this.config = {};
     this.loaded = false;
     this.healthReady = false;
