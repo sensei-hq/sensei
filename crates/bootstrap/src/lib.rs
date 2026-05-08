@@ -16,19 +16,15 @@ pub mod util;
 
 pub use config::{
     SenseiConfig, SenseiMode,
-    BREW_TAP, GITHUB_ORG, GITHUB_REPO, HOMEBREW_BREWFILE_URL, HOMEBREW_TAP_REPO,
+    BREW_PATHS, BREW_TAP, GITHUB_ORG, GITHUB_REPO,
+    HOMEBREW_BREWFILE_URL, HOMEBREW_TAP_REPO, HOMEBREW_TAP_URL,
     MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
+    OLLAMA_PORT, POSTGRES_PORT,
 };
 pub use prereq::{BootstrapReport, GateReport, GateStatus, HumanAction, ProgressEvent};
 pub use prereq::engine::{BootstrapContext, BootstrapEngine};
 pub use types::*;
 pub use types::BootstrapTrace;
-
-/// Default ports for sensei services.
-/// `DAEMON_PORT` is the release default; use `daemon_port()` for mode-aware selection.
-pub const DAEMON_PORT: u16 = 7744;
-pub const OLLAMA_PORT: u16 = 11434;
-pub const POSTGRES_PORT: u16 = 5432;
 
 /// Return the daemon port for the current mode.
 ///
@@ -194,7 +190,7 @@ mod tests {
 
     #[test]
     fn port_constants() {
-        assert_eq!(DAEMON_PORT, 7744);
+        assert_eq!(config::DAEMON_PORT, 7744);
         assert_eq!(OLLAMA_PORT, 11434);
         assert_eq!(POSTGRES_PORT, 5432);
     }

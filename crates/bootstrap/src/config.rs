@@ -35,6 +35,25 @@ pub const MARKETPLACE_RAW_URL: &str =
 /// Marketplace repository slug (for `claude plugin add`).
 pub const MARKETPLACE_REPO: &str = "sensei-hq/marketplace";
 
+/// Candidate paths for the Homebrew binary (Apple Silicon first, Intel fallback).
+pub const BREW_PATHS: [&str; 2] = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
+
+/// Full GitHub URL for the Homebrew tap repository.
+pub const HOMEBREW_TAP_URL: &str = "https://github.com/sensei-hq/homebrew-tap";
+
+// ── Service ports ─────────────────────────────────────────────────────────────
+
+/// Default daemon port (production).
+/// **Do not use directly.** Always use `SenseiConfig::from_env().daemon_port` —
+/// this constant is 7744 (prod only) and will be wrong in dev mode.
+pub(crate) const DAEMON_PORT: u16 = 7744;
+
+/// Default Ollama port.
+pub const OLLAMA_PORT: u16 = 11434;
+
+/// Default PostgreSQL port.
+pub const POSTGRES_PORT: u16 = 5432;
+
 /// Runtime mode — controls ports, directory names, and database names.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SenseiMode {
@@ -106,7 +125,7 @@ impl SenseiConfig {
 
         // DB URL: explicit override > derived from db_name
         let db_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| format!("postgresql://localhost:5432/{db_name}"));
+            .unwrap_or_else(|_| format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}"));
 
         let dir_suffix = match mode {
             SenseiMode::Dev  => ".sensei-dev",
