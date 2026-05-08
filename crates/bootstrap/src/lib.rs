@@ -107,7 +107,7 @@ pub fn run_with_traces() -> (BootstrapResult, Vec<BootstrapTrace>) {
     let h3 = std::thread::spawn(|| {
         util::check_binary_traced("sensei", "sensei", "--version")
     });
-    let h4 = std::thread::spawn(|| database::check_traced());
+    let h4 = std::thread::spawn(database::check_traced);
     let h5 = std::thread::spawn(|| util::check_service_traced("daemon", daemon_port()));
 
     // Collate in gate order

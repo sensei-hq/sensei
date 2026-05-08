@@ -520,11 +520,11 @@ fn resolve_project_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> St
     let mut best_len = 0;
 
     for p in &projects {
-        if let Some(path) = p["path"].as_str() {
-            if cwd.starts_with(path) && path.len() > best_len {
-                best_match = p["repo_id"].as_str().unwrap_or("").to_string();
-                best_len = path.len();
-            }
+        if let Some(path) = p["path"].as_str()
+            && cwd.starts_with(path) && path.len() > best_len
+        {
+            best_match = p["repo_id"].as_str().unwrap_or("").to_string();
+            best_len = path.len();
         }
     }
 
