@@ -111,8 +111,8 @@ impl SenseiConfig {
         let mode = SenseiMode::from_env();
 
         let daemon_port = match mode {
-            SenseiMode::Dev  => 7745,
-            SenseiMode::Prod => 7744,
+            SenseiMode::Dev  => DAEMON_PORT + 1,
+            SenseiMode::Prod => DAEMON_PORT,
         };
 
         // DB name: explicit override > mode default
