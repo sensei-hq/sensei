@@ -4,12 +4,9 @@
     import { appState } from "$lib/appstate.svelte.js";
     import {
         hasTauri,
-        installPrerequisites,
-        startServices,
-        setupDatabase,
+        checkAndFixBootstrap,
         getPlatform,
         listenBootstrapEvents,
-        runBootstrap,
     } from "$lib/bootstrap.js";
     import { bootstrapState as bs } from "$lib/bootstrap-state.svelte.js";
     import { GATES } from "$lib/bootstrap-gates.js";
@@ -43,73 +40,7 @@
         }
     });
 
-    // Auto-trigger Phase 3 (database) when PostgreSQL is ready but DB isn't.
-    // Intentionally does NOT require senseid to be ready — the daemon depends on
-    // the DB, so we must set up the DB before the daemon can start.
-    let dbPhaseTriggered = false;
-    $effect(() => {
-        if (!hasTauri() || dbPhaseTriggered) return;
-        const postgresReady =
-            bs.statuses["postgres"] === "ready" ||
-            bs.statuses["homebrew"] === "ready";
-        const dbNotReady = bs.statuses["database"] !== "ready";
-        if (postgresReady && dbNotReady) {
-            dbPhaseTriggered = true;
-            setupDatabase();
-        }
-    });
-
-    // After the DB is set up, restart services so the daemon can connect.
-    // This handles the cold-start case: DB missing → setupDatabase() creates it →
-    // daemon can now start. Without this re-trigger, the daemon stays stopped.
-    let daemonRestartTriggered = false;
-    $effect(() => {
-        if (!hasTauri() || daemonRestartTriggered) return;
-        const dbReady = bs.statuses["database"] === "ready";
-        const daemonNotReady = bs.statuses["senseid"] !== "ready";
-        if (dbReady && daemonNotReady) {
-            daemonRestartTriggered = true;
-            startServices();
-        }
-    });
-
-    // Map bootstrap component state to gate status
-    function componentStateToGateStatus(comp: {
-        state: { state: string; error?: string };
-    }): GateStatus {
-        switch (comp.state.state) {
-            case "ready":
-                return "ready";
-            case "failed": {
-                // "not installed" = binary missing, anything else = service error
-                const err = comp.state.error ?? "";
-                return err.includes("not installed") ? "missing" : "blocked";
-            }
-            case "detecting":
-                return "checking";
-            case "installing":
-                return "checking";
-            case "starting":
-                return "starting";
-            default:
-                return "waiting";
-        }
-    }
-
-    // Map bootstrap component name to gate ID
-    function componentNameToGateId(name: string): string | null {
-        const map: Record<string, string> = {
-            homebrew: "homebrew",
-            postgresql: "postgres",
-            ollama: "ollama",
-            sensei: "sensei",
-            database: "database",
-            daemon: "senseid",
-        };
-        return map[name] ?? null;
-    }
-
-    // Wire Tauri events → state (via handleEvent) + run Phase 0 detection
+    // Wire Tauri events → state and kick off the check-and-fix pipeline
     let unlistenFn: (() => void) | undefined;
     onMount(() => {
         if (!hasTauri()) return;
@@ -123,64 +54,27 @@
                 /* browser fallback */
             }
 
-            // Subscribe to phase events
+            // Subscribe to gate/phase events before starting the engine
             unlistenFn = await listenBootstrapEvents((event) =>
                 bs.handleEvent(event),
             );
 
-            // Phase 0: Run detection and apply results to state
-            try {
-                const result = await runBootstrap();
-                for (const comp of result.components) {
-                    const gateId = componentNameToGateId(comp.name);
-                    if (gateId) {
-                        bs.setGateStatus(
-                            gateId,
-                            componentStateToGateStatus(comp),
-                        );
-                    }
-                }
-
-                // Auto-progress: if prereqs are present, start services + re-check
-                if (!bs.needsPrereqInstall && !bs.allReady) {
-                    await startServices();
-
-                    // After start_services completes (background thread), wait and re-detect
-                    // to catch services that came up after the initial poll
-                    setTimeout(async () => {
-                        if (bs.allReady) return;
-                        try {
-                            const recheck = await runBootstrap();
-                            for (const comp of recheck.components) {
-                                const id = componentNameToGateId(comp.name);
-                                if (id)
-                                    bs.setGateStatus(
-                                        id,
-                                        componentStateToGateStatus(comp),
-                                    );
-                            }
-                        } catch {
-                            /* ignore */
-                        }
-                    }, 5000);
-                }
-            } catch {
-                // Detection failed — gates stay pending, user sees waiting state
-            }
+            // Single call: checks all prerequisites, fixes what's broken,
+            // streams progress via "bootstrap" events.
+            await checkAndFixBootstrap();
         })();
 
         return () => unlistenFn?.();
     });
 
-    // Retry: re-run detection and auto-progress
-    async function retry(gateId: string) {
-        bs.setGateStatus(gateId, "checking");
-
+    // Retry: re-run the full check-and-fix pipeline
+    async function retry(_gateId: string) {
         if (!hasTauri()) {
             // Browser-mode simulation
+            bs.setGateStatus(_gateId, "checking");
             setTimeout(() => {
-                bs.setGateStatus(gateId, "ready");
-                const idx = GATES.findIndex((g) => g.id === gateId);
+                bs.setGateStatus(_gateId, "ready");
+                const idx = GATES.findIndex((g) => g.id === _gateId);
                 if (
                     idx + 1 < GATES.length &&
                     bs.statuses[GATES[idx + 1].id] === "waiting"
@@ -195,30 +89,17 @@
             }, 1100);
             return;
         }
-
-        // Tauri mode: re-run full detection and auto-progress
-        try {
-            const result = await runBootstrap();
-            for (const comp of result.components) {
-                const id = componentNameToGateId(comp.name);
-                if (id) bs.setGateStatus(id, componentStateToGateStatus(comp));
-            }
-            if (!bs.needsPrereqInstall && !bs.allReady) {
-                await startServices();
-            }
-        } catch {
-            /* detection failed — gate stays checking */
-        }
+        await checkAndFixBootstrap();
     }
 
     async function runInstallPrereqs() {
         if (!hasTauri()) return;
         bs.installing = true;
-        await installPrerequisites();
+        await checkAndFixBootstrap();
     }
 
     function retryAll() {
-        bs.missingPrereqGates.forEach((g) => retry(g.id));
+        checkAndFixBootstrap();
     }
 
     function statusColor(s: GateStatus): string {
