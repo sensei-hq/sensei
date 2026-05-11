@@ -2,7 +2,8 @@
 
 use axum::response::Json;
 use serde::Serialize;
-use sensei_bootstrap::{self as bootstrap, ComponentStatus};
+use sensei_bootstrap::{self as bootstrap};
+use sensei_bootstrap::prereq::{CheckResult, checker::{Checker, PortChecker}};
 use std::time::Instant;
 
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -41,29 +42,59 @@ struct ComponentBrief {
     version: Option<String>,
 }
 
-impl From<&ComponentStatus> for ComponentBrief {
-    fn from(s: &ComponentStatus) -> Self {
+impl From<&CheckResult> for ComponentBrief {
+    fn from(r: &CheckResult) -> Self {
+        Self {
+            state: if r.ok { "ready".to_string() } else { "failed".to_string() },
+            version: r.version.clone(),
+        }
+    }
+}
+
+impl From<&bootstrap::ComponentStatus> for ComponentBrief {
+    fn from(s: &bootstrap::ComponentStatus) -> Self {
         let state = match &s.state {
-            bootstrap::ComponentState::Ready => "ready".to_string(),
-            bootstrap::ComponentState::Failed { .. } => "failed".to_string(),
-            bootstrap::ComponentState::Skipped => "skipped".to_string(),
-            _ => "unknown".to_string(),
+            bootstrap::ComponentState::Ready => "ready",
+            bootstrap::ComponentState::Failed { .. } => "failed",
+            bootstrap::ComponentState::Skipped => "skipped",
+            _ => "unknown",
         };
-        Self { state, version: s.version.clone() }
+        Self { state: state.to_string(), version: s.version.clone() }
     }
 }
 
 pub(crate) async fn health() -> Json<HealthResponse> {
-    let (pg, ollama, db, models) = tokio::task::spawn_blocking(|| {
-        let pg = bootstrap::util::check_service("postgresql", bootstrap::POSTGRES_PORT);
-        let ollama = bootstrap::util::check_service("ollama", bootstrap::OLLAMA_PORT);
+    let result = tokio::task::spawn_blocking(|| {
+        let pg = PortChecker::new("postgresql", bootstrap::POSTGRES_PORT).check();
+        let ollama = PortChecker::new("ollama", bootstrap::OLLAMA_PORT).check();
         let db = bootstrap::database::check();
         let models = bootstrap::models::list();
         (pg, ollama, db, models)
-    }).await.unwrap();
+    }).await;
+
+    let (pg, ollama, db, models) = match result {
+        Ok(data) => data,
+        Err(e) => {
+            // Blocking task panicked or was aborted — return a degraded but
+            // valid response rather than propagating the panic to the handler.
+            tracing::error!("health check task failed: {e}");
+            return Json(HealthResponse {
+                status: "error",
+                name: "senseid",
+                version: env!("CARGO_PKG_VERSION"),
+                uptime_seconds: uptime_seconds(),
+                components: ComponentSummary {
+                    postgresql: ComponentBrief { state: "unknown".to_string(), version: None },
+                    ollama:     ComponentBrief { state: "unknown".to_string(), version: None },
+                    database:   ComponentBrief { state: "unknown".to_string(), version: None },
+                    models: vec![],
+                },
+            });
+        }
+    };
 
     Json(HealthResponse {
-        status: if pg.is_ready() && db.is_ready() { "healthy" } else { "degraded" },
+        status: if pg.ok && db.is_ready() { "healthy" } else { "degraded" },
         name: "senseid",
         version: env!("CARGO_PKG_VERSION"),
         uptime_seconds: uptime_seconds(),

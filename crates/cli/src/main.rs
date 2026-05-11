@@ -181,9 +181,17 @@ fn ensure_daemon() {
 
 fn start_daemon() {
     let bin = daemon_bin();
-    let _ = std::process::Command::new(&bin)
-        .args(["start", "--port", "7744"])
-        .spawn();
+    let port = default_port();
+    match std::process::Command::new(&bin)
+        .args(["start", "--port", &port.to_string()])
+        .spawn()
+    {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Failed to spawn daemon ({}): {}", bin.display(), e);
+            return;
+        }
+    }
 
     for _ in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(250));
@@ -457,7 +465,13 @@ fn init_user_scope(acp: Option<&str>, _recommended: bool) {
 // ── Project scope ───────────────────────────────────────────────────────────
 
 fn init_project_scope(_recommended: bool) {
-    let repo_root = std::env::current_dir().expect("Cannot determine current directory");
+    let repo_root = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: cannot determine current directory: {e}");
+            std::process::exit(1);
+        }
+    };
     println!("[project scope] {}\n", repo_root.display());
 
     // 1. .sensei/ directory — mindsets, personas, rules
