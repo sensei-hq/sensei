@@ -20,9 +20,7 @@ pub(crate) async fn get_sessions_stub(
             vec![]
         }
     } else {
-        // No folder filter — no PgStore equivalent for "all sessions".
-        // TODO: Add list_all_sessions if needed.
-        vec![]
+        state.pg.list_all_sessions(50).await.unwrap_or_default()
     };
     let total = sessions.len();
     let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();

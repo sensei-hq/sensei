@@ -62,12 +62,19 @@ pub(crate) async fn create_solution(
 }
 
 pub(crate) async fn update_solution(
-    State(_store): State<AppState>,
-    Path(_id): Path<String>,
-    Json(_body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-    // TODO: implement update
-    Json(serde_json::json!({"ok": true}))
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = uuid::Uuid::parse_str(&id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.pg.update_project(
+        &project_id,
+        body["name"].as_str(),
+        body["description"].as_str(),
+        body["maturity"].as_str(),
+    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 pub(crate) async fn delete_solution(
@@ -183,7 +190,9 @@ pub(crate) async fn project_summary(
         + counts.get("interface").copied().unwrap_or(0)
         + counts.get("enum").copied().unwrap_or(0)
         + counts.get("type").copied().unwrap_or(0);
-    let edge_count: u32 = 0; // TODO: implement edge count in PG
+    let edge_count = if let Some(fid) = &folder_id_opt {
+        state.pg.count_edges(fid).await.unwrap_or(0)
+    } else { 0 };
     let pkg_count = counts.get("package").copied().unwrap_or(0);
     let mod_count = counts.get("module").copied().unwrap_or(0);
 
