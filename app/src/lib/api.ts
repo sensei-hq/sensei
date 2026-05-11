@@ -4,7 +4,14 @@ import type {
   IndexQueueStatus, DirtyStatus, IndexError,
   FunctionDetail, TypeDetail, CommunityInfo, DocDrift,
   LibEntry, LibDoc, DepVersion, SessionData,
+  ProjectMemory, DriftItem, PatternEntry, Recommendation,
+  ProjectSession, CallFlowModule, CallFlowCall,
+  ProjectListItem,
 } from './types.js';
+
+export type ApiError = { status: number; message: string } | { status: 0; message: string };
+
+export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
 /** Create a typed API client for the sensei Rust daemon. */
 export function senseiApi(port: number) {
@@ -42,6 +49,30 @@ export function senseiApi(port: number) {
     try { await fetch(`${base}${path}`, { method: 'DELETE' }); } catch { /* non-fatal */ }
   }
 
+  async function tryGet<T>(path: string): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`);
+      if (res.ok) return { ok: true, data: await res.json() as T };
+      return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
+  async function tryPost<T>(path: string, body: unknown): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return { ok: true, data: await res.json() as T };
+      return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
   return {
     // ── Health ────────────────────────────────────────────────────────────
     getHealth: () => get<Record<string, unknown>>('/health', {}),
@@ -75,7 +106,7 @@ export function senseiApi(port: number) {
     },
 
     getRepoSummary: (repoId: string) =>
-      get<ProjectSummary>(`/api/repos/${enc(repoId)}/summary`, null as any),
+      get<ProjectSummary | null>(`/api/repos/${enc(repoId)}/summary`, null),
 
     registerRepo: (repoId: string, name: string, path: string) =>
       post('/api/repos', { repoId, name, path }, { ok: false }),
@@ -95,12 +126,12 @@ export function senseiApi(port: number) {
       del(`/api/repos/${enc(repoId)}/tags/${enc(tag)}`),
 
     // ── Projects (groups of 1+ repos) ───────────────────────────────────
-    listProjects: () => get<any[]>('/api/projects', []),
+    listProjects: () => get<ProjectListItem[]>('/api/projects', []),
 
-    createProject: (project: any) =>
+    createProject: (project: object) =>
       post<{ ok: boolean; id?: string }>('/api/projects', project, { ok: false }),
 
-    updateProject: (id: string, patch: any) =>
+    updateProject: (id: string, patch: object) =>
       put(`/api/projects/${enc(id)}`, patch),
 
     deleteProject: (id: string) => del(`/api/projects/${enc(id)}`),
@@ -112,13 +143,13 @@ export function senseiApi(port: number) {
       del(`/api/projects/${enc(projectId)}/repos/${enc(repoId)}`),
 
     getProjectGraph: (id: string) =>
-      get<SolutionGraphResponse>(`/api/projects/${enc(id)}/graph`, null as any),
+      get<SolutionGraphResponse | null>(`/api/projects/${enc(id)}/graph`, null),
 
     getProjectRoles: (id: string) =>
       get<InferredRole[]>(`/api/projects/${enc(id)}/roles`, []),
 
     analyzeProject: (id: string) =>
-      post<SolutionAnalysis>(`/api/projects/${enc(id)}/analyze`, {}, null as any),
+      post<SolutionAnalysis | null>(`/api/projects/${enc(id)}/analyze`, {}, null),
 
     // ── Project detail (new multi-window endpoints) ───────────────────
     getProjectFtr: (id: string) =>
@@ -143,27 +174,27 @@ export function senseiApi(port: number) {
       ),
 
     getProjectMemories: (id: string) =>
-      get<{ active: any[]; total: number; pendingShare: number }>(
+      get<{ active: ProjectMemory[]; total: number; pendingShare: number }>(
         `/api/projects/${enc(id)}/memories`, { active: [], total: 0, pendingShare: 0 }
       ),
 
     getProjectDrift: (id: string) =>
-      get<{ items: any[]; total: number; drifted: number; broken: number }>(
+      get<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(
         `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
       ),
 
     getProjectPatterns: (id: string) =>
-      get<{ followed: any[]; antiPatterns: any[] }>(
+      get<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(
         `/api/projects/${enc(id)}/patterns`, { followed: [], antiPatterns: [] }
       ),
 
     getProjectRecommendations: (id: string, status?: string) =>
-      get<any[]>(
+      get<Recommendation[]>(
         `/api/projects/${enc(id)}/recommendations${status ? `?status=${enc(status)}` : ''}`, []
       ),
 
     getProjectSessions: (id: string, limit = 50) =>
-      get<{ sessions: any[] }>(
+      get<{ sessions: ProjectSession[] }>(
         `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
       ),
 
@@ -230,7 +261,7 @@ export function senseiApi(port: number) {
       post<{ ok: boolean; communities: number }>('/api/graph/communities', { repoId }, { ok: false, communities: 0 }),
 
     getCallFlow: (repoId: string) =>
-      get<{ modules: any[]; calls: any[]; moduleCount: number; exportCount: number; callCount: number }>(
+      get<{ modules: CallFlowModule[]; calls: CallFlowCall[]; moduleCount: number; exportCount: number; callCount: number }>(
         `/api/graph/call-flow?repoId=${enc(repoId)}`, { modules: [], calls: [], moduleCount: 0, exportCount: 0, callCount: 0 },
       ),
 
@@ -381,6 +412,8 @@ export function senseiApi(port: number) {
     get analyzeSolution() { return this.analyzeProject; },
   };
 }
+
+export type SenseiApi = ReturnType<typeof senseiApi>;
 
 function enc(s: string): string {
   return encodeURIComponent(s);
