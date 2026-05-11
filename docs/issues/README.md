@@ -17,27 +17,27 @@
 | [P1](#p1--unwrap-in-health-http-handler) | Panic | ✅ Fixed | `senseid/src/api/handlers/health.rs:73` |
 | [P2](#p2--mutexlockunwrap-in-circuit-breaker-crashes-all-inference) | Panic | ✅ Fixed | `gateway/src/circuit_breaker.rs:72,98,124,151,168,174` |
 | [P3](#p3--current_direxpect-panics-cli) | Panic | ✅ Fixed | `cli/src/main.rs:460` |
-| [A1](#a1--daemon-porturl-computed-four-incompatible-ways) | Architecture | ⏳ Pending | `cli`, `mcp`, `app`, `bootstrap` |
+| [A1](#a1--daemon-porturl-computed-four-incompatible-ways) | Architecture | ✅ Fixed (mcp) | `cli`, `mcp`, `app`, `bootstrap` |
 | [A2](#a2--which_binary--which_exists--3-independent-implementations) | Architecture | ⏳ Pending | `bootstrap/util.rs`, `senseid/assistants/helpers.rs`, `cli/main.rs` |
 | [A3](#a3--home--3-implementations-with-different-semantics) | Architecture | ⏳ Pending | `bootstrap`, `senseid/paths.rs`, `cli/main.rs` |
 | [A4](#a4--is_dev-binary-name-detection-duplicated) | Architecture | ⏳ Pending | `cli/main.rs:11`, `senseid/main.rs:62` |
 | [A5](#a5--modesensei_mode-enum-defined-twice) | Architecture | ⏳ Pending | `bootstrap/config.rs:58`, `senseid/paths.rs:21` |
 | [A6](#a6--assistantstatus-struct-defined-twice) | Architecture | ⏳ Pending | `senseid/assistants/mod.rs:92`, `app/src-tauri/commands/assistants.rs:15` |
-| [A7](#a7--constants-scattered-across-crates) | Architecture | ⏳ Pending | Multiple |
+| [A7](#a7--constants-scattered-across-crates) | Architecture | ✅ Fixed | Multiple |
 | [A8](#a8--senseiconfig-json-readwrite-pattern-in-3-places) | Architecture | ⏳ Pending | `cli/main.rs:270`, `installer/catalog.rs:74`, `assistants/mod.rs:191` |
-| [S1](#s1--mark_user_scope_configured-discards-write-failure) | Silent Failure | ⏳ Pending | `cli/main.rs:281` |
-| [S2](#s2--config-write-uses-unwrap-before-ok) | Silent Failure | ⏳ Pending | `cli/main.rs:281` |
+| [S1](#s1--mark_user_scope_configured-discards-write-failure) | Silent Failure | ✅ Fixed | `cli/main.rs:281` |
+| [S2](#s2--config-write-uses-unwrap-before-ok) | Silent Failure | ✅ Fixed | `cli/main.rs:281` |
 | [S3](#s3--all-pgstore-errors-erased-to-string) | Silent Failure | ⏳ Pending | `senseid/db/pg_store.rs` (110 sites) |
 | [S4](#s4--resolve_project-falls-back-to-raw-hint-as-repo_id) | Silent Failure | ⏳ Pending | `mcp/main.rs:511` |
 | [S5](#s5--watcher_status-creates-throwaway-taskqueue-per-http-call) | Silent Failure | ⏳ Pending | `senseid/api/handlers/health.rs:92` |
-| [M1](#m1--boxleak-on-every-file-processed) | Memory Leak | ⏳ Pending | `senseid/languages/mod.rs:60` |
-| [M2](#m2--boxleak-in-formula_for-for-unknown-service-names) | Memory Leak | ⏳ Pending | `bootstrap/platform/macos.rs:42` |
+| [M1](#m1--boxleak-on-every-file-processed) | Memory Leak | ✅ Fixed | `senseid/languages/mod.rs:60` |
+| [M2](#m2--boxleak-in-formula_for-for-unknown-service-names) | Memory Leak | ✅ Fixed | `bootstrap/platform/macos.rs:42` |
 | [E1](#e1--adding-a-language-requires-editing-two-parallel-match-arms) | Extensibility | ⏳ Pending | `senseid/languages/mod.rs:24–80` |
 | [E2](#e2--acp-registry-and-cli-acp-map-are-separate-hardcoded-lists) | Extensibility | ⏳ Pending | `senseid/assistants/mod.rs:14`, `cli/main.rs:624` |
-| [E3](#e3--bootstrap-component-list-has-hardcoded-count-assertion) | Extensibility | ⏳ Pending | `bootstrap/prereq/registry.rs:241` |
+| [E3](#e3--bootstrap-component-list-has-hardcoded-count-assertion) | Extensibility | ✅ Fixed | `bootstrap/prereq/registry.rs:241` |
 | [PL1](#pl1--extra_paths-and-path-separator-are-unix-only-in-utilrs) | Platform | ⏳ Pending | `bootstrap/util.rs:30–36` |
 | [PL2](#pl2--hardware-detect_gpu-has-cfg-blocks-instead-of-delegating-to-platform) | Platform | ⏳ Pending | `bootstrap/hardware.rs:21–46` |
-| [D1](#dead-code) | Dead Code | ⏳ Pending | `senseid/config/detector.rs:13,59` |
+| [D1](#dead-code) | Dead Code | ✅ Fixed | `senseid/config/detector.rs:13,59` |
 | [D2](#dead-code) | Dead Code | ⏳ Pending | `senseid/types.rs:272,317,354,367,388,398,412` |
 
 ---
