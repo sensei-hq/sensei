@@ -497,6 +497,71 @@ impl PgStore {
         }).collect())
     }
 
+    /// Count all edges for a folder.
+    pub async fn count_edges(&self, folder_id: &uuid::Uuid) -> Result<i64, String> {
+        let row: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM sensei.edges WHERE folder_id = $1"
+        ).bind(folder_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Delete nodes whose file_path starts with a given prefix (for folder deletion).
+    pub async fn delete_nodes_by_path_prefix(&self, folder_id: &uuid::Uuid, prefix: &str) -> Result<u64, String> {
+        let result = sqlx_core::query::query(
+            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path LIKE $2 || '%'"
+        ).bind(folder_id).bind(prefix).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(result.rows_affected())
+    }
+
+    /// Search libraries by name (ILIKE).
+    pub async fn search_libraries(&self, query: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, ecosystem::text, description FROM sensei.libraries
+             WHERE name ILIKE '%' || $1 || '%'
+             ORDER BY name LIMIT 50"
+        ).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, eco, desc)| {
+            serde_json::json!({ "id": id, "name": name, "ecosystem": eco, "description": desc })
+        }).collect())
+    }
+
+    /// Get a single library by exact name.
+    pub async fn get_library_by_name(&self, name: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, name, ecosystem::text, description FROM sensei.libraries
+             WHERE name = $1
+             ORDER BY name"
+        ).bind(name).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, name, eco, desc)| {
+            serde_json::json!({ "id": id, "name": name, "ecosystem": eco, "description": desc })
+        }).collect())
+    }
+
+    /// List all sessions across all folders.
+    pub async fn list_all_sessions(&self, limit: i64) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, Option<String>, Option<bool>, i32, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, folder_id, task, outcome::text, ftr, turns, started_at
+                 FROM activity.sessions ORDER BY started_at DESC LIMIT $1"
+            ).bind(limit).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, fid, task, outcome, ftr, turns, started)| {
+            serde_json::json!({
+                "id": id, "folder_id": fid, "task": task, "outcome": outcome,
+                "ftr": ftr, "turns": turns, "started_at": started.to_rfc3339(),
+            })
+        }).collect())
+    }
+
+    /// Update deferred sibling folders' project_id to match their parent folder.
+    pub async fn assign_deferred_siblings_to_project(&self, parent_path: &str, project_id: &uuid::Uuid) -> Result<u64, String> {
+        let result = sqlx_core::query::query(
+            "UPDATE sensei.folders SET project_id = $2, modified_at = now()
+             WHERE project_id IS NULL AND status = 'deferred'::sensei.folder_status
+             AND path LIKE $1 || '/%'"
+        ).bind(parent_path).bind(project_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(result.rows_affected())
+    }
+
     // ── Extensions ────────────────────────────────────────────────────
 
     pub async fn create_extension(

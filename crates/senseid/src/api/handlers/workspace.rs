@@ -95,7 +95,10 @@ pub(crate) async fn exclude_project(
         .unwrap_or_default()
         .to_string();
 
-    // TODO: clear indexed nodes from PG when exclude is called
+    // Clear indexed nodes before deleting the folder record
+    if let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"])) {
+        state.pg.delete_nodes_by_folder(&folder_id).await.ok();
+    }
 
     // Delete the folder record (exclusions now handled by watcher)
     state.pg.delete_repo_by_name(&repo_id).await

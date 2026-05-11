@@ -80,13 +80,22 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
         0.0,
     )));
 
-    // ── 6. Attach deferred siblings to this project ──────────────────
-    // TODO: query DB for deferred folders with same parent path, update their project_id
-
     // ── Existing logic: look up folder, clear stale data ─────────────
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_uuid = folder.as_ref()
         .and_then(|f| crate::api::util::json_uuid(&f["id"]));
+
+    // ── 6. Attach deferred siblings to this project ──────────────────
+    if let Some(project_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["project_id"])) {
+        let parent = std::path::Path::new(&task.folder_path)
+            .parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        if !parent.is_empty() {
+            let assigned = ctx.pg().assign_deferred_siblings_to_project(&parent, &project_id).await.unwrap_or(0);
+            if assigned > 0 {
+                tracing::info!("process_git_folder: {} — assigned {} deferred siblings to project {}", folder_name, assigned, project_id);
+            }
+        }
+    }
 
     if let Some(ref fid) = folder_uuid {
         ctx.pg().delete_nodes_by_folder(fid).await.ok();
@@ -370,9 +379,7 @@ pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String>
     let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-            // Delete all nodes whose file path starts with the deleted folder path
-            // TODO: add a delete_nodes_by_path_prefix method
-            ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
+            ctx.pg().delete_nodes_by_path_prefix(&folder_id, &task.path).await.ok();
         }
     tracing::info!("delete_folder: {}", task.path);
     Ok(())
