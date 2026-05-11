@@ -138,55 +138,49 @@ pub(crate) async fn query_types(state: &AppState, q: &str, repo_id: &str) -> ser
 
 pub(crate) async fn query_callers(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    // TODO: implement — need node_uuid from name lookup
-    let _ = (state, repo_id);
+    let results = state.pg.get_callers_by_name(repo_id, &term).await.unwrap_or_default();
     serde_json::json!({
         "type": "callers",
         "query": q,
         "function": term,
-        "results": [],
+        "results": results,
     })
 }
 
 pub(crate) async fn query_callees(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
     let term = extract_search_term(q);
-    // TODO: implement — need node_uuid from name lookup
-    let _ = (state, repo_id);
+    let results = state.pg.get_callees_by_name(repo_id, &term).await.unwrap_or_default();
     serde_json::json!({
         "type": "callees",
         "query": q,
         "function": term,
-        "results": [],
+        "results": results,
     })
 }
 
 pub(crate) async fn query_files(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
-    // TODO: implement files_by_tag in PG
-    let _ = (state, repo_id);
-    serde_json::json!({ "type": "files", "query": q, "results": [] })
+    let term = extract_search_term(q);
+    let results = state.pg.get_files_by_tag(repo_id, &term).await.unwrap_or_default();
+    serde_json::json!({ "type": "files", "query": q, "results": results })
 }
 
 pub(crate) async fn query_patterns(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
-    // Extract pattern keyword and search functions by tag
     let tag = if q.contains("hook") { "hook" }
         else if q.contains("middleware") { "middleware" }
         else if q.contains("route") { "route" }
         else if q.contains("handler") { "handler" }
         else if q.contains("component") { "component" }
         else { &extract_search_term(q) };
-
-    // TODO: implement files_by_tag in PG
-    let _ = (state, repo_id);
-    serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": [] })
+    let results = state.pg.get_files_by_tag(repo_id, tag).await.unwrap_or_default();
+    serde_json::json!({ "type": "patterns", "query": q, "pattern": tag, "results": results })
 }
 
 pub(crate) async fn query_docs(state: &AppState, q: &str, repo_id: &str) -> serde_json::Value {
-    // TODO: implement doc drift in PG
-    let _ = (state, repo_id);
+    let drifted = state.pg.get_doc_drift(repo_id).await.unwrap_or_default();
     serde_json::json!({
         "type": "docs",
         "query": q,
-        "driftedDocs": [],
+        "driftedDocs": drifted,
     })
 }
 
