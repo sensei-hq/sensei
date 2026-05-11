@@ -143,12 +143,11 @@ pub fn classify_folders(
         let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
 
         // Sibling: shares parent with a git folder
-        if let Some(parent) = dir.parent() {
-            if git_parents.contains(&parent.to_path_buf()) {
+        if let Some(parent) = dir.parent()
+            && git_parents.contains(&parent.to_path_buf()) {
                 result.push(DiscoveredFolder { name, path: dir.clone(), kind: FolderKind::Sibling });
                 continue;
             }
-        }
 
         // Standalone: non-git, not a sibling
         result.push(DiscoveredFolder { name, path: dir.clone(), kind: FolderKind::Standalone });
@@ -220,13 +219,11 @@ pub fn group_into_projects(folders: &[DiscoveredFolder]) -> Vec<DiscoveredProjec
 /// Detect if a git folder is a monorepo (has workspace config).
 pub fn is_monorepo(path: &Path) -> bool {
     // Cargo workspace
-    if let Ok(content) = std::fs::read_to_string(path.join("Cargo.toml")) {
-        if content.contains("[workspace]") { return true; }
-    }
+    if let Ok(content) = std::fs::read_to_string(path.join("Cargo.toml"))
+        && content.contains("[workspace]") { return true; }
     // npm/pnpm workspace
-    if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
-        if content.contains("\"workspaces\"") { return true; }
-    }
+    if let Ok(content) = std::fs::read_to_string(path.join("package.json"))
+        && content.contains("\"workspaces\"") { return true; }
     if path.join("pnpm-workspace.yaml").exists() { return true; }
     // Go workspace
     if path.join("go.work").exists() { return true; }

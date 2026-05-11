@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use super::trait_def::{Assistant, AssistantConfigureOk};
-use super::helpers::{home, which_exists, upsert_sensei_in_json, remove_sensei_from_json};
+use super::helpers::{home, upsert_sensei_in_json, remove_sensei_from_json};
 
 /// Entry format written to the MCP config file.
 pub(crate) enum McpEntryFormat {
@@ -46,7 +46,7 @@ impl Assistant for McpFileAssistant {
             }
         }
         for bin in self.bin_names {
-            if which_exists(bin) { return true; }
+            if sensei_bootstrap::util::which_binary(bin).is_some() { return true; }
         }
         for path in self.home_paths {
             if h.join(path).exists() { return true; }

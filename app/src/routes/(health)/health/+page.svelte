@@ -9,12 +9,15 @@
         listenBootstrapEvents,
     } from "$lib/bootstrap.js";
     import { bootstrapState as bs } from "$lib/bootstrap-state.svelte.js";
-    import { GATES } from "$lib/bootstrap-gates.js";
-    import type { GateStatus } from "$lib/bootstrap-gates.js";
 
-    // In e2e builds (VITE_SENSEI_MODE=dev baked in by globalSetup), skip auto-advance
-    // so tests can observe gate states without the page redirecting under them.
-    const isDevBuild = import.meta.env.VITE_SENSEI_MODE === "dev";
+    // Item ledger — matches BS_ITEMS order in docs/mockups/lib/bootstrap-simple.jsx
+    const LEDGER_ITEMS = [
+        { id: "postgres", label: "PostgreSQL @17",    note: null },
+        { id: "ollama",   label: "Ollama",             note: null },
+        { id: "sensei",   label: "Sensei components",  note: "cli · mcp · daemon" },
+        { id: "database", label: "Database & schema",  note: "pgvector · sensei tables" },
+        { id: "senseid",  label: "Background daemon",  note: null },
+    ] as const;
 
     // Browser mode: apply mock preset
     if (!hasTauri()) {
@@ -28,17 +31,17 @@
         });
     }
 
-    // Auto-advance when all ready — suppressed in dev/e2e builds so tests can observe gate states
-    $effect(() => {
-        if (bs.allReady && !isDevBuild) {
-            setTimeout(() => {
-                appState.setHealthReady();
-                if (appState.setupComplete)
-                    goto("/observatory", { replaceState: true });
-                else goto("/setup/welcome", { replaceState: true });
-            }, 900);
-        }
-    });
+
+    // Auto-advance when all gates are ready.
+    // Disabled for now — the "Enter" / "Continue →" buttons serve this role.
+    // Re-enable once we decide on the right trigger (e.g. only on first-run,
+    // only in release builds, only if no dev-navigate menu was used, etc.).
+    //
+    // $effect(() => {
+    //     if (bs.allReady) {
+    //         setTimeout(() => enterApp(), 900);
+    //     }
+    // });
 
     // Wire Tauri events → state and kick off the check-and-fix pipeline
     let unlistenFn: (() => void) | undefined;
@@ -46,451 +49,303 @@
         if (!hasTauri()) return;
 
         (async () => {
-            // Load platform info
             try {
                 const info = await getPlatform();
                 bs.setPlatform(info);
-            } catch {
-                /* browser fallback */
-            }
+            } catch { /* browser fallback */ }
 
-            // Subscribe to gate/phase events before starting the engine
             unlistenFn = await listenBootstrapEvents((event) =>
                 bs.handleEvent(event),
             );
-
-            // Single call: checks all prerequisites, fixes what's broken,
-            // streams progress via "bootstrap" events.
             await checkAndFixBootstrap();
         })();
 
         return () => unlistenFn?.();
     });
 
-    // Retry: re-run the full check-and-fix pipeline
-    async function retry(_gateId: string) {
-        if (!hasTauri()) {
-            // Browser-mode simulation
-            bs.setGateStatus(_gateId, "checking");
-            setTimeout(() => {
-                bs.setGateStatus(_gateId, "ready");
-                const idx = GATES.findIndex((g) => g.id === _gateId);
-                if (
-                    idx + 1 < GATES.length &&
-                    bs.statuses[GATES[idx + 1].id] === "waiting"
-                ) {
-                    bs.setGateStatus(GATES[idx + 1].id, "checking");
-                    setTimeout(() => {
-                        GATES.slice(idx + 1).forEach((g) =>
-                            bs.setGateStatus(g.id, "ready"),
-                        );
-                    }, 900);
-                }
-            }, 1100);
-            return;
-        }
-        await checkAndFixBootstrap();
-    }
-
-    async function runInstallPrereqs() {
+    async function retryAll() {
         if (!hasTauri()) return;
-        bs.installing = true;
         await checkAndFixBootstrap();
     }
 
-    function retryAll() {
-        checkAndFixBootstrap();
+    function enterApp() {
+        appState.setHealthReady();
+        goto(
+            appState.setupComplete ? "/observatory" : "/setup/welcome",
+            { replaceState: true },
+        );
     }
 
-    function statusColor(s: GateStatus): string {
-        if (s === "ready") return "oklch(var(--color-success-z6) / 1)";
-        if (s === "missing" || s === "blocked")
-            return "oklch(var(--color-primary-z6) / 1)";
-        if (s === "checking" || s === "installing" || s === "starting")
-            return "oklch(var(--color-surface-z8) / 1)";
-        return "oklch(var(--color-surface-z6) / 1)";
+    // ── Derived visual state ──────────────────────────────────────────────────
+
+    const isGreen  = $derived(bs.simpleState === "all-green");
+    const isManual = $derived(bs.simpleState === "manual");
+    const isFixing = $derived(
+        bs.simpleState === "auto-fixing" || bs.simpleState === "detecting"
+    );
+
+    // Hero card: homebrew sub-states
+    const hwReady   = $derived(bs.homebrewStatus === "ready");
+    const hwBusy    = $derived(bs.homebrewStatus === "checking" || bs.homebrewStatus === "installing");
+    const hwMissing = $derived(bs.homebrewStatus === "missing" || bs.homebrewStatus === "blocked");
+
+    // Progress bar width (0–100)
+    const progress = $derived((bs.readyCount / bs.totalCount) * 100);
+
+    // Active ledger item label while fixing
+    const activeItemLabel = $derived(
+        LEDGER_ITEMS[Math.min(bs.activeSimpleItemIdx, LEDGER_ITEMS.length - 1)].label
+    );
+    const activeItemCount = $derived(
+        Math.min(bs.activeSimpleItemIdx + 1, LEDGER_ITEMS.length)
+    );
+
+    // ── Script card state ────────────────────────────────────────────────────
+
+    let copied = $state(false);
+    let scriptOpen = $state(true);
+
+    function copyScript() {
+        const cmd = bs.platformInfo.prereq_remedy.command;
+        navigator.clipboard?.writeText(cmd).catch(() => {});
+        copied = true;
+        setTimeout(() => (copied = false), 1800);
     }
 
-    function pillBg(s: GateStatus): string {
-        if (s === "ready") return "oklch(var(--color-success-z6) / 0.10)";
-        if (s === "missing" || s === "blocked")
-            return "oklch(var(--color-primary-z6) / 0.08)";
-        if (s === "checking" || s === "installing" || s === "starting")
-            return "oklch(var(--color-surface-z2) / 1)";
-        return "transparent";
+    // Per-item visual state
+    type ItemState = "ready" | "running" | "blocked" | "pending";
+    function itemState(id: string): ItemState {
+        const s = bs.statuses[id];
+        if (s === "ready") return "ready";
+        if (s === "checking" || s === "installing" || s === "starting") return "running";
+        if (s === "missing" || s === "blocked") return "blocked";
+        return "pending";
     }
 </script>
 
-<div
-    class="flex-1 min-h-0 overflow-hidden bg-surface-z1 text-surface-z9 flex flex-col"
->
-    <!-- Fixed top: header + progress rail -->
-    <div class="shrink-0 bg-surface-z1 pt-14 px-10">
-        <div class="max-w-[760px] w-full mx-auto flex flex-col gap-10 pb-10">
-            <!-- Header -->
-            <div>
-                <div class="flex items-center gap-2.5 mb-3.5">
-                    <span class="kanji text-2xl text-primary-z5">支</span>
-                    <span
-                        class="text-2xs tracking-tag uppercase text-surface-z6"
-                        >bootstrap · checking the foundation</span
-                    >
-                </div>
-                <h1
-                    class="display text-4xl font-light leading-tight mb-3.5 tracking-tight"
-                >
-                    {#if bs.allReady}
-                        The foundation <span class="text-success-z5"
-                            >holds.</span
-                        >
-                    {:else if bs.firstBlockedIdx >= 0}
-                        A few pieces are <span class="text-primary-z5"
-                            >missing.</span
-                        >
-                    {:else}
-                        Checking the foundation…
-                    {/if}
-                </h1>
-                <p
-                    class="text-sm text-surface-z6 leading-reading max-w-[540px]"
-                >
-                    {#if bs.allReady}
-                        Homebrew, Postgres, Ollama, sensei components, database,
-                        and the daemon are all present. Opening the observatory.
-                    {:else if bs.firstBlockedIdx >= 0}
-                        Sensei needs these to run locally. Install the missing
-                        pieces below — the rest will check themselves once the
-                        foundation is in place.
-                    {:else}
-                        Verifying Homebrew, Postgres, Ollama, and the sensei
-                        components. This takes a few seconds on a cold start.
-                    {/if}
-                </p>
+<div class="flex-1 min-h-0 overflow-hidden bg-surface-z1 text-surface-z9 flex flex-col">
+
+    <!-- ── Fixed top: header ───────────────────────────────────────────── -->
+    <div class="shrink-0 pt-14 px-10">
+        <div class="max-w-[640px] w-full mx-auto pb-9">
+
+            <div class="flex items-center gap-2.5 mb-3.5">
+                <span class="kanji text-xl text-primary-z5">支</span>
+                <span class="text-2xs tracking-tag uppercase text-surface-z6">
+                    bootstrap · {bs.platformInfo.platform}
+                </span>
             </div>
 
-            <!-- Progress rail -->
-            <div class="flex items-center gap-3">
-                <div
-                    class="text-3xs tracking-tag uppercase text-surface-z5 tabular-nums whitespace-nowrap"
-                >
-                    {String(bs.readyCount).padStart(2, "0")} / {String(
-                        bs.totalCount,
-                    ).padStart(2, "0")} ready
-                </div>
-                <div class="flex-1 flex gap-0.75">
-                    {#each bs.gates as gate}
-                        <span
-                            class="flex-1 h-0.5 rounded-sm transition-colors duration-300"
-                            style="background: {statusColor(
-                                gate.status,
-                            )}; opacity: {gate.status === 'waiting' ? 0.5 : 1};"
-                        ></span>
-                    {/each}
-                </div>
-            </div>
+            <h1 class="display text-4xl font-light leading-tight mb-3.5 tracking-tight">
+                {#if isGreen}
+                    The foundation <span class="text-success-z5">holds.</span>
+                {:else if bs.simpleState === "auto-fixing"}
+                    Setting up your <span class="text-primary-z5">foundation.</span>
+                {:else if bs.simpleState === "detecting"}
+                    Checking the <span class="text-surface-z7">foundation…</span>
+                {:else}
+                    One last <span class="text-primary-z5">step.</span>
+                {/if}
+            </h1>
+
+            <p class="text-sm text-surface-z6 leading-reading max-w-[540px]">
+                {#if isGreen}
+                    Everything sensei needs is here. Opening the observatory.
+                {:else if bs.simpleState === "auto-fixing"}
+                    Running <span class="mono text-surface-z7">{bs.platformInfo.package_manager.toLowerCase()}</span>
+                    with the manifest from <span class="mono text-surface-z7">sensei-hq/homebrew-tap</span>. No input needed.
+                {:else if bs.simpleState === "detecting"}
+                    Verifying {bs.platformInfo.package_manager}, Postgres, Ollama, and the sensei
+                    components. This takes a few seconds on a cold start.
+                {:else if bs.needsPrereqInstall}
+                    {bs.platformInfo.package_manager} isn't installed. Run the script below —
+                    it installs {bs.platformInfo.package_manager} first, then everything else.
+                {:else}
+                    {bs.platformInfo.package_manager} is here, but hit a problem finishing the setup.
+                    The script below runs the same steps manually.
+                {/if}
+            </p>
         </div>
     </div>
 
-    <!-- Scrollable bottom: gate list + footer -->
+    <!-- ── Scrollable bottom ─────────────────────────────────────────────── -->
     <div class="flex-1 min-h-0 overflow-y-auto px-10 pb-12">
-        <div class="max-w-[760px] w-full mx-auto">
-            <!-- Gate list -->
-            <div class="flex flex-col border-t border-surface-z2">
-                {#each bs.visibleGates as gate, i (gate.id)}
-                    {@const isBlocked =
-                        gate.status === "missing" || gate.status === "blocked"}
-                    {@const isBusy =
-                        gate.status === "checking" ||
-                        gate.status === "installing" ||
-                        gate.status === "starting"}
-                    {@const isReady = gate.status === "ready"}
-                    {@const isPending = gate.status === "waiting"}
-                    {@const showRemedy = i === bs.firstBlockedIdx && isBlocked}
+        <div class="max-w-[640px] w-full mx-auto">
 
-                    <div
-                        class="gate-row border-b border-surface-z2 py-4 transition-opacity duration-300"
-                        class:pending={isPending}
-                    >
-                        <!-- Main row -->
+            <!-- ── Hero card ─────────────────────────────────────────────── -->
+            <div class="relative overflow-hidden border border-surface-z2 rounded-xl bg-surface-z2 p-6.5">
+
+                <!-- Progress bar across the top while fixing -->
+                {#if isFixing}
+                    <div class="absolute top-0 left-0 right-0 h-0.5 bg-surface-z3">
                         <div
-                            class="grid grid-cols-[32px_1fr_auto] gap-4 items-center"
-                        >
-                            <div
-                                class="kanji text-2xl text-center"
-                                style="color: {statusColor(gate.status)};"
-                            >
-                                {gate.n}
-                            </div>
-                            <div>
-                                <div class="flex items-baseline gap-2.5">
-                                    <span class="display text-prose font-normal"
-                                        >{gate.name}</span
-                                    >
-                                    <span class="text-xs text-surface-z5"
-                                        >· {gate.detail}</span
-                                    >
-                                </div>
-                                <div class="mono text-2xs text-surface-z5 mt-1">
-                                    {gate.check}
-                                </div>
-                            </div>
-                            <div
-                                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded tabular-nums text-2xs tracking-widest uppercase"
-                                style="color: {statusColor(
-                                    gate.status,
-                                )}; background: {pillBg(gate.status)};"
-                            >
-                                {#if isBusy}<span class="spinner"></span>{/if}
-                                {#if isReady}<span class="text-3xs">✓</span
-                                    >{/if}
-                                {#if isBlocked}<span class="text-xs">·</span
-                                    >{/if}
-                                {gate.status}
-                            </div>
-                        </div>
+                            class="h-full bg-primary-z5 transition-all duration-700 ease-out"
+                            style="width: {progress}%"
+                        ></div>
+                    </div>
+                {/if}
 
-                        <!-- Sub-checks (sensei components) -->
-                        {#if gate.sub && (isBusy || isBlocked || isReady)}
-                            <div
-                                class="sub-checks mt-3 ml-12 flex flex-col gap-1 pl-3.5"
-                            >
-                                {#each gate.sub as sub}
-                                    {@const subStatus = isReady
-                                        ? "ready"
-                                        : isBusy
-                                          ? "checking"
-                                          : "missing"}
-                                    <div class="flex items-center gap-2.5">
-                                        <span
-                                            class="w-1.5 h-1.5 rounded-full inline-block"
-                                            style="background: {statusColor(
-                                                subStatus,
-                                            )};"
-                                        ></span>
-                                        <span class="text-xs text-surface-z7"
-                                            >{sub.name}</span
-                                        >
-                                        <span
-                                            class="mono text-2xs text-surface-z5"
-                                            >{sub.check}</span
-                                        >
-                                    </div>
-                                {/each}
-                            </div>
-                        {/if}
+                <div class="flex items-center gap-4.5">
 
-                        <!-- Per-gate remedy (non-prereq only) -->
-                        {#if showRemedy && gate.remedy !== "prereq"}
-                            <div
-                                class="mt-4 ml-12 px-5 py-4.5 bg-surface-z2 border border-surface-z2 rounded-md"
-                            >
-                                {#if gate.remedy === "install"}
-                                    <div class="display text-body mb-1">
-                                        {bs.platformInfo.pkgmgr_remedy.title}
-                                    </div>
-                                    <p
-                                        class="text-ui text-surface-z6 leading-relaxed mb-3.5"
-                                    >
-                                        {bs.platformInfo.package_manager} is the base
-                                        that installs everything else.
-                                    </p>
-                                    <div
-                                        class="bg-surface-z1 border border-surface-z2 rounded-md px-3 py-2.5 mb-3"
-                                    >
-                                        <code
-                                            class="font-mono text-xs text-surface-z9 break-all"
-                                            >{bs.platformInfo.pkgmgr_remedy
-                                                .command}</code
-                                        >
-                                    </div>
-                                    <div class="flex gap-2.5 items-center">
-                                        {#if bs.platformInfo.pkgmgr_remedy.url}
-                                            <a
-                                                href={bs.platformInfo
-                                                    .pkgmgr_remedy.url}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                class="btn-outline btn-sm"
-                                                >Learn more <span
-                                                    class="text-surface-z6"
-                                                    >↗</span
-                                                ></a
-                                            >
-                                        {/if}
-                                        <button
-                                            class="btn-solid btn-sm"
-                                            onclick={() => retry(gate.id)}
-                                            >I've installed it — retry</button
-                                        >
-                                    </div>
-                                {:else if gate.remedy === "db"}
-                                    <div class="display text-body mb-1">
-                                        Could not create the sensei database
-                                    </div>
-                                    <p
-                                        class="text-ui text-surface-z6 leading-relaxed mb-3.5"
-                                    >
-                                        Postgres is running but sensei couldn't
-                                        create its database automatically.
-                                    </p>
-                                    <div
-                                        class="bg-surface-z1 border border-surface-z2 rounded-md px-3 py-2.5 mb-3"
-                                    >
-                                        <code
-                                            class="font-mono text-xs text-surface-z9 break-all"
-                                            >createdb sensei && psql sensei -c
-                                            'CREATE EXTENSION IF NOT EXISTS
-                                            vector;'</code
-                                        >
-                                    </div>
-                                    <div class="flex gap-2.5 items-center">
-                                        <button
-                                            class="btn-solid btn-sm"
-                                            onclick={() => retry(gate.id)}
-                                            >Retry</button
-                                        >
-                                    </div>
-                                {:else if gate.remedy === "daemon"}
-                                    <div class="display text-body mb-1">
-                                        Daemon failed to start
-                                    </div>
-                                    <p
-                                        class="text-ui text-surface-z6 leading-relaxed mb-3.5"
-                                    >
-                                        The database is reachable but the daemon
-                                        did not come up.
-                                    </p>
-                                    <div class="flex gap-2.5 items-center">
-                                        <button
-                                            class="btn-solid btn-sm"
-                                            onclick={() => retry(gate.id)}
-                                            >Retry</button
-                                        >
-                                    </div>
-                                {/if}
-                            </div>
+                    <!-- Status indicator circle -->
+                    <div
+                        class="w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
+                        class:border-success-z5={isGreen}
+                        class:border-primary-z5={isManual || hwMissing}
+                        class:border-surface-z5={isFixing}
+                    >
+                        {#if isGreen}
+                            <span class="text-2xl text-success-z5 leading-none">✓</span>
+                        {:else if isManual || hwMissing}
+                            <span class="kanji text-xl text-primary-z5">?</span>
+                        {:else}
+                            <span class="spinner-ring"></span>
                         {/if}
                     </div>
-                {/each}
+
+                    <!-- Package manager info -->
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-baseline gap-2.5 mb-1">
+                            <span class="display text-prose font-medium">
+                                {bs.platformInfo.package_manager}
+                            </span>
+                            <span class="mono text-2xs text-surface-z5">
+                                which {bs.platformInfo.package_manager.toLowerCase()}
+                            </span>
+                        </div>
+                        <div class="text-sm text-surface-z7 leading-snug">
+                            {#if isGreen}
+                                Detected. All dependencies installed.
+                            {:else if isManual || hwMissing}
+                                Couldn't finish automatically. Run the script below.
+                            {:else if hwReady || hwBusy}
+                                Detected. Installing
+                                <span class="text-surface-z9">{activeItemLabel}</span>
+                                <span class="mono text-2xs text-surface-z5 ml-2">
+                                    ({activeItemCount}/{LEDGER_ITEMS.length})
+                                </span>
+                            {:else}
+                                Checking system…
+                            {/if}
+                        </div>
+                    </div>
+
+                    <!-- Enter button (all-green) -->
+                    {#if isGreen}
+                        <button class="btn-solid shrink-0" onclick={enterApp}>
+                            Enter
+                        </button>
+                    {/if}
+
+                </div>
             </div>
 
-            <!-- Consolidated prereq remedy -->
-            {#if bs.needsPrereqInstall}
-                <div
-                    class="mt-6 px-6 py-5 bg-surface-z2 border border-surface-z2 rounded-md"
-                >
-                    <div class="display text-body mb-1">
-                        {bs.platformInfo.prereq_remedy.title}
+            <!-- ── Script card (manual fallback) ─────────────────────────── -->
+            {#if isManual}
+                <div class="mt-4.5 border border-primary-z5/30 rounded-xl bg-surface-z1 overflow-hidden">
+                    <div class="flex items-center gap-2.5 px-4.5 py-3.5 border-b border-surface-z2">
+                        <span class="kanji text-base text-primary-z5">手</span>
+                        <div class="flex-1">
+                            <div class="text-sm text-surface-z9">Run this in your terminal</div>
+                            <div class="text-2xs text-surface-z5 mt-0.5">
+                                Same steps sensei would run · {bs.platformInfo.platform}
+                            </div>
+                        </div>
+                        <button
+                            class="text-2xs text-surface-z6 px-2 py-1 border border-surface-z3 rounded hover:bg-surface-z2 transition-colors"
+                            onclick={() => (scriptOpen = !scriptOpen)}
+                        >{scriptOpen ? "Hide" : "Show"}</button>
                     </div>
-                    <div class="flex gap-1.5 flex-wrap mt-2 mb-3">
-                        {#each bs.missingPrereqGates as gate}
-                            <span
-                                class="text-2xs tracking-wider uppercase text-primary-z5 px-2 py-0.75 rounded-sm"
-                                style="background: oklch(var(--color-primary-z5) / 0.08);"
-                                >{gate.name}</span
-                            >
-                        {/each}
-                    </div>
-                    <p class="text-ui text-surface-z6 leading-relaxed mb-3.5">
-                        One command installs everything. Already-installed items
-                        are skipped.
-                    </p>
-                    {#if hasTauri()}
-                        <div class="flex gap-2.5 items-center">
-                            <button
-                                class="btn-solid btn-sm"
-                                onclick={runInstallPrereqs}
-                                disabled={bs.installing}
-                            >
-                                {bs.installing ? "Installing…" : "Install all"}
+
+                    {#if scriptOpen}
+                        <pre class="m-0 px-4.5 py-4 mono text-xs text-surface-z9 bg-surface-z1 leading-relaxed whitespace-pre-wrap break-words max-h-56 overflow-auto">{bs.platformInfo.prereq_remedy.command}</pre>
+                        <div class="flex items-center justify-between gap-2.5 px-4.5 py-3 border-t border-surface-z2">
+                            <button class="btn-solid btn-sm" onclick={copyScript}>
+                                {copied ? "Copied ✓" : "Copy script"}
                             </button>
                             <button
                                 class="btn-outline btn-sm"
-                                onclick={retryAll}>Retry checks</button
+                                style="color: oklch(var(--color-primary-z5) / 1); border-color: oklch(var(--color-primary-z5) / 0.4);"
+                                onclick={retryAll}
                             >
-                        </div>
-                    {:else}
-                        <div
-                            class="bg-surface-z1 border border-surface-z2 rounded-md px-3 py-2.5 mb-3"
-                        >
-                            <code
-                                class="font-mono text-xs text-surface-z9 break-all"
-                                >{bs.platformInfo.prereq_remedy.command}</code
-                            >
-                        </div>
-                        <div class="flex gap-2.5 items-center">
-                            <button class="btn-solid btn-sm" onclick={retryAll}
-                                >Retry checks</button
-                            >
+                                I've run it · re-check
+                            </button>
                         </div>
                     {/if}
                 </div>
             {/if}
 
-            <!-- Footer -->
-            <div
-                class="flex justify-between items-center gap-4 pt-5.5 border-t border-surface-z2"
-            >
-                <div class="text-2xs text-surface-z5 leading-relaxed">
-                    Bootstrap runs on every launch. Once a gate is green it
-                    stays that way — the next startup is quick.
+            <!-- ── Item ledger ─────────────────────────────────────────────── -->
+            <div class="mt-5.5">
+                <div class="text-2xs tracking-tag uppercase text-surface-z5 mb-2.5">
+                    what this resolves
                 </div>
-                {#if bs.allReady}
-                    <button
-                        class="btn-solid"
-                        onclick={() => {
-                            appState.setHealthReady();
-                            goto(
-                                appState.setupComplete
-                                    ? "/observatory"
-                                    : "/setup/welcome",
-                                { replaceState: true },
-                            );
-                        }}>Continue →</button
-                    >
+                <div class="flex flex-col">
+                    {#each LEDGER_ITEMS as item}
+                        {@const s = itemState(item.id)}
+                        <div
+                            class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-surface-z2 transition-opacity duration-200"
+                            style="opacity: {s === 'pending' ? 0.45 : 1}"
+                        >
+                            <span
+                                class="w-2 h-2 rounded-full shrink-0"
+                                style="background: {
+                                    s === 'ready'   ? 'oklch(var(--color-success-z5) / 1)' :
+                                    s === 'running' ? 'oklch(var(--color-primary-z5) / 1)' :
+                                    s === 'blocked' ? 'oklch(var(--color-primary-z5) / 0.5)' :
+                                    'oklch(var(--color-surface-z4) / 1)'
+                                }"
+                            ></span>
+                            <div>
+                                <span class="text-sm text-surface-z9">{item.label}</span>
+                                {#if item.note}
+                                    <span class="text-xs text-surface-z5 ml-2">· {item.note}</span>
+                                {/if}
+                            </div>
+                            <span
+                                class="mono text-2xs tracking-wider uppercase"
+                                style="color: {
+                                    s === 'ready'   ? 'oklch(var(--color-success-z5) / 1)' :
+                                    s === 'running' ? 'oklch(var(--color-primary-z5) / 1)' :
+                                    'oklch(var(--color-surface-z5) / 1)'
+                                }"
+                            >
+                                {s === "running" ? (bs.statuses[item.id] ?? s) : s}
+                            </span>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+
+            <!-- ── Footer ─────────────────────────────────────────────────── -->
+            <div class="flex justify-between items-center gap-4 mt-8 pt-5.5 border-t border-surface-z2">
+                <div class="text-2xs text-surface-z5 leading-relaxed">
+                    Bootstrap runs once. The next launch will be quick.
+                </div>
+                {#if isGreen}
+                    <button class="btn-solid" onclick={enterApp}>Continue →</button>
                 {/if}
             </div>
+
         </div>
     </div>
 </div>
 
 <style>
-    /* Spinner pseudo-element + animation */
-    .spinner {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        position: relative;
-    }
-    .spinner::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        border: 1.5px solid currentColor;
-        border-top-color: transparent;
+    .spinner-ring {
+        display: block;
+        width: 20px;
+        height: 20px;
         border-radius: 50%;
+        border: 2px solid oklch(var(--color-surface-z5) / 1);
+        border-top-color: transparent;
         animation: spin 0.9s linear infinite;
     }
+
     @keyframes spin {
-        to {
-            transform: rotate(360deg);
-        }
+        to { transform: rotate(360deg); }
     }
 
-    /* Dashed sub-checks guide line — needs CSS var, can't be expressed as utility */
-    .sub-checks {
-        border-left: 1px dashed oklch(var(--color-surface-z3) / 1);
-    }
-
-    /* Pending gate row */
-    .gate-row.pending {
-        opacity: 0.42;
-    }
-
-    /* Button size override for this page */
     .btn-sm {
         padding: 8px 14px !important;
         font-size: 12px !important;

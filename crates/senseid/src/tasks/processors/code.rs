@@ -76,8 +76,7 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
             callee_name: e.callee_name.clone(),
         }).collect();
 
-    // Parse IR (rich data) alongside the old path
-    let ir = languages::parse_to_ir_for_filename(filename, content, rel_path);
+    let ir = Some(adapter.parse_to_ir(content, rel_path));
 
     Some(FileProcessResult {
         file_id,

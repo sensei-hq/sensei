@@ -93,8 +93,7 @@ pub(crate) async fn add_solution_repo(
     let folder = state.pg.get_repo_by_name(&body.repo_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let folder_id = folder["id"].as_str()
-        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     state.pg.set_folder_project(&folder_id, &project_id, &body.role, body.label.as_deref()).await
@@ -110,8 +109,7 @@ pub(crate) async fn remove_solution_repo(
     let folder = state.pg.get_repo_by_name(&repo_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let folder_id = folder["id"].as_str()
-        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Clear the project association by setting project_id to null via props
@@ -172,7 +170,7 @@ pub(crate) async fn project_summary(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // Derive counts from PgStore count_nodes_by_kind
-    let folder_id_opt = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let folder_id_opt = crate::api::util::json_uuid(&folder["id"]);
     let counts = if let Some(fid) = &folder_id_opt {
         state.pg.count_nodes_by_kind(fid).await.unwrap_or_default()
     } else {
@@ -238,7 +236,7 @@ pub(crate) async fn solution_graph(
         }
 
         // Look up folder UUID for this repo to query PgStore
-        if let Some(folder_id) = repo["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        if let Some(folder_id) = crate::api::util::json_uuid(&repo["id"]) {
             let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
             let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
             let role = repo["role"].as_str().unwrap_or("unknown");
@@ -331,8 +329,8 @@ pub(crate) async fn get_metrics(
     // Metrics are computed from session data in PgStore.
     // Look up folder to get its UUID, then query sessions.
     let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let sessions = state.pg.list_sessions_by_folder(&folder_id, 100).await.unwrap_or_default();
             let session_count = sessions.len();
             let completed = sessions.iter().filter(|s| s["outcome"].as_str() == Some("completed")).count();
@@ -343,6 +341,5 @@ pub(crate) async fn get_metrics(
                 "ftr": if session_count > 0 { completed as f64 / session_count as f64 } else { 0.0 },
             }));
         }
-    }
     Json(serde_json::json!({"error": "project not found"}))
 }

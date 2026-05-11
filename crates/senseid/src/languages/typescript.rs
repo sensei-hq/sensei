@@ -12,6 +12,9 @@ pub struct JavaScriptAdapter;
 
 impl LanguageAdapter for TypeScriptAdapter {
     fn language(&self) -> &str { "typescript" }
+    fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
+        parse_to_ir(source, file_path)
+    }
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         parse_oxc(source, file_path)
     }
@@ -19,6 +22,9 @@ impl LanguageAdapter for TypeScriptAdapter {
 
 impl LanguageAdapter for JavaScriptAdapter {
     fn language(&self) -> &str { "javascript" }
+    fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
+        parse_to_ir(source, file_path)
+    }
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         parse_oxc(source, file_path)
     }

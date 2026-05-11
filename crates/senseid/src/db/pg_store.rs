@@ -1,4 +1,6 @@
-use sqlx_postgres::PgPool;
+use std::time::Duration;
+use sqlx_postgres::{PgPool, PgPoolOptions};
+use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB_POOL_IDLE_TIMEOUT_SECS};
 
 /// PostgreSQL store.
 /// Schema is managed by `dbd apply`, not by this code.
@@ -6,11 +8,20 @@ pub struct PgStore {
     pool: PgPool,
 }
 
-#[allow(dead_code)] // PgStore API surface — methods wired up incrementally
+#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+// PgStore API surface — methods wired up incrementally; SQLx tuple return types
+// are inherently verbose and adding an extra layer of type aliases would
+// not improve readability at the call sites.
 impl PgStore {
-    /// Connect to a PostgreSQL database.
+    /// Connect to a PostgreSQL database using the shared pool defaults from
+    /// [`sensei_bootstrap`] (`DB_POOL_MAX_CONNECTIONS`, `DB_POOL_ACQUIRE_TIMEOUT_SECS`,
+    /// `DB_POOL_IDLE_TIMEOUT_SECS`).
     pub async fn connect(database_url: &str) -> Result<Self, String> {
-        let pool = PgPool::connect(database_url)
+        let pool = PgPoolOptions::new()
+            .max_connections(DB_POOL_MAX_CONNECTIONS)
+            .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
+            .idle_timeout(Duration::from_secs(DB_POOL_IDLE_TIMEOUT_SECS))
+            .connect(database_url)
             .await
             .map_err(|e| format!("PgStore connect: {}", e))?;
         Ok(Self { pool })
@@ -19,7 +30,7 @@ impl PgStore {
     /// Connect to the test database. Uses TEST_DATABASE_URL or defaults to sensei_test.
     pub async fn connect_test() -> Result<Self, String> {
         let url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql://localhost:5432/sensei_test".to_string());
+            .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT));
         Self::connect(&url).await
     }
 
@@ -1188,7 +1199,7 @@ impl PgStore {
 
         Ok(rows.into_iter()
             .filter(|(_, _, kind, _, _, _)| {
-                kind_filter.map_or(true, |f| f.contains(&kind.as_str()))
+                kind_filter.is_none_or(|f| f.contains(&kind.as_str()))
             })
             .map(|(id, name, kind, enabled, props, scope)| {
                 serde_json::json!({
@@ -1402,7 +1413,7 @@ mod tests {
 
     fn test_db_url() -> String {
         std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string())
+            .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei", sensei_bootstrap::POSTGRES_PORT))
     }
 
     #[tokio::test]

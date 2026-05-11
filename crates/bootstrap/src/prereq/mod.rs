@@ -57,14 +57,6 @@ impl FixResult {
     }
 }
 
-/// Manual remedy shown in the UI when a prerequisite cannot be auto-fixed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Remedy {
-    pub title: String,
-    pub command: String,
-    pub url: Option<String>,
-}
-
 /// What in-progress status to emit while fixing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GateKind {
@@ -102,16 +94,6 @@ pub enum ProgressEvent {
     },
 }
 
-/// A self-describing prerequisite: check, fix, and report.
-pub trait Prerequisite: Send + Sync {
-    fn id(&self) -> &str;
-    fn label(&self) -> &str;
-    fn check(&self) -> CheckResult;
-    fn fix(&self) -> Result<FixResult, String>;
-    fn gate_kind(&self) -> GateKind;
-    fn remedy(&self) -> Option<&Remedy>;
-}
-
 /// A human action required before bootstrap can continue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HumanAction {
@@ -128,6 +110,10 @@ pub struct GateReport {
     pub status:        GateStatus,
     pub fix_attempted: bool,
     pub fix_detail:    Option<String>,
+    /// The original checker error from Phase A, preserved even after fix attempts.
+    /// Useful for diagnosing version mismatches that trigger a human-action fixer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_error:   Option<String>,
 }
 
 /// Returned by BootstrapEngine::check_and_fix.
@@ -140,8 +126,7 @@ pub struct BootstrapReport {
 
 pub mod checker;
 pub mod fixer;
-pub mod generic;
-pub mod runner;
+pub mod ids;
 pub mod registry;
 pub mod engine;
 
@@ -198,6 +183,7 @@ mod tests {
             status:        GateStatus::Ready { version: Some("17.2".into()), detail: None },
             fix_attempted: true,
             fix_detail:    Some("brew bundle upgraded".into()),
+            check_error:   None,
         };
         assert!(r.fix_attempted);
         assert_eq!(r.fix_detail.as_deref(), Some("brew bundle upgraded"));
@@ -207,8 +193,8 @@ mod tests {
     fn bootstrap_report_all_ok_false_when_any_failed() {
         let report = BootstrapReport {
             gates: vec![
-                GateReport { id: "homebrew".to_string(), status: GateStatus::Ready { version: None, detail: None }, fix_attempted: false, fix_detail: None },
-                GateReport { id: "postgresql".to_string(), status: GateStatus::Failed { error: "not found".into() }, fix_attempted: false, fix_detail: None },
+                GateReport { id: "homebrew".to_string(), status: GateStatus::Ready { version: None, detail: None }, fix_attempted: false, fix_detail: None, check_error: None },
+                GateReport { id: "postgresql".to_string(), status: GateStatus::Failed { error: "not found".into() }, fix_attempted: false, fix_detail: None, check_error: Some("postgres not found in PATH".into()) },
             ],
             all_ok:     false,
             blocked_on: None,

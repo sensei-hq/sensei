@@ -3,25 +3,14 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-// Source of truth: sensei_bootstrap::config::BREW_TAP — keep in sync.
-// (CLI does not depend on bootstrap to avoid pulling in tokio/sysinfo/dbd-core.)
-const BREW_TAP: &str = "sensei-hq/tap/sensei";
+use sensei_bootstrap::{SenseiConfig, BREW_TAP, SenseiLocalConfig};
 
-/// True when this binary is named `sensei-dev` — determines port and daemon binary.
-fn is_dev() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .map(|name| name.ends_with("-dev"))
-        .unwrap_or(false)
+fn cfg() -> &'static SenseiConfig {
+    sensei_bootstrap::config()
 }
 
-fn daemon_url() -> &'static str {
-    if is_dev() { "http://127.0.0.1:7745" } else { "http://127.0.0.1:7744" }
-}
-
-fn default_port() -> u16 {
-    if is_dev() { 7745 } else { 7744 }
+fn daemon_url() -> String {
+    sensei_bootstrap::daemon_url()
 }
 
 #[derive(Parser)]
@@ -53,7 +42,7 @@ enum Commands {
     Remove {
         /// What to remove: "acp" or "all"
         target: String,
-        /// For "acp" target: claude, cursor, windsurf, zed, kiro, opencode, vscode, desktop, all
+        /// For "acp" target: ACP name or ID (e.g. claude, cursor, windsurf) or "all"
         name: Option<String>,
         /// Also remove data (sessions, indexes, project artifacts)
         #[arg(long)]
@@ -115,9 +104,9 @@ fn main() {
             name,
             purge,
         } => remove_cmd(&target, name.as_deref(), purge),
-        Commands::Start { port } => daemon_cmd("start", Some(port.unwrap_or_else(default_port))),
+        Commands::Start { port } => daemon_cmd("start", Some(port.unwrap_or_else(|| cfg().daemon_port))),
         Commands::Stop => daemon_cmd("stop", None),
-        Commands::Restart { port } => restart_daemon(port.unwrap_or_else(default_port)),
+        Commands::Restart { port } => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
         Commands::Status => daemon_cmd("status", None),
         Commands::Scan { path } => scan(&path),
         Commands::AddLib { name, url } => add_lib(&name, url.as_deref()),
@@ -127,12 +116,16 @@ fn main() {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn home() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
+    sensei_bootstrap::home_dir()
 }
 
 fn client() -> reqwest::blocking::Client {
+    client_with_timeout(30)
+}
+
+fn client_with_timeout(secs: u64) -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(secs))
         .build()
         .unwrap()
 }
@@ -145,19 +138,13 @@ fn daemon_available() -> bool {
         .unwrap_or(false)
 }
 
-fn which_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
-        .unwrap_or(false)
-}
-
 fn daemon_bin() -> PathBuf {
-    let name = if is_dev() { "senseid-dev" } else { "senseid" };
-    if which_exists(name) {
-        return PathBuf::from(name);
+    let name = cfg().daemon_binary();
+    if let Some(p) = sensei_bootstrap::util::which_binary(name) {
+        return PathBuf::from(p);
     }
     // Fallback: plugin bin dir (release only — dev is always from ~/.local/bin)
-    if !is_dev() {
+    if !cfg().is_dev() {
         let p = home().join(".claude/plugins/sensei/bin/senseid");
         if p.exists() { return p; }
     }
@@ -175,13 +162,18 @@ fn ensure_daemon() {
     eprintln!("Daemon not running — starting...");
     start_daemon();
 
+    if daemon_available() {
+        check_daemon_version(true);
+        return;
+    }
+
     eprintln!("Could not start daemon. Run: brew services start sensei");
     std::process::exit(1);
 }
 
 fn start_daemon() {
     let bin = daemon_bin();
-    let port = default_port();
+    let port = cfg().daemon_port;
     match std::process::Command::new(&bin)
         .args(["start", "--port", &port.to_string()])
         .spawn()
@@ -264,32 +256,15 @@ fn confirm(prompt: &str, auto_yes: bool) -> bool {
 
 /// Check if user-scope init has been done (MCP registered for at least one ACP).
 fn is_user_scope_configured() -> bool {
-    let config_file = home().join(".sensei/config.json");
-    config_file
-        .exists()
-        .then(|| fs::read_to_string(&config_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v["user_scope_configured"].as_bool())
-        .unwrap_or(false)
+    SenseiLocalConfig::load(&home().join(".sensei")).user_scope_configured
 }
 
 /// Mark user scope as configured.
 fn mark_user_scope_configured() {
     let sensei_dir = home().join(".sensei");
-    if let Err(e) = fs::create_dir_all(&sensei_dir) {
-        eprintln!("Warning: failed to create sensei config directory: {e}");
-        return;
-    }
-    let config_file = sensei_dir.join("config.json");
-    let mut config: serde_json::Value = config_file
-        .exists()
-        .then(|| fs::read_to_string(&config_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}));
-    config["user_scope_configured"] = serde_json::json!(true);
-    if let Err(e) = fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()) {
+    let mut cfg = SenseiLocalConfig::load(&sensei_dir);
+    cfg.user_scope_configured = true;
+    if let Err(e) = cfg.save(&sensei_dir) {
         eprintln!("Warning: failed to write sensei config: {e}");
     }
 }
@@ -322,7 +297,7 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool) {
     println!("=== sensei init ===\n");
 
     // Verify binaries
-    if !which_exists("senseid") || !which_exists("sensei-mcp") {
+    if sensei_bootstrap::util::which_binary("senseid").is_none() || sensei_bootstrap::util::which_binary("sensei-mcp").is_none() {
         eprintln!("Missing binaries. Install: brew install {BREW_TAP}");
         std::process::exit(1);
     }
@@ -566,10 +541,10 @@ fn init_project_scope(_recommended: bool) {
 
     // 4. Gate check
     println!("\n  --- gate check ---");
-    if which_exists("senseid") {
+    if sensei_bootstrap::util::which_binary("senseid").is_some() {
         println!("  ✓ senseid on PATH");
     }
-    if which_exists("sensei-mcp") {
+    if sensei_bootstrap::util::which_binary("sensei-mcp").is_some() {
         println!("  ✓ sensei-mcp on PATH");
     }
     println!("  ✓ mindsets/ ({} files)", count_md_files(&mindsets_dst));
@@ -595,70 +570,49 @@ fn count_md_files(dir: &std::path::Path) -> usize {
 }
 
 fn format_date() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let days = now / 86400;
-    let mut y = 1970i32;
-    let mut remaining = days as i32;
-    loop {
-        let year_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-            366
-        } else {
-            365
-        };
-        if remaining < year_days {
-            break;
-        }
-        remaining -= year_days;
-        y += 1;
-    }
-    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let mdays = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut m = 0usize;
-    while m < 12 && remaining >= mdays[m] {
-        remaining -= mdays[m];
-        m += 1;
-    }
-    format!("{}-{:02}-{:02}", y, m + 1, remaining + 1)
+    chrono::Utc::now().format("%Y-%m-%d").to_string()
 }
 
 // ── Remove ──────────────────────────────────────────────────────────────────
 
-/// Map friendly CLI name to ACP ID.
-fn acp_name_to_id(name: &str) -> Option<String> {
-    match name {
-        "claude" => Some("claude-code".into()),
-        "desktop" => Some("claude-desktop".into()),
-        "cursor" => Some("cursor".into()),
-        "windsurf" => Some("windsurf".into()),
-        "zed" => Some("zed".into()),
-        "kiro" => Some("kiro".into()),
-        "opencode" => Some("opencode".into()),
-        "vscode" => Some("vscode".into()),
-        "all" => None, // None means all
-        _ => {
-            eprintln!(
-                "Unknown ACP: {}. Available: claude, desktop, cursor, windsurf, zed, kiro, opencode, vscode, all",
-                name
-            );
-            std::process::exit(1);
+/// Resolve a user-supplied ACP name to a daemon ACP ID by querying
+/// `/api/assistants/detect`. Returns `None` for "all" (remove everything).
+/// Exits with an error if the name doesn't match any known ACP.
+fn resolve_acp_id(name: &str) -> Option<String> {
+    if name == "all" { return None; }
+
+    let detected: Vec<serde_json::Value> = client()
+        .get(format!("{}/api/assistants/detect", daemon_url()))
+        .send()
+        .ok()
+        .and_then(|r| r.json().ok())
+        .unwrap_or_default();
+
+    let q = name.to_lowercase();
+    let id = detected.iter().find_map(|a| {
+        let id = a["id"].as_str()?;
+        let display = a["name"].as_str().unwrap_or("").to_lowercase();
+        // exact ID, word in ID (e.g. "desktop" → "claude-desktop"),
+        // or display name starts with the query (e.g. "claude" → "Claude Code")
+        if id == name
+            || id.split('-').any(|w| w == q)
+            || display.starts_with(&q)
+        {
+            Some(id.to_string())
+        } else {
+            None
         }
+    });
+
+    if id.is_none() {
+        let available: Vec<&str> = detected.iter()
+            .filter_map(|a| a["id"].as_str())
+            .collect();
+        eprintln!("Unknown ACP: '{}'. Available: {}", name,
+            if available.is_empty() { "none detected".to_string() } else { available.join(", ") });
+        std::process::exit(1);
     }
+    id
 }
 
 fn remove_cmd(target: &str, name: Option<&str>, purge: bool) {
@@ -666,8 +620,8 @@ fn remove_cmd(target: &str, name: Option<&str>, purge: bool) {
         "acp" => remove_acp(name.unwrap_or("all")),
         "all" => remove_all(purge),
         _ => {
-            eprintln!("Unknown target: {}. Usage:", target);
-            eprintln!("  sensei remove acp <claude|cursor|...>");
+            eprintln!("Unknown target: {target}. Usage:");
+            eprintln!("  sensei remove acp <name|all>");
             eprintln!("  sensei remove all [--purge]");
             std::process::exit(1);
         }
@@ -677,12 +631,13 @@ fn remove_cmd(target: &str, name: Option<&str>, purge: bool) {
 fn remove_acp(name: &str) {
     println!("=== sensei remove acp {} ===\n", name);
 
-    let acps: Vec<String> = match acp_name_to_id(name) {
-        Some(id) => vec![id],
-        None => vec![], // empty = all
-    };
-
+    // Daemon must be available before we can resolve the ACP ID.
     ensure_daemon();
+
+    let acps: Vec<String> = match resolve_acp_id(name) {
+        Some(id) => vec![id],
+        None => vec![], // empty = remove all
+    };
 
     match client()
         .post(format!("{}/api/assistants/remove", daemon_url()))
@@ -786,7 +741,7 @@ fn remove_all(purge: bool) {
         let _ = std::process::Command::new(&bin).arg("stop").status();
 
         // Also stop dev daemon if running
-        if which_exists("senseid-dev") {
+        if sensei_bootstrap::util::which_binary("senseid-dev").is_some() {
             let _ = std::process::Command::new("senseid-dev").arg("stop").status();
         }
 
@@ -873,10 +828,7 @@ fn scan(path: &str) {
 
 fn add_lib(name: &str, url: Option<&str>) {
     ensure_daemon();
-    let c = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(45))
-        .build()
-        .unwrap();
+    let c = client_with_timeout(45);
     let mut body = serde_json::json!({"tool": "add_library", "params": {"name": name}});
     if let Some(u) = url {
         body["params"]["url"] = serde_json::json!(u);

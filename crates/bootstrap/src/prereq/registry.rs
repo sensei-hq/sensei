@@ -10,6 +10,7 @@ use crate::config::SenseiConfig;
 use super::checker::{BinaryChecker, Checker, PortChecker, VersionedBinaryChecker, DatabaseChecker};
 use super::fixer::{BrewBundleFixer, DaemonFixer, DatabaseSetupFixer, Fixer, HumanActionFixer, NoopFixer, ServiceStartFixer};
 use super::GateKind;
+use super::ids;
 use crate::{POSTGRES_PORT, OLLAMA_PORT};
 use crate::config::HOMEBREW_BREWFILE_URL;
 
@@ -42,6 +43,30 @@ fn detect_brew_path() -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Returns a `BrewBundleFixer` when Homebrew is found, or a `NoopFixer` otherwise.
+fn brew_bundle_fixer() -> Box<dyn Fixer> {
+    match detect_brew_path() {
+        Some(brew) => Box::new(BrewBundleFixer::new(brew, HOMEBREW_BREWFILE_URL)),
+        None       => Box::new(NoopFixer::new("Homebrew not found")),
+    }
+}
+
+/// Returns the standard fixer for a Sensei binary component:
+/// - Dev mode: `HumanActionFixer` (run `make install-dev`)
+/// - Prod mode: `BrewBundleFixer` (or `NoopFixer` if brew not found)
+fn sensei_binary_fixer(component_id: &'static str, ctx: &BuildContext) -> Box<dyn Fixer> {
+    if ctx.config.is_dev() {
+        Box::new(HumanActionFixer {
+            component_id,
+            title:   "Build dev binaries",
+            command: "make install-dev",
+            url:     None,
+        })
+    } else {
+        brew_bundle_fixer()
+    }
+}
+
 /// Homebrew checker that delegates to PlatformProvider::check_package_manager.
 struct HomebrewChecker(Arc<dyn PlatformProvider>);
 impl Checker for HomebrewChecker {
@@ -61,7 +86,7 @@ impl Checker for HomebrewChecker {
 pub static COMPONENTS: &[ComponentSpec] = &[
     // ── Homebrew ─────────────────────────────────────────────────────────────
     ComponentSpec {
-        id:               "homebrew",
+        id:               ids::HOMEBREW,
         label:            "Homebrew",
         depends_on:       &[],
         fix_group:        None,
@@ -69,7 +94,7 @@ pub static COMPONENTS: &[ComponentSpec] = &[
         gate_kind:        GateKind::Install,
         checker_fn: |ctx| Box::new(HomebrewChecker(Arc::clone(ctx.platform))),
         fixer_fn:   |_ctx| Box::new(HumanActionFixer {
-            component_id: "homebrew",
+            component_id: ids::HOMEBREW,
             title:        "Install Homebrew",
             command:      "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
             url:          Some("https://brew.sh"),
@@ -77,37 +102,31 @@ pub static COMPONENTS: &[ComponentSpec] = &[
     },
     // ── PostgreSQL (binary) ──────────────────────────────────────────────────
     ComponentSpec {
-        id:               "postgresql",
+        id:               ids::POSTGRESQL,
         label:            "PostgreSQL",
-        depends_on:       &["homebrew"],
+        depends_on:       &[ids::HOMEBREW],
         fix_group:        Some("bundle"),
         post_fix_trigger: &[],
         gate_kind:        GateKind::Install,
         checker_fn: |_ctx| Box::new(BinaryChecker::new("postgres", "--version")),
-        fixer_fn:   |_ctx| match detect_brew_path() {
-            Some(brew) => Box::new(BrewBundleFixer::new(brew, HOMEBREW_BREWFILE_URL)),
-            None       => Box::new(NoopFixer::new("Homebrew not found")),
-        },
+        fixer_fn:   |_ctx| brew_bundle_fixer(),
     },
     // ── Ollama (binary) ──────────────────────────────────────────────────────
     ComponentSpec {
-        id:               "ollama",
+        id:               ids::OLLAMA,
         label:            "Ollama",
-        depends_on:       &["homebrew"],
+        depends_on:       &[ids::HOMEBREW],
         fix_group:        Some("bundle"),
         post_fix_trigger: &[],
         gate_kind:        GateKind::Install,
         checker_fn: |_ctx| Box::new(BinaryChecker::new("ollama", "--version")),
-        fixer_fn:   |_ctx| match detect_brew_path() {
-            Some(brew) => Box::new(BrewBundleFixer::new(brew, HOMEBREW_BREWFILE_URL)),
-            None       => Box::new(NoopFixer::new("Homebrew not found")),
-        },
+        fixer_fn:   |_ctx| brew_bundle_fixer(),
     },
     // ── Sensei CLI ───────────────────────────────────────────────────────────
     ComponentSpec {
-        id:               "sensei",
+        id:               ids::SENSEI,
         label:            "Sensei CLI",
-        depends_on:       &["homebrew"],
+        depends_on:       &[ids::HOMEBREW],
         fix_group:        Some("bundle"),
         post_fix_trigger: &[],
         gate_kind:        GateKind::Install,
@@ -115,55 +134,27 @@ pub static COMPONENTS: &[ComponentSpec] = &[
             let bin = ctx.config.sensei_binary();
             Box::new(VersionedBinaryChecker::new(bin, "--version", ctx.app_version))
         },
-        fixer_fn: |ctx| {
-            if ctx.config.is_dev() {
-                Box::new(HumanActionFixer {
-                    component_id: "sensei",
-                    title:        "Build dev binaries",
-                    command:      "make install-dev",
-                    url:          None,
-                })
-            } else {
-                match detect_brew_path() {
-                    Some(brew) => Box::new(BrewBundleFixer::new(brew, HOMEBREW_BREWFILE_URL)),
-                    None       => Box::new(NoopFixer::new("Homebrew not found")),
-                }
-            }
-        },
+        fixer_fn: |ctx| sensei_binary_fixer(ids::SENSEI, ctx),
     },
     // ── Sensei Daemon (binary) ───────────────────────────────────────────────
     ComponentSpec {
-        id:               "senseid",
+        id:               ids::SENSEID,
         label:            "Sensei Daemon",
-        depends_on:       &["homebrew"],
+        depends_on:       &[ids::HOMEBREW],
         fix_group:        Some("bundle"),
-        post_fix_trigger: &["database"],
+        post_fix_trigger: &[ids::DATABASE],
         gate_kind:        GateKind::Install,
         checker_fn: |ctx| {
             let bin = ctx.config.senseid_binary();
             Box::new(VersionedBinaryChecker::new(bin, "--version", ctx.app_version))
         },
-        fixer_fn: |ctx| {
-            if ctx.config.is_dev() {
-                Box::new(HumanActionFixer {
-                    component_id: "senseid",
-                    title:        "Build dev binaries",
-                    command:      "make install-dev",
-                    url:          None,
-                })
-            } else {
-                match detect_brew_path() {
-                    Some(brew) => Box::new(BrewBundleFixer::new(brew, HOMEBREW_BREWFILE_URL)),
-                    None       => Box::new(NoopFixer::new("Homebrew not found")),
-                }
-            }
-        },
+        fixer_fn: |ctx| sensei_binary_fixer(ids::SENSEID, ctx),
     },
     // ── Sensei MCP (binary) ──────────────────────────────────────────────────
     ComponentSpec {
-        id:               "sensei_mcp",
+        id:               ids::SENSEI_MCP,
         label:            "Sensei MCP",
-        depends_on:       &["homebrew"],
+        depends_on:       &[ids::HOMEBREW],
         fix_group:        Some("bundle"),
         post_fix_trigger: &[],
         gate_kind:        GateKind::Install,
@@ -171,27 +162,13 @@ pub static COMPONENTS: &[ComponentSpec] = &[
             let bin = ctx.config.sensei_mcp_binary();
             Box::new(BinaryChecker::new(bin, "--version"))
         },
-        fixer_fn: |ctx| {
-            if ctx.config.is_dev() {
-                Box::new(HumanActionFixer {
-                    component_id: "sensei_mcp",
-                    title:        "Build dev binaries",
-                    command:      "make install-dev",
-                    url:          None,
-                })
-            } else {
-                match detect_brew_path() {
-                    Some(brew) => Box::new(BrewBundleFixer::new(brew, HOMEBREW_BREWFILE_URL)),
-                    None       => Box::new(NoopFixer::new("Homebrew not found")),
-                }
-            }
-        },
+        fixer_fn: |ctx| sensei_binary_fixer(ids::SENSEI_MCP, ctx),
     },
     // ── PostgreSQL Service ───────────────────────────────────────────────────
     ComponentSpec {
-        id:               "postgresql_service",
+        id:               ids::POSTGRESQL_SERVICE,
         label:            "PostgreSQL Service",
-        depends_on:       &["postgresql"],
+        depends_on:       &[ids::POSTGRESQL],
         fix_group:        None,
         post_fix_trigger: &[],
         gate_kind:        GateKind::Service,
@@ -200,9 +177,9 @@ pub static COMPONENTS: &[ComponentSpec] = &[
     },
     // ── Ollama Service ───────────────────────────────────────────────────────
     ComponentSpec {
-        id:               "ollama_service",
+        id:               ids::OLLAMA_SERVICE,
         label:            "Ollama Service",
-        depends_on:       &["ollama"],
+        depends_on:       &[ids::OLLAMA],
         fix_group:        None,
         post_fix_trigger: &[],
         gate_kind:        GateKind::Service,
@@ -211,9 +188,9 @@ pub static COMPONENTS: &[ComponentSpec] = &[
     },
     // ── Sensei Database ──────────────────────────────────────────────────────
     ComponentSpec {
-        id:               "database",
+        id:               ids::DATABASE,
         label:            "Sensei Database",
-        depends_on:       &["postgresql_service", "senseid"],
+        depends_on:       &[ids::POSTGRESQL_SERVICE, ids::SENSEID],
         fix_group:        None,
         post_fix_trigger: &[],
         gate_kind:        GateKind::Install,
@@ -222,14 +199,19 @@ pub static COMPONENTS: &[ComponentSpec] = &[
     },
     // ── Sensei Daemon Service ────────────────────────────────────────────────
     ComponentSpec {
-        id:               "daemon",
+        id:               ids::DAEMON,
         label:            "Sensei Daemon Service",
-        depends_on:       &["senseid", "database"],
+        depends_on:       &[ids::SENSEID, ids::DATABASE],
         fix_group:        None,
         post_fix_trigger: &[],
         gate_kind:        GateKind::Service,
         checker_fn: |ctx| Box::new(PortChecker::new("daemon", ctx.config.daemon_port)),
-        fixer_fn:   |ctx| Box::new(DaemonFixer::new(Arc::clone(ctx.platform), ctx.config.daemon_port)),
+        fixer_fn:   |ctx| Box::new(DaemonFixer::new(
+            Arc::clone(ctx.platform),
+            ctx.config.daemon_port,
+            ctx.config.is_dev(),
+            ctx.config.senseid_binary(),
+        )),
     },
 ];
 
@@ -239,9 +221,9 @@ mod tests {
 
     #[test]
     fn component_ids_are_unique() {
-        let mut ids: std::collections::HashSet<&str> = Default::default();
+        let mut seen: std::collections::HashSet<&str> = Default::default();
         for c in COMPONENTS {
-            assert!(ids.insert(c.id), "duplicate component id: {}", c.id);
+            assert!(seen.insert(c.id), "duplicate component id: {}", c.id);
         }
     }
 
@@ -275,16 +257,16 @@ mod tests {
 
     #[test]
     fn homebrew_has_no_dependencies() {
-        let homebrew = COMPONENTS.iter().find(|c| c.id == "homebrew").unwrap();
+        let homebrew = COMPONENTS.iter().find(|c| c.id == ids::HOMEBREW).unwrap();
         assert!(homebrew.depends_on.is_empty());
         assert!(homebrew.fix_group.is_none());
     }
 
     #[test]
     fn senseid_triggers_database() {
-        let senseid = COMPONENTS.iter().find(|c| c.id == "senseid").unwrap();
+        let senseid = COMPONENTS.iter().find(|c| c.id == ids::SENSEID).unwrap();
         assert!(
-            senseid.post_fix_trigger.contains(&"database"),
+            senseid.post_fix_trigger.contains(&ids::DATABASE),
             "senseid must trigger database"
         );
     }

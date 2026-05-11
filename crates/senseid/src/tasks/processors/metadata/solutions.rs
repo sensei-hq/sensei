@@ -106,7 +106,7 @@ fn group_by_name_prefix(repos: &[(String, String)]) -> Vec<(String, Vec<String>)
 /// "acme-api" -> "acme", "my-project-frontend" -> "my-project"
 pub(crate) fn extract_name_prefix(name: &str) -> String {
     // Split on common separators
-    let parts: Vec<&str> = name.split(|c| c == '-' || c == '_' || c == '.').collect();
+    let parts: Vec<&str> = name.split(['-', '_', '.']).collect();
     if parts.len() >= 2 {
         parts[0].to_string()
     } else {

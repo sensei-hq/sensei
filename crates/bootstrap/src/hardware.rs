@@ -16,34 +16,12 @@ pub fn detect() -> HardwareInfo {
     HardwareInfo { ram_gb, cpu_cores, gpu, metal_support, recommended_tier }
 }
 
-/// Detect GPU name. On macOS, reads from system_profiler.
+/// Detect GPU name. Delegates to the current platform's detection logic.
 fn detect_gpu() -> Option<String> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("sysctl")
-            .args(["-n", "machdep.cpu.brand_string"])
-            .output()
-            .ok()?;
-        let brand = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if brand.contains("Apple") {
-            return Some(brand);
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let output = std::process::Command::new("lspci")
-            .output()
-            .ok()?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        for line in text.lines() {
-            if line.contains("VGA") || line.contains("3D") {
-                return Some(line.trim().to_string());
-            }
-        }
-    }
-
-    None
+    #[cfg(not(target_os = "windows"))]
+    { crate::platform::macos::detect_gpu() }
+    #[cfg(target_os = "windows")]
+    { crate::platform::windows::detect_gpu() }
 }
 
 #[cfg(test)]

@@ -66,7 +66,7 @@
     background: var(--paper);
   }
   .date-label {
-    font-size: 9.5px;
+    font-size: 10px;
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -92,7 +92,7 @@
     margin-bottom: 6px;
   }
   .obs-tag {
-    font-size: 9.5px;
+    font-size: 10px;
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -141,7 +141,7 @@
   .notice-item.bordered {
     border-bottom: var(--ink-line);
   }
-  .notice-text { font-size: 11.5px; color: var(--sumi); }
+  .notice-text { font-size: 12px; color: var(--sumi); }
   .notice-project { font-size: 9px; color: var(--sumi-3); }
   .teachings {
     display: flex;

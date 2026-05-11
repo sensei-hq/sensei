@@ -66,15 +66,14 @@ impl Assistant for ClaudeCodeAssistant {
 
         // 3. Dev daemon additionally registers sensei-hook-dev.ts so the dev
         //    daemon also receives hook events (alongside the release hooks from step 2).
-        if crate::paths::mode() == crate::paths::Mode::Dev {
-            if let Err(e) = write_dev_hook_entries() {
+        if crate::paths::mode().is_dev()
+            && let Err(e) = write_dev_hook_entries() {
                 // Non-fatal: plugin install succeeded; dev hooks are best-effort.
                 return Ok(AssistantConfigureOk {
                     plugin: true,
                     warnings: vec![format!("dev hooks: {}", e)],
                 });
             }
-        }
 
         Ok(AssistantConfigureOk { plugin: true, warnings: vec![] })
     }
@@ -99,7 +98,7 @@ impl Assistant for ClaudeCodeAssistant {
 
         // Dev daemon additionally removes its own hook entries (sensei-hook-dev.ts).
         // This never touches the release plugin entries — only removes the dev entries.
-        if crate::paths::mode() == crate::paths::Mode::Dev {
+        if crate::paths::mode().is_dev() {
             remove_dev_hook_entries();
         }
 

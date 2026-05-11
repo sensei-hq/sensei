@@ -7,9 +7,10 @@ use crate::types::ModelTier;
 /// Required models per tier.
 pub fn required_models(tier: &ModelTier) -> Vec<&'static str> {
     match tier {
-        ModelTier::Minimum => vec!["gemma3:12b"],
+        ModelTier::Minimum     => vec!["gemma3:12b"],
         ModelTier::Recommended => vec!["gemma3:27b", "qwen3:14b"],
-        ModelTier::Full => vec!["gemma3:27b", "qwen3:14b"],
+        // TODO: add the full MOE panel models once the set is finalised.
+        ModelTier::Full        => vec!["gemma3:27b", "qwen3:14b"],
     }
 }
 

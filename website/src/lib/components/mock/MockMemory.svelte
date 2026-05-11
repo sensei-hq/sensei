@@ -61,7 +61,7 @@
     margin-bottom: 4px;
   }
   .section-tag {
-    font-size: 9.5px;
+    font-size: 10px;
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -105,7 +105,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    font-size: 10.5px;
+    font-size: 11px;
     color: var(--sumi-2);
   }
   .prov-key { color: var(--sumi-3); }

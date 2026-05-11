@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageShell from '$lib/components/PageShell.svelte';
+
   const faqs = [
     { q: 'Which AI assistants does sensei work with?',
       a: 'Any AI coding assistant that speaks MCP — Claude Code, Cursor, Windsurf, Copilot, Codex, and Aider. Sensei connects via its MCP server and adapts to each platform\'s capabilities through a feature registry.' },
@@ -31,61 +33,27 @@
   ];
 </script>
 
-<svelte:head>
-  <title>FAQ — Sensei</title>
-</svelte:head>
+<PageShell title="FAQ">
+  <div class="section-tag">Frequently asked</div>
+  <h1 class="display page-title">Questions & answers.</h1>
+  <p class="page-intro display">
+    Everything you might want to know before downloading.
+  </p>
 
-<div class="page">
-  <nav class="page-nav">
-    <a href="/" class="back-link">
-      <span class="kanji" style="font-size: 18px; color: var(--shu);">先生</span>
-      <span class="display" style="font-size: 15px;">Sensei</span>
-    </a>
-  </nav>
-
-  <div class="page-content">
-    <div class="section-tag">Frequently asked</div>
-    <h1 class="display page-title">Questions & answers.</h1>
-    <p class="page-intro display">
-      Everything you might want to know before downloading.
-    </p>
-
-    <div class="faq-list">
-      {#each faqs as it, i}
-        <details class="faq-item" class:last={i === faqs.length - 1}>
-          <summary class="faq-summary display">
-            <span>{it.q}</span>
-            <span class="faq-toggle">+</span>
-          </summary>
-          <div class="faq-answer">{it.a}</div>
-        </details>
-      {/each}
-    </div>
+  <div class="faq-list">
+    {#each faqs as it, i}
+      <details class="faq-item" class:last={i === faqs.length - 1}>
+        <summary class="faq-summary display">
+          <span>{it.q}</span>
+          <span class="faq-toggle">+</span>
+        </summary>
+        <div class="faq-answer">{it.a}</div>
+      </details>
+    {/each}
   </div>
-</div>
+</PageShell>
 
 <style>
-  .page {
-    background: var(--paper);
-    color: var(--sumi);
-    min-height: 100vh;
-    font-family: var(--font-ui);
-  }
-  .page-nav {
-    padding: 24px 56px;
-    border-bottom: var(--hairline);
-  }
-  .back-link {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 8px;
-    text-decoration: none;
-  }
-  .page-content {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 80px 56px 120px;
-  }
   .section-tag {
     font-size: 11px;
     letter-spacing: 0.22em;
@@ -131,8 +99,6 @@
     max-width: 720px;
   }
   @media (max-width: 900px) {
-    .page-nav { padding: 20px 24px; }
-    .page-content { padding: 48px 24px 80px; }
     .page-title { font-size: 32px; }
   }
 </style>

@@ -2,19 +2,26 @@
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
+    import TabBar from "$lib/components/TabBar.svelte";
+    import EmptyState from "$lib/components/EmptyState.svelte";
 
     type Tool = { name: string; description: string; params: string[] };
 
     let tools = $state<Tool[]>([]);
     let loading = $state(true);
-    let tab = $state<"playground" | "replay" | "insights">("playground");
+    let tab = $state("playground");
     let selectedTool = $state<Tool | null>(null);
     let toolResult = $state<string>("");
     let toolParams = $state<Record<string, string>>({});
     let executing = $state(false);
 
+    const instrumentTabs: [string, string][] = [
+        ["playground", "Playground"],
+        ["replay", "Replay"],
+        ["insights", "Insights"],
+    ];
+
     onMount(async () => {
-        await appState.load();
         const api = senseiApi(appState.port);
         const data = await api.mcpListTools();
         tools = data.tools;
@@ -40,38 +47,17 @@
         <h1 class="display text-2xl font-normal m-0">具 Instruments</h1>
     </div>
 
-    <!-- Tab bar -->
-    <div class="flex gap-0 border-b border-surface-z2 mb-7">
-        {#each [["playground", "具", "Playground"], ["replay", "録", "Replay"], ["insights", "照", "Insights"]] as [key, kanji, label]}
-            <button
-                class="tab flex items-center gap-2 px-4.5 py-2 border-none bg-none text-ui cursor-pointer border-b-2 border-transparent -mb-px text-surface-z6"
-                class:active={tab === key}
-                onclick={() => (tab = key as any)}
-            >
-                <span class="kanji text-xs">{kanji}</span>
-                {label}
-            </button>
-        {/each}
-    </div>
+    <TabBar tabs={instrumentTabs} bind:active={tab} class="mb-7" />
 
     {#if tab === "playground"}
         {#if loading}
             <p class="text-ui text-surface-z6">Loading tools...</p>
         {:else if tools.length === 0}
-            <div class="flex flex-col items-center text-center py-20 gap-4">
-                <span class="kanji text-6xl text-primary-z5 opacity-30">具</span
-                >
-                <p class="display text-xl font-normal m-0">
-                    No MCP tools available.
-                </p>
-                <p
-                    class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
-                >
-                    Tools appear when the sensei daemon is running and MCP
-                    services are configured. Check your instruments in the setup
-                    wizard.
-                </p>
-            </div>
+            <EmptyState
+                kanji="具"
+                title="No MCP tools available."
+                description="Tools appear when the sensei daemon is running and MCP services are configured. Check your instruments in the setup wizard."
+            />
         {:else}
             <div class="grid grid-cols-[260px_1fr] gap-6">
                 <!-- Tool list -->
@@ -159,41 +145,21 @@
             </div>
         {/if}
     {:else if tab === "replay"}
-        <div class="flex flex-col items-center text-center py-20 gap-4">
-            <span class="kanji text-6xl text-primary-z5 opacity-30">録</span>
-            <p class="display text-xl font-normal m-0">Session replay</p>
-            <p
-                class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
-            >
-                Tool calls from your assistant sessions will appear here. Each
-                call shows the tool, arguments, response, and whether the
-                assistant used the result.
-            </p>
-        </div>
+        <EmptyState
+            kanji="録"
+            title="Session replay"
+            description="Tool calls from your assistant sessions will appear here. Each call shows the tool, arguments, response, and whether the assistant used the result."
+        />
     {:else}
-        <div class="flex flex-col items-center text-center py-20 gap-4">
-            <span class="kanji text-6xl text-primary-z5 opacity-30">照</span>
-            <p class="display text-xl font-normal m-0">Tool insights</p>
-            <p
-                class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
-            >
-                Aggregated usage and effectiveness metrics across sessions.
-                Which tools are used most, which responses get ignored, and
-                where tool usage correlates with FTR.
-            </p>
-        </div>
+        <EmptyState
+            kanji="照"
+            title="Tool insights"
+            description="Aggregated usage and effectiveness metrics across sessions. Which tools are used most, which responses get ignored, and where tool usage correlates with FTR."
+        />
     {/if}
 </div>
 
 <style>
-    .tab:hover {
-        color: oklch(var(--color-surface-z8) / 1);
-    }
-    .tab.active {
-        color: oklch(var(--color-surface-z9) / 1);
-        border-bottom-color: oklch(var(--color-primary-z5) / 1);
-    }
-
     .tool-card:hover {
         background: oklch(var(--color-surface-z2) / 1);
     }

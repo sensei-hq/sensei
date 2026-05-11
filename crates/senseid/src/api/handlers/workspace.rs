@@ -150,10 +150,11 @@ pub(crate) async fn remove_project_tag(
 // ── Scan ────────────────────────────────────────────────────────────────────
 
 fn expand_tilde(path: &str) -> String {
-    if path.starts_with("~/") {
-        dirs::home_dir()
-            .map(|h| h.join(&path[2..]).to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string())
+    if let Some(stripped) = path.strip_prefix("~/") {
+        sensei_bootstrap::home_dir()
+            .join(stripped)
+            .to_string_lossy()
+            .to_string()
     } else {
         path.to_string()
     }

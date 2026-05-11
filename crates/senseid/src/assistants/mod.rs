@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use trait_def::Assistant;
 use claude_code::ClaudeCodeAssistant;
 use mcp_file::{McpFileAssistant, McpEntryFormat};
-use helpers::{home, find_mcp_binary};
+use helpers::find_mcp_binary;
 
 // ── Registry ───────────────────────────────────────────────────────────────
 
@@ -153,7 +153,6 @@ pub fn detect_families() -> Vec<AssistantFamily> {
 
 pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
     let assistants = all_assistants();
-    let h = home();
     let mut result = ConfigureResult {
         configured: vec![],
         skipped: vec![],
@@ -186,23 +185,14 @@ pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
         }
     }
 
-    // Save configured assistants
-    let sensei_dir = h.join(".sensei");
-    std::fs::create_dir_all(&sensei_dir).ok();
-    let config_file = sensei_dir.join("config.json");
-    let mut config: serde_json::Value = config_file
-        .exists()
-        .then(|| std::fs::read_to_string(&config_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}));
-    config["configured_assistants"] = serde_json::json!(
-        targets.iter()
-            .filter(|a| result.configured.contains(&a.id().to_string()))
-            .map(|a| a.id().to_string())
-            .collect::<Vec<_>>()
-    );
-    std::fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+    // Persist the set of successfully configured assistants.
+    let sensei_dir = crate::paths::sensei_dir();
+    let mut local_cfg = sensei_bootstrap::SenseiLocalConfig::load(&sensei_dir);
+    local_cfg.configured_assistants = targets.iter()
+        .filter(|a| result.configured.contains(&a.id().to_string()))
+        .map(|a| a.id().to_string())
+        .collect();
+    local_cfg.save(&sensei_dir).ok();
 
     result
 }

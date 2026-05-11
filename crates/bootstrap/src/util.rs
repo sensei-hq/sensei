@@ -8,32 +8,22 @@ use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
-use crate::types::{BootstrapTrace, ComponentState, ComponentStatus, TraceAction};
+use crate::types::{BootstrapTrace, TraceAction};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-/// Build a PATH string that includes well-known directories.
-/// Used when spawning child processes from a macOS .app bundle
-/// where the inherited PATH is minimal.
-pub fn enrich_path() -> String {
-    let current = std::env::var("PATH").unwrap_or_default();
-    let mut parts: Vec<&str> = current.split(':').collect();
-    for extra in EXTRA_PATHS {
-        if !parts.contains(extra) {
-            parts.push(extra);
-        }
-    }
-    parts.join(":")
-}
+// Alias the correct platform module so EXTRA_PATHS and enrich_path stay DRY.
+#[cfg(not(target_os = "windows"))]
+use crate::platform::macos as plat;
+#[cfg(target_os = "windows")]
+use crate::platform::windows as plat;
 
-/// Well-known binary directories to search when PATH is limited.
-/// macOS .app bundles inherit a minimal PATH that excludes Homebrew and ~/.local/bin.
-const EXTRA_PATHS: &[&str] = &[
-    "/opt/homebrew/bin",
-    "/opt/homebrew/sbin",
-    "/usr/local/bin",
-    "/usr/local/sbin",
-];
+/// Build a PATH string that includes well-known platform directories.
+/// Delegates to the current platform's enrichment logic.
+/// Used when spawning child processes from an .app bundle where PATH is minimal.
+pub fn enrich_path() -> String {
+    plat::enrich_path()
+}
 
 /// Find a binary in PATH (and well-known locations).
 ///
@@ -63,8 +53,8 @@ pub fn which_binary(name: &str) -> Option<String> {
         }
     }
 
-    // Fallback: check well-known directories directly
-    for dir in EXTRA_PATHS {
+    // Fallback: check well-known directories directly (platform-defined)
+    for dir in plat::EXTRA_PATHS {
         let candidate = format!("{dir}/{name}");
         if std::path::Path::new(&candidate).exists() {
             return Some(candidate);
@@ -104,64 +94,6 @@ fn parse_version_from_line(line: &str) -> Option<String> {
         .map(|v| v.to_string())
 }
 
-/// Check if a binary exists AND its service is running on a port.
-///
-/// Returns `missing` if the binary isn't found, `failed` if the binary
-/// exists but the port isn't responsive, and `ready` if both pass.
-/// This produces a single status for components that have both a binary
-/// and a service (e.g. postgresql, ollama).
-pub fn check_binary_and_service(
-    name: &str,
-    binary: &str,
-    version_flag: &str,
-    port: u16,
-) -> ComponentStatus {
-    // Binary must exist first
-    let path = match which_binary(binary) {
-        Some(p) => p,
-        None => return ComponentStatus::missing(name),
-    };
-
-    let version = binary_version(binary, version_flag);
-
-    // Then check the service port
-    if !probe_port(port) {
-        let mut status = ComponentStatus::failed(
-            name,
-            &format!("installed at {} but service not running on port {}", path, port),
-        );
-        status.version = version;
-        status.detail = Some(path);
-        return status;
-    }
-
-    // Both binary and service are good
-    let svc_version = fetch_service_version(name, port);
-    let mut status = ComponentStatus::ready(
-        name,
-        svc_version.as_deref().or(version.as_deref()).unwrap_or("unknown"),
-    );
-    status.detail = Some(path);
-    status
-}
-
-/// Check if a binary exists in PATH and report its version.
-///
-/// Combines [`which_binary`] + [`binary_version`].
-/// The resolved path is stored in `detail`.
-/// Returns a `missing` status if the binary is not found.
-pub fn check_binary(name: &str, binary: &str, version_flag: &str) -> ComponentStatus {
-    let path = match which_binary(binary) {
-        Some(p) => p,
-        None => return ComponentStatus::missing(name),
-    };
-
-    let version = binary_version(binary, version_flag);
-    let mut status = ComponentStatus::ready(name, version.as_deref().unwrap_or("unknown"));
-    status.detail = Some(path);
-    status
-}
-
 /// TCP connect to 127.0.0.1:`port` with a 2-second timeout.
 ///
 /// Returns `true` if the connection succeeds (something is listening).
@@ -173,19 +105,6 @@ pub fn probe_port(port: u16) -> bool {
     .is_ok()
 }
 
-/// Check whether a service is reachable on the given port.
-///
-/// Probes the port, then tries to fetch the service version via
-/// [`fetch_service_version`]. Returns `ready` or `failed`.
-pub fn check_service(name: &str, port: u16) -> ComponentStatus {
-    if probe_port(port) {
-        let version = fetch_service_version(name, port);
-        ComponentStatus::ready(name, version.as_deref().unwrap_or("unknown"))
-    } else {
-        ComponentStatus::failed(name, &format!("not reachable on port {port}"))
-    }
-}
-
 /// Fetch the version string from a service's health endpoint.
 ///
 /// Supported services:
@@ -194,28 +113,14 @@ pub fn check_service(name: &str, port: u16) -> ComponentStatus {
 /// - `"postgresql"` — `psql --version` → last whitespace token
 pub fn fetch_service_version(name: &str, port: u16) -> Option<String> {
     match name {
-        "daemon" => {
-            let url = format!("http://127.0.0.1:{port}/health");
-            let resp = reqwest::blocking::Client::builder()
+        "daemon" | "ollama" => {
+            let client = reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(2))
                 .build()
-                .ok()?
-                .get(&url)
-                .send()
                 .ok()?;
-            let json: serde_json::Value = resp.json().ok()?;
-            json["version"].as_str().map(|s| s.to_string())
-        }
-        "ollama" => {
-            let url = format!("http://127.0.0.1:{port}/api/version");
-            let resp = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(2))
-                .build()
-                .ok()?
-                .get(&url)
-                .send()
-                .ok()?;
-            let json: serde_json::Value = resp.json().ok()?;
+            let path = if name == "daemon" { "health" } else { "api/version" };
+            let url = format!("http://127.0.0.1:{port}/{path}");
+            let json: serde_json::Value = client.get(&url).send().ok()?.json().ok()?;
             json["version"].as_str().map(|s| s.to_string())
         }
         "postgresql" => {
@@ -224,50 +129,6 @@ pub fn fetch_service_version(name: &str, port: u16) -> Option<String> {
             text.split_whitespace().last().map(|s| s.to_string())
         }
         _ => None,
-    }
-}
-
-/// Start the sensei daemon on the given port.
-///
-/// Locates `senseid` via [`which_binary`], spawns `senseid --port {port}`,
-/// waits 500ms, then probes the port. Returns `ready` if the port responds,
-/// or a `Starting` state if the daemon was spawned but hasn't bound yet.
-pub fn start_daemon(port: u16) -> Result<ComponentStatus, String> {
-    let binary = which_binary("senseid").ok_or("senseid binary not found in PATH")?;
-
-    // Build a PATH that includes Homebrew so the daemon can find psql, etc.
-    let enriched_path = enrich_path();
-
-    // Use `senseid start` which daemonizes itself.
-    let output = Command::new(&binary)
-        .args(["start", "--port", &port.to_string()])
-        .env("PATH", &enriched_path)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to start senseid: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("senseid start failed: {stderr}"));
-    }
-
-    // Give it a moment to bind
-    std::thread::sleep(Duration::from_millis(2000));
-
-    if probe_port(port) {
-        let version = fetch_service_version("daemon", port);
-        Ok(ComponentStatus::ready(
-            "daemon",
-            version.as_deref().unwrap_or("unknown"),
-        ))
-    } else {
-        Ok(ComponentStatus {
-            name: "daemon".to_string(),
-            state: ComponentState::Starting,
-            version: None,
-            detail: Some("started but not yet responding".into()),
-        })
     }
 }
 
@@ -379,132 +240,6 @@ pub fn probe_traced(step: &str, desc: &str, host: &str, port: u16) -> BootstrapT
     }
 }
 
-/// Check if a binary exists, returning status and traces. Pure function.
-pub fn check_binary_traced(
-    name: &str,
-    binary: &str,
-    version_flag: &str,
-) -> (ComponentStatus, Vec<BootstrapTrace>) {
-    #[cfg(unix)]
-    let which_cmd = "which";
-    #[cfg(windows)]
-    let which_cmd = "where";
-
-    let which_t = run_traced(
-        &format!("{name}_which"),
-        &format!("Locate {name} binary"),
-        which_cmd,
-        &[binary],
-    );
-
-    let path = which_binary(binary);
-    if path.is_none() {
-        let mut t = which_t;
-        t.ok = false;
-        t.err = format!("{binary} not found in PATH or known directories");
-        return (ComponentStatus::missing(name), vec![t]);
-    }
-    let path = path.unwrap();
-
-    let version_t = run_traced(
-        &format!("{name}_version"),
-        &format!("Check {name} version"),
-        binary,
-        &[version_flag],
-    );
-    let version = parse_version_from_line(&version_t.out);
-
-    // If which command failed (EXTRA_PATHS fallback found it), fix the trace
-    let mut which_final = which_t;
-    if !which_final.ok {
-        which_final.ok = true;
-        which_final.out = path.clone();
-    }
-
-    let mut status = ComponentStatus::ready(name, version.as_deref().unwrap_or("unknown"));
-    status.detail = Some(path);
-    (status, vec![which_final, version_t])
-}
-
-/// Check binary + service port, returning status and traces. Pure function.
-pub fn check_binary_and_service_traced(
-    name: &str,
-    binary: &str,
-    _version_flag: &str,
-    port: u16,
-) -> (ComponentStatus, Vec<BootstrapTrace>) {
-    #[cfg(unix)]
-    let which_cmd = "which";
-    #[cfg(windows)]
-    let which_cmd = "where";
-
-    let which_t = run_traced(
-        &format!("{name}_which"),
-        &format!("Locate {name} binary"),
-        which_cmd,
-        &[binary],
-    );
-
-    let path = which_binary(binary);
-    if path.is_none() {
-        let mut t = which_t;
-        t.ok = false;
-        t.err = format!("{binary} not found in PATH or known directories");
-        return (ComponentStatus::missing(name), vec![t]);
-    }
-    let path = path.unwrap();
-
-    let mut which_final = which_t;
-    if !which_final.ok {
-        which_final.ok = true;
-        which_final.out = path.clone();
-    }
-
-    let port_t = probe_traced(
-        &format!("{name}_port"),
-        &format!("Check {name} service on port {port}"),
-        "127.0.0.1",
-        port,
-    );
-    let port_ok = port_t.ok;
-    let traces = vec![which_final, port_t];
-
-    if !port_ok {
-        let mut status = ComponentStatus::failed(
-            name,
-            &format!("installed at {path} but service not running on port {port}"),
-        );
-        status.detail = Some(path);
-        return (status, traces);
-    }
-
-    let svc_version = fetch_service_version(name, port);
-    let mut status = ComponentStatus::ready(
-        name,
-        svc_version.as_deref().unwrap_or("unknown"),
-    );
-    status.detail = Some(path);
-    (status, traces)
-}
-
-/// Check a service port only, returning status and a trace. Pure function.
-pub fn check_service_traced(name: &str, port: u16) -> (ComponentStatus, Vec<BootstrapTrace>) {
-    let port_t = probe_traced(
-        &format!("{name}_port"),
-        &format!("Check {name} on port {port}"),
-        "127.0.0.1",
-        port,
-    );
-    if port_t.ok {
-        let version = fetch_service_version(name, port);
-        let status = ComponentStatus::ready(name, version.as_deref().unwrap_or("unknown"));
-        (status, vec![port_t])
-    } else {
-        let status = ComponentStatus::failed(name, &format!("not reachable on port {port}"));
-        (status, vec![port_t])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,13 +309,6 @@ mod tests {
     }
 
     #[test]
-    fn check_binary_nonexistent() {
-        let status = check_binary("nope", "sensei-nonexistent-binary-xyz", "--version");
-        assert!(status.is_failed());
-        assert_eq!(status.name, "nope");
-    }
-
-    #[test]
     fn version_parsing_postgres() {
         let parsed = parse_version_from_line("postgres (PostgreSQL) 17.2");
         assert_eq!(parsed, Some("17.2".to_string()));
@@ -593,37 +321,101 @@ mod tests {
     }
 
     #[test]
-    fn check_binary_traced_finds_ls() {
-        let (status, traces) = check_binary_traced("ls", "ls", "--help");
-        // ls exists everywhere — expect ready
-        assert!(status.is_ready(), "ls should be found");
-        assert!(!traces.is_empty(), "should have at least one trace");
-        assert!(traces.iter().any(|t| t.step.contains("ls")));
+    fn version_parsing_no_digit_returns_none() {
+        let parsed = parse_version_from_line("no digits here at all");
+        assert_eq!(parsed, None);
     }
 
     #[test]
-    fn check_binary_traced_missing() {
-        let (status, traces) = check_binary_traced(
-            "nope", "sensei-nonexistent-xyz", "--version"
-        );
-        assert!(status.is_failed(), "nonexistent binary should fail");
-        assert!(!traces.is_empty());
+    fn version_parsing_empty_returns_none() {
+        let parsed = parse_version_from_line("");
+        assert_eq!(parsed, None);
+    }
+
+    // ── probe_port success ───────────────────────────────────────────────────
+
+    #[test]
+    fn probe_port_open() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(probe_port(port), "should connect to an actively listening port");
+    }
+
+    // ── probe_traced success path ────────────────────────────────────────────
+
+    #[test]
+    fn probe_traced_open_port() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let t = probe_traced("open_port_test", "Check open port", "127.0.0.1", port);
+        assert!(t.ok, "open port probe should succeed");
+        assert!(t.err.is_empty(), "no error on success");
+        assert!(t.exit.is_none(), "TCP probes have no exit code");
+    }
+
+    // ── binary_version ───────────────────────────────────────────────────────
+
+    #[test]
+    fn binary_version_returns_some_for_real_binary() {
+        // echo with a digit-containing arg gives us predictable output
+        let v = binary_version("echo", "1.2.3");
+        // echo outputs "1.2.3" which contains digits → parse_version_from_line finds it
+        assert_eq!(v.as_deref(), Some("1.2.3"));
     }
 
     #[test]
-    fn check_service_traced_closed_port() {
-        let (status, traces) = check_service_traced("nope_service", 1);
-        assert!(status.is_failed());
-        assert!(!traces.is_empty());
-        assert!(traces.iter().any(|t| t.cmd.contains("tcp probe")));
+    fn binary_version_returns_none_for_nonexistent_binary() {
+        let v = binary_version("sensei-totally-nonexistent-xyz", "--version");
+        assert_eq!(v, None);
+    }
+
+    // ── enrich_path ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn enrich_path_includes_extra_paths() {
+        let p = enrich_path();
+        // At least one of the platform's EXTRA_PATHS must appear (macOS/Linux only).
+        let contains_extra = plat::EXTRA_PATHS.iter().any(|ep| p.contains(ep));
+        // On Windows EXTRA_PATHS is empty, so this check is vacuously true.
+        if !plat::EXTRA_PATHS.is_empty() {
+            assert!(contains_extra, "enrich_path should include at least one known extra path");
+        }
     }
 
     #[test]
-    fn check_binary_and_service_traced_missing_binary() {
-        let (status, traces) = check_binary_and_service_traced(
-            "nope", "sensei-nonexistent-xyz", "--version", 1
-        );
-        assert!(status.is_failed());
-        assert!(!traces.is_empty());
+    fn enrich_path_does_not_add_extra_paths_twice() {
+        // enrich_path guarantees it won't append an EXTRA_PATH that's already present.
+        let p = enrich_path();
+        for extra in plat::EXTRA_PATHS {
+            let count = p.split(plat::PATH_SEPARATOR).filter(|seg| *seg == *extra).count();
+            assert!(
+                count <= 1,
+                "EXTRA_PATH '{extra}' should appear at most once in enrich_path output, found {count}"
+            );
+        }
+    }
+
+    // ── fetch_service_version ────────────────────────────────────────────────
+
+    #[test]
+    fn fetch_service_version_unknown_service_returns_none() {
+        // Unknown service names fall through to the `_ => None` arm
+        let result = fetch_service_version("unknown-service-xyz", 19998);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn fetch_service_version_daemon_unreachable_returns_none() {
+        // Port 19997 is almost certainly not running our daemon
+        let result = fetch_service_version("daemon", 19997);
+        assert_eq!(result, None, "unreachable daemon port should yield None");
+    }
+
+    #[test]
+    fn fetch_service_version_ollama_unreachable_returns_none() {
+        let result = fetch_service_version("ollama", 19996);
+        assert_eq!(result, None);
     }
 }
