@@ -475,7 +475,7 @@ fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> String {
 
     // Exact repo_id match
     if let Some(p) = projects.iter().find(|p| p["repo_id"].as_str() == Some(hint)) {
-        return p["repo_id"].as_str().unwrap().to_string();
+        return p["repo_id"].as_str().unwrap_or("").to_string();
     }
 
     // Exact name match (case insensitive)
@@ -483,14 +483,14 @@ fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> String {
     if let Some(p) = projects.iter().find(|p| {
         p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
     }) {
-        return p["repo_id"].as_str().unwrap().to_string();
+        return p["repo_id"].as_str().unwrap_or("").to_string();
     }
 
     // Partial name match
     if let Some(p) = projects.iter().find(|p| {
         p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true)
     }) {
-        return p["repo_id"].as_str().unwrap().to_string();
+        return p["repo_id"].as_str().unwrap_or("").to_string();
     }
 
     // Check if it's a library name used by any project
@@ -504,7 +504,7 @@ fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> String {
         if let Some(lib_project) = projects.iter().find(|p2| {
             p2["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
         }) {
-            return lib_project["repo_id"].as_str().unwrap().to_string();
+            return lib_project["repo_id"].as_str().unwrap_or("").to_string();
         }
     }
 

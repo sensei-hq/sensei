@@ -69,7 +69,7 @@ impl CircuitBreakerManager {
     ///   case the state transitions to HalfOpen and returns `true`.
     /// - **HalfOpen** — returns `true` (probe requests are allowed).
     pub fn can_execute(&self, endpoint: &str) -> bool {
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
         let state = states
             .entry(endpoint.to_string())
             .or_insert(BreakerState::Closed { failure_count: 0 });
@@ -95,7 +95,7 @@ impl CircuitBreakerManager {
     ///   once `half_open_max_requests` successes are reached.
     /// - **Open** — no-op (shouldn't happen in normal flow).
     pub fn record_success(&self, endpoint: &str) {
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
         let Some(state) = states.get_mut(endpoint) else {
             return;
         };
@@ -121,7 +121,7 @@ impl CircuitBreakerManager {
     /// - **HalfOpen** — immediately transitions to Open.
     /// - **Open** — no-op (shouldn't happen in normal flow).
     pub fn record_failure(&self, endpoint: &str) {
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
         let Some(state) = states.get_mut(endpoint) else {
             return;
         };
@@ -148,7 +148,7 @@ impl CircuitBreakerManager {
     ///
     /// Returns `Closed { failure_count: 0 }` for unknown endpoints.
     pub fn get_state(&self, endpoint: &str) -> BreakerState {
-        let states = self.states.lock().unwrap();
+        let states = self.states.lock().unwrap_or_else(|e| e.into_inner());
         match states.get(endpoint) {
             Some(BreakerState::Closed { failure_count }) => BreakerState::Closed {
                 failure_count: *failure_count,
@@ -165,13 +165,13 @@ impl CircuitBreakerManager {
 
     /// Remove state for a single endpoint, resetting it to the default Closed.
     pub fn reset(&self, endpoint: &str) {
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
         states.remove(endpoint);
     }
 
     /// Remove state for all endpoints.
     pub fn reset_all(&self) {
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
         states.clear();
     }
 }
