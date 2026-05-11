@@ -10,6 +10,10 @@ pub struct SqlAdapter;
 impl LanguageAdapter for SqlAdapter {
     fn language(&self) -> &str { "sql" }
 
+    fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
+        parse_to_ir(source, file_path)
+    }
+
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let dialect = GenericDialect {};
         let stmts = match SqlParser::parse_sql(&dialect, source) {

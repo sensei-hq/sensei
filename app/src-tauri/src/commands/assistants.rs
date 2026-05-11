@@ -1,4 +1,8 @@
-//! Assistant detection and configuration — delegates to daemon API.
+//! Assistant detection and configuration — thin proxy to the daemon API.
+//!
+//! The Tauri sidecar owns bootstrap/health/upgrade only.
+//! All assistant logic (detection, configuration, removal) is daemon-owned.
+//! These commands are pure passthroughs — no types are duplicated here.
 
 use serde_json::{json, Value};
 
@@ -12,26 +16,11 @@ fn daemon_url() -> &'static str {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct AssistantStatus {
-    id: String,
-    name: String,
-    family: String,
-    installed: bool,
-    mcp_configured: bool,
-    config_path: String,
-}
-
+/// Returns the daemon's full assistant list. Caller receives raw daemon JSON.
 #[tauri::command]
-pub fn detect_assistants() -> Vec<String> {
+pub fn detect_assistants() -> Vec<Value> {
     match ureq::get(&format!("{}/api/assistants/detect", daemon_url())).call() {
-        Ok(resp) => {
-            let assistants: Vec<Value> = resp.into_json().unwrap_or_default();
-            assistants.iter()
-                .filter(|a| a["installed"].as_bool() == Some(true))
-                .filter_map(|a| a["id"].as_str().map(String::from))
-                .collect()
-        }
+        Ok(resp) => resp.into_json().unwrap_or_default(),
         Err(_) => vec![],
     }
 }
@@ -62,8 +51,9 @@ pub fn configure_mcp(assistants: Vec<String>) -> Result<Vec<String>, String> {
     }
 }
 
+/// Returns the daemon's full assistant status list. Caller receives raw daemon JSON.
 #[tauri::command]
-pub fn check_assistant_configs() -> Vec<AssistantStatus> {
+pub fn check_assistant_configs() -> Vec<Value> {
     match ureq::get(&format!("{}/api/assistants/detect", daemon_url())).call() {
         Ok(resp) => resp.into_json().unwrap_or_default(),
         Err(_) => vec![],

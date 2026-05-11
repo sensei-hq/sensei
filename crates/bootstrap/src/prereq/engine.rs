@@ -228,6 +228,7 @@ impl BootstrapEngine {
                 },
                 fix_attempted: false,
                 fix_detail:    None,
+                check_error:   None,
             }).collect();
             return BootstrapReport { gates, all_ok: true, blocked_on: None };
         }
@@ -248,6 +249,7 @@ impl BootstrapEngine {
                     },
                     fix_attempted: false,
                     fix_detail:    None,
+                    check_error:   None,
                 });
             }
         }
@@ -264,6 +266,7 @@ impl BootstrapEngine {
                     let spec = COMPONENTS.iter().find(|s| s.id == id).unwrap();
 
                     if dep_blocked.contains(id) {
+                        let check_error = check_results.get(id).and_then(|r| r.error.clone());
                         let err = "dep-blocked: dependency not ready".to_string();
                         callback(ProgressEvent::Gate {
                             id:     id.to_string(),
@@ -274,23 +277,28 @@ impl BootstrapEngine {
                             status:        GateStatus::Failed { error: err },
                             fix_attempted: false,
                             fix_detail:    None,
+                            check_error,
                         });
                         continue;
                     }
 
                     let fixer = self.get_fixer(id);
 
-                    // Human action check — stops execution
+                    // Human action check — stops execution and surfaces the original check error.
                     if let Some(action) = fixer.human_action() {
+                        let check_error = check_results.get(id).and_then(|r| r.error.clone());
+                        let err = check_error.clone()
+                            .unwrap_or_else(|| "not ready".to_string());
                         callback(ProgressEvent::Gate {
                             id:     id.to_string(),
-                            status: GateStatus::Failed { error: "human action required".to_string() },
+                            status: GateStatus::Failed { error: err.clone() },
                         });
                         gate_reports.insert(id, GateReport {
                             id:            id.to_string(),
-                            status:        GateStatus::Failed { error: "human action required".to_string() },
+                            status:        GateStatus::Failed { error: err },
                             fix_attempted: false,
                             fix_detail:    None,
+                            check_error,
                         });
                         blocked_on = Some(action);
                         break 'plan;
@@ -306,10 +314,11 @@ impl BootstrapEngine {
                     });
 
                     // Run fix then recheck
+                    let check_error = check_results.get(id).and_then(|r| r.error.clone());
                     let fix_result = fixer.fix();
                     let recheck    = self.run_check(id);
                     Self::record_fix_result(
-                        id, fix_result, recheck, &callback, &mut gate_reports,
+                        id, fix_result, recheck, check_error, &callback, &mut gate_reports,
                     );
 
                     // post_fix_trigger
@@ -323,6 +332,30 @@ impl BootstrapEngine {
                 }
 
                 PlanStep::Batch(ids) => {
+                    // One BrewBundleFixer call covers all bundle components.
+                    let representative_id = ids[0];
+                    let fixer = self.get_fixer(representative_id);
+
+                    // Human action check — if the batch fixer requires human action,
+                    // surface the original check error for each component and stop.
+                    if let Some(action) = fixer.human_action() {
+                        for &id in ids {
+                            let check_error = check_results.get(id).and_then(|r| r.error.clone());
+                            let err = check_error.clone()
+                                .unwrap_or_else(|| "not ready".to_string());
+                            let status = GateStatus::Failed { error: err };
+                            callback(ProgressEvent::Gate { id: id.to_string(), status: status.clone() });
+                            gate_reports.insert(id, GateReport {
+                                id: id.to_string(), status,
+                                fix_attempted: false,
+                                fix_detail:    None,
+                                check_error,
+                            });
+                        }
+                        blocked_on = Some(action);
+                        break 'plan;
+                    }
+
                     // Emit Installing for all ids in the batch
                     for &id in ids {
                         callback(ProgressEvent::Gate {
@@ -331,25 +364,25 @@ impl BootstrapEngine {
                         });
                     }
 
-                    // One BrewBundleFixer call covers all bundle components.
-                    let representative_id = ids[0];
-                    let fixer      = self.get_fixer(representative_id);
                     let fix_result = fixer.fix();
 
                     match fix_result {
                         Err(e) => {
                             for &id in ids {
+                                let check_error = check_results.get(id).and_then(|r| r.error.clone());
                                 let status = GateStatus::Failed { error: e.clone() };
                                 callback(ProgressEvent::Gate { id: id.to_string(), status: status.clone() });
                                 gate_reports.insert(id, GateReport {
                                     id: id.to_string(), status,
                                     fix_attempted: true,
                                     fix_detail:    None,
+                                    check_error,
                                 });
                             }
                         }
                         Ok(fix_res) => {
                             for &id in ids {
+                                let check_error = check_results.get(id).and_then(|r| r.error.clone());
                                 let recheck = self.run_check(id);
                                 let final_status = if recheck.ok {
                                     GateStatus::Ready { version: recheck.version, detail: recheck.detail }
@@ -365,6 +398,7 @@ impl BootstrapEngine {
                                     status:        final_status.clone(),
                                     fix_attempted: true,
                                     fix_detail:    Some(fix_res.approach.clone()),
+                                    check_error,
                                 });
 
                                 // post_fix_trigger after bundle
@@ -397,10 +431,11 @@ impl BootstrapEngine {
                 },
             });
 
+            let check_error = check_results.get(tid).and_then(|r| r.error.clone());
             let fix_result = fixer.fix();
             let recheck    = self.run_check(tid);
             Self::record_fix_result(
-                tid, fix_result, recheck, &callback, &mut gate_reports,
+                tid, fix_result, recheck, check_error, &callback, &mut gate_reports,
             );
         }
 
@@ -412,6 +447,7 @@ impl BootstrapEngine {
                 status:        GateStatus::Failed { error: "not reached".to_string() },
                 fix_attempted: false,
                 fix_detail:    None,
+                check_error:   check_results.get(spec.id).and_then(|r| r.error.clone()),
             })
         }).collect();
 
@@ -426,6 +462,7 @@ impl BootstrapEngine {
         id:            &'static str,
         fix_result:    Result<FixResult, String>,
         recheck:       CheckResult,
+        check_error:   Option<String>,
         callback:      &Arc<impl Fn(ProgressEvent) + Send + Sync + 'static>,
         gate_reports:  &mut HashMap<&'static str, GateReport>,
     ) {
@@ -448,6 +485,7 @@ impl BootstrapEngine {
             status:        final_status,
             fix_attempted: true,
             fix_detail,
+            check_error,
         });
     }
 }
@@ -875,5 +913,97 @@ mod tests {
         let daemon = report.gates.iter().find(|g| g.id == "daemon").unwrap();
         assert!(matches!(daemon.status, GateStatus::Failed { .. }), "daemon should be dep-blocked/Failed");
         assert!(!daemon.fix_attempted, "daemon fix should not be attempted when dep-blocked");
+    }
+
+    // ── Integration test 14: Batch fixer fails → all batch members Failed ─────
+
+    #[test]
+    fn batch_fixer_fails_marks_all_batch_components_failed() {
+        // postgresql and ollama share fix_group="bundle"; both fail initial check.
+        // The batch fixer returns Err → both components must be Failed, fix_attempted=true.
+        let mut ctx = make_ctx();
+        ctx = ctx.with_checker("homebrew",   make_mock_checker(true));
+        ctx = ctx.with_checker("postgresql", make_mock_checker(false));
+        ctx = ctx.with_checker("ollama",     make_mock_checker(false));
+        ctx = ctx.with_fixer  ("postgresql", make_mock_fixer(false)); // batch fixer fails
+        ctx = ctx.with_fixer  ("ollama",     make_mock_fixer(false));
+        for spec in COMPONENTS {
+            if !["homebrew","postgresql","ollama"].contains(&spec.id) {
+                ctx = ctx.with_checker(spec.id, make_mock_checker(true));
+            }
+        }
+        let report = BootstrapEngine::new(Arc::new(ctx)).check_and_fix(|_| {});
+        let pg = report.gates.iter().find(|g| g.id == "postgresql").unwrap();
+        let ol = report.gates.iter().find(|g| g.id == "ollama").unwrap();
+        assert!(matches!(pg.status, GateStatus::Failed { .. }), "postgresql should be Failed when batch fixer fails");
+        assert!(matches!(ol.status, GateStatus::Failed { .. }), "ollama should be Failed when batch fixer fails");
+        assert!(pg.fix_attempted, "fix_attempted should be true (batch fixer ran)");
+        assert!(ol.fix_attempted, "fix_attempted should be true (batch fixer ran)");
+    }
+
+    // ── Integration test 15: all_ok false when component unfixable ────────────
+
+    #[test]
+    fn all_ok_false_when_component_fix_fails() {
+        // postgresql fails and its fixer fails too → all_ok must be false,
+        // blocked_on must be None (no human action, just a failed fix).
+        let mut ctx = make_ctx();
+        ctx = ctx.with_checker("homebrew",   make_mock_checker(true));
+        ctx = ctx.with_checker("postgresql", make_mock_checker(false));
+        ctx = ctx.with_fixer  ("postgresql", make_mock_fixer(false));
+        for spec in COMPONENTS {
+            if !["homebrew","postgresql"].contains(&spec.id) {
+                ctx = ctx.with_checker(spec.id, make_mock_checker(true));
+            }
+        }
+        let report = BootstrapEngine::new(Arc::new(ctx)).check_and_fix(|_| {});
+        assert!(!report.all_ok, "all_ok must be false when any component cannot be fixed");
+        assert!(report.blocked_on.is_none(), "blocked_on should be None (no human action)");
+    }
+
+    // ── Integration test 16: Gate event count ────────────────────────────────
+    // The engine emits exactly 2 Gate events per component in the all-ok path:
+    // one Checking and one Ready (no fixing events).
+
+    #[test]
+    fn all_ok_emits_exactly_two_gate_events_per_component() {
+        let gate_events: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(vec![]));
+        let cb = Arc::clone(&gate_events);
+        let engine = BootstrapEngine::new(Arc::new(all_ok_ctx()));
+        engine.check_and_fix(move |e| {
+            if let ProgressEvent::Gate { id, .. } = &e {
+                cb.lock().unwrap().push(id.clone());
+            }
+        });
+        let ev = gate_events.lock().unwrap();
+        // Each of the 10 components should emit exactly 2 Gate events
+        for spec in COMPONENTS {
+            let count = ev.iter().filter(|id| id.as_str() == spec.id).count();
+            assert_eq!(count, 2, "component '{}' should emit exactly 2 Gate events (Checking + Ready)", spec.id);
+        }
+    }
+
+    // ── Integration test 17: check_error preserved on gate report ─────────────
+
+    #[test]
+    fn check_error_preserved_on_gate_report() {
+        // After a failed check, the check_error field on GateReport should be populated
+        // even if the fix is attempted.
+        let mut ctx = make_ctx();
+        ctx = ctx.with_checker("homebrew",   make_mock_checker(true));
+        ctx = ctx.with_checker("postgresql", make_mock_checker(false)); // always fails
+        ctx = ctx.with_fixer  ("postgresql", make_mock_fixer(false));
+        for spec in COMPONENTS {
+            if !["homebrew","postgresql"].contains(&spec.id) {
+                ctx = ctx.with_checker(spec.id, make_mock_checker(true));
+            }
+        }
+        let report = BootstrapEngine::new(Arc::new(ctx)).check_and_fix(|_| {});
+        let pg = report.gates.iter().find(|g| g.id == "postgresql").unwrap();
+        assert!(
+            pg.check_error.is_some(),
+            "check_error should be preserved for diagnosis: {:?}", pg
+        );
     }
 }

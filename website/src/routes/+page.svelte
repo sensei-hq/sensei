@@ -7,6 +7,8 @@
   import MockMemory from '$lib/components/mock/MockMemory.svelte';
   import MockInstruments from '$lib/components/mock/MockInstruments.svelte';
 
+  declare const __APP_VERSION__: string;
+
   const GITHUB = 'https://github.com/sensei-hq/sensei';
   const RELEASES = 'https://github.com/sensei-hq/sensei-releases';
   const RELEASE_BASE = `${RELEASES}/releases/latest/download`;
@@ -387,7 +389,7 @@
           A patient observer for AI-assisted work. Built quietly,
           shipped slowly.
         </div>
-        <div class="mono footer-version">v0.4.2</div>
+        <div class="mono footer-version">v{__APP_VERSION__}</div>
       </div>
       <div class="footer-cols">
         {#each footerCols as col}
@@ -545,7 +547,7 @@
     text-decoration: none;
   }
   .hero-note {
-    font-size: 11.5px;
+    font-size: 12px;
     color: var(--sumi-3);
     margin-top: 16px;
     letter-spacing: 0.05em;
@@ -579,7 +581,7 @@
     color: var(--sumi);
   }
   .stat-label {
-    font-size: 10.5px;
+    font-size: 11px;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--sumi-3);
@@ -645,7 +647,7 @@
     margin-bottom: 18px;
   }
   .step-phase {
-    font-size: 10.5px;
+    font-size: 11px;
     letter-spacing: 0.22em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -664,7 +666,7 @@
     margin-bottom: 20px;
   }
   .step-sub {
-    font-size: 11.5px;
+    font-size: 12px;
     color: var(--sumi-3);
     font-style: italic;
     padding-top: 14px;
@@ -934,7 +936,7 @@
     gap: 56px;
   }
   .footer-col-title {
-    font-size: 9.5px;
+    font-size: 10px;
     letter-spacing: 0.22em;
     color: var(--sumi-4);
     text-transform: uppercase;

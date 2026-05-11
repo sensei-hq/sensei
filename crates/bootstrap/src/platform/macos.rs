@@ -7,6 +7,60 @@ use crate::types::{ComponentState, ComponentStatus};
 
 use super::{InstallRemedy, Platform, PlatformProvider};
 
+// ── Platform-specific utilities ───────────────────────────────────────────────
+
+/// Well-known binary directories on macOS/Linux (Homebrew + system).
+/// Used to supplement PATH when launched from an .app bundle.
+pub const EXTRA_PATHS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+];
+
+/// PATH separator character on Unix.
+pub const PATH_SEPARATOR: char = ':';
+
+/// Build a colon-separated PATH string that includes the well-known directories.
+pub fn enrich_path() -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut parts: Vec<&str> = current.split(PATH_SEPARATOR).collect();
+    for extra in EXTRA_PATHS {
+        if !parts.contains(extra) {
+            parts.push(extra);
+        }
+    }
+    parts.join(&PATH_SEPARATOR.to_string())
+}
+
+/// Detect GPU on macOS (via sysctl) or Linux (via lspci).
+pub fn detect_gpu() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+            .ok()?;
+        let brand = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if brand.contains("Apple") {
+            return Some(brand);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let output = std::process::Command::new("lspci").output().ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            if line.contains("VGA") || line.contains("3D") {
+                return Some(line.trim().to_string());
+            }
+        }
+    }
+
+    None
+}
+
 /// macOS / Linux provider that delegates to Homebrew.
 pub struct MacOSProvider {
     brew_path: Option<String>,

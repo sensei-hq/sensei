@@ -6,6 +6,7 @@ pub(crate) mod codebase;
 pub(crate) mod libraries;
 pub(crate) mod config;
 pub(crate) mod query;
+pub(crate) mod mcp;
 pub(crate) mod gateway;
 pub(crate) mod scan_events;
 pub(crate) mod project_detail;

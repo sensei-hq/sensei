@@ -13,6 +13,7 @@ use crate::api::handlers::codebase;
 use crate::api::handlers::libraries;
 use crate::api::handlers::config;
 use crate::api::handlers::query;
+use crate::api::handlers::mcp;
 use crate::api::handlers::gateway;
 use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
@@ -90,8 +91,8 @@ pub fn create_router(state: AppState) -> Router {
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy
-        .route("/api/mcp/tools", get(query::mcp_list_tools))
-        .route("/api/mcp/call", post(query::mcp_call_tool))
+        .route("/api/mcp/tools", get(mcp::mcp_list_tools))
+        .route("/api/mcp/call", post(mcp::mcp_call_tool))
         // Marketplace install (legacy — prefer /api/install endpoints)
         .route("/api/marketplace/install", post(config::marketplace_install))
         // Assistants detection & configuration

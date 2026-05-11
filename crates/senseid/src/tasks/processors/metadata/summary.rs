@@ -17,19 +17,16 @@ pub fn extract_summary(repo_path: &Path) -> ProjectSummary {
     let mut summary = ProjectSummary::default();
 
     // Try package.json description
-    if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json")) {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(desc) = val["description"].as_str() {
-                if !desc.is_empty() {
+    if let Ok(content) = std::fs::read_to_string(repo_path.join("package.json"))
+        && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+            && let Some(desc) = val["description"].as_str()
+                && !desc.is_empty() {
                     summary.description = Some(desc.to_string());
                 }
-            }
-        }
-    }
 
     // Try Cargo.toml description
-    if summary.description.is_none() {
-        if let Ok(content) = std::fs::read_to_string(repo_path.join("Cargo.toml")) {
+    if summary.description.is_none()
+        && let Ok(content) = std::fs::read_to_string(repo_path.join("Cargo.toml")) {
             for line in content.lines() {
                 if let Some(rest) = line.trim().strip_prefix("description = ") {
                     let desc = rest.trim_matches(|c| c == '"' || c == '\'');
@@ -40,7 +37,6 @@ pub fn extract_summary(repo_path: &Path) -> ProjectSummary {
                 }
             }
         }
-    }
 
     // Try README first non-heading paragraph
     if summary.description.is_none() {

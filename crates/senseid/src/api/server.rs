@@ -28,11 +28,10 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     };
 
     // Read max concurrent repos from PgStore config
-    if let Ok(Some(max_str)) = pg.get_config("max_concurrent_repos").await {
-        if let Ok(max) = max_str.parse::<usize>() {
+    if let Ok(Some(max_str)) = pg.get_config("max_concurrent_repos").await
+        && let Ok(max) = max_str.parse::<usize>() {
             task_queue.set_max_concurrent_repos(max);
         }
-    }
 
     // Initialize inference gateway (probes Ollama, checks API keys)
     let gateway = super::gateway_init::init_gateway().await;

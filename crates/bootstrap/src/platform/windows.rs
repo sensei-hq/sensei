@@ -5,6 +5,26 @@ use crate::util;
 
 use super::{InstallRemedy, Platform, PlatformProvider};
 
+// ── Platform-specific utilities ───────────────────────────────────────────────
+
+/// No additional PATH directories needed on Windows beyond the defaults.
+pub const EXTRA_PATHS: &[&str] = &[];
+
+/// PATH separator character on Windows.
+pub const PATH_SEPARATOR: char = ';';
+
+/// Build a semicolon-separated PATH string on Windows.
+/// Currently a no-op (no extra directories to inject), but kept symmetric with
+/// the macOS implementation for future extension.
+pub fn enrich_path() -> String {
+    std::env::var("PATH").unwrap_or_default()
+}
+
+/// Detect GPU on Windows. Not yet implemented.
+pub fn detect_gpu() -> Option<String> {
+    None
+}
+
 /// Windows provider that delegates to winget.
 pub struct WindowsProvider;
 

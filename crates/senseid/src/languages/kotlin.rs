@@ -13,6 +13,10 @@ pub struct KotlinAdapter;
 impl LanguageAdapter for KotlinAdapter {
     fn language(&self) -> &str { "kotlin" }
 
+    fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
+        parse_to_ir(source, file_path)
+    }
+
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut parser = Parser::new();
         let lang = unsafe { tree_sitter_kotlin() };

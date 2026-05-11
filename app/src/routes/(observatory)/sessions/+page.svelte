@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
+    import EmptyState from "$lib/components/EmptyState.svelte";
     import type { SessionData } from "$lib/types.js";
 
     type Session = SessionData["sessions"][number];
@@ -22,7 +23,6 @@
     let filter = $state<"all" | "completed" | "corrected" | "abandoned">("all");
 
     onMount(async () => {
-        await appState.load();
         const api = senseiApi(appState.port);
         const data = await api.getSessions();
         sessions = data.sessions ?? [];
@@ -93,16 +93,11 @@
     {#if loading}
         <p class="text-ui text-surface-z6">Loading sessions...</p>
     {:else if filtered.length === 0}
-        <div class="flex flex-col items-center text-center py-20 gap-4">
-            <span class="kanji text-6xl text-primary-z5 opacity-30">刻</span>
-            <p class="display text-xl font-normal m-0">No sessions yet.</p>
-            <p
-                class="text-ui text-surface-z6 max-w-[360px] leading-relaxed m-0"
-            >
-                Start a session with your assistant. Each session becomes a
-                moment of learning.
-            </p>
-        </div>
+        <EmptyState
+            kanji="刻"
+            title="No sessions yet."
+            description="Start a session with your assistant. Each session becomes a moment of learning."
+        />
     {:else}
         <div class="flex flex-col gap-px">
             {#each filtered as session (session.id)}
