@@ -157,28 +157,6 @@ export interface ScannedRepo {
 
 // ─── Indexing ─────────────────────────────────────────────────────────────────
 
-export type IndexStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed' | 'partial';
-
-export interface IndexProgress {
-  currentFile: string;
-  filesProcessed: number;
-  filesTotal: number;
-  filesUnchanged: number;
-  filesSkipped: number;
-  filesFailed: number;
-  startedAt: string;
-}
-
-export interface RepoEntry {
-  name: string;
-  path: string;
-  repoId: string;
-  indexedAt?: string;
-  status: IndexStatus;
-  error?: string;
-  progress?: IndexProgress;
-}
-
 export interface IndexQueueStatus {
   current: { repo_id: string; repo_path: string; status: string } | null;
   queued: Array<{ repo_id: string; repo_path: string; status: string }>;
@@ -257,6 +235,20 @@ export interface ServerProject {
   indexedAt?: string;
   lastError?: string;
   partiallyIndexed?: boolean;
+}
+
+/** Shape returned by GET /api/projects (project groups, not individual repos). */
+export interface ProjectListItem {
+  id: string;
+  name: string;
+  description?: string | null;
+  client?: string | null;
+  goal?: string | null;
+  maturity: string;
+  stack: { languages?: string[]; frameworks?: string[]; runtimes?: string[]; services?: string[] };
+  icon?: { kind: string; value: string };
+  preferred_acp?: string;
+  [key: string]: unknown;
 }
 
 export interface ProjectSummary {
@@ -423,6 +415,67 @@ export interface IndexError {
   error: string;
   adapter?: string;
   timestamp: string;
+}
+
+// ── Project detail types ──────────────────────────────────────────────────
+export interface ProjectMemory {
+  id: string;
+  name: string;
+  title: string;
+  kind: string;
+  type: string;
+  strength: number;
+  scope: string;
+}
+
+export interface DriftItem {
+  id: string;
+  file: string;
+  status: string;
+  confidence: number;
+  detail?: string;
+}
+
+export interface PatternEntry {
+  id: string;
+  name: string;
+  kind: string;
+  members: string[];
+  confidence: number;
+  is_anti_pattern: boolean;
+  lifecycle?: string;
+}
+
+export interface Recommendation {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: number;
+  verdict?: string;
+  urgency?: string;
+}
+
+export interface ProjectSession {
+  id: string;
+  task: string;
+  outcome: string | null;
+  ftr: boolean;
+  turns: number;
+  started_at: string;
+  startedAt: string;
+  completed_at: string | null;
+}
+
+export interface CallFlowModule {
+  path: string;
+  exports: string[];
+}
+
+export interface CallFlowCall {
+  source: string;
+  target: string;
+  kind: string;
 }
 
 // ── Diagnostic Log Types ──────────────────────────────────────────────────

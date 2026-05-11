@@ -3,25 +3,10 @@
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
+    import type { ProjectListItem } from "$lib/types.js";
     import TabBar from "$lib/components/TabBar.svelte";
 
     let projectId = $derived(page.params.id);
-
-    type Project = {
-        id: string;
-        name: string;
-        client?: string;
-        goal?: string;
-        maturity: string;
-        stack: {
-            languages?: string[];
-            frameworks?: string[];
-            runtimes?: string[];
-            services?: string[];
-        };
-        icon?: { value?: string };
-        preferred_acp?: string;
-    };
 
     type Repo = {
         repo_id: string;
@@ -31,7 +16,7 @@
         language?: string;
     };
 
-    let project = $state<Project | null>(null);
+    let project = $state<ProjectListItem | null>(null);
     let repos = $state<Repo[]>([]);
     let loading = $state(true);
     let tab = $state("overview");
@@ -47,7 +32,7 @@
     onMount(async () => {
         const api = senseiApi(appState.port);
         const projects = await api.listProjects();
-        project = projects.find((p: any) => p.id === projectId) ?? null;
+        project = projects.find((p) => p.id === projectId) ?? null;
         const allRepos = await api.getRepos();
         repos = allRepos.filter((r: any) => r.project_id === projectId);
         loading = false;
