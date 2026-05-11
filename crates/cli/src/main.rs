@@ -277,7 +277,10 @@ fn is_user_scope_configured() -> bool {
 /// Mark user scope as configured.
 fn mark_user_scope_configured() {
     let sensei_dir = home().join(".sensei");
-    fs::create_dir_all(&sensei_dir).ok();
+    if let Err(e) = fs::create_dir_all(&sensei_dir) {
+        eprintln!("Warning: failed to create sensei config directory: {e}");
+        return;
+    }
     let config_file = sensei_dir.join("config.json");
     let mut config: serde_json::Value = config_file
         .exists()
@@ -286,7 +289,9 @@ fn mark_user_scope_configured() {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(serde_json::json!({}));
     config["user_scope_configured"] = serde_json::json!(true);
-    fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+    if let Err(e) = fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()) {
+        eprintln!("Warning: failed to write sensei config: {e}");
+    }
 }
 
 /// Register a project in ~/.sensei/projects.json so uninstall can find it later.

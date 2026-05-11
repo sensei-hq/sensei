@@ -1,7 +1,25 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
+use std::sync::OnceLock;
 
-const DAEMON_URL: &str = "http://127.0.0.1:7744";
+static DAEMON_URL_CACHE: OnceLock<String> = OnceLock::new();
+
+/// Return the daemon base URL, detecting dev mode from the binary name.
+///
+/// Dev binaries (name ending in `-dev`) connect to port 7745; release binaries
+/// connect to port 7744. The result is computed once and cached for the
+/// lifetime of the process.
+fn daemon_url() -> &'static str {
+    DAEMON_URL_CACHE.get_or_init(|| {
+        let is_dev = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .map(|name| name.ends_with("-dev"))
+            .unwrap_or(false);
+        let port = if is_dev { 7745u16 } else { 7744u16 };
+        format!("http://127.0.0.1:{port}")
+    })
+}
 
 fn main() {
     let stdin = std::io::stdin();
@@ -61,7 +79,7 @@ fn handle_initialize() -> Value {
     json!({
         "protocolVersion": "2024-11-05",
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": "sensei", "version": "0.1.0" }
+        "serverInfo": { "name": "sensei", "version": env!("CARGO_PKG_VERSION") }
     })
 }
 
@@ -218,7 +236,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             "max_tokens": max_tokens,
         });
 
-        let result = client.post(format!("{}/api/gateway/infer", DAEMON_URL))
+        let result = client.post(format!("{}/api/gateway/infer", daemon_url()))
             .json(&body)
             .send();
 
@@ -248,7 +266,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             "model": model,
         });
 
-        let result = client.post(format!("{}/api/gateway/embed", DAEMON_URL))
+        let result = client.post(format!("{}/api/gateway/embed", daemon_url()))
             .json(&body)
             .send();
 
@@ -263,7 +281,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     }
 
     if tool_name == "gateway_status" {
-        let result = client.get(format!("{}/api/gateway/status", DAEMON_URL)).send();
+        let result = client.get(format!("{}/api/gateway/status", daemon_url())).send();
         return match result {
             Ok(resp) if resp.status().is_success() => {
                 let data: Value = resp.json().unwrap_or(json!({}));
@@ -296,7 +314,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             .unwrap_or_else(|_| client.clone());
 
         let result = consensus_client
-            .post(format!("{}/api/gateway/consensus", DAEMON_URL))
+            .post(format!("{}/api/gateway/consensus", daemon_url()))
             .json(&body)
             .send();
 
@@ -335,7 +353,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             "last_checkpoint": args["checkpoint"].as_str(),
             "project_path": cwd,
         });
-        let result = client.put(format!("{}/api/state/{}", DAEMON_URL, repo_id))
+        let result = client.put(format!("{}/api/state/{}", daemon_url(), repo_id))
             .json(&body)
             .send();
         return match result {
@@ -348,7 +366,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         };
     }
     if tool_name == "get_workflow_state" {
-        let result = client.get(format!("{}/api/state/{}", DAEMON_URL, repo_id)).send();
+        let result = client.get(format!("{}/api/state/{}", daemon_url(), repo_id)).send();
         return match result {
             Ok(resp) if resp.status().is_success() => {
                 let data: Value = resp.json().unwrap_or(json!({}));
@@ -361,7 +379,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
 
     if tool_name == "match_pattern" {
         let desc = args["description"].as_str().unwrap_or("");
-        let result = client.get(format!("{}/api/patterns/{}/match", DAEMON_URL, repo_id))
+        let result = client.get(format!("{}/api/patterns/{}/match", daemon_url(), repo_id))
             .query(&[("description", desc)])
             .send();
         return match result {
@@ -376,7 +394,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
 
     if tool_name == "get_pattern_for" {
         let symbol = args["symbol"].as_str().unwrap_or("");
-        let result = client.get(format!("{}/api/patterns/{}/for/{}", DAEMON_URL, repo_id, symbol)).send();
+        let result = client.get(format!("{}/api/patterns/{}/for/{}", daemon_url(), repo_id, symbol)).send();
         return match result {
             Ok(resp) if resp.status().is_success() => {
                 let data: serde_json::Value = resp.json().unwrap_or(json!({}));
@@ -387,7 +405,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         };
     }
     if tool_name == "get_duplicates" {
-        let result = client.get(format!("{}/api/patterns/{}/duplicates", DAEMON_URL, repo_id)).send();
+        let result = client.get(format!("{}/api/patterns/{}/duplicates", daemon_url(), repo_id)).send();
         return match result {
             Ok(resp) if resp.status().is_success() => {
                 let data: serde_json::Value = resp.json().unwrap_or(json!({}));
@@ -398,7 +416,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         };
     }
     if tool_name == "get_project_conventions" {
-        let result = client.get(format!("{}/api/patterns/{}/conventions", DAEMON_URL, repo_id)).send();
+        let result = client.get(format!("{}/api/patterns/{}/conventions", daemon_url(), repo_id)).send();
         return match result {
             Ok(resp) if resp.status().is_success() => {
                 let data: serde_json::Value = resp.json().unwrap_or(json!({}));
@@ -419,7 +437,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             "session_id": session_id,
             "data": serde_json::from_str::<serde_json::Value>(data_str).unwrap_or(json!(data_str)),
         });
-        let result = client.post(format!("{}/api/events", DAEMON_URL))
+        let result = client.post(format!("{}/api/events", daemon_url()))
             .json(&body)
             .send();
         return match result {
@@ -439,7 +457,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         other => other,
     };
 
-    let result = client.post(format!("{}/api/mcp/call", DAEMON_URL))
+    let result = client.post(format!("{}/api/mcp/call", daemon_url()))
         .json(&json!({"tool": daemon_tool, "params": daemon_params}))
         .send();
 
@@ -532,7 +550,7 @@ fn resolve_project_from_cwd(cwd: &str, client: &reqwest::blocking::Client) -> St
 }
 
 fn get_projects(client: &reqwest::blocking::Client) -> Vec<Value> {
-    client.get(format!("{}/api/projects", DAEMON_URL))
+    client.get(format!("{}/api/projects", daemon_url()))
         .send()
         .ok()
         .and_then(|r| r.json::<Vec<Value>>().ok())

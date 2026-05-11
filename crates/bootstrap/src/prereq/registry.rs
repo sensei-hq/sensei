@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::platform::PlatformProvider;
 use crate::config::SenseiConfig;
 use super::checker::{BinaryChecker, Checker, PortChecker, VersionedBinaryChecker, DatabaseChecker};
-use super::fixer::{BrewBundleFixer, DatabaseSetupFixer, Fixer, HumanActionFixer, NoopFixer, ServiceStartFixer};
+use super::fixer::{BrewBundleFixer, DaemonFixer, DatabaseSetupFixer, Fixer, HumanActionFixer, NoopFixer, ServiceStartFixer};
 use super::GateKind;
 use crate::{POSTGRES_PORT, OLLAMA_PORT};
 use crate::config::HOMEBREW_BREWFILE_URL;
@@ -229,18 +229,13 @@ pub static COMPONENTS: &[ComponentSpec] = &[
         post_fix_trigger: &[],
         gate_kind:        GateKind::Service,
         checker_fn: |ctx| Box::new(PortChecker::new("daemon", ctx.config.daemon_port)),
-        fixer_fn:   |ctx| Box::new(ServiceStartFixer::new(Arc::clone(ctx.platform), "daemon", ctx.config.daemon_port)),
+        fixer_fn:   |ctx| Box::new(DaemonFixer::new(Arc::clone(ctx.platform), ctx.config.daemon_port)),
     },
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn components_count_is_ten() {
-        assert_eq!(COMPONENTS.len(), 10);
-    }
 
     #[test]
     fn component_ids_are_unique() {

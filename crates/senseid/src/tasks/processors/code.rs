@@ -11,7 +11,7 @@ pub fn process(abs_path: &str, rel_path: &str, ext: &str, content: &str, _repo_i
     // Try compound extension first (e.g. .svelte.ts), then simple extension
     let filename = std::path::Path::new(abs_path).file_name()
         .and_then(|n| n.to_str()).unwrap_or("");
-    let adapter = if let Some((a, _)) = languages::adapter_for_filename(filename) {
+    let adapter = if let Some(a) = languages::adapter_for_filename(filename) {
         a
     } else {
         let dotted = format!(".{}", ext);

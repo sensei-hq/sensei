@@ -106,7 +106,7 @@ async fn probe_ollama() -> bool {
         .unwrap_or_default();
 
     client
-        .get("http://localhost:11434/api/tags")
+        .get(format!("http://localhost:{}/api/tags", sensei_bootstrap::OLLAMA_PORT))
         .send()
         .await
         .map(|r| r.status().is_success())
