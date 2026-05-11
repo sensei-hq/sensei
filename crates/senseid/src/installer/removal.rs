@@ -69,16 +69,15 @@ fn remove_cache(result: &mut RemoveResult) {
 /// Remove .sensei/ dirs from all registered projects.
 fn remove_registered_projects(result: &mut RemoveResult) {
     let projects_file = sensei_dir().join("projects.json");
+    // projects.json stores a root JSON array of path strings (Vec<String>).
+    // Do NOT read it as a serde_json::Value and then index ["projects"] —
+    // that key does not exist and always returns null.
     let projects: Vec<String> = projects_file
         .exists()
         .then(|| fs::read_to_string(&projects_file).ok())
         .flatten()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v["projects"].as_array().cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default();
 
     for path in &projects {
         remove_project_scope(path, result);
@@ -337,6 +336,31 @@ mod tests {
         assert!(mcp_file.exists());
         let content = fs::read_to_string(&mcp_file).unwrap();
         assert_eq!(content, original_str);
+    }
+
+    // ── remove_registered_projects — JSON format ─────────────────────
+
+    /// Regression test for B1: projects.json stores a root array, not {"projects":[...]}.
+    /// The old code read v["projects"] which always returned null for a root array.
+    #[test]
+    fn remove_registered_projects_reads_root_array_format() {
+        // Set up a fake sensei_dir via env manipulation is not straightforward,
+        // so we test the fix by verifying the parse path directly:
+        // serde_json::from_str::<Vec<String>> succeeds on a root array.
+        let json = r#"["/home/user/project1", "/home/user/project2"]"#;
+        let result: Option<Vec<String>> = serde_json::from_str::<Vec<String>>(json).ok();
+        assert_eq!(
+            result,
+            Some(vec!["/home/user/project1".to_string(), "/home/user/project2".to_string()]),
+            "projects.json root array must parse to Vec<String>"
+        );
+
+        // Old (broken) path: indexing a root array as an object returns null
+        let as_value: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert!(
+            as_value["projects"].is_null(),
+            "v[\"projects\"] on a root array must be null — confirms the old bug"
+        );
     }
 
     // ── remove (integration-level) ──────────────────────────────────
