@@ -199,7 +199,16 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     // Resolve project: explicit "project" param → or detect from CWD
     let project_hint = args["project"].as_str().unwrap_or("");
     let repo_id = if !project_hint.is_empty() {
-        resolve_project(project_hint, client)
+        match resolve_project(project_hint, client) {
+            Some(id) => id,
+            None => return json!({
+                "content": [{"type": "text", "text": format!(
+                    "Project '{}' not found. Use the list_projects tool to see available projects.",
+                    project_hint
+                )}],
+                "isError": true
+            }),
+        }
     } else {
         resolve_project_from_cwd(cwd, client)
     };
@@ -486,47 +495,47 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
     }
 }
 
-/// Resolve a project name/library name to a repoId by querying the daemon.
-fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> String {
-    // Try exact match first
+/// Resolve a project name/library name to a repo_id by querying the daemon.
+///
+/// Returns `None` when no project matches the hint so callers can return a
+/// clear error to the LLM rather than silently forwarding an arbitrary string.
+fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> Option<String> {
     let projects = get_projects(client);
+    let hint_lower = hint.to_lowercase();
 
     // Exact repo_id match
     if let Some(p) = projects.iter().find(|p| p["repo_id"].as_str() == Some(hint)) {
-        return p["repo_id"].as_str().unwrap_or("").to_string();
+        return Some(p["repo_id"].as_str().unwrap_or("").to_string());
     }
 
     // Exact name match (case insensitive)
-    let hint_lower = hint.to_lowercase();
     if let Some(p) = projects.iter().find(|p| {
         p["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
     }) {
-        return p["repo_id"].as_str().unwrap_or("").to_string();
+        return Some(p["repo_id"].as_str().unwrap_or("").to_string());
     }
 
     // Partial name match
     if let Some(p) = projects.iter().find(|p| {
         p["name"].as_str().map(|n| n.to_lowercase().contains(&hint_lower)) == Some(true)
     }) {
-        return p["repo_id"].as_str().unwrap_or("").to_string();
+        return Some(p["repo_id"].as_str().unwrap_or("").to_string());
     }
 
-    // Check if it's a library name used by any project
-    if let Some(_p) = projects.iter().find(|p| {
+    // Library-name match: find the project that owns the lib
+    if projects.iter().any(|p| {
         p["libs"].as_array().map(|libs| {
             libs.iter().any(|l| l.as_str().map(|s| s.to_lowercase()) == Some(hint_lower.clone()))
         }).unwrap_or(false)
     }) {
-        // Return the project that uses this lib — but the lib itself might be a project too
-        // Check if there's a project with this lib's name
         if let Some(lib_project) = projects.iter().find(|p2| {
             p2["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
         }) {
-            return lib_project["repo_id"].as_str().unwrap_or("").to_string();
+            return Some(lib_project["repo_id"].as_str().unwrap_or("").to_string());
         }
     }
 
-    hint.to_string() // fallback: use hint as-is
+    None
 }
 
 /// Resolve current project from CWD by matching against registered project paths.

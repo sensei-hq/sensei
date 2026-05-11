@@ -265,77 +265,6 @@ pub struct ParsedImport {
     pub names: Vec<String>,
 }
 
-// ── Repo & Project ──────────────────────────────────────────────────────────
-
-/// A single git repository tracked by sensei.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Repo {
-    pub repo_id: String,
-    pub name: String,
-    pub path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub remote_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub indexed_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duplicate_of: Option<String>,
-    #[serde(default)]
-    pub stack: Vec<String>,
-    #[serde(default)]
-    pub libs: Vec<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default = "default_status")]
-    pub status: String,
-    /// Which project this repo belongs to (None = standalone).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
-    /// Role within its project (backend, frontend, library, etc.).
-    #[serde(default = "default_role")]
-    pub role: String,
-    /// Display label override.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
-
-#[allow(dead_code)]
-fn default_status() -> String {
-    "active".to_string()
-}
-
-#[allow(dead_code)]
-fn default_role() -> String {
-    "unknown".to_string()
-}
-
-/// A project — one or more repos that evolve together.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Project {
-    pub id: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client: Option<String>,
-    #[serde(default = "default_category")]
-    pub category: String,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
-}
-
-#[allow(dead_code)]
-fn default_category() -> String {
-    "active".to_string()
-}
-
 // ── Package / Module info ────────────────────────────────────────────────────
 
 /// A workspace member / crate / sub-package discovered inside a project.
@@ -349,77 +278,6 @@ pub struct PackageInfo {
     pub pkg_type: String,
 }
 
-// ── Indexing ─────────────────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexError {
-    pub repo_id: String,
-    pub file_path: String,
-    pub error: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub adapter: Option<String>,
-    pub timestamp: String,
-}
-
-// ── Graph query results ──────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphNode {
-    pub id: String,
-    pub name: String,
-    pub kind: String,
-    pub file: String,
-    pub line: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub complexity: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub doc_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub level: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphEdge {
-    pub source: String,
-    pub target: String,
-    #[serde(rename = "type")]
-    pub edge_type: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionDetail {
-    pub id: String,
-    pub name: String,
-    pub file: String,
-    pub line: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docstring: Option<String>,
-    pub complexity: u32,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub tags: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TypeDetail {
-    pub id: String,
-    pub name: String,
-    pub file: String,
-    pub line: u32,
-    pub kind: String,
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,39 +287,6 @@ mod tests {
         assert_eq!(SymbolKind::Function.to_string(), "function");
         assert_eq!(SymbolKind::Class.to_string(), "class");
         assert_eq!(SymbolKind::Method.to_string(), "method");
-    }
-
-    #[test]
-    fn repo_serialization() {
-        let p = Repo {
-            repo_id: "test".into(),
-            name: "test".into(),
-            path: "/tmp/test".into(),
-            remote_url: None,
-            indexed_at: None,
-            last_error: None,
-            duplicate_of: None,
-            stack: vec!["typescript".into()],
-            libs: vec![],
-            tags: vec![],
-            status: "active".into(),
-            project_id: None,
-            role: "unknown".into(),
-            label: None,
-        };
-        let json = serde_json::to_string(&p).unwrap();
-        assert!(json.contains("\"repo_id\":\"test\""));
-        // Optional None fields should be skipped
-        assert!(!json.contains("remote_url"));
-    }
-
-    #[test]
-    fn project_defaults() {
-        let json = r#"{"id":"1","name":"Test","repos":[]}"#;
-        let s: Project = serde_json::from_str(json).unwrap();
-        assert_eq!(s.category, "active");
-        assert!(s.client.is_none());
-        assert!(s.tags.is_empty());
     }
 
     #[test]
