@@ -69,59 +69,79 @@ pub(crate) async fn search_types(
 #[derive(Deserialize)]
 pub(crate) struct TraceQuery {
     #[serde(rename = "repoId")]
-    #[allow(dead_code)]
     pub repo_id: String,
-    #[allow(dead_code)]
     pub name: String,
 }
 
 pub(crate) async fn fn_callers(
-    State(_state): State<AppState>,
-    Query(_q): Query<TraceQuery>,
+    State(state): State<AppState>,
+    Query(q): Query<TraceQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    // TODO: implement — need node_uuid from name lookup
-    Ok(Json(vec![]))
+    let results = state.pg.get_callers_by_name(&q.repo_id, &q.name).await.unwrap_or_default();
+    Ok(Json(results))
 }
 
 pub(crate) async fn fn_callees(
-    State(_state): State<AppState>,
-    Query(_q): Query<TraceQuery>,
+    State(state): State<AppState>,
+    Query(q): Query<TraceQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    // TODO: implement — need node_uuid from name lookup
-    Ok(Json(vec![]))
+    let results = state.pg.get_callees_by_name(&q.repo_id, &q.name).await.unwrap_or_default();
+    Ok(Json(results))
 }
 
 #[derive(Deserialize)]
 pub(crate) struct TagQuery {
     #[serde(rename = "repoId")]
-    #[allow(dead_code)]
     pub repo_id: String,
-    #[allow(dead_code)]
     pub tag: String,
 }
 
 pub(crate) async fn files_by_tag(
-    State(_state): State<AppState>,
-    Query(_q): Query<TagQuery>,
+    State(state): State<AppState>,
+    Query(q): Query<TagQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: implement in PG
-    Ok(Json(serde_json::json!([])))
+    let results = state.pg.get_files_by_tag(&q.repo_id, &q.tag).await.unwrap_or_default();
+    Ok(Json(serde_json::json!(results)))
 }
 
 pub(crate) async fn doc_drift(
-    State(_state): State<AppState>,
-    Query(_q): Query<GraphQuery>,
+    State(state): State<AppState>,
+    Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: implement in PG
-    Ok(Json(serde_json::json!([])))
+    let repo_id = q.repo_id.unwrap_or_default();
+    let results = state.pg.get_doc_drift(&repo_id).await.unwrap_or_default();
+    Ok(Json(serde_json::json!(results)))
 }
 
 pub(crate) async fn call_flow(
-    State(_state): State<AppState>,
-    Query(_q): Query<GraphQuery>,
+    State(state): State<AppState>,
+    Query(q): Query<GraphQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: implement in PG
-    Ok(Json(serde_json::json!({})))
+    let repo_id = q.repo_id.unwrap_or_default();
+    let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
+            let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
+            let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
+            let modules: Vec<serde_json::Value> = nodes.iter()
+                .filter(|n| n["kind"].as_str() == Some("file"))
+                .map(|n| serde_json::json!({
+                    "path": n["file_path"],
+                    "exports": nodes.iter()
+                        .filter(|c| c["file_path"] == n["file_path"] && c["is_exported"].as_bool() == Some(true))
+                        .filter_map(|c| c["name"].as_str())
+                        .collect::<Vec<_>>(),
+                }))
+                .collect();
+            return Ok(Json(serde_json::json!({
+                "modules": modules,
+                "calls": edges,
+                "moduleCount": modules.len(),
+                "exportCount": modules.iter().map(|m| m["exports"].as_array().map_or(0, |a| a.len())).sum::<usize>(),
+                "callCount": edges.len(),
+            })));
+        }
+    Ok(Json(serde_json::json!({"modules": [], "calls": [], "moduleCount": 0, "exportCount": 0, "callCount": 0})))
 }
 
 pub(crate) async fn detect_communities(

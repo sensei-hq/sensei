@@ -443,6 +443,60 @@ impl PgStore {
         }).collect())
     }
 
+    // ── View-based graph queries ────────────────────────────────────
+
+    /// Find callers of a function by name via the call_graph view.
+    pub async fn get_callers_by_name(&self, folder_name: &str, target: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT source_name, source_kind::text, source_file, source_line
+               FROM sensei.call_graph
+              WHERE folder = $1 AND target_name = $2 AND edge_kind = 'calls'
+              ORDER BY source_file, source_line LIMIT 100"
+        ).bind(folder_name).bind(target).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(name, kind, file, line)| {
+            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line })
+        }).collect())
+    }
+
+    /// Find callees of a function by name via the call_graph view.
+    pub async fn get_callees_by_name(&self, folder_name: &str, source: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT target_name, target_kind::text, target_file, target_line, unresolved_target
+               FROM sensei.call_graph
+              WHERE folder = $1 AND source_name = $2 AND edge_kind = 'calls'
+              ORDER BY target_file, target_line LIMIT 100"
+        ).bind(folder_name).bind(source).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(name, kind, file, line, unresolved)| {
+            let display_name = name.or(unresolved).unwrap_or_default();
+            serde_json::json!({ "name": display_name, "kind": kind, "file_path": file, "line_start": line })
+        }).collect())
+    }
+
+    /// Get files matching a tag via the file_tags view.
+    pub async fn get_files_by_tag(&self, folder_name: &str, tag: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, Vec<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, file_path, tags FROM sensei.file_tags
+              WHERE folder = $1 AND $2 = ANY(tags)
+              ORDER BY file_path LIMIT 200"
+        ).bind(folder_name).bind(tag).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, fp, tags)| {
+            serde_json::json!({ "id": id, "file_path": fp, "tags": tags })
+        }).collect())
+    }
+
+    /// Get doc coverage with drift detection via the doc_coverage view.
+    pub async fn get_doc_drift(&self, folder_name: &str) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, String, String, bool)> = sqlx_core::query_as::query_as(
+            "SELECT doc_name, doc_file, code_name, code_file, drifted
+               FROM sensei.doc_coverage
+              WHERE folder = $1
+              ORDER BY drifted DESC, doc_file LIMIT 200"
+        ).bind(folder_name).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(doc_name, doc_file, code_name, code_file, drifted)| {
+            serde_json::json!({ "doc": doc_name, "docFile": doc_file, "code": code_name, "codeFile": code_file, "drifted": drifted })
+        }).collect())
+    }
+
     // ── Extensions ────────────────────────────────────────────────────
 
     pub async fn create_extension(

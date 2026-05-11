@@ -56,16 +56,19 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"results": fns})
         }
         "get_callers" => {
-            // TODO: implement — need node_uuid from name lookup
-            serde_json::json!({"callers": []})
+            let name = params["name"].as_str().unwrap_or(query);
+            let callers = state.pg.get_callers_by_name(repo_id, name).await.unwrap_or_default();
+            serde_json::json!({"callers": callers})
         }
         "get_callees" => {
-            // TODO: implement — need node_uuid from name lookup
-            serde_json::json!({"callees": []})
+            let name = params["name"].as_str().unwrap_or(query);
+            let callees = state.pg.get_callees_by_name(repo_id, name).await.unwrap_or_default();
+            serde_json::json!({"callees": callees})
         }
         "get_file_tags" => {
-            // TODO: implement files_by_tag in PG
-            serde_json::json!({"files": []})
+            let tag = params["tag"].as_str().unwrap_or(query);
+            let files = state.pg.get_files_by_tag(repo_id, tag).await.unwrap_or_default();
+            serde_json::json!({"files": files})
         }
         "get_communities" => {
             let communities = if let Some(fid) = resolve_folder_id(&state, repo_id).await {
@@ -76,8 +79,8 @@ pub(crate) async fn mcp_call_tool(
             serde_json::json!({"communities": communities})
         }
         "get_doc_drift" => {
-            // TODO: implement doc drift in PG
-            serde_json::json!({"drift": []})
+            let drift = state.pg.get_doc_drift(repo_id).await.unwrap_or_default();
+            serde_json::json!({"drift": drift})
         }
         "search_lib_docs" => {
             let docs = state.pg.list_libraries().await.unwrap_or_default();
