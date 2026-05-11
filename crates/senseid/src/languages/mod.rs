@@ -39,15 +39,15 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
 
 /// Get the adapter for a filename, handling compound extensions.
 /// e.g. "foo.svelte.ts" → TypeScript, "bar.spec.svelte.js" → JavaScript
-pub fn adapter_for_filename(filename: &str) -> Option<(Box<dyn LanguageAdapter>, &str)> {
+pub fn adapter_for_filename(filename: &str) -> Option<Box<dyn LanguageAdapter>> {
     let lower = filename.to_lowercase();
 
     // Compound svelte extensions: .svelte.ts, .svelte.js
     if lower.ends_with(".svelte.ts") || lower.ends_with(".svelte.tsx") {
-        return Some((Box::new(typescript::TypeScriptAdapter), "typescript"));
+        return Some(Box::new(typescript::TypeScriptAdapter));
     }
     if lower.ends_with(".svelte.js") || lower.ends_with(".svelte.jsx") {
-        return Some((Box::new(typescript::JavaScriptAdapter), "javascript"));
+        return Some(Box::new(typescript::JavaScriptAdapter));
     }
 
     // Fall back to regular extension
@@ -55,10 +55,7 @@ pub fn adapter_for_filename(filename: &str) -> Option<(Box<dyn LanguageAdapter>,
         .and_then(|e| e.to_str())
         .map(|e| format!(".{}", e))
         .unwrap_or_default();
-    adapter_for_ext(&ext).map(|a| {
-        let lang = a.language().to_string();
-        (a, Box::leak(lang.into_boxed_str()) as &str)
-    })
+    adapter_for_ext(&ext)
 }
 
 /// Get the IR parse for a file extension, or None if unsupported.
