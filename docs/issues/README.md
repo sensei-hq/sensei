@@ -13,7 +13,7 @@
 | [B1](#b1--removalrs-reads-wrong-json-key-removes-nothing) | Bug | ✅ Fixed | `senseid/src/installer/removal.rs:77` |
 | [B2](#b2--start_daemon-hardcodes-port-7744-and-discards-spawn-error) | Bug | ✅ Fixed | `cli/src/main.rs:182–195` |
 | [B3](#b3--mcp-server-panics-on-unexpected-daemon-json) | Bug | ✅ Fixed | `mcp/src/main.rs:478,486,493,507` |
-| [B4](#b4--upsert_node-silently-duplicates-nodes-on-every-rescan) | Bug | ⏳ Needs DDL | `senseid/src/db/pg_store.rs:344` |
+| [B4](#b4--upsert_node-silently-duplicates-nodes-on-every-rescan) | Bug | ✅ Fixed | `senseid/src/db/pg_store.rs:344`, `database/ddl/table/sensei/nodes.ddl` |
 | [P1](#p1--unwrap-in-health-http-handler) | Panic | ✅ Fixed | `senseid/src/api/handlers/health.rs:73` |
 | [P2](#p2--mutexlockunwrap-in-circuit-breaker-crashes-all-inference) | Panic | ✅ Fixed | `gateway/src/circuit_breaker.rs:72,98,124,151,168,174` |
 | [P3](#p3--current_direxpect-panics-cli) | Panic | ✅ Fixed | `cli/src/main.rs:460` |
@@ -28,7 +28,7 @@
 | [S1](#s1--mark_user_scope_configured-discards-write-failure) | Silent Failure | ✅ Fixed | `cli/main.rs:281` |
 | [S2](#s2--config-write-uses-unwrap-before-ok) | Silent Failure | ✅ Fixed | `cli/main.rs:281` |
 | [S3](#s3--all-pgstore-errors-erased-to-string) | Silent Failure | ⏳ Pending | `senseid/db/pg_store.rs` (110 sites) |
-| [S4](#s4--resolve_project-falls-back-to-raw-hint-as-repo_id) | Silent Failure | ⏳ Pending | `mcp/main.rs:511` |
+| [S4](#s4--resolve_project-falls-back-to-raw-hint-as-repo_id) | Silent Failure | ✅ Fixed | `mcp/main.rs:511` |
 | [S5](#s5--watcher_status-creates-throwaway-taskqueue-per-http-call) | Silent Failure | ⏳ Pending | `senseid/api/handlers/health.rs:92` |
 | [M1](#m1--boxleak-on-every-file-processed) | Memory Leak | ✅ Fixed | `senseid/languages/mod.rs:60` |
 | [M2](#m2--boxleak-in-formula_for-for-unknown-service-names) | Memory Leak | ✅ Fixed | `bootstrap/platform/macos.rs:42` |
@@ -38,7 +38,7 @@
 | [PL1](#pl1--extra_paths-and-path-separator-are-unix-only-in-utilrs) | Platform | ⏳ Pending | `bootstrap/util.rs:30–36` |
 | [PL2](#pl2--hardware-detect_gpu-has-cfg-blocks-instead-of-delegating-to-platform) | Platform | ⏳ Pending | `bootstrap/hardware.rs:21–46` |
 | [D1](#dead-code) | Dead Code | ✅ Fixed | `senseid/config/detector.rs:13,59` |
-| [D2](#dead-code) | Dead Code | ⏳ Pending | `senseid/types.rs:272,317,354,367,388,398,412` |
+| [D2](#dead-code) | Dead Code | ✅ Fixed | `senseid/types.rs:272,317,354,367,388,398,412` |
 
 ---
 
