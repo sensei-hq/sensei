@@ -69,22 +69,59 @@
                 {/if}
             </div>
 
+            {#snippet navItem(item: typeof NAV_ITEMS[number], collapsed: boolean)}
+                {@const active = isActive(item.href)}
+                <a
+                    href={item.href}
+                    class="nav-item flex items-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
+                    class:justify-center={collapsed}
+                    class:gap-2.5={!collapsed}
+                    class:px-2.5={!collapsed}
+                    class:active
+                    title={collapsed ? item.label : undefined}
+                >
+                    <span
+                        class="kanji text-ui w-3.5 text-surface-z6"
+                        class:nav-kanji-active={active}
+                        >{item.kanji}</span
+                    >
+                    {#if !collapsed}
+                        <span>{item.label}</span>
+                    {/if}
+                </a>
+            {/snippet}
+
+            {#snippet projectItem(proj: SidebarProject, collapsed: boolean)}
+                {@const active = !collapsed && isActive(`/projects/${proj.id}`)}
+                <button
+                    type="button"
+                    class="nav-item flex items-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3 bg-none border-none cursor-pointer w-full"
+                    class:justify-center={collapsed}
+                    class:gap-2.5={!collapsed}
+                    class:px-2.5={!collapsed}
+                    class:text-left={!collapsed}
+                    onclick={() =>
+                        openProjectWindow(proj.id, proj.name).catch(
+                            console.error,
+                        )}
+                    title={collapsed ? `${proj.name} ↗` : `${proj.name} ↗ opens in its own window`}
+                >
+                    <span
+                        class="kanji text-ui w-3.5 text-surface-z6"
+                        class:nav-kanji-active={active}
+                        >{proj.kanji}</span
+                    >
+                    {#if !collapsed}
+                        <span class="nav-label">{proj.name}</span>
+                        <span class="text-3xs opacity-40 ml-auto">↗</span>
+                    {/if}
+                </button>
+            {/snippet}
+
             {#if sidebarCollapsed}
                 <nav class="flex flex-col gap-px">
                     {#each NAV_ITEMS as item (item.href)}
-                        {@const active = isActive(item.href)}
-                        <a
-                            href={item.href}
-                            class="nav-item flex items-center justify-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
-                            class:active
-                            title={item.label}
-                        >
-                            <span
-                                class="kanji text-ui w-3.5 text-surface-z6"
-                                class:nav-kanji-active={active}
-                                >{item.kanji}</span
-                            >
-                        </a>
+                        {@render navItem(item, true)}
                     {/each}
                 </nav>
 
@@ -92,20 +129,7 @@
                     <div class="h-px bg-surface-z3 mx-2.5"></div>
                     <nav class="flex flex-col gap-px">
                         {#each projects as proj (proj.id)}
-                            <button
-                                type="button"
-                                class="nav-item flex items-center justify-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3 bg-none border-none cursor-pointer w-full"
-                                onclick={() =>
-                                    openProjectWindow(proj.id, proj.name).catch(
-                                        console.error,
-                                    )}
-                                title="{proj.name} ↗"
-                            >
-                                <span
-                                    class="kanji text-ui w-3.5 text-surface-z6"
-                                    >{proj.kanji}</span
-                                >
-                            </button>
+                            {@render projectItem(proj, true)}
                         {/each}
                     </nav>
                 {/if}
@@ -125,19 +149,7 @@
                     </p>
                     <nav class="flex flex-col gap-px">
                         {#each NAV_ITEMS as item (item.href)}
-                            {@const active = isActive(item.href)}
-                            <a
-                                href={item.href}
-                                class="nav-item flex items-center gap-2.5 px-2.5 py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
-                                class:active
-                            >
-                                <span
-                                    class="kanji text-ui w-3.5 text-surface-z6"
-                                    class:nav-kanji-active={active}
-                                    >{item.kanji}</span
-                                >
-                                <span>{item.label}</span>
-                            </a>
+                            {@render navItem(item, false)}
                         {/each}
                     </nav>
                 </div>
@@ -151,29 +163,7 @@
                         </p>
                         <nav class="flex flex-col gap-px">
                             {#each projects as proj (proj.id)}
-                                {@const active = isActive(
-                                    `/projects/${proj.id}`,
-                                )}
-                                <button
-                                    type="button"
-                                    class="nav-item flex items-center gap-2.5 px-2.5 py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3 bg-none border-none cursor-pointer w-full text-left"
-                                    onclick={() =>
-                                        openProjectWindow(
-                                            proj.id,
-                                            proj.name,
-                                        ).catch(console.error)}
-                                    title="{proj.name} ↗ opens in its own window"
-                                >
-                                    <span
-                                        class="kanji text-ui w-3.5 text-surface-z6"
-                                        class:nav-kanji-active={active}
-                                        >{proj.kanji}</span
-                                    >
-                                    <span class="nav-label">{proj.name}</span>
-                                    <span class="text-3xs opacity-40 ml-auto"
-                                        >↗</span
-                                    >
-                                </button>
+                                {@render projectItem(proj, false)}
                             {/each}
                         </nav>
                     </div>
@@ -182,19 +172,7 @@
                 <div class="flex flex-col gap-0.5 mt-auto">
                     <nav class="flex flex-col gap-px">
                         {#each BOTTOM_ITEMS as item (item.href)}
-                            {@const active = isActive(item.href)}
-                            <a
-                                href={item.href}
-                                class="nav-item flex items-center gap-2.5 px-2.5 py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
-                                class:active
-                            >
-                                <span
-                                    class="kanji text-ui w-3.5 text-surface-z6"
-                                    class:nav-kanji-active={active}
-                                    >{item.kanji}</span
-                                >
-                                <span>{item.label}</span>
-                            </a>
+                            {@render navItem(item, false)}
                         {/each}
                     </nav>
                 </div>

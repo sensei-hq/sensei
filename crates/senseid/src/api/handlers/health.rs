@@ -1,6 +1,7 @@
 //! Health endpoints — basic liveness and full component status.
 
-use axum::response::Json;
+use axum::{extract::State, response::Json};
+use crate::api::state::AppState;
 use serde::Serialize;
 use sensei_bootstrap::{self as bootstrap};
 use sensei_bootstrap::prereq::{CheckResult, checker::{Checker, PortChecker}};
@@ -109,9 +110,8 @@ pub(crate) async fn health() -> Json<HealthResponse> {
 
 // ── Watcher endpoints (unchanged) ───────────────────────────────────────────
 
-pub(crate) async fn watcher_status() -> Json<serde_json::Value> {
-    let queue = std::sync::Arc::new(crate::tasks::queue::TaskQueue::new());
-    let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
+pub(crate) async fn watcher_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let watcher = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
 
     if let Ok(w) = watcher.lock() {
         let status = format!("{:?}", w.status());

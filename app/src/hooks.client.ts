@@ -26,8 +26,17 @@
  *   /setup/*
  */
 
-const HEALTH_EXEMPT = new Set(['/health', '/logs']);
+const HEALTH_EXEMPT = new Set(['/health', '/logs', '/upgrade']);
 const SETUP_PREFIX = '/setup';
+
+// Clear the health flag on every cold start so a stale sessionStorage value
+// from a previous dev session never bypasses bootstrap. WKWebView does clear
+// sessionStorage when the app process exits, but NOT across hot-reloads or
+// when the renderer process stays alive (common in tauri:dev).
+// This module runs once at startup before reroute, so clearing here is safe.
+if (typeof sessionStorage !== 'undefined') {
+  sessionStorage.removeItem('sensei:health');
+}
 
 // VITE_BYPASS_HEALTH=true is set in tauri:vite-dev. In that mode the Tauri
 // sidecar is not embedded, so the health check cannot run. Health is treated
@@ -38,6 +47,19 @@ const BYPASS_HEALTH = import.meta.env.VITE_BYPASS_HEALTH === 'true';
 
 export function reroute({ url }: { url: URL }): string | undefined {
   const path = url.pathname;
+
+  // ── Tier 0: Upgrade gate ──────────────────────────────────────────────────
+  // If the app was just updated, run upgrade steps before health checks.
+  // The updater writes `sensei:app-version` to localStorage before restarting;
+  // the /upgrade page clears it once brew bundle + db deploy have completed.
+  const pendingUpgrade =
+    !BYPASS_HEALTH &&
+    typeof localStorage !== 'undefined' &&
+    localStorage.getItem('sensei:app-version') !== null;
+
+  if (pendingUpgrade && !HEALTH_EXEMPT.has(path) && path !== '/') {
+    return '/upgrade';
+  }
 
   // ── Tier 1: Health gate ───────────────────────────────────────────────────
   const healthReady =

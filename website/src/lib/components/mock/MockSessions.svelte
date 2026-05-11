@@ -68,7 +68,7 @@
     margin-bottom: 18px;
   }
   .section-tag {
-    font-size: 9.5px;
+    font-size: 10px;
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;

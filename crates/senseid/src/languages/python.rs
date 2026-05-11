@@ -9,6 +9,10 @@ pub struct PythonAdapter;
 impl LanguageAdapter for PythonAdapter {
     fn language(&self) -> &str { "python" }
 
+    fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
+        parse_to_ir(source, file_path)
+    }
+
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         let mut parser = Parser::new();
         let lang = tree_sitter_python::LANGUAGE;

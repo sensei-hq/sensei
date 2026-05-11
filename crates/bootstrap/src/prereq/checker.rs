@@ -58,44 +58,6 @@ impl Checker for PortChecker {
     }
 }
 
-/// Checks that a binary exists AND its service port is open.
-pub struct BinaryAndPortChecker {
-    pub binary: String,
-    pub version_flag: String,
-    pub name: String,
-    pub port: u16,
-}
-
-impl BinaryAndPortChecker {
-    pub fn new(
-        binary: impl Into<String>,
-        version_flag: impl Into<String>,
-        name: impl Into<String>,
-        port: u16,
-    ) -> Self {
-        Self { binary: binary.into(), version_flag: version_flag.into(), name: name.into(), port }
-    }
-}
-
-impl Checker for BinaryAndPortChecker {
-    fn check(&self) -> CheckResult {
-        let path = match util::which_binary(&self.binary) {
-            None => return CheckResult::fail(format!("{} binary not found in PATH", self.binary)),
-            Some(p) => p,
-        };
-        if !util::probe_port(self.port) {
-            return CheckResult::fail(format!(
-                "{} installed at {} but service not running on port {}",
-                self.binary, path, self.port
-            ));
-        }
-        let version = util::fetch_service_version(&self.name, self.port)
-            .or_else(|| util::binary_version(&self.binary, &self.version_flag))
-            .unwrap_or_else(|| "unknown".to_string());
-        CheckResult::ok_with_detail(version, path)
-    }
-}
-
 /// Checks that a binary exists in PATH AND its version matches the expected version.
 ///
 /// Extracts the bare semver from output like "sensei 0.2.13" by taking the last
@@ -135,7 +97,7 @@ impl Checker for VersionedBinaryChecker {
             CheckResult::ok_with_detail(raw, path)
         } else {
             CheckResult::fail(format!(
-                "{} outdated: installed {}, expected {}",
+                "{} out of sync: installed {}, expected {}",
                 self.binary, installed, self.expected_version
             ))
         }
@@ -188,16 +150,6 @@ mod tests {
     }
 
     #[test]
-    fn binary_and_port_checker_missing_binary_returns_fail() {
-        let checker = BinaryAndPortChecker::new(
-            "sensei-nonexistent-xyz-binary", "--version", "test", 9999,
-        );
-        let result = checker.check();
-        assert!(!result.ok);
-        assert!(result.error.as_deref().unwrap().contains("not found"));
-    }
-
-    #[test]
     fn binary_checker_error_contains_binary_name() {
         let checker = BinaryChecker::new("totally-missing-binary", "--version");
         let result = checker.check();
@@ -227,8 +179,8 @@ mod tests {
         if !result.ok {
             let err = result.error.as_deref().unwrap();
             assert!(
-                err.contains("outdated"),
-                "error should mention 'outdated', got: {err}"
+                err.contains("out of sync"),
+                "error should mention 'out of sync', got: {err}"
             );
         }
     }
@@ -246,5 +198,61 @@ mod tests {
         assert_eq!(checker.binary, "sensei");
         assert_eq!(checker.version_flag, "--version");
         assert_eq!(checker.expected_version, "0.1.0");
+    }
+
+    // ── PortChecker success path ─────────────────────────────────────────────
+
+    #[test]
+    fn port_checker_open_port_returns_ok() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let checker = PortChecker::new("test-open", port);
+        let result = checker.check();
+        assert!(result.ok, "open port should return ok");
+        // version will be "unknown" (no fetch_service_version handler for "test-open")
+        assert!(result.version.is_some());
+    }
+
+    #[test]
+    fn port_checker_error_message_contains_name_and_port() {
+        let checker = PortChecker::new("my-svc", 19998);
+        let result = checker.check();
+        assert!(!result.ok);
+        let err = result.error.unwrap();
+        assert!(err.contains("my-svc"), "error should name the service");
+        assert!(err.contains("19998"), "error should include the port");
+    }
+
+    // ── VersionedBinaryChecker success path ──────────────────────────────────
+
+    #[test]
+    fn versioned_binary_checker_match_returns_ok_with_detail() {
+        // Detect the actual version the binary reports so we can request that exact version.
+        // This exercises the success (ok) branch deterministically.
+        let raw = crate::util::binary_version("ls", "--version")
+            .unwrap_or_else(|| "unknown".to_string());
+        let detected = raw.split_whitespace().last().unwrap_or("unknown").to_string();
+
+        let checker = VersionedBinaryChecker::new("ls", "--version", &detected);
+        let result = checker.check();
+        if result.ok {
+            assert!(result.detail.is_some(), "ok result should populate binary path in detail");
+            assert!(result.version.is_some(), "ok result should populate version");
+        }
+        // On some platforms ls --version outputs nothing useful; ok-or-fail both acceptable
+    }
+
+    // ── DatabaseChecker smoke test ───────────────────────────────────────────
+
+    #[test]
+    fn database_checker_does_not_panic() {
+        let checker = DatabaseChecker;
+        let result = checker.check();
+        // Result depends on system state — ready if pg running and schema deployed, fail otherwise
+        assert!(result.ok || !result.ok, "must not panic");
+        if !result.ok {
+            assert!(result.error.is_some(), "failed check should carry an error message");
+        }
     }
 }

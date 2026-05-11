@@ -120,8 +120,8 @@ pub(crate) async fn list_events(
 ) -> Json<serde_json::Value> {
     // PgStore offers get_events_by_session or get_events_by_type — route based on query params.
     // If session filter is provided, use that; otherwise filter by folder + event_type.
-    if let Some(session_str) = &q.session {
-        if let Ok(session_id) = uuid::Uuid::parse_str(session_str) {
+    if let Some(session_str) = &q.session
+        && let Ok(session_id) = uuid::Uuid::parse_str(session_str) {
             return match state.pg.get_events_by_session(&session_id).await {
                 Ok(events) => {
                     let count = events.len();
@@ -130,7 +130,6 @@ pub(crate) async fn list_events(
                 Err(e) => Json(serde_json::json!({"error": e})),
             };
         }
-    }
 
     // Fall back to folder + event_type query
     if let (Ok(folder_id), Some(etype)) = (uuid::Uuid::parse_str(&project), &q.event_type) {

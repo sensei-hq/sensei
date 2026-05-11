@@ -27,30 +27,7 @@ pub fn db_name() -> String {
 /// A freshly-created (empty) database returns `failed("schema not deployed")`,
 /// which triggers `DatabaseSetupFixer` to run `deploy()`.
 pub fn check() -> ComponentStatus {
-    let db = db_name();
-    let db = db.as_str();
-
-    if !pg_is_ready() {
-        return ComponentStatus::failed("database", "postgresql not reachable (pg_isready failed)");
-    }
-
-    match database_exists(db) {
-        Ok(false) => return ComponentStatus::failed("database", &format!("database '{db}' does not exist")),
-        Err(e)    => return ComponentStatus::failed("database", &format!("database check failed: {e}")),
-        Ok(true)  => {}
-    }
-
-    if !pgvector_installed(db) {
-        return ComponentStatus::failed("database", "pgvector extension not installed");
-    }
-
-    // Schema is deployed when the 'sensei' schema exists in the database.
-    if !sensei_schema_exists(db) {
-        return ComponentStatus::failed("database", "schema not deployed");
-    }
-
-    let version = dbd_meta_version(db);
-    ComponentStatus::ready("database", &format!("schema-{}", version.unwrap_or(0)))
+    check_traced().0
 }
 
 /// Check PostgreSQL reachability + database existence + pgvector + schema version.
@@ -261,17 +238,6 @@ pub fn setup(app_version: &str) -> Result<ComponentStatus, String> {
     deploy(app_version)
 }
 
-/// Check whether the `sensei` schema exists — indicates the schema has been deployed.
-fn sensei_schema_exists(db_name: &str) -> bool {
-    let output = Command::new("psql")
-        .args([
-            "-d", db_name,
-            "-tAc", "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'sensei'",
-        ])
-        .output();
-    matches!(output, Ok(o) if o.status.success() && o.stdout.starts_with(b"1"))
-}
-
 /// Read the deployed schema version from `_dbd_meta` (dbd's tracking table).
 /// Returns `None` if the table does not exist or has no row for project 'sensei'.
 fn dbd_meta_version(db_name: &str) -> Option<u32> {
@@ -310,15 +276,6 @@ fn database_exists(db_name: &str) -> Result<bool, String> {
         line.split('|').next().map(|name| name.trim() == db_name).unwrap_or(false)
     }))
 }
-
-fn pgvector_installed(db_name: &str) -> bool {
-    let output = Command::new("psql")
-        .args(["-d", db_name, "-tAc", "SELECT 1 FROM pg_extension WHERE extname = 'vector'"])
-        .output();
-
-    matches!(output, Ok(o) if o.status.success() && o.stdout.starts_with(b"1"))
-}
-
 
 #[cfg(test)]
 mod tests {

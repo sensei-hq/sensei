@@ -86,8 +86,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
     // ── Existing logic: look up folder, clear stale data ─────────────
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_uuid = folder.as_ref()
-        .and_then(|f| f["id"].as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        .and_then(|f| crate::api::util::json_uuid(&f["id"]));
 
     if let Some(ref fid) = folder_uuid {
         ctx.pg().delete_nodes_by_folder(fid).await.ok();
@@ -211,8 +210,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
                 // Register each subtree as a separate repo via PgStore
                 // Look up the root_id for upsert_repo
                 let root_id = folder.as_ref()
-                    .and_then(|f| f["root_id"].as_str())
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
+                    .and_then(|f| crate::api::util::json_uuid(&f["root_id"]));
 
                 if let Some(root_id) = root_id {
                     for (name, subtree_path) in &subtrees {
@@ -242,8 +240,8 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
 
         // Persist metadata on the folder record via PgStore
         let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
-        if let Some(folder) = folder {
-            if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        if let Some(folder) = folder
+            && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
                 let meta = serde_json::json!({
                     "icon": icon,
                     "external_links": links.links,
@@ -251,7 +249,6 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
                 });
                 ctx.pg().set_folder_props(&folder_id, &meta).await.ok();
             }
-        }
     }
 
     tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", folder_name, dirs.len(), all_file_task_ids.len(), resolve_id);
@@ -266,8 +263,7 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
     let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = folder.as_ref()
-        .and_then(|f| f["id"].as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        .and_then(|f| crate::api::util::json_uuid(&f["id"]));
     let repo_path_str = folder.as_ref()
         .and_then(|f| f["abs_path"].as_str())
         .unwrap_or("");
@@ -303,8 +299,8 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 
     // Write parsed symbols to PG
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             // Write file node
             let file_node_id = ctx.pg().upsert_node(
                 &folder_id, &result.kind, &result.rel_path, &result.rel_path, None, None, None, None
@@ -342,8 +338,8 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
             }
 
             // Write doc references (file_refs → COVERS, fn_mentions → references)
-            if result.kind == "doc" {
-                if let Some(ref fid) = file_node_id {
+            if result.kind == "doc"
+                && let Some(ref fid) = file_node_id {
                     for file_ref in &result.file_refs {
                         ctx.pg().insert_edge(&folder_id, fid, None, Some(file_ref), "covers").await.ok();
                     }
@@ -351,9 +347,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
                         ctx.pg().insert_edge(&folder_id, fid, None, Some(fn_ref), "references").await.ok();
                     }
                 }
-            }
         }
-    }
 
     Ok(())
 }
@@ -363,11 +357,10 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     // Look up folder UUID for PgStore operations
     let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
         }
-    }
     tracing::info!("delete_file: {}", task.path);
     Ok(())
 }
@@ -375,13 +368,12 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     // Look up folder UUID for PgStore operations
     let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             // Delete all nodes whose file path starts with the deleted folder path
             // TODO: add a delete_nodes_by_path_prefix method
             ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
         }
-    }
     tracing::info!("delete_folder: {}", task.path);
     Ok(())
 }

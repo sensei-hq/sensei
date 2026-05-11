@@ -8,6 +8,7 @@
     { id: 'insights',  kanji: '察', label: 'Insights',  badge: 6 },
     { id: 'memories',  kanji: '覚', label: 'Memories',  badge: 24 },
     { id: 'libraries', kanji: '庫', label: 'Libraries', badge: 14 },
+    { id: 'instruments', kanji: '具', label: 'Instruments' },
   ];
 </script>
 
@@ -94,7 +95,7 @@
     flex-direction: column;
     gap: 4px;
     padding: 0 8px;
-    font-size: 10.5px;
+    font-size: 11px;
     color: var(--sumi-2);
   }
 </style>

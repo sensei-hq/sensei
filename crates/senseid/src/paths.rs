@@ -10,50 +10,45 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+pub use sensei_bootstrap::SenseiMode;
+
 // ── GitHub org/repo constants — re-exported from bootstrap (single source of truth) ────
 
 pub use sensei_bootstrap::config::{
     BREW_TAP, GITHUB_ORG, GITHUB_REPO, MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
 };
 
-/// Runtime mode — determines data directory and default port.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Mode {
-    Prod,
-    Dev,
-}
-
-static MODE: OnceLock<Mode> = OnceLock::new();
+static MODE: OnceLock<SenseiMode> = OnceLock::new();
 
 /// Set the runtime mode. Must be called once at startup before any path access.
-pub fn set_mode(mode: Mode) {
+pub fn set_mode(mode: SenseiMode) {
     MODE.set(mode).ok(); // ignore if already set
 }
 
 /// Get the current mode. Defaults to Prod.
-pub fn mode() -> Mode {
-    *MODE.get().unwrap_or(&Mode::Prod)
+pub fn mode() -> SenseiMode {
+    *MODE.get().unwrap_or(&SenseiMode::Prod)
 }
 
 /// Default port for the current mode.
 pub fn default_port() -> u16 {
     match mode() {
-        Mode::Prod => 7744,
-        Mode::Dev => 7745,
+        SenseiMode::Prod => 7744,
+        SenseiMode::Dev  => 7745,
     }
 }
 
 /// Directory suffix for the current mode.
 fn dir_name() -> &'static str {
     match mode() {
-        Mode::Prod => ".sensei",
-        Mode::Dev => ".sensei-dev",
+        SenseiMode::Prod => ".sensei",
+        SenseiMode::Dev  => ".sensei-dev",
     }
 }
 
-/// User's home directory. Falls back to /tmp if unavailable.
+/// User's home directory. Panics if HOME is not set — see [`sensei_bootstrap::home_dir`].
 pub fn home() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
+    sensei_bootstrap::home_dir()
 }
 
 /// Sensei data directory: ~/.sensei/ (prod) or ~/.sensei-dev/ (dev)
@@ -85,11 +80,7 @@ pub fn cache_dir() -> PathBuf {
 /// Delegates to [`sensei_bootstrap::SenseiConfig`] for consistent mode detection.
 /// Call this at startup before any path access.
 pub fn init_from_env() {
-    if sensei_bootstrap::SenseiConfig::from_env().is_dev() {
-        set_mode(Mode::Dev);
-    } else {
-        set_mode(Mode::Prod);
-    }
+    set_mode(sensei_bootstrap::SenseiConfig::from_env().mode);
 }
 
 #[cfg(test)]

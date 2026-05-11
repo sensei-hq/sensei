@@ -69,30 +69,20 @@ pub(super) fn load_or_download(cache: &Path, path: &str) -> Result<String, Strin
     Ok(text)
 }
 
-// ── Marketplace version tracking via ~/.sensei/config.json ───────────────────
+// ── Marketplace version tracking via SenseiLocalConfig ───────────────────────
 
 pub(super) fn load_marketplace_version() -> String {
-    let config_file = sensei_dir().join("config.json");
-    config_file
-        .exists()
-        .then(|| fs::read_to_string(&config_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v["marketplace_version"].as_str().map(String::from))
+    let dir = sensei_dir();
+    sensei_bootstrap::SenseiLocalConfig::load(&dir)
+        .marketplace_version
         .unwrap_or_default()
 }
 
 pub(super) fn save_marketplace_version(version: &str) {
-    let config_file = sensei_dir().join("config.json");
-    fs::create_dir_all(sensei_dir()).ok();
-    let mut config: serde_json::Value = config_file
-        .exists()
-        .then(|| fs::read_to_string(&config_file).ok())
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(serde_json::json!({}));
-    config["marketplace_version"] = serde_json::json!(version);
-    fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).ok();
+    let dir = sensei_dir();
+    let mut cfg = sensei_bootstrap::SenseiLocalConfig::load(&dir);
+    cfg.marketplace_version = Some(version.to_string());
+    cfg.save(&dir).ok();
 }
 
 #[cfg(test)]

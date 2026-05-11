@@ -11,8 +11,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
     let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = match folder.as_ref()
-        .and_then(|f| f["id"].as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        .and_then(|f| crate::api::util::json_uuid(&f["id"])) {
         Some(id) => id,
         None => { tracing::warn!("resolve_edges: {} — folder not found", folder_name); return Ok(()); }
     };
@@ -39,7 +38,7 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
     let mut resolved = 0u32;
     for edge in &unresolved {
         let target_name = match edge["target_name"].as_str() { Some(n) => n, None => continue };
-        let edge_id = match edge["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) { Some(id) => id, None => continue };
+        let edge_id = match crate::api::util::json_uuid(&edge["id"]) { Some(id) => id, None => continue };
         let kind = edge["kind"].as_str().unwrap_or("calls");
 
         let matched_id = match kind {
@@ -47,19 +46,16 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<(), String>
                 // Resolve relative import: match against file paths
                 file_by_path.iter()
                     .find(|(fp, _)| fp.contains(target_name))
-                    .and_then(|(_, n)| n["id"].as_str())
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .and_then(|(_, n)| crate::api::util::json_uuid(&n["id"]))
             }
             "calls" => {
                 // Resolve function call by name
                 node_by_name.get(target_name)
-                    .and_then(|n| n["id"].as_str())
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .and_then(|n| crate::api::util::json_uuid(&n["id"]))
             }
             _ => {
                 node_by_name.get(target_name)
-                    .and_then(|n| n["id"].as_str())
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .and_then(|n| crate::api::util::json_uuid(&n["id"]))
             }
         };
 
@@ -81,8 +77,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
     let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = match folder.as_ref()
-        .and_then(|f| f["id"].as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        .and_then(|f| crate::api::util::json_uuid(&f["id"])) {
         Some(id) => id,
         None => { tracing::info!("build_connections: {} — folder not found", folder_name); return Ok(()); }
     };
@@ -106,7 +101,7 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
 
     // For each doc, check if its file_path suggests coverage of code files
     for doc in &docs {
-        let doc_id = match doc["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) { Some(id) => id, None => continue };
+        let doc_id = match crate::api::util::json_uuid(&doc["id"]) { Some(id) => id, None => continue };
         let doc_path = doc["file_path"].as_str().unwrap_or("");
 
         // Check if doc covers a code file by path proximity
@@ -118,12 +113,11 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<(), Str
         for (file_path, file_node) in &files {
             let file_stem = std::path::Path::new(file_path)
                 .file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if file_stem == doc_stem && file_path != &doc_path {
-                if let Some(file_id) = file_node["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+            if file_stem == doc_stem && file_path != &doc_path
+                && let Some(file_id) = crate::api::util::json_uuid(&file_node["id"]) {
                     ctx.pg().insert_edge(&folder_id, &doc_id, Some(&file_id), None, "covers").await.ok();
                     edges_created += 1;
                 }
-            }
         }
     }
 
@@ -156,11 +150,9 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
     let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     let folder_id = folder.as_ref()
-        .and_then(|f| f["id"].as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        .and_then(|f| crate::api::util::json_uuid(&f["id"]));
     let project_id = folder.as_ref()
-        .and_then(|f| f["project_id"].as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        .and_then(|f| crate::api::util::json_uuid(&f["project_id"]));
 
     // Rebuild doc↔code traceability for this repo
     if let Some(ref fid) = folder_id {
@@ -170,18 +162,17 @@ pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<(),
 
         let mut edges = 0u32;
         for doc in &docs {
-            let doc_id = match doc["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) { Some(id) => id, None => continue };
+            let doc_id = match crate::api::util::json_uuid(&doc["id"]) { Some(id) => id, None => continue };
             let doc_stem = std::path::Path::new(doc["file_path"].as_str().unwrap_or(""))
                 .file_stem().and_then(|s| s.to_str()).unwrap_or("");
             for code in &code_files {
                 let code_stem = std::path::Path::new(code["file_path"].as_str().unwrap_or(""))
                     .file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if !doc_stem.is_empty() && doc_stem == code_stem {
-                    if let Some(code_id) = code["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+                if !doc_stem.is_empty() && doc_stem == code_stem
+                    && let Some(code_id) = crate::api::util::json_uuid(&code["id"]) {
                         ctx.pg().insert_edge(fid, &doc_id, Some(&code_id), None, "covers").await.ok();
                         edges += 1;
                     }
-                }
             }
         }
         tracing::info!("reconcile_connections: {} — {} traceability edges", folder_name, edges);

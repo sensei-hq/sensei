@@ -8,6 +8,10 @@ pub struct SvelteAdapter;
 impl LanguageAdapter for SvelteAdapter {
     fn language(&self) -> &str { "svelte" }
 
+    fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
+        parse_to_ir(source, file_path)
+    }
+
     fn parse(&self, source: &str, file_path: &str) -> ParsedFile {
         // Extract <script> block(s) and parse with oxc (TypeScript)
         let mut all_symbols = Vec::new();

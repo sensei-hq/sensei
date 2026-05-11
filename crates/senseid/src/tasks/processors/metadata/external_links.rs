@@ -102,8 +102,8 @@ fn extract_markdown_links(content: &str, found_in: &str, links: &mut Vec<Externa
 fn extract_package_json_links(content: &str, found_in: &str, links: &mut Vec<ExternalLink>) {
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(content) {
         for key in &["homepage", "repository", "bugs"] {
-            if let Some(url) = val[key].as_str() {
-                if url.starts_with("http") {
+            if let Some(url) = val[key].as_str()
+                && url.starts_with("http") {
                     links.push(ExternalLink {
                         url: url.to_string(),
                         kind: classify_url(url),
@@ -111,10 +111,9 @@ fn extract_package_json_links(content: &str, found_in: &str, links: &mut Vec<Ext
                         found_in: found_in.to_string(),
                     });
                 }
-            }
             // repository can be {type, url}
-            if let Some(url) = val[key]["url"].as_str() {
-                if url.starts_with("http") {
+            if let Some(url) = val[key]["url"].as_str()
+                && url.starts_with("http") {
                     links.push(ExternalLink {
                         url: url.to_string(),
                         kind: classify_url(url),
@@ -122,7 +121,6 @@ fn extract_package_json_links(content: &str, found_in: &str, links: &mut Vec<Ext
                         found_in: found_in.to_string(),
                     });
                 }
-            }
         }
     }
 }
@@ -211,14 +209,12 @@ pub(crate) fn list_md_files_in(repo_path: &Path, subdir: &str, _max_depth: usize
     let mut files = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
-            if entry.path().is_file() {
-                if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
-                    if ext == "md" || ext == "mdx" {
+            if entry.path().is_file()
+                && let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
+                    && (ext == "md" || ext == "mdx") {
                         let rel = format!("{}/{}", subdir, entry.file_name().to_string_lossy());
                         files.push(rel);
                     }
-                }
-            }
         }
     }
     files

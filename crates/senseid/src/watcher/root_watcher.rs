@@ -1,7 +1,7 @@
 //! Root watcher — watches registered directories for file changes and enqueues tasks.
 //! Singleton pattern: use `RootWatcher::instance(queue)` to access.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -150,8 +150,8 @@ impl RootWatcher {
                         for path in event.paths {
                             if RootWatcher::is_branch_switch(&path) {
                                 let new_branch = read_git_head(&path.to_string_lossy());
-                                if let Some(branch) = new_branch {
-                                    if let Some((repo_id, _)) = projects.iter()
+                                if let Some(branch) = new_branch
+                                    && let Some((repo_id, _)) = projects.iter()
                                         .find(|(_, rp)| path.to_string_lossy().starts_with(rp.as_str()))
                                     {
                                         let q = queue.clone();
@@ -164,7 +164,6 @@ impl RootWatcher {
                                         });
                                         tracing::info!("Branch switch: {} → {}", repo_id, branch);
                                     }
-                                }
                                 continue;
                             }
 
@@ -216,7 +215,7 @@ impl RootWatcher {
         }
     }
 
-    pub(crate) fn should_watch_path(path: &PathBuf, exclusions: &[String]) -> bool {
+    pub(crate) fn should_watch_path(path: &Path, exclusions: &[String]) -> bool {
         let path_str = path.to_string_lossy();
 
         if EXCLUDE_DIRS.iter().any(|d| path_str.contains(&format!("/{}/", d))) {
@@ -235,7 +234,7 @@ impl RootWatcher {
         is_code || is_doc
     }
 
-    pub(crate) fn is_branch_switch(path: &PathBuf) -> bool {
+    pub(crate) fn is_branch_switch(path: &Path) -> bool {
         let s = path.to_string_lossy();
         s.ends_with(".git/HEAD") || s.ends_with(".git\\HEAD")
     }
@@ -258,13 +257,11 @@ impl RootWatcher {
 
             let mut deleted_dirs: HashSet<PathBuf> = HashSet::new();
             for (path, kind) in &changes {
-                if *kind == ChangeKind::Delete {
-                    if let Some(parent) = path.parent() {
-                        if !parent.exists() && !deleted_dirs.contains(parent) {
+                if *kind == ChangeKind::Delete
+                    && let Some(parent) = path.parent()
+                        && !parent.exists() && !deleted_dirs.contains(parent) {
                             deleted_dirs.insert(parent.to_path_buf());
                         }
-                    }
-                }
             }
 
             for dir in &deleted_dirs {
@@ -272,9 +269,8 @@ impl RootWatcher {
             }
 
             for (path, kind) in &changes {
-                if let Some(parent) = path.parent() {
-                    if deleted_dirs.contains(parent) { continue; }
-                }
+                if let Some(parent) = path.parent()
+                    && deleted_dirs.contains(parent) { continue; }
 
                 let abs_path = path.to_string_lossy().to_string();
                 let repo_path = projects.iter().find(|(rid, _)| *rid == repo_id).map(|(_, p)| p.as_str()).unwrap_or("");

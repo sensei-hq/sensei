@@ -1,24 +1,20 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
-use std::sync::OnceLock;
 
-static DAEMON_URL_CACHE: OnceLock<String> = OnceLock::new();
+fn daemon_url() -> String {
+    sensei_bootstrap::daemon_url()
+}
 
-/// Return the daemon base URL, detecting dev mode from the binary name.
-///
-/// Dev binaries (name ending in `-dev`) connect to port 7745; release binaries
-/// connect to port 7744. The result is computed once and cached for the
-/// lifetime of the process.
-fn daemon_url() -> &'static str {
-    DAEMON_URL_CACHE.get_or_init(|| {
-        let is_dev = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .map(|name| name.ends_with("-dev"))
-            .unwrap_or(false);
-        let port = if is_dev { 7745u16 } else { 7744u16 };
-        format!("http://127.0.0.1:{port}")
-    })
+/// Convert a daemon HTTP result to an MCP content response.
+fn daemon_result(result: reqwest::Result<reqwest::blocking::Response>) -> Value {
+    match result {
+        Ok(resp) if resp.status().is_success() => {
+            let data: Value = resp.json().unwrap_or(json!({}));
+            json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
+        }
+        Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
+        Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
+    }
 }
 
 fn main() {
@@ -279,26 +275,12 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             .json(&body)
             .send();
 
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: Value = resp.json().unwrap_or(json!({}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
 
     if tool_name == "gateway_status" {
         let result = client.get(format!("{}/api/gateway/status", daemon_url())).send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: Value = resp.json().unwrap_or(json!({}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
 
     if tool_name == "consensus" {
@@ -365,25 +347,11 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         let result = client.put(format!("{}/api/state/{}", daemon_url(), repo_id))
             .json(&body)
             .send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: Value = resp.json().unwrap_or(json!({"ok": true}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
     if tool_name == "get_workflow_state" {
         let result = client.get(format!("{}/api/state/{}", daemon_url(), repo_id)).send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: Value = resp.json().unwrap_or(json!({}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
 
     if tool_name == "match_pattern" {
@@ -391,49 +359,21 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         let result = client.get(format!("{}/api/patterns/{}/match", daemon_url(), repo_id))
             .query(&[("description", desc)])
             .send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: serde_json::Value = resp.json().unwrap_or(json!({}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
 
     if tool_name == "get_pattern_for" {
         let symbol = args["symbol"].as_str().unwrap_or("");
         let result = client.get(format!("{}/api/patterns/{}/for/{}", daemon_url(), repo_id, symbol)).send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: serde_json::Value = resp.json().unwrap_or(json!({}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
     if tool_name == "get_duplicates" {
         let result = client.get(format!("{}/api/patterns/{}/duplicates", daemon_url(), repo_id)).send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: serde_json::Value = resp.json().unwrap_or(json!({}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
     if tool_name == "get_project_conventions" {
         let result = client.get(format!("{}/api/patterns/{}/conventions", daemon_url(), repo_id)).send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: serde_json::Value = resp.json().unwrap_or(json!({}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
 
     if tool_name == "log_event" {
@@ -449,14 +389,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         let result = client.post(format!("{}/api/events", daemon_url()))
             .json(&body)
             .send();
-        return match result {
-            Ok(resp) if resp.status().is_success() => {
-                let data: serde_json::Value = resp.json().unwrap_or(json!({"ok": true}));
-                json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&data).unwrap_or_default()}]})
-            }
-            Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
-            Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
-        };
+        return daemon_result(result);
     }
 
     // ── Standard tools (via daemon mcp proxy) ───────────────────────────
@@ -470,29 +403,7 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         .json(&json!({"tool": daemon_tool, "params": daemon_params}))
         .send();
 
-    match result {
-        Ok(resp) if resp.status().is_success() => {
-            let data: Value = resp.json().unwrap_or(json!({"error": "invalid response"}));
-            json!({
-                "content": [{
-                    "type": "text",
-                    "text": serde_json::to_string_pretty(&data).unwrap_or_default()
-                }]
-            })
-        }
-        Ok(resp) => {
-            json!({
-                "content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}],
-                "isError": true
-            })
-        }
-        Err(e) => {
-            json!({
-                "content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}],
-                "isError": true
-            })
-        }
-    }
+    daemon_result(result)
 }
 
 /// Resolve a project name/library name to a repo_id by querying the daemon.
@@ -527,12 +438,10 @@ fn resolve_project(hint: &str, client: &reqwest::blocking::Client) -> Option<Str
         p["libs"].as_array().map(|libs| {
             libs.iter().any(|l| l.as_str().map(|s| s.to_lowercase()) == Some(hint_lower.clone()))
         }).unwrap_or(false)
+    }) && let Some(lib_project) = projects.iter().find(|p2| {
+        p2["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
     }) {
-        if let Some(lib_project) = projects.iter().find(|p2| {
-            p2["name"].as_str().map(|n| n.to_lowercase()) == Some(hint_lower.clone())
-        }) {
-            return Some(lib_project["repo_id"].as_str().unwrap_or("").to_string());
-        }
+        return Some(lib_project["repo_id"].as_str().unwrap_or("").to_string());
     }
 
     None

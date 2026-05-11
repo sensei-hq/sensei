@@ -2,12 +2,6 @@ use std::path::PathBuf;
 
 pub(crate) fn home() -> PathBuf { crate::paths::home() }
 
-pub(crate) fn which_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
-        .unwrap_or(false)
-}
-
 pub(crate) fn check_mcp_configured(config_path: &std::path::Path, mcp_key: &str) -> bool {
     if !config_path.exists() { return false; }
     std::fs::read_to_string(config_path)
@@ -18,26 +12,16 @@ pub(crate) fn check_mcp_configured(config_path: &std::path::Path, mcp_key: &str)
 }
 
 pub(crate) fn find_mcp_binary() -> Option<PathBuf> {
-    if which_exists("sensei-mcp") {
-        return Some(PathBuf::from("sensei-mcp"));
-    }
-    let search = [
-        PathBuf::from("/opt/homebrew/bin/sensei-mcp"),
-        PathBuf::from("/usr/local/bin/sensei-mcp"),
-    ];
-    search.into_iter().find(|p| p.exists())
+    sensei_bootstrap::util::which_binary("sensei-mcp").map(PathBuf::from)
 }
 
 pub(crate) fn find_claude_binary() -> Option<PathBuf> {
-    if which_exists("claude") {
-        return Some(PathBuf::from("claude"));
+    if let Some(p) = sensei_bootstrap::util::which_binary("claude") {
+        return Some(PathBuf::from(p));
     }
-    let search = [
-        PathBuf::from("/opt/homebrew/bin/claude"),
-        PathBuf::from("/usr/local/bin/claude"),
-        home().join(".claude/bin/claude"),
-    ];
-    search.into_iter().find(|p| p.exists())
+    // Extra fallback: Claude installs to ~/.claude/bin/ which may not be in PATH
+    let fallback = home().join(".claude/bin/claude");
+    fallback.exists().then_some(fallback)
 }
 
 /// Parse a JSON or JSONC (JSON with comments) file into a serde_json::Value.

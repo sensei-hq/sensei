@@ -18,27 +18,32 @@
 | [P2](#p2--mutexlockunwrap-in-circuit-breaker-crashes-all-inference) | Panic | ✅ Fixed | `gateway/src/circuit_breaker.rs:72,98,124,151,168,174` |
 | [P3](#p3--current_direxpect-panics-cli) | Panic | ✅ Fixed | `cli/src/main.rs:460` |
 | [A1](#a1--daemon-porturl-computed-four-incompatible-ways) | Architecture | ✅ Fixed (mcp) | `cli`, `mcp`, `app`, `bootstrap` |
-| [A2](#a2--which_binary--which_exists--3-independent-implementations) | Architecture | ⏳ Pending | `bootstrap/util.rs`, `senseid/assistants/helpers.rs`, `cli/main.rs` |
-| [A3](#a3--home--3-implementations-with-different-semantics) | Architecture | ⏳ Pending | `bootstrap`, `senseid/paths.rs`, `cli/main.rs` |
-| [A4](#a4--is_dev-binary-name-detection-duplicated) | Architecture | ⏳ Pending | `cli/main.rs:11`, `senseid/main.rs:62` |
-| [A5](#a5--modesensei_mode-enum-defined-twice) | Architecture | ⏳ Pending | `bootstrap/config.rs:58`, `senseid/paths.rs:21` |
-| [A6](#a6--assistantstatus-struct-defined-twice) | Architecture | ⏳ Pending | `senseid/assistants/mod.rs:92`, `app/src-tauri/commands/assistants.rs:15` |
+| [A2](#a2--which_binary--which_exists--3-independent-implementations) | Architecture | ✅ Fixed | `bootstrap/util.rs`, `senseid/assistants/helpers.rs`, `cli/main.rs` |
+| [A3](#a3--home--3-implementations-with-different-semantics) | Architecture | ✅ Fixed | `bootstrap`, `senseid/paths.rs`, `cli/main.rs` |
+| [A4](#a4--is_dev-binary-name-detection-duplicated) | Architecture | ✅ Fixed | `bootstrap/config.rs`, `cli/main.rs`, `senseid/main.rs` |
+| [A5](#a5--modesensei_mode-enum-defined-twice) | Architecture | ✅ Fixed | `bootstrap/config.rs`, `senseid/paths.rs` |
+| [A6](#a6--assistantstatus-struct-defined-twice) | Architecture | ✅ Fixed | `senseid/assistants/mod.rs:92`, `app/src-tauri/commands/assistants.rs:15` |
 | [A7](#a7--constants-scattered-across-crates) | Architecture | ✅ Fixed | Multiple |
-| [A8](#a8--senseiconfig-json-readwrite-pattern-in-3-places) | Architecture | ⏳ Pending | `cli/main.rs:270`, `installer/catalog.rs:74`, `assistants/mod.rs:191` |
+| [A8](#a8--senseiconfig-json-readwrite-pattern-in-3-places) | Architecture | ✅ Fixed | `cli/main.rs`, `installer/catalog.rs`, `assistants/mod.rs` |
 | [S1](#s1--mark_user_scope_configured-discards-write-failure) | Silent Failure | ✅ Fixed | `cli/main.rs:281` |
 | [S2](#s2--config-write-uses-unwrap-before-ok) | Silent Failure | ✅ Fixed | `cli/main.rs:281` |
 | [S3](#s3--all-pgstore-errors-erased-to-string) | Silent Failure | ⏳ Pending | `senseid/db/pg_store.rs` (110 sites) |
 | [S4](#s4--resolve_project-falls-back-to-raw-hint-as-repo_id) | Silent Failure | ✅ Fixed | `mcp/main.rs:511` |
-| [S5](#s5--watcher_status-creates-throwaway-taskqueue-per-http-call) | Silent Failure | ⏳ Pending | `senseid/api/handlers/health.rs:92` |
+| [S5](#s5--watcher_status-creates-throwaway-taskqueue-per-http-call) | Silent Failure | ✅ Fixed | `senseid/api/handlers/health.rs` |
 | [M1](#m1--boxleak-on-every-file-processed) | Memory Leak | ✅ Fixed | `senseid/languages/mod.rs:60` |
 | [M2](#m2--boxleak-in-formula_for-for-unknown-service-names) | Memory Leak | ✅ Fixed | `bootstrap/platform/macos.rs:42` |
-| [E1](#e1--adding-a-language-requires-editing-two-parallel-match-arms) | Extensibility | ⏳ Pending | `senseid/languages/mod.rs:24–80` |
-| [E2](#e2--acp-registry-and-cli-acp-map-are-separate-hardcoded-lists) | Extensibility | ⏳ Pending | `senseid/assistants/mod.rs:14`, `cli/main.rs:624` |
+| [E1](#e1--adding-a-language-requires-editing-two-parallel-match-arms) | Extensibility | ✅ Fixed | `senseid/languages/mod.rs` |
+| [E2](#e2--acp-registry-and-cli-acp-map-are-separate-hardcoded-lists) | Extensibility | ✅ Fixed | `cli/main.rs` |
 | [E3](#e3--bootstrap-component-list-has-hardcoded-count-assertion) | Extensibility | ✅ Fixed | `bootstrap/prereq/registry.rs:241` |
-| [PL1](#pl1--extra_paths-and-path-separator-are-unix-only-in-utilrs) | Platform | ⏳ Pending | `bootstrap/util.rs:30–36` |
-| [PL2](#pl2--hardware-detect_gpu-has-cfg-blocks-instead-of-delegating-to-platform) | Platform | ⏳ Pending | `bootstrap/hardware.rs:21–46` |
+| [PL1](#pl1--extra_paths-and-path-separator-are-unix-only-in-utilrs) | Platform | ✅ Fixed | `bootstrap/platform/macos.rs`, `bootstrap/platform/windows.rs` |
+| [PL2](#pl2--hardware-detect_gpu-has-cfg-blocks-instead-of-delegating-to-platform) | Platform | ✅ Fixed | `bootstrap/hardware.rs`, `bootstrap/platform/macos.rs`, `bootstrap/platform/windows.rs` |
 | [D1](#dead-code) | Dead Code | ✅ Fixed | `senseid/config/detector.rs:13,59` |
 | [D2](#dead-code) | Dead Code | ✅ Fixed | `senseid/types.rs:272,317,354,367,388,398,412` |
+| [N1](#n1--mcp-duplicates-binary-is-dev--port-logic) | Architecture | ⏳ Pending | `mcp/src/main.rs:14–19` |
+| [N2](#n2--assistantsmod-hardcodes-sensei-breaks-in-dev-mode) | Architecture | ⏳ Pending | `senseid/assistants/mod.rs:190` |
+| [N3](#n3--external_linksrs-hardcodes-senseirules-path) | Architecture | ⏳ Pending | `senseid/tasks/processors/metadata/external_links.rs:34` |
+| [N4](#n4--pg_store-test-urls-hardcode-postgres-port) | Architecture | ⏳ Pending | `senseid/db/pg_store.rs:30,1413` |
+| [N5](#n5--tauri-lib-hardcodes-github-url) | Architecture | ⏳ Pending | `app/src-tauri/src/lib.rs:156` |
 
 ---
 
@@ -540,6 +545,81 @@ pipeline or delete them.
 
 These appear to be planned types for a graph query layer that has not yet been implemented. They
 should either be wired to the live database query results or removed until needed.
+
+---
+
+## Tier 8: Bootstrap Consolidation (New — 2026-05-11)
+
+### N1 — MCP duplicates `binary_is_dev` + port logic
+
+**File:** `crates/mcp/src/main.rs:14–19`
+
+Word-for-word copy of the binary-name detection pattern that was consolidated into
+`sensei_bootstrap::binary_is_dev()` and `SenseiConfig::detect()`. MCP never received
+the same cleanup as cli and senseid.
+
+**Fix:** `SenseiConfig::detect().daemon_url()` — one call replaces the 7-line block.
+
+---
+
+### N2 — `assistants/mod.rs` hardcodes `.sensei`, breaks in dev mode
+
+**File:** `crates/senseid/src/assistants/mod.rs:190`
+
+```rust
+let sensei_dir = h.join(".sensei");
+```
+
+In dev mode (`senseid-dev`) the data directory is `~/.sensei-dev/`, so this always
+points to the wrong directory, silently reading/writing prod config during dev runs.
+
+**Fix:** `crate::paths::sensei_dir()` or `SenseiConfig::detect().sensei_dir()`.
+
+---
+
+### N3 — `external_links.rs` hardcodes `.sensei/rules.md` path
+
+**File:** `crates/senseid/src/tasks/processors/metadata/external_links.rs:34`
+
+```rust
+".sensei/rules.md",
+```
+
+The metadata scanner looks for project rules in `.sensei/rules.md`. In dev mode the
+directory is `.sensei-dev/`, so the scanner silently skips rules files during dev indexing.
+
+**Fix:** Build the path from `SenseiConfig::detect().dir_suffix` at scan time.
+
+---
+
+### N4 — `pg_store` test URLs hardcode PostgreSQL port
+
+**Files:** `crates/senseid/src/db/pg_store.rs:30, 1413`
+
+```rust
+"postgresql://localhost:5432/sensei_test"
+"postgresql://localhost:5432/sensei"
+```
+
+Both are test-only fallback URLs. The port `5432` is already `sensei_bootstrap::POSTGRES_PORT`.
+If the port constant changes, these will silently diverge.
+
+**Fix:** `format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT)`.
+
+---
+
+### N5 — Tauri lib hardcodes GitHub issues URL
+
+**File:** `app/src-tauri/src/lib.rs:156`
+
+```rust
+"https://github.com/sensei-hq/sensei/issues"
+```
+
+`GITHUB_ORG` and `GITHUB_REPO` are already constants in `sensei-bootstrap`. If the repo
+is ever renamed or moved, this will be the only place that doesn't update automatically.
+
+**Fix:** `format!("https://github.com/{}/{}/issues", sensei_bootstrap::GITHUB_ORG, sensei_bootstrap::GITHUB_REPO)`.
 
 ---
 
