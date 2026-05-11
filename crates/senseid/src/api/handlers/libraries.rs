@@ -152,9 +152,9 @@ pub(crate) async fn get_dep_versions(
     // Read package.json / Cargo.toml for version info
     let mut deps = Vec::new();
     let pkg_json = repo_path.join("package.json");
-    if pkg_json.exists() {
-        if let Ok(content) = std::fs::read_to_string(&pkg_json) {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+    if pkg_json.exists()
+        && let Ok(content) = std::fs::read_to_string(&pkg_json)
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
                 for section in &["dependencies", "devDependencies"] {
                     if let Some(obj) = parsed.get(section).and_then(|v| v.as_object()) {
                         for (name, ver) in obj {
@@ -163,7 +163,5 @@ pub(crate) async fn get_dep_versions(
                     }
                 }
             }
-        }
-    }
     Ok(Json(serde_json::json!(deps)))
 }

@@ -2643,9 +2643,10 @@ dependencies = [
 name = "sensei-cli"
 version = "0.2.2"
 dependencies = [
+ "chrono",
  "clap",
- "dirs",
  "reqwest",
+ "sensei-bootstrap",
  "serde",
  "serde_json",
 ]
@@ -2655,6 +2656,7 @@ name = "sensei-mcp"
 version = "0.2.2"
 dependencies = [
  "reqwest",
+ "sensei-bootstrap",
  "serde",
  "serde_json",
 ]

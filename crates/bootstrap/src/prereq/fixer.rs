@@ -33,101 +33,6 @@ impl Fixer for NoopFixer {
     }
 }
 
-/// Runs `brew install <formula>`.
-pub struct BrewFixer {
-    pub brew_path: String,
-    pub formula: String,
-}
-
-impl BrewFixer {
-    pub fn new(brew_path: impl Into<String>, formula: impl Into<String>) -> Self {
-        Self { brew_path: brew_path.into(), formula: formula.into() }
-    }
-}
-
-impl Fixer for BrewFixer {
-    fn fix(&self) -> Result<FixResult, String> {
-        let output = Command::new(&self.brew_path)
-            .args(["install", &self.formula])
-            .output()
-            .map_err(|e| format!("failed to run brew install: {e}"))?;
-
-        if output.status.success() {
-            Ok(FixResult::new(format!("brew install {}", self.formula)))
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(format!("brew install {} failed: {stderr}", self.formula))
-        }
-    }
-}
-
-/// Runs `brew upgrade <formula>` first (handles version bump); falls back to
-/// `brew install <formula>` for first-time installs. One fixer covers both cases.
-pub struct BrewUpgradeFixer {
-    pub brew_path: String,
-    pub formula: String,
-}
-
-impl BrewUpgradeFixer {
-    pub fn new(brew_path: impl Into<String>, formula: impl Into<String>) -> Self {
-        Self { brew_path: brew_path.into(), formula: formula.into() }
-    }
-}
-
-impl Fixer for BrewUpgradeFixer {
-    fn fix(&self) -> Result<FixResult, String> {
-        // Try upgrade first — works when formula is already installed but outdated
-        let upgrade = Command::new(&self.brew_path)
-            .args(["upgrade", &self.formula])
-            .output()
-            .map_err(|e| format!("brew upgrade failed to run: {e}"))?;
-
-        if upgrade.status.success() {
-            return Ok(FixResult::new(format!("brew upgrade {}", self.formula)));
-        }
-
-        // Fall back to install — handles first-time install
-        let install = Command::new(&self.brew_path)
-            .args(["install", &self.formula])
-            .output()
-            .map_err(|e| format!("brew install failed to run: {e}"))?;
-
-        if install.status.success() {
-            return Ok(FixResult::new(format!("brew install {}", self.formula)));
-        }
-
-        let stderr = String::from_utf8_lossy(&install.stderr).trim().to_string();
-        Err(format!("brew install {} failed: {stderr}", self.formula))
-    }
-}
-
-/// Runs `winget install --id <package> -e --silent`.
-pub struct WingetFixer {
-    pub package: String,
-}
-
-impl WingetFixer {
-    pub fn new(package: impl Into<String>) -> Self {
-        Self { package: package.into() }
-    }
-}
-
-impl Fixer for WingetFixer {
-    fn fix(&self) -> Result<FixResult, String> {
-        let output = Command::new("winget")
-            .args(["install", "--id", &self.package, "-e", "--silent"])
-            .output()
-            .map_err(|e| format!("failed to run winget install: {e}"))?;
-
-        if output.status.success() {
-            Ok(FixResult::new(format!("winget install {}", self.package)))
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(format!("winget install {} failed: {stderr}", self.package))
-        }
-    }
-}
-
 /// Calls `platform_provider.start_service(name)` then polls the port for up to 30s.
 pub struct ServiceStartFixer {
     provider: Arc<dyn PlatformProvider>,
@@ -239,6 +144,75 @@ impl Fixer for BrewBundleFixer {
     }
 }
 
+/// Starts the sensei daemon.
+///
+/// Strategy:
+/// - Production: delegates to `provider.start_service("senseid")` which runs
+///   `brew services start sensei-hq/tap/sensei`. Falls back to direct binary
+///   invocation if brew services fails or is unavailable.
+/// - Dev mode: spawns `senseid-dev start --port` directly (not a brew service).
+///
+/// After start, polls the daemon port for up to 30 s.
+pub struct DaemonFixer {
+    provider: Arc<dyn PlatformProvider>,
+    port: u16,
+    is_dev: bool,
+    binary_name: &'static str,
+}
+
+impl DaemonFixer {
+    pub fn new(
+        provider: Arc<dyn PlatformProvider>,
+        port: u16,
+        is_dev: bool,
+        binary_name: &'static str,
+    ) -> Self {
+        Self { provider, port, is_dev, binary_name }
+    }
+
+    fn poll_port(&self, started_via: &str) -> Result<FixResult, String> {
+        for _ in 0..30 {
+            std::thread::sleep(Duration::from_secs(1));
+            if util::probe_port(self.port) {
+                return Ok(FixResult::new(format!(
+                    "daemon started via {started_via} on port {}",
+                    self.port
+                )));
+            }
+        }
+        Err(format!("timed out waiting for daemon on port {}", self.port))
+    }
+}
+
+impl Fixer for DaemonFixer {
+    fn fix(&self) -> Result<FixResult, String> {
+        // Production: use `brew services start` via the platform provider
+        // (same code path as postgresql and ollama — brew services logic lives in macos.rs)
+        if !self.is_dev && self.provider.start_service("senseid").is_ok() {
+            return self.poll_port("brew services");
+        }
+
+        // Dev mode or brew services unavailable/failed: start binary directly
+        let binary = util::which_binary(self.binary_name)
+            .ok_or_else(|| format!("{} not found in PATH", self.binary_name))?;
+
+        let output = Command::new(&binary)
+            .args(["start", "--port", &self.port.to_string()])
+            .env("PATH", util::enrich_path())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .map_err(|e| format!("failed to start {}: {e}", self.binary_name))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(format!("{} start failed: {stderr}", self.binary_name));
+        }
+
+        self.poll_port(self.binary_name)
+    }
+}
+
 /// Fixer that cannot auto-fix — surfaces a structured human action instead.
 /// Used for: Homebrew missing (cannot auto-install), dev-mode binaries (run `make install-dev`).
 pub struct HumanActionFixer {
@@ -276,26 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn brew_fixer_stores_fields() {
-        let fixer = BrewFixer::new("/opt/homebrew/bin/brew", "postgresql@17");
-        assert_eq!(fixer.formula, "postgresql@17");
-        assert_eq!(fixer.brew_path, "/opt/homebrew/bin/brew");
-    }
-
-    #[test]
-    fn winget_fixer_stores_package() {
-        let fixer = WingetFixer::new("PostgreSQL.PostgreSQL");
-        assert_eq!(fixer.package, "PostgreSQL.PostgreSQL");
-    }
-
-    #[test]
-    fn brew_fixer_nonexistent_brew_returns_err() {
-        let fixer = BrewFixer::new("/nonexistent/path/to/brew", "postgresql@17");
-        let result = fixer.fix();
-        assert!(result.is_err(), "should fail when brew binary does not exist");
-    }
-
-    #[test]
     fn service_start_fixer_stores_fields() {
         use crate::platform;
         let provider = Arc::from(platform::detect());
@@ -305,28 +259,85 @@ mod tests {
     }
 
     #[test]
-    fn brew_upgrade_fixer_stores_fields() {
-        let fixer = BrewUpgradeFixer::new("/opt/homebrew/bin/brew", "sensei-hq/tap/sensei");
-        assert_eq!(fixer.brew_path, "/opt/homebrew/bin/brew");
-        assert_eq!(fixer.formula, "sensei-hq/tap/sensei");
+    fn database_setup_fixer_stores_version() {
+        let fixer = DatabaseSetupFixer::new("0.1.0");
+        assert_eq!(fixer.app_version, "0.1.0");
     }
 
     #[test]
-    fn brew_upgrade_fixer_nonexistent_brew_returns_err() {
-        let fixer = BrewUpgradeFixer::new("/nonexistent/brew", "sensei-hq/tap/sensei");
+    fn daemon_fixer_stores_fields() {
+        use crate::platform;
+        let provider = Arc::from(platform::detect());
+        let fixer = DaemonFixer::new(provider, 7744, false, "senseid");
+        assert_eq!(fixer.port, 7744);
+        assert!(!fixer.is_dev);
+        assert_eq!(fixer.binary_name, "senseid");
+    }
+
+    /// Mock platform provider for DaemonFixer tests.
+    struct MockProvider { start_ok: bool }
+
+    impl crate::platform::PlatformProvider for MockProvider {
+        fn platform(&self) -> crate::platform::Platform { crate::platform::Platform::MacOS }
+        fn check_package_manager(&self) -> crate::types::ComponentStatus {
+            crate::types::ComponentStatus::ready("homebrew", "4.0")
+        }
+        fn package_manager_name(&self) -> &str { "Homebrew" }
+        fn start_service(&self, _name: &str) -> Result<crate::types::ComponentStatus, String> {
+            if self.start_ok {
+                Ok(crate::types::ComponentStatus {
+                    name:    "senseid".into(),
+                    state:   crate::types::ComponentState::Starting,
+                    version: None,
+                    detail:  None,
+                })
+            } else {
+                Err("mock: brew services failed".into())
+            }
+        }
+        fn prereq_install_remedy(&self) -> crate::platform::InstallRemedy {
+            crate::platform::InstallRemedy { title: "t".into(), command: "c".into(), url: None }
+        }
+        fn package_manager_remedy(&self) -> crate::platform::InstallRemedy {
+            crate::platform::InstallRemedy { title: "t".into(), command: "c".into(), url: None }
+        }
+    }
+
+    #[test]
+    fn daemon_fixer_brew_fails_binary_not_found_returns_err() {
+        // MockProvider.start_service returns Err → DaemonFixer falls back to binary.
+        // "senseid" is unlikely to be in PATH during unit tests → Err "not found in PATH".
+        if crate::util::which_binary("senseid").is_some() {
+            return; // senseid installed — skip; binary path would run, not test error path
+        }
+        let provider: Arc<dyn crate::platform::PlatformProvider> =
+            Arc::new(MockProvider { start_ok: false });
+        let fixer = DaemonFixer::new(provider, 19995, false, "senseid");
         let result = fixer.fix();
-        assert!(result.is_err(), "should fail when brew binary does not exist");
-        let err = result.unwrap_err();
+        assert!(result.is_err(), "should Err when brew fails and binary not in PATH");
         assert!(
-            err.contains("brew upgrade") || err.contains("brew install"),
-            "error should mention brew operation, got: {err}"
+            result.unwrap_err().contains("not found in PATH"),
+            "error should mention binary not found"
         );
     }
 
     #[test]
-    fn database_setup_fixer_stores_version() {
-        let fixer = DatabaseSetupFixer::new("0.1.0");
-        assert_eq!(fixer.app_version, "0.1.0");
+    fn daemon_fixer_in_dev_mode_binary_not_found_returns_err() {
+        // In dev mode DaemonFixer skips brew services and goes straight to binary.
+        // If senseid-dev isn't installed, it should return Err immediately.
+        if crate::util::which_binary("senseid-dev").is_some() {
+            return; // binary present — test would go to port-polling path, skip
+        }
+        let provider: Arc<dyn crate::platform::PlatformProvider> =
+            Arc::new(MockProvider { start_ok: true });
+        let fixer = DaemonFixer::new(provider, 19994, true, "senseid-dev");
+        let result = fixer.fix();
+        assert!(result.is_err(), "should Err in dev mode when senseid-dev not in PATH");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("not found in PATH"),
+            "error should name the missing binary, got: {err}"
+        );
     }
 
     #[test]

@@ -96,7 +96,7 @@
     overflow: hidden;
   }
   .desc {
-    font-size: 10.5px;
+    font-size: 11px;
     color: var(--sumi-2);
     margin-bottom: 14px;
     max-width: 480px;
@@ -108,7 +108,7 @@
   }
   .mcp-chip {
     padding: 5px 10px;
-    font-size: 10.5px;
+    font-size: 11px;
     border-radius: 4px;
     border: var(--hairline);
     color: var(--sumi-2);
@@ -128,7 +128,7 @@
     grid-template-columns: auto 1fr auto;
     gap: 8px;
     align-items: center;
-    font-size: 10.5px;
+    font-size: 11px;
     border-bottom: var(--ink-line);
   }
   .tool-kind {

@@ -1,7 +1,7 @@
 import { sumiPalette } from './sumi-palette.js';
 
 export default {
-  colors: {
+  skin: {
     surface:   'sumi',
     primary:   'shu',
     secondary: 'murasaki',

@@ -28,6 +28,9 @@ export class BootstrapState {
     cli: 'waiting', mcp: 'waiting', daemon: 'waiting',
   });
 
+  /** Original check error per gate — populated from event detail when status is 'blocked'. */
+  gateErrors = $state<Record<string, string>>({});
+
   installing = $state(false);
 
   platformInfo = $state<PlatformInfo>({
@@ -46,6 +49,14 @@ export class BootstrapState {
       const idMap: Record<string, string> = { postgresql: 'postgres', daemon: 'senseid' };
       const id = idMap[event.id] ?? event.id;
       this.statuses = { ...this.statuses, [id]: status };
+      // Capture check error (detail) for blocked gates so the UI can display version mismatches
+      if (status === 'blocked') {
+        const detail = event.data.detail as string | null | undefined;
+        if (detail) this.gateErrors = { ...this.gateErrors, [id]: detail };
+      } else {
+        const { [id]: _removed, ...rest } = this.gateErrors;
+        this.gateErrors = rest;
+      }
     }
     if (event.action === 'set' && event.entity === 'phase') {
       if (event.data.complete) {
@@ -61,6 +72,7 @@ export class BootstrapState {
       ...g,
       name: g.id === 'homebrew' ? this.platformInfo.package_manager : g.name,
       status: this.statuses[g.id] ?? 'pending' as GateStatus,
+      error: this.gateErrors[g.id] ?? null,
       sub: g.sub?.map(s => ({ ...s, status: this.subStatuses?.[s.id] ?? 'pending' as GateStatus })),
     }));
   }
@@ -98,6 +110,45 @@ export class BootstrapState {
     return this.needsPrereqInstall
       ? this.gates.filter(g => g.id === 'homebrew')
       : this.gates;
+  }
+
+  // ── Simplified view ───────────────────────────────────────────
+
+  /** Gate IDs shown in the item ledger (homebrew is the hero card, not a ledger row). */
+  static readonly LEDGER_GATES = ['postgres', 'ollama', 'sensei', 'database', 'senseid'] as const;
+
+  /** Status of the homebrew gate (hero card). */
+  get homebrewStatus(): GateStatus {
+    return this.statuses['homebrew'] ?? 'waiting';
+  }
+
+  /**
+   * Simplified three/four-state machine for the bootstrap-simple UI.
+   *   detecting  — all gates still at initial `waiting` state
+   *   auto-fixing — engine is running (checking | installing | starting)
+   *   manual      — engine finished but some gates are still blocked/missing
+   *   all-green   — every gate is ready
+   */
+  get simpleState(): 'detecting' | 'auto-fixing' | 'manual' | 'all-green' {
+    if (this.allReady) return 'all-green';
+    if (this.isChecking) return 'auto-fixing';
+    const allWaiting = Object.values(this.statuses).every(s => s === 'waiting');
+    if (allWaiting) return 'detecting';
+    return 'manual';
+  }
+
+  /**
+   * Index of the currently-active ledger row (0–4).
+   * While auto-fixing: first gate in checking/installing/starting.
+   * Otherwise: count of ready ledger gates (used as a progress cursor).
+   */
+  get activeSimpleItemIdx(): number {
+    const gates = BootstrapState.LEDGER_GATES;
+    for (let i = 0; i < gates.length; i++) {
+      const s = this.statuses[gates[i]];
+      if (s === 'checking' || s === 'installing' || s === 'starting') return i;
+    }
+    return gates.filter(id => this.statuses[id] === 'ready').length;
   }
 
   // ── Mutations (used by page for browser-mode simulation only) ──

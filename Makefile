@@ -55,7 +55,12 @@ install-dev: crates-dev
 	cp target/debug/senseid    ~/.local/bin/senseid-dev
 	cp target/debug/sensei     ~/.local/bin/sensei-dev
 	cp target/debug/sensei-mcp ~/.local/bin/sensei-mcp-dev
-	@echo "Installed dev binaries to ~/.local/bin (senseid-dev, sensei-dev, sensei-mcp-dev)"
+	# Re-sign with hardened runtime so macOS Code Signing Monitor accepts the binaries
+	# when spawned from inside Sensei.app (required on macOS Sequoia with CSM level 2).
+	codesign --sign - --options runtime --force ~/.local/bin/senseid-dev
+	codesign --sign - --options runtime --force ~/.local/bin/sensei-dev
+	codesign --sign - --options runtime --force ~/.local/bin/sensei-mcp-dev
+	@echo "Installed and signed dev binaries to ~/.local/bin (senseid-dev, sensei-dev, sensei-mcp-dev)"
 	@echo "Run dev daemon: make daemon-dev"
 
 install-release: crates-release
@@ -182,8 +187,8 @@ bump:
 	@# Tauri app manifest + Cargo.toml
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/src-tauri/tauri.conf.json
 	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" app/src-tauri/Cargo.toml
-	@# Rust crates (excludes bootstrap which has its own cadence)
-	@for crate in senseid cli mcp gateway; do \
+	@# Rust crates
+	@for crate in senseid cli mcp gateway bootstrap; do \
 	  f="crates/$$crate/Cargo.toml"; \
 	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" "$$f"; \
 	done
@@ -193,11 +198,13 @@ bump:
 	@# Marketplace
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/package.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/catalog.json
+	@# Website footer version
+	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(v)<\/div>/' website/src/routes/+page.svelte
 	@# Commit everything
 	@git add VERSION \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
-	  website/package.json \
-	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml crates/gateway/Cargo.toml \
+	  website/package.json website/src/routes/+page.svelte \
+	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml crates/gateway/Cargo.toml crates/bootstrap/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \
 	  marketplace/package.json marketplace/catalog.json
 	@git commit -m "chore: bump to v$(v)"

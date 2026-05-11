@@ -56,22 +56,11 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Mode is determined by binary name, then SENSEI_MODE env var (for CI overrides).
-    // Binary ending in "-dev" → Dev mode (port 7745, ~/.sensei-dev/).
-    // No --mode flag — binary name is the contract, not a runtime argument.
-    let is_dev_binary = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .map(|name| name.ends_with("-dev"))
-        .unwrap_or(false);
+    // Mode from binary name + SENSEI_MODE env var override — single call to bootstrap.
+    let startup_cfg = sensei_bootstrap::SenseiConfig::detect();
+    paths::set_mode(startup_cfg.mode);
 
-    if is_dev_binary {
-        paths::set_mode(paths::Mode::Dev);
-    }
-    // SENSEI_MODE env var can override binary-name detection (useful for CI).
-    paths::init_from_env();
-
-    let default_port = paths::default_port();
+    let default_port = startup_cfg.daemon_port;
 
     match cli.command {
         Some(Commands::Start { port }) => {

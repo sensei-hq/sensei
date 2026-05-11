@@ -219,12 +219,10 @@ fn has_repo_name_dark_variant(dir: &Path, repo_name: &str) -> bool {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let fname = entry.file_name().to_string_lossy().to_lowercase();
-            if fname.starts_with(repo_name) {
-                let suffix = &fname[repo_name.len()..];
-                if suffix.starts_with("-dark") || suffix.starts_with("_dark") || suffix.starts_with(".dark") {
+            if let Some(suffix) = fname.strip_prefix(repo_name)
+                && (suffix.starts_with("-dark") || suffix.starts_with("_dark") || suffix.starts_with(".dark")) {
                     return true;
                 }
-            }
         }
     }
     false

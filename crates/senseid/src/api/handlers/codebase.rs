@@ -23,13 +23,12 @@ pub(crate) async fn graph_nodes(
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
     let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let nodes = state.pg.get_nodes_by_folder(&folder_id).await.unwrap_or_default();
             let edges = state.pg.get_edges_by_kind(&folder_id, "calls").await.unwrap_or_default();
             return Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})));
         }
-    }
     Ok(Json(serde_json::json!({"nodes": [], "edges": []})))
 }
 
@@ -46,12 +45,11 @@ pub(crate) async fn search_functions(
     Query(q): Query<SymbolQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let folder = state.pg.get_repo_by_name(&q.repo_id).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let results = state.pg.search_functions(&folder_id, &q.query).await.unwrap_or_default();
             return Ok(Json(results));
         }
-    }
     Ok(Json(vec![]))
 }
 
@@ -60,12 +58,11 @@ pub(crate) async fn search_types(
     Query(q): Query<SymbolQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let folder = state.pg.get_repo_by_name(&q.repo_id).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let results = state.pg.search_types(&folder_id, &q.query).await.unwrap_or_default();
             return Ok(Json(results));
         }
-    }
     Ok(Json(vec![]))
 }
 
@@ -136,8 +133,8 @@ pub(crate) async fn detect_communities(
         return Ok(Json(serde_json::json!({"error": "repoId required"})));
     }
     let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let communities = state.pg.list_communities(&folder_id).await.unwrap_or_default();
             let num = communities.len();
             return Ok(Json(serde_json::json!({
@@ -146,7 +143,6 @@ pub(crate) async fn detect_communities(
                 "assignments": num,
             })));
         }
-    }
     Ok(Json(serde_json::json!({"ok": false, "error": "project not found"})))
 }
 
@@ -156,12 +152,11 @@ pub(crate) async fn community_info(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let repo_id = q.repo_id.unwrap_or_default();
     let folder = state.pg.get_repo_by_name(&repo_id).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let communities = state.pg.list_communities(&folder_id).await.unwrap_or_default();
             return Ok(Json(serde_json::json!(communities)));
         }
-    }
     Ok(Json(serde_json::json!([])))
 }
 
@@ -173,12 +168,11 @@ pub(crate) async fn detect_patterns(
 ) -> Json<serde_json::Value> {
     // Look up folder UUID and query patterns from PgStore
     let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
             return Json(serde_json::json!({"ok": true, "patterns": patterns, "count": patterns.len()}));
         }
-    }
     Json(serde_json::json!({"ok": false, "error": "project not found"}))
 }
 
@@ -187,12 +181,11 @@ pub(crate) async fn list_patterns(
     Path(project): Path<String>,
 ) -> Json<serde_json::Value> {
     let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
             return Json(serde_json::json!({"patterns": patterns, "count": patterns.len()}));
         }
-    }
     Json(serde_json::json!({"patterns": [], "count": 0}))
 }
 
@@ -209,15 +202,14 @@ pub(crate) async fn match_pattern_handler(
     let desc = q.description.unwrap_or_default();
     // Search patterns by folder using BM25 ranking
     let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let ranked = state.pg.rank_bm25(&folder_id, &desc).await.unwrap_or_default();
             let matches: Vec<serde_json::Value> = ranked.into_iter()
                 .map(|(name, score)| serde_json::json!({"name": name, "score": score}))
                 .collect();
             return Json(serde_json::json!({"matches": matches, "count": matches.len()}));
         }
-    }
     Json(serde_json::json!({"matches": [], "count": 0}))
 }
 
@@ -227,19 +219,17 @@ pub(crate) async fn pattern_for_symbol(
 ) -> Json<serde_json::Value> {
     // Search patterns by folder, then filter by symbol
     let folder = state.pg.get_repo_by_name(&project).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             let patterns = state.pg.list_patterns_by_folder(&folder_id).await.unwrap_or_default();
             // Find pattern whose members include this symbol
             for p in &patterns {
-                if let Some(members) = p.get("members").and_then(|m| m.as_array()) {
-                    if members.iter().any(|m| m.as_str() == Some(&symbol)) {
+                if let Some(members) = p.get("members").and_then(|m| m.as_array())
+                    && members.iter().any(|m| m.as_str() == Some(&symbol)) {
                         return Json(p.clone());
                     }
-                }
             }
         }
-    }
     Json(serde_json::json!({"pattern": null, "message": "symbol does not belong to any detected pattern"}))
 }
 

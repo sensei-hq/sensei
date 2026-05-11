@@ -32,6 +32,9 @@ pub fn run() {
             commands::logs::log_entry,
             commands::logs::log_session_end,
             commands::logs::get_log_sessions,
+            // Update
+            commands::update::run_upgrade_steps,
+            commands::update::check_for_update,
         ])
         .setup(|app| {
             // ── Startup banner ────────────────────────────────────────────
@@ -71,6 +74,8 @@ pub fn run() {
             let app_submenu = SubmenuBuilder::new(app, "Sensei")
                 .about(None)
                 .separator()
+                .text("check-for-updates", "Check for Updates…")
+                .separator()
                 .text("preferences", "Preferences…")
                 .separator()
                 .services()
@@ -105,6 +110,11 @@ pub fn run() {
                 .text("toggle-sidebar", "Toggle Sidebar")
                 .separator()
                 .item(&logs_item)
+                .separator()
+                .text("go-health",      "Health")
+                .text("go-upgrade",     "Upgrade")
+                .text("go-observatory", "Observatory")
+                .text("go-setup",       "Setup")
                 .build()?;
 
             let window_menu = SubmenuBuilder::new(app, "Window")
@@ -133,12 +143,21 @@ pub fn run() {
                     "open-logs" => {
                         let _ = app.emit("open-logs", ());
                     }
+                    "check-for-updates" => {
+                        let _ = app.emit("update-check-requested", ());
+                    }
+                    "go-health"      => { let _ = app.emit("dev-navigate", "/health"); }
+                    "go-upgrade"     => { let _ = app.emit("dev-navigate", "/upgrade"); }
+                    "go-observatory" => { let _ = app.emit("dev-navigate", "/observatory"); }
+                    "go-setup"       => { let _ = app.emit("dev-navigate", "/setup/welcome"); }
                     "report-issue" => {
                         use tauri_plugin_opener::OpenerExt;
-                        let _ = app.opener().open_url(
-                            "https://github.com/sensei-hq/sensei/issues",
-                            None::<&str>,
+                        let url = format!(
+                            "https://github.com/{}/{}/issues",
+                            sensei_bootstrap::GITHUB_ORG,
+                            sensei_bootstrap::GITHUB_REPO,
                         );
+                        let _ = app.opener().open_url(&url, None::<&str>);
                     }
                     "shortcuts" => {
                         // TODO: open help window (Task 19)

@@ -7,7 +7,8 @@
 //! All three dependents — Tauri sidecar, bootstrap crate, and senseid daemon —
 //! already depend on this crate, so importing from here creates no new edges.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
 
 // ── Project-wide constants ────────────────────────────────────────────────────
 
@@ -43,6 +44,18 @@ pub const HOMEBREW_TAP_URL: &str = "https://github.com/sensei-hq/homebrew-tap";
 
 // ── Service ports ─────────────────────────────────────────────────────────────
 
+/// True when the current executable's filename ends with `-dev` (e.g. `senseid-dev`, `sensei-dev`).
+///
+/// Call once at binary startup to detect dev mode from binary name, before env-var
+/// detection runs. Both `senseid` and `sensei` CLI use this — do not duplicate the logic.
+pub fn binary_is_dev() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .map(|name| name.ends_with("-dev"))
+        .unwrap_or(false)
+}
+
 /// Default daemon port (production).
 /// **Do not use directly.** Always use `SenseiConfig::from_env().daemon_port` —
 /// this constant is 7744 (prod only) and will be wrong in dev mode.
@@ -53,6 +66,24 @@ pub const OLLAMA_PORT: u16 = 11434;
 
 /// Default PostgreSQL port.
 pub const POSTGRES_PORT: u16 = 5432;
+
+// ── Database pool defaults ────────────────────────────────────────────────────
+
+/// Maximum number of connections in the pool.
+///
+/// Scan operations are I/O-bound and batched, so a small pool keeps pressure
+/// on the DB low while still supporting concurrent tasks.  Individual tasks
+/// acquire a connection for a single query and release it immediately.
+pub const DB_POOL_MAX_CONNECTIONS: u32 = 10;
+
+/// How long (in seconds) a caller waits for a connection before giving up.
+///
+/// Scan tasks that time out are retried by the executor, so a short timeout
+/// surfaces backpressure quickly instead of piling up waiters.
+pub const DB_POOL_ACQUIRE_TIMEOUT_SECS: u64 = 10;
+
+/// How long (in seconds) an idle connection is kept alive before being closed.
+pub const DB_POOL_IDLE_TIMEOUT_SECS: u64 = 300;
 
 /// Runtime mode — controls ports, directory names, and database names.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -106,33 +137,55 @@ pub struct SenseiConfig {
 }
 
 impl SenseiConfig {
-    /// Build configuration from environment variables.
-    pub fn from_env() -> Self {
-        let mode = SenseiMode::from_env();
-
+    /// Build configuration from a known mode (env-var overrides for DB name/URL still apply).
+    fn for_mode(mode: SenseiMode) -> Self {
         let daemon_port = match mode {
             SenseiMode::Dev  => DAEMON_PORT + 1,
             SenseiMode::Prod => DAEMON_PORT,
         };
-
-        // DB name: explicit override > mode default
         let db_name = std::env::var("SENSEI_DB_NAME").unwrap_or_else(|_| {
             match mode {
                 SenseiMode::Dev  => "sensei_dev".to_string(),
                 SenseiMode::Prod => "sensei".to_string(),
             }
         });
-
-        // DB URL: explicit override > derived from db_name
         let db_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}"));
-
         let dir_suffix = match mode {
             SenseiMode::Dev  => ".sensei-dev",
             SenseiMode::Prod => ".sensei",
         };
-
         Self { mode, daemon_port, db_name, db_url, dir_suffix }
+    }
+
+    /// Build configuration from environment variables only (`SENSEI_MODE`, `DATABASE_URL`, etc.).
+    pub fn from_env() -> Self {
+        Self::for_mode(SenseiMode::from_env())
+    }
+
+    /// Build configuration detecting mode from binary name first, then env var.
+    ///
+    /// Priority: `SENSEI_MODE` env var (if set) > binary name ending in `-dev` > Prod.
+    /// Use this in CLI / daemon entrypoints that detect mode at startup.
+    pub fn detect() -> Self {
+        let mode = if std::env::var("SENSEI_MODE").is_ok() {
+            SenseiMode::from_env()
+        } else if binary_is_dev() {
+            SenseiMode::Dev
+        } else {
+            SenseiMode::Prod
+        };
+        Self::for_mode(mode)
+    }
+
+    /// Daemon base URL derived from the configured port.
+    pub fn daemon_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.daemon_port)
+    }
+
+    /// Daemon binary name for the current mode (`senseid` or `senseid-dev`).
+    pub fn daemon_binary(&self) -> &'static str {
+        self.senseid_binary()
     }
 
     /// Returns `true` when running in dev / E2E mode.
@@ -184,11 +237,56 @@ impl SenseiConfig {
     }
 }
 
-/// User's home directory. Falls back to `/tmp` if unavailable.
+/// User's home directory.
+///
+/// Panics if the `HOME` environment variable is not set — we cannot safely
+/// fall back to `/tmp` because that would silently write config/data files in
+/// the wrong location.
 pub fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .expect("HOME environment variable is not set — cannot determine user home directory")
+}
+
+// ── Local config file ─────────────────────────────────────────────────────────
+
+/// Contents of `~/.sensei/config.json` (or `~/.sensei-dev/config.json`).
+///
+/// This is the single source of truth for persisted local state shared between
+/// the daemon and the CLI. Read/write via [`SenseiLocalConfig::load`] and
+/// [`SenseiLocalConfig::save`].
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SenseiLocalConfig {
+    /// Set to `true` after the user completes their first `sensei init`.
+    #[serde(default)]
+    pub user_scope_configured: bool,
+
+    /// IDs of assistants that have been successfully configured (e.g. `"claude-code"`).
+    #[serde(default)]
+    pub configured_assistants: Vec<String>,
+
+    /// Installed marketplace version string (e.g. `"0.3.1"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marketplace_version: Option<String>,
+}
+
+impl SenseiLocalConfig {
+    /// Load from `<sensei_dir>/config.json`. Returns `Default` if the file is
+    /// missing or cannot be parsed — config errors are non-fatal.
+    pub fn load(sensei_dir: &Path) -> Self {
+        let path = sensei_dir.join("config.json");
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    /// Save to `<sensei_dir>/config.json`, creating the directory if needed.
+    pub fn save(&self, sensei_dir: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(sensei_dir).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(sensei_dir.join("config.json"), json).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]

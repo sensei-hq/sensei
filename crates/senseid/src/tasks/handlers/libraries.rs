@@ -87,11 +87,10 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
 
     // Update folder libs via PgStore
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
-    if let Some(folder) = folder {
-        if let Some(folder_id) = folder["id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+    if let Some(folder) = folder
+        && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
         }
-    }
 
     tracing::info!("resolve_libs: {} — {} external libs detected", folder_name, libs.len());
     Ok(())

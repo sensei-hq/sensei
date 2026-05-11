@@ -155,7 +155,10 @@ pub fn ir_parsed_file(
     file_path: &str, language: &str,
     module: IRModule, classes: Vec<IRClass>,
 ) -> IRParsedFile {
-    let is_test = file_path.contains("test");
+    let ext = std::path::Path::new(file_path).extension()
+        .and_then(|e| e.to_str()).unwrap_or("");
+    let tag = crate::tasks::processors::types::classify_file_tag(file_path, ext);
+    let is_test = tag == "test" || tag == "e2e";
     IRParsedFile {
         file_path: file_path.into(),
         language: language.into(),
