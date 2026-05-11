@@ -341,10 +341,18 @@ impl PgStore {
         parent_id: Option<&uuid::Uuid>, signature: Option<&str>,
         line_start: Option<i32>, line_end: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
+        // ON CONFLICT targets nodes_unique_identity (folder_id, file_path, kind, name,
+        // parent_id, line_start NULLS NOT DISTINCT).  DO UPDATE keeps the row stable
+        // on re-scans — same UUID returned whether the row was just inserted or already
+        // existed — and refreshes mutable fields (signature, line_end, modified_at).
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
              VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT DO NOTHING RETURNING id"
+             ON CONFLICT ON CONSTRAINT nodes_unique_identity DO UPDATE
+               SET signature   = EXCLUDED.signature,
+                   line_end    = EXCLUDED.line_end,
+                   modified_at = now()
+             RETURNING id"
         ).bind(folder_id).bind(kind).bind(name).bind(file_path)
             .bind(parent_id).bind(signature).bind(line_start).bind(line_end)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
