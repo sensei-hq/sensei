@@ -1145,6 +1145,42 @@ impl PgStore {
         Ok(())
     }
 
+    // ── Verdict measurement ────────────────────────────────────────────
+
+    /// Recompute FTR deltas for accepted recommendations with pending verdict.
+    /// Compares current 14-day FTR against baseline_ftr snapshot at time of acceptance.
+    /// Returns number of recommendations updated.
+    pub async fn measure_pending_verdicts(&self) -> Result<i64, String> {
+        // Update current_ftr and verdict for accepted recommendations that have been
+        // acted on at least 3 days ago (enough data for a meaningful comparison).
+        let result = sqlx_core::query::query(
+            "WITH current AS (
+               SELECT r.id AS rec_id,
+                      AVG(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END) AS current_ftr
+                 FROM inference.recommendations r
+                 JOIN activity.sessions s ON s.project_id = r.project_id
+                                         AND s.started_at > r.acted_at
+                WHERE r.status = 'accepted'
+                  AND r.verdict = 'pending'
+                  AND r.acted_at < now() - interval '3 days'
+                  AND s.outcome IS NOT NULL
+                GROUP BY r.id
+                HAVING COUNT(*) >= 3
+             )
+             UPDATE inference.recommendations r
+                SET current_ftr = c.current_ftr,
+                    verdict = CASE
+                      WHEN c.current_ftr > r.baseline_ftr + 0.05 THEN 'positive'
+                      WHEN c.current_ftr < r.baseline_ftr - 0.05 THEN 'negative'
+                      ELSE 'neutral'
+                    END::sensei.recommendation_verdict,
+                    measured_at = now()
+               FROM current c
+              WHERE c.rec_id = r.id"
+        ).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(result.rows_affected() as i64)
+    }
+
     // ── Observatory views ──────────────────────────────────────────────
 
     pub async fn get_ftr_daily(&self, project_id: Option<&uuid::Uuid>, days: i32) -> Result<Vec<serde_json::Value>, String> {
@@ -1591,17 +1627,25 @@ impl PgStore {
     }
 
     pub async fn get_project_recommendations(&self, project_id: &uuid::Uuid, status: Option<&str>) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, String, Option<String>)> =
+        let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, String, Option<String>,
+                        Option<f64>, Option<f64>, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, title, urgency::text, status::text, verdict::text
+                "SELECT id, title, urgency::text, status::text, verdict::text, why, impact,
+                        baseline_ftr::float8, current_ftr::float8, acted_at, measured_at
                  FROM inference.recommendations WHERE project_id = $1
                    AND ($2::text IS NULL OR status::text = $2)
-                 ORDER BY urgency DESC, created_at DESC LIMIT 50"
+                 ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+                 LIMIT 50"
             ).bind(project_id).bind(status)
             .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
 
-        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict)| {
-            serde_json::json!({ "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict })
+        Ok(rows.into_iter().map(|(id, title, urgency, status, verdict, why, impact, baseline, current, acted, measured)| {
+            serde_json::json!({
+                "id": id, "title": title, "urgency": urgency, "status": status, "verdict": verdict,
+                "why": why, "impact": impact,
+                "baseline_ftr": baseline, "current_ftr": current,
+                "acted_at": acted.map(|t| t.to_rfc3339()), "measured_at": measured.map(|t| t.to_rfc3339()),
+            })
         }).collect())
     }
 
