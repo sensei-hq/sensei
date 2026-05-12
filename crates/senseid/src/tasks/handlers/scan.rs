@@ -10,7 +10,7 @@ use crate::api::events::*;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
 
-pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let root = Path::new(&task.path);
     if !root.exists() {
         return Err(format!("Root path does not exist: {}", task.path));
@@ -103,12 +103,12 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<(), String> {
 
     tracing::info!("scan_root: {} git, {} sibling, {} standalone in {}",
         git_count, sibling_count, standalone_count, task.path);
-    Ok(())
+    Ok(git_count as u32)
 }
 
 // ── Branch Switch ─────────────────────────────────────────────────────────
 
-pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let folder_name = task.folder_name();
     let new_branch = task.branch.as_deref().ok_or("branch_switch requires branch field")?;
 
@@ -129,7 +129,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<(), String>
     ctx.queue.enqueue(git_task).await;
 
     tracing::info!("branch_switch: {} → {}", folder_name, new_branch);
-    Ok(())
+    Ok(0)
 }
 
 fn _detect_current_branch(repo_path: &str) -> Option<String> {
@@ -168,6 +168,7 @@ mod tests {
             queue,
             app_state,
             _graph_path: None,
+            logger: sensei_logger::Logger::noop(),
         })
     }
 
@@ -185,6 +186,7 @@ mod tests {
             queue,
             app_state,
             _graph_path: None,
+            logger: sensei_logger::Logger::noop(),
         });
         (ctx, event_rx)
     }
