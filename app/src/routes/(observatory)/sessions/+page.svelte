@@ -70,9 +70,14 @@
     <div
         class="flex gap-8 mb-7 px-6 py-5 bg-surface-z2 border border-surface-z3 rounded-lg"
     >
-        {#each [{ value: stats.count, label: "sessions (7d)" }, { value: Math.round(stats.ftr * 100) + "%", label: "FTR" }, { value: stats.corrections, label: "corrections" }, { value: stats.projects, label: "projects" }] as stat}
+        {#each [
+            { value: stats.count || null, label: "sessions (7d)" },
+            { value: stats.count ? Math.round(stats.ftr * 100) + "%" : null, label: "FTR" },
+            { value: stats.corrections || null, label: "corrections" },
+            { value: stats.projects || null, label: "projects" },
+        ] as stat}
             <div class="flex flex-col gap-0.5">
-                <span class="display text-2xl font-normal">{stat.value}</span>
+                <span class="display text-2xl font-normal">{stat.value ?? "—"}</span>
                 <span class="text-2xs text-surface-z6">{stat.label}</span>
             </div>
         {/each}
