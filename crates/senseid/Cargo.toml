@@ -4,6 +4,9 @@ version = "0.2.2"
 edition = "2024"
 description = "Sensei indexer daemon — graph-based code intelligence"
 
+[features]
+dev = ["sensei-bootstrap/dev"]
+
 [dependencies]
 # HTTP server
 axum = { version = "0.8", features = ["json"] }

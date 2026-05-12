@@ -56,10 +56,8 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Mode from binary name + SENSEI_MODE env var override — single call to bootstrap.
-    let startup_cfg = sensei_bootstrap::SenseiConfig::detect();
-    paths::set_mode(startup_cfg.mode);
-
+    // Mode is compile-time via Cargo features (--features dev).
+    let startup_cfg = sensei_bootstrap::SenseiConfig::from_env();
     let default_port = startup_cfg.daemon_port;
 
     match cli.command {
@@ -121,7 +119,7 @@ fn start_daemon(port: u16) {
         .expect("senseid: cannot open log file");
     let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
 
-    // Spawn self — mode is inferred from binary name, no --mode flag needed.
+    // Spawn self — mode is baked in at compile time via --features dev.
     let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
     let mut child = Command::new(exe)
         .args(["--port", &port.to_string()])

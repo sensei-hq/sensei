@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use sensei_bootstrap::{SenseiConfig, BREW_TAP, SenseiLocalConfig};
+use sensei_bootstrap::{BREW_TAP, SenseiConfig, SenseiLocalConfig};
 
 fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
@@ -35,7 +35,6 @@ enum Commands {
         /// Skip interactive prompts — install recommended set
         #[arg(long)]
         recommended: bool,
-
     },
 
     /// Remove sensei configuration
@@ -93,18 +92,16 @@ fn main() {
             acp,
             recommended,
         } => {
-            init(
-                scope.as_deref(),
-                acp.as_deref(),
-                recommended,
-            );
+            init(scope.as_deref(), acp.as_deref(), recommended);
         }
         Commands::Remove {
             target,
             name,
             purge,
         } => remove_cmd(&target, name.as_deref(), purge),
-        Commands::Start { port } => daemon_cmd("start", Some(port.unwrap_or_else(|| cfg().daemon_port))),
+        Commands::Start { port } => {
+            daemon_cmd("start", Some(port.unwrap_or_else(|| cfg().daemon_port)))
+        }
         Commands::Stop => daemon_cmd("stop", None),
         Commands::Restart { port } => restart_daemon(port.unwrap_or_else(|| cfg().daemon_port)),
         Commands::Status => daemon_cmd("status", None),
@@ -142,11 +139,6 @@ fn daemon_bin() -> PathBuf {
     let name = cfg().daemon_binary();
     if let Some(p) = sensei_bootstrap::util::which_binary(name) {
         return PathBuf::from(p);
-    }
-    // Fallback: plugin bin dir (release only — dev is always from ~/.local/bin)
-    if !cfg().is_dev() {
-        let p = home().join(".claude/plugins/sensei/bin/senseid");
-        if p.exists() { return p; }
     }
     PathBuf::from(name)
 }
@@ -297,7 +289,9 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool) {
     println!("=== sensei init ===\n");
 
     // Verify binaries
-    if sensei_bootstrap::util::which_binary("senseid").is_none() || sensei_bootstrap::util::which_binary("sensei-mcp").is_none() {
+    if sensei_bootstrap::util::which_binary("senseid").is_none()
+        || sensei_bootstrap::util::which_binary("sensei-mcp").is_none()
+    {
         eprintln!("Missing binaries. Install: brew install {BREW_TAP}");
         std::process::exit(1);
     }
@@ -579,7 +573,9 @@ fn format_date() -> String {
 /// `/api/assistants/detect`. Returns `None` for "all" (remove everything).
 /// Exits with an error if the name doesn't match any known ACP.
 fn resolve_acp_id(name: &str) -> Option<String> {
-    if name == "all" { return None; }
+    if name == "all" {
+        return None;
+    }
 
     let detected: Vec<serde_json::Value> = client()
         .get(format!("{}/api/assistants/detect", daemon_url()))
@@ -594,10 +590,7 @@ fn resolve_acp_id(name: &str) -> Option<String> {
         let display = a["name"].as_str().unwrap_or("").to_lowercase();
         // exact ID, word in ID (e.g. "desktop" → "claude-desktop"),
         // or display name starts with the query (e.g. "claude" → "Claude Code")
-        if id == name
-            || id.split('-').any(|w| w == q)
-            || display.starts_with(&q)
-        {
+        if id == name || id.split('-').any(|w| w == q) || display.starts_with(&q) {
             Some(id.to_string())
         } else {
             None
@@ -605,11 +598,16 @@ fn resolve_acp_id(name: &str) -> Option<String> {
     });
 
     if id.is_none() {
-        let available: Vec<&str> = detected.iter()
-            .filter_map(|a| a["id"].as_str())
-            .collect();
-        eprintln!("Unknown ACP: '{}'. Available: {}", name,
-            if available.is_empty() { "none detected".to_string() } else { available.join(", ") });
+        let available: Vec<&str> = detected.iter().filter_map(|a| a["id"].as_str()).collect();
+        eprintln!(
+            "Unknown ACP: '{}'. Available: {}",
+            name,
+            if available.is_empty() {
+                "none detected".to_string()
+            } else {
+                available.join(", ")
+            }
+        );
         std::process::exit(1);
     }
     id
@@ -742,7 +740,9 @@ fn remove_all(purge: bool) {
 
         // Also stop dev daemon if running
         if sensei_bootstrap::util::which_binary("senseid-dev").is_some() {
-            let _ = std::process::Command::new("senseid-dev").arg("stop").status();
+            let _ = std::process::Command::new("senseid-dev")
+                .arg("stop")
+                .status();
         }
 
         let sensei_dir = home().join(".sensei");
@@ -766,9 +766,7 @@ fn remove_all(purge: bool) {
             }
         }
 
-        println!(
-            "\nSensei fully removed. To reinstall: brew install {BREW_TAP} && sensei init"
-        );
+        println!("\nSensei fully removed. To reinstall: brew install {BREW_TAP} && sensei init");
     } else {
         println!("\nData preserved. To reinstall: sensei init");
     }
