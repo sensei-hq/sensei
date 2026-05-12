@@ -70,10 +70,9 @@
 
     function enterApp() {
         appState.setHealthReady();
-        goto(
-            appState.setupComplete ? "/observatory" : "/setup/welcome",
-            { replaceState: true },
-        );
+        // Always navigate to /observatory — the reroute guard in hooks.client.ts
+        // will redirect to /setup/welcome if setup isn't complete yet.
+        goto("/observatory", { replaceState: true });
     }
 
     // ── Derived visual state ──────────────────────────────────────────────────
