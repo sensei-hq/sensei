@@ -1,13 +1,13 @@
 create table if not exists public.logs (
-  id               uuid        primary key default gen_random_uuid()
-, level            varchar     not null
-, running_on       varchar     not null
-, logged_at        timestamptz not null
-, message          varchar
-, context          jsonb       not null default '{}'
-, data             jsonb
-, error            jsonb
-, written_at       timestamptz not null default now()
+  id                       uuid        primary key default gen_random_uuid()
+, level                    varchar     not null
+, running_on               varchar     not null
+, logged_at                timestamptz not null
+, message                  varchar
+, context                  jsonb       not null default '{}'
+, data                     jsonb
+, error                    jsonb
+, written_at               timestamptz not null default now()
 );
 
 create index if not exists logs_level_idx

@@ -81,6 +81,9 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
         TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
         TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
+        TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
+        TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
+        TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
     };
 
     let duration_ms = start.elapsed().as_millis() as i32;

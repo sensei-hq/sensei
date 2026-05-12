@@ -15,6 +15,9 @@ create table if not exists library_pages (
 , modified_at              timestamptz not null default now()
 );
 
+create unique index if not exists library_pages_library_title_uq
+    on library_pages(library_id, title);
+
 create index if not exists library_pages_library_id_idx
     on library_pages(library_id);
 

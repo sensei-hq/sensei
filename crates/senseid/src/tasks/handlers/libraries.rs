@@ -121,3 +121,93 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         Err(e) => Err(format!("Failed to index lib {}: {}", lib_name, e))
     }
 }
+
+// ── Index Library ──────────────────────────────────────────────────────────
+
+/// Fetch library docs from URL, parse into pages, and store each page.
+/// Enqueues IndexLibraryPage child tasks for each parsed doc section.
+pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    let lib_name = &task.path;
+    let url = task.url.as_deref().unwrap_or("");
+
+    if url.is_empty() {
+        return Err("index_library requires a URL (set via task.url)".into());
+    }
+
+    let content = crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, 15).await?;
+
+    if content.len() < 50 {
+        return Err(format!("Content too short from {}: {} bytes", url, content.len()));
+    }
+
+    // Upsert the library record
+    let lib_id = ctx.pg().upsert_library(lib_name, "npm", None, None, Some("url"), Some(url)).await
+        .map_err(|e| format!("upsert_library failed: {}", e))?;
+
+    // Parse content into doc sections
+    let result = crate::indexer::lib_indexer::index_lib_content(lib_name, url, &content, None)
+        .map_err(|e| format!("index_lib_content failed: {}", e))?;
+
+    // Get parsed docs for page storage
+    let source_type = crate::indexer::lib_indexer::detect_source_type(url, &content);
+    let docs = crate::indexer::lib_indexer::parse_docs(&content, lib_name, url);
+
+    // Store each parsed doc as a library_page
+    let mut pages_stored = 0u32;
+    for doc in &docs {
+        match ctx.pg().upsert_library_page(
+            &lib_id,
+            &doc.title,
+            Some(url),
+            Some(&doc.summary),
+            Some(&doc.content),
+            &source_type,
+            doc.component.as_deref(),
+        ).await {
+            Ok(_) => pages_stored += 1,
+            Err(e) => tracing::warn!("Failed to store page '{}': {}", doc.title, e),
+        }
+    }
+
+    // Update denormalized page_count
+    ctx.pg().update_library_page_count(&lib_id).await.ok();
+
+    tracing::info!(
+        "index_library: {} — {} pages stored (parsed {} sections) from {}",
+        lib_name, pages_stored, result.docs_indexed, url
+    );
+    Ok(pages_stored)
+}
+
+// ── Index Library Page ─────────────────────────────────────────────────────
+
+/// Store a single library documentation page. Currently stores content only
+/// (embedding generation deferred to gateway integration).
+pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    let lib_id_str = &task.folder_path; // library UUID stored in folder_path
+    let title = &task.path;             // page title stored in path
+
+    let lib_id = uuid::Uuid::parse_str(lib_id_str)
+        .map_err(|_| format!("Invalid library UUID: {}", lib_id_str))?;
+
+    let url = task.url.as_deref();
+
+    // Verify library exists
+    ctx.pg().get_library(&lib_id).await
+        .map_err(|e| format!("DB error: {}", e))?
+        .ok_or_else(|| format!("Library {} not found", lib_id))?;
+
+    // Page content passed via module_id field (reusing available Task fields)
+    let content = task.module_id.as_deref().unwrap_or("");
+    if content.is_empty() {
+        return Err("index_library_page requires content in module_id".into());
+    }
+
+    let summary: String = content.lines().take(3).collect::<Vec<_>>().join(" ");
+    let summary = &summary[..summary.len().min(200)];
+
+    ctx.pg().upsert_library_page(&lib_id, title, url, Some(summary), Some(content), "http", None).await
+        .map_err(|e| format!("upsert_library_page failed: {}", e))?;
+
+    Ok(1)
+}

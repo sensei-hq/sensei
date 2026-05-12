@@ -2652,6 +2652,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sensei-logger"
+version = "0.2.2"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx-core",
+ "sqlx-postgres",
+ "tokio",
+]
+
+[[package]]
 name = "sensei-mcp"
 version = "0.2.2"
 dependencies = [
@@ -2684,6 +2697,7 @@ dependencies = [
  "regex",
  "reqwest",
  "sensei-bootstrap",
+ "sensei-logger",
  "serde",
  "serde_json",
  "serde_yaml",

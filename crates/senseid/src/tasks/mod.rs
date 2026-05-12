@@ -31,6 +31,9 @@ pub enum TaskKind {
     BranchSwitch,
     BuildConnections,
     ReconcileConnections,
+    IndexLibrary,
+    IndexLibraryPage,
+    DetectCommunities,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -48,6 +51,9 @@ impl std::fmt::Display for TaskKind {
             Self::BranchSwitch => write!(f, "branch_switch"),
             Self::BuildConnections => write!(f, "build_connections"),
             Self::ReconcileConnections => write!(f, "reconcile_connections"),
+            Self::IndexLibrary => write!(f, "index_library"),
+            Self::IndexLibraryPage => write!(f, "index_library_page"),
+            Self::DetectCommunities => write!(f, "detect_communities"),
         }
     }
 }
@@ -190,5 +196,8 @@ mod tests {
         assert_eq!(TaskKind::ScanRoot.to_string(), "scan_root");
         assert_eq!(TaskKind::ProcessFile.to_string(), "process_file");
         assert_eq!(TaskKind::ResolveEdges.to_string(), "resolve_edges");
+        assert_eq!(TaskKind::IndexLibrary.to_string(), "index_library");
+        assert_eq!(TaskKind::IndexLibraryPage.to_string(), "index_library_page");
+        assert_eq!(TaskKind::DetectCommunities.to_string(), "detect_communities");
     }
 }

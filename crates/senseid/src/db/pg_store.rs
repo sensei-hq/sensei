@@ -394,6 +394,13 @@ impl PgStore {
         Ok(())
     }
 
+    pub async fn update_node_community(&self, node_id: &uuid::Uuid, community_id: i32) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id = $2, modified_at = now() WHERE id = $1")
+            .bind(node_id).bind(community_id)
+            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // ── Edges ────────────────────────────────────────────────────────
 
     pub async fn insert_edge(
@@ -1094,6 +1101,33 @@ impl PgStore {
     pub async fn delete_library(&self, id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
             .bind(id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn upsert_library_page(
+        &self, library_id: &uuid::Uuid, title: &str, url: Option<&str>,
+        description: Option<&str>, content: Option<&str>, source_type: &str,
+        component: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.library_pages(library_id, title, url, description, content, source_type, component, fetched_at)
+             VALUES($1, $2, $3, $4, $5, $6::sensei.library_source_type, $7, now())
+             ON CONFLICT(library_id, title) DO UPDATE SET
+               url = COALESCE(EXCLUDED.url, library_pages.url),
+               description = COALESCE(EXCLUDED.description, library_pages.description),
+               content = COALESCE(EXCLUDED.content, library_pages.content),
+               component = COALESCE(EXCLUDED.component, library_pages.component),
+               fetched_at = now(), modified_at = now()
+             RETURNING id"
+        ).bind(library_id).bind(title).bind(url).bind(description).bind(content).bind(source_type).bind(component)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    pub async fn update_library_page_count(&self, library_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.libraries SET page_count = (SELECT count(*) FROM sensei.library_pages WHERE library_id = $1), modified_at = now() WHERE id = $1"
+        ).bind(library_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
