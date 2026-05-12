@@ -58,6 +58,14 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/memories",        get(project_detail::get_project_memories))
         .route("/api/projects/{id}/recommendations", get(project_detail::get_project_recommendations))
         .route("/api/projects/{id}/sessions",        get(project_detail::get_project_sessions))
+        // Observatory chart data
+        .route("/api/observatory/ftr-daily",             get(observatory::holistic_ftr_daily))
+        .route("/api/observatory/tool-usage",            get(observatory::tool_usage))
+        .route("/api/projects/{id}/ftr-daily",           get(observatory::project_ftr_daily))
+        .route("/api/projects/{id}/hotspots",            get(observatory::project_hotspots))
+        .route("/api/projects/{id}/quality-signals",     get(observatory::project_quality_signals))
+        .route("/api/projects/{id}/teachings",           get(observatory::project_teachings))
+        .route("/api/libs/{id}/usage",                   get(observatory::library_usage))
         // Indexing
         .route("/api/index", post(workspace::index_project))
         .route("/api/index/status", get(workspace::task_status))
