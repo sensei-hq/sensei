@@ -2,4 +2,4 @@
     import MemoryList from "$lib/components/MemoryList.svelte";
 </script>
 
-<MemoryList pageLabel="Insights" pageTitle="&#x5B78; Insights" />
+<MemoryList pageLabel="Insights" pageTitle="學 Insights" />
