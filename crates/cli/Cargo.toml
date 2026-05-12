@@ -1,6 +1,6 @@
 [package]
 name = "sensei-cli"
-version = "0.2.3"
+version = "0.2.14"
 edition = "2024"
 description = "Sensei CLI — initialize and manage sensei for AI coding"
 
