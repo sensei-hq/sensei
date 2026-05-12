@@ -372,7 +372,11 @@ export interface DocDrift {
 // ─── Libraries ───────────────────────────────────────────────────────────────
 
 export interface LibEntry {
+  id: string;
   name: string;
+  ecosystem?: string;
+  version?: string;
+  pageCount?: number;
   repos: string[];
   repoCount: number;
 }
@@ -449,11 +453,17 @@ export interface PatternEntry {
 export interface Recommendation {
   id: string;
   title: string;
-  description: string;
+  description?: string;
+  why?: string;
+  impact?: string;
   status: string;
-  priority: number;
+  priority?: number;
   verdict?: string;
   urgency?: string;
+  baseline_ftr?: number | null;
+  current_ftr?: number | null;
+  acted_at?: string | null;
+  measured_at?: string | null;
 }
 
 export interface ProjectSession {

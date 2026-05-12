@@ -35,6 +35,7 @@ pub enum TaskKind {
     IndexLibraryPage,
     DetectCommunities,
     ExtractDeps,
+    MeasureVerdicts,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -56,6 +57,7 @@ impl std::fmt::Display for TaskKind {
             Self::IndexLibraryPage => write!(f, "index_library_page"),
             Self::DetectCommunities => write!(f, "detect_communities"),
             Self::ExtractDeps => write!(f, "extract_deps"),
+            Self::MeasureVerdicts => write!(f, "measure_verdicts"),
         }
     }
 }
@@ -202,5 +204,6 @@ mod tests {
         assert_eq!(TaskKind::IndexLibraryPage.to_string(), "index_library_page");
         assert_eq!(TaskKind::DetectCommunities.to_string(), "detect_communities");
         assert_eq!(TaskKind::ExtractDeps.to_string(), "extract_deps");
+        assert_eq!(TaskKind::MeasureVerdicts.to_string(), "measure_verdicts");
     }
 }

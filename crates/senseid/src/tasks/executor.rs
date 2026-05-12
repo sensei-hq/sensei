@@ -85,6 +85,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
         TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
         TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
+        TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
     };
 
     let duration_ms = start.elapsed().as_millis() as i32;
