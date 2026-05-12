@@ -23,6 +23,9 @@ pub(crate) async fn mcp_list_tools() -> Json<serde_json::Value> {
             {"name": "query", "description": "Natural language query across graph", "params": ["q", "repoId"]},
             {"name": "get_project_summary", "description": "Get project stats and metadata", "params": ["repoId"]},
             {"name": "get_metrics", "description": "Get project quality metrics: FTR, turn count, rework rate, tool adherence", "params": ["repoId"]},
+            {"name": "get_ftr_daily", "description": "Get daily FTR sparkline data for charts", "params": ["repoId", "days"]},
+            {"name": "get_hotspots", "description": "Get files with highest rework/correction frequency", "params": ["repoId", "days"]},
+            {"name": "get_quality_signals", "description": "Get quality indicators: FTR, pattern compliance, doc drift, test pass rate", "params": ["repoId"]},
         ]
     }))
 }
@@ -218,6 +221,28 @@ pub(crate) async fn mcp_call_tool(
                 } else {
                     serde_json::json!({"error": "invalid folder id"})
                 }
+            } else {
+                serde_json::json!({"error": "project not found"})
+            }
+        }
+        "get_ftr_daily" => {
+            let days = params["days"].as_i64().unwrap_or(14) as i32;
+            let project_id = resolve_folder_id(&state, repo_id).await;
+            let data = state.pg.get_ftr_daily(project_id.as_ref(), days).await.unwrap_or_default();
+            serde_json::json!({"ftr_daily": data})
+        }
+        "get_hotspots" => {
+            let days = params["days"].as_i64().unwrap_or(7) as i32;
+            if let Some(fid) = resolve_folder_id(&state, repo_id).await {
+                let data = state.pg.get_hotspots(&fid, days).await.unwrap_or_default();
+                serde_json::json!({"hotspots": data})
+            } else {
+                serde_json::json!({"hotspots": []})
+            }
+        }
+        "get_quality_signals" => {
+            if let Some(fid) = resolve_folder_id(&state, repo_id).await {
+                state.pg.get_quality_signals(&fid).await.unwrap_or(serde_json::json!({}))
             } else {
                 serde_json::json!({"error": "project not found"})
             }
