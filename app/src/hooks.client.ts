@@ -68,10 +68,7 @@ export function reroute({ url }: { url: URL }): string | undefined {
       sessionStorage.getItem('sensei:health') === 'ready');
 
   if (!healthReady) {
-    // '/' is handled by root +page.svelte onMount — letting it redirect
-    // via onMount instead of reroute avoids the WKWebView TDZ bug that
-    // occurs when too many modules load simultaneously during initial mount.
-    if (HEALTH_EXEMPT.has(path) || path === '/') return undefined;
+    if (HEALTH_EXEMPT.has(path)) return undefined;
     return '/health';
   }
 
