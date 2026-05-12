@@ -78,4 +78,4 @@ Critical gates (Homebrew, PostgreSQL, database, daemon) must pass before Sensei 
 ## Reference
 
 - Mockups: `docs/mockups/lib/bootstrap.jsx`
-- Implementation details: `design/01-app.md`
+- Implementation details: [design/01-app.md](../design/01-app.md)

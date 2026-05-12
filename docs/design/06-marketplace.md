@@ -1,6 +1,6 @@
 # Marketplace — Commands, Skills, Hooks, Plugins
 
-**See also:** [ideas/03](../ideas/03-marketplace.md), [ideas/04](../ideas/04-plugin-system.md)
+**See also:** [ideas/03-observatory](../ideas/03-observatory.md), [ideas/04-project](../ideas/04-project.md)
 
 ## Overview
 

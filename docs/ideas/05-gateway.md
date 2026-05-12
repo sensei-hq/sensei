@@ -138,4 +138,4 @@ The natural flow is: microphone to STT to chat to TTS to speaker. The gateway ha
 
 ## Reference
 
-- Implementation details: `design/03-gateway.md`
+- Implementation details: [design/03-gateway.md](../design/03-gateway.md)
