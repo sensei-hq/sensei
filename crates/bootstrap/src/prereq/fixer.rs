@@ -150,9 +150,10 @@ impl Fixer for BrewBundleFixer {
 /// - Production: delegates to `provider.start_service("senseid")` which runs
 ///   `brew services start sensei-hq/tap/sensei`. Falls back to direct binary
 ///   invocation if brew services fails or is unavailable.
-/// - Dev mode: spawns `senseid-dev start --port` directly (not a brew service).
+/// - Dev mode: spawns `senseid-dev start` directly (not a brew service).
 ///
-/// After start, polls the daemon port for up to 30 s.
+/// The binary's port is compile-time via Cargo feature flag, so no `--port`
+/// argument is needed. After start, polls the daemon port for up to 30 s.
 pub struct DaemonFixer {
     provider: Arc<dyn PlatformProvider>,
     port: u16,
@@ -192,12 +193,13 @@ impl Fixer for DaemonFixer {
             return self.poll_port("brew services");
         }
 
-        // Dev mode or brew services unavailable/failed: start binary directly
+        // Dev mode or brew services unavailable/failed: start binary directly.
+        // No --port needed: the binary reads its default from compile-time config.
         let binary = util::which_binary(self.binary_name)
             .ok_or_else(|| format!("{} not found in PATH", self.binary_name))?;
 
         let output = Command::new(&binary)
-            .args(["start", "--port", &self.port.to_string()])
+            .args(["start"])
             .env("PATH", util::enrich_path())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
