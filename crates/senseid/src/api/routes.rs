@@ -14,6 +14,7 @@ use crate::api::handlers::libraries;
 use crate::api::handlers::config;
 use crate::api::handlers::query;
 use crate::api::handlers::mcp;
+use crate::api::handlers::logs;
 use crate::api::handlers::gateway;
 use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
@@ -126,6 +127,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/events/{project}", get(sessions::list_events))
         // Hook event ingestion (from sensei-hook.ts)
         .route("/hook/event", post(sessions::ingest_hook_event))
+        // Structured logging (remote writers: CLI, MCP, app)
+        .route("/api/logs", post(logs::ingest_log))
         // Metrics
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state

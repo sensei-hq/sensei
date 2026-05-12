@@ -1523,6 +1523,36 @@ impl PgStore {
             .map_err(|e| format!("PgStore execute_raw: {}", e))?;
         Ok(())
     }
+
+    // ── Logging (public.logs) ───────────────────────────────────────
+
+    /// Insert a structured log entry into public.logs (kavach pattern).
+    pub async fn insert_log(
+        &self,
+        level: &str,
+        running_on: &str,
+        logged_at: &str,
+        message: &str,
+        context: &serde_json::Value,
+        data: &Option<serde_json::Value>,
+        error: &Option<serde_json::Value>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO public.logs(level, running_on, logged_at, message, context, data, error)
+             VALUES($1, $2, $3::timestamptz, $4, $5, $6, $7)"
+        )
+        .bind(level)
+        .bind(running_on)
+        .bind(logged_at)
+        .bind(message)
+        .bind(context)
+        .bind(data)
+        .bind(error)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("insert_log: {}", e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
