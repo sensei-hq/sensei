@@ -12,11 +12,10 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     let task_queue = Arc::new(TaskQueue::new());
 
     // Connect to PostgreSQL.
-    // All mode-sensitive values come from SenseiConfig — the single source of truth
-    // shared by bootstrap, the Tauri sidecar, and this daemon.
-    // detect() checks binary name (senseid-dev → dev) then SENSEI_MODE env var.
-    // Priority: DATABASE_URL > SENSEI_DB_NAME > binary name > SENSEI_MODE > Prod.
-    let database_url = sensei_bootstrap::SenseiConfig::detect().db_url;
+    // All mode-sensitive values come from SenseiConfig — compile-time via Cargo features.
+    // Dev builds (--features dev): port 7745, sensei_dev DB, ~/.sensei-dev/
+    // Prod builds (no features):  port 7744, sensei DB, ~/.sensei/
+    let database_url = sensei_bootstrap::SenseiConfig::from_env().db_url;
     let pg = match crate::db::pg_store::PgStore::connect(&database_url).await {
         Ok(store) => store,
         Err(e) => {

@@ -4,6 +4,9 @@ version = "0.2.2"
 edition = "2024"
 description = "Sensei CLI — initialize and manage sensei for AI coding"
 
+[features]
+dev = ["sensei-bootstrap/dev"]
+
 [[bin]]
 name = "sensei"
 path = "src/main.rs"

@@ -6,6 +6,7 @@ version = "0.2.2"
 edition = "2021"
 
 [features]
+dev = ["sensei-bootstrap/dev"]
 e2e-testing = ["tauri-plugin-playwright"]
 
 [lib]
