@@ -211,3 +211,49 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
 
     Ok(1)
 }
+
+// ── Extract Deps ───────────────────────────────────────────────────────
+
+/// Parse manifest files (package.json, Cargo.toml, pyproject.toml) and upsert
+/// detected dependencies into libraries + referenced_libraries.
+pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    let folder_name = task.folder_name();
+
+    let folder = ctx.pg().get_repo_by_name(folder_name).await
+        .map_err(|e| format!("DB error: {}", e))?
+        .ok_or_else(|| format!("Folder '{}' not found", folder_name))?;
+
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
+        .ok_or("Invalid folder id")?;
+
+    let repo_path = folder["abs_path"].as_str()
+        .ok_or("Folder has no abs_path")?;
+
+    let deps = crate::indexer::lib_indexer::extract_dep_versions(folder_name, repo_path)?;
+
+    let mut count = 0u32;
+    for dep in &deps {
+        let ecosystem = match dep.source.as_str() {
+            "package.json" => "npm",
+            "Cargo.toml" => "crates",
+            "pyproject.toml" => "pypi",
+            _ => "npm",
+        };
+
+        // Upsert the library record (creates if not exists)
+        let lib_id = match ctx.pg().upsert_library(&dep.lib_name, ecosystem, Some(&dep.version), None, None, None).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("extract_deps: skip {} — {}", dep.lib_name, e);
+                continue;
+            }
+        };
+
+        // Link folder → library via referenced_libraries
+        ctx.pg().upsert_referenced_library(&folder_id, &lib_id, Some(&dep.version)).await.ok();
+        count += 1;
+    }
+
+    tracing::info!("extract_deps: {} — {} deps from manifests", folder_name, count);
+    Ok(count)
+}

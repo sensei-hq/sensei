@@ -352,3 +352,96 @@ pub(crate) async fn get_metrics(
         }
     Json(serde_json::json!({"error": "project not found"}))
 }
+
+// ── Observatory Chart Data ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub(crate) struct DaysQuery {
+    #[serde(default = "default_days")]
+    days: i32,
+}
+fn default_days() -> i32 { 14 }
+
+#[derive(Deserialize)]
+pub(crate) struct LimitQuery {
+    #[serde(default = "default_limit")]
+    limit: i64,
+}
+fn default_limit() -> i64 { 10 }
+
+/// GET /api/observatory/ftr-daily?days=14 — holistic FTR sparkline (all projects)
+pub(crate) async fn holistic_ftr_daily(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<DaysQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let data = state.pg.get_ftr_daily(None, q.days).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "ftr_daily": data })))
+}
+
+/// GET /api/projects/{id}/ftr-daily?days=14 — per-project FTR sparkline
+pub(crate) async fn project_ftr_daily(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<DaysQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let data = state.pg.get_ftr_daily(Some(&project_id), q.days).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "ftr_daily": data })))
+}
+
+/// GET /api/projects/{id}/hotspots?days=7 — files with highest rework
+pub(crate) async fn project_hotspots(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<DaysQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let data = state.pg.get_hotspots(&project_id, q.days).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "hotspots": data })))
+}
+
+/// GET /api/projects/{id}/quality-signals — 4 quality indicators
+pub(crate) async fn project_quality_signals(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let data = state.pg.get_quality_signals(&project_id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(data))
+}
+
+/// GET /api/observatory/tool-usage — tool usage across all sessions
+pub(crate) async fn tool_usage(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let data = state.pg.get_tool_usage_stats().await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "tools": data })))
+}
+
+/// GET /api/libraries/{id}/usage — per-library usage across folders
+pub(crate) async fn library_usage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let library_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let data = state.pg.get_library_usage(&library_id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "usage": data })))
+}
+
+/// GET /api/projects/{id}/teachings?limit=10 — adopted rules
+pub(crate) async fn project_teachings(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<LimitQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let data = state.pg.get_adopted_teachings(&project_id, q.limit).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "teachings": data })))
+}

@@ -30,7 +30,6 @@ pub fn index_lib_content(
 }
 
 /// Fetch and store dependency versions from a project's manifest files.
-#[allow(dead_code)] // TODO: wire up dep version extraction
 pub fn extract_dep_versions(
 
     _repo_id: &str,
@@ -259,7 +258,6 @@ fn parse_markdown(content: &str, lib_name: &str, _url: &str) -> Vec<ParsedDoc> {
     parse_llms_txt(content, lib_name)
 }
 
-#[allow(dead_code)] // TODO: wire up dep version extraction
 fn clean_version(v: &str) -> String {
     v.trim_start_matches('^')
         .trim_start_matches('~')
@@ -272,7 +270,6 @@ fn clean_version(v: &str) -> String {
         .to_string()
 }
 
-#[allow(dead_code)] // TODO: wire up dep version extraction
 fn parse_pep508(spec: &str) -> (String, String) {
     // "requests>=2.28" → ("requests", "2.28")
     let parts: Vec<&str> = spec.splitn(2, ['>', '<', '=', '!', '[']).collect();
