@@ -214,8 +214,17 @@ Task / query      Token budget          Resolution selection     MCP            
 
 ## Gaps
 
-Gaps are identified during design doc writing and collected here. This table will be populated as individual design docs are written.
+Gaps identified during design doc writing.
 
 | Gap | Module | Description | Blocks |
 |-----|--------|-------------|--------|
-| | | | |
+| G1 | Observatory | No daemon API endpoints designed for observatory screens (metrics, teachings, memory) | Observatory UI |
+| G2 | Setup | Inference + Assignments wizard steps blocked on gateway integration | Setup completion |
+| G3 | Memory | Memory consolidation described in ideas/03 but daemon implementation not designed | Observatory coaching |
+| G4 | MCP | Multi-coordinator adapter implementations not designed beyond Claude Code | Cursor/Zed support |
+| G5 | App | Desktop app distribution mechanism undefined (macOS DMG? Cask only?) | Release process |
+| G6 | Website | Architecture diagram needs update from old D3 version (referenced deprecated tech) | Website accuracy |
+| G7 | Daemon | PgStore error handling (S3 from issues catalog) — 110 sites erase sqlx::Error to String | Error recovery |
+| G8 | Gateway | Voice chain (STT/TTS) described in ideas but no model selection or streaming design | Voice features |
+| G9 | Logging | sensei-logger crate exists but log viewer API endpoints not implemented | Log viewer screen |
+| G10 | Daemon | Benchmarking framework described but no task corpus or evaluation harness built | Credibility metrics |
