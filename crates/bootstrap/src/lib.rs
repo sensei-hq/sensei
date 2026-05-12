@@ -16,7 +16,7 @@ pub mod util;
 
 pub use config::{
     SenseiConfig, SenseiMode, SenseiLocalConfig,
-    binary_is_dev, home_dir,
+    COMPILE_DEV, home_dir,
     BREW_PATHS, BREW_TAP, GITHUB_ORG, GITHUB_REPO,
     HOMEBREW_BREWFILE_URL, HOMEBREW_TAP_REPO, HOMEBREW_TAP_URL,
     MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
@@ -39,7 +39,7 @@ pub fn daemon_port() -> u16 {
 pub fn config() -> &'static SenseiConfig {
     use std::sync::OnceLock;
     static CFG: OnceLock<SenseiConfig> = OnceLock::new();
-    CFG.get_or_init(SenseiConfig::detect)
+    CFG.get_or_init(SenseiConfig::from_env)
 }
 
 /// Shorthand for `config().daemon_url()`.

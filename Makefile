@@ -45,7 +45,7 @@ export DATABASE_URL SENSEI_MODE VITE_BYPASS_HEALTH
 # ── Rust crates ───────────────────────────────────────────────────────────────
 
 crates-dev:
-	cargo build -p senseid -p sensei-cli -p sensei-mcp
+	cargo build --features dev -p senseid -p sensei-cli -p sensei-mcp
 
 crates-release:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp
@@ -78,20 +78,19 @@ build-release: crates-release
 
 # Run the dev daemon directly from the build directory (port 7745, sensei_dev DB).
 # Does NOT install to ~/.local/bin — coexists alongside the release daemon on port 7744.
-# SENSEI_MODE=dev is required because the binary is named 'senseid' (not 'senseid-dev');
-# mode detection by binary name only works when the installed -dev suffix binary is used.
+# Mode is baked in at compile time via --features dev (no env var needed).
 daemon-dev: crates-dev
-	SENSEI_MODE=dev target/debug/senseid start
+	target/debug/senseid start
 
 # ── Desktop app ───────────────────────────────────────────────────────────────
 
 # Tauri dev with Vite HMR — pre-builds Rust backend then starts tauri dev
 app-dev:
-	cd app && cargo build --manifest-path src-tauri/Cargo.toml && bunx tauri dev
+	cd app && cargo build --features dev --manifest-path src-tauri/Cargo.toml && bunx tauri dev --features dev
 
 # Build debug .app bundle and launch it (full native bundle, slower than app-dev)
 app-dev-bundle: install-dev
-	cd app && SENSEI_DB_SCHEMA_PATH=../database bunx tauri build --debug && SENSEI_DB_SCHEMA_PATH=../database ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
+	cd app && SENSEI_DB_SCHEMA_PATH=../database bunx tauri build --debug --features dev && SENSEI_DB_SCHEMA_PATH=../database ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
 
 app-release:
 	cd app && bunx tauri build
