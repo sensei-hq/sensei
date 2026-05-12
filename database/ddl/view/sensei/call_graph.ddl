@@ -5,6 +5,8 @@ select e.id              as edge_id
      , e.folder_id
      , f.name            as folder
      , f.project_id
+     , p.name            as project
+     , p.maturity        as project_maturity
      , e.kind            as edge_kind
      , e.confidence
      , e.confidence_score
@@ -23,22 +25,18 @@ select e.id              as edge_id
      , e.target_name     as unresolved_target
      , e.props
   from edges e
-  join folders f   on f.id = e.folder_id
-  join nodes  src  on src.id = e.source_id
+  join folders  f   on f.id = e.folder_id
+  left join projects p on p.id = f.project_id
+  join nodes   src  on src.id = e.source_id
   left join nodes tgt on tgt.id = e.target_id;
 
 comment on view call_graph is
-'Resolved and unresolved edges with source/target symbol details.
+'Resolved and unresolved edges with source/target symbol details and project context.
 LEFT JOIN on target — unresolved edges have target columns null but unresolved_target set.
 
+Filter/group dimensions: project, project_maturity, folder, edge_kind, confidence, source/target name.
+
 Common queries:
-  -- Who calls function X?
-  SELECT source_name, source_file, source_line
-    FROM call_graph
-   WHERE folder = ''myrepo'' AND target_name = ''handleAuth'' AND edge_kind = ''calls''
-  -- What does function X call?
-  SELECT target_name, target_file, target_line
-    FROM call_graph
-   WHERE folder = ''myrepo'' AND source_name = ''handleAuth'' AND edge_kind = ''calls''
-  -- All imports in a project
-  SELECT * FROM call_graph WHERE project_id = $1 AND edge_kind = ''imports''';
+  SELECT source_name, source_file FROM call_graph WHERE folder = ''myrepo'' AND target_name = ''handleAuth'' AND edge_kind = ''calls''
+  SELECT edge_kind::text, count(*) FROM call_graph WHERE project = ''sensei'' GROUP BY edge_kind
+  SELECT folder, count(*) FROM call_graph WHERE project_maturity = ''active'' AND edge_kind = ''calls'' GROUP BY folder';
