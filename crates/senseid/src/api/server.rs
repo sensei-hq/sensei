@@ -45,10 +45,17 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     });
 
     // Spawn task workers
+    let task_logger = sensei_logger::Logger::new(
+        sensei_logger::LogWriter::pg(state.pg.pool().clone()),
+        sensei_logger::LogLevel::Info,
+        "daemon",
+        "tasks",
+    );
     let task_ctx = Arc::new(TaskContext {
         queue: task_queue.clone(),
         app_state: state.clone(),
         _graph_path: None,
+        logger: task_logger,
     });
     spawn_workers(task_ctx, DEFAULT_WORKERS);
 

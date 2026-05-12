@@ -11,6 +11,7 @@ pub struct TaskContext {
     pub queue: Arc<TaskQueue>,
     pub app_state: crate::api::state::AppState,
     pub _graph_path: Option<std::path::PathBuf>,
+    pub logger: sensei_logger::Logger,
 }
 
 impl TaskContext {
@@ -33,7 +34,7 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
                 let result = execute_task(&ctx, &task).await;
 
                 match result {
-                    Ok(()) => {
+                    Ok(_items) => {
                         ctx.queue.complete(task.id).await;
                         tracing::debug!("[task-worker-{}] completed {} #{}", worker_id, task.kind, task.id);
                     }
@@ -47,8 +48,18 @@ pub fn spawn_workers(ctx: Arc<TaskContext>, n: usize) {
     }
 }
 
-async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
-    match task.kind {
+async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    let start = std::time::Instant::now();
+    let task_logger = ctx.logger.with_method(&task.kind.to_string())
+        .with_context(serde_json::json!({
+            "task_id": task.id,
+            "folder": &task.folder_path,
+            "path": &task.path,
+        }));
+
+    task_logger.info("task_started", None).await;
+
+    let result = match task.kind {
         TaskKind::ScanRoot => handlers::scan_root(ctx, task).await,
         TaskKind::ProcessGitFolder => handlers::process_git_folder(ctx, task).await,
         TaskKind::ProcessFolder => handlers::process_folder(ctx, task).await,
@@ -61,7 +72,24 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<(), String> {
         TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
         TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
         TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
+    };
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+    match &result {
+        Ok(items) => {
+            task_logger.info("task_completed", Some(serde_json::json!({
+                "duration_ms": duration_ms,
+                "items_processed": items,
+            }))).await;
+        }
+        Err(e) => {
+            task_logger.error("task_failed", Some(serde_json::json!({
+                "duration_ms": duration_ms,
+            })), Some(serde_json::json!({"message": e}))).await;
+        }
     }
+
+    result
 }
 
 #[cfg(test)]
@@ -83,6 +111,7 @@ mod tests {
             queue,
             app_state,
             _graph_path: None,
+            logger: sensei_logger::Logger::noop(),
         })
     }
 

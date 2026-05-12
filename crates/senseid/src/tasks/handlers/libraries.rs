@@ -7,7 +7,7 @@ use crate::languages;
 // ── Resolve Libs ──────────────────────────────────────────────────────────
 
 /// Classify imports as internal vs external libraries. Update project.libs.
-pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let folder_name = task.folder_name();
     let _folder_path = &task.folder_path;
 
@@ -93,13 +93,13 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<(), String> 
         }
 
     tracing::info!("resolve_libs: {} — {} external libs detected", folder_name, libs.len());
-    Ok(())
+    Ok(libs.len() as u32)
 }
 
 // ── Import Lib ────────────────────────────────────────────────────────────
 
 /// User-triggered: fetch and index documentation for an external library.
-pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let lib_name = &task.path; // lib name stored in path field
     let url = task.url.as_deref().unwrap_or("");
 
@@ -116,7 +116,7 @@ pub async fn import_lib(ctx: &TaskContext, task: &Task) -> Result<(), String> {
     match ctx.pg().upsert_library(lib_name, "npm", None, Some(&content), Some("url"), Some(url)).await {
         Ok(lib_id) => {
             tracing::info!("import_lib: {} — indexed as {} from {}", lib_name, lib_id, url);
-            Ok(())
+            Ok(1)
         }
         Err(e) => Err(format!("Failed to index lib {}: {}", lib_name, e))
     }
