@@ -8,7 +8,7 @@
     let { children } = $props();
 
     const NAV_ITEMS = [
-        { href: "/observatory", kanji: "家", label: "Today" },
+        { href: "/", kanji: "家", label: "Today" },
         { href: "/projects", kanji: "場", label: "Projects" },
         { href: "/sessions", kanji: "刻", label: "Sessions" },
         { href: "/insights", kanji: "學", label: "Insights" },
