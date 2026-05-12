@@ -45,8 +45,8 @@ make bump v=0.3.0
 
 ## Database
 
-See `database/` for DDL. Dev builds connect to `sensei_dev`; release builds connect to `sensei`.
-`DATABASE_URL` env var always overrides (set in `.env.dev` for local dev).
+See `database/` for DDL. Dev builds (`--features dev`) connect to `sensei_dev`; release builds connect to `sensei`.
+Mode is compile-time via Cargo feature flag — no runtime env var detection.
 
 ## Rules
 
