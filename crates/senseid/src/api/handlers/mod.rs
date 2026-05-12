@@ -10,3 +10,4 @@ pub(crate) mod mcp;
 pub(crate) mod gateway;
 pub(crate) mod scan_events;
 pub(crate) mod project_detail;
+pub(crate) mod logs;
