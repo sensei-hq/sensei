@@ -3,7 +3,6 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { getDaemonPort } from '$lib/bootstrap.js';
   import { appState } from '$lib/appstate.svelte.js';
 
   let { children } = $props();
@@ -60,9 +59,7 @@
   }
 
   onMount(() => {
-    // Resolve daemon port from SenseiConfig (single source of truth in Rust).
-    // Must happen before appState.load() and any daemon API calls.
-    getDaemonPort().then(port => appState.setPort(port)).catch(() => { /* keep default */ });
+    // Port resolution now happens in +layout.ts load() — runs before any page loader.
 
     applyColorScheme();
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
