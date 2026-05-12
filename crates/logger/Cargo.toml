@@ -13,7 +13,7 @@ tokio = { version = "1", features = ["rt", "macros", "time"] }
 # Writers (optional features for consumers that need them)
 sqlx-core = { version = "0.8", features = ["_rt-tokio", "json"], optional = true }
 sqlx-postgres = { version = "0.8", features = ["json"], optional = true }
-reqwest = { version = "0.12", features = ["json"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 [features]
 default = ["pg", "api"]
