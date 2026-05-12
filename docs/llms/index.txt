@@ -1,7 +1,0 @@
-# sensei
-
-sensei consists of
-
-- daemon
-- cli
-- app
