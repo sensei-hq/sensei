@@ -198,6 +198,44 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/sessions?limit=${limit}`, { sessions: [] }
       ),
 
+    // ── Observatory chart data ──────────────────────────────────────────
+
+    getHolisticFtrDaily: (days = 14) =>
+      get<{ ftr_daily: Array<{ day: string; ftr_rate: number; session_count: number }> }>(
+        `/api/observatory/ftr-daily?days=${days}`, { ftr_daily: [] }
+      ),
+
+    getProjectFtrDaily: (id: string, days = 14) =>
+      get<{ ftr_daily: Array<{ day: string; ftr_rate: number; session_count: number }> }>(
+        `/api/projects/${enc(id)}/ftr-daily?days=${days}`, { ftr_daily: [] }
+      ),
+
+    getProjectHotspots: (id: string, days = 7) =>
+      get<{ hotspots: Array<{ folder: string; file_path: string; edit_count: number; correction_count: number }> }>(
+        `/api/projects/${enc(id)}/hotspots?days=${days}`, { hotspots: [] }
+      ),
+
+    getProjectQualitySignals: (id: string) =>
+      get<{ ftr_7d: number; pattern_compliance: number | null; open_drift_count: number; test_pass_rate: number | null }>(
+        `/api/projects/${enc(id)}/quality-signals`,
+        { ftr_7d: 0, pattern_compliance: null, open_drift_count: 0, test_pass_rate: null }
+      ),
+
+    getProjectTeachings: (id: string, limit = 10) =>
+      get<{ teachings: Array<{ id: string; name: string; family: string | null; instance_count: number; modified_at: string }> }>(
+        `/api/projects/${enc(id)}/teachings?limit=${limit}`, { teachings: [] }
+      ),
+
+    getToolUsage: () =>
+      get<{ tools: Array<{ tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string }> }>(
+        '/api/observatory/tool-usage', { tools: [] }
+      ),
+
+    getLibraryUsage: (id: string) =>
+      get<{ usage: Array<{ library_name: string; folder: string; version_used: string | null; import_count: number }> }>(
+        `/api/libs/${enc(id)}/usage`, { usage: [] }
+      ),
+
     // ── Indexing ─────────────────────────────────────────────────────────
     indexRepo: (repoId: string, repoPath: string, force = false) =>
       post<{ ok: boolean; queued: boolean; taskId: number }>(
