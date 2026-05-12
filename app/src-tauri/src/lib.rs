@@ -38,11 +38,11 @@ pub fn run() {
         ])
         .setup(|app| {
             // ── Startup banner ────────────────────────────────────────────
+            let cfg = sensei_bootstrap::SenseiConfig::from_env();
             flog::log(&format!(
-                "=== Sensei.app starting v={} SENSEI_MODE={:?} SENSEI_DB_NAME={:?} ===",
+                "=== Sensei.app starting v={} mode={:?} db={} port={} ===",
                 app.package_info().version,
-                std::env::var("SENSEI_MODE").unwrap_or_default(),
-                std::env::var("SENSEI_DB_NAME").unwrap_or_default(),
+                cfg.mode, cfg.db_name, cfg.daemon_port,
             ));
 
             // ── Vibrancy ──────────────────────────────────────────────────
