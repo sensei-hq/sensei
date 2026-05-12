@@ -35,12 +35,12 @@
 
 VERSION := $(shell cat VERSION)
 
-# Load dev environment from .env.dev (DATABASE_URL, SENSEI_MODE, VITE_BYPASS_HEALTH)
-ifeq (,$(wildcard .env.dev))
-  $(error .env.dev not found — create it with DATABASE_URL, SENSEI_MODE, and VITE_BYPASS_HEALTH)
+# Load dev environment from .env.dev (VITE_BYPASS_HEALTH for frontend-only dev)
+# Mode (dev/prod) is compile-time via --features dev, not env vars.
+ifneq (,$(wildcard .env.dev))
+  include .env.dev
+  export VITE_BYPASS_HEALTH
 endif
-include .env.dev
-export DATABASE_URL SENSEI_MODE VITE_BYPASS_HEALTH
 
 # ── Rust crates ───────────────────────────────────────────────────────────────
 
