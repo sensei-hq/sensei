@@ -1,5 +1,8 @@
 # Tauri Desktop E2E Tests — Design Spec
 
+> **Note (2026-05-12):** References to `SENSEI_MODE=dev` env var are outdated.
+> Mode is now compile-time via `--features dev` Cargo flag. See `docs/design/daemon/debug-vs-release.md`.
+
 ## Goal
 
 Replace all browser-mode (mocked IPC) E2E tests with full Tauri desktop tests that run against the real compiled app using the `sensei-dev` database.

@@ -59,21 +59,18 @@ export default async function globalSetup(): Promise<void> {
     throw new Error('$HOME is not set — cannot resolve senseid symlink path');
   }
 
-  // 1. Build senseid daemon (debug)
-  console.log('[globalSetup] Building senseid...');
-  execFileSync('cargo', ['build', '-p', 'senseid'], {
+  // 1. Build senseid daemon (debug + dev feature for compile-time mode)
+  console.log('[globalSetup] Building senseid (--features dev)...');
+  execFileSync('cargo', ['build', '--features', 'dev', '-p', 'senseid'], {
     cwd: DAEMON_REPO,
     stdio: 'inherit',
   });
 
-  // 2. Build Sensei.app (debug + e2e-testing feature)
-  // VITE_SENSEI_MODE=dev is baked in at build time — the health page reads it to
-  // suppress auto-advance so E2E tests can observe gate states before navigating.
-  console.log('[globalSetup] Building Sensei.app...');
-  execFileSync('cargo', ['tauri', 'build', '--debug', '--features', 'e2e-testing'], {
+  // 2. Build Sensei.app (debug + dev + e2e-testing features)
+  console.log('[globalSetup] Building Sensei.app (--features dev,e2e-testing)...');
+  execFileSync('cargo', ['tauri', 'build', '--debug', '--features', 'dev,e2e-testing'], {
     cwd: join(APP_REPO, 'src-tauri'),
     stdio: 'inherit',
-    env: { ...process.env, VITE_SENSEI_MODE: 'dev' },
   });
 
   // 3. Stop any running senseid before swapping symlink
@@ -86,15 +83,12 @@ export default async function globalSetup(): Promise<void> {
   // 4. Swap symlink to debug binary
   swapSymlink(SENSEID_DEBUG, SYMLINK);
 
-  // 5. Launch Sensei.app with dev env vars
+  // 5. Launch Sensei.app — mode is compile-time (--features dev).
+  //    SENSEI_DB_SCHEMA_PATH lets bootstrap use local DDL instead of GitHub download.
   console.log('[globalSetup] Launching Sensei.app...');
   const proc = spawn(APP_BINARY, [], {
     env: {
       ...process.env,
-      SENSEI_MODE: 'dev',
-      SENSEI_DB_NAME: DB_NAME,
-      // Local schema path so deploy() in bootstrap uses checked-out DDL (not GitHub download).
-      // Must point to the directory containing design.yaml (not the ddl/ subdirectory).
       SENSEI_DB_SCHEMA_PATH: join(DAEMON_REPO, 'database'),
     },
     detached: true,
