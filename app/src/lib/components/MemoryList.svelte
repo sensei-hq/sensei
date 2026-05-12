@@ -53,7 +53,7 @@
         <p class="text-ui text-surface-z6">Loading...</p>
     {:else if memories.length === 0}
         <EmptyState
-            kanji="\u5B78"
+            kanji="學"
             title="Nothing learned yet."
             description="As you work with your assistants, sensei observes corrections and patterns. Learnings appear here once sensei has enough evidence to teach."
         />

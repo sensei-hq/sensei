@@ -82,8 +82,6 @@ export function reroute({ url }: { url: URL }): string | undefined {
     return '/setup/welcome';
   }
 
-  // Both gates passed — route root to the main view, allow all else
-  if (path === '/') return '/observatory';
-
+  // Both gates passed — '/' is the observatory (lives in (observatory)/+page.svelte)
   return undefined;
 }
