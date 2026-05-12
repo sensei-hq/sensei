@@ -94,4 +94,4 @@ Session traces are accessible from the observatory's session detail view. They'r
 
 ## Reference
 
-- Implementation details: `design/07-logging.md`
+- Implementation details: [design/07-logging.md](../design/07-logging.md)

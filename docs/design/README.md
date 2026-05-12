@@ -220,7 +220,7 @@ Gaps identified during design doc writing.
 |-----|--------|-------------|--------|
 | G1 | Observatory | No daemon API endpoints designed for observatory screens (metrics, teachings, memory) | Observatory UI |
 | G2 | Setup | Inference + Assignments wizard steps blocked on gateway integration | Setup completion |
-| G3 | Memory | Memory consolidation described in ideas/03 but daemon implementation not designed | Observatory coaching |
+| G3 | Memory | Memory consolidation described in [ideas/03](../ideas/03-observatory.md) but daemon implementation not designed | Observatory coaching |
 | G4 | MCP | Multi-coordinator adapter implementations not designed beyond Claude Code | Cursor/Zed support |
 | G5 | App | Desktop app distribution mechanism undefined (macOS DMG? Cask only?) | Release process |
 | G6 | Website | Architecture diagram needs update from old D3 version (referenced deprecated tech) | Website accuracy |

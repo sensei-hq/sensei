@@ -8,7 +8,7 @@ Every screen connects to one of three quality signals: FTR (first-time-right rat
 
 The app contains zero business logic. All data comes from the daemon HTTP API (`senseid` on port 7744 release / 7745 dev). The app renders, navigates, and dispatches user intent -- nothing more.
 
-See ideas/01 (Bootstrap), ideas/02 (Setup), ideas/03 (Observatory), ideas/04 (Project), ideas/05 (Gateway), ideas/06 (Logging) for the "what."
+See [ideas/01-bootstrap](../ideas/01-bootstrap.md), [ideas/02-setup](../ideas/02-setup.md), [ideas/03-observatory](../ideas/03-observatory.md), [ideas/04-project](../ideas/04-project.md), [ideas/05-gateway](../ideas/05-gateway.md), [ideas/06-logging](../ideas/06-logging.md) for the "what."
 
 ---
 
@@ -53,7 +53,7 @@ On app launch, the sidecar checks whether the daemon is reachable:
 
 1. `GET http://127.0.0.1:{port}/health` -- fast path if daemon is already running.
 2. If unreachable, invoke `run_bootstrap()` which runs the six-gate check sequence.
-3. If all prerequisites pass, `start_services()` spawns the daemon: `senseid start --port 7744|7745`.
+3. If all prerequisites pass, `start_services()` spawns the daemon: `senseid start --port 7744` in dev mode:`senseid-dev start --port 7745` ).
 4. The daemon daemonizes (spawns itself, parent exits).
 
 ### Health poll
