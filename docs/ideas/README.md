@@ -11,11 +11,11 @@ Sensei is a developer tool that observes AI-assisted coding sessions, learns pat
 | # | Module | Purpose |
 |---|--------|---------|
 | [01](./01-bootstrap.md) | **Bootstrap** | Get running: install dependencies, verify health, handle upgrades |
-| 02 | **Setup** | Configure your workspace: 10-step wizard from welcome to done |
-| 03 | **Observatory** | Observe, measure, learn: daily dashboard, sessions, coaching, memory |
-| 04 | **Project** | Understand and work with your code: intelligence, patterns, search, traceability |
-| 05 | **Gateway** | Inference routing: model config, budget, providers, consensus |
-| 06 | **Logging** | Diagnostics: log viewer, debug mode, issue submission |
+| [02](./02-setup.md) | **Setup** | Configure your workspace: 10-step wizard from welcome to done |
+| [03](./03-observatory.md) | **Observatory** | Observe, measure, learn: daily dashboard, sessions, coaching, memory |
+| [04](./04-project.md) | **Project** | Understand and work with your code: intelligence, patterns, search, traceability |
+| [05](./05-gateway.md) | **Gateway** | Inference routing: model config, budget, providers, consensus |
+| [06](./06-logging.md) | **Logging** | Diagnostics: log viewer, debug mode, issue submission |
 
 ---
 
