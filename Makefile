@@ -13,7 +13,7 @@
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
-##   `make bump v=0.3.0` updates VERSION + all manifests, commits, tags, and pushes.
+##   `make bump v=patch|minor|major|0.3.0` updates VERSION + all manifests, commits, tags, and pushes.
 ##   The tag push triggers GitHub Actions which build release artifacts and
 ##   update the Homebrew tap SHA256s automatically.
 ##
@@ -170,35 +170,64 @@ update:
 	@echo "Review: git diff Cargo.lock app/bun.lock website/bun.lock"
 
 # ── Version bump ──────────────────────────────────────────────────────────────
-# Usage: make bump v=0.3.0
+# Usage:
+#   make bump v=patch       — 0.2.13 → 0.2.14
+#   make bump v=minor       — 0.2.13 → 0.3.0
+#   make bump v=major       — 0.2.13 → 1.0.0
+#   make bump v=0.5.0       — explicit version
 #
+# Safety: aborts if the target tag already exists (prevents duplicate bumps).
 # Updates all version strings, commits, creates a git tag, pushes the commit
 # and tag (which triggers the GitHub Actions release workflows), then syncs
 # the updated Homebrew formula version to the tap and marketplace.
 # GitHub Actions will fill in the real SHA256s once artifacts are built.
 
 bump:
-	@if [ -z "$(v)" ]; then echo "Usage: make bump v=<version>"; exit 1; fi
-	@echo "$(v)" > VERSION
+	@if [ -z "$(v)" ]; then echo "Usage: make bump v=patch|minor|major|<version>"; exit 1; fi
+	$(eval _v := $(shell \
+	  cur=$$(cat VERSION); \
+	  if [ "$(v)" = "patch" ]; then echo "$$cur" | awk -F. '{printf "%s.%s.%s", $$1, $$2, $$3+1}'; \
+	  elif [ "$(v)" = "minor" ]; then echo "$$cur" | awk -F. '{printf "%s.%s.0", $$1, $$2+1}'; \
+	  elif [ "$(v)" = "major" ]; then echo "$$cur" | awk -F. '{printf "%s.0.0", $$1+1}'; \
+	  else echo "$(v)"; \
+	  fi))
+	@# Safety: block if tag already exists
+	@if git tag -l "v$(_v)" | grep -q .; then \
+	  echo "Error: tag v$(_v) already exists. Current VERSION is $$(cat VERSION)."; \
+	  echo "Did you mean: make bump v=patch ?"; \
+	  exit 1; \
+	fi
+	@# Safety: block version downgrades
+	@cur=$$(cat VERSION); \
+	if [ "$$(printf '%s\n%s' "$$cur" "$(_v)" | sort -V | tail -1)" = "$$cur" ] && [ "$$cur" != "$(_v)" ]; then \
+	  echo "Error: cannot bump down ($$cur → $(_v))"; \
+	  exit 1; \
+	fi; \
+	if [ "$$cur" = "$(_v)" ]; then \
+	  echo "Error: $(_v) is already the current version"; \
+	  exit 1; \
+	fi
+	@echo "Bumping $$(cat VERSION) → $(_v)"
+	@echo "$(_v)" > VERSION
 	@# Node manifests
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/package.json
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' website/package.json
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/package.json
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' website/package.json
 	@# Tauri app manifest + Cargo.toml
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' app/src-tauri/tauri.conf.json
-	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" app/src-tauri/Cargo.toml
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/src-tauri/tauri.conf.json
+	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" app/src-tauri/Cargo.toml
 	@# Rust crates
 	@for crate in senseid cli mcp gateway bootstrap; do \
 	  f="crates/$$crate/Cargo.toml"; \
-	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(v)\"/" "$$f"; \
+	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" "$$f"; \
 	done
 	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
-	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Formula/sensei.rb
-	@sed -i '' "s/version \"[^\"]*\"/version \"$(v)\"/" homebrew/Casks/senseihq.rb
+	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Formula/sensei.rb
+	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Casks/senseihq.rb
 	@# Marketplace
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/package.json
-	@sed -i '' 's/"version": "[^"]*"/"version": "$(v)"/' marketplace/catalog.json
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/package.json
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/catalog.json
 	@# Website footer version
-	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(v)<\/div>/' website/src/routes/+page.svelte
+	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(_v)<\/div>/' website/src/routes/+page.svelte
 	@# Commit everything
 	@git add VERSION \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
@@ -206,11 +235,11 @@ bump:
 	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml crates/gateway/Cargo.toml crates/bootstrap/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \
 	  marketplace/package.json marketplace/catalog.json
-	@git commit -m "chore: bump to v$(v)"
-	@git tag v$(v)
+	@git commit -m "chore: bump to v$(_v)"
+	@git tag v$(_v)
 	@git push origin HEAD
-	@git push origin v$(v)
-	@echo "Pushed v$(v) — GitHub Actions will build release artifacts and update tap SHA256s"
+	@git push origin v$(_v)
+	@echo "Pushed v$(_v) — GitHub Actions will build release artifacts and update tap SHA256s"
 	@echo "Syncing homebrew-tap and marketplace..."
 	@$(MAKE) tap-push marketplace-push
 
