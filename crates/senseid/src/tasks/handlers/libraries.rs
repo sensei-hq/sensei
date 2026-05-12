@@ -92,7 +92,15 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
         }
 
-    tracing::info!("resolve_libs: {} — {} external libs detected", folder_name, libs.len());
+    // Enqueue ExtractDeps to parse manifest files and populate referenced_libraries
+    let extract_task = super::super::Task::new(
+        super::super::TaskKind::ExtractDeps,
+        &task.folder_path,
+        &task.folder_path,
+    ).with_parent(task.id);
+    ctx.queue.enqueue(extract_task).await;
+
+    tracing::info!("resolve_libs: {} — {} external libs detected, enqueued ExtractDeps", folder_name, libs.len());
     Ok(libs.len() as u32)
 }
 
