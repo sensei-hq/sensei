@@ -5,6 +5,10 @@ select n.id
      , n.folder_id
      , f.name            as folder
      , f.project_id
+     , p.name            as project
+     , p.maturity        as project_maturity
+     , f.status          as folder_status
+     , f.kind            as folder_kind
      , n.parent_id
      , n.kind
      , n.name
@@ -21,16 +25,17 @@ select n.id
      , n.props
      , n.modified_at
   from nodes n
-  join folders f on f.id = n.folder_id
+  join folders  f on f.id = n.folder_id
+  left join projects p on p.id = f.project_id
  where n.kind not in ('file', 'section', 'rationale');
 
 comment on view symbols is
 'Flattened code symbols (functions, classes, types, etc.) with folder and project context.
 Excludes file nodes, doc sections, and rationale comments.
-Use for: symbol search, callers/callees lookup, function/type listings.
+
+Filter/group dimensions: project, project_maturity, folder, folder_status, kind, is_exported, tags.
 
 Common queries:
-  -- Find a function by name in a folder
   SELECT * FROM symbols WHERE folder = ''myrepo'' AND name ILIKE ''%auth%'' AND kind = ''function''
-  -- All exported types in a project
-  SELECT * FROM symbols WHERE project_id = $1 AND kind IN (''class'',''interface'',''type'') AND is_exported';
+  SELECT kind::text, count(*) FROM symbols WHERE project = ''sensei'' GROUP BY kind
+  SELECT folder, count(*) FROM symbols WHERE project_maturity = ''active'' GROUP BY folder';
