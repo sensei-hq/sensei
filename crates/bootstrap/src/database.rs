@@ -2,7 +2,9 @@
 //! Uses shell commands (pg_isready, psql), NOT sqlx — no database driver dependency.
 //!
 //! All mode-sensitive values (DB name, deploy environment) derive from
-//! [`crate::config::SenseiConfig`] — the single source of truth.
+//! [`crate::config::SenseiConfig`] — compile-time via the `dev` Cargo feature.
+
+use crate::config::COMPILE_DEV;
 
 use std::process::Command;
 
@@ -154,11 +156,10 @@ pub fn ensure_extensions() -> Result<ComponentStatus, String> {
 
 /// Deploy the schema using dbd-core.
 ///
-/// Schema source priority:
-///   1. `SENSEI_DB_SCHEMA_PATH` env var — local directory path (dev/test override)
-///   2. `sensei-hq/sensei/database@v{app_version}` — GitHub download (production)
+/// Schema source: GitHub download at the matching release tag.
+/// In dev builds with `SENSEI_DB_SCHEMA_PATH` set, uses local directory instead.
 ///
-/// Deploy environment (dev | prod) is derived from [`SenseiConfig`].
+/// Target database is derived from [`SenseiConfig`] (compile-time).
 ///
 /// Idempotent: dbd checks `_dbd_meta` internally and only applies pending changes.
 /// Requires a running PostgreSQL server and a reachable `{db_name}` database.
@@ -176,10 +177,9 @@ pub fn deploy(app_version: &str) -> Result<ComponentStatus, String> {
         current_v.map_or_else(|| "none".to_string(), |v| v.to_string()),
     );
 
-    // Resolve schema source: local override wins over GitHub
     let source = SenseiConfig::db_schema_source(app_version);
-    if std::env::var("SENSEI_DB_SCHEMA_PATH").is_ok() {
-        eprintln!("[dbd] deploy: using local schema path: {source}");
+    if COMPILE_DEV {
+        eprintln!("[dbd] deploy: dev build — schema source: {source}");
     }
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn db_name_returns_non_empty() {
-        // Returns SENSEI_DB_NAME if set, otherwise "sensei". Either is valid.
+        // Returns compile-time db name: "sensei_dev" (--features dev) or "sensei".
         assert!(!db_name().is_empty());
     }
 
@@ -336,8 +336,9 @@ mod tests {
         // Verify the source format we construct is valid per dbd-core's parser
         let version = "1.2.3";
         let source = SenseiConfig::db_schema_source(version);
-        // SENSEI_DB_SCHEMA_PATH is not set in unit tests → should use GitHub format
-        if std::env::var("SENSEI_DB_SCHEMA_PATH").is_err() {
+        // In prod builds (no dev feature), schema source is always GitHub.
+        // In dev builds, it may use SENSEI_DB_SCHEMA_PATH if set (Tauri sidecar).
+        if !COMPILE_DEV || std::env::var("SENSEI_DB_SCHEMA_PATH").is_err() {
             let parsed = dbd_core::github::parse_github_source(&source).unwrap();
             assert_eq!(parsed.owner, "sensei-hq");
             assert_eq!(parsed.repo, "sensei");
@@ -348,7 +349,7 @@ mod tests {
 
     #[test]
     fn deploy_db_url_format() {
-        // Verify the DATABASE_URL we construct has the right format
+        // Verify the db_url we construct has the right format
         let db = "sensei-test-deploy-url";
         let url = format!("postgres://localhost/{db}");
         assert!(url.starts_with("postgres://localhost/"));

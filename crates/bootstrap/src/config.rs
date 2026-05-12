@@ -44,22 +44,15 @@ pub const HOMEBREW_TAP_URL: &str = "https://github.com/sensei-hq/homebrew-tap";
 
 // ── Service ports ─────────────────────────────────────────────────────────────
 
-/// True when the current executable's filename ends with `-dev` (e.g. `senseid-dev`, `sensei-dev`).
-///
-/// Call once at binary startup to detect dev mode from binary name, before env-var
-/// detection runs. Both `senseid` and `sensei` CLI use this — do not duplicate the logic.
-pub fn binary_is_dev() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .map(|name| name.ends_with("-dev"))
-        .unwrap_or(false)
-}
+/// Compile-time mode flag. Set by the `dev` Cargo feature.
+/// `true` when built with `cargo build --features dev`.
+#[cfg(feature = "dev")]
+pub const COMPILE_DEV: bool = true;
+#[cfg(not(feature = "dev"))]
+pub const COMPILE_DEV: bool = false;
 
-/// Default daemon port (production).
-/// **Do not use directly.** Always use `SenseiConfig::from_env().daemon_port` —
-/// this constant is 7744 (prod only) and will be wrong in dev mode.
-const DAEMON_PORT: u16 = 7744;
+/// Default daemon port — derived at compile time from the `dev` feature.
+const DAEMON_PORT: u16 = if COMPILE_DEV { 7745 } else { 7744 };
 
 /// Default Ollama port.
 pub const OLLAMA_PORT: u16 = 11434;
@@ -90,17 +83,14 @@ pub const DB_POOL_IDLE_TIMEOUT_SECS: u64 = 300;
 pub enum SenseiMode {
     /// Production mode: port 7744, `sensei` DB, `~/.sensei/`
     Prod,
-    /// Development / E2E mode: port 7745, `sensei_dev` DB (or `SENSEI_DB_NAME`), `~/.sensei-dev/`
+    /// Development / E2E mode: port 7745, `sensei_dev` DB, `~/.sensei-dev/`
     Dev,
 }
 
 impl SenseiMode {
-    /// Detect mode from `SENSEI_MODE` env var. Defaults to `Prod`.
+    /// Compile-time mode. Determined by the `dev` Cargo feature — not env vars.
     pub fn from_env() -> Self {
-        match std::env::var("SENSEI_MODE").as_deref() {
-            Ok("dev" | "development" | "test") => SenseiMode::Dev,
-            _ => SenseiMode::Prod,
-        }
+        if COMPILE_DEV { SenseiMode::Dev } else { SenseiMode::Prod }
     }
 
     pub fn is_dev(self) -> bool {
@@ -108,74 +98,40 @@ impl SenseiMode {
     }
 }
 
-/// Runtime configuration for all sensei components.
+/// Compile-time configuration for all sensei components.
 ///
-/// Derived once from environment variables. Callers own the lifetime — cache
-/// with `once_cell` / `OnceLock` if you need a global singleton.
+/// All values are determined by the `dev` Cargo feature at build time.
+/// No runtime env var overrides.
 ///
-/// ## Env-var priority (highest wins)
-///
-/// | Value     | Priority 1        | Priority 2         | Priority 3 |
-/// |-----------|-------------------|--------------------|------------|
-/// | `db_url`  | `DATABASE_URL`    | derived from name  | —          |
-/// | `db_name` | `SENSEI_DB_NAME`  | mode default       | —          |
-/// | `port`    | *(no override)*   | mode default       | —          |
-/// | `mode`    | `SENSEI_MODE`     | Prod               | —          |
+/// | Feature       | Port  | Database     | Directory       |
+/// |---------------|-------|-------------|-----------------|
+/// | `--features dev` | 7745  | `sensei_dev` | `~/.sensei-dev/` |
+/// | *(default)*   | 7744  | `sensei`     | `~/.sensei/`    |
 #[derive(Debug, Clone)]
 pub struct SenseiConfig {
-    /// Current runtime mode.
     pub mode: SenseiMode,
-    /// Daemon HTTP port (7744 prod / 7745 dev).
     pub daemon_port: u16,
-    /// Active database name (`sensei`, `sensei_dev`, `sensei-dev`, …).
     pub db_name: String,
-    /// Full PostgreSQL connection URL.
-    /// Use this everywhere — never hard-code a URL.
     pub db_url: String,
-    /// Sensei data directory suffix (`.sensei` / `.sensei-dev`).
     pub dir_suffix: &'static str,
 }
 
 impl SenseiConfig {
-    /// Build configuration from a known mode (env-var overrides for DB name/URL still apply).
-    fn for_mode(mode: SenseiMode) -> Self {
-        let daemon_port = match mode {
-            SenseiMode::Dev  => DAEMON_PORT + 1,
-            SenseiMode::Prod => DAEMON_PORT,
-        };
-        let db_name = std::env::var("SENSEI_DB_NAME").unwrap_or_else(|_| {
-            match mode {
-                SenseiMode::Dev  => "sensei_dev".to_string(),
-                SenseiMode::Prod => "sensei".to_string(),
-            }
-        });
-        let db_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}"));
-        let dir_suffix = match mode {
-            SenseiMode::Dev  => ".sensei-dev",
-            SenseiMode::Prod => ".sensei",
-        };
+    /// Build configuration. All values derived from the compile-time `dev` Cargo feature.
+    /// No runtime env var overrides — what you compiled is what you get.
+    pub fn from_env() -> Self {
+        let mode = SenseiMode::from_env();
+        let daemon_port = DAEMON_PORT;
+        let db_name = if COMPILE_DEV { "sensei_dev".to_string() } else { "sensei".to_string() };
+        let db_url = format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}");
+        let dir_suffix = if COMPILE_DEV { ".sensei-dev" } else { ".sensei" };
         Self { mode, daemon_port, db_name, db_url, dir_suffix }
     }
 
-    /// Build configuration from environment variables only (`SENSEI_MODE`, `DATABASE_URL`, etc.).
-    pub fn from_env() -> Self {
-        Self::for_mode(SenseiMode::from_env())
-    }
-
-    /// Build configuration detecting mode from binary name first, then env var.
-    ///
-    /// Priority: `SENSEI_MODE` env var (if set) > binary name ending in `-dev` > Prod.
-    /// Use this in CLI / daemon entrypoints that detect mode at startup.
+    /// Alias for `from_env()`.
+    #[deprecated(note = "Use from_env() — mode is compile-time via Cargo features")]
     pub fn detect() -> Self {
-        let mode = if std::env::var("SENSEI_MODE").is_ok() {
-            SenseiMode::from_env()
-        } else if binary_is_dev() {
-            SenseiMode::Dev
-        } else {
-            SenseiMode::Prod
-        };
-        Self::for_mode(mode)
+        Self::from_env()
     }
 
     /// Daemon base URL derived from the configured port.
@@ -226,14 +182,20 @@ impl SenseiConfig {
     /// Resolve the database schema source for dbd-core's `resolve_source()`.
     ///
     /// Priority:
-    ///   1. `SENSEI_DB_SCHEMA_PATH` env var — local directory path (dev/test override).
-    ///      Must point to the directory containing `design.yaml`.
-    ///   2. GitHub path: `{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}` (production).
+    /// Schema source for database deployment.
+    /// Dev builds: local `database/` directory via `SENSEI_DB_SCHEMA_PATH` if set.
+    /// Prod builds: GitHub download at matching release tag.
     pub fn db_schema_source(version: &str) -> String {
-        std::env::var("SENSEI_DB_SCHEMA_PATH")
-            .ok()
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}"))
+        // Dev builds always look for a local schema path first.
+        // The Tauri sidecar sets SENSEI_DB_SCHEMA_PATH; standalone daemon does not.
+        if COMPILE_DEV {
+            if let Ok(path) = std::env::var("SENSEI_DB_SCHEMA_PATH") {
+                if !path.is_empty() {
+                    return path;
+                }
+            }
+        }
+        format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
     }
 }
 
@@ -294,39 +256,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_mode_is_prod() {
-        // This test assumes SENSEI_MODE is not set in the test environment.
-        // If it is, the test is a no-op (we just verify it doesn't panic).
+    fn mode_matches_compile_flag() {
         let cfg = SenseiConfig::from_env();
-        assert!(matches!(cfg.mode, SenseiMode::Prod | SenseiMode::Dev));
-    }
-
-    #[test]
-    fn prod_defaults() {
-        // Only valid if SENSEI_MODE is unset and DATABASE_URL / SENSEI_DB_NAME unset.
-        // Use a subprocess or env-isolation crate for hermetic tests.
-        // This just verifies the struct is well-formed.
-        let cfg = SenseiConfig::from_env();
-        assert!(cfg.daemon_port == 7744 || cfg.daemon_port == 7745);
-        assert!(!cfg.db_name.is_empty());
-        assert!(cfg.db_url.starts_with("postgresql://"));
+        if COMPILE_DEV {
+            assert_eq!(cfg.mode, SenseiMode::Dev);
+            assert_eq!(cfg.daemon_port, 7745);
+            assert_eq!(cfg.db_name, "sensei_dev");
+            assert_eq!(cfg.dir_suffix, ".sensei-dev");
+        } else {
+            assert_eq!(cfg.mode, SenseiMode::Prod);
+            assert_eq!(cfg.daemon_port, 7744);
+            assert_eq!(cfg.db_name, "sensei");
+            assert_eq!(cfg.dir_suffix, ".sensei");
+        }
     }
 
     #[test]
     fn db_url_contains_db_name() {
         let cfg = SenseiConfig::from_env();
-        // DATABASE_URL may override, but if not set the URL contains db_name
-        if std::env::var("DATABASE_URL").is_err() {
-            assert!(
-                cfg.db_url.contains(&cfg.db_name),
-                "derived URL should contain db_name"
-            );
-        }
+        assert!(cfg.db_url.contains(&cfg.db_name));
     }
 
     #[test]
-    fn sensei_mode_from_env_does_not_panic() {
-        let _ = SenseiMode::from_env();
+    fn db_url_is_well_formed() {
+        let cfg = SenseiConfig::from_env();
+        assert!(cfg.db_url.starts_with("postgresql://"));
     }
 
     #[test]
@@ -337,9 +291,14 @@ mod tests {
 
     #[test]
     fn port_constants() {
-        assert_eq!(DAEMON_PORT, 7744);
         assert_eq!(OLLAMA_PORT, 11434);
         assert_eq!(POSTGRES_PORT, 5432);
+        // DAEMON_PORT depends on compile-time feature
+        if COMPILE_DEV {
+            assert_eq!(DAEMON_PORT, 7745);
+        } else {
+            assert_eq!(DAEMON_PORT, 7744);
+        }
     }
 
     #[test]
@@ -350,30 +309,16 @@ mod tests {
     }
 
     #[test]
-    fn binary_names_prod() {
-        let cfg = SenseiConfig {
-            mode: SenseiMode::Prod,
-            daemon_port: 7744,
-            db_name: "sensei".to_string(),
-            db_url: "postgresql://localhost/sensei".to_string(),
-            dir_suffix: ".sensei",
-        };
-        assert_eq!(cfg.sensei_binary(), "sensei");
-        assert_eq!(cfg.senseid_binary(), "senseid");
-        assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp");
-    }
-
-    #[test]
-    fn binary_names_dev() {
-        let cfg = SenseiConfig {
-            mode: SenseiMode::Dev,
-            daemon_port: 7745,
-            db_name: "sensei_dev".to_string(),
-            db_url: "postgresql://localhost/sensei_dev".to_string(),
-            dir_suffix: ".sensei-dev",
-        };
-        assert_eq!(cfg.sensei_binary(), "sensei-dev");
-        assert_eq!(cfg.senseid_binary(), "senseid-dev");
-        assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp-dev");
+    fn binary_names_match_mode() {
+        let cfg = SenseiConfig::from_env();
+        if COMPILE_DEV {
+            assert_eq!(cfg.sensei_binary(), "sensei-dev");
+            assert_eq!(cfg.senseid_binary(), "senseid-dev");
+            assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp-dev");
+        } else {
+            assert_eq!(cfg.sensei_binary(), "sensei");
+            assert_eq!(cfg.senseid_binary(), "senseid");
+            assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp");
+        }
     }
 }
