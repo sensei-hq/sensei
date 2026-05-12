@@ -24,11 +24,15 @@ select e.id              as edge_id
      , tgt.is_exported   as target_exported
      , e.target_name     as unresolved_target
      , e.props
-  from edges e
-  join folders  f   on f.id = e.folder_id
-  left join projects p on p.id = f.project_id
-  join nodes   src  on src.id = e.source_id
-  left join nodes tgt on tgt.id = e.target_id;
+  from edges         e
+  join folders       f
+    on f.id          = e.folder_id
+  left join projects p
+    on p.id          = f.project_id
+  join nodes         src
+    on src.id        = e.source_id
+  left join nodes    tgt
+    on tgt.id        = e.target_id;
 
 comment on view call_graph is
 'Resolved and unresolved edges with source/target symbol details and project context.

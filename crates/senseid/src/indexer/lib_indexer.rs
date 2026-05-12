@@ -5,9 +5,7 @@ pub async fn fetch_lib_url(url: &str) -> Result<String, String> {
 }
 
 /// Index pre-fetched library content (sync part — safe to hold mutex).
-#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 pub fn index_lib_content(
-
     lib_name: &str,
     url: &str,
     content: &str,
@@ -106,7 +104,6 @@ pub fn extract_dep_versions(
     Ok(deps)
 }
 
-#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LibIndexResult {
     pub lib_name: String,
@@ -115,7 +112,6 @@ pub struct LibIndexResult {
     pub version: Option<String>,
 }
 
-#[allow(dead_code)] // TODO: wire up dep version extraction
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DepVersion {
     pub lib_name: String,
@@ -125,7 +121,7 @@ pub struct DepVersion {
     pub dev: bool,
 }
 
-#[allow(dead_code)] // TODO: wire up lib doc storage
+#[allow(dead_code)] // planned: full lib doc API response type
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LibDoc {
     pub id: String,
@@ -138,12 +134,11 @@ pub struct LibDoc {
     pub indexed_at: String,
 }
 
-#[allow(dead_code)] // used by index_lib_content pipeline
-struct ParsedDoc {
-    title: String,
-    summary: String,
-    content: String,
-    component: Option<String>,
+pub struct ParsedDoc {
+    pub title: String,
+    pub summary: String,
+    pub content: String,
+    pub component: Option<String>,
 }
 
 /// Fetch a URL. Public so MCP handler can use it.
@@ -173,8 +168,7 @@ async fn fetch_url(url: &str) -> Result<String, String> {
     resp.text().await.map_err(|e| format!("Read body: {}", e))
 }
 
-#[allow(dead_code)] // TODO: wire up lib indexing pipeline
-fn detect_source_type(url: &str, content: &str) -> String {
+pub fn detect_source_type(url: &str, content: &str) -> String {
     if url.ends_with("llms.txt") || url.ends_with("llms-full.txt") {
         return "llms-txt".into();
     }
@@ -187,8 +181,16 @@ fn detect_source_type(url: &str, content: &str) -> String {
     "text".into()
 }
 
+/// Parse content into documentation sections, auto-detecting format.
+pub fn parse_docs(content: &str, lib_name: &str, url: &str) -> Vec<ParsedDoc> {
+    let source_type = detect_source_type(url, content);
+    match source_type.as_str() {
+        "llms-txt" => parse_llms_txt(content, lib_name),
+        _ => parse_markdown(content, lib_name, url),
+    }
+}
+
 /// Parse llms.txt format — sections delimited by `# heading` with content.
-#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
     let mut docs = Vec::new();
     let mut current_title = String::new();
@@ -252,7 +254,6 @@ fn parse_llms_txt(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
     docs
 }
 
-#[allow(dead_code)] // TODO: wire up lib indexing pipeline
 fn parse_markdown(content: &str, lib_name: &str, _url: &str) -> Vec<ParsedDoc> {
     // Same as llms_txt for now — split by headings
     parse_llms_txt(content, lib_name)

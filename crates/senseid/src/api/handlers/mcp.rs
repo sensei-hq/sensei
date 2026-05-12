@@ -139,58 +139,44 @@ pub(crate) async fn mcp_call_tool(
             if name.is_empty() {
                 serde_json::json!({"error": "name required"})
             } else {
-                // Try explicit URL first, then auto-discover
-                let urls_to_try: Vec<String> = if !explicit_url.is_empty() {
-                    vec![explicit_url.to_string()]
-                } else {
-                    // Common llms.txt URL patterns
-                    let clean = name.trim_start_matches('@').replace('/', "-");
-                    vec![
-                        format!("https://{}.com/llms.txt", clean),
-                        format!("https://{}.dev/llms.txt", clean),
-                        format!("https://{}.com/llms-full.txt", clean),
-                        format!("https://{}.io/llms.txt", clean),
-                        format!("https://www.{}.com/llms.txt", clean),
-                        format!("https://raw.githubusercontent.com/{name}/main/llms.txt"),
-                        format!("https://raw.githubusercontent.com/{name}/master/README.md"),
-                    ]
-                };
+                // Discover a working URL first (quick probes)
+                let discovered_url = discover_lib_url(name, explicit_url).await;
 
-                let mut result_json = serde_json::json!({"error": "Could not find docs. Provide a url parameter."});
-                let mut tried = Vec::new();
+                match discovered_url {
+                    Some(url) => {
+                        // Upsert the library record
+                        match state.pg.upsert_library(name, "npm", version, None, Some("url"), Some(&url)).await {
+                            Ok(lib_id) => {
+                                // Enqueue IndexLibrary task for async doc parsing
+                                let task = crate::tasks::Task::new(
+                                    crate::tasks::TaskKind::IndexLibrary,
+                                    &lib_id.to_string(),
+                                    name,
+                                ).with_url(&url);
+                                let task_id = state.task_queue.enqueue(task).await;
 
-                for url in &urls_to_try {
-                    tried.push(url.clone());
-                    // Short timeout for auto-discovery probing
-                    let timeout = if explicit_url.is_empty() { 5 } else { 15 };
-                    match crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, timeout).await {
-                        Ok(content) if content.len() > 50 => {
-                            match state.pg.upsert_library(name, "npm", version, Some(&content), Some("url"), Some(url)).await {
-                                Ok(lib_id) => {
-                                    result_json = serde_json::json!({
-                                        "ok": true,
-                                        "libName": name,
-                                        "libId": lib_id.to_string(),
-                                        "docsIndexed": 1,
-                                        "sourceType": "url",
-                                        "url": url,
-                                    });
-                                    break;
-                                }
-                                Err(_) => continue,
+                                serde_json::json!({
+                                    "ok": true,
+                                    "libName": name,
+                                    "libId": lib_id.to_string(),
+                                    "taskId": task_id,
+                                    "url": url,
+                                    "status": "indexing",
+                                })
                             }
+                            Err(e) => serde_json::json!({"error": format!("Failed to create library: {}", e)}),
                         }
-                        _ => continue,
+                    }
+                    None => {
+                        let clean = name.trim_start_matches('@').replace('/', "-");
+                        serde_json::json!({
+                            "error": format!(
+                                "Could not find docs for '{}'. Tried common patterns ({}.com, .dev, .io, GitHub). Provide an explicit url.",
+                                name, clean
+                            ),
+                        })
                     }
                 }
-
-                if !result_json["ok"].as_bool().unwrap_or(false) {
-                    result_json = serde_json::json!({
-                        "error": format!("Could not find docs for '{}'. Tried: {}. Provide an explicit url.", name, tried.join(", ")),
-                    });
-                }
-
-                result_json
             }
         }
         "query" => {
@@ -240,4 +226,34 @@ pub(crate) async fn mcp_call_tool(
     };
 
     Ok(Json(result))
+}
+
+/// Probe common URL patterns to find library documentation.
+/// Returns the first URL that responds with content > 50 bytes.
+async fn discover_lib_url(name: &str, explicit_url: &str) -> Option<String> {
+    let urls: Vec<String> = if !explicit_url.is_empty() {
+        vec![explicit_url.to_string()]
+    } else {
+        let clean = name.trim_start_matches('@').replace('/', "-");
+        vec![
+            format!("https://{}.com/llms.txt", clean),
+            format!("https://{}.dev/llms.txt", clean),
+            format!("https://{}.com/llms-full.txt", clean),
+            format!("https://{}.io/llms.txt", clean),
+            format!("https://www.{}.com/llms.txt", clean),
+            format!("https://raw.githubusercontent.com/{name}/main/llms.txt"),
+            format!("https://raw.githubusercontent.com/{name}/master/README.md"),
+        ]
+    };
+
+    let timeout = if explicit_url.is_empty() { 5 } else { 15 };
+
+    for url in &urls {
+        if let Ok(content) = crate::indexer::lib_indexer::fetch_lib_url_with_timeout(url, timeout).await
+            && content.len() > 50 {
+            return Some(url.clone());
+        }
+    }
+
+    None
 }
