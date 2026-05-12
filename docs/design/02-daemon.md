@@ -6,7 +6,7 @@ Rust HTTP server. The core engine of Sensei. Owns the code graph, session store,
 
 Port 7744 (release) / 7745 (dev). Mode is compile-time via Cargo feature flag (`--features dev`), not a runtime environment variable. Dev builds connect to `sensei_dev`, release builds connect to `sensei`.
 
-See ideas/03 (Observatory) and ideas/04 (Project) for the "what." This document covers the "how."
+See [ideas/03-observatory](../ideas/03-observatory.md) and [ideas/04-project](../ideas/04-project.md) for the "what." This document covers the "how."
 
 ---
 

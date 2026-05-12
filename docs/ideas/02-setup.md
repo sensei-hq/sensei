@@ -126,4 +126,4 @@ Every step is revisitable from Settings at any time:
 ## Reference
 
 - Mockups: `mockups/lib/setup-wizard.jsx`, `mockups/lib/wiz-inference.jsx`, `mockups/lib/wiz-assignments.jsx`
-- Design: `design/01-app.md`
+- Design: [design/01-app.md](../design/01-app.md)

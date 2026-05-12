@@ -121,4 +121,4 @@ Settings is where you revisit any configuration made during setup and adjust ong
 ## Reference
 
 - Mockups: `mockups/lib/observatory.jsx`, `mockups/lib/sessions.jsx`, `mockups/lib/sessions-zen.jsx`, `mockups/lib/learnings.jsx`, `mockups/lib/learnings-v2.jsx`
-- Design: `design/01-app.md`, `design/02-daemon.md`
+- Design: [design/01-app.md](../design/01-app.md), [design/02-daemon.md](../design/02-daemon.md)
