@@ -61,7 +61,7 @@
                                           │
                                           ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  PostgreSQL (pgvector + Apache AGE)                                             │
+│  PostgreSQL (pgvector)                                                          │
 │                                                                                 │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌──────────┐ ┌─────────────┐ │
 │  │ gateway (7) │ │ sensei (24) │ │inference (9)│ │activity(6│ │ history (2) │ │
@@ -94,7 +94,7 @@ Sensei has three tiers, with two cross-cutting concerns:
 |------|----------------|------|
 | **User surfaces** | Desktop app, CLI, AI assistants via MCP | Present information, accept commands, deliver context |
 | **Core engine** | Daemon (senseid) — indexing pipeline, intelligence layer, analytics engine, gateway, API surface | Owns all logic: indexing, graph building, pattern detection, event processing, inference routing, context delivery |
-| **Storage** | PostgreSQL with pgvector and Apache AGE | Single source of truth for all state: relational, graph, vector, and queue data |
+| **Storage** | PostgreSQL with pgvector | Single source of truth for all state: relational, vector, and queue data. Graph queries via SQL JOINs on edge tables. |
 
 **Cross-cutting: Gateway** — the inference routing library (`sensei-gateway` crate) lives inside the daemon but serves any component that needs model inference. Routes requests across Ollama (local), Anthropic, OpenAI, and Google based on configurable fallback chains.
 
@@ -109,7 +109,7 @@ Sensei has three tiers, with two cross-cutting concerns:
 | Daemon, MCP server, CLI | **Rust** — Cargo workspace with crates: `senseid`, `mcp`, `cli`, `gateway`, `bootstrap`, `logger`, `sensei-config` |
 | Desktop app | **Tauri** (Rust native shell) + **SvelteKit** (Svelte 5 runes) |
 | Design system | **Rokkit** — custom component library |
-| Database | **PostgreSQL** with **pgvector** (vector similarity) and **Apache AGE** (graph / Cypher queries) |
+| Database | **PostgreSQL** with **pgvector** (vector similarity). Graph queries via relational JOINs on edge tables. |
 | Local inference | **Ollama** — embedding generation, local model inference for indexing and classification |
 | Plugin system | **Claude Code plugin format** — skills, commands, hooks, MCP server registrations |
 | Distribution | **Homebrew** tap (`sensei-hq/homebrew-tap`), desktop installers (DMG/MSI) |
