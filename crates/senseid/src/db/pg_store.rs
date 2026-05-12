@@ -1184,21 +1184,21 @@ impl PgStore {
     // ── Observatory views ──────────────────────────────────────────────
 
     pub async fn get_ftr_daily(&self, project_id: Option<&uuid::Uuid>, days: i32) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(Option<uuid::Uuid>, chrono::NaiveDate, f64, i64)> = if let Some(pid) = project_id {
+        let rows: Vec<(Option<uuid::Uuid>, chrono::NaiveDate, Option<f64>, Option<i64>)> = if let Some(pid) = project_id {
             sqlx_core::query_as::query_as(
-                "SELECT project_id, day, ftr_rate, session_count FROM sensei.ftr_daily
+                "SELECT project_id, day, ftr_rate::float8, session_count::bigint FROM sensei.ftr_daily
                  WHERE project_id = $1 AND day >= (current_date - $2::int)
                  ORDER BY day"
             ).bind(pid).bind(days).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
-                "SELECT NULL::uuid, day, AVG(ftr_rate) as ftr_rate, SUM(session_count) as session_count
+                "SELECT NULL::uuid, day, AVG(ftr_rate)::float8 as ftr_rate, SUM(session_count)::bigint as session_count
                  FROM sensei.ftr_daily WHERE day >= (current_date - $1::int)
                  GROUP BY day ORDER BY day"
             ).bind(days).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         };
         Ok(rows.into_iter().map(|(_, day, ftr, count)| {
-            serde_json::json!({ "day": day.to_string(), "ftr_rate": ftr, "session_count": count })
+            serde_json::json!({ "day": day.to_string(), "ftr_rate": ftr.unwrap_or(0.0), "session_count": count.unwrap_or(0) })
         }).collect())
     }
 
