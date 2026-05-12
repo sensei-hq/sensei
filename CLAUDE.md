@@ -19,7 +19,7 @@
 ## Version
 
 `VERSION` at the repo root is the single source of truth.
-Run `make bump v=X.Y.Z` to update all manifests, commit, tag, push, and sync subtrees.
+Run `make bump v=patch|minor|major|X.Y.Z` to update all manifests, commit, tag, push, and sync subtrees.
 
 ## Common commands
 
@@ -40,7 +40,9 @@ make test
 make test-fast           # no DB required (pre-commit)
 
 # Bump version across all manifests + tag + push
-make bump v=0.3.0
+make bump v=patch        # 0.2.13 → 0.2.14
+make bump v=minor        # 0.2.13 → 0.3.0
+make bump v=0.5.0        # explicit version
 ```
 
 ## Database
