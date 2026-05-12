@@ -68,7 +68,14 @@ pub(crate) async fn update_session_handler(
     let corrections = body["corrections"].as_i64().unwrap_or(0) as i32;
 
     match state.pg.complete_session(&session_id, outcome, ftr, turns, corrections).await {
-        Ok(_) => Json(serde_json::json!({"ok": true})),
+        Ok(_) => {
+            // Fire-and-forget: enqueue verdict measurement after session ends
+            let task = crate::tasks::Task::new(
+                crate::tasks::TaskKind::MeasureVerdicts, "", "",
+            );
+            state.task_queue.enqueue(task).await;
+            Json(serde_json::json!({"ok": true}))
+        }
         Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
     }
 }

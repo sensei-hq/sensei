@@ -6,8 +6,10 @@
     import EmptyState from "$lib/components/EmptyState.svelte";
 
     type Tool = { name: string; description: string; params: string[] };
+    type ToolStat = { tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string };
 
     let tools = $state<Tool[]>([]);
+    let toolStats = $state<ToolStat[]>([]);
     let loading = $state(true);
     let tab = $state("playground");
     let selectedTool = $state<Tool | null>(null);
@@ -23,8 +25,12 @@
 
     onMount(async () => {
         const api = senseiApi(appState.port);
-        const data = await api.mcpListTools();
+        const [data, stats] = await Promise.all([
+            api.mcpListTools(),
+            api.getToolUsage(),
+        ]);
         tools = data.tools;
+        toolStats = stats.tools ?? [];
         loading = false;
     });
 
@@ -151,13 +157,48 @@
             description="Tool calls from your assistant sessions will appear here. Each call shows the tool, arguments, response, and whether the assistant used the result."
         />
     {:else}
-        <EmptyState
-            kanji="照"
-            title="Tool insights"
-            description="Aggregated usage and effectiveness metrics across sessions. Which tools are used most, which responses get ignored, and where tool usage correlates with FTR."
-        />
+        {@render ToolInsights()}
     {/if}
 </div>
+
+{#snippet ToolInsights()}
+    {#if toolStats.length === 0}
+        <EmptyState
+            kanji="照"
+            title="No tool usage data yet"
+            description="Tool usage statistics appear after your assistant sessions call sensei tools. Start a session to begin tracking."
+        />
+    {:else}
+        <div class="flex flex-col gap-1">
+            <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-2xs text-surface-z6 tracking-loose uppercase">
+                <span>Tool</span>
+                <span class="text-right">Calls</span>
+                <span class="text-right">Errors</span>
+                <span class="text-right">Avg ms</span>
+                <span class="text-right">Last used</span>
+            </div>
+            {#each toolStats as stat (stat.tool_name)}
+                {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
+                <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-surface-z2 text-ui items-center">
+                    <span class="font-mono text-xs">{stat.tool_name}</span>
+                    <span class="text-right mono text-xs">{stat.call_count}</span>
+                    <span class="text-right mono text-xs" class:text-error={errorRate > 0.1}>
+                        {stat.error_count}
+                        {#if errorRate > 0}
+                            <span class="text-2xs opacity-50">({Math.round(errorRate * 100)}%)</span>
+                        {/if}
+                    </span>
+                    <span class="text-right mono text-xs opacity-70">
+                        {stat.avg_duration_ms != null ? Math.round(stat.avg_duration_ms) : '—'}
+                    </span>
+                    <span class="text-right text-2xs text-surface-z6">
+                        {new Date(stat.last_used_at).toLocaleDateString()}
+                    </span>
+                </div>
+            {/each}
+        </div>
+    {/if}
+{/snippet}
 
 <style>
     .tool-card:hover {
@@ -169,5 +210,8 @@
 
     .param-input:focus {
         border-color: oklch(var(--color-surface-z6) / 1);
+    }
+    .text-error {
+        color: oklch(var(--color-primary-z5) / 1);
     }
 </style>
