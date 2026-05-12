@@ -8,7 +8,7 @@ use super::helpers::{is_binary_ext, build_globset};
 // ── Process Repo ──────────────────────────────────────────────────────────
 
 /// Process a git folder: detect stack, count files, create/find project, emit events, enqueue file tasks.
-pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let repo_path = Path::new(&task.path);
     if !repo_path.exists() {
         return Err(format!("Repo path does not exist: {}", task.path));
@@ -261,13 +261,13 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<(), St
     }
 
     tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", folder_name, dirs.len(), all_file_task_ids.len(), resolve_id);
-    Ok(())
+    Ok(all_file_task_ids.len() as u32)
 }
 
 // ── Process Folder ────────────────────────────────────────────────────────
 
 /// Create module node for a folder.
-pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let folder_name = task.folder_name();
     let _folder_path = &task.folder_path;
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
@@ -287,13 +287,13 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<(), String
         ctx.pg().upsert_node(fid, "module", &mod_name, &task.path, None, None, None, None).await.ok();
     }
 
-    Ok(())
+    Ok(0)
 }
 
 // ── Process File ──────────────────────────────────────────────────────────
 
 /// Parse a single file using file_processor, then write results to graph.
-pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let folder_name = task.folder_name();
     let _folder_path = &task.folder_path;
     let abs_path = &task.path;
@@ -307,6 +307,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
     let result = crate::tasks::processors::process_file(abs_path, &repo_path_str, folder_name)?;
 
     // Write parsed symbols to PG
+    let symbols_count = result.symbols.len();
     let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     if let Some(folder) = folder
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
@@ -358,12 +359,12 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<(), String> 
                 }
         }
 
-    Ok(())
+    Ok(symbols_count as u32)
 }
 
 // ── Delete File / Folder ──────────────────────────────────────────────────
 
-pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // Look up folder UUID for PgStore operations
     let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder
@@ -371,10 +372,10 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<(), String> {
             ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
         }
     tracing::info!("delete_file: {}", task.path);
-    Ok(())
+    Ok(0)
 }
 
-pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String> {
+pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // Look up folder UUID for PgStore operations
     let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder
@@ -382,7 +383,7 @@ pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<(), String>
             ctx.pg().delete_nodes_by_path_prefix(&folder_id, &task.path).await.ok();
         }
     tracing::info!("delete_folder: {}", task.path);
-    Ok(())
+    Ok(0)
 }
 
 #[cfg(test)]
@@ -408,6 +409,7 @@ mod tests {
             queue,
             app_state,
             _graph_path: None,
+            logger: sensei_logger::Logger::noop(),
         })
     }
 
