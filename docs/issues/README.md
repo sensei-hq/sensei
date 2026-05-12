@@ -257,22 +257,7 @@ let repo_root = match std::env::current_dir() {
 
 **Severity:** High — MCP always connects to wrong port in dev mode
 
-| Location | Mechanism | Dev port | Prod port |
-|---|---|---|---|
-| `bootstrap/src/config.rs` | `SENSEI_MODE` env var | 7745 | 7744 |
-| `cli/src/main.rs:19–25` | binary name ends with `-dev` | 7745 | 7744 |
-| `mcp/src/main.rs:4` | **hardcoded const** | ❌ 7744 | 7744 |
-| `app/src-tauri/src/commands/assistants.rs:7` | `cfg!(debug_assertions)` | 7745 | 7744 |
-
-`SenseiConfig::from_env()` in `bootstrap` is the canonical source. `cli` bypasses it to avoid
-heavy transitive deps (documented). `mcp` and `app` bypass it with no justification.
-
-**Fix:** 
-- `mcp`: implement `fn daemon_url() -> String` using binary-name detection (same as `cli:11-17`)
-  or read `SENSEI_MODE` env var
-- `app`: use `SENSEI_MODE` env var at runtime rather than `cfg!(debug_assertions)` at compile time
-- Long-term: extract `bootstrap-constants` as a zero-dep crate so `cli` and `mcp` can import the
-  port values without pulling in tokio/sysinfo
+**Status: ✅ Resolved** — All components now use `SenseiConfig::from_env()` which reads the compile-time `COMPILE_DEV` const (set by `--features dev` Cargo flag). No runtime env vars, no binary name detection. See `docs/design/daemon/debug-vs-release.md`.
 
 ---
 
@@ -552,13 +537,7 @@ should either be wired to the live database query results or removed until neede
 
 ### N1 — MCP duplicates `binary_is_dev` + port logic
 
-**File:** `crates/mcp/src/main.rs:14–19`
-
-Word-for-word copy of the binary-name detection pattern that was consolidated into
-`sensei_bootstrap::binary_is_dev()` and `SenseiConfig::detect()`. MCP never received
-the same cleanup as cli and senseid.
-
-**Fix:** `SenseiConfig::detect().daemon_url()` — one call replaces the 7-line block.
+**Status: ✅ Resolved** — All components use `SenseiConfig::from_env()` with compile-time `dev` Cargo feature. `binary_is_dev()` removed.
 
 ---
 

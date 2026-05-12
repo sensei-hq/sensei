@@ -8,7 +8,7 @@
  *
  * Prerequisites (satisfied by globalSetup):
  *   • sensei-dev DB dropped and recreated via `dbd apply` — guaranteed clean slate
- *   • App launched with SENSEI_MODE=dev, SENSEI_DB_NAME=sensei-dev
+ *   • App built with --features dev (compile-time: port 7745, sensei_dev DB)
  *   • Bootstrap ran: schema confirmed, daemon started on port 7745
  *   • Port 7745 is accepting connections
  *

@@ -1,8 +1,8 @@
 /**
  * Shared test helpers for Playwright e2e tests.
  *
- * Manages the daemon lifecycle in dev mode (.sensei-dev/, port 7745)
- * so tests never touch production data.
+ * The daemon is built with --features dev (compile-time: port 7745,
+ * sensei_dev DB, ~/.sensei-dev/) so tests never touch production data.
  */
 
 import { execSync, spawn, type ChildProcess } from 'child_process';
@@ -14,13 +14,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = parseInt(process.env.SENSEI_PORT ?? '7745', 10);
-const MODE = process.env.SENSEI_MODE ?? 'dev';
 const BIN = process.env.SENSEID_BIN ?? '../../target/debug/senseid';
 const LOCAL_FOLDER = (process.env.LOCAL_FOLDER ?? '~/Developer').replace('~', process.env.HOME ?? '');
 
 let daemonProcess: ChildProcess | null = null;
 
-export { PORT, MODE, LOCAL_FOLDER };
+export { PORT, LOCAL_FOLDER };
 
 /** Base URL for daemon API. */
 export const DAEMON_URL = `http://127.0.0.1:${PORT}`;
@@ -39,10 +38,10 @@ export async function startDaemon(): Promise<void> {
   await stopDaemon();
 
   const bin = resolveBin();
-  daemonProcess = spawn(bin, ['--mode', MODE, '--port', String(PORT)], {
+  // Binary is built with --features dev (compile-time mode). No env vars needed.
+  daemonProcess = spawn(bin, ['start', '--port', String(PORT)], {
     stdio: 'ignore',
     detached: true,
-    env: { ...process.env, SENSEI_MODE: MODE },
   });
   daemonProcess.unref();
 

@@ -88,23 +88,14 @@ Six gates are checked in parallel by `bootstrap::run_with_traces()`:
 
 ## Mode Awareness
 
-Daemon port and DB name depend on the **mode**:
+Daemon port and DB name are set at **compile time** via the `dev` Cargo feature:
 
-| Mode | Port | Default DB | How set |
-|------|------|------------|---------|
-| Production | 7744 | `sensei` | binary release |
-| Development | 7745 | `sensei_dev` | `SENSEI_MODE=dev` |
-| E2E testing | 7745 | `sensei-dev` | `SENSEI_MODE=dev` + `SENSEI_DB_NAME=sensei-dev` |
+| Mode | Port | Database | How set |
+|------|------|----------|---------|
+| Production | 7744 | `sensei` | `cargo build` (no features) |
+| Development | 7745 | `sensei_dev` | `cargo build --features dev` |
 
-The `SENSEI_DB_NAME` env var is the single source of truth for the DB name.
-Both bootstrap and the daemon read it:
-
-```
-bootstrap/src/database.rs  → SENSEI_DB_NAME (creates + checks the DB)
-senseid/src/api/server.rs  → SENSEI_DB_NAME (builds the connection URL)
-```
-
-If `DATABASE_URL` is set explicitly, it overrides everything in the daemon.
+All values derive from `SenseiConfig::from_env()` which reads the compile-time `COMPILE_DEV` const. No runtime env var overrides.
 
 ---
 

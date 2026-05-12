@@ -1,5 +1,8 @@
 # Tauri Desktop E2E Tests Implementation Plan
 
+> **Note (2026-05-12):** References to `SENSEI_MODE=dev` env var are outdated.
+> Mode is now compile-time via `--features dev` Cargo flag. See `docs/design/daemon/debug-vs-release.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace all browser-mode (mocked IPC) E2E tests with full Tauri desktop tests that build and launch the real `Sensei.app` binary automatically against the `sensei-dev` database.
