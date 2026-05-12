@@ -267,6 +267,6 @@ Measure whether a skill, rule, or persona actually improves outcomes. Define a t
 
 ## Reference
 
-- [Daemon architecture](design/02-daemon.md)
-- [MCP protocol and tools](design/04-mcp.md)
-- [Marketplace and extensions](design/06-marketplace.md)
+- [Daemon architecture](../design/02-daemon.md)
+- [MCP protocol and tools](../design/04-mcp.md)
+- [Marketplace and extensions](../design/06-marketplace.md)
