@@ -375,7 +375,7 @@ pub(crate) async fn holistic_ftr_daily(
     axum::extract::Query(q): axum::extract::Query<DaysQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let data = state.pg.get_ftr_daily(None, q.days).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| { tracing::error!("ftr_daily error: {}", e); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({ "ftr_daily": data })))
 }
 
@@ -419,7 +419,7 @@ pub(crate) async fn tool_usage(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let data = state.pg.get_tool_usage_stats().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| { tracing::error!("tool_usage error: {}", e); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({ "tools": data })))
 }
 
