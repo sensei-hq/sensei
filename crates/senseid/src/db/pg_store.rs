@@ -1553,6 +1553,74 @@ impl PgStore {
         .map_err(|e| format!("insert_log: {}", e))?;
         Ok(())
     }
+
+    // ── Task Executions (activity.task_executions) ──────────────────
+
+    /// Insert a running task execution record. Returns the row UUID.
+    pub async fn start_task_execution(
+        &self,
+        task_id: i64,
+        parent_task_id: Option<i64>,
+        task_kind: &str,
+        folder_path: &str,
+        path: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.task_executions(task_id, parent_task_id, task_kind, folder_path, path, status)
+             VALUES($1, $2, $3, $4, $5, 'running') RETURNING id"
+        )
+        .bind(task_id)
+        .bind(parent_task_id)
+        .bind(task_kind)
+        .bind(folder_path)
+        .bind(path)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("start_task_execution: {}", e))?;
+        Ok(row.0)
+    }
+
+    /// Mark a task execution as completed.
+    pub async fn complete_task_execution(
+        &self,
+        id: &uuid::Uuid,
+        items_processed: i32,
+        duration_ms: i32,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions
+                SET status = 'completed', items_processed = $2, duration_ms = $3, completed_at = now()
+              WHERE id = $1"
+        )
+        .bind(id)
+        .bind(items_processed)
+        .bind(duration_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("complete_task_execution: {}", e))?;
+        Ok(())
+    }
+
+    /// Mark a task execution as failed.
+    pub async fn fail_task_execution(
+        &self,
+        id: &uuid::Uuid,
+        duration_ms: i32,
+        error_message: &str,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE activity.task_executions
+                SET status = 'failed', duration_ms = $2, error_message = $3, completed_at = now()
+              WHERE id = $1"
+        )
+        .bind(id)
+        .bind(duration_ms)
+        .bind(error_message)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("fail_task_execution: {}", e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
