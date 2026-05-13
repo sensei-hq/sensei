@@ -4,8 +4,18 @@ import type {
 } from './health-types.js';
 import { COMPONENT_ORDER } from './health-types.js';
 
+/** Display labels for each ledger component. The Rust crate provides these in Phase 2/3 — here they live as cold-load defaults so the UI matches the mockup before any transport runs. */
+const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | null }> = {
+  postgres: { label: 'PostgreSQL @16',     note: null },
+  ollama:   { label: 'Ollama',             note: null },
+  sensei:   { label: 'Sensei components',  note: 'cli · mcp · daemon' },
+  database: { label: 'Database & schema',  note: 'pgvector · sensei tables' },
+  daemon:   { label: 'Background daemon',  note: null },
+};
+
 function emptyComponent(id: ComponentId): Component {
-  return { id, label: id, note: null, status: 'pending', version: null, detail: null };
+  const d = COMPONENT_DEFAULTS[id];
+  return { id, label: d.label, note: d.note, status: 'pending', version: null, detail: null };
 }
 
 /** Deterministic default — status='checking' so the UI never flashes 'ok' pre-apply. */
@@ -13,7 +23,7 @@ export const emptyPayload: HealthPayload = {
   version: '',
   uptimeSeconds: 0,
   platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'pending', version: null, detail: null },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: 'which brew', status: 'pending', version: null, detail: null },
   components: COMPONENT_ORDER.map(emptyComponent),
   status: 'checking',
   remedy: null,

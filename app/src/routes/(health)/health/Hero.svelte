@@ -40,20 +40,20 @@
 
     <div class="flex-1 min-w-0">
       <div class="flex items-baseline gap-2.5 mb-1">
-        <span class="display text-prose font-medium text-ink-z1">{packageManager.label}</span>
+        <span class="display text-prose font-medium text-surface-z9">{packageManager.label}</span>
         {#if packageManager.note}
-          <span class="mono text-2xs text-ink-z5">{packageManager.note}</span>
+          <span class="mono text-2xs text-surface-z6">{packageManager.note}</span>
         {/if}
       </div>
-      <div class="text-sm text-ink-z3 leading-snug">
+      <div class="text-sm text-surface-z8 leading-snug">
         {#if status === 'ok'}
           Detected. All dependencies installed.
         {:else if status === 'needs-action'}
           Couldn't finish automatically. Run the script below.
         {:else if status === 'resolving'}
           Detected. Installing
-          <span class="text-ink-z1">{activeLabel}</span>
-          <span class="mono text-2xs text-ink-z5 ml-2">({activeCount}/{total})</span>
+          <span class="text-surface-z9">{activeLabel}</span>
+          <span class="mono text-2xs text-surface-z6 ml-2">({activeCount}/{total})</span>
         {:else}
           Checking system…
         {/if}
