@@ -65,7 +65,7 @@ export class HealthState {
     switch (e.kind) {
       case 'phase':     this.status = e.phase; return;
       case 'component': this.#patch(e.id, e.patch); return;
-      case 'remedy':    return; // implemented in T7
+      case 'remedy':    this.remedy = e.remedy; return;
       case 'report':    return; // implemented in T8
       default: {
         const _exhaustive: never = e;
