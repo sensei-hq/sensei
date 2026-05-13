@@ -51,6 +51,7 @@
     "@unocss/extractor-svelte": "^66.6.8",
     "@unocss/reset": "^66.6.8",
     "@unocss/vite": "^66.6.8",
+    "@vitest/coverage-v8": "4",
     "dotenv": "^17.4.2",
     "esbuild": "^0.28.0",
     "jsdom": "^29.1.1",
