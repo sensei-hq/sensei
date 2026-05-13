@@ -18,8 +18,8 @@
       case 'ready':      return 'bg-success-z5';
       case 'installing':
       case 'checking':   return 'bg-primary-z5';
-      case 'failed':     return 'bg-primary-z5/50';
-      case 'pending':    return 'bg-surface-z4';
+      case 'failed':     return 'bg-ink-z4';
+      case 'pending':    return 'bg-surface-z3';
     }
   };
 
@@ -28,14 +28,14 @@
       case 'ready':      return 'text-success-z5';
       case 'installing':
       case 'checking':   return 'text-primary-z5';
-      case 'failed':     return 'text-primary-z5/70';
-      case 'pending':    return 'text-surface-z5';
+      case 'failed':     return 'text-ink-z4';
+      case 'pending':    return 'text-ink-z5';
     }
   };
 </script>
 
 <section class="mt-5.5">
-  <div class="text-2xs tracking-tag uppercase text-surface-z5 mb-2.5">what this resolves</div>
+  <div class="text-2xs tracking-tag uppercase text-ink-z5 mb-2.5">what this resolves</div>
   <ul class="flex flex-col">
     {#each rows as c (c.id)}
       <li data-row={c.id}
@@ -43,10 +43,10 @@
           style="opacity: {c.status === 'pending' ? 0.55 : 1}">
         <span class="w-2 h-2 rounded-full shrink-0 {dotClass(c.status)}"></span>
         <div>
-          <span class="text-sm text-surface-z9">{c.label}</span>
-          {#if c.note}<span class="text-xs text-surface-z5 ml-2">· {c.note}</span>{/if}
+          <span class="text-sm text-ink-z1">{c.label}</span>
+          {#if c.note}<span class="text-xs text-ink-z5 ml-2">· {c.note}</span>{/if}
           {#if c.status === 'failed' && c.detail}
-            <div data-detail class="text-2xs text-surface-z6 mt-0.5">{c.detail}</div>
+            <div data-detail class="text-2xs text-ink-z4 mt-0.5">{c.detail}</div>
           {/if}
         </div>
         <span data-badge class="mono text-2xs tracking-wider uppercase {badgeClass(c.status)}">
