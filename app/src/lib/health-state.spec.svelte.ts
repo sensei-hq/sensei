@@ -236,4 +236,13 @@ describe('HealthState — derived getters', () => {
   });
 });
 
+describe('HealthState — latest', () => {
+  it('is a writable reactive field (Phase 2 fills it from a transport)', () => {
+    const s = new HealthState();
+    expect(s.latest).toBeNull();
+    s.latest = '0.3.0';
+    expect(s.latest).toBe('0.3.0');
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };
