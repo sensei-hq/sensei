@@ -57,4 +57,40 @@ describe('HealthState — construction', () => {
   });
 });
 
+describe('HealthState — apply() happy paths', () => {
+  it('applies an ok payload', () => {
+    const s = new HealthState();
+    s.apply(okPayload());
+    expect(s.status).toBe('ok');
+    expect(s.remedy).toBeNull();
+    expect(s.components.every((c) => c.status === 'ready')).toBe(true);
+  });
+
+  it('applies a needs-action payload (remedy is set)', () => {
+    const s = new HealthState();
+    s.apply(needsActionPayload());
+    expect(s.status).toBe('needs-action');
+    expect(s.remedy?.script).toContain('brew bundle');
+  });
+
+  it('applies a resolving payload (remedy cleared)', () => {
+    const s = new HealthState(needsActionPayload());
+    s.apply({ ...okPayload(), status: 'resolving', remedy: null });
+    expect(s.status).toBe('resolving');
+    expect(s.remedy).toBeNull();
+  });
+
+  it('applies a checking payload', () => {
+    const s = new HealthState(okPayload());
+    s.apply({ ...okPayload(), status: 'checking', remedy: null });
+    expect(s.status).toBe('checking');
+  });
+
+  it('replaces fields rather than merging on successive apply()', () => {
+    const s = new HealthState(okPayload());
+    s.apply({ ...okPayload(), version: '9.9.9', uptimeSeconds: 999 });
+    expect(s.version).toBe('9.9.9');
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };
