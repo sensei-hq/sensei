@@ -217,4 +217,23 @@ describe('HealthState — applyEvent INV-5', () => {
   });
 });
 
+describe('HealthState — derived getters', () => {
+  it.each([
+    ['checking',     { isOk: false, isBusy: true,  needsAction: false }],
+    ['resolving',    { isOk: false, isBusy: true,  needsAction: false }],
+    ['ok',           { isOk: true,  isBusy: false, needsAction: false }],
+    ['needs-action', { isOk: false, isBusy: false, needsAction: true  }],
+  ] as const)('status=%s → isOk/isBusy/needsAction', (status, expected) => {
+    const s = new HealthState();
+    if (status === 'needs-action') {
+      s.apply(needsActionPayload());
+    } else {
+      s.apply({ ...okPayload(), status, remedy: null });
+    }
+    expect(s.isOk).toBe(expected.isOk);
+    expect(s.isBusy).toBe(expected.isBusy);
+    expect(s.needsAction).toBe(expected.needsAction);
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };

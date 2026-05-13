@@ -28,6 +28,10 @@ export class HealthState {
   components     = $state<Component[]>(emptyPayload.components);
   remedy         = $state<Remedy | null>(null);
 
+  get isOk():        boolean { return this.status === 'ok'; }
+  get isBusy():      boolean { return this.status === 'checking' || this.status === 'resolving'; }
+  get needsAction(): boolean { return this.status === 'needs-action'; }
+
   constructor(seed: HealthPayload = emptyPayload) {
     this.apply(seed);
   }
