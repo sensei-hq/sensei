@@ -50,4 +50,13 @@ describe('Ledger', () => {
       mountComponent(Ledger, { components: allReady().slice(0, 4) })
     ).toThrow(/expected 5 components/);
   });
+
+  it('renders the row note when non-null', () => {
+    const cs = allReady();
+    cs[2] = { ...cs[2], note: 'cli · mcp · daemon' };
+    const m = mountComponent(Ledger, { components: cs });
+    cleanup.push(m.destroy);
+    const row = m.container.querySelector('[data-row="sensei"]');
+    expect(row?.textContent).toContain('cli · mcp · daemon');
+  });
 });
