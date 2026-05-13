@@ -94,4 +94,12 @@ describe('Hero', () => {
     cleanup.push(m.destroy);
     expect(m.container.textContent).toMatch(/Couldn['']t finish/);
   });
+
+  it('renders packageManager.note when non-null', () => {
+    const m = mountComponent(Hero, {
+      packageManager: pm({ note: 'which brew' }), status: 'ok' as HealthStatus, components: allReady(),
+    });
+    cleanup.push(m.destroy);
+    expect(m.container.textContent).toContain('which brew');
+  });
 });
