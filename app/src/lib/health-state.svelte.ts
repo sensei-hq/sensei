@@ -66,7 +66,7 @@ export class HealthState {
       case 'phase':     this.status = e.phase; return;
       case 'component': this.#patch(e.id, e.patch); return;
       case 'remedy':    this.remedy = e.remedy; return;
-      case 'report':    return; // implemented in T8
+      case 'report':    this.apply(e.payload); return;
       default: {
         const _exhaustive: never = e;
         throw new Error(`HealthState: unknown event kind ${JSON.stringify(_exhaustive)}`);
