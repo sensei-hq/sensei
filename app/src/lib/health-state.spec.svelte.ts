@@ -141,4 +141,18 @@ describe('HealthState — apply() invariants', () => {
   });
 });
 
+describe('HealthState — applyEvent("phase")', () => {
+  it('sets status to checking', () => {
+    const s = new HealthState(okPayload());
+    s.applyEvent({ kind: 'phase', phase: 'checking' });
+    expect(s.status).toBe('checking');
+  });
+
+  it('sets status to resolving', () => {
+    const s = new HealthState();
+    s.applyEvent({ kind: 'phase', phase: 'resolving' });
+    expect(s.status).toBe('resolving');
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };
