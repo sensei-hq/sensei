@@ -93,4 +93,52 @@ describe('HealthState — apply() happy paths', () => {
   });
 });
 
+describe('HealthState — apply() invariants', () => {
+  it('INV-1: needs-action with null remedy throws', () => {
+    const s = new HealthState();
+    const bad = { ...okPayload(), status: 'needs-action', remedy: null } as unknown as HealthPayload;
+    expect(() => s.apply(bad)).toThrow(/needs-action requires a remedy/);
+  });
+
+  it('INV-1: non-needs-action with non-null remedy throws', () => {
+    const s = new HealthState();
+    const bad = { ...okPayload(), status: 'ok', remedy: remedyFixture() } as unknown as HealthPayload;
+    expect(() => s.apply(bad)).toThrow(/must not carry a remedy/);
+  });
+
+  it('INV-2: wrong components length throws', () => {
+    const s = new HealthState();
+    const bad = { ...okPayload(), components: okPayload().components.slice(0, 4) };
+    expect(() => s.apply(bad)).toThrow(/expected 5 components, got 4/);
+  });
+
+  it('INV-2: wrong components order throws', () => {
+    const s = new HealthState();
+    const reordered = okPayload();
+    [reordered.components[0], reordered.components[1]] = [reordered.components[1], reordered.components[0]];
+    expect(() => s.apply(reordered)).toThrow(/components\[0\]\.id must be "postgres"/);
+  });
+
+  it('INV-3: macos platform with winget package manager throws', () => {
+    const s = new HealthState();
+    const bad = { ...okPayload(), platform: 'macos' as const,
+      packageManager: { ...okPayload().packageManager, id: 'winget' as const } };
+    expect(() => s.apply(bad)).toThrow(/platform=macos expects packageManager.id="homebrew"/);
+  });
+
+  it('INV-3: windows platform with homebrew package manager throws', () => {
+    const s = new HealthState();
+    const bad = { ...okPayload(), platform: 'windows' as const,
+      packageManager: { ...okPayload().packageManager, id: 'homebrew' as const } };
+    expect(() => s.apply(bad)).toThrow(/platform=windows expects packageManager.id="winget"/);
+  });
+
+  it('INV-3: linux platform requires homebrew', () => {
+    const s = new HealthState();
+    const bad = { ...okPayload(), platform: 'linux' as const,
+      packageManager: { ...okPayload().packageManager, id: 'winget' as const } };
+    expect(() => s.apply(bad)).toThrow(/platform=linux expects packageManager.id="homebrew"/);
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };
