@@ -187,4 +187,16 @@ describe('HealthState — applyEvent("component")', () => {
   });
 });
 
+describe('HealthState — applyEvent("remedy")', () => {
+  it('replaces remedy regardless of previous value', () => {
+    const s = new HealthState();
+    const r1 = remedyFixture();
+    s.applyEvent({ kind: 'remedy', remedy: r1 });
+    expect(s.remedy).toEqual(r1);
+    const r2 = { ...r1, message: 'new message' };
+    s.applyEvent({ kind: 'remedy', remedy: r2 });
+    expect(s.remedy?.message).toBe('new message');
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };
