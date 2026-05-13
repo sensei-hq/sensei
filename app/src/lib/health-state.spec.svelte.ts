@@ -199,4 +199,22 @@ describe('HealthState — applyEvent("remedy")', () => {
   });
 });
 
+describe('HealthState — applyEvent("report")', () => {
+  it('terminal report is equivalent to apply()', () => {
+    const s = new HealthState();
+    s.applyEvent({ kind: 'report', payload: needsActionPayload() });
+    expect(s.status).toBe('needs-action');
+    expect(s.remedy).not.toBeNull();
+    expect(s.components.every((c) => c.status === 'failed')).toBe(true);
+  });
+});
+
+describe('HealthState — applyEvent INV-5', () => {
+  it('unknown event kind throws', () => {
+    const s = new HealthState();
+    expect(() => s.applyEvent({ kind: 'bogus' } as never))
+      .toThrow(/unknown event kind/);
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };
