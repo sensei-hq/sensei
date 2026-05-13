@@ -23,12 +23,12 @@
   const activeCount = $derived(Math.min(activeIdx + 1, total));
 </script>
 
-<section class="border border-surface-z2 rounded-xl bg-surface-z2 p-6.5">
+<section class="border border-surface-z2 rounded-xl bg-surface-z1 p-6.5">
   <div class="flex items-center gap-4.5">
     <div class="w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
          class:border-success-z5={status === 'ok'}
          class:border-primary-z5={status === 'needs-action'}
-         class:border-surface-z5={status === 'checking' || status === 'resolving'}>
+         class:border-surface-z3={status === 'checking' || status === 'resolving'}>
       {#if status === 'ok'}
         <span class="text-2xl text-success-z5 leading-none">✓</span>
       {:else if status === 'needs-action'}
@@ -40,20 +40,20 @@
 
     <div class="flex-1 min-w-0">
       <div class="flex items-baseline gap-2.5 mb-1">
-        <span class="display text-prose font-medium">{packageManager.label}</span>
+        <span class="display text-prose font-medium text-ink-z1">{packageManager.label}</span>
         {#if packageManager.note}
-          <span class="mono text-2xs text-surface-z5">{packageManager.note}</span>
+          <span class="mono text-2xs text-ink-z5">{packageManager.note}</span>
         {/if}
       </div>
-      <div class="text-sm text-surface-z7 leading-snug">
+      <div class="text-sm text-ink-z3 leading-snug">
         {#if status === 'ok'}
           Detected. All dependencies installed.
         {:else if status === 'needs-action'}
           Couldn't finish automatically. Run the script below.
         {:else if status === 'resolving'}
           Detected. Installing
-          <span class="text-surface-z9">{activeLabel}</span>
-          <span class="mono text-2xs text-surface-z5 ml-2">({activeCount}/{total})</span>
+          <span class="text-ink-z1">{activeLabel}</span>
+          <span class="mono text-2xs text-ink-z5 ml-2">({activeCount}/{total})</span>
         {:else}
           Checking system…
         {/if}
@@ -72,7 +72,7 @@
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    border: 2px solid oklch(var(--color-surface-z5) / 1);
+    border: 2px solid oklch(var(--color-surface-z3) / 1);
     border-top-color: transparent;
     animation: spin 0.9s linear infinite;
   }
