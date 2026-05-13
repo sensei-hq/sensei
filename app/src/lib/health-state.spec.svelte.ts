@@ -155,4 +155,36 @@ describe('HealthState — applyEvent("phase")', () => {
   });
 });
 
+describe('HealthState — applyEvent("component")', () => {
+  it('patches a known ledger component, leaves others intact', () => {
+    const s = new HealthState(okPayload());
+    s.applyEvent({ kind: 'component', id: 'postgres', patch: { status: 'installing' } });
+    expect(s.components[0].status).toBe('installing');
+    expect(s.components[1].status).toBe('ready');
+    expect(s.components[2].status).toBe('ready');
+  });
+
+  it('patches the package manager', () => {
+    const s = new HealthState(okPayload());
+    s.applyEvent({ kind: 'component', id: 'homebrew', patch: { detail: 'permission denied' } });
+    expect(s.packageManager.detail).toBe('permission denied');
+    expect(s.packageManager.status).toBe('ready'); // un-patched fields intact
+  });
+
+  it('patches multiple fields at once', () => {
+    const s = new HealthState(okPayload());
+    s.applyEvent({ kind: 'component', id: 'daemon',
+      patch: { status: 'failed', detail: 'port in use' } });
+    expect(s.components[4].status).toBe('failed');
+    expect(s.components[4].detail).toBe('port in use');
+  });
+
+  it('INV-4: unknown component id throws', () => {
+    const s = new HealthState();
+    expect(() =>
+      s.applyEvent({ kind: 'component', id: 'not-a-thing' as never, patch: {} })
+    ).toThrow(/unknown component id "not-a-thing"/);
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };

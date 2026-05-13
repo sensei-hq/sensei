@@ -64,7 +64,7 @@ export class HealthState {
   applyEvent(e: HealthEvent): void {
     switch (e.kind) {
       case 'phase':     this.status = e.phase; return;
-      case 'component': return; // implemented in T6
+      case 'component': this.#patch(e.id, e.patch); return;
       case 'remedy':    return; // implemented in T7
       case 'report':    return; // implemented in T8
       default: {
@@ -72,6 +72,22 @@ export class HealthState {
         throw new Error(`HealthState: unknown event kind ${JSON.stringify(_exhaustive)}`);
       }
     }
+  }
+
+  #patch(id: ComponentId | PackageManagerId, patch: Partial<Component>): void {
+    if (id === this.packageManager.id) {
+      this.packageManager = { ...this.packageManager, ...patch };
+      return;
+    }
+    const idx = this.components.findIndex((c) => c.id === id);
+    if (idx < 0) {
+      throw new Error(
+        `HealthState: unknown component id "${id}" — not in [${this.packageManager.id}, ${COMPONENT_ORDER.join(', ')}]`
+      );
+    }
+    const next = this.components.slice();
+    next[idx] = { ...next[idx], ...patch };
+    this.components = next;
   }
 }
 
