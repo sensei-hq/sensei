@@ -60,6 +60,19 @@ export class HealthState {
     this.remedy         = p.remedy;
     this.status         = p.status;
   }
+
+  applyEvent(e: HealthEvent): void {
+    switch (e.kind) {
+      case 'phase':     this.status = e.phase; return;
+      case 'component': return; // implemented in T6
+      case 'remedy':    return; // implemented in T7
+      case 'report':    return; // implemented in T8
+      default: {
+        const _exhaustive: never = e;
+        throw new Error(`HealthState: unknown event kind ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
 }
 
 export const healthState = new HealthState();
