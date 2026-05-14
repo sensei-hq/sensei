@@ -164,7 +164,10 @@ fn overall_status(pm: &Component, components: &[Component]) -> HealthStatus {
 /// IMPORTANT: C4 (macOS) / C5 (Windows) replace this body. For C1, it panics
 /// so callers don't accidentally use it before the platform impls are in.
 pub fn detect_provider() -> Box<dyn PlatformProvider> {
-    unimplemented!("detect_provider() is wired in Tasks C4/C5. Tests use MockProvider directly.")
+    #[cfg(target_os = "windows")]
+    { Box::new(super::platforms::windows::WindowsProvider) }
+    #[cfg(not(target_os = "windows"))]
+    { Box::new(super::platforms::macos::MacOSProvider) }
 }
 
 #[cfg(test)]
