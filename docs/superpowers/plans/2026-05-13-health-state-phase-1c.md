@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Wire the TypeScript HealthState to the new Rust health surface that Phase 1b landed. The UI stops calling the old `check_and_fix_bootstrap` command and stops listening on the legacy `bootstrap` / `bootstrap-report` events. It calls `health_check` once, listens on the new `health` event channel, and consumes `HealthEvent` values directly via the existing `state.applyEvent`. End state: cold-deleted system → launch app → /health page walks `checking → resolving → ok` live.
+**Goal (narrow scope):** Connect Svelte `HealthState` to the Tauri sidecar's new `health_check` / `health_check_and_resolve` commands and the `health` event channel. **Nothing else.** The legacy `bootstrap.ts` exports stay in place (dormant — no caller after this phase). Setup wizard, update.rs, and any aux-command retirement are explicitly out of scope.
+
+**End state after Phase 1c:** cold-deleted system → launch app → `/health` page walks `checking → resolving → ok` live, driven by real Rust check + resolve calls flowing through `HealthTransport` into `HealthState.applyEvent`.
 
 **Architecture in one paragraph:** A new `HealthTransport` interface in `app/src/lib/health-transport.ts` (with `RealTransport` and `MockTransport` impls) sits between `HealthState` and Tauri. `HealthState.init()` calls `transport.check()` then conditionally `transport.resolve(onEvent)`. SessionStorage cache (`sensei:health = 'ready'`) is written from inside `apply()` when `status === 'ok'` so `hooks.client.ts` can read it synchronously during reroute. `appState.healthReady` / `setHealthReady` are removed.
 
@@ -257,32 +259,19 @@ No behavior change — `hooks.client.ts` already reads `sessionStorage.getItem('
 
 ---
 
-## Section D — Delete the legacy `bootstrap.ts` and stub `update.rs`
+## Section D — Stop importing health symbols from `bootstrap.ts`
 
-### Task D1 — Delete `app/src/lib/bootstrap.ts` (deprecated)
+Phase 1c does NOT delete `bootstrap.ts`. It stops _using_ the health-related symbols from it. After Sections B + C, the only callers of `$lib/bootstrap` are those that need the aux wrappers (`detectHardware`, `listModels`, `missingModels`, `getDaemonPort`, `hasTauri`) — those callers stay untouched until the setup-wizard / upgrade-flow phase that comes after this one.
 
-`app/src/lib/bootstrap.ts` is deprecated. The whole file goes away. Anything still useful is renamed and split into purpose-specific modules.
+### Task D1 — Audit + remove health-symbol imports
 
-**Files:**
-- Delete: `app/src/lib/bootstrap.ts`
-- Create (one or more):
-  - `app/src/lib/platform-info.ts` — TS wrappers around the remaining Tauri commands (`detect_hardware`, `list_models`, `missing_models`, `get_daemon_port`). Mirrors the Rust `commands/platform_info.rs` filename.
-  - `app/src/lib/tauri-env.ts` — `hasTauri()` (and any other Tauri-runtime helpers worth keeping). Or fold into `platform-info.ts`. Decide on file granularity when the task starts.
+```bash
+grep -rn "checkAndFixBootstrap\|listenBootstrapEvents\|listenBootstrapReport\|BootstrapEvent\|BootstrapReport\|GateStatus\|GateReport\|HumanAction\|getPlatform" app/src 2>&1
+```
 
-**Steps:**
+For every remaining caller after Sections B + C, replace the legacy health call with the corresponding `healthState.*` access. Most of these get cleaned up naturally as part of B/C; this task is the audit-and-sweep that guarantees zero stragglers remain.
 
-1. **Catalog every importer of `$lib/bootstrap` (or `./bootstrap`)** across `app/src/`:
-   ```bash
-   grep -rn "from ['\"][^'\"]*\bbootstrap\b" app/src 2>&1
-   ```
-2. For each importer, classify what's being imported:
-   - Old/dead (`checkAndFixBootstrap`, `BootstrapEvent`, `BootstrapReport`, `listenBootstrapEvents`, `listenBootstrapReport`, `getPlatform`, `GateStatus`, `GateReport`, `HumanAction`) — remove the import and rewrite the caller against `healthState` + the new transport.
-   - Surviving aux (`hasTauri`, `detectHardware`, `listModels`, `missingModels`, `getDaemonPort`) — re-point to `$lib/platform-info` (or whatever new module hosts them).
-3. **Write** the new `platform-info.ts` containing only the aux command wrappers and `hasTauri`. Each wrapper is two lines (lazy-import `invoke`, call it). Unit tests cover them with `vi.mock('@tauri-apps/api/core', ...)`.
-4. **Delete** `app/src/lib/bootstrap.ts`.
-5. **Verify** `bun run check` is 0/0 and `bun run test:unit` still has 275+ pass.
-
-**Acceptance:** `grep -rn "from ['\"][^'\"]*\bbootstrap\b" app/src` returns zero hits. The string `bootstrap.ts` no longer exists anywhere in `app/src/lib/`.
+**Acceptance:** the grep above returns zero hits outside of `app/src/lib/bootstrap.ts` itself. The legacy health exports continue to exist in `bootstrap.ts` as dormant code (deletion is deferred to a later phase, when the aux wrappers also move).
 
 ### Task D2 — Rewrite `app/src-tauri/src/commands/update.rs`
 
@@ -339,19 +328,23 @@ A new test in `app/src/lib/health-transport.spec.svelte.ts` (or its own file) de
 
 ---
 
-## Out of scope (Phase 1d+)
+## Deferred to a later phase
 
-- **Process-runner injection for Rust resolvers** (closes the 33-77% coverage gap on shell-out resolver code). Refactor `BrewBundleResolver` / `DatabaseResolver` / `DaemonStartResolver` to accept a `dyn CommandRunner` so tests can mock the shell invocation. Same for `PostgresDatabaseChecker`.
-- **`latest` version lookup** (the `latest: string | null` field on HealthState that's currently always null). Decide source: GitHub Releases API vs a daemon `/api/version/latest` endpoint. Wire into Phase 2.
-- **Upgrade redirect** behavior in `hooks.client.ts` when `latest > version` — Phase 2.
-- **Phase 1b scenario registry** (`health-scenarios.ts`) — Phase 1d. Defers until after the live transport is working.
-- **Snapshot tests of every scenario** — also Phase 1d.
+This list is intentionally long — Phase 1c is the narrow wiring step. Everything else waits.
+
+- **Delete `app/src/lib/bootstrap.ts`** — once the aux wrappers move to `platform-info.ts` / `tauri-env.ts` in the setup-wizard phase, the file becomes deletable.
+- **Setup wizard migration** — `detectHardware`, `listModels`, `missingModels`, `getDaemonPort` callers (mostly the wizard) move to their final homes (daemon HTTP endpoints or relocated TS modules). Rust aux commands retire after that.
+- **`update.rs` rewrite** — the upgrade flow re-wires on top of the new health surface. The G1 stub stays in place until then.
+- **Process-runner injection for Rust resolvers** — closes the 33-77% coverage gap on shell-out resolver code. Refactor `BrewBundleResolver` / `DatabaseResolver` / `DaemonStartResolver` to accept a `dyn CommandRunner`. Same for `PostgresDatabaseChecker`.
+- **`latest` version lookup** — the `latest: string | null` field on HealthState that's currently always null. Decide source: GitHub Releases API vs a daemon `/api/version/latest` endpoint.
+- **Upgrade redirect** behavior in `hooks.client.ts` when `latest > version`.
+- **Scenario registry** (`health-scenarios.ts`) + per-scenario snapshot tests of `HealthView`.
 
 ---
 
 ## Estimated commit shape
 
-About 10–15 commits, similar pace to Phase 1b:
+About 9–11 commits, narrower than 1b:
 
 1. `feat(app): add HealthTransport interface + MockTransport` (A1)
 2. `feat(app): add RealTransport calling health_check / health_check_and_resolve` (A2)
@@ -362,9 +355,9 @@ About 10–15 commits, similar pace to Phase 1b:
 7. `chore(app): remove appState.healthReady / setHealthReady` (B5)
 8. `feat(app): /health page calls init() onMount + wires recheck` (C1)
 9. `test(app): hooks.client.ts reroute reads HealthState cache` (C2)
-10. `refactor(app): delete bootstrap.ts; move aux command wrappers to platform-info.ts` (D1)
-11. `refactor(src-tauri): commands/update.rs uses new health surface` (D2)
-12. `test(transport): TS RealTransport decodes Rust /health verbatim` (E2)
-13. `chore: phase 1c complete` + push + merge to main.
+10. `refactor(app): sweep remaining legacy bootstrap-health imports` (D1)
+11. `chore: phase 1c complete` + push + merge to main.
+
+(D2/D3/D4 from earlier drafts are now deferred — see the "Deferred" section.)
 
 Each commit is reviewable in isolation. The end-of-phase merge is identical to the Phase 1a / 1b pattern.
