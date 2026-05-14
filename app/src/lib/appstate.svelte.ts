@@ -1,8 +1,7 @@
 /**
  * Application state — singleton class managing daemon config and port.
  * Only `sensei:port` and `sensei:setup-complete` stay in localStorage.
- * `healthReady` is in-memory only — reset on every cold start so bootstrap
- * always runs and ensures daemon + postgres are up before the app is usable.
+ * The health gate (`sensei:health` in sessionStorage) is owned by HealthState.
  */
 import { senseiApi } from './api.js';
 
@@ -15,11 +14,6 @@ export class AppState {
   port = $state(DEFAULT_PORT);
   config = $state<Record<string, string>>({});
   loaded = $state(false);
-  /**
-   * True once bootstrap confirmed all gates ready in this session.
-   * In-memory only — not persisted, so bootstrap runs on every cold start.
-   */
-  healthReady = $state(false);
 
   get activeProjectId(): string | null {
     return this.config['active_project'] || this.config['active_solution'] || null;
@@ -88,22 +82,6 @@ export class AppState {
     }
   }
 
-  /**
-   * Mark health check as passed for this session.
-   * Writes to sessionStorage (cleared on cold start by WKWebView) so the
-   * reroute hook can read it synchronously without importing this module.
-   * Also caches setup-complete to localStorage for the setup gate.
-   */
-  setHealthReady() {
-    this.healthReady = true;
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem('sensei:health', 'ready');
-    }
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sensei:setup-complete', this.setupComplete ? '1' : '0');
-    }
-  }
-
   async dismissSuggestion(id: string) {
     const current = this.dismissedSuggestions;
     if (!current.includes(id)) {
@@ -115,8 +93,6 @@ export class AppState {
     if (typeof localStorage !== 'undefined') {
       const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
       if (!isNaN(stored) && stored > 0) this.port = stored;
-      // healthReady is intentionally NOT loaded from storage — bootstrap must
-      // run on every cold start to ensure services are up.
     }
 
     // Browser (no Tauri) → skip daemon calls
@@ -139,7 +115,6 @@ export class AppState {
   async reset() {
     this.config = {};
     this.loaded = false;
-    this.healthReady = false;
 
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.removeItem('sensei:health');
