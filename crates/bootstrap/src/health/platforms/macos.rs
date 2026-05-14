@@ -17,7 +17,10 @@ use crate::health::checker::Checker;
 use crate::health::checkers::{BinaryChecker, PortChecker, AndChecker, PostgresDatabaseChecker};
 use crate::health::provider::PlatformProvider;
 use crate::health::resolver::Resolver;
-use crate::health::resolvers::{BrewBundleResolver, DatabaseResolver, DaemonStartResolver};
+use crate::health::resolvers::{
+    DatabaseResolver, DaemonStartResolver,
+    PostgresInstallResolver, OllamaInstallResolver, SenseiInstallResolver,
+};
 use crate::health::types::{ComponentId, PackageManagerId, Platform, Remedy};
 
 pub struct MacOSProvider;
@@ -62,16 +65,24 @@ impl PlatformProvider for MacOSProvider {
 
     fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
         vec![
-            Box::new(BrewBundleResolver),
+            Box::new(PostgresInstallResolver),
+            Box::new(OllamaInstallResolver),
+            Box::new(SenseiInstallResolver),
             Box::new(DatabaseResolver { db_name: SenseiConfig::from_env().db_name }),
             Box::new(DaemonStartResolver),
         ]
     }
 
     fn default_remedy(&self) -> Remedy {
+        let cfg = SenseiConfig::from_env();
+        let (formula, head) = if cfg.is_dev() {
+            ("sensei-hq/tap/sensei-dev", " --HEAD")
+        } else {
+            ("sensei-hq/tap/sensei", "")
+        };
         Remedy {
-            message: "Some components need attention. Run the sensei bootstrap repair flow.".to_string(),
-            script:  SenseiConfig::from_env().brew_bundle_script(),
+            message: "Some components need attention. Run the script below to (re)install sensei; missing prerequisites will be installed when the daemon next runs its health check.".to_string(),
+            script:  format!("brew install{head} {formula}"),
             url:     None,
         }
     }
@@ -106,31 +117,33 @@ mod tests {
     }
 
     #[test]
-    fn provides_three_resolvers() {
+    fn provides_five_resolvers() {
         let r = MacOSProvider.resolvers();
-        assert_eq!(r.len(), 3);
+        assert_eq!(r.len(), 5);
         let ids: Vec<&'static str> = r.iter().map(|r| r.id()).collect();
-        assert!(ids.contains(&"brew_bundle"));
+        assert!(ids.contains(&"postgres_install"));
+        assert!(ids.contains(&"ollama_install"));
+        assert!(ids.contains(&"sensei_install"));
         assert!(ids.contains(&"db_setup"));
         assert!(ids.contains(&"daemon_start"));
     }
 
     #[test]
-    fn brew_bundle_resolver_covers_postgres_ollama_sensei() {
+    fn each_brew_install_resolver_covers_one_component() {
         let r = MacOSProvider.resolvers();
-        let brew = r.iter().find(|r| r.id() == "brew_bundle").expect("present");
-        let t = brew.resolves();
-        assert!(t.contains(&ComponentId::Postgres));
-        assert!(t.contains(&ComponentId::Ollama));
-        assert!(t.contains(&ComponentId::Sensei));
-        assert!(!t.contains(&ComponentId::Database));
-        assert!(!t.contains(&ComponentId::Daemon));
+        let by_id = |id: &str| -> &'static [ComponentId] {
+            r.iter().find(|r| r.id() == id).expect("present").resolves()
+        };
+        assert_eq!(by_id("postgres_install"), &[ComponentId::Postgres]);
+        assert_eq!(by_id("ollama_install"), &[ComponentId::Ollama]);
+        assert_eq!(by_id("sensei_install"), &[ComponentId::Sensei]);
     }
 
     #[test]
-    fn default_remedy_mentions_brew_bundle() {
+    fn default_remedy_uses_brew_install_for_sensei_tap() {
         let r = MacOSProvider.default_remedy();
-        assert!(r.script.contains("brew bundle"));
+        assert!(r.script.starts_with("brew install"));
+        assert!(r.script.contains("sensei-hq/tap/sensei"));
     }
 
     #[test]
