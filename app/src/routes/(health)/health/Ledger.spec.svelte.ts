@@ -59,4 +59,20 @@ describe('Ledger', () => {
     const row = m.container.querySelector('[data-row="sensei"]');
     expect(row?.textContent).toContain('cli · mcp · daemon');
   });
+
+  it('renders the row version (mono badge) when non-null', () => {
+    const cs = allReady();
+    cs[0] = { ...cs[0], version: '17.2' };
+    const m = mountComponent(Ledger, { components: cs });
+    cleanup.push(m.destroy);
+    const badge = m.container.querySelector('[data-row="postgres"] [data-version]');
+    expect(badge?.textContent).toBe('17.2');
+  });
+
+  it('omits the version badge when null', () => {
+    const cs = allReady(); // factory sets version: null
+    const m = mountComponent(Ledger, { components: cs });
+    cleanup.push(m.destroy);
+    expect(m.container.querySelector('[data-row="postgres"] [data-version]')).toBeNull();
+  });
 });

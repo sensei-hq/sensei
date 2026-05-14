@@ -44,6 +44,7 @@
         <span class="w-2 h-2 rounded-full shrink-0 {dotClass(c.status)}"></span>
         <div>
           <span class="text-sm text-surface-z9">{c.label}</span>
+          {#if c.version}<span data-version class="mono text-2xs text-surface-z6 ml-2">{c.version}</span>{/if}
           {#if c.note}<span class="text-xs text-surface-z5 ml-2">· {c.note}</span>{/if}
           {#if c.status === 'failed' && c.detail}
             <div data-detail class="text-2xs text-surface-z6 mt-0.5">{c.detail}</div>
