@@ -7,6 +7,7 @@ pub mod checker;
 pub mod resolver;
 pub mod provider;
 pub mod platforms;
+pub mod checkers;
 
 pub use types::*;
 pub use graph::{DependencySpec, dependency_specs, spec_for};
