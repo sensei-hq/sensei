@@ -219,6 +219,7 @@ pub fn remove_selected(ids: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
     use helpers::{upsert_sensei_in_json, remove_sensei_from_json};
+    use sensei_bootstrap::MCP_REGISTRY_KEY;
 
     // ── upsert_sensei_in_json ──────────────────────────────────────────
 
@@ -231,7 +232,7 @@ mod tests {
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
     }
 
     // ── JSONC (JSON with comments) ─────────────────────────────────────────
@@ -256,7 +257,7 @@ mod tests {
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         // Sensei entry added
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         // Sibling mcpServer preserved
         assert_eq!(content["mcpServers"]["other-tool"]["command"], "other-mcp");
         // Unrelated top-level keys preserved
@@ -268,21 +269,21 @@ mod tests {
     fn upsert_jsonc_updates_existing_sensei_without_touching_siblings() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"// existing config
-{
+        std::fs::write(&path, format!(r#"// existing config
+{{
   "vim_mode": false,
-  "mcpServers": {
+  "mcpServers": {{
     // sensei was here before
-    "sensei": { "command": "old-binary" },
-    "postgres": { "command": "pg-mcp" },
-  },
-}"#).unwrap();
+    "{MCP_REGISTRY_KEY}": {{ "command": "old-binary" }},
+    "postgres": {{ "command": "pg-mcp" }},
+  }},
+}}"#)).unwrap();
 
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         assert_eq!(content["mcpServers"]["postgres"]["command"], "pg-mcp");
         assert_eq!(content["vim_mode"], false);
     }
@@ -291,19 +292,19 @@ mod tests {
     fn remove_sensei_from_jsonc_preserves_other_content() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"// Zed settings
-{
-  "terminal": { "dock": "right" }, // trailing comma
-  "mcpServers": {
-    "sensei": { "command": "sensei-mcp" },
-    "svelte": { "command": "svelte-mcp" },
-  },
-}"#).unwrap();
+        std::fs::write(&path, format!(r#"// Zed settings
+{{
+  "terminal": {{ "dock": "right" }}, // trailing comma
+  "mcpServers": {{
+    "{MCP_REGISTRY_KEY}": {{ "command": "sensei-mcp" }},
+    "svelte": {{ "command": "svelte-mcp" }},
+  }},
+}}"#)).unwrap();
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_null());
+        assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert_eq!(content["mcpServers"]["svelte"]["command"], "svelte-mcp");
         assert_eq!(content["terminal"]["dock"], "right");
     }
@@ -318,7 +319,7 @@ mod tests {
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
         assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
     }
 
@@ -326,13 +327,13 @@ mod tests {
     fn upsert_overwrites_existing_sensei_entry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        std::fs::write(&path, r#"{"mcpServers":{"sensei":{"command":"old-binary"}}}"#).unwrap();
+        std::fs::write(&path, format!(r#"{{"mcpServers":{{"{MCP_REGISTRY_KEY}":{{"command":"old-binary"}}}}}}"#)).unwrap();
 
         let entry = serde_json::json!({"command": "sensei-mcp"});
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
     }
 
     #[test]
@@ -355,8 +356,8 @@ mod tests {
         upsert_sensei_in_json(&path, "mcp", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcp"]["sensei"]["type"], "local");
-        assert_eq!(content["mcp"]["sensei"]["enabled"], true);
+        assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["type"], "local");
+        assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["enabled"], true);
     }
 
     // ── remove_sensei_from_json ────────────────────────────────────────
@@ -383,12 +384,12 @@ mod tests {
     fn remove_sensei_preserves_other_servers() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        std::fs::write(&path, r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"},"svelte":{"command":"npx"}}}"#).unwrap();
+        std::fs::write(&path, format!(r#"{{"mcpServers":{{"{MCP_REGISTRY_KEY}":{{"command":"sensei-mcp"}},"svelte":{{"command":"npx"}}}}}}"#)).unwrap();
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_null());
+        assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
     }
 
@@ -396,12 +397,12 @@ mod tests {
     fn remove_sensei_only_server() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        std::fs::write(&path, r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"}}}"#).unwrap();
+        std::fs::write(&path, format!(r#"{{"mcpServers":{{"{MCP_REGISTRY_KEY}":{{"command":"sensei-mcp"}}}}}}"#)).unwrap();
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_null());
+        assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert!(content["mcpServers"].as_object().unwrap().is_empty());
     }
 
@@ -409,7 +410,7 @@ mod tests {
     fn remove_with_opencode_mcp_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("opencode.json");
-        std::fs::write(&path, r#"{"mcp":{"sensei":{"type":"local","command":["sensei-mcp",""]}}}"#).unwrap();
+        std::fs::write(&path, format!(r#"{{"mcp":{{"{MCP_REGISTRY_KEY}":{{"type":"local","command":["sensei-mcp",""]}}}}}}"#)).unwrap();
 
         assert!(remove_sensei_from_json(&path, "mcp"));
     }
@@ -426,13 +427,13 @@ mod tests {
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_object());
+        assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_object());
         assert!(content["mcpServers"]["svelte"].is_object());
 
         assert!(remove_sensei_from_json(&path, "mcpServers"));
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_null());
+        assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
         assert_eq!(content["mcpServers"]["svelte"]["command"], "npx");
     }
 
@@ -458,11 +459,11 @@ mod tests {
         upsert_sensei_in_json(&config_path, "mcpServers", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
 
         assert!(remove_sensei_from_json(&config_path, "mcpServers"));
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-        assert!(content["mcpServers"]["sensei"].is_null());
+        assert!(content["mcpServers"][MCP_REGISTRY_KEY].is_null());
     }
 
     #[test]
@@ -474,9 +475,9 @@ mod tests {
         upsert_sensei_in_json(&path, "mcp", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcp"]["sensei"]["type"], "local");
-        assert_eq!(content["mcp"]["sensei"]["enabled"], true);
-        let cmd = content["mcp"]["sensei"]["command"].as_array().unwrap();
+        assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["type"], "local");
+        assert_eq!(content["mcp"][MCP_REGISTRY_KEY]["enabled"], true);
+        let cmd = content["mcp"][MCP_REGISTRY_KEY]["command"].as_array().unwrap();
         assert_eq!(cmd[0], "sensei-mcp");
     }
 
@@ -546,7 +547,7 @@ mod tests {
         upsert_sensei_in_json(&path, "mcpServers", entry).unwrap();
 
         let content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["sensei"]["command"], "sensei-mcp");
+        assert_eq!(content["mcpServers"][MCP_REGISTRY_KEY]["command"], "sensei-mcp");
     }
 
     #[test]
