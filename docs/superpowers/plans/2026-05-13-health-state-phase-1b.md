@@ -477,7 +477,7 @@ pub struct DependencySpec {
 }
 
 const GRAPH: [DependencySpec; 5] = [
-    DependencySpec { id: ComponentId::Postgres, label: "PostgreSQL @16",    note: None, depends_on: &[] },
+    DependencySpec { id: ComponentId::Postgres, label: "PostgreSQL",        note: None, depends_on: &[] },
     DependencySpec { id: ComponentId::Ollama,   label: "Ollama",            note: None, depends_on: &[] },
     DependencySpec { id: ComponentId::Sensei,   label: "Sensei components", note: Some("cli · mcp · daemon"), depends_on: &[] },
     DependencySpec { id: ComponentId::Database, label: "Database & schema", note: Some("pgvector · sensei tables"),
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn spec_labels_match_ts_defaults() {
-        assert_eq!(spec_for(ComponentId::Postgres).label, "PostgreSQL @16");
+        assert_eq!(spec_for(ComponentId::Postgres).label, "PostgreSQL");
         assert_eq!(spec_for(ComponentId::Ollama).label,   "Ollama");
         assert_eq!(spec_for(ComponentId::Sensei).label,   "Sensei components");
         assert_eq!(spec_for(ComponentId::Sensei).note,    Some("cli · mcp · daemon"));
@@ -1912,7 +1912,7 @@ fn mock_payload(status: HealthStatus, with_remedy: bool) -> HealthPayload {
         platform: Platform::Macos,
         package_manager: mk_component("homebrew", "Homebrew", Some("which brew"), ComponentStatus::Ready),
         components: vec![
-            mk_component("postgres", "PostgreSQL @16", None, ComponentStatus::Ready),
+            mk_component("postgres", "PostgreSQL", None, ComponentStatus::Ready),
             mk_component("ollama",   "Ollama", None, ComponentStatus::Ready),
             mk_component("sensei",   "Sensei components", Some("cli · mcp · daemon"), ComponentStatus::Ready),
             mk_component("database", "Database & schema", Some("pgvector · sensei tables"), ComponentStatus::Ready),
@@ -1932,7 +1932,7 @@ fn ok_payload_serializes_to_expected_json() {
     assert_eq!(json["platform"], "macos");
     assert_eq!(json["package_manager"]["id"], "homebrew");
     assert_eq!(json["components"][0]["id"], "postgres");
-    assert_eq!(json["components"][0]["label"], "PostgreSQL @16");
+    assert_eq!(json["components"][0]["label"], "PostgreSQL");
     assert_eq!(json["components"][2]["note"], "cli · mcp · daemon");
 }
 
