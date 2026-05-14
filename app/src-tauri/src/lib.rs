@@ -18,8 +18,8 @@ pub fn run() {
             commands::platform_info::missing_models,
             commands::platform_info::get_daemon_port,
             // Bootstrap health commands — added in Task G2
-            // commands::bootstrap::health_check,
-            // commands::bootstrap::health_check_and_resolve,
+            commands::bootstrap::health_check,
+            commands::bootstrap::health_check_and_resolve,
             // Assistants (detection, MCP config)
             commands::assistants::detect_assistants,
             commands::assistants::configure_mcp,
