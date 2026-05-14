@@ -51,21 +51,30 @@ crates-release:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp
 
 install-dev: crates-dev
+	@# Cold install: ensure the sensei-dev formula is present via Brewfile-dev.
+	@# (Runs cargo build inside brew sandbox — slow first time, no-op on repeat.)
+	@if ! brew list --formula sensei-dev >/dev/null 2>&1; then \
+	  echo "Cold install: brew bundle --file=./homebrew/Brewfile-dev (one-time, slow)..."; \
+	  brew bundle --file=./homebrew/Brewfile-dev; \
+	fi
+	@# Stop any running dev daemon before overlay.
 	@if pgrep -x senseid-dev > /dev/null; then \
 	  echo "Stopping senseid-dev (pid $$(pgrep -x senseid-dev))..."; \
 	  pkill -x senseid-dev; \
 	  sleep 1; \
 	fi
-	@mkdir -p ~/.local/bin
-	cp target/debug/senseid    ~/.local/bin/senseid-dev
-	cp target/debug/sensei     ~/.local/bin/sensei-dev
-	cp target/debug/sensei-mcp ~/.local/bin/sensei-mcp-dev
-	# Re-sign with hardened runtime so macOS Code Signing Monitor accepts the binaries
-	# when spawned from inside Sensei.app (required on macOS Sequoia with CSM level 2).
-	codesign --sign - --options runtime --force ~/.local/bin/senseid-dev
-	codesign --sign - --options runtime --force ~/.local/bin/sensei-dev
-	codesign --sign - --options runtime --force ~/.local/bin/sensei-mcp-dev
-	@echo "Installed and signed dev binaries to ~/.local/bin (senseid-dev, sensei-dev, sensei-mcp-dev)"
+	@# Fast iteration overlay: replace the brew-installed binaries with the
+	@# freshly-built ones from target/debug/ (uses local cargo cache — fast).
+	@# Re-sign with hardened runtime so the Tauri sidecar can spawn them
+	@# (macOS Sequoia Code Signing Monitor level 2 requires this).
+	@DEST=$$(brew --prefix sensei-dev)/bin && \
+	cp target/debug/senseid    "$$DEST/senseid-dev" && \
+	cp target/debug/sensei     "$$DEST/sensei-dev" && \
+	cp target/debug/sensei-mcp "$$DEST/sensei-mcp-dev" && \
+	codesign --sign - --options runtime --force "$$DEST/senseid-dev" && \
+	codesign --sign - --options runtime --force "$$DEST/sensei-dev" && \
+	codesign --sign - --options runtime --force "$$DEST/sensei-mcp-dev" && \
+	echo "Overlaid fresh dev binaries into $$DEST (codesigned)"
 	@echo "Run dev daemon: make daemon-dev"
 
 install-release: crates-release
