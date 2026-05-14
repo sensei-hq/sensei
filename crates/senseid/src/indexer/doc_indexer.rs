@@ -148,9 +148,9 @@ fn classify_doc(rel_path: &str, frontmatter: &DocFrontmatter) -> DocClassificati
     DocClassification { kind: NodeKind::Doc, doc_type: "doc".into(), doc_category: None }
 }
 
-/// Create traceability edges between doc stages.
-/// SPECIFIES: requirement → design (matched by shared path segments)
-/// IMPLEMENTS: design → code module (matched by module names in doc content)
+// Create traceability edges between doc stages.
+// SPECIFIES: requirement → design (matched by shared path segments)
+// IMPLEMENTS: design → code module (matched by module names in doc content)
 
 /// Parse a markdown file into an IRDoc.
 /// This is the doc adapter's parse() implementation.
@@ -206,7 +206,7 @@ pub fn parse_to_ir(content: &str, rel_path: &str, repo_path: &str) -> crate::ir:
         doc_type: Some(classification.doc_type),
         frontmatter,
         status: fm.doc_type.as_deref()
-            .and_then(|_| None) // status not in DocFrontmatter yet — use raw
+            .and(None) // status not in DocFrontmatter yet — use raw
             .or_else(|| extract_frontmatter_field(content, "status")),
         origin: extract_frontmatter_field(content, "origin"),
         description: fm._description.clone(),
@@ -258,13 +258,12 @@ fn extract_sections(content: &str) -> Vec<crate::ir::IRSection> {
 
 #[cfg(test)]
 fn parse_heading(line: &str) -> Option<(u8, String)> {
-    if line.starts_with("######") { Some((6, line[6..].trim().into())) }
-    else if line.starts_with("#####") { Some((5, line[5..].trim().into())) }
-    else if line.starts_with("####") { Some((4, line[4..].trim().into())) }
-    else if line.starts_with("###") { Some((3, line[3..].trim().into())) }
-    else if line.starts_with("##") { Some((2, line[2..].trim().into())) }
-    else if line.starts_with("# ") { Some((1, line[2..].trim().into())) }
-    else { None }
+    for (n, prefix) in [(6, "######"), (5, "#####"), (4, "####"), (3, "###"), (2, "##"), (1, "# ")] {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            return Some((n, rest.trim().into()));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -287,8 +286,8 @@ fn extract_code_blocks(content: &str) -> Vec<crate::ir::IRCodeBlock> {
 
     while i < lines.len() {
         let trimmed = lines[i].trim();
-        if trimmed.starts_with("```") {
-            let lang = trimmed[3..].trim();
+        if let Some(rest) = trimmed.strip_prefix("```") {
+            let lang = rest.trim();
             let lang = if lang.is_empty() { None } else { Some(lang.to_string()) };
             let start = i as u32 + 1;
             i += 1;
