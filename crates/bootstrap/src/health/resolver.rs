@@ -22,8 +22,8 @@ pub trait Resolver: Send + Sync {
     fn resolves(&self) -> &'static [ComponentId];
 
     /// Run the fix. `targets` is the subset of `resolves()` that's currently
-    /// failed. Resolver decides whether to batch (e.g. brew bundle covers
-    /// all targets in one shell-out) or iterate.
+    /// failed. Resolver decides whether to batch all targets in one shell-out
+    /// or iterate.
     fn resolve(&self, targets: &[ComponentId]) -> ResolveOutcome;
 }
 
