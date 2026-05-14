@@ -221,6 +221,41 @@ impl SenseiConfig {
         format!("brew bundle --file={}", self.brewfile_url())
     }
 
+    /// Returns the sensei homebrew tap formula slug for the current mode —
+    /// `sensei-hq/tap/sensei` in prod, `sensei-hq/tap/sensei-dev` in dev.
+    /// Single source of truth — callers that need to install or reference the
+    /// formula must use this method.
+    pub fn sensei_tap_formula(&self) -> &'static str {
+        if self.is_dev() {
+            "sensei-hq/tap/sensei-dev"
+        } else {
+            "sensei-hq/tap/sensei"
+        }
+    }
+
+    /// Returns the formula slug and the brew install args for the current mode.
+    /// Dev mode needs `--HEAD` because the dev formula is HEAD-only; prod uses
+    /// the published bottle with no args. Suitable for direct use with
+    /// `brew_install(formula, args)`.
+    pub fn sensei_tap_install_args(&self) -> (&'static str, &'static [&'static str]) {
+        if self.is_dev() {
+            (self.sensei_tap_formula(), &["--HEAD"])
+        } else {
+            (self.sensei_tap_formula(), &[])
+        }
+    }
+
+    /// Returns the full `brew install [--HEAD] <formula>` script for the
+    /// current mode. Suitable for direct copy/paste in a shell or for display
+    /// in a [`Remedy`]. Supersedes [`brew_bundle_script`].
+    pub fn brew_install_script(&self) -> String {
+        if self.is_dev() {
+            format!("brew install --HEAD {}", self.sensei_tap_formula())
+        } else {
+            format!("brew install {}", self.sensei_tap_formula())
+        }
+    }
+
     /// Returns the sensei-mcp binary name for the current mode.
     pub fn sensei_mcp_binary(&self) -> &'static str { SENSEI_MCP_BIN }
 
@@ -405,6 +440,40 @@ mod tests {
         assert_eq!(SENSEI_BIN, cfg.sensei_binary());
         assert_eq!(SENSEID_BIN, cfg.senseid_binary());
         assert_eq!(SENSEI_MCP_BIN, cfg.sensei_mcp_binary());
+    }
+
+    #[test]
+    fn sensei_tap_formula_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        let formula = cfg.sensei_tap_formula();
+        if cfg.is_dev() {
+            assert_eq!(formula, "sensei-hq/tap/sensei-dev");
+        } else {
+            assert_eq!(formula, "sensei-hq/tap/sensei");
+        }
+    }
+
+    #[test]
+    fn sensei_tap_install_args_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        let (formula, args) = cfg.sensei_tap_install_args();
+        assert_eq!(formula, cfg.sensei_tap_formula());
+        if cfg.is_dev() {
+            assert_eq!(args, &["--HEAD"]);
+        } else {
+            assert_eq!(args, &[] as &[&str]);
+        }
+    }
+
+    #[test]
+    fn brew_install_script_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        let script = cfg.brew_install_script();
+        if cfg.is_dev() {
+            assert_eq!(script, "brew install --HEAD sensei-hq/tap/sensei-dev");
+        } else {
+            assert_eq!(script, "brew install sensei-hq/tap/sensei");
+        }
     }
 
     #[test]

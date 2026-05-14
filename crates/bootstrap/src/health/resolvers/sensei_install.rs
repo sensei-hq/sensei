@@ -12,15 +12,8 @@ pub struct SenseiInstallResolver;
 
 const TARGETS: &[ComponentId] = &[ComponentId::Sensei];
 
-const PROD_FORMULA: &str = "sensei-hq/tap/sensei";
-const DEV_FORMULA:  &str = "sensei-hq/tap/sensei-dev";
-
 fn formula_and_args() -> (&'static str, &'static [&'static str]) {
-    if SenseiConfig::from_env().is_dev() {
-        (DEV_FORMULA, &["--HEAD"])
-    } else {
-        (PROD_FORMULA, &[])
-    }
+    SenseiConfig::from_env().sensei_tap_install_args()
 }
 
 impl Resolver for SenseiInstallResolver {

@@ -35,7 +35,7 @@ impl Resolver for DatabaseResolver {
 fn missing_cli_remedy(bin: &str) -> Remedy {
     Remedy {
         message: format!("The `{bin}` CLI is not installed. Install it via Homebrew first."),
-        script:  SenseiConfig::from_env().brew_bundle_script(),
+        script:  SenseiConfig::from_env().brew_install_script(),
         url:     None,
     }
 }
