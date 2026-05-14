@@ -30,6 +30,39 @@ pub const HOMEBREW_BREWFILE_URL: &str =
 pub const HOMEBREW_BREWFILE_DEV_URL: &str =
     "https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile-dev";
 
+// ── Compile-time binary names (single source of truth) ────────────────────────
+//
+// These exist as `const &str` so they can be used at attribute / macro time —
+// e.g. clap's `#[command(name = SENSEI_BIN, ...)]`. Runtime callers should use
+// the equivalent `SenseiConfig::sensei_binary()` etc. accessors.
+
+/// Compile-time `sensei` CLI binary name for the current build mode.
+#[cfg(feature = "dev")]
+pub const SENSEI_BIN: &str = "sensei-dev";
+#[cfg(not(feature = "dev"))]
+pub const SENSEI_BIN: &str = "sensei";
+
+/// Compile-time `senseid` daemon binary name for the current build mode.
+#[cfg(feature = "dev")]
+pub const SENSEID_BIN: &str = "senseid-dev";
+#[cfg(not(feature = "dev"))]
+pub const SENSEID_BIN: &str = "senseid";
+
+/// Compile-time `sensei-mcp` server binary name for the current build mode.
+#[cfg(feature = "dev")]
+pub const SENSEI_MCP_BIN: &str = "sensei-mcp-dev";
+#[cfg(not(feature = "dev"))]
+pub const SENSEI_MCP_BIN: &str = "sensei-mcp";
+
+/// MCP server registry key for the current build mode. Used by sensei CLI and
+/// senseid daemon when registering / removing the MCP entry in ACP configs
+/// (Claude Code, Cursor, etc.) — dev runs register as a distinct key so dev
+/// and prod can coexist in the same ACP without colliding.
+#[cfg(feature = "dev")]
+pub const MCP_REGISTRY_KEY: &str = "sensei-dev";
+#[cfg(not(feature = "dev"))]
+pub const MCP_REGISTRY_KEY: &str = "sensei";
+
 /// Homebrew tap repository slug (for reference/logging).
 pub const HOMEBREW_TAP_REPO: &str = "sensei-hq/homebrew-tap";
 
@@ -170,14 +203,10 @@ impl SenseiConfig {
     }
 
     /// Returns the sensei CLI binary name for the current mode.
-    pub fn sensei_binary(&self) -> &'static str {
-        if self.is_dev() { "sensei-dev" } else { "sensei" }
-    }
+    pub fn sensei_binary(&self) -> &'static str { SENSEI_BIN }
 
     /// Returns the senseid daemon binary name for the current mode.
-    pub fn senseid_binary(&self) -> &'static str {
-        if self.is_dev() { "senseid-dev" } else { "senseid" }
-    }
+    pub fn senseid_binary(&self) -> &'static str { SENSEID_BIN }
 
     /// Returns the Brewfile URL appropriate to the current build mode —
     /// prod Brewfile for release builds, Brewfile-dev for `--features dev`.
@@ -193,9 +222,12 @@ impl SenseiConfig {
     }
 
     /// Returns the sensei-mcp binary name for the current mode.
-    pub fn sensei_mcp_binary(&self) -> &'static str {
-        if self.is_dev() { "sensei-mcp-dev" } else { "sensei-mcp" }
-    }
+    pub fn sensei_mcp_binary(&self) -> &'static str { SENSEI_MCP_BIN }
+
+    /// Returns the MCP registry key for the current mode — `"sensei"` in prod,
+    /// `"sensei-dev"` in dev. Used so dev and prod can coexist in the same
+    /// ACP config without overwriting each other.
+    pub fn mcp_registry_key(&self) -> &'static str { MCP_REGISTRY_KEY }
 
     /// Resolve the database schema source for dbd-core's `resolve_source()`.
     ///
@@ -365,5 +397,24 @@ mod tests {
         assert!(script.contains(cfg.brewfile_url()));
         // Single `=` after --file, not the broken `--file==URL` form.
         assert!(!script.contains("--file=="));
+    }
+
+    #[test]
+    fn compile_time_binary_consts_match_runtime_accessors() {
+        let cfg = SenseiConfig::from_env();
+        assert_eq!(SENSEI_BIN, cfg.sensei_binary());
+        assert_eq!(SENSEID_BIN, cfg.senseid_binary());
+        assert_eq!(SENSEI_MCP_BIN, cfg.sensei_mcp_binary());
+    }
+
+    #[test]
+    fn mcp_registry_key_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        if COMPILE_DEV {
+            assert_eq!(MCP_REGISTRY_KEY, "sensei-dev");
+        } else {
+            assert_eq!(MCP_REGISTRY_KEY, "sensei");
+        }
+        assert_eq!(MCP_REGISTRY_KEY, cfg.mcp_registry_key());
     }
 }
