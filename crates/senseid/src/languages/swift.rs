@@ -405,7 +405,7 @@ mod tests {
         let pf = parse_ir("class Dog {\n    func bark() -> String { return \"woof\" }\n}");
         assert_eq!(pf.classes.len(), 1);
         assert_eq!(pf.classes[0].class_kind, ClassKind::Class);
-        assert!(pf.classes[0].methods.len() >= 1);
+        assert!(!pf.classes[0].methods.is_empty());
     }
 
     #[test]

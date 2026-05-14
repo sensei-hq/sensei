@@ -296,7 +296,7 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool) {
     if sensei_bootstrap::util::which_binary(SENSEID_BIN).is_none()
         || sensei_bootstrap::util::which_binary(SENSEI_MCP_BIN).is_none()
     {
-        eprintln!("Missing binaries. Install: {}", cfg().brew_bundle_script());
+        eprintln!("Missing binaries. Install: {}", cfg().brew_install_script());
         std::process::exit(1);
     }
 
@@ -772,7 +772,7 @@ fn remove_all(purge: bool) {
 
         println!(
             "\nSensei fully removed. To reinstall: {} && {SENSEI_BIN} init",
-            cfg().brew_bundle_script()
+            cfg().brew_install_script()
         );
     } else {
         println!("\nData preserved. To reinstall: {SENSEI_BIN} init");
@@ -793,7 +793,7 @@ fn restart_daemon(port: u16) {
         Err(e) => {
             eprintln!(
                 "Failed to run {SENSEID_BIN}: {e}. Install: {}",
-                cfg().brew_bundle_script()
+                cfg().brew_install_script()
             );
             std::process::exit(1);
         }
@@ -812,7 +812,7 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
         Err(e) => {
             eprintln!(
                 "Failed to run {SENSEID_BIN}: {e}. Install: {}",
-                cfg().brew_bundle_script()
+                cfg().brew_install_script()
             );
             std::process::exit(1);
         }

@@ -67,14 +67,14 @@ mod tests {
     fn process_doc_file(rel: &str) -> FileProcessResult {
         let root = repo_root();
         let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs).expect(&format!("not found: {}", abs.display()));
+        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("not found: {}", abs.display()));
         process(&abs.to_string_lossy(), rel, &content, "sensei", &root.to_string_lossy())
     }
 
     fn process_doc_fixture(rel: &str) -> FileProcessResult {
         let root = fixtures();
         let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs).expect(&format!("Fixture not found: {}", abs.display()));
+        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
         process(&abs.to_string_lossy(), rel, &content, "test", &root.to_string_lossy())
     }
 
@@ -83,7 +83,7 @@ mod tests {
         let subtree_root = root.join(subtree);
         let abs = root.join(rel);
         let sub_rel = abs.strip_prefix(&subtree_root).unwrap_or(&abs).to_string_lossy().to_string();
-        let content = std::fs::read_to_string(&abs).expect(&format!("Fixture not found: {}", abs.display()));
+        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
         process(&abs.to_string_lossy(), &sub_rel, &content, &format!("test:{}", subtree), &subtree_root.to_string_lossy())
     }
 

@@ -115,7 +115,7 @@ mod tests {
     fn process_code_file(rel: &str) -> FileProcessResult {
         let root = workspace_root();
         let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs).expect(&format!("File not found: {}", abs.display()));
+        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("File not found: {}", abs.display()));
         let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
         process(&abs.to_string_lossy(), rel, ext, &content, "sensei").expect("should process")
     }
@@ -123,7 +123,7 @@ mod tests {
     fn process_fixture(rel: &str) -> FileProcessResult {
         let root = fixtures();
         let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs).expect(&format!("Fixture not found: {}", abs.display()));
+        let content = std::fs::read_to_string(&abs).unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
         let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
         process(&abs.to_string_lossy(), rel, ext, &content, "test").expect("should process")
     }
@@ -141,10 +141,10 @@ mod tests {
 
         // Should find parse method (impl LanguageAdapter)
         let methods: Vec<_> = r.symbols.iter().filter(|s| s.kind == "method").collect();
-        assert!(methods.len() > 0, "should find methods");
+        assert!(!methods.is_empty(), "should find methods");
 
         // Should have imports (use statements)
-        assert!(r.unresolved_imports.len() > 0, "should have imports");
+        assert!(!r.unresolved_imports.is_empty(), "should have imports");
     }
 
     #[test]
