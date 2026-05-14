@@ -51,7 +51,7 @@ export function reroute({ url }: { url: URL }): string | undefined {
   // ── Tier 0: Upgrade gate ──────────────────────────────────────────────────
   // If the app was just updated, run upgrade steps before health checks.
   // The updater writes `sensei:app-version` to localStorage before restarting;
-  // the /upgrade page clears it once brew bundle + db deploy have completed.
+  // the /upgrade page clears it once the health resolvers + db deploy have completed.
   const pendingUpgrade =
     !BYPASS_HEALTH &&
     typeof localStorage !== 'undefined' &&

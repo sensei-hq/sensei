@@ -9,7 +9,7 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
 const fixture = (over: Partial<RemedyT> = {}): RemedyT => ({
   message: 'Run the script in your terminal.',
-  script: 'brew bundle --file=https://example/Brewfile',
+  script: 'brew install sensei-hq/tap/sensei',
   url: null, ...over,
 });
 
