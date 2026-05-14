@@ -23,7 +23,7 @@
   const activeCount = $derived(Math.min(activeIdx + 1, total));
 </script>
 
-<section class="border border-surface-z2 rounded-xl bg-surface-z1 p-6.5">
+<section class="rounded-xl bg-surface-z1 p-6.5" style="border: var(--hairline);">
   <div class="flex items-center gap-4.5">
     <div class="w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
          class:border-success-z5={status === 'ok'}
@@ -40,7 +40,7 @@
 
     <div class="flex-1 min-w-0">
       <div class="flex items-baseline gap-2.5 mb-1">
-        <span class="display text-prose font-medium text-surface-z9">{packageManager.label}</span>
+        <span class="display text-prose font-semibold text-surface-z9">{packageManager.label}</span>
         {#if packageManager.note}
           <span class="mono text-2xs text-surface-z6">{packageManager.note}</span>
         {/if}
