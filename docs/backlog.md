@@ -270,6 +270,7 @@ Screens confirmed to have no mockup. Design (mockup → spec → plan) must prec
 | # | Area | Issue | Notes |
 |---|------|-------|-------|
 | K1 | Daemon — ACP config | JSONC comment loss on rewrite | `upsert_sensei_in_json` / `remove_sensei_from_json` parse with `json5` (preserves all key/value data) but serialize back with `serde_json` (strips comments). All settings values are preserved; only `// comments` and trailing commas are lost. Full fix requires a CST-preserving JSONC editor — no mature Rust crate exists. Options: (a) preserve leading comment block (prefix before `{`), (b) surgical text splice at the key range. |
+| K2 | Database — DDL upgrades | No rollback for partial or failed upgrades | A partial DDL upgrade (e.g. `dbd apply` interrupted mid-run) leaves the schema in an inconsistent state. The current `dbd reset + apply` workflow is acceptable pre-release but will not be safe once stable versions ship to users. A rollback mechanism is needed — likely transactional DDL snapshots or migration checkpoints inside `dbd` itself (not in `senseid` code). Offload to `dbd` team. Consider before first stable release. |
 
 ---
 

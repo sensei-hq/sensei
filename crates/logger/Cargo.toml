@@ -1,0 +1,21 @@
+[package]
+name = "sensei-logger"
+version = "0.2.2"
+edition = "2024"
+description = "Structured logger — kavach pattern (level, running_on, context, data, error)"
+
+[dependencies]
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+# Writers (optional features for consumers that need them)
+sqlx-core = { version = "0.8", features = ["_rt-tokio", "json"], optional = true }
+sqlx-postgres = { version = "0.8", features = ["json"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+
+[features]
+default = ["pg", "api"]
+pg = ["sqlx-core", "sqlx-postgres"]
+api = ["reqwest"]

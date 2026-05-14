@@ -2,7 +2,7 @@
  * Boot flow E2E tests — real Sensei.app, real IPC.
  *
  * Tests the /health bootstrap page against the running app.
- * App is launched by globalSetup with SENSEI_MODE=dev / SENSEI_DB_NAME=sensei-dev.
+ * App is built with --features dev (compile-time: port 7745, sensei_dev DB).
  */
 
 import { test, expect } from '../fixtures';
@@ -29,7 +29,7 @@ test.describe('Boot flow', () => {
     // (proving the page is loaded and IPC is draining), then clear health,
     // then navigate to '/' to test the cold-start routing.
     await navigateTo(tauriPage, '/health');
-    await expect(tauriPage.locator('.bootstrap-page')).toBeVisible({ timeout: 15_000 });
+    await expect(tauriPage.locator('.gate-row').first()).toBeVisible({ timeout: 15_000 });
 
     // Clear health gate — IPC is no longer saturated at this point
     await tauriPage.evaluate(`
@@ -42,13 +42,13 @@ test.describe('Boot flow', () => {
     // reroute() exempts '/' → root page mounts → onMount calls goto('/health')
     await navigateTo(tauriPage, '/');
 
-    // Health page must appear via the onMount chain (bootstrap-page class is the marker)
-    await expect(tauriPage.locator('.bootstrap-page')).toBeVisible({ timeout: 15_000 });
+    // Health page must appear via the onMount chain
+    await expect(tauriPage.locator('.gate-row').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('health page loads', async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/health');
-    await expect(tauriPage.locator('.bootstrap-page')).toBeVisible({ timeout: 10_000 });
+    await expect(tauriPage.locator('.gate-row').first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('bootstrap gates are visible', async ({ tauriPage }) => {

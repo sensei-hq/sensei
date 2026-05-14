@@ -48,7 +48,7 @@
   }
   .heading { margin-bottom: 20px; }
   .section-tag {
-    font-size: 9.5px;
+    font-size: 10px;
     letter-spacing: 0.18em;
     color: var(--sumi-3);
     text-transform: uppercase;
@@ -85,7 +85,7 @@
   .card-meta {
     display: flex;
     justify-content: space-between;
-    font-size: 9.5px;
+    font-size: 10px;
     color: var(--sumi-3);
   }
   .bar-track {

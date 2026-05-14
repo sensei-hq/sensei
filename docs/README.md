@@ -1,43 +1,32 @@
-# sensei docs  先生
+# Sensei Documentation
 
 Observe. Learn. Improve.
 
-Sensei is a development intelligence platform for AI-assisted coding. It watches your coding sessions, learns your team's patterns and conventions, and feeds that knowledge back to your AI assistant — so it gets it right the first time.
+## Structure
 
-## This directory
+| Directory | Purpose |
+|-----------|---------|
+| `ideas/` | What Sensei does -- user perspective. Start here. |
+| `design/` | How it's built -- engineering perspective. References ideas/. |
+| `mockups/` | Visual reference -- HTML mockups and design system. |
+| `archive/` | Old documentation -- retained for historical context. |
+| `backlog.md` | Active implementation backlog. |
 
-Design docs, ideas, mockups, journeys, and analysis. No runnable code.
+## Reading order
 
-| Directory | Contents |
-|-----------|----------|
-| `ideas/` | Feature explorations and proposals |
-| `mockups/` | Interactive JSX prototypes and design summaries |
-| `journeys/` | User journeys and system pipelines |
-| `design/` | Architecture, schemas, algorithms, ADRs |
-| `blueprints/` | Implementation blueprints |
-| `analysis/` | Gap analysis, skill-command mappings |
-| `plans/` | Implementation plans |
-| `features/` | Feature specifications |
-| `experiments/` | Design experiments |
-| `feature-requests/` | Upstream requests (Claude Code, Copilot, etc.) |
-| `reference/` | Reference materials and blocking gaps |
-| `backlog.md` | Active backlog — start here |
+1. `ideas/README.md` -- product overview, module map, status
+2. `ideas/01-bootstrap.md` through `ideas/06-logging.md` -- what the user experiences
+3. `design/README.md` -- architecture, principles, component map
+4. `design/01-app.md` through `design/10-build-and-release.md` -- how each component is built
 
-## Monorepo layout
+## Monorepo structure
 
-All code lives in [sensei-hq/sensei](https://github.com/sensei-hq/sensei):
-
-| Path | What |
-|------|------|
-| [`app/`](../app/) | Tauri + SvelteKit desktop app |
-| [`daemon/`](../daemon/) | Rust workspace — senseid, sensei-cli, sensei-mcp, database DDL |
-| [`website/`](../website/) | Marketing website |
-| [`gateway/`](../gateway/) | LLM routing library |
-
-## Separate repos
-
-| Repo | Purpose |
-|------|---------|
-| [marketplace](https://github.com/sensei-hq/marketplace) | Skills, commands, agents, hooks, templates |
-| [homebrew-tap](https://github.com/sensei-hq/homebrew-tap) | Homebrew formula and cask for macOS |
-| [corpus](https://github.com/sensei-hq/corpus) | Benchmark repositories for indexing tests |
+| Directory | Language | Purpose |
+|-----------|----------|---------|
+| `app/` | SvelteKit + Tauri | Desktop observatory |
+| `crates/` | Rust | All Rust crates (senseid, cli, mcp, bootstrap, gateway) |
+| `website/` | SvelteKit | Marketing site |
+| `database/` | SQL | DDL definitions |
+| `homebrew/` | Ruby | Homebrew tap (subtree) |
+| `marketplace/` | Markdown | Skills and plugins (subtree) |
+| `docs/` | Markdown | This documentation |

@@ -6,8 +6,13 @@
  */
 import { senseiApi } from './api.js';
 
+// Build-time port injected by vite.config.ts — 7745 for dev/debug, 7744 for prod.
+// No async resolution needed; page loaders can read appState.port immediately.
+declare const __SENSEI_DEFAULT_PORT__: number;
+const DEFAULT_PORT = typeof __SENSEI_DEFAULT_PORT__ !== 'undefined' ? __SENSEI_DEFAULT_PORT__ : 7744;
+
 export class AppState {
-  port = $state(7744);
+  port = $state(DEFAULT_PORT);
   config = $state<Record<string, string>>({});
   loaded = $state(false);
   /**
@@ -132,10 +137,6 @@ export class AppState {
   }
 
   async reset() {
-    try {
-      await fetch(`http://127.0.0.1:${this.port}/api/reset`, { method: 'POST' });
-    } catch { /* non-fatal */ }
-
     this.config = {};
     this.loaded = false;
     this.healthReady = false;
