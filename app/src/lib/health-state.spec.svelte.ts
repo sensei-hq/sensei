@@ -6,7 +6,7 @@ import type { HealthPayload, Remedy } from './health-types.js';
 
 const remedyFixture = (): Remedy => ({
   message: 'Run the script in your terminal.',
-  script: 'brew bundle --file=https://example/Brewfile',
+  script: 'brew install sensei-hq/tap/sensei',
   url: null,
 });
 
@@ -71,7 +71,7 @@ describe('HealthState — apply() happy paths', () => {
     const s = new HealthState();
     s.apply(needsActionPayload());
     expect(s.status).toBe('needs-action');
-    expect(s.remedy?.script).toContain('brew bundle');
+    expect(s.remedy?.script).toContain('brew install');
   });
 
   it('applies a resolving payload (remedy cleared)', () => {
