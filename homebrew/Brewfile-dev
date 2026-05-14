@@ -1,9 +1,0 @@
-# Install Sensei dev binaries and prerequisites via Homebrew.
-# Usage: brew bundle --file=Brewfile-dev
-# Safe to re-run — already-installed items are skipped.
-
-tap "sensei-hq/tap", "https://github.com/sensei-hq/homebrew-tap"
-
-brew "postgresql@17"                # Storage engine (shared with prod)
-brew "ollama"                       # Local AI inference (shared with prod)
-brew "sensei-hq/tap/sensei-dev"     # senseid-dev + sensei-dev + sensei-mcp-dev (built from develop branch)
