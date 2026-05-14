@@ -22,7 +22,9 @@ class SenseiDev < Formula
   # SSH (not HTTPS) so the private sensei-hq/sensei repo can be cloned
   # via the developer's existing GitHub SSH key — HTTPS would prompt for
   # username/password and hang brew bundle.
-  head "git@github.com:sensei-hq/sensei.git", branch: "develop"
+  # `using: :git` forces the git download strategy — brew only auto-detects
+  # git from `.git`-suffixed HTTPS URLs, not from SSH-style URLs.
+  head "git@github.com:sensei-hq/sensei.git", branch: "develop", using: :git
 
   depends_on "rust" => :build
   depends_on "make" => :build
