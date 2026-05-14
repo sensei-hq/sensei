@@ -124,7 +124,7 @@ Tests for RealTransport are integration-style (vi.mock the Tauri API imports). C
 
 ---
 
-## Section B — `HealthState.init()` / `HealthState.recheck()` lifecycle
+## Section B — `HealthState.init()` / `HealthState.verify()` lifecycle
 
 The HealthState class gains its missing lifecycle methods. The transport is injected via constructor (defaulting to `RealTransport` for production, `MockTransport` for tests).
 
@@ -174,11 +174,11 @@ Tests (TDD red-first):
 - Each `HealthEvent` fed back into `applyEvent` mutates state correctly.
 - `init()` on an already-ok state DOES NOT call resolve.
 
-### Task B3 — `recheck()` (forced re-check)
+### Task B3 — `verify()` (force a fresh check)
 
 ```ts
 /** Force a fresh check. Clears the session cache. Same idempotency while in flight. */
-async recheck(): Promise<void> {
+async verify(): Promise<void> {
   if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('sensei:health');
   this.#initPromise = null; // allow init() to run again
   return this.init();
@@ -186,9 +186,9 @@ async recheck(): Promise<void> {
 ```
 
 Tests:
-- `recheck()` clears `sensei:health` from sessionStorage.
-- `recheck()` causes a fresh `transport.check()` call (separate from any prior `init`).
-- `recheck()` is also idempotent if called concurrently.
+- `verify()` clears `sensei:health` from sessionStorage.
+- `verify()` causes a fresh `transport.check()` call (separate from any prior `init`).
+- `verify()` is also idempotent if called concurrently.
 
 ### Task B4 — sessionStorage cache writes from inside `apply()`
 
@@ -238,20 +238,20 @@ The session cache now lives in HealthState. The old `AppState` field and method 
   onMount(() => { healthState.init(); });
 
   function onEnter()   { goto('/', { replaceState: true }); }
-  function onRecheck() { healthState.recheck(); }
+  function onVerify() { healthState.verify(); }
   function onCopyScript() {
     if (healthState.remedy) navigator.clipboard?.writeText(healthState.remedy.script);
   }
 </script>
 
-<HealthView state={healthState} {onEnter} {onRecheck} {onCopyScript} />
+<HealthView state={healthState} {onEnter} {onVerify} {onCopyScript} />
 ```
 
-The page is still ~14 lines. Just adds the `onMount(init)` and wires `onRecheck`.
+The page is still ~14 lines. Just adds the `onMount(init)` and wires `onVerify`.
 
 Tests: existing 6 HealthView.spec tests + 2 new tests:
 - Mounting the page calls `healthState.init()` exactly once.
-- Clicking the recheck button (via the Remedy sub-component) calls `healthState.recheck()`.
+- Clicking the verify button (via the Remedy sub-component) calls `healthState.verify()`.
 
 ### Task C2 — `hooks.client.ts` confirms sessionStorage shape
 
@@ -307,8 +307,8 @@ Expected behavior:
 6. SessionStorage `sensei:health = 'ready'` is set.
 
 Failure modes to verify:
-- Stop the daemon mid-session → `recheck` brings the ledger back to life.
-- Delete `sensei_dev` DB → `recheck` → re-runs db_setup.
+- Stop the daemon mid-session → `verify` brings the ledger back to life.
+- Delete `sensei_dev` DB → `verify` → re-runs db_setup.
 
 ### Task E2 — JSON wire-shape integration test (TS side)
 
@@ -350,10 +350,10 @@ About 9–11 commits, narrower than 1b:
 2. `feat(app): add RealTransport calling health_check / health_check_and_resolve` (A2)
 3. `feat(app): HealthState takes a transport via constructor` (B1)
 4. `feat(app): HealthState.init() lifecycle` (B2)
-5. `feat(app): HealthState.recheck() forced re-check` (B3)
+5. `feat(app): HealthState.verify() forces a fresh check` (B3)
 6. `feat(app): apply() writes sessionStorage cache for hook reads` (B4)
 7. `chore(app): remove appState.healthReady / setHealthReady` (B5)
-8. `feat(app): /health page calls init() onMount + wires recheck` (C1)
+8. `feat(app): /health page calls init() onMount + wires verify` (C1)
 9. `test(app): hooks.client.ts reroute reads HealthState cache` (C2)
 10. `refactor(app): sweep remaining legacy bootstrap-health imports` (D1)
 11. `chore: phase 1c complete` + push + merge to main.
