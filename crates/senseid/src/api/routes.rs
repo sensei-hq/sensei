@@ -183,10 +183,16 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["name"], "senseid");
+        // /health now returns sensei_bootstrap::HealthPayload (Phase 1b).
         assert!(json["version"].is_string());
-        assert!(json["components"].is_object());
-        assert!(json["status"].as_str() == Some("healthy") || json["status"].as_str() == Some("degraded"));
+        assert_eq!(json["packageManager"]["id"], "homebrew");
+        assert!(json["components"].is_array());
+        assert_eq!(json["components"].as_array().unwrap().len(), 5);
+        let status = json["status"].as_str().unwrap();
+        assert!(
+            matches!(status, "ok" | "needs-action" | "checking" | "resolving"),
+            "unexpected status {status}"
+        );
     }
 
     #[tokio::test]
