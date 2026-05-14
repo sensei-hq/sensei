@@ -13,9 +13,7 @@ impl Checker for AndChecker {
             let out = c.check();
             match out.status {
                 ComponentStatus::Failed => return out,
-                ComponentStatus::Ready  => {
-                    if version.is_none() { version = out.version; }
-                }
+                ComponentStatus::Ready if version.is_none() => { version = out.version; }
                 _ => {}
             }
         }

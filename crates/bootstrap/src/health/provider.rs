@@ -6,8 +6,8 @@
 //! Default methods (Template Method, shared orchestration):
 //!   * check  — runs every checker once, returns validated HealthPayload.
 //!   * resolve — walks resolvers, finds covered failures, runs each
-//!               resolver once with all its targets, re-checks, emits
-//!               HealthEvents, returns terminal HealthPayload.
+//!     resolver once with all its targets, re-checks, emits
+//!     HealthEvents, returns terminal HealthPayload.
 //!
 //! IMPORTANT: every impl of `checker_for` MUST use exhaustive `match id {...}`
 //! with no `_ =>` catchall, so adding a new ComponentId is a compile error

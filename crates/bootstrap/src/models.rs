@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn model_name_matching() {
-        let installed = vec!["gemma3:27b".to_string(), "llama3:8b".to_string()];
+        let installed = ["gemma3:27b".to_string(), "llama3:8b".to_string()];
         let model = "gemma3:27b";
         let found = installed.iter().any(|name| name.starts_with(model));
         assert!(found);
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn model_name_matching_not_found() {
-        let installed = vec!["llama3:8b".to_string()];
+        let installed = ["llama3:8b".to_string()];
         let model = "gemma3:27b";
         let found = installed.iter().any(|name| name.starts_with(model));
         assert!(!found);

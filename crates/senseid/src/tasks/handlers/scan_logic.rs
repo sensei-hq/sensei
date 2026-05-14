@@ -486,8 +486,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         std::fs::write(tmp.path().join("code.rs"), "fn x() {}").unwrap();
-        std::fs::write(tmp.path().join("image.png"), &[0u8; 10]).unwrap();
-        std::fs::write(tmp.path().join("font.woff2"), &[0u8; 10]).unwrap();
+        std::fs::write(tmp.path().join("image.png"), [0u8; 10]).unwrap();
+        std::fs::write(tmp.path().join("font.woff2"), [0u8; 10]).unwrap();
 
         let (_, count) = count_indexable_files(tmp.path());
         assert_eq!(count, 1, "only .rs should be counted, not .png or .woff2");
