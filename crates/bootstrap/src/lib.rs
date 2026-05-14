@@ -5,12 +5,16 @@
 //!   * health::{HealthPayload, HealthEvent, ...} — wire types matching TS.
 //!   * health::check()             — sync fast path; daemon /health uses this.
 //!   * health::check_and_resolve() — streaming check + fix; sidecar uses this.
+//!   * hardware::{HardwareInfo, ModelTier, detect()} — host hardware probing.
+//!   * models::{list(), missing_models(), ...} — Ollama model helpers.
 //!   * config::*                    — runtime config (unchanged).
 //!   * util::*                      — small utilities (unchanged).
 
 pub mod config;
 pub mod util;
 pub mod health;
+pub mod hardware;
+pub mod models;
 
 pub use config::{
     SenseiConfig, SenseiMode, SenseiLocalConfig,
@@ -23,6 +27,7 @@ pub use config::{
 };
 #[allow(unused_imports)]
 pub use health::*;
+pub use hardware::{HardwareInfo, ModelTier};
 
 /// Daemon port for the current mode.
 pub fn daemon_port() -> u16 { SenseiConfig::from_env().daemon_port }
