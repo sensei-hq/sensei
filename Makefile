@@ -267,12 +267,11 @@ tap-push:
 	cp homebrew/Formula/sensei.rb "$$tmpdir/Formula/" && \
 	cp homebrew/Formula/sensei-dev.rb "$$tmpdir/Formula/" && \
 	cp homebrew/Casks/senseihq.rb "$$tmpdir/Casks/" && \
-	cp homebrew/Brewfile "$$tmpdir/" && \
-	cp homebrew/Brewfile-dev "$$tmpdir/" && \
+	rm -f "$$tmpdir/Brewfile" "$$tmpdir/Brewfile-dev" && \
 	cd "$$tmpdir" && \
 	git add -A && \
 	git diff --cached --quiet && echo "homebrew-tap already up to date" || \
-	  (git commit -m "chore: sync from sensei monorepo" && git push origin main) && \
+	  (git commit -m "chore: sync from sensei monorepo (retire Brewfiles)" && git push origin main) && \
 	rm -rf "$$tmpdir"
 
 # Sync marketplace/ files to sensei-hq/marketplace.
