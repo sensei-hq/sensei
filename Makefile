@@ -51,11 +51,13 @@ crates-release:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp
 
 install-dev: crates-dev
-	@# Cold install: ensure the sensei-dev formula is present via Brewfile-dev.
-	@# (Runs cargo build inside brew sandbox — slow first time, no-op on repeat.)
+	@# Cold install: ensure the sensei-dev formula is present via direct
+	@# `brew install --HEAD`. Postgres + ollama are no longer cold-installed
+	@# here — the daemon's health resolvers handle them on first boot.
 	@if ! brew list --formula sensei-dev >/dev/null 2>&1; then \
-	  echo "Cold install: brew bundle --file=./homebrew/Brewfile-dev (one-time, slow)..."; \
-	  brew bundle --file=./homebrew/Brewfile-dev; \
+	  echo "Cold install: brew install --HEAD sensei-hq/tap/sensei-dev (one-time, slow)..."; \
+	  brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap >/dev/null 2>&1 || true; \
+	  brew install --HEAD sensei-hq/tap/sensei-dev; \
 	fi
 	@# Stop any running dev daemon before overlay.
 	@if pgrep -x senseid-dev > /dev/null; then \
