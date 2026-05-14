@@ -71,7 +71,7 @@ impl PlatformProvider for MacOSProvider {
     fn default_remedy(&self) -> Remedy {
         Remedy {
             message: "Some components need attention. Run the sensei bootstrap repair flow.".to_string(),
-            script:  "brew bundle --file==https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile".to_string(),
+            script:  SenseiConfig::from_env().brew_bundle_script(),
             url:     None,
         }
     }
