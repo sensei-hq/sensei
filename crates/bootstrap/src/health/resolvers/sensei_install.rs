@@ -5,10 +5,7 @@
 
 use crate::config::SenseiConfig;
 use crate::health::resolver::{Resolver, ResolveOutcome};
-use crate::health::resolvers::brew_helpers::{brew_install, BrewError};
-use crate::health::resolvers::postgres_install::{
-    generic_brew_remedy, homebrew_install_remedy, overwrite_link_remedy, tap_missing_remedy,
-};
+use crate::health::resolvers::brew_helpers::brew_install_to_outcome;
 use crate::health::types::ComponentId;
 
 pub struct SenseiInstallResolver;
@@ -32,13 +29,7 @@ impl Resolver for SenseiInstallResolver {
 
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         let (formula, args) = formula_and_args();
-        match brew_install(formula, args) {
-            Ok(())                                => ResolveOutcome::Resolved,
-            Err(BrewError::BrewNotFound)          => ResolveOutcome::NeedsHumanAction(homebrew_install_remedy()),
-            Err(BrewError::LinkConflict { path }) => ResolveOutcome::NeedsHumanAction(overwrite_link_remedy(formula, &path)),
-            Err(BrewError::TapMissing)            => ResolveOutcome::NeedsHumanAction(tap_missing_remedy(formula)),
-            Err(BrewError::Other(stderr))         => ResolveOutcome::NeedsHumanAction(generic_brew_remedy(formula, &stderr)),
-        }
+        brew_install_to_outcome(formula, args)
     }
 }
 
