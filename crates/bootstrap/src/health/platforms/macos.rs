@@ -74,15 +74,9 @@ impl PlatformProvider for MacOSProvider {
     }
 
     fn default_remedy(&self) -> Remedy {
-        let cfg = SenseiConfig::from_env();
-        let (formula, head) = if cfg.is_dev() {
-            ("sensei-hq/tap/sensei-dev", " --HEAD")
-        } else {
-            ("sensei-hq/tap/sensei", "")
-        };
         Remedy {
             message: "Some components need attention. Run the script below to (re)install sensei; missing prerequisites will be installed when the daemon next runs its health check.".to_string(),
-            script:  format!("brew install{head} {formula}"),
+            script:  SenseiConfig::from_env().brew_install_script(),
             url:     None,
         }
     }
@@ -139,11 +133,21 @@ mod tests {
         assert_eq!(by_id("sensei_install"), &[ComponentId::Sensei]);
     }
 
+    #[cfg(feature = "dev")]
     #[test]
-    fn default_remedy_uses_brew_install_for_sensei_tap() {
+    fn default_remedy_uses_dev_formula_and_head_in_dev_mode() {
         let r = MacOSProvider.default_remedy();
-        assert!(r.script.starts_with("brew install"));
+        assert!(r.script.contains("--HEAD"));
+        assert!(r.script.contains("sensei-hq/tap/sensei-dev"));
+    }
+
+    #[cfg(not(feature = "dev"))]
+    #[test]
+    fn default_remedy_uses_prod_formula_no_head() {
+        let r = MacOSProvider.default_remedy();
+        assert!(!r.script.contains("--HEAD"));
         assert!(r.script.contains("sensei-hq/tap/sensei"));
+        assert!(!r.script.contains("sensei-dev"));
     }
 
     #[test]
