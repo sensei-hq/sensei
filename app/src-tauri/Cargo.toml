@@ -1,9 +1,12 @@
+[workspace]
+
 [package]
 name = "sensei-desktop"
-version = "0.1.0"
+version = "0.2.14"
 edition = "2021"
 
 [features]
+dev = ["sensei-bootstrap/dev"]
 e2e-testing = ["tauri-plugin-playwright"]
 
 [lib]
@@ -21,7 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shellexpand = "3"
 ureq = { version = "2", features = ["json"] }
-sensei-bootstrap = { path = "../../daemon/crates/bootstrap" }
+sensei-bootstrap = { path = "../../crates/bootstrap" }
 tauri-plugin-playwright = { version = "0.2", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 sysinfo = "0.34"

@@ -1,0 +1,9 @@
+[package]
+name = "sensei-config"
+version = "0.2.2"
+edition = "2024"
+description = "Shared config types for sensei — no heavy runtime dependencies"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -3,6 +3,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { appState } from '$lib/appstate.svelte.js';
 
   let { children } = $props();
 
@@ -58,20 +59,31 @@
   }
 
   onMount(() => {
+    // Port resolution now happens in +layout.ts load() — runs before any page loader.
+
     applyColorScheme();
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     mq.addEventListener('change', applyColorScheme);
 
-    let unlisten: (() => void) | undefined;
+    const unlistens: Array<() => void> = [];
     if (typeof window !== 'undefined' && (window as any).__TAURI__) {
       import('@tauri-apps/api/event').then(({ listen }) => {
-        listen<void>('open-logs', () => { goto('/logs'); }).then(fn => { unlisten = fn; });
+        listen<void>('open-logs', () => {
+          goto('/logs');
+        }).then(fn => unlistens.push(fn));
+
+        // Dev View-menu navigation — bypasses routing guards for testing.
+        // Sets health=ready in sessionStorage so the guard doesn't intercept.
+        listen<string>('dev-navigate', (e) => {
+          sessionStorage.setItem('sensei:health', 'ready');
+          goto(e.payload, { replaceState: true });
+        }).then(fn => unlistens.push(fn));
       });
     }
 
     return () => {
       mq.removeEventListener('change', applyColorScheme);
-      unlisten?.();
+      unlistens.forEach(fn => fn());
     };
   });
 </script>

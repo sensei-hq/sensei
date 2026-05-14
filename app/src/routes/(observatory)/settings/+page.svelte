@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
+    import TabBar from "$lib/components/TabBar.svelte";
 
     type Assistant = {
         family: string;
@@ -17,12 +18,16 @@
         Array<{ name: string; kind: string; enabled: boolean }>
     >([]);
     let loading = $state(true);
-    let section = $state<"general" | "assistants" | "inference" | "extensions">(
-        "general",
-    );
+    let section = $state("general");
+
+    const sectionTabs: [string, string][] = [
+        ["general", "General"],
+        ["assistants", "Assistants"],
+        ["inference", "Inference"],
+        ["extensions", "Extensions"],
+    ];
 
     onMount(async () => {
-        await appState.load();
         const api = senseiApi(appState.port);
         const [cfg, assts, items] = await Promise.all([
             api.getConfig(),
@@ -53,16 +58,7 @@
         <h1 class="display text-2xl font-normal m-0">設 Settings</h1>
     </div>
 
-    <!-- Section nav -->
-    <div class="flex gap-0 border-b border-surface-z2 mb-8">
-        {#each [["general", "General"], ["assistants", "Assistants"], ["inference", "Inference"], ["extensions", "Extensions"]] as [key, label]}
-            <button
-                class="section-btn px-4.5 py-2 border-none bg-none text-ui cursor-pointer border-b-2 border-transparent -mb-px text-surface-z6"
-                class:active={section === key}
-                onclick={() => (section = key as any)}>{label}</button
-            >
-        {/each}
-    </div>
+    <TabBar tabs={sectionTabs} bind:active={section} class="mb-8" />
 
     {#if loading}
         <p class="text-ui text-surface-z6 leading-relaxed">
@@ -193,14 +189,6 @@
 </div>
 
 <style>
-    .section-btn:hover {
-        color: oklch(var(--color-surface-z8) / 1);
-    }
-    .section-btn.active {
-        color: oklch(var(--color-surface-z9) / 1);
-        border-bottom-color: oklch(var(--color-primary-z5) / 1);
-    }
-
     .setting-row:last-child {
         border-bottom: none;
     }

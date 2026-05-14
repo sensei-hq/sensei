@@ -1,0 +1,232 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Daemon binaries (4 platforms) ──────────────────────────────────────────
+  build-daemon:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: sensei-macos-arm64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact: sensei-macos-x86_64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: sensei-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: sensei-linux-arm64
+            use-cross: true
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use-cross
+        run: cargo install cross --locked
+
+      - name: Build binaries
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          USE_CROSS: ${{ matrix.use-cross }}
+        run: |
+          if [ "$USE_CROSS" = "true" ]; then
+            cross build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp
+          else
+            cargo build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp
+          fi
+
+      - name: Package binaries
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          mkdir -p "$ARTIFACT"
+          for bin in senseid sensei sensei-mcp; do
+            src="target/${BUILD_TARGET}/release/${bin}"
+            [ -f "$src" ] && cp "$src" "$ARTIFACT/"
+          done
+          tar czf "${ARTIFACT}.tar.gz" "$ARTIFACT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  # ── Desktop app (macOS universal) ──────────────────────────────────────────
+  build-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: bun install
+
+      - name: Build app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          args: --target universal-apple-darwin
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensei-app-dmg
+          path: app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+  # ── GitHub Release (all artifacts) ─────────────────────────────────────────
+  release:
+    needs: [build-daemon, build-app]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.dmg
+
+  # ── Publish gateway to crates.io (independent) ────────────────────────────
+  # TODO: uncomment when CARGO_REGISTRY_TOKEN secret is configured
+  # publish-gateway:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: dtolnay/rust-toolchain@stable
+  #     - uses: Swatinem/rust-cache@v2
+  #       with:
+  #         workspaces: crates/gateway
+  #     - name: Run tests
+  #       working-directory: crates/gateway
+  #       run: cargo test --all-features
+  #     - name: Publish to crates.io
+  #       working-directory: crates/gateway
+  #       run: cargo publish -p gateway
+  #       env:
+  #         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ── Update Homebrew tap ────────────────────────────────────────────────────
+  update-tap:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Derive version from tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Download CLI tarballs and compute SHA256s
+        run: |
+          BASE="https://github.com/sensei-hq/sensei/releases/download/${TAG}"
+          for artifact in sensei-macos-arm64 sensei-macos-x86_64 sensei-linux-arm64 sensei-linux-x86_64; do
+            curl -fsSL -o "${artifact}.tar.gz" "${BASE}/${artifact}.tar.gz"
+            sha=$(sha256sum "${artifact}.tar.gz" | cut -d' ' -f1)
+            key="SHA256_${artifact//-/_}"
+            echo "${key}=${sha}" >> "$GITHUB_ENV"
+          done
+
+      - name: Find DMG asset and compute SHA256
+        run: |
+          dmg_url=$(gh api "repos/sensei-hq/sensei/releases/tags/${TAG}" \
+            --jq '.assets[] | select(.name | endswith(".dmg")) | .browser_download_url' \
+            | head -1)
+          if [ -n "$dmg_url" ]; then
+            dmg_name=$(basename "$dmg_url")
+            curl -fsSL -o "$dmg_name" "$dmg_url"
+            sha=$(sha256sum "$dmg_name" | cut -d' ' -f1)
+            echo "SHA256_dmg=${sha}" >> "$GITHUB_ENV"
+            echo "DMG_FOUND=true" >> "$GITHUB_ENV"
+          else
+            echo "DMG_FOUND=false" >> "$GITHUB_ENV"
+            echo "No DMG in release — cask SHA256 will not be updated"
+          fi
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: sensei-hq/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Update formula (version + SHA256s)
+        run: |
+          f="tap/Formula/sensei.rb"
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$f"
+          awk -v arm64="$SHA256_sensei_macos_arm64" \
+              -v x86_64="$SHA256_sensei_macos_x86_64" \
+              -v lnx_arm64="$SHA256_sensei_linux_arm64" \
+              -v lnx_x86_64="$SHA256_sensei_linux_x86_64" '
+            /if OS\.mac\? && Hardware::CPU\.arm\?/    { plat="mac_arm" }
+            /elsif OS\.mac\? && Hardware::CPU\.intel\?/ { plat="mac_x86" }
+            /elsif OS\.linux\? && Hardware::CPU\.arm\?/ { plat="lnx_arm" }
+            /else/                                    { plat="lnx_x86" }
+            /sha256/ {
+              gsub(/"([0-9a-f]{64}|REPLACE_WITH_[A-Z0-9_]+)"/, \
+                plat=="mac_arm"  ? "\"" arm64   "\"" : \
+                plat=="mac_x86"  ? "\"" x86_64  "\"" : \
+                plat=="lnx_arm"  ? "\"" lnx_arm64  "\"" : \
+                                   "\"" lnx_x86_64 "\"")
+            }
+            { print }
+          ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+
+      - name: Update cask (version + SHA256)
+        if: env.DMG_FOUND == 'true'
+        run: |
+          f="tap/Casks/senseihq.rb"
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$f"
+          sed -i "s/sha256 \"[^\"]*\"/sha256 \"${SHA256_dmg}\"/" "$f"
+
+      - name: Commit and push
+        run: |
+          cd tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/sensei.rb Casks/senseihq.rb
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "chore: update to v${VERSION}"
+            git push
+          fi
