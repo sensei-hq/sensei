@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HealthState, emptyPayload } from './health-state.svelte.js';
 import { MockTransport } from './health-transport.js';
 import { COMPONENT_ORDER } from './health-types.js';
@@ -305,19 +305,20 @@ describe('HealthState — B2: init() lifecycle', () => {
 });
 
 describe('HealthState — B3: verify() forces a fresh check', () => {
-  it('clears sensei:health from sessionStorage', async () => {
+  it('calls sessionStorage.removeItem for sensei:health during verify', async () => {
     const sessionStore = new Map<string, string>();
+    const removedKeys: string[] = [];
     vi.stubGlobal('sessionStorage', {
       getItem:    (k: string) => sessionStore.get(k) ?? null,
       setItem:    (k: string, v: string) => sessionStore.set(k, v),
-      removeItem: (k: string) => sessionStore.delete(k),
+      removeItem: (k: string) => { removedKeys.push(k); sessionStore.delete(k); },
     });
     sessionStore.set('sensei:health', 'ready');
 
     const transport = new MockTransport({ checkPayload: okPayload() });
     const s = new HealthState(emptyPayload, transport);
     await s.verify();
-    expect(sessionStore.has('sensei:health')).toBe(false);
+    expect(removedKeys).toContain('sensei:health');
 
     vi.unstubAllGlobals();
   });
@@ -342,6 +343,56 @@ describe('HealthState — B3: verify() forces a fresh check', () => {
     const transport = new MockTransport({ checkPayload: okPayload() });
     const s = new HealthState(emptyPayload, transport);
     await expect(s.verify()).resolves.toBeUndefined();
+  });
+});
+
+describe('HealthState — B4: apply() writes sessionStorage cache', () => {
+  let sessionStore: Map<string, string>;
+
+  beforeEach(() => {
+    sessionStore = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem:    (k: string) => sessionStore.get(k) ?? null,
+      setItem:    (k: string, v: string) => sessionStore.set(k, v),
+      removeItem: (k: string) => sessionStore.delete(k),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('applying an ok payload writes ready to sensei:health', () => {
+    const s = new HealthState(emptyPayload);
+    s.apply(okPayload());
+    expect(sessionStore.get('sensei:health')).toBe('ready');
+  });
+
+  it('applying a needs-action payload removes sensei:health', () => {
+    sessionStore.set('sensei:health', 'ready');
+    const s = new HealthState(emptyPayload);
+    s.apply(needsActionPayload());
+    expect(sessionStore.has('sensei:health')).toBe(false);
+  });
+
+  it('applying a checking payload removes sensei:health', () => {
+    sessionStore.set('sensei:health', 'ready');
+    const s = new HealthState(emptyPayload);
+    s.apply({ ...okPayload(), status: 'checking', remedy: null });
+    expect(sessionStore.has('sensei:health')).toBe(false);
+  });
+
+  it('applying a resolving payload removes sensei:health', () => {
+    sessionStore.set('sensei:health', 'ready');
+    const s = new HealthState(emptyPayload);
+    s.apply({ ...okPayload(), status: 'resolving', remedy: null });
+    expect(sessionStore.has('sensei:health')).toBe(false);
+  });
+
+  it('does not throw when sessionStorage is undefined', () => {
+    vi.unstubAllGlobals();
+    const s = new HealthState(emptyPayload);
+    expect(() => s.apply(okPayload())).not.toThrow();
   });
 });
 
