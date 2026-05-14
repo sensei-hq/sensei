@@ -19,7 +19,10 @@ class SenseiDev < Formula
   version "0.2.14-dev"
 
   # No stable URL — dev formulae always build from HEAD of develop.
-  head "https://github.com/sensei-hq/sensei.git", branch: "develop"
+  # SSH (not HTTPS) so the private sensei-hq/sensei repo can be cloned
+  # via the developer's existing GitHub SSH key — HTTPS would prompt for
+  # username/password and hang brew bundle.
+  head "git@github.com:sensei-hq/sensei.git", branch: "develop"
 
   depends_on "rust" => :build
   depends_on "make" => :build
