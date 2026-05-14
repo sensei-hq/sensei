@@ -51,6 +51,11 @@ crates-release:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp
 
 install-dev: crates-dev
+	@if pgrep -x senseid-dev > /dev/null; then \
+	  echo "Stopping senseid-dev (pid $$(pgrep -x senseid-dev))..."; \
+	  pkill -x senseid-dev; \
+	  sleep 1; \
+	fi
 	@mkdir -p ~/.local/bin
 	cp target/debug/senseid    ~/.local/bin/senseid-dev
 	cp target/debug/sensei     ~/.local/bin/sensei-dev
