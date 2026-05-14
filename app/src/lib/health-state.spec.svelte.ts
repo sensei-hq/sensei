@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { HealthState, emptyPayload } from './health-state.svelte.js';
+import { MockTransport } from './health-transport.js';
 import { COMPONENT_ORDER } from './health-types.js';
 import type { HealthPayload, Remedy } from './health-types.js';
 
@@ -242,6 +243,13 @@ describe('HealthState — latest', () => {
     expect(s.latest).toBeNull();
     s.latest = '0.3.0';
     expect(s.latest).toBe('0.3.0');
+  });
+});
+
+describe('HealthState — B1: constructor accepts a transport', () => {
+  it('accepts a MockTransport without throwing', () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    expect(() => new HealthState(emptyPayload, transport)).not.toThrow();
   });
 });
 

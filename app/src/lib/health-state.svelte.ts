@@ -3,6 +3,7 @@ import type {
   PackageManagerId, ComponentId, Remedy,
 } from './health-types.js';
 import { COMPONENT_ORDER } from './health-types.js';
+import { RealTransport, type HealthTransport } from './health-transport.js';
 
 /** Display labels for each ledger component. The Rust crate provides these in Phase 2/3 — here they live as cold-load defaults so the UI matches the mockup before any transport runs. */
 const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | null }> = {
@@ -38,11 +39,17 @@ export class HealthState {
   components     = $state<Component[]>(emptyPayload.components);
   remedy         = $state<Remedy | null>(null);
 
+  #transport: HealthTransport;
+
   get isOk():        boolean { return this.status === 'ok'; }
   get isBusy():      boolean { return this.status === 'checking' || this.status === 'resolving'; }
   get needsAction(): boolean { return this.status === 'needs-action'; }
 
-  constructor(seed: HealthPayload = emptyPayload) {
+  constructor(
+    seed: HealthPayload = emptyPayload,
+    transport: HealthTransport = new RealTransport(),
+  ) {
+    this.#transport = transport;
     this.apply(seed);
   }
 
