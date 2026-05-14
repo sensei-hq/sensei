@@ -3,7 +3,10 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use sensei_bootstrap::{BREW_TAP, SenseiConfig, SenseiLocalConfig};
+use sensei_bootstrap::{
+    SenseiConfig, SenseiLocalConfig,
+    SENSEI_BIN, SENSEID_BIN, SENSEI_MCP_BIN, MCP_REGISTRY_KEY,
+};
 
 fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
@@ -14,7 +17,7 @@ fn daemon_url() -> String {
 }
 
 #[derive(Parser)]
-#[command(name = "sensei", about = "Sensei — AI coding companion", version)]
+#[command(name = SENSEI_BIN, about = "Sensei — AI coding companion", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -248,22 +251,23 @@ fn confirm(prompt: &str, auto_yes: bool) -> bool {
 
 /// Check if user-scope init has been done (MCP registered for at least one ACP).
 fn is_user_scope_configured() -> bool {
-    SenseiLocalConfig::load(&home().join(".sensei")).user_scope_configured
+    SenseiLocalConfig::load(&cfg().sensei_dir()).user_scope_configured
 }
 
 /// Mark user scope as configured.
 fn mark_user_scope_configured() {
-    let sensei_dir = home().join(".sensei");
-    let mut cfg = SenseiLocalConfig::load(&sensei_dir);
-    cfg.user_scope_configured = true;
-    if let Err(e) = cfg.save(&sensei_dir) {
+    let sensei_dir = cfg().sensei_dir();
+    let mut local = SenseiLocalConfig::load(&sensei_dir);
+    local.user_scope_configured = true;
+    if let Err(e) = local.save(&sensei_dir) {
         eprintln!("Warning: failed to write sensei config: {e}");
     }
 }
 
-/// Register a project in ~/.sensei/projects.json so uninstall can find it later.
+/// Register a project in the sensei data dir (mode-aware) so uninstall can find it later.
 fn register_project(repo_path: &std::path::Path) {
-    let projects_file = home().join(".sensei/projects.json");
+    let sensei_dir = cfg().sensei_dir();
+    let projects_file = sensei_dir.join("projects.json");
     let mut projects: Vec<String> = projects_file
         .exists()
         .then(|| fs::read_to_string(&projects_file).ok())
@@ -274,7 +278,7 @@ fn register_project(repo_path: &std::path::Path) {
     let path_str = repo_path.to_string_lossy().to_string();
     if !projects.contains(&path_str) {
         projects.push(path_str);
-        fs::create_dir_all(home().join(".sensei")).ok();
+        fs::create_dir_all(&sensei_dir).ok();
         fs::write(
             &projects_file,
             serde_json::to_string_pretty(&projects).unwrap(),
@@ -289,10 +293,10 @@ fn init(scope: Option<&str>, acp: Option<&str>, recommended: bool) {
     println!("=== sensei init ===\n");
 
     // Verify binaries
-    if sensei_bootstrap::util::which_binary("senseid").is_none()
-        || sensei_bootstrap::util::which_binary("sensei-mcp").is_none()
+    if sensei_bootstrap::util::which_binary(SENSEID_BIN).is_none()
+        || sensei_bootstrap::util::which_binary(SENSEI_MCP_BIN).is_none()
     {
-        eprintln!("Missing binaries. Install: brew install {BREW_TAP}");
+        eprintln!("Missing binaries. Install: {}", cfg().brew_bundle_script());
         std::process::exit(1);
     }
 
@@ -504,8 +508,8 @@ fn init_project_scope(_recommended: bool) {
         })
         .map(|servers| {
             servers.insert(
-                "sensei".into(),
-                serde_json::json!({"command": "sensei-mcp"}),
+                MCP_REGISTRY_KEY.into(),
+                serde_json::json!({"command": SENSEI_MCP_BIN}),
             )
         });
 
@@ -535,11 +539,11 @@ fn init_project_scope(_recommended: bool) {
 
     // 4. Gate check
     println!("\n  --- gate check ---");
-    if sensei_bootstrap::util::which_binary("senseid").is_some() {
-        println!("  ✓ senseid on PATH");
+    if sensei_bootstrap::util::which_binary(SENSEID_BIN).is_some() {
+        println!("  ✓ {SENSEID_BIN} on PATH");
     }
-    if sensei_bootstrap::util::which_binary("sensei-mcp").is_some() {
-        println!("  ✓ sensei-mcp on PATH");
+    if sensei_bootstrap::util::which_binary(SENSEI_MCP_BIN).is_some() {
+        println!("  ✓ {SENSEI_MCP_BIN} on PATH");
     }
     println!("  ✓ mindsets/ ({} files)", count_md_files(&mindsets_dst));
     if rules_file.exists() {
@@ -766,9 +770,12 @@ fn remove_all(purge: bool) {
             }
         }
 
-        println!("\nSensei fully removed. To reinstall: brew install {BREW_TAP} && sensei init");
+        println!(
+            "\nSensei fully removed. To reinstall: {} && {SENSEI_BIN} init",
+            cfg().brew_bundle_script()
+        );
     } else {
-        println!("\nData preserved. To reinstall: sensei init");
+        println!("\nData preserved. To reinstall: {SENSEI_BIN} init");
     }
 }
 
@@ -785,8 +792,8 @@ fn restart_daemon(port: u16) {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
             eprintln!(
-                "Failed to run senseid: {}. Install: brew install {BREW_TAP}",
-                e
+                "Failed to run {SENSEID_BIN}: {e}. Install: {}",
+                cfg().brew_bundle_script()
             );
             std::process::exit(1);
         }
@@ -804,8 +811,8 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
             eprintln!(
-                "Failed to run senseid: {}. Install: brew install {BREW_TAP}",
-                e
+                "Failed to run {SENSEID_BIN}: {e}. Install: {}",
+                cfg().brew_bundle_script()
             );
             std::process::exit(1);
         }
