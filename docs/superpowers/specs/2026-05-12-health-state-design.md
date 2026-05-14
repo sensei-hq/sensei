@@ -111,7 +111,7 @@ export const COMPONENT_ORDER: readonly ComponentId[] =
 
 export interface Component {
   id: ComponentId | PackageManagerId;
-  label: string;             // "PostgreSQL @16", "Homebrew"
+  label: string;             // "PostgreSQL", "Homebrew"
   note: string | null;       // "pgvector · sensei tables"
   status: ComponentStatus;
   version: string | null;    // "16.3" when known

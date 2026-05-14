@@ -6,7 +6,7 @@ import { COMPONENT_ORDER } from './health-types.js';
 
 /** Display labels for each ledger component. The Rust crate provides these in Phase 2/3 — here they live as cold-load defaults so the UI matches the mockup before any transport runs. */
 const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | null }> = {
-  postgres: { label: 'PostgreSQL @16',     note: null },
+  postgres: { label: 'PostgreSQL',         note: null },
   ollama:   { label: 'Ollama',             note: null },
   sensei:   { label: 'Sensei components',  note: 'cli · mcp · daemon' },
   database: { label: 'Database & schema',  note: 'pgvector · sensei tables' },
