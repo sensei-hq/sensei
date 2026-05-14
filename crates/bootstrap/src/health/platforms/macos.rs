@@ -43,11 +43,14 @@ impl PlatformProvider for MacOSProvider {
                 Box::new(BinaryChecker::with_version("ollama", "--version")),
                 Box::new(PortChecker::new("ollama", OLLAMA_PORT)),
             ])),
-            ComponentId::Sensei => Box::new(AndChecker(vec![
-                Box::new(BinaryChecker::new("sensei")),
-                Box::new(BinaryChecker::new("senseid")),
-                Box::new(BinaryChecker::new("sensei-mcp")),
-            ])),
+            ComponentId::Sensei => {
+                let cfg = SenseiConfig::from_env();
+                Box::new(AndChecker(vec![
+                    Box::new(BinaryChecker::new(cfg.sensei_binary())),
+                    Box::new(BinaryChecker::new(cfg.senseid_binary())),
+                    Box::new(BinaryChecker::new(cfg.sensei_mcp_binary())),
+                ]))
+            },
             ComponentId::Database => Box::new(PostgresDatabaseChecker {
                 db_name: SenseiConfig::from_env().db_name,
             }),
@@ -128,5 +131,23 @@ mod tests {
     fn default_remedy_mentions_brew_bundle() {
         let r = MacOSProvider.default_remedy();
         assert!(r.script.contains("brew bundle"));
+    }
+
+    #[test]
+    fn sensei_checker_failure_detail_mentions_current_mode_binary() {
+        use crate::config::SenseiConfig;
+        use crate::health::types::ComponentStatus;
+        let p = MacOSProvider;
+        let c = p.checker_for(ComponentId::Sensei);
+        let outcome = c.check();
+        if matches!(outcome.status, ComponentStatus::Failed) {
+            let detail = outcome.detail.unwrap_or_default();
+            let cfg = SenseiConfig::from_env();
+            let expected = [cfg.sensei_binary(), cfg.senseid_binary(), cfg.sensei_mcp_binary()];
+            assert!(
+                expected.iter().any(|n| detail.contains(n)),
+                "expected detail '{detail}' to mention one of {expected:?}"
+            );
+        }
     }
 }
