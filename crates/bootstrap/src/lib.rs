@@ -9,6 +9,7 @@
 //!   * util::*                      — small utilities (unchanged).
 
 pub mod config;
+pub mod util;
 pub mod health;
 
 pub use config::{
