@@ -67,9 +67,13 @@ install-dev: crates-dev
 	fi
 	@# Fast iteration overlay: replace the brew-installed binaries with the
 	@# freshly-built ones from target/debug/ (uses local cargo cache — fast).
+	@# `bin.install` in the brew Formula sets the destination mode to 0555
+	@# (read+exec, no write), so cp-overwrite fails with EACCES. `rm -f`
+	@# unlinks the read-only file (needs write on parent dir, not on file).
 	@# Re-sign with hardened runtime so the Tauri sidecar can spawn them
 	@# (macOS Sequoia Code Signing Monitor level 2 requires this).
 	@DEST=$$(brew --prefix sensei-dev)/bin && \
+	rm -f "$$DEST/senseid-dev" "$$DEST/sensei-dev" "$$DEST/sensei-mcp-dev" && \
 	cp target/debug/senseid    "$$DEST/senseid-dev" && \
 	cp target/debug/sensei     "$$DEST/sensei-dev" && \
 	cp target/debug/sensei-mcp "$$DEST/sensei-mcp-dev" && \
