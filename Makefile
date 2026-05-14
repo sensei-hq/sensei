@@ -35,12 +35,12 @@
 
 VERSION := $(shell cat VERSION)
 
-# Load dev environment from .env.dev (VITE_BYPASS_HEALTH for frontend-only dev)
+# VITE_BYPASS_HEALTH is bound to the `bun run dev` script in app/package.json
+# (frontend-only vite dev — no Tauri sidecar, so the bootstrap check cannot
+# run). All other dev paths (`make app-dev`, `make app-dev-bundle`) embed the
+# real sidecar and must NOT bypass the health gate.
+#
 # Mode (dev/prod) is compile-time via --features dev, not env vars.
-ifneq (,$(wildcard .env.dev))
-  include .env.dev
-  export VITE_BYPASS_HEALTH
-endif
 
 # ── Rust crates ───────────────────────────────────────────────────────────────
 
