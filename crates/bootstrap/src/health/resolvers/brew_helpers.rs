@@ -6,8 +6,10 @@
 //! pure function over the stderr text — extracted for exhaustive unit
 //! testing without invoking brew.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use crate::health::resolver::ResolveOutcome;
+use crate::health::types::Remedy;
 use crate::util::which_binary;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +79,53 @@ pub fn brew_install(formula: &str, args: &[&str]) -> Result<(), BrewError> {
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(parse_brew_error(&stderr))
+}
+
+pub(crate) fn homebrew_install_remedy() -> Remedy {
+    Remedy {
+        message: "Homebrew isn't installed. Run the script below to install it, then re-check.".to_string(),
+        script:  r#"/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)""#.to_string(),
+        url:     Some("https://brew.sh".to_string()),
+    }
+}
+
+pub(crate) fn overwrite_link_remedy(formula: &str, path: &Path) -> Remedy {
+    Remedy {
+        message: format!(
+            "Couldn't link `{formula}` because `{}` already exists. If you installed it elsewhere (e.g. .dmg or Postgres.app) you can keep that and skip this step. To switch to the brew install, run the script below.",
+            path.display(),
+        ),
+        script:  format!("brew link --overwrite {formula}"),
+        url:     None,
+    }
+}
+
+pub(crate) fn tap_missing_remedy(formula: &str) -> Remedy {
+    Remedy {
+        message: format!("Couldn't find `{formula}`. Run the script below to add the tap, then re-check."),
+        script:  format!("brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap && brew install {formula}"),
+        url:     None,
+    }
+}
+
+pub(crate) fn generic_brew_remedy(formula: &str, stderr_tail: &str) -> Remedy {
+    Remedy {
+        message: format!(
+            "Couldn't install `{formula}` automatically. Last brew output was:\n\n```\n{stderr_tail}\n```\n\nRun the script below to retry."
+        ),
+        script:  format!("brew install {formula}"),
+        url:     None,
+    }
+}
+
+pub(crate) fn brew_install_to_outcome(formula: &str, args: &[&str]) -> ResolveOutcome {
+    match brew_install(formula, args) {
+        Ok(())                                => ResolveOutcome::Resolved,
+        Err(BrewError::BrewNotFound)          => ResolveOutcome::NeedsHumanAction(homebrew_install_remedy()),
+        Err(BrewError::LinkConflict { path }) => ResolveOutcome::NeedsHumanAction(overwrite_link_remedy(formula, &path)),
+        Err(BrewError::TapMissing)            => ResolveOutcome::NeedsHumanAction(tap_missing_remedy(formula)),
+        Err(BrewError::Other(stderr))         => ResolveOutcome::NeedsHumanAction(generic_brew_remedy(formula, &stderr)),
+    }
 }
 
 #[cfg(test)]
@@ -173,5 +222,34 @@ Please create a new installation in /opt/homebrew using one of the
             }
             other => panic!("expected Other, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn homebrew_install_remedy_contains_install_script_and_url() {
+        let r = homebrew_install_remedy();
+        assert!(r.script.contains("brew.sh") || r.script.contains("Homebrew/install"));
+        assert_eq!(r.url.as_deref(), Some("https://brew.sh"));
+    }
+
+    #[test]
+    fn overwrite_link_remedy_mentions_formula_and_path() {
+        let r = overwrite_link_remedy("postgresql@17", &PathBuf::from("/opt/homebrew/bin/psql"));
+        assert!(r.message.contains("postgresql@17"));
+        assert!(r.message.contains("/opt/homebrew/bin/psql"));
+        assert_eq!(r.script, "brew link --overwrite postgresql@17");
+    }
+
+    #[test]
+    fn tap_missing_remedy_runs_tap_then_install() {
+        let r = tap_missing_remedy("postgresql@17");
+        assert!(r.script.contains("brew tap"));
+        assert!(r.script.contains("brew install postgresql@17"));
+    }
+
+    #[test]
+    fn generic_brew_remedy_includes_stderr_tail() {
+        let r = generic_brew_remedy("postgresql@17", "some failure detail");
+        assert!(r.message.contains("some failure detail"));
+        assert_eq!(r.script, "brew install postgresql@17");
     }
 }
