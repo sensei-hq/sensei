@@ -32,7 +32,7 @@ impl Resolver for DaemonStartResolver {
 
 fn missing_remedy(bin: &str) -> Remedy {
     Remedy {
-        message: format!("The `{bin}` binary isn't installed. Run brew bundle to install all sensei binaries."),
+        message: format!("The `{bin}` binary isn't installed. Run the script below to install all sensei binaries."),
         script:  SenseiConfig::from_env().brew_install_script(),
         url:     None,
     }
