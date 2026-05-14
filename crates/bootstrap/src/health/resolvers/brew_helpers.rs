@@ -31,8 +31,7 @@ pub(crate) fn parse_brew_error(stderr: &str) -> BrewError {
     if stderr.contains("No available formula with the name") {
         return BrewError::TapMissing;
     }
-    let tail_start = stderr.len().saturating_sub(500);
-    BrewError::Other(stderr[tail_start..].to_string())
+    BrewError::Other(truncate_to_tail(stderr, 500))
 }
 
 fn extract_target_path(stderr: &str) -> Option<PathBuf> {
@@ -46,10 +45,17 @@ fn extract_target_path(stderr: &str) -> Option<PathBuf> {
     None
 }
 
+fn truncate_to_tail(stderr: &str, max_bytes: usize) -> String {
+    let mut start = stderr.len().saturating_sub(max_bytes);
+    while start < stderr.len() && !stderr.is_char_boundary(start) {
+        start += 1;
+    }
+    stderr[start..].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     const OLLAMA_LINK_CONFLICT: &str = r#"Error: Could not symlink bin/ollama
 Target /opt/homebrew/bin/ollama
@@ -115,6 +121,29 @@ Please create a new installation in /opt/homebrew using one of the
             BrewError::Other(s) => {
                 assert!(s.contains("ARM processor"), "kept body: {s}");
                 assert!(s.len() <= 500);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_generic_failure_handles_multibyte_utf8_at_boundary() {
+        // Build a >500-byte string where the byte at position len-500 is
+        // INSIDE a multi-byte UTF-8 character. '€' is 3 bytes (U+20AC).
+        // 250 '€' = 750 bytes. tail_start = 250 lands inside '€' #84
+        // (which spans bytes 249..=251), so byte 250 is NOT a char boundary.
+        let mut input = String::new();
+        for _ in 0..250 {
+            input.push('€');
+        }
+        assert_eq!(input.len(), 750);
+        // Naive `&input[250..]` would panic. Our parser must not panic.
+        let r = parse_brew_error(&input);
+        match r {
+            BrewError::Other(s) => {
+                // The truncate slid the start forward to the next char boundary.
+                assert!(s.len() <= 500);
+                assert!(s.starts_with('€'));
             }
             other => panic!("expected Other, got {other:?}"),
         }
