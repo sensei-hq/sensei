@@ -1,26 +1,12 @@
 <script lang="ts">
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
+    import type { ProjectListItem } from "$lib/types.js";
+    import TabBar from "$lib/components/TabBar.svelte";
 
-    let projectId = $derived($page.params.id);
-
-    type Project = {
-        id: string;
-        name: string;
-        client?: string;
-        goal?: string;
-        maturity: string;
-        stack: {
-            languages?: string[];
-            frameworks?: string[];
-            runtimes?: string[];
-            services?: string[];
-        };
-        icon?: { value?: string };
-        preferred_acp?: string;
-    };
+    let projectId = $derived(page.params.id);
 
     type Repo = {
         repo_id: string;
@@ -30,18 +16,23 @@
         language?: string;
     };
 
-    let project = $state<Project | null>(null);
+    let project = $state<ProjectListItem | null>(null);
     let repos = $state<Repo[]>([]);
     let loading = $state(true);
-    let tab = $state<
-        "overview" | "graph" | "patterns" | "sessions" | "settings"
-    >("overview");
+    let tab = $state("overview");
+
+    const projectTabs: [string, string][] = [
+        ["overview", "Overview"],
+        ["graph", "Graph"],
+        ["patterns", "Patterns"],
+        ["sessions", "Sessions"],
+        ["settings", "Settings"],
+    ];
 
     onMount(async () => {
-        await appState.load();
         const api = senseiApi(appState.port);
         const projects = await api.listProjects();
-        project = projects.find((p: any) => p.id === projectId) ?? null;
+        project = projects.find((p) => p.id === projectId) ?? null;
         const allRepos = await api.getRepos();
         repos = allRepos.filter((r: any) => r.project_id === projectId);
         loading = false;
@@ -101,16 +92,7 @@
             {/if}
         </header>
 
-        <!-- Tab bar -->
-        <div class="flex gap-0 border-b border-surface-z2 mb-7">
-            {#each [["overview", "Overview"], ["graph", "Graph"], ["patterns", "Patterns"], ["sessions", "Sessions"], ["settings", "Settings"]] as [key, label]}
-                <button
-                    class="tab px-4.5 py-2 border-none bg-none text-ui cursor-pointer border-b-2 border-transparent -mb-px text-surface-z6"
-                    class:active={tab === key}
-                    onclick={() => (tab = key as any)}>{label}</button
-                >
-            {/each}
-        </div>
+        <TabBar tabs={projectTabs} bind:active={tab} class="mb-7" />
 
         <!-- Tab content -->
         {#if tab === "overview"}
@@ -228,14 +210,6 @@
 </div>
 
 <style>
-    .tab:hover {
-        color: oklch(var(--color-surface-z8) / 1);
-    }
-    .tab.active {
-        color: oklch(var(--color-surface-z9) / 1);
-        border-bottom-color: oklch(var(--color-primary-z5) / 1);
-    }
-
     .repo-row:hover {
         background: oklch(var(--color-surface-z2) / 1);
     }

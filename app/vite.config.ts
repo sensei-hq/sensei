@@ -55,8 +55,16 @@ function webkitNodeReexportFix(): Plugin {
   };
 }
 
+// Daemon port: 7745 in dev/debug builds, 7744 in production.
+// Injected at build time so the frontend default is always correct.
+const daemonPort = process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production' ? 7745 : 7744;
+
 export default defineConfig({
   plugins: [webkitNodeReexportFix(), UnoCSS(), sveltekit()],
+
+  define: {
+    __SENSEI_DEFAULT_PORT__: JSON.stringify(daemonPort),
+  },
 
   // Tauri: don't open browser, use Tauri window
   server: {

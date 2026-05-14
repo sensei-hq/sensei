@@ -1,0 +1,20 @@
+[package]
+name = "sensei-cli"
+version = "0.2.14"
+edition = "2024"
+description = "Sensei CLI — initialize and manage sensei for AI coding"
+
+[features]
+dev = ["sensei-bootstrap/dev"]
+
+[[bin]]
+name = "sensei"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+sensei-bootstrap = { path = "../bootstrap" }

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Sensei",
-  "version": "0.1.0",
-  "identifier": "dev.sensei.desktop",
+  "version": "0.2.14",
+  "identifier": "com.senseihq.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:5173",
