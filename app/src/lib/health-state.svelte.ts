@@ -40,6 +40,7 @@ export class HealthState {
   remedy         = $state<Remedy | null>(null);
 
   #transport: HealthTransport;
+  #initPromise: Promise<void> | null = null;
 
   get isOk():        boolean { return this.status === 'ok'; }
   get isBusy():      boolean { return this.status === 'checking' || this.status === 'resolving'; }
@@ -51,6 +52,21 @@ export class HealthState {
   ) {
     this.#transport = transport;
     this.apply(seed);
+  }
+
+  /** Idempotent — runs the check once per app load. Concurrent callers share one in-flight promise. */
+  async init(): Promise<void> {
+    if (this.#initPromise) return this.#initPromise;
+    this.#initPromise = this.#runCheckThenMaybeResolve();
+    return this.#initPromise;
+  }
+
+  async #runCheckThenMaybeResolve(): Promise<void> {
+    this.status = 'checking';
+    const payload = await this.#transport.check();
+    this.apply(payload);
+    if (payload.status === 'ok') return;
+    await this.#transport.resolve(payload, (ev) => this.applyEvent(ev));
   }
 
   apply(p: HealthPayload): void {
