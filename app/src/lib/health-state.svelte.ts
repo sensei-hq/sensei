@@ -41,6 +41,7 @@ export class HealthState {
 
   #transport: HealthTransport;
   #initPromise: Promise<void> | null = null;
+  #verifyPromise: Promise<void> | null = null;
 
   get isOk():        boolean { return this.status === 'ok'; }
   get isBusy():      boolean { return this.status === 'checking' || this.status === 'resolving'; }
@@ -52,6 +53,18 @@ export class HealthState {
   ) {
     this.#transport = transport;
     this.apply(seed);
+  }
+
+  /** Force a fresh check. Clears the session cache. Same idempotency while in flight. */
+  verify(): Promise<void> {
+    if (this.#verifyPromise) return this.#verifyPromise;
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('sensei:health');
+    this.#initPromise = null;
+    this.#verifyPromise = this.#runCheckThenMaybeResolve().then(() => {
+      this.#verifyPromise = null;
+    });
+    this.#initPromise = this.#verifyPromise;
+    return this.#verifyPromise;
   }
 
   /** Idempotent — runs the check once per app load. Concurrent callers share one in-flight promise. */
