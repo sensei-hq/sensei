@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { HealthState, emptyPayload } from './health-state.svelte.js';
 import { MockTransport } from './health-transport.js';
 import { COMPONENT_ORDER } from './health-types.js';
@@ -301,6 +301,47 @@ describe('HealthState — B2: init() lifecycle', () => {
     const s = new HealthState(emptyPayload, transport);
     const result = await s.init();
     expect(result).toBeUndefined();
+  });
+});
+
+describe('HealthState — B3: verify() forces a fresh check', () => {
+  it('clears sensei:health from sessionStorage', async () => {
+    const sessionStore = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem:    (k: string) => sessionStore.get(k) ?? null,
+      setItem:    (k: string, v: string) => sessionStore.set(k, v),
+      removeItem: (k: string) => sessionStore.delete(k),
+    });
+    sessionStore.set('sensei:health', 'ready');
+
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.verify();
+    expect(sessionStore.has('sensei:health')).toBe(false);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('causes a fresh transport.check() call after a prior init()', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.checkCalls).toHaveLength(1);
+    await s.verify();
+    expect(transport.checkCalls).toHaveLength(2);
+  });
+
+  it('concurrent verify() calls trigger only one check pass', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await Promise.all([s.verify(), s.verify()]);
+    expect(transport.checkCalls).toHaveLength(1);
+  });
+
+  it('does not throw when sessionStorage is undefined', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await expect(s.verify()).resolves.toBeUndefined();
   });
 });
 
