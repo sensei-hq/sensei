@@ -34,7 +34,7 @@ describe('/health/+page.svelte', () => {
         id: id as 'postgres', label: id, note: null, status: 'failed' as const, version: null, detail: 'blocked',
       })),
       status: 'needs-action',
-      remedy: { message: 'Run script', script: 'brew bundle', url: null },
+      remedy: { message: 'Run script', script: 'brew install sensei-hq/tap/sensei', url: null },
     });
 
     const m = mountComponent(Page, {});

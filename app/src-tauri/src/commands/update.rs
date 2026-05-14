@@ -4,8 +4,8 @@
 //!   1. Tauri updater downloads new app version, writes `sensei:app-version` to
 //!      localStorage, then calls `install()` which triggers a restart.
 //!   2. On next launch, the frontend detects the flag and navigates to /upgrade.
-//!   3. /upgrade calls `run_upgrade_steps` which runs brew bundle + db deploy
-//!      and streams progress on the "upgrade" event channel.
+//!   3. /upgrade calls `run_upgrade_steps` which will run the health resolvers
+//!      + db deploy (Section H) and streams progress on the "upgrade" event channel.
 //!   4. /upgrade clears the flag and redirects to /health.
 //!
 //! NOTE: `run_upgrade_steps` is currently stubbed. The legacy implementation
@@ -21,7 +21,7 @@ use tauri::Emitter;
 // Upgrade steps
 // ---------------------------------------------------------------------------
 
-/// Run post-restart upgrade steps: brew bundle upgrade + database deploy.
+/// Run post-restart upgrade steps: re-run health resolvers + database deploy.
 ///
 /// Streams progress on the "upgrade" Tauri event channel:
 ///   { step: "brew_bundle" | "db_deploy", status: "running" | "done" | "failed", error?: string }

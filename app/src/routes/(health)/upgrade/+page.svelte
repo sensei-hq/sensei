@@ -1,10 +1,10 @@
 <script lang="ts">
     /**
-     * Upgrade page — runs post-restart upgrade steps (brew bundle + db deploy).
+     * Upgrade page — runs post-restart upgrade steps (health resolvers + db deploy).
      *
      * Reached when `localStorage["sensei:app-version"]` is set, which means the
      * app was just updated by tauri-plugin-updater and restarted. This page:
-     *   1. Calls run_upgrade_steps (brew bundle --upgrade + db deploy)
+     *   1. Calls run_upgrade_steps (health resolvers + db deploy)
      *   2. Streams progress via the "upgrade" Tauri event channel
      *   3. On completion, clears the flag and redirects to /health
      */
@@ -15,19 +15,19 @@
     type StepStatus = "pending" | "running" | "done" | "failed";
 
     interface UpgradeStep {
-        id: "brew_bundle" | "db_deploy";
+        id: "prereqs" | "db_deploy";
         label: string;
         note: string;
     }
 
     const STEPS: UpgradeStep[] = [
-        { id: "brew_bundle", label: "Homebrew bundle upgrade",  note: "brew bundle --upgrade" },
-        { id: "db_deploy",   label: "Database schema deploy",   note: "dbd deploy" },
+        { id: "prereqs",   label: "Prerequisite upgrades",     note: "health resolvers" },
+        { id: "db_deploy", label: "Database schema deploy",    note: "dbd deploy" },
     ];
 
     let stepStatuses = $state<Record<string, StepStatus>>({
-        brew_bundle: "pending",
-        db_deploy:   "pending",
+        prereqs:   "pending",
+        db_deploy: "pending",
     });
     let stepErrors = $state<Record<string, string>>({});
     let done = $state(false);
@@ -99,9 +99,9 @@
 
     function simulateBrowserUpgrade() {
         setTimeout(() => {
-            stepStatuses = { ...stepStatuses, brew_bundle: "running" };
+            stepStatuses = { ...stepStatuses, prereqs: "running" };
             setTimeout(() => {
-                stepStatuses = { ...stepStatuses, brew_bundle: "done", db_deploy: "running" };
+                stepStatuses = { ...stepStatuses, prereqs: "done", db_deploy: "running" };
                 setTimeout(() => {
                     stepStatuses = { ...stepStatuses, db_deploy: "done" };
                     done = true;
@@ -188,7 +188,7 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex items-baseline gap-2.5 mb-1">
                             <span class="display text-prose font-medium">Sensei update</span>
-                            <span class="mono text-2xs text-surface-z5">brew bundle · dbd</span>
+                            <span class="mono text-2xs text-surface-z5">health resolvers · dbd</span>
                         </div>
                         <div class="text-sm text-surface-z7 leading-snug">
                             {#if isComplete && !anyFailed}
