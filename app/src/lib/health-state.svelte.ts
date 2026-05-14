@@ -109,6 +109,11 @@ export class HealthState {
     this.components     = p.components;
     this.remedy         = p.remedy;
     this.status         = p.status;
+
+    if (typeof sessionStorage !== 'undefined') {
+      if (p.status === 'ok') sessionStorage.setItem('sensei:health', 'ready');
+      else                   sessionStorage.removeItem('sensei:health');
+    }
   }
 
   applyEvent(e: HealthEvent): void {
