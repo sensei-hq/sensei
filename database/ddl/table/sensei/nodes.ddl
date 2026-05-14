@@ -19,6 +19,11 @@ create table if not exists nodes (
 , tags                     text[]      not null default '{}'
 , props                    jsonb       not null default '{}'
 , modified_at              timestamptz not null default now()
+-- Prevents duplicate nodes when a file is re-processed.
+-- NULLS NOT DISTINCT treats NULLs as equal so (parent_id=NULL, line_start=NULL)
+-- rows correctly conflict with each other (e.g. file and module nodes).
+, constraint nodes_unique_identity
+    unique nulls not distinct (folder_id, file_path, kind, name, parent_id, line_start)
 );
 
 create index if not exists nodes_folder_id_idx

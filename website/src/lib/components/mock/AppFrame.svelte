@@ -3,7 +3,7 @@
     title?: string;
     width?: number;
     height?: number;
-    children: any;
+    children: import('svelte').Snippet;
   }>();
 </script>
 

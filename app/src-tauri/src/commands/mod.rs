@@ -4,3 +4,4 @@ pub mod bootstrap;
 pub mod assistants;
 pub mod repos;
 pub mod logs;
+pub mod update;

@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sensei Architecture</title>
+<script src="https://d3js.org/d3.v7.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+<style>
+  body { margin: 0; background: #faf8f5; display: flex; justify-content: center; padding: 32px; }
+  svg { font-family: 'Inter', -apple-system, sans-serif; }
+  .layer-box { stroke-width: 1.5; rx: 8; ry: 8; }
+  .layer-user { fill: #f7f3ee; stroke: #c8bfb0; }
+  .layer-daemon { fill: #f0ebe4; stroke: #b0a697; }
+  .layer-db { fill: #eae4db; stroke: #9e9486; }
+  .node-box { stroke-width: 1.5; rx: 6; ry: 6; }
+  .node-surface { fill: #fff; stroke: #c1512d; }
+  .node-mcp { fill: #fff; stroke: #8b6e52; }
+  .node-subsystem { fill: #fefcfa; stroke: #b0a697; }
+  .node-provider { fill: #fefcfa; stroke: #7a9e7e; }
+  .node-schema { fill: #fefcfa; stroke: #9e9486; }
+  .node-external { fill: #fff; stroke: #c8bfb0; stroke-dasharray: 4,3; }
+  .label-layer { font-size: 11px; fill: #8b7e6e; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+  .label-node { font-size: 12px; fill: #3d3428; font-weight: 600; }
+  .label-detail { font-size: 10px; fill: #8b7e6e; }
+  .label-port { font-size: 9px; fill: #c1512d; font-weight: 600; }
+  .conn { stroke: #b0a697; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .conn-stdio { stroke: #c1512d; stroke-dasharray: 6,3; }
+</style>
+</head>
+<body>
+<svg id="arch" width="900" height="820"></svg>
+<script>
+const svg = d3.select("#arch");
+const defs = svg.append("defs");
+
+// Arrow marker
+defs.append("marker")
+  .attr("id", "arrow")
+  .attr("viewBox", "0 0 10 10")
+  .attr("refX", 10).attr("refY", 5)
+  .attr("markerWidth", 8).attr("markerHeight", 8)
+  .attr("orient", "auto-start-reverse")
+  .append("path")
+  .attr("d", "M 0 0 L 10 5 L 0 10 z")
+  .attr("fill", "#b0a697");
+
+// --- USER SURFACES LAYER ---
+svg.append("rect").attr("class", "layer-box layer-user")
+  .attr("x", 20).attr("y", 10).attr("width", 860).attr("height", 130);
+svg.append("text").attr("class", "label-layer")
+  .attr("x", 36).attr("y", 30).text("USER SURFACES");
+
+// Desktop App
+const appX = 50, appY = 44;
+svg.append("rect").attr("class", "node-box node-surface")
+  .attr("x", appX).attr("y", appY).attr("width", 200).attr("height", 80);
+svg.append("text").attr("class", "label-node").attr("x", appX+100).attr("y", appY+28).attr("text-anchor", "middle").text("Desktop App");
+svg.append("text").attr("class", "label-detail").attr("x", appX+100).attr("y", appY+44).attr("text-anchor", "middle").text("Tauri + SvelteKit");
+svg.append("text").attr("class", "label-detail").attr("x", appX+100).attr("y", appY+58).attr("text-anchor", "middle").text("Observatory, Setup, Projects");
+
+// CLI
+const cliX = 300, cliY = 44;
+svg.append("rect").attr("class", "node-box node-surface")
+  .attr("x", cliX).attr("y", cliY).attr("width", 170).attr("height", 80);
+svg.append("text").attr("class", "label-node").attr("x", cliX+85).attr("y", cliY+28).attr("text-anchor", "middle").text("CLI");
+svg.append("text").attr("class", "label-detail").attr("x", cliX+85).attr("y", cliY+44).attr("text-anchor", "middle").text("sensei");
+svg.append("text").attr("class", "label-detail").attr("x", cliX+85).attr("y", cliY+58).attr("text-anchor", "middle").text("init, status, hooks");
+
+// AI Assistants
+const aiX = 520, aiY = 44;
+svg.append("rect").attr("class", "node-box node-surface")
+  .attr("x", aiX).attr("y", aiY).attr("width", 340).attr("height", 80);
+svg.append("text").attr("class", "label-node").attr("x", aiX+170).attr("y", aiY+28).attr("text-anchor", "middle").text("AI Assistants");
+svg.append("text").attr("class", "label-detail").attr("x", aiX+170).attr("y", aiY+44).attr("text-anchor", "middle").text("Claude Code, Cursor, Zed, ...");
+svg.append("text").attr("class", "label-detail").attr("x", aiX+170).attr("y", aiY+58).attr("text-anchor", "middle").text("Hooks capture events");
+
+// --- MCP ---
+const mcpX = 600, mcpY = 172;
+svg.append("rect").attr("class", "node-box node-mcp")
+  .attr("x", mcpX).attr("y", mcpY).attr("width", 200).attr("height", 60);
+svg.append("text").attr("class", "label-node").attr("x", mcpX+100).attr("y", mcpY+24).attr("text-anchor", "middle").text("MCP Server");
+svg.append("text").attr("class", "label-detail").attr("x", mcpX+100).attr("y", mcpY+40).attr("text-anchor", "middle").text("sensei-mcp (stdio)");
+
+// --- CONNECTIONS: User Surfaces to Daemon/MCP ---
+// App -> Daemon (HTTP)
+svg.append("path").attr("class", "conn")
+  .attr("d", `M ${appX+100} ${appY+80} L ${appX+100} 280`);
+svg.append("text").attr("class", "label-port").attr("x", appX+108).attr("y", 170).text("HTTP");
+
+// CLI -> Daemon (HTTP)
+svg.append("path").attr("class", "conn")
+  .attr("d", `M ${cliX+85} ${cliY+80} L ${cliX+85} 280`);
+svg.append("text").attr("class", "label-port").attr("x", cliX+93).attr("y", 170).text("HTTP");
+
+// AI -> MCP (stdio)
+svg.append("path").attr("class", "conn conn-stdio")
+  .attr("d", `M ${aiX+170} ${aiY+80} L ${mcpX+100} ${mcpY}`);
+svg.append("text").attr("class", "label-port").attr("x", aiX+80).attr("y", mcpY-4).text("stdio");
+
+// MCP -> Daemon (HTTP)
+svg.append("path").attr("class", "conn")
+  .attr("d", `M ${mcpX+100} ${mcpY+60} L ${mcpX+100} 280`);
+svg.append("text").attr("class", "label-port").attr("x", mcpX+108).attr("y", 260).text("HTTP");
+
+// --- DAEMON LAYER ---
+const dY = 280;
+svg.append("rect").attr("class", "layer-box layer-daemon")
+  .attr("x", 20).attr("y", dY).attr("width", 860).attr("height", 270);
+svg.append("text").attr("class", "label-layer")
+  .attr("x", 36).attr("y", dY+20).text("DAEMON (SENSEID)");
+svg.append("text").attr("class", "label-port")
+  .attr("x", 240).attr("y", dY+20).text(":7744 release / :7745 dev");
+
+// Indexing Pipeline
+const idxX = 40, idxY = dY+32;
+svg.append("rect").attr("class", "node-box node-subsystem")
+  .attr("x", idxX).attr("y", idxY).attr("width", 200).attr("height", 100);
+svg.append("text").attr("class", "label-node").attr("x", idxX+100).attr("y", idxY+22).attr("text-anchor", "middle").text("Indexing Pipeline");
+svg.append("text").attr("class", "label-detail").attr("x", idxX+100).attr("y", idxY+40).attr("text-anchor", "middle").text("tree-sitter, OXC, sqlparser");
+svg.append("text").attr("class", "label-detail").attr("x", idxX+100).attr("y", idxY+56).attr("text-anchor", "middle").text("Adapter IR (IRModule,");
+svg.append("text").attr("class", "label-detail").attr("x", idxX+100).attr("y", idxY+70).attr("text-anchor", "middle").text("IRClass, IRDoc)");
+svg.append("text").attr("class", "label-detail").attr("x", idxX+100).attr("y", idxY+86).attr("text-anchor", "middle").text("Task queue, graph builder");
+
+// Intelligence Layer
+const intX = 260, intY = dY+32;
+svg.append("rect").attr("class", "node-box node-subsystem")
+  .attr("x", intX).attr("y", intY).attr("width", 200).attr("height", 100);
+svg.append("text").attr("class", "label-node").attr("x", intX+100).attr("y", intY+22).attr("text-anchor", "middle").text("Intelligence");
+svg.append("text").attr("class", "label-detail").attr("x", intX+100).attr("y", intY+40).attr("text-anchor", "middle").text("Context delivery (L0-L3)");
+svg.append("text").attr("class", "label-detail").attr("x", intX+100).attr("y", intY+56).attr("text-anchor", "middle").text("Pattern detection");
+svg.append("text").attr("class", "label-detail").attr("x", intX+100).attr("y", intY+70).attr("text-anchor", "middle").text("Semantic search (pgvector)");
+svg.append("text").attr("class", "label-detail").attr("x", intX+100).attr("y", intY+86).attr("text-anchor", "middle").text("Memory system");
+
+// Analytics Engine
+const anaX = 480, anaY = dY+32;
+svg.append("rect").attr("class", "node-box node-subsystem")
+  .attr("x", anaX).attr("y", anaY).attr("width", 200).attr("height", 100);
+svg.append("text").attr("class", "label-node").attr("x", anaX+100).attr("y", anaY+22).attr("text-anchor", "middle").text("Analytics Engine");
+svg.append("text").attr("class", "label-detail").attr("x", anaX+100).attr("y", anaY+40).attr("text-anchor", "middle").text("Event capture, FTR scoring");
+svg.append("text").attr("class", "label-detail").attr("x", anaX+100).attr("y", anaY+56).attr("text-anchor", "middle").text("Session tracking");
+svg.append("text").attr("class", "label-detail").attr("x", anaX+100).attr("y", anaY+70).attr("text-anchor", "middle").text("Correction classification");
+svg.append("text").attr("class", "label-detail").attr("x", anaX+100).attr("y", anaY+86).attr("text-anchor", "middle").text("Coaching, teachings");
+
+// API Surface
+const apiX = 700, apiY = dY+32;
+svg.append("rect").attr("class", "node-box node-subsystem")
+  .attr("x", apiX).attr("y", apiY).attr("width", 160).attr("height", 100);
+svg.append("text").attr("class", "label-node").attr("x", apiX+80).attr("y", apiY+22).attr("text-anchor", "middle").text("API Surface");
+svg.append("text").attr("class", "label-detail").attr("x", apiX+80).attr("y", apiY+40).attr("text-anchor", "middle").text("Axum HTTP");
+svg.append("text").attr("class", "label-detail").attr("x", apiX+80).attr("y", apiY+56).attr("text-anchor", "middle").text("SSE streams");
+svg.append("text").attr("class", "label-detail").attr("x", apiX+80).attr("y", apiY+70).attr("text-anchor", "middle").text("/health, /api/*");
+svg.append("text").attr("class", "label-detail").attr("x", apiX+80).attr("y", apiY+86).attr("text-anchor", "middle").text("/bootstrap/*");
+
+// Gateway (inside daemon)
+const gwX = 40, gwY = dY+148;
+svg.append("rect").attr("class", "node-box node-subsystem")
+  .attr("x", gwX).attr("y", gwY).attr("width", 540).attr("height", 100);
+svg.append("text").attr("class", "label-node").attr("x", gwX+12).attr("y", gwY+22).text("Gateway (sensei-gateway) -- Inference Routing");
+
+// Provider boxes inside gateway
+const provY = gwY + 34;
+// Ollama
+svg.append("rect").attr("class", "node-box node-provider")
+  .attr("x", gwX+16).attr("y", provY).attr("width", 150).attr("height", 52);
+svg.append("text").attr("class", "label-node").attr("x", gwX+91).attr("y", provY+22).attr("text-anchor", "middle").text("Ollama");
+svg.append("text").attr("class", "label-detail").attr("x", gwX+91).attr("y", provY+38).attr("text-anchor", "middle").text("Local inference");
+
+// Anthropic
+svg.append("rect").attr("class", "node-box node-provider")
+  .attr("x", gwX+182).attr("y", provY).attr("width", 150).attr("height", 52);
+svg.append("text").attr("class", "label-node").attr("x", gwX+257).attr("y", provY+22).attr("text-anchor", "middle").text("Anthropic");
+svg.append("text").attr("class", "label-detail").attr("x", gwX+257).attr("y", provY+38).attr("text-anchor", "middle").text("API provider");
+
+// OpenAI / Google
+svg.append("rect").attr("class", "node-box node-provider")
+  .attr("x", gwX+348).attr("y", provY).attr("width", 176).attr("height", 52);
+svg.append("text").attr("class", "label-node").attr("x", gwX+436).attr("y", provY+22).attr("text-anchor", "middle").text("OpenAI / Google");
+svg.append("text").attr("class", "label-detail").attr("x", gwX+436).attr("y", provY+38).attr("text-anchor", "middle").text("API providers");
+
+// --- CONNECTION: Daemon to DB ---
+svg.append("path").attr("class", "conn")
+  .attr("d", `M 450 ${dY+270} L 450 580`);
+
+// --- DATABASE LAYER ---
+const dbY = 580;
+svg.append("rect").attr("class", "layer-box layer-db")
+  .attr("x", 20).attr("y", dbY).attr("width", 860).attr("height", 130);
+svg.append("text").attr("class", "label-layer")
+  .attr("x", 36).attr("y", dbY+20).text("POSTGRESQL (PGVECTOR)");
+
+// Schema boxes
+const schemas = [
+  { name: "gateway", count: 7, detail: "providers, models,\nrouters, chains", x: 40 },
+  { name: "sensei", count: 24, detail: "projects, nodes,\nedges, folders, libs", x: 212 },
+  { name: "inference", count: 9, detail: "patterns, insights,\ndrift, recommend.", x: 384 },
+  { name: "activity", count: 6, detail: "events, sessions,\nhooks, tasks", x: 556 },
+  { name: "history", count: 2, detail: "past_extensions,\npast_memories", x: 728 }
+];
+
+schemas.forEach(s => {
+  svg.append("rect").attr("class", "node-box node-schema")
+    .attr("x", s.x).attr("y", dbY+32).attr("width", 152).attr("height", 84);
+  svg.append("text").attr("class", "label-node")
+    .attr("x", s.x+76).attr("y", dbY+52).attr("text-anchor", "middle").text(`${s.name} (${s.count})`);
+  const lines = s.detail.split("\n");
+  lines.forEach((line, i) => {
+    svg.append("text").attr("class", "label-detail")
+      .attr("x", s.x+76).attr("y", dbY+68 + i*14).attr("text-anchor", "middle").text(line);
+  });
+});
+
+// --- EXTERNAL ---
+const extY = 740;
+svg.append("text").attr("class", "label-layer").attr("x", 36).attr("y", extY).text("EXTERNAL");
+
+// Marketplace
+svg.append("rect").attr("class", "node-box node-external")
+  .attr("x", 40).attr("y", extY+10).attr("width", 240).attr("height", 56);
+svg.append("text").attr("class", "label-node").attr("x", 160).attr("y", extY+34).attr("text-anchor", "middle").text("Marketplace (GitHub)");
+svg.append("text").attr("class", "label-detail").attr("x", 160).attr("y", extY+50).attr("text-anchor", "middle").text("Skills, commands, hooks, plugins");
+
+// Homebrew
+svg.append("rect").attr("class", "node-box node-external")
+  .attr("x", 320).attr("y", extY+10).attr("width", 240).attr("height", 56);
+svg.append("text").attr("class", "label-node").attr("x", 440).attr("y", extY+34).attr("text-anchor", "middle").text("Homebrew (distribution)");
+svg.append("text").attr("class", "label-detail").attr("x", 440).attr("y", extY+50).attr("text-anchor", "middle").text("sensei-hq/homebrew-tap");
+</script>
+</body>
+</html>

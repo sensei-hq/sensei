@@ -5,29 +5,31 @@
 //!
 //! Run: cargo test --test bootstrap_integration
 
-use sensei_bootstrap::{self as bootstrap, BootstrapResult};
-use sensei_bootstrap::platform::{self, Platform, PlatformProvider};
+use sensei_bootstrap::{self as bootstrap};
+use sensei_bootstrap::platform::{Platform, PlatformProvider};
+use sensei_bootstrap::prereq::checker::{BinaryChecker, Checker, PortChecker};
 use sensei_bootstrap::util;
 
 // ── Phase 0: Detection ─────────────────────────────────────────────────
 
 #[test]
-fn run_bootstrap_returns_all_components() {
-    let result = bootstrap::run();
-    // Should always return at least 8 components:
-    // homebrew, postgresql, ollama, sensei, postgresql-service, ollama-service, database, daemon-service
+fn bootstrap_engine_checks_all_components() {
+    // The engine runs all 10 registered components.
+    // Any component may be failed/missing depending on machine state — we only
+    // verify that the run completes without panicking and reports gates.
+    let report = bootstrap::check_and_fix("0.0.0", |_| {});
     assert!(
-        result.components.len() >= 5,
-        "expected at least 5 components, got {}",
-        result.components.len()
+        report.gates.len() >= 5,
+        "expected at least 5 component checks, got {}",
+        report.gates.len()
     );
 }
 
 #[test]
-fn run_bootstrap_includes_hardware() {
-    let result = bootstrap::run();
-    assert!(result.hardware.ram_gb > 0, "RAM should be detected");
-    assert!(result.hardware.cpu_cores > 0, "CPU cores should be detected");
+fn bootstrap_hardware_is_detected() {
+    let hw = bootstrap::hardware::detect();
+    assert!(hw.ram_gb > 0, "RAM should be detected");
+    assert!(hw.cpu_cores > 0, "CPU cores should be detected");
 }
 
 #[test]
@@ -56,24 +58,25 @@ fn provider_has_remedies() {
 // ── Binary detection ────────────────────────────────────────────────────
 
 #[test]
-fn check_binary_postgres_on_dev_machine() {
-    // On a dev machine with Postgres installed, this should find it
-    let status = util::check_binary("postgresql", "postgres", "--version");
-    // We don't assert ready/failed — depends on machine state
-    // But name should always be set
-    assert_eq!(status.name, "postgresql");
+fn binary_checker_postgres_on_dev_machine() {
+    // On a dev machine with Postgres installed, this should find it.
+    // We don't assert ready/failed — depends on machine state.
+    let result = BinaryChecker::new("postgres", "--version").check();
+    // Any non-panic result is valid; just verify the check ran
+    let _ = result.ok;
 }
 
 #[test]
-fn check_binary_ollama_on_dev_machine() {
-    let status = util::check_binary("ollama", "ollama", "--version");
-    assert_eq!(status.name, "ollama");
+fn binary_checker_ollama_on_dev_machine() {
+    let result = BinaryChecker::new("ollama", "--version").check();
+    let _ = result.ok;
 }
 
 #[test]
-fn check_binary_nonexistent_returns_failed() {
-    let status = util::check_binary("fake", "nonexistent-binary-xyz", "--version");
-    assert!(status.is_failed(), "nonexistent binary should return failed");
+fn binary_checker_nonexistent_returns_fail() {
+    let result = BinaryChecker::new("nonexistent-binary-xyz", "--version").check();
+    assert!(!result.ok, "nonexistent binary should return failed");
+    assert!(result.error.is_some(), "should have an error message");
 }
 
 // ── Port probing ────────────────────────────────────────────────────────
@@ -85,10 +88,10 @@ fn probe_port_unreachable() {
 }
 
 #[test]
-fn check_service_unreachable() {
-    let status = util::check_service("test-service", 19999);
-    assert!(status.is_failed());
-    assert_eq!(status.name, "test-service");
+fn port_checker_unreachable() {
+    let result = PortChecker::new("test-service", 19999).check();
+    assert!(!result.ok, "unreachable port should fail");
+    assert!(result.error.is_some());
 }
 
 // ── Database checks ─────────────────────────────────────────────────────
@@ -96,7 +99,7 @@ fn check_service_unreachable() {
 #[test]
 fn database_check_returns_status() {
     // May be ready or failed depending on PostgreSQL state
-    let status = bootstrap::database::check(None);
+    let status = bootstrap::database::check();
     assert_eq!(status.name, "database");
 }
 
@@ -104,7 +107,7 @@ fn database_check_returns_status() {
 fn database_setup_fails_without_postgres() {
     // If PostgreSQL isn't running, setup should return an Err
     if !util::probe_port(bootstrap::POSTGRES_PORT) {
-        let result = bootstrap::database::setup(None);
+        let result = bootstrap::database::setup("0.0.0");
         assert!(result.is_err(), "setup should fail when PostgreSQL is not running");
     }
 }

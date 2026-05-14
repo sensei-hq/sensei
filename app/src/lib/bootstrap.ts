@@ -1,32 +1,13 @@
 /**
- * Bootstrap client — talks to Tauri bootstrap commands or daemon health API.
+ * Bootstrap client — talks to Tauri bootstrap commands.
  *
- * Two modes:
- * - Tauri mode: invoke('run_bootstrap') → full prereq check via bootstrap crate
- * - HTTP mode: fetch('/api/health/components') → daemon reports component status
+ * The single `checkAndFixBootstrap()` call replaces the old three-phase API
+ * (runBootstrap / installPrerequisites / startServices / setupDatabase).
+ * Progress arrives via `listenBootstrapEvents()`; the final `BootstrapReport`
+ * is emitted as a "bootstrap-report" Tauri event when the engine finishes.
  */
 
-// senseiApi is used by post-bootstrap screens (wizard, observatory) — not here.
-// Bootstrap always uses the Tauri sidecar directly.
-
 // ── Types (match bootstrap crate types) ──────────────────────────────────────
-
-export interface ComponentStatus {
-  name: string;
-  state: ComponentState;
-  version: string | null;
-  detail: string | null;
-}
-
-export type ComponentState =
-  | { state: 'detecting' }
-  | { state: 'installing' }
-  | { state: 'starting' }
-  | { state: 'upgrading' }
-  | { state: 'pulling'; progress_pct: number; size_mb: number }
-  | { state: 'ready' }
-  | { state: 'failed'; error: string }
-  | { state: 'skipped' };
 
 export interface HardwareInfo {
   ram_gb: number;
@@ -36,59 +17,59 @@ export interface HardwareInfo {
   recommended_tier: 'minimum' | 'recommended' | 'full';
 }
 
-export interface BootstrapResult {
-  components: ComponentStatus[];
-  hardware: HardwareInfo;
-  ready: boolean;
+export type GateStatus =
+  | { status: 'Checking' }
+  | { status: 'Installing' }
+  | { status: 'Starting' }
+  | { status: 'Ready'; version: string | null; detail: string | null }
+  | { status: 'Failed'; error: string };
+
+export interface GateReport {
+  id: string;
+  status: GateStatus;
+  fix_attempted: boolean;
+  fix_detail: string | null;
+}
+
+export interface HumanAction {
+  component_id: string;
+  title: string;
+  command: string;
+  url: string | null;
+}
+
+export interface BootstrapReport {
+  gates: GateReport[];
+  all_ok: boolean;
+  blocked_on: HumanAction | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-export function stateLabel(s: ComponentState): string {
-  return s.state;
-}
-
-export function isReady(s: ComponentState): boolean {
-  return s.state === 'ready';
-}
-
-export function isFailed(s: ComponentState): boolean {
-  return s.state === 'failed';
-}
-
-export function errorMessage(s: ComponentState): string | null {
-  return s.state === 'failed' ? s.error : null;
-}
-
-// ── Tauri detection ──────────────────────────────────────────────────────────
-
-async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<T>(cmd, args);
-}
 
 /** True when running inside Tauri app, false in browser. */
 export function hasTauri(): boolean {
   return typeof window !== 'undefined' && !!(window as any).__TAURI__;
 }
 
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<T>(cmd, args);
+}
+
 // ── Bootstrap API ────────────────────────────────────────────────────────────
 
 /**
- * Run the full bootstrap check via Tauri sidecar.
+ * Run the full check-and-fix bootstrap pipeline.
  *
- * Always uses the sidecar (not the daemon API) because during bootstrap
- * the daemon may not be running yet. The daemon fast-path is used by
- * post-bootstrap screens that know the daemon is up.
+ * Checks all prerequisites, then fixes what's broken — all handled by the
+ * BootstrapEngine. Returns immediately; progress arrives via listenBootstrapEvents().
+ * The final BootstrapReport is emitted as a "bootstrap-report" Tauri event.
+ *
+ * Falls back to a no-op in browser mode (mock data is applied separately).
  */
-export async function runBootstrap(): Promise<BootstrapResult> {
-  // Browser (no Tauri) → mock data for development/testing
-  if (!hasTauri()) {
-    const { mockBootstrapPartial } = await import('./mock-data.js');
-    return mockBootstrapPartial;
-  }
-
-  return tauriInvoke<BootstrapResult>('run_bootstrap');
+export async function checkAndFixBootstrap(): Promise<void> {
+  if (!hasTauri()) return;
+  return tauriInvoke<void>('check_and_fix_bootstrap');
 }
 
 /** Get hardware info. Requires Tauri. */
@@ -106,19 +87,18 @@ export async function missingModels(): Promise<string[]> {
   return tauriInvoke<string[]>('missing_models');
 }
 
-/** Install prerequisites via platform provider. Requires Tauri. */
-export async function installPrerequisites(): Promise<void> {
-  return tauriInvoke<void>('install_prerequisites');
-}
-
-/** Start services sequentially. Requires Tauri. */
-export async function startServices(): Promise<void> {
-  return tauriInvoke<void>('start_services');
-}
-
-/** Run database setup pipeline. Requires Tauri. */
-export async function setupDatabase(): Promise<void> {
-  return tauriInvoke<void>('setup_database');
+/**
+ * Return the daemon port for the current runtime mode.
+ *
+ * Delegates to SenseiConfig::from_env() in the sidecar — the single source
+ * of truth. Returns 7744 (prod) or 7745 (dev). Call once at app startup to
+ * initialise appState.port before any daemon API calls.
+ *
+ * Falls back to 7744 if running outside Tauri (browser dev mode).
+ */
+export async function getDaemonPort(): Promise<number> {
+  if (!hasTauri()) return 7744;
+  return tauriInvoke<number>('get_daemon_port');
 }
 
 /** Get platform info from the backend. Requires Tauri. */
@@ -127,7 +107,7 @@ export async function getPlatform(): Promise<any> {
 }
 
 /**
- * Listen for bootstrap events from the Tauri backend.
+ * Listen for bootstrap gate/phase events from the Tauri backend.
  * Dispatches to the provided handler (which should be bs.handleEvent).
  * Returns an unlisten function.
  */
@@ -141,3 +121,16 @@ export async function listenBootstrapEvents(
   return unlisten;
 }
 
+/**
+ * Listen for the final BootstrapReport emitted when the engine finishes.
+ * Returns an unlisten function.
+ */
+export async function listenBootstrapReport(
+  handler: (report: BootstrapReport) => void,
+): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event');
+  const unlisten = await listen<BootstrapReport>('bootstrap-report', (event) => {
+    handler(event.payload);
+  });
+  return unlisten;
+}

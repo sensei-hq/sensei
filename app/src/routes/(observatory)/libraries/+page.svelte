@@ -2,20 +2,35 @@
     import { onMount } from "svelte";
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
+    import EmptyState from "$lib/components/EmptyState.svelte";
     import type { LibEntry } from "$lib/types.js";
+
+    type UsageEntry = { library_name: string; folder: string; version_used: string | null; import_count: number };
 
     let libs = $state<LibEntry[]>([]);
     let loading = $state(true);
     let search = $state("");
     let kindFilter = $state<"all" | "code" | "service">("all");
     let selectedLib = $state<LibEntry | null>(null);
+    let usageData = $state<UsageEntry[]>([]);
+    let usageLoading = $state(false);
 
     onMount(async () => {
-        await appState.load();
         const api = senseiApi(appState.port);
         const data = await api.getLibs({ shared: true });
         libs = data.libs;
         loading = false;
+    });
+
+    // Fetch usage data when selection changes
+    $effect(() => {
+        const lib = selectedLib;
+        if (!lib?.id) { usageData = []; return; }
+        usageLoading = true;
+        senseiApi(appState.port).getLibraryUsage(lib.id).then(d => {
+            usageData = d.usage ?? [];
+            usageLoading = false;
+        }).catch(() => { usageData = []; usageLoading = false; });
     });
 
     let filtered = $derived(
@@ -57,17 +72,11 @@
     {#if loading}
         <p class="text-ui text-surface-z6">Loading libraries...</p>
     {:else if filtered.length === 0}
-        <div class="flex flex-col items-center text-center py-20 gap-4">
-            <span class="kanji text-6xl text-primary-z5 opacity-30">書</span>
-            <p class="display text-xl font-normal m-0">No libraries indexed.</p>
-            <p
-                class="text-ui text-surface-z6 max-w-[380px] leading-relaxed m-0"
-            >
-                Libraries appear once sensei scans your project dependencies.
-                Add folders in the setup wizard, and sensei will detect
-                libraries from your manifests.
-            </p>
-        </div>
+        <EmptyState
+            kanji="書"
+            title="No libraries indexed."
+            description="Libraries appear once sensei scans your project dependencies. Add folders in the setup wizard, and sensei will detect libraries from your manifests."
+        />
     {:else}
         <div class="grid grid-cols-[1fr_340px] gap-6">
             <div class="flex flex-col gap-1">
@@ -95,24 +104,41 @@
                 <div
                     class="p-6 bg-surface-z2 border border-surface-z3 rounded-lg sticky top-6"
                 >
-                    <h3 class="text-base font-medium m-0 mb-4">
+                    <h3 class="text-base font-medium m-0 mb-1">
                         {selectedLib.name}
                     </h3>
-                    <div>
-                        <p
-                            class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-2"
-                        >
-                            Used in
-                        </p>
+                    <p class="text-2xs text-surface-z6 m-0 mb-4">
+                        {selectedLib.repoCount} repo{selectedLib.repoCount !== 1 ? 's' : ''}
+                        {#if selectedLib.pageCount}· {selectedLib.pageCount} doc pages{/if}
+                    </p>
+
+                    <div class="mb-4">
+                        <p class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-2">Used in</p>
                         <div class="flex flex-wrap gap-1.5">
                             {#each selectedLib.repos as repo}
-                                <span
-                                    class="inline-block px-2 py-0.5 rounded-full text-3xs bg-surface-z3 text-surface-z6 lowercase"
-                                    >{repo}</span
-                                >
+                                <span class="inline-block px-2 py-0.5 rounded-full text-3xs bg-surface-z3 text-surface-z6 lowercase">{repo}</span>
                             {/each}
                         </div>
                     </div>
+
+                    {#if usageLoading}
+                        <p class="text-2xs text-surface-z6">Loading usage...</p>
+                    {:else if usageData.length > 0}
+                        <div>
+                            <p class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-2">Usage by folder</p>
+                            {#each usageData as u}
+                                <div class="flex justify-between py-1.5 border-b border-surface-z3 text-ui">
+                                    <div>
+                                        <span class="mono text-xs">{u.folder}</span>
+                                        {#if u.version_used}
+                                            <span class="text-2xs text-surface-z6 ml-1.5">v{u.version_used}</span>
+                                        {/if}
+                                    </div>
+                                    <span class="mono text-xs text-surface-z6">{u.import_count} imports</span>
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
                 </div>
             {/if}
         </div>
