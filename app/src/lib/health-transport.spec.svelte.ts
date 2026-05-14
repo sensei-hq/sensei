@@ -1,9 +1,17 @@
 // app/src/lib/health-transport.spec.svelte.ts
 
-import { describe, it, expect } from 'vitest';
-import type { HealthEvent } from './health-types.js';
-import { MockTransport } from './health-transport.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { HealthEvent, HealthPayload } from './health-types.js';
+import { MockTransport, RealTransport } from './health-transport.js';
 import { okPayload, needsActionPayload, remedyFixture } from './health-state.spec.svelte.js';
+
+// ── Hoisted Tauri mocks (must precede any import of health-transport) ─────────
+
+const invokeMock = vi.fn();
+const listenMock = vi.fn();
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
 // ── check() ──────────────────────────────────────────────────────────────────
 
@@ -165,5 +173,194 @@ describe('MockTransport — resolve() call recording', () => {
     expect(t.resolveCalls).toHaveLength(2);
     expect(t.resolveCalls[0].current).toBe(p1);
     expect(t.resolveCalls[1].current).toBe(p2);
+  });
+});
+
+// ── RealTransport ─────────────────────────────────────────────────────────────
+
+/**
+ * Helper: wires listenMock so it captures the handler and returns an unlisten
+ * stub.  Returns `fire(ev)` to push an event and `unlisten` to inspect calls.
+ */
+function rigListen() {
+  let handler: ((e: { payload: HealthEvent }) => void) | null = null;
+  const unlisten = vi.fn();
+  listenMock.mockImplementation(async (_channel: string, fn: (e: { payload: HealthEvent }) => void) => {
+    handler = fn;
+    return unlisten;
+  });
+  return {
+    fire: (ev: HealthEvent) => handler?.({ payload: ev }),
+    unlisten,
+  };
+}
+
+describe('RealTransport', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+  });
+
+  // ── check() ────────────────────────────────────────────────────────────────
+
+  it('check() calls invoke("health_check") exactly once', async () => {
+    const expected = okPayload();
+    invokeMock.mockResolvedValueOnce(expected);
+
+    const t = new RealTransport();
+    await t.check();
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith('health_check');
+  });
+
+  it('check() resolves with the typed HealthPayload returned by invoke', async () => {
+    const expected = okPayload();
+    invokeMock.mockResolvedValueOnce(expected);
+
+    const t = new RealTransport();
+    const result = await t.check();
+
+    expect(result).toBe(expected);
+  });
+
+  it('check() propagates rejections from invoke', async () => {
+    const err = new Error('tauri bridge down');
+    invokeMock.mockRejectedValueOnce(err);
+
+    const t = new RealTransport();
+    await expect(t.check()).rejects.toThrow('tauri bridge down');
+  });
+
+  // ── resolve() ──────────────────────────────────────────────────────────────
+
+  it('resolve() subscribes to "health" before invoking "health_check_and_resolve"', async () => {
+    const callOrder: string[] = [];
+
+    listenMock.mockImplementation(async (_channel: string, fn: (e: { payload: HealthEvent }) => void) => {
+      callOrder.push('listen');
+      // immediately fire the terminal report so the promise settles
+      setTimeout(() => fn({ payload: { kind: 'report', payload: okPayload() } }), 0);
+      return vi.fn();
+    });
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      callOrder.push(cmd);
+    });
+
+    const t = new RealTransport();
+    await t.resolve(okPayload(), () => {});
+
+    expect(callOrder[0]).toBe('listen');
+    expect(callOrder[1]).toBe('health_check_and_resolve');
+  });
+
+  it('resolve() invokes "health_check_and_resolve" exactly once', async () => {
+    const { fire } = rigListen();
+    invokeMock.mockImplementation(async () => {
+      fire({ kind: 'report', payload: okPayload() });
+    });
+
+    const t = new RealTransport();
+    await t.resolve(okPayload(), () => {});
+
+    const resolveCallCount = invokeMock.mock.calls.filter(
+      (c) => c[0] === 'health_check_and_resolve',
+    ).length;
+    expect(resolveCallCount).toBe(1);
+  });
+
+  it('resolve() forwards every received event to onEvent in order', async () => {
+    const { fire } = rigListen();
+    const terminal = needsActionPayload();
+
+    invokeMock.mockImplementation(async () => {
+      fire({ kind: 'phase', phase: 'resolving' });
+      fire({ kind: 'component', id: 'postgres', patch: { status: 'checking' } });
+      fire({ kind: 'report', payload: terminal });
+    });
+
+    const t = new RealTransport();
+    const received: HealthEvent[] = [];
+    await t.resolve(okPayload(), (ev) => received.push(ev));
+
+    expect(received).toHaveLength(3);
+    expect(received[0]).toEqual({ kind: 'phase', phase: 'resolving' });
+    expect(received[1]).toEqual({ kind: 'component', id: 'postgres', patch: { status: 'checking' } });
+    expect(received[2]).toEqual({ kind: 'report', payload: terminal });
+  });
+
+  it('resolve() resolves with the payload of the first kind:"report" event', async () => {
+    const terminal = needsActionPayload();
+    const { fire } = rigListen();
+
+    invokeMock.mockImplementation(async () => {
+      fire({ kind: 'report', payload: terminal });
+    });
+
+    const t = new RealTransport();
+    const result = await t.resolve(okPayload(), () => {});
+
+    expect(result).toBe(terminal);
+  });
+
+  it('resolve() ignores events that arrive after the terminal report (settled flag)', async () => {
+    const terminal = okPayload();
+    const { fire } = rigListen();
+
+    invokeMock.mockImplementation(async () => {
+      fire({ kind: 'report', payload: terminal });
+      // These arrive after settlement — must be silently ignored.
+      fire({ kind: 'phase', phase: 'resolving' });
+      fire({ kind: 'report', payload: needsActionPayload() });
+    });
+
+    const t = new RealTransport();
+    const received: HealthEvent[] = [];
+    const result = await t.resolve(okPayload(), (ev) => received.push(ev));
+
+    // Only the first report fires onEvent; subsequent events are dropped.
+    const reportCount = received.filter((e) => e.kind === 'report').length;
+    expect(reportCount).toBe(1);
+    expect(result).toBe(terminal);
+  });
+
+  it('resolve() calls unlisten once the report arrives (success cleanup)', async () => {
+    const { fire, unlisten } = rigListen();
+
+    invokeMock.mockImplementation(async () => {
+      fire({ kind: 'report', payload: okPayload() });
+    });
+
+    const t = new RealTransport();
+    await t.resolve(okPayload(), () => {});
+
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolve() calls unlisten when invoke("health_check_and_resolve") rejects (error cleanup)', async () => {
+    const { unlisten } = rigListen();
+    const err = new Error('rust panic');
+
+    invokeMock.mockRejectedValueOnce(err);
+
+    const t = new RealTransport();
+    await expect(t.resolve(okPayload(), () => {})).rejects.toThrow('rust panic');
+
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolve() rejects if invoke("health_check_and_resolve") rejects before any report', async () => {
+    const { unlisten } = rigListen();
+    const err = new Error('sidecar unavailable');
+
+    invokeMock.mockRejectedValueOnce(err);
+
+    const t = new RealTransport();
+    const received: HealthEvent[] = [];
+    await expect(t.resolve(okPayload(), (ev) => received.push(ev))).rejects.toThrow('sidecar unavailable');
+
+    expect(received).toHaveLength(0);
+    expect(unlisten).toHaveBeenCalledTimes(1);
   });
 });
