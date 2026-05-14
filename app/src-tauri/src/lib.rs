@@ -12,13 +12,14 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            // Bootstrap (prereqs, hardware, models)
-            commands::bootstrap::check_and_fix_bootstrap,
-            commands::bootstrap::detect_hardware,
-            commands::bootstrap::list_models,
-            commands::bootstrap::missing_models,
-            commands::bootstrap::get_platform,
-            commands::bootstrap::get_daemon_port,
+            // Platform info (hardware, models, daemon port) — read-only helpers
+            commands::platform_info::detect_hardware,
+            commands::platform_info::list_models,
+            commands::platform_info::missing_models,
+            commands::platform_info::get_daemon_port,
+            // Bootstrap health commands — added in Task G2
+            // commands::bootstrap::health_check,
+            // commands::bootstrap::health_check_and_resolve,
             // Assistants (detection, MCP config)
             commands::assistants::detect_assistants,
             commands::assistants::configure_mcp,
