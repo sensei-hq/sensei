@@ -253,4 +253,55 @@ describe('HealthState — B1: constructor accepts a transport', () => {
   });
 });
 
+describe('HealthState — B2: init() lifecycle', () => {
+  it('calls transport.check() exactly once and applies result', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.checkCalls).toHaveLength(1);
+    expect(s.status).toBe('ok');
+  });
+
+  it('calls transport.resolve() when check returns non-ok', async () => {
+    const transport = new MockTransport({ checkPayload: needsActionPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.resolveCalls).toHaveLength(1);
+  });
+
+  it('does NOT call transport.resolve() when check returns ok', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.resolveCalls).toHaveLength(0);
+  });
+
+  it('concurrent init() callers share one in-flight promise (check called once)', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await Promise.all([s.init(), s.init()]);
+    expect(transport.checkCalls).toHaveLength(1);
+  });
+
+  it('HealthEvent fed via resolve callback mutates state correctly', async () => {
+    const transport = new MockTransport({
+      checkPayload: needsActionPayload(),
+      resolveEvents: [
+        { kind: 'component', id: 'postgres', patch: { status: 'ready', version: '16.0' } },
+      ],
+    });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(s.components[0].status).toBe('ready');
+    expect(s.components[0].version).toBe('16.0');
+  });
+
+  it('resolves with undefined after check + resolve complete', async () => {
+    const transport = new MockTransport({ checkPayload: needsActionPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    const result = await s.init();
+    expect(result).toBeUndefined();
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };
