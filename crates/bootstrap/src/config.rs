@@ -21,9 +21,14 @@ pub const GITHUB_REPO: &str = "sensei";
 /// Homebrew tap slug used in install/reinstall messages.
 pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
 
-/// Raw GitHub URL for the homebrew tap Brewfile (authoritative install source).
+/// Raw GitHub URL for the prod homebrew tap Brewfile.
 pub const HOMEBREW_BREWFILE_URL: &str =
     "https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile";
+
+/// Raw GitHub URL for the dev homebrew tap Brewfile.
+/// Used by dev (`--features dev`) builds to install `*-dev` binaries.
+pub const HOMEBREW_BREWFILE_DEV_URL: &str =
+    "https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile-dev";
 
 /// Homebrew tap repository slug (for reference/logging).
 pub const HOMEBREW_TAP_REPO: &str = "sensei-hq/homebrew-tap";
@@ -174,6 +179,19 @@ impl SenseiConfig {
         if self.is_dev() { "senseid-dev" } else { "senseid" }
     }
 
+    /// Returns the Brewfile URL appropriate to the current build mode —
+    /// prod Brewfile for release builds, Brewfile-dev for `--features dev`.
+    pub fn brewfile_url(&self) -> &'static str {
+        if self.is_dev() { HOMEBREW_BREWFILE_DEV_URL } else { HOMEBREW_BREWFILE_URL }
+    }
+
+    /// Returns the full `brew bundle --file=<url>` script that installs
+    /// the current-mode binaries. Suitable for direct copy/paste in a shell
+    /// or for display in a [`Remedy`].
+    pub fn brew_bundle_script(&self) -> String {
+        format!("brew bundle --file={}", self.brewfile_url())
+    }
+
     /// Returns the sensei-mcp binary name for the current mode.
     pub fn sensei_mcp_binary(&self) -> &'static str {
         if self.is_dev() { "sensei-mcp-dev" } else { "sensei-mcp" }
@@ -320,5 +338,32 @@ mod tests {
             assert_eq!(cfg.senseid_binary(), "senseid");
             assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp");
         }
+    }
+
+    #[test]
+    fn brewfile_dev_url_is_github_raw() {
+        assert!(HOMEBREW_BREWFILE_DEV_URL.starts_with("https://raw.githubusercontent.com/"));
+        assert!(HOMEBREW_BREWFILE_DEV_URL.contains("homebrew-tap"));
+        assert!(HOMEBREW_BREWFILE_DEV_URL.ends_with("Brewfile-dev"));
+    }
+
+    #[test]
+    fn brewfile_url_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        if COMPILE_DEV {
+            assert_eq!(cfg.brewfile_url(), HOMEBREW_BREWFILE_DEV_URL);
+        } else {
+            assert_eq!(cfg.brewfile_url(), HOMEBREW_BREWFILE_URL);
+        }
+    }
+
+    #[test]
+    fn brew_bundle_script_uses_mode_url() {
+        let cfg = SenseiConfig::from_env();
+        let script = cfg.brew_bundle_script();
+        assert!(script.starts_with("brew bundle --file="));
+        assert!(script.contains(cfg.brewfile_url()));
+        // Single `=` after --file, not the broken `--file==URL` form.
+        assert!(!script.contains("--file=="));
     }
 }

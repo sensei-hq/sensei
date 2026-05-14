@@ -3,7 +3,7 @@
 //! dependencies; runs once even when all three are failed.
 
 use std::process::Command;
-use crate::config::HOMEBREW_BREWFILE_URL;
+use crate::config::SenseiConfig;
 use crate::health::resolver::{Resolver, ResolveOutcome};
 use crate::health::types::{ComponentId, Remedy};
 
@@ -25,8 +25,9 @@ impl Resolver for BrewBundleResolver {
             Some(p) => p,
             None    => return ResolveOutcome::NeedsHumanAction(homebrew_install_remedy()),
         };
+        let cfg = SenseiConfig::from_env();
         let status = Command::new(brew)
-            .args(["bundle", "--file", &format!("={}", HOMEBREW_BREWFILE_URL)])
+            .args(["bundle", &format!("--file={}", cfg.brewfile_url())])
             .status();
         match status {
             Ok(s) if s.success() => ResolveOutcome::Resolved,
@@ -49,7 +50,7 @@ fn homebrew_install_remedy() -> Remedy {
 fn bundle_failed_remedy(detail: String) -> Remedy {
     Remedy {
         message: format!("Couldn't complete `brew bundle` automatically ({detail}). Run it yourself."),
-        script:  format!("brew bundle --file=={HOMEBREW_BREWFILE_URL}"),
+        script:  SenseiConfig::from_env().brew_bundle_script(),
         url:     None,
     }
 }
