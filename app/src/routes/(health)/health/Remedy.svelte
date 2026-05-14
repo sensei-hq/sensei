@@ -4,9 +4,9 @@
   interface Props {
     remedy: Remedy;
     onCopyScript?: () => void;
-    onRecheck?: () => void;
+    onVerify?: () => void;
   }
-  let { remedy, onCopyScript, onRecheck }: Props = $props();
+  let { remedy, onCopyScript, onVerify }: Props = $props();
 </script>
 
 <section class="mt-4.5 border border-primary-z5/30 rounded-xl bg-surface-z1 overflow-hidden">
@@ -26,11 +26,11 @@
 
   <footer class="flex items-center justify-between gap-2.5 px-4.5 py-3 border-t border-surface-z2">
     <button data-action="copy" class="btn-solid btn-sm" onclick={onCopyScript}>Copy script</button>
-    <button data-action="recheck"
+    <button data-action="verify"
             class="btn-outline btn-sm"
             style="color: oklch(var(--color-primary-z5) / 1); border-color: oklch(var(--color-primary-z5) / 0.4);"
-            onclick={onRecheck}>
-      I've run it · re-check
+            onclick={onVerify}>
+      I've run it · verify
     </button>
   </footer>
 </section>
