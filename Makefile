@@ -254,7 +254,10 @@ tap-push:
 	@tmpdir=$$(mktemp -d) && \
 	git clone git@github.com:sensei-hq/homebrew-tap.git "$$tmpdir" 2>&1 && \
 	cp homebrew/Formula/sensei.rb "$$tmpdir/Formula/" && \
+	cp homebrew/Formula/sensei-dev.rb "$$tmpdir/Formula/" && \
 	cp homebrew/Casks/senseihq.rb "$$tmpdir/Casks/" && \
+	cp homebrew/Brewfile "$$tmpdir/" && \
+	cp homebrew/Brewfile-dev "$$tmpdir/" && \
 	cd "$$tmpdir" && \
 	git add -A && \
 	git diff --cached --quiet && echo "homebrew-tap already up to date" || \
