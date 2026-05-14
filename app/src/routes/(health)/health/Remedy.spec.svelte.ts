@@ -31,12 +31,12 @@ describe('Remedy', () => {
     expect(onCopyScript).toHaveBeenCalledTimes(1);
   });
 
-  it('Recheck button calls onRecheck', () => {
-    const onRecheck = vi.fn();
-    const m = mountComponent(Remedy, { remedy: fixture(), onRecheck });
+  it('Verify button calls onVerify', () => {
+    const onVerify = vi.fn();
+    const m = mountComponent(Remedy, { remedy: fixture(), onVerify });
     cleanup.push(m.destroy);
-    (m.container.querySelector('button[data-action="recheck"]') as HTMLButtonElement).click();
-    expect(onRecheck).toHaveBeenCalledTimes(1);
+    (m.container.querySelector('button[data-action="verify"]') as HTMLButtonElement).click();
+    expect(onVerify).toHaveBeenCalledTimes(1);
   });
 
   it('renders a link only when remedy.url is non-null', () => {
