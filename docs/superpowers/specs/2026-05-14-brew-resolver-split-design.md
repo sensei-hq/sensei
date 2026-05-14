@@ -23,45 +23,39 @@ This change is server-side only. The TS health UI in Phase 1c consumes the same 
 
 ### Resolver layout (before vs after)
 
-```
-BEFORE                                       AFTER
-─────────────────────────────────────        ─────────────────────────────────────────────
-health/resolvers/                            health/resolvers/
-├── brew_bundle.rs      [3 components]       ├── postgres_install.rs   [Postgres]
-├── daemon_start.rs     [Daemon]             ├── ollama_install.rs     [Ollama]
-└── db_setup.rs         [Database]           ├── sensei_install.rs     [Sensei]
-                                             ├── daemon_start.rs       [Daemon]      (unchanged)
-                                             ├── db_setup.rs           [Database]    (unchanged)
-                                             └── brew_helpers.rs       (shared)
+```mermaid
+flowchart LR
+    subgraph BEFORE["BEFORE — health/resolvers/"]
+        b1["brew_bundle.rs<br/>covers: Postgres + Ollama + Sensei"]
+        b2["daemon_start.rs<br/>covers: Daemon"]
+        b3["db_setup.rs<br/>covers: Database"]
+    end
+    subgraph AFTER["AFTER — health/resolvers/"]
+        a1["postgres_install.rs<br/>covers: Postgres"]
+        a2["ollama_install.rs<br/>covers: Ollama"]
+        a3["sensei_install.rs<br/>covers: Sensei"]
+        a4["daemon_start.rs<br/>covers: Daemon (unchanged)"]
+        a5["db_setup.rs<br/>covers: Database (unchanged)"]
+        a6[("brew_helpers.rs<br/>shared")]
+        a1 --> a6
+        a2 --> a6
+        a3 --> a6
+    end
+    BEFORE -.->|"split + extract helper"| AFTER
 ```
 
 ### Invocation flow
 
-```
-              ┌──────────────────┐
-              │   Orchestrator   │
-              └────────┬─────────┘
-                       │ for each failed ComponentId
-                       ▼
-              ┌──────────────────┐
-              │   Checker        │   (already failed — that's why we're here)
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │   Resolver       │   one of: PostgresInstall / OllamaInstall / SenseiInstall
-              └────────┬─────────┘
-                       │ calls
-                       ▼
-              ┌──────────────────┐
-              │  brew_install()  │   shared helper — runs `brew install [args] <formula>`,
-              │  in brew_helpers │   parses stderr, returns Result<(), BrewError>
-              └────────┬─────────┘
-                       │
-        ┌──────────────┼──────────────┬──────────────────┐
-        ▼              ▼              ▼                  ▼
-    Resolved   NeedsHumanAction   NeedsHumanAction   NeedsHumanAction
-               (homebrew_install) (overwrite_link)   (tap_missing | generic)
+```mermaid
+flowchart TD
+    O["Orchestrator"] -->|"for each failed ComponentId"| C["Checker<br/>(already failed — that's why we're here)"]
+    C --> R["Resolver<br/>(PostgresInstall / OllamaInstall / SenseiInstall)"]
+    R -->|"calls"| H["brew_install()<br/>runs brew install [args] formula<br/>parses stderr → Result<(), BrewError>"]
+    H -->|"Ok"| Resolved["Resolved"]
+    H -->|"Err(BrewNotFound)"| NHA1["NeedsHumanAction<br/>homebrew_install_remedy"]
+    H -->|"Err(LinkConflict)"| NHA2["NeedsHumanAction<br/>overwrite_link_remedy"]
+    H -->|"Err(TapMissing)"| NHA3["NeedsHumanAction<br/>tap_missing_remedy"]
+    H -->|"Err(Other)"| NHA4["NeedsHumanAction<br/>generic_brew_remedy"]
 ```
 
 Resolvers do not pre-check. The orchestrator only invokes a resolver after the corresponding checker has failed. That means the dmg-ollama / Postgres.app cases — where the binary works fine — never reach the resolver at all; the checker already returned green and the orchestrator moved on.
