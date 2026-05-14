@@ -7,6 +7,8 @@
 //! testing without invoking brew.
 
 use std::path::PathBuf;
+use std::process::Command;
+use crate::util::which_binary;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrewError {
@@ -51,6 +53,30 @@ fn truncate_to_tail(stderr: &str, max_bytes: usize) -> String {
         start += 1;
     }
     stderr[start..].to_string()
+}
+
+/// Run `brew install <args>... <formula>` and translate failure modes
+/// into typed `BrewError` variants.
+///
+/// On success, returns `Ok(())`. On any non-zero exit, parses stderr.
+/// If `brew` isn't on PATH, returns `BrewError::BrewNotFound` without
+/// invoking anything.
+pub fn brew_install(formula: &str, args: &[&str]) -> Result<(), BrewError> {
+    let brew = match which_binary("brew") {
+        Some(p) => p,
+        None    => return Err(BrewError::BrewNotFound),
+    };
+    let output = Command::new(brew)
+        .arg("install")
+        .args(args)
+        .arg(formula)
+        .output()
+        .map_err(|e| BrewError::Other(format!("spawn failed: {e}")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(parse_brew_error(&stderr))
 }
 
 #[cfg(test)]
