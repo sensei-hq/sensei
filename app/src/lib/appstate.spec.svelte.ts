@@ -27,6 +27,15 @@ vi.stubGlobal('localStorage', {
   clear: () => storage.clear(),
 });
 
+// Mock sessionStorage — HealthState owns 'sensei:health', AppState must not touch it
+const sessionStore = new Map<string, string>();
+vi.stubGlobal('sessionStorage', {
+  getItem: (key: string) => sessionStore.get(key) ?? null,
+  setItem: (key: string, value: string) => sessionStore.set(key, value),
+  removeItem: (key: string) => sessionStore.delete(key),
+  clear: () => sessionStore.clear(),
+});
+
 describe('AppState', () => {
   let state: AppState;
 
@@ -198,5 +207,14 @@ describe('AppState', () => {
     await state.reset();
     expect(state.config).toEqual({});
     expect(state.loaded).toBe(false);
+  });
+
+  it('reset does not touch sensei:health (HealthState owns the health cache)', async () => {
+    sessionStore.clear();
+    sessionStore.set('sensei:health', 'ready');
+    state.config = { foo: 'bar' };
+    state.loaded = true;
+    await state.reset();
+    expect(sessionStore.get('sensei:health')).toBe('ready');
   });
 });

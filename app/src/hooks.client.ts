@@ -15,9 +15,10 @@
  *    Once the setup wizard finishes, `sensei:setup-complete=1` is written to
  *    localStorage. The guard stops redirecting to /setup/welcome.
  *
- * No module imports — only Web APIs — so this runs safely before the Svelte
- * runtime initialises (importing $state-rune modules at hook time causes
- * a blank screen in tauri:dev).
+ * Imports are restricted to pure modules (no Svelte runes) so this file
+ * loads safely before the Svelte runtime initialises. Importing a
+ * `.svelte.ts` / `$state`-rune module at hook time causes a blank screen
+ * in tauri:dev. `health-cache.ts` is rune-free.
  *
  * Routes always reachable regardless of gate state:
  *   /health  /logs
@@ -26,24 +27,17 @@
  *   /setup/*
  */
 
+import { initHealthCache, isHealthReady } from '$lib/health-cache.js';
+
 const HEALTH_EXEMPT = new Set(['/health', '/logs', '/upgrade']);
 const SETUP_PREFIX = '/setup';
 
-// Clear the health flag on every cold start so a stale sessionStorage value
-// from a previous dev session never bypasses bootstrap. WKWebView does clear
-// sessionStorage when the app process exits, but NOT across hot-reloads or
-// when the renderer process stays alive (common in tauri:dev).
-// This module runs once at startup before reroute, so clearing here is safe.
-if (typeof sessionStorage !== 'undefined') {
-  sessionStorage.removeItem('sensei:health');
-}
-
-// VITE_BYPASS_HEALTH=true is set in tauri:vite-dev. In that mode the Tauri
-// sidecar is not embedded, so the health check cannot run. Health is treated
-// as already passed so the app is directly usable for frontend development.
-// This value is replaced at build/serve time by Vite — it is never 'true'
-// in a production or tauri:dev (binary) build.
-const BYPASS_HEALTH = import.meta.env.VITE_BYPASS_HEALTH === 'true';
+// Cold-start init — owned by health-cache. Either clears stale state (so a
+// 'ready' value that survived hot-reload doesn't bypass HealthState) or
+// pre-populates 'ready' in bypass mode so reroute passes without a /health
+// hop. This is the only sessionStorage interaction here; the actual cache
+// writes during the app's lifetime are owned by HealthState.
+initHealthCache();
 
 export function reroute({ url }: { url: URL }): string | undefined {
   const path = url.pathname;
@@ -53,7 +47,6 @@ export function reroute({ url }: { url: URL }): string | undefined {
   // The updater writes `sensei:app-version` to localStorage before restarting;
   // the /upgrade page clears it once the health resolvers + db deploy have completed.
   const pendingUpgrade =
-    !BYPASS_HEALTH &&
     typeof localStorage !== 'undefined' &&
     localStorage.getItem('sensei:app-version') !== null;
 
@@ -62,12 +55,7 @@ export function reroute({ url }: { url: URL }): string | undefined {
   }
 
   // ── Tier 1: Health gate ───────────────────────────────────────────────────
-  const healthReady =
-    BYPASS_HEALTH ||
-    (typeof sessionStorage !== 'undefined' &&
-      sessionStorage.getItem('sensei:health') === 'ready');
-
-  if (!healthReady) {
+  if (!isHealthReady()) {
     if (HEALTH_EXEMPT.has(path)) return undefined;
     return '/health';
   }
