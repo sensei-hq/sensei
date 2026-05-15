@@ -76,7 +76,23 @@ export class AppState {
   }
 
   async setSetupComplete() {
-    await this.setConfig('setup_complete', '1');
+    // Optimistically update in-memory config so callers reading appState
+    // immediately after this method see a consistent state on success.
+    this.config = { ...this.config, setup_complete: '1' };
+
+    // Daemon is canonical — only write the local cache if the daemon write
+    // succeeded. Throwing on failure lets the wizard surface the error to
+    // the user instead of silently passing the setup gate next launch.
+    const api = senseiApi(this.port);
+    const result = await api.trySetConfig({ setup_complete: '1' });
+    if (!result.ok) {
+      delete this.config['setup_complete'];
+      this.config = { ...this.config };
+      throw new Error(
+        `Failed to mark setup complete on daemon: ${result.error.message}`,
+      );
+    }
+
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('sensei:setup-complete', '1');
     }
@@ -103,9 +119,22 @@ export class AppState {
     }
 
     const api = senseiApi(this.port);
-    try {
-      this.config = await api.getConfig();
-    } catch {
+    const result = await api.tryGetConfig();
+    if (result.ok) {
+      this.config = result.data;
+      // Daemon is the canonical source for setup completion. Reconcile the
+      // localStorage cache (the sync gate read by hooks.client.ts) so it
+      // can never drift past a daemon write that didn't actually land.
+      if (typeof localStorage !== 'undefined') {
+        if (this.config['setup_complete'] === '1') {
+          localStorage.setItem('sensei:setup-complete', '1');
+        } else {
+          localStorage.removeItem('sensei:setup-complete');
+        }
+      }
+    } else {
+      // Daemon unreachable — leave the cache untouched. A transient outage
+      // must not clear setup-complete and force the user back through setup.
       this.config = {};
     }
 
