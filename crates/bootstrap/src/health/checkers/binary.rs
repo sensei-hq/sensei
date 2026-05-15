@@ -2,6 +2,7 @@
 
 use std::process::Command;
 use crate::health::checker::{Checker, CheckOutcome};
+use crate::health::process_util::{output_with_timeout, TimedOutcome, DEFAULT_CHECKER_TIMEOUT};
 
 pub struct BinaryChecker {
     pub bin:         &'static str,
@@ -24,15 +25,23 @@ impl Checker for BinaryChecker {
         }
         match self.version_arg {
             None => CheckOutcome::ready_no_version(),
-            Some(arg) => match Command::new(self.bin).arg(arg).output() {
-                Ok(out) if out.status.success() => {
-                    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    let v = if raw.is_empty() { "unknown".to_string() } else { raw };
-                    CheckOutcome::ready(v)
+            Some(arg) => {
+                let mut cmd = Command::new(self.bin);
+                cmd.arg(arg);
+                match output_with_timeout(cmd, DEFAULT_CHECKER_TIMEOUT) {
+                    TimedOutcome::Done(out) if out.status.success() => {
+                        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        let v = if raw.is_empty() { "unknown".to_string() } else { raw };
+                        CheckOutcome::ready(v)
+                    }
+                    TimedOutcome::Done(out) =>
+                        CheckOutcome::failed(format!("{} {} exited {}", self.bin, arg, out.status)),
+                    TimedOutcome::TimedOut =>
+                        CheckOutcome::failed(format!("{} {} timed out after {}s", self.bin, arg, DEFAULT_CHECKER_TIMEOUT.as_secs())),
+                    TimedOutcome::Failed(e) =>
+                        CheckOutcome::failed(format!("{}: {e}", self.bin)),
                 }
-                Ok(out)  => CheckOutcome::failed(format!("{} {} exited {}", self.bin, arg, out.status)),
-                Err(e)   => CheckOutcome::failed(format!("{}: {e}", self.bin)),
-            },
+            }
         }
     }
 }
