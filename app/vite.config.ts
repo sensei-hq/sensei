@@ -59,18 +59,9 @@ function webkitNodeReexportFix(): Plugin {
 // Injected at build time so the frontend default is always correct.
 const daemonPort = process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production' ? 7745 : 7744;
 
-// ── Tauri-context detection ───────────────────────────────────────────────
-// Tauri sets these env vars whenever vite runs under `tauri dev` or
-// `tauri build` (the cargo + tauri-cli code path), so they are the
-// canonical "are we building inside a Tauri app" signal. We inject the
-// boolean as `__SENSEI_HAS_TAURI__`; HealthState bypasses the daemon
-// health check when this is false (= browser-only dev or static preview,
-// where no Tauri sidecar exists to answer). No custom bypass env var is
-// needed — there is nothing to leak.
-const hasTauri =
-  process.env.TAURI_PLATFORM !== undefined
-  || process.env.TAURI_ENV_PLATFORM !== undefined
-  || process.env.TAURI_ENV_DEBUG !== undefined;
+// Health-bypass is decided at RUNTIME via `window.__TAURI__` (set by
+// Tauri's pre-injected bootstrap script before any user JS runs). No
+// build-time constant, no env var. See `health-cache.ts::isHealthBypass`.
 
 // App version: read from package.json so reroute can compare against the
 // `sensei:app-version` localStorage flag (set by the updater pre-restart).
@@ -85,7 +76,6 @@ export default defineConfig({
   define: {
     __SENSEI_DEFAULT_PORT__: JSON.stringify(daemonPort),
     __SENSEI_APP_VERSION__: JSON.stringify(pkg.version),
-    __SENSEI_HAS_TAURI__:   JSON.stringify(hasTauri),
   },
 
   // Tauri: don't open browser, use Tauri window

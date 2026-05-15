@@ -5,6 +5,13 @@ import type { HealthEvent, HealthPayload } from './health-types.js';
 import { MockTransport, RealTransport } from './health-transport.js';
 import { okPayload, needsActionPayload, remedyFixture } from './health-state.spec.svelte.js';
 
+// Pretend Tauri is present so HealthState's runtime bypass check resolves
+// to "Tauri build" — every test in this file constructs HealthState
+// against a transport mock and expects the production code path.
+const win = (globalThis as unknown as { window?: Record<string, unknown> }).window
+  ?? ((globalThis as unknown as { window: Record<string, unknown> }).window = {});
+win.__TAURI__ = {};
+
 // ── Hoisted Tauri mocks (must precede any import of health-transport) ─────────
 
 const invokeMock = vi.fn();

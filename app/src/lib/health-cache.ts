@@ -14,36 +14,29 @@
  * can use it safely.
  *
  * Bypass semantics:
- *   The health gate is bypassed when the bundle is NOT built inside a
- *   Tauri context — i.e. `bun run dev` or a static preview, where no Tauri
- *   sidecar exists to answer the health check. The `__SENSEI_HAS_TAURI__`
- *   constant is injected by vite.config.ts from the TAURI_PLATFORM /
- *   TAURI_ENV_PLATFORM / TAURI_ENV_DEBUG env vars that Tauri itself sets
- *   on `tauri dev` / `tauri build`. No custom env var is involved, so
- *   nothing can leak.
+ *   The health gate is bypassed when the app is NOT running inside Tauri
+ *   (= no `window.__TAURI__`). Tauri injects its global before any user
+ *   script runs (`withGlobalTauri: true` in tauri.conf.json), so by the
+ *   time `initHealthCache()` is called the global is reliably present in
+ *   Tauri builds and reliably absent in plain `vite dev`. No env vars,
+ *   no build-time constants, no leak surface.
  */
-
-declare const __SENSEI_HAS_TAURI__: boolean;
 
 const KEY = 'sensei:health';
 const VALUE_READY = 'ready';
 
-/** True when the bundle was built inside a Tauri context (= a Tauri
- *  sidecar will be present at runtime to answer the health check).
- *
- *  vite.config.ts always substitutes `__SENSEI_HAS_TAURI__` to a literal
- *  `true`/`false` at compile time, so in any real build this returns a
- *  definite answer. The `typeof ... === 'undefined'` branch only fires in
- *  vitest where vite's `define` doesn't apply — we default to `true`
- *  there (= no bypass) so tests exercise the production code path by
- *  default. Bypass-specific tests opt in by stubbing the global. */
-function hasTauriBuild(): boolean {
-  return typeof __SENSEI_HAS_TAURI__ === 'undefined' || __SENSEI_HAS_TAURI__;
+/** True when the app is running inside a Tauri webview.
+ *  Tauri sets `window.__TAURI__` via a script that runs before any
+ *  bundle code. In `vite dev` / `vite preview` it is absent. */
+function hasTauriRuntime(): boolean {
+  return typeof window !== 'undefined'
+    && !!(window as { __TAURI__?: unknown }).__TAURI__;
 }
 
-/** True when the health check should be bypassed (browser-only mode). */
+/** True when the health check should be bypassed (no Tauri sidecar to
+ *  answer it, so there is nothing to check). */
 export function isHealthBypass(): boolean {
-  return !hasTauriBuild();
+  return !hasTauriRuntime();
 }
 
 /** Reroute consults this to decide whether to redirect to /health. */
@@ -68,9 +61,9 @@ export function clearHealthCache(): void {
  * Cold-start initializer. Runs once from hooks.client.ts at module init,
  * before any reroute or HealthState code.
  *
- * - Bypass mode (browser-only build): pre-populate 'ready' so reroute
- *   passes without a /health hop.
- * - Tauri build: clear any stale 'ready' that survived hot-reload in
+ * - No Tauri (browser dev / static preview): pre-populate 'ready' so the
+ *   reroute hook passes without a /health hop.
+ * - Tauri: clear any stale 'ready' that survived a hot reload in
  *   tauri:dev. (WKWebView clears sessionStorage on app exit but not
  *   across hot reloads.)
  */
