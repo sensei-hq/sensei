@@ -9,14 +9,14 @@
 const { useState: shS } = React;
 
 const CAT_META = {
-  pattern:      { glyph: "紋", label: "Pattern",       color: "var(--shu)"   },
-  anti_pattern: { glyph: "禁", label: "Anti-pattern",  color: "var(--amber)" },
-  correction:   { glyph: "直", label: "Correction",    color: "var(--sumi-2)"},
-  ftr:          { glyph: "果", label: "FTR signal",    color: "var(--jade)"  },
-  model:        { glyph: "型", label: "Model",         color: "var(--sumi-2)"},
-  skill:        { glyph: "技", label: "Skill",         color: "var(--jade)"  },
-  tool:         { glyph: "具", label: "Tool",          color: "var(--sumi-2)"},
-  stack:        { glyph: "層", label: "Stack",         color: "var(--shu)"   }
+  pattern:      { glyph: "紋", label: "Pattern",       color: "var(--accent)"   },
+  anti_pattern: { glyph: "禁", label: "Anti-pattern",  color: "var(--warning)" },
+  correction:   { glyph: "直", label: "Correction",    color: "var(--ink-2)"},
+  ftr:          { glyph: "果", label: "FTR signal",    color: "var(--success)"  },
+  model:        { glyph: "型", label: "Model",         color: "var(--ink-2)"},
+  skill:        { glyph: "技", label: "Skill",         color: "var(--success)"  },
+  tool:         { glyph: "具", label: "Tool",          color: "var(--ink-2)"},
+  stack:        { glyph: "層", label: "Stack",         color: "var(--accent)"   }
 };
 
 function ObsSharingReview() {
@@ -37,27 +37,27 @@ function ObsSharingReview() {
                   background: 'var(--paper)', overflow: 'hidden' }}>
 
       {/* Hero */}
-      <div style={{ padding: '22px 36px 18px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 22 }}>
-        <div className="kanji" style={{ fontSize: 42, color: 'var(--shu)', lineHeight: 1 }}>共</div>
+      <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center', gap: 24 }}>
+        <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>共</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                         textTransform: 'uppercase', marginBottom: 5 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase', marginBottom: 4 }}>
             Memories · review before sharing
           </div>
           <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                            color: 'var(--sumi)' }}>
+                                            color: 'var(--ink)' }}>
             The next share will include {included.length} insights.
           </h1>
-          <p style={{ fontSize: 12, color: 'var(--sumi-2)', margin: '4px 0 0',
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
                        maxWidth: 720, lineHeight: 1.55 }}>
-            Scheduled for <span style={{ color: 'var(--sumi)' }}>{U.nextBatch.scheduledFor}</span>{" "}
+            Scheduled for <span style={{ color: 'var(--ink)' }}>{U.nextBatch.scheduledFor}</span>{" "}
             ({U.cadence}). Sensei anonymizes paths, project names and identifiers
             before any item leaves your machine. Uncheck anything you'd rather keep private.
           </p>
         </div>
-        <div style={{ paddingLeft: 22, borderLeft: 'var(--hairline)',
-                       display: 'flex', gap: 22 }}>
+        <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)',
+                       display: 'flex', gap: 24 }}>
           <UgMini n={included.length} l="will share" accent/>
           <UgMini n={excluded.size} l="excluded"/>
           <UgMini n={U.contribution.streak} l="week streak" mono/>
@@ -65,9 +65,9 @@ function ObsSharingReview() {
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0,
-                     padding: '24px 36px 28px', maxWidth: 980, margin: '0 auto', width: '100%' }}>
+                     padding: '24px 32px 24px', maxWidth: 980, margin: '0 auto', width: '100%' }}>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
           {U.nextBatch.insights.map(ins => {
             const cm = CAT_META[ins.category] || CAT_META.pattern;
             const out = excluded.has(ins.id);
@@ -76,48 +76,48 @@ function ObsSharingReview() {
                        style={{ display: 'grid',
                                  gridTemplateColumns: '24px 1fr auto',
                                  gap: 16, alignItems: 'flex-start',
-                                 padding: '16px 18px',
+                                 padding: '16px 16px',
                                  background: out ? 'transparent' : 'var(--paper-2)',
                                  border: 'var(--hairline)', borderRadius: 6,
                                  opacity: out ? 0.5 : 1 }}>
                 <input type="checkbox" checked={!out}
                        onChange={() => toggle(ins.id)}
-                       style={{ marginTop: 4, accentColor: 'var(--shu)',
+                       style={{ marginTop: 4, accentColor: 'var(--accent)',
                                  cursor: 'pointer', width: 14, height: 14 }}/>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                     <span className="kanji" style={{ fontSize: 13, color: cm.color }}>{cm.glyph}</span>
-                    <span style={{ fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--sumi-3)',
+                    <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                                     textTransform: 'uppercase' }}>{cm.label}</span>
                     <Sep/>
-                    <span style={{ fontSize: 10, color: 'var(--sumi-3)' }}>
+                    <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                       {ins.evidence} evidence
                     </span>
                     <Sep/>
-                    <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                       conf {Math.round(ins.confidence*100)}%
                     </span>
                   </div>
-                  <div style={{ fontSize: 14, color: 'var(--sumi)', lineHeight: 1.4,
+                  <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
                                  fontWeight: 500, marginBottom: 4 }}>{ins.title}</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--sumi-2)', lineHeight: 1.55,
+                  <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55,
                                  marginBottom: 8 }}>{ins.summary}</div>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6,
-                                 fontSize: 11, color: 'var(--sumi-3)', lineHeight: 1.5 }}>
-                    <span className="kanji" style={{ fontSize: 11, color: 'var(--jade)',
-                                  marginTop: 1 }}>匿</span>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4,
+                                 fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                    <span className="kanji" style={{ fontSize: 11, color: 'var(--success)',
+                                  marginTop: 4 }}>匿</span>
                     <span style={{ fontStyle: 'italic' }}>{ins.anonymizationNote}</span>
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4,
                                alignItems: 'flex-end' }}>
-                  <button style={{ fontSize: 10.5, padding: '4px 9px',
+                  <button style={{ fontSize: 11, padding: '4px 8px',
                                     background: 'transparent',
                                     border: 'var(--hairline)', borderRadius: 4,
-                                    color: 'var(--sumi-2)', cursor: 'pointer' }}>
+                                    color: 'var(--ink-2)', cursor: 'pointer' }}>
                     view source →
                   </button>
-                  <span className="mono" style={{ fontSize: 9.5, color: 'var(--sumi-4)' }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
                     {ins.sourceId}
                   </span>
                 </div>
@@ -128,12 +128,12 @@ function ObsSharingReview() {
 
         {/* Contribution summary */}
         <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 8, padding: '18px 22px', marginBottom: 22 }}>
-          <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
+                       borderRadius: 8, padding: '16px 24px', marginBottom: 24 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                          textTransform: 'uppercase', marginBottom: 12 }}>
             Your contribution to the network
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
             <ContribStat n={U.contribution.insightsShared} l="insights shared"/>
             <ContribStat n={U.contribution.usersHelped} l="users helped" accent/>
             <ContribStat n={U.contribution.bestCategory} l={`best · ${U.contribution.bestCategoryCount}× · pattern`} mono/>
@@ -143,16 +143,16 @@ function ObsSharingReview() {
 
         {/* Footer actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button style={{ padding: '9px 18px', fontSize: 13,
-                            background: 'var(--sumi)', color: 'var(--paper)',
+          <button style={{ padding: '8px 16px', fontSize: 13,
+                            background: 'var(--ink)', color: 'var(--paper)',
                             border: 'none', borderRadius: 6, cursor: 'pointer',
                             display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--shu)' }}>送</span>
+            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>送</span>
             Send {included.length} insights now
           </button>
           <FlatBtn glyph="待" label="Hold this batch"/>
           <span style={{ flex: 1 }}/>
-          <button style={{ fontSize: 11, color: 'var(--sumi-3)',
+          <button style={{ fontSize: 11, color: 'var(--ink-3)',
                             background: 'transparent', border: 'none', cursor: 'pointer' }}>
             sharing settings →
           </button>
@@ -166,11 +166,11 @@ function ContribStat({ n, l, accent, mono }) {
   return (
     <div>
       <div className={mono ? "mono" : "display"}
-           style={{ fontSize: mono ? 17 : 22, color: accent ? 'var(--jade)' : 'var(--sumi)',
+           style={{ fontSize: mono ? 17 : 22, color: accent ? 'var(--success)' : 'var(--ink)',
                      fontWeight: 300, lineHeight: 1.1 }}>
         {n}
       </div>
-      <div style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 4,
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
                      letterSpacing: '0.1em', textTransform: 'uppercase' }}>{l}</div>
     </div>
   );

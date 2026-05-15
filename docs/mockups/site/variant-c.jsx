@@ -22,7 +22,7 @@ const { useState: cS, useEffect: cE } = React;
 function VariantC() {
   return (
     <div className="sensei variant-c" style={{
-      background: 'var(--paper)', color: 'var(--sumi)',
+      background: 'var(--paper)', color: 'var(--ink)',
       minHeight: '100%', fontFamily: 'var(--font-ui)'
     }}>
       <NavC/>
@@ -50,17 +50,17 @@ function NavC() {
       borderBottom: 'var(--hairline)'
     }}>
       <div style={{ maxWidth: 1280, margin: '0 auto',
-                     padding: '18px 48px',
+                     padding: '16px 48px',
                      display: 'flex', alignItems: 'center',
                      justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <span className="kanji" style={{ fontSize: 22,
-                         color: 'var(--shu)', letterSpacing: '-0.04em' }}>先生</span>
-          <span className="display" style={{ fontSize: 18,
+                         color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
+          <span className="display" style={{ fontSize: 17,
                          letterSpacing: '-0.01em',
-                         color: 'var(--sumi)' }}>Sensei</span>
+                         color: 'var(--ink)' }}>Sensei</span>
         </div>
-        <div style={{ display: 'flex', gap: 28, fontSize: 13,
+        <div style={{ display: 'flex', gap: 24, fontSize: 13,
                        alignItems: 'center' }}>
           {[
             ['#how', 'How'],
@@ -70,11 +70,11 @@ function NavC() {
             ['#faq', 'FAQ']
           ].map(([href, label]) => (
             <a key={href} href={href}
-               style={{ color: 'var(--sumi-2)',
+               style={{ color: 'var(--ink-2)',
                          textDecoration: 'none',
                          transition: 'color .15s' }}
-               onMouseEnter={(e) => e.currentTarget.style.color = 'var(--sumi)'}
-               onMouseLeave={(e) => e.currentTarget.style.color = 'var(--sumi-2)'}>
+               onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
+               onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-2)'}>
               {label}
             </a>
           ))}
@@ -88,7 +88,7 @@ function HeroC() {
   return (
     <section style={{
       position: 'relative',
-      padding: '80px 48px 0',
+      padding: '64px 48px 0',
       overflow: 'hidden',
       background: `radial-gradient(ellipse at 70% 20%, oklch(0.58 0.15 35 / 0.10) 0%, transparent 55%),
                     radial-gradient(ellipse at 20% 80%, oklch(0.62 0.08 160 / 0.08) 0%, transparent 50%),
@@ -98,58 +98,58 @@ function HeroC() {
                      display: 'grid',
                      gridTemplateColumns: '1.1fr 1fr',
                      gap: 64, alignItems: 'center',
-                     paddingBottom: 100 }}>
+                     paddingBottom: 96 }}>
         <div style={{ position: 'relative' }}>
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '6px 12px',
+            padding: '4px 12px',
             background: 'var(--paper-2)',
             border: 'var(--hairline)',
             borderRadius: 999,
-            fontSize: 11, color: 'var(--sumi-2)',
-            marginBottom: 28
+            fontSize: 11, color: 'var(--ink-2)',
+            marginBottom: 24
           }}>
             <span className="ink-dot" style={{
-              background: 'var(--jade)', width: 6, height: 6 }}/>
+              background: 'var(--success)', width: 6, height: 6 }}/>
             v0.4.2 · now in public preview
           </div>
           <h1 className="display" style={{
-            fontSize: 76, fontWeight: 300, lineHeight: 1.02,
+            fontSize: 56, fontWeight: 300, lineHeight: 1.02,
             letterSpacing: '-0.03em',
             margin: 0
           }}>
             A quiet companion for{' '}
             <span style={{
-              background: 'linear-gradient(95deg, var(--shu) 0%, oklch(0.66 0.15 60) 100%)',
+              background: 'linear-gradient(95deg, var(--accent) 0%, oklch(0.66 0.15 60) 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text'
             }}>AI-assisted work</span>.
           </h1>
-          <p style={{ fontSize: 18, color: 'var(--sumi-2)',
-                       lineHeight: 1.6, marginTop: 28, maxWidth: 520 }}>
+          <p style={{ fontSize: 17, color: 'var(--ink-2)',
+                       lineHeight: 1.6, marginTop: 24, maxWidth: 520 }}>
             Sensei observes your sessions with AI assistants —
             then surfaces the patterns you're too close to see. Not a
             chatbot. Not a copilot. <em>A patient observer.</em>
           </p>
-          <div style={{ display: 'flex', gap: 14, alignItems: 'center',
-                         marginTop: 36 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center',
+                         marginTop: 32 }}>
             <DownloadCTAC size="lg"/>
             <a href="#how" style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '14px 22px',
-              border: '1px solid var(--paper-edge)',
+              padding: '12px 24px',
+              border: '1px solid var(--edge)',
               borderRadius: 8,
-              fontSize: 14,
-              color: 'var(--sumi)',
+              fontSize: 13,
+              color: 'var(--ink)',
               background: 'var(--paper)',
               textDecoration: 'none'
             }}>
               How it works ↓
             </a>
           </div>
-          <div style={{ display: 'flex', gap: 18, marginTop: 22,
-                         fontSize: 11, color: 'var(--sumi-3)' }}>
+          <div style={{ display: 'flex', gap: 16, marginTop: 24,
+                         fontSize: 11, color: 'var(--ink-3)' }}>
             <span>✓ Free</span>
             <span>✓ Local-first</span>
             <span>✓ No account</span>
@@ -174,8 +174,8 @@ function HeroC() {
           {/* Big floating kanji as art object */}
           <div style={{
             position: 'absolute', right: -120, top: -60,
-            fontSize: 240, lineHeight: 1,
-            color: 'var(--shu)', opacity: 0.08,
+            fontSize: 56, lineHeight: 1,
+            color: 'var(--accent)', opacity: 0.08,
             pointerEvents: 'none',
             letterSpacing: '-0.04em'
           }} className="kanji">先生</div>
@@ -198,9 +198,9 @@ function DownloadCTAC({ size = "lg" }) {
   return (
     <a href={`#download-${os.toLowerCase()}`}
        style={{
-        display: 'inline-flex', alignItems: 'center', gap: 10,
+        display: 'inline-flex', alignItems: 'center', gap: 8,
         padding: px,
-        background: 'linear-gradient(180deg, var(--sumi) 0%, oklch(0.18 0.012 50) 100%)',
+        background: 'linear-gradient(180deg, var(--ink) 0%, oklch(0.18 0.012 50) 100%)',
         color: 'var(--paper)',
         borderRadius: 8,
         fontSize: fs,
@@ -209,7 +209,7 @@ function DownloadCTAC({ size = "lg" }) {
         boxShadow: '0 8px 24px -8px rgba(20,18,14,0.5), inset 0 1px 0 rgba(255,255,255,0.08)'
       }}>
       <span className="kanji" style={{ fontSize: fs + 3,
-                     color: 'var(--shu)' }}>下</span>
+                     color: 'var(--accent)' }}>下</span>
       Download for {os}
     </a>
   );
@@ -221,21 +221,21 @@ function LogoStripC() {
   return (
     <section style={{ borderTop: 'var(--hairline)',
                        borderBottom: 'var(--hairline)',
-                       padding: '28px 48px',
+                       padding: '24px 48px',
                        background: 'var(--paper-2)' }}>
       <div style={{ maxWidth: 1280, margin: '0 auto',
                      display: 'flex',
                      alignItems: 'center',
                      justifyContent: 'space-between',
-                     fontSize: 11, color: 'var(--sumi-3)',
+                     fontSize: 11, color: 'var(--ink-3)',
                      letterSpacing: '0.12em',
                      textTransform: 'uppercase' }}>
         <span style={{ flexShrink: 0 }}>Works alongside</span>
-        <div style={{ display: 'flex', gap: 36,
-                       fontSize: 14, fontFamily: 'var(--font-display)',
+        <div style={{ display: 'flex', gap: 32,
+                       fontSize: 13, fontFamily: 'var(--font-display)',
                        letterSpacing: '-0.01em',
                        textTransform: 'none',
-                       color: 'var(--sumi-2)' }}>
+                       color: 'var(--ink-2)' }}>
           {items.map((l, i) => <span key={i}>{l}</span>)}
         </div>
       </div>
@@ -245,11 +245,11 @@ function LogoStripC() {
 
 function WhatItIsC() {
   return (
-    <section style={{ padding: '120px 48px' }}>
+    <section style={{ padding: '96px 48px' }}>
       <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-        <div style={{ textAlign: 'center', marginBottom: 80 }}>
+        <div style={{ textAlign: 'center', marginBottom: 64 }}>
           <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--shu)',
+                         color: 'var(--accent)',
                          textTransform: 'uppercase', marginBottom: 16,
                          fontWeight: 500 }}>
             What it is
@@ -275,7 +275,7 @@ function WhatItIsC() {
               tone: 'amber' }
           ].map((f, i) => (
             <div key={i} style={{
-              padding: '32px 28px',
+              padding: '32px 24px',
               background: 'var(--paper-2)',
               border: 'var(--hairline)',
               borderRadius: 16,
@@ -284,22 +284,22 @@ function WhatItIsC() {
             }}>
               <div style={{
                 position: 'absolute', right: -12, top: -16,
-                fontSize: 120, lineHeight: 1,
+                fontSize: 56, lineHeight: 1,
                 color: `var(--${f.tone}-soft)`,
                 pointerEvents: 'none'
               }} className="kanji">{f.k}</div>
-              <div className="kanji" style={{ fontSize: 32,
+              <div className="kanji" style={{ fontSize: 28,
                              color: `var(--${f.tone})`,
-                             marginBottom: 18, position: 'relative' }}>
+                             marginBottom: 16, position: 'relative' }}>
                 {f.k}
               </div>
-              <h3 className="display" style={{ fontSize: 24,
+              <h3 className="display" style={{ fontSize: 22,
                              fontWeight: 400,
                              margin: '0 0 12px',
                              letterSpacing: '-0.01em' }}>
                 {f.title}
               </h3>
-              <div style={{ fontSize: 14, color: 'var(--sumi-2)',
+              <div style={{ fontSize: 13, color: 'var(--ink-2)',
                              lineHeight: 1.65 }}>
                 {f.text}
               </div>
@@ -333,13 +333,13 @@ function HowItWorksC() {
     <section id="how" style={{
       borderTop: 'var(--hairline)',
       borderBottom: 'var(--hairline)',
-      padding: '120px 48px',
+      padding: '96px 48px',
       background: `linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%)`
     }}>
       <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-        <div style={{ textAlign: 'center', marginBottom: 80 }}>
+        <div style={{ textAlign: 'center', marginBottom: 64 }}>
           <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--shu)',
+                         color: 'var(--accent)',
                          textTransform: 'uppercase', marginBottom: 16,
                          fontWeight: 500 }}>
             How it works
@@ -356,11 +356,11 @@ function HowItWorksC() {
           {/* connecting line */}
           <div style={{ position: 'absolute', top: 60,
                          left: '16%', right: '16%', height: 1,
-                         background: 'var(--paper-edge)',
+                         background: 'var(--edge)',
                          pointerEvents: 'none' }}/>
           {steps.map((s, i) => (
             <div key={i} style={{
-              padding: '40px 32px',
+              padding: '32px 32px',
               background: 'var(--paper)',
               border: 'var(--hairline)',
               borderRadius: 16,
@@ -371,7 +371,7 @@ function HowItWorksC() {
                 borderRadius: '50%',
                 background: `var(--${s.tone}-soft)`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                marginBottom: 22
+                marginBottom: 24
               }}>
                 <span className="kanji" style={{ fontSize: 28,
                                color: `var(--${s.tone})` }}>{s.kanji}</span>
@@ -379,16 +379,16 @@ function HowItWorksC() {
               <div className="mono" style={{ fontSize: 11,
                              color: `var(--${s.tone})`,
                              marginBottom: 8 }}>{s.phase}</div>
-              <h3 className="display" style={{ fontSize: 24,
+              <h3 className="display" style={{ fontSize: 22,
                              fontWeight: 400,
-                             margin: '0 0 14px',
+                             margin: '0 0 12px',
                              letterSpacing: '-0.01em' }}>{s.title}</h3>
-              <div style={{ fontSize: 14, color: 'var(--sumi-2)',
-                             lineHeight: 1.65, marginBottom: 18 }}>
+              <div style={{ fontSize: 13, color: 'var(--ink-2)',
+                             lineHeight: 1.65, marginBottom: 16 }}>
                 {s.text}
               </div>
-              <div style={{ fontSize: 11.5, color: 'var(--sumi-3)',
-                             paddingTop: 14,
+              <div style={{ fontSize: 11, color: 'var(--ink-3)',
+                             paddingTop: 12,
                              borderTop: 'var(--hairline)' }}>
                 {s.sub}
               </div>
@@ -424,11 +424,11 @@ function GalleryC() {
       el: <MockInstruments width={920} height={580}/> }
   ];
   return (
-    <section id="gallery" style={{ padding: '120px 48px 60px' }}>
+    <section id="gallery" style={{ padding: '96px 48px 64px' }}>
       <div style={{ maxWidth: 1280, margin: '0 auto' }}>
-        <div style={{ textAlign: 'center', marginBottom: 80 }}>
+        <div style={{ textAlign: 'center', marginBottom: 64 }}>
           <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--shu)',
+                         color: 'var(--accent)',
                          textTransform: 'uppercase', marginBottom: 16,
                          fontWeight: 500 }}>
             The screens
@@ -439,7 +439,7 @@ function GalleryC() {
             Five surfaces, one rhythm.
           </h2>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 100 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 96 }}>
           {screens.map((s, i) => (
             <div key={i} style={{
               display: 'grid',
@@ -460,17 +460,17 @@ function GalleryC() {
                 <div style={{ position: 'relative', zIndex: 1 }}>{s.el}</div>
               </div>
               <div style={{ order: i % 2 === 0 ? 1 : 0 }}>
-                <div className="mono" style={{ fontSize: 12,
+                <div className="mono" style={{ fontSize: 13,
                                color: `var(--${s.tone})`,
-                               marginBottom: 10,
+                               marginBottom: 8,
                                letterSpacing: '0.1em' }}>
                   0{i + 1} / 05
                 </div>
-                <div className="display" style={{ fontSize: 36,
+                <div className="display" style={{ fontSize: 40,
                                fontWeight: 400,
                                marginBottom: 16,
                                letterSpacing: '-0.02em' }}>{s.caption}</div>
-                <div style={{ fontSize: 15, color: 'var(--sumi-2)',
+                <div style={{ fontSize: 15, color: 'var(--ink-2)',
                                lineHeight: 1.65 }}>{s.sub}</div>
               </div>
             </div>
@@ -484,7 +484,7 @@ function GalleryC() {
 function PhilosophyC() {
   return (
     <section id="philosophy" style={{
-      padding: '160px 48px',
+      padding: '96px 48px',
       background: `linear-gradient(180deg, oklch(0.22 0.012 50) 0%, oklch(0.18 0.010 50) 100%)`,
       color: 'var(--paper)',
       position: 'relative',
@@ -493,25 +493,25 @@ function PhilosophyC() {
       <div style={{
         position: 'absolute', left: '50%', top: '50%',
         transform: 'translate(-50%, -50%)',
-        fontSize: 540, lineHeight: 1,
+        fontSize: 56, lineHeight: 1,
         color: 'oklch(0.58 0.15 35 / 0.08)',
         pointerEvents: 'none'
       }} className="kanji">静</div>
       <div style={{ maxWidth: 820, margin: '0 auto',
                      textAlign: 'center', position: 'relative' }}>
         <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--shu)',
+                       color: 'var(--accent)',
                        textTransform: 'uppercase', marginBottom: 24,
                        fontWeight: 500 }}>
           Sei · stillness
         </div>
-        <h2 className="display" style={{ fontSize: 52, fontWeight: 300,
-                       margin: '0 0 36px', letterSpacing: '-0.025em',
+        <h2 className="display" style={{ fontSize: 56, fontWeight: 300,
+                       margin: '0 0 32px', letterSpacing: '-0.025em',
                        lineHeight: 1.18, color: 'var(--paper)' }}>
           The master observes for a long time before teaching.
         </h2>
-        <p style={{ fontSize: 18, color: 'oklch(0.78 0.008 85)',
-                     lineHeight: 1.7, margin: '0 0 22px' }}>
+        <p style={{ fontSize: 17, color: 'oklch(0.78 0.008 85)',
+                     lineHeight: 1.7, margin: '0 0 24px' }}>
           AI tools are getting louder. More suggestions, more autocompletes,
           more interrupting. Sensei moves the other way. It speaks rarely,
           and only when it has something specific to say. Most days it is
@@ -531,21 +531,21 @@ function PhilosophyC() {
 function PrivacyC() {
   return (
     <section id="privacy" style={{
-      padding: '120px 48px',
+      padding: '96px 48px',
       background: 'var(--paper)'
     }}>
       <div style={{ maxWidth: 1280, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 64 }}>
           <span className="kanji" style={{ fontSize: 56,
-                         color: 'var(--shu)' }}>蔵</span>
+                         color: 'var(--accent)' }}>蔵</span>
           <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--shu)',
+                         color: 'var(--accent)',
                          textTransform: 'uppercase',
-                         marginTop: 14, marginBottom: 16,
+                         marginTop: 12, marginBottom: 16,
                          fontWeight: 500 }}>
             Privacy & local-first
           </div>
-          <h2 className="display" style={{ fontSize: 48, fontWeight: 300,
+          <h2 className="display" style={{ fontSize: 56, fontWeight: 300,
                          margin: 0, letterSpacing: '-0.025em',
                          lineHeight: 1.1, maxWidth: 720,
                          marginLeft: 'auto', marginRight: 'auto' }}>
@@ -564,17 +564,17 @@ function PrivacyC() {
               text: "One folder. Delete it and sensei forgets everything. Export to JSON anytime." }
           ].map((it, i) => (
             <div key={i} style={{
-              padding: '28px 24px',
+              padding: '24px 24px',
               background: 'var(--paper-2)',
               border: 'var(--hairline)',
               borderRadius: 12
             }}>
               <span className="kanji" style={{ fontSize: 28,
-                             color: 'var(--sumi-2)' }}>{it.k}</span>
-              <div className="display" style={{ fontSize: 18,
-                             marginTop: 14, marginBottom: 10,
+                             color: 'var(--ink-2)' }}>{it.k}</span>
+              <div className="display" style={{ fontSize: 17,
+                             marginTop: 12, marginBottom: 8,
                              letterSpacing: '-0.01em' }}>{it.title}</div>
-              <div style={{ fontSize: 13.5, color: 'var(--sumi-2)',
+              <div style={{ fontSize: 13, color: 'var(--ink-2)',
                              lineHeight: 1.65 }}>{it.text}</div>
             </div>
           ))}
@@ -587,7 +587,7 @@ function PrivacyC() {
 function PricingC() {
   return (
     <section style={{
-      padding: '120px 48px',
+      padding: '96px 48px',
       background: `radial-gradient(ellipse at center, oklch(0.58 0.15 35 / 0.08) 0%, transparent 60%), var(--paper)`,
       borderTop: 'var(--hairline)',
       borderBottom: 'var(--hairline)',
@@ -595,30 +595,30 @@ function PricingC() {
     }}>
       <div style={{ maxWidth: 760, margin: '0 auto' }}>
         <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--shu)',
-                       textTransform: 'uppercase', marginBottom: 18,
+                       color: 'var(--accent)',
+                       textTransform: 'uppercase', marginBottom: 16,
                        fontWeight: 500 }}>
           Pricing
         </div>
-        <h2 className="display" style={{ fontSize: 64, fontWeight: 300,
+        <h2 className="display" style={{ fontSize: 56, fontWeight: 300,
                        margin: '0 0 24px', letterSpacing: '-0.03em',
                        lineHeight: 1 }}>
           Free.<br/>
           <span style={{
-            background: 'linear-gradient(95deg, var(--shu) 0%, oklch(0.66 0.15 60) 100%)',
+            background: 'linear-gradient(95deg, var(--accent) 0%, oklch(0.66 0.15 60) 100%)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent'
           }}>
             Pay what feels right.
           </span>
         </h2>
-        <p style={{ fontSize: 17, color: 'var(--sumi-2)',
+        <p style={{ fontSize: 17, color: 'var(--ink-2)',
                      lineHeight: 1.65, margin: 0 }}>
           Sensei is free to download and use forever. If it earns a place
           in your daily practice, you can support development below — but
           there's no nag, no trial, no upgrade prompt. Ever.
         </p>
-        <div style={{ marginTop: 44 }}>
+        <div style={{ marginTop: 48 }}>
           <DownloadCTAC size="lg"/>
         </div>
       </div>
@@ -640,16 +640,16 @@ function FaqC() {
       a: "Sensei stays local-first and free. We may add an optional paid tier later for cross-machine sync, but the core promise — quiet, local, observant — never changes." }
   ];
   return (
-    <section id="faq" style={{ padding: '120px 48px' }}>
+    <section id="faq" style={{ padding: '96px 48px' }}>
       <div style={{ maxWidth: 960, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 64 }}>
           <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                         color: 'var(--shu)',
+                         color: 'var(--accent)',
                          textTransform: 'uppercase', marginBottom: 16,
                          fontWeight: 500 }}>
             Frequently asked
           </div>
-          <h2 className="display" style={{ fontSize: 48, fontWeight: 300,
+          <h2 className="display" style={{ fontSize: 56, fontWeight: 300,
                          margin: 0, letterSpacing: '-0.025em',
                          lineHeight: 1.1 }}>
             Common questions, plain answers.
@@ -662,20 +662,20 @@ function FaqC() {
               border: 'var(--hairline)',
               borderRadius: 10,
               marginBottom: 12,
-              padding: '20px 24px'
+              padding: '16px 24px'
             }}>
               <summary style={{
                 cursor: 'pointer',
                 listStyle: 'none',
                 display: 'flex', justifyContent: 'space-between',
-                fontSize: 16, color: 'var(--sumi)',
+                fontSize: 15, color: 'var(--ink)',
                 fontFamily: 'var(--font-display)', fontWeight: 400
               }}>
                 <span>{it.q}</span>
-                <span className="kanji" style={{ color: 'var(--shu)' }}>+</span>
+                <span className="kanji" style={{ color: 'var(--accent)' }}>+</span>
               </summary>
-              <div style={{ fontSize: 14, color: 'var(--sumi-2)',
-                             lineHeight: 1.7, marginTop: 14 }}>
+              <div style={{ fontSize: 13, color: 'var(--ink-2)',
+                             lineHeight: 1.7, marginTop: 12 }}>
                 {it.a}
               </div>
             </details>
@@ -689,7 +689,7 @@ function FaqC() {
 function SupportC() {
   return (
     <section style={{
-      padding: '100px 48px',
+      padding: '96px 48px',
       background: `linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%)`,
       borderTop: 'var(--hairline)',
       textAlign: 'center'
@@ -700,32 +700,32 @@ function SupportC() {
                      border: 'var(--hairline)',
                      borderRadius: 16,
                      boxShadow: '0 20px 50px -20px rgba(20,18,14,0.15)' }}>
-        <span className="kanji" style={{ fontSize: 48,
-                       color: 'var(--shu)' }}>志</span>
+        <span className="kanji" style={{ fontSize: 56,
+                       color: 'var(--accent)' }}>志</span>
         <div style={{ fontSize: 11, letterSpacing: '0.22em',
-                       color: 'var(--sumi-3)',
+                       color: 'var(--ink-3)',
                        textTransform: 'uppercase',
-                       marginTop: 12, marginBottom: 14 }}>
+                       marginTop: 12, marginBottom: 12 }}>
           Support development
         </div>
         <h2 className="display" style={{ fontSize: 28, fontWeight: 400,
-                       margin: '0 0 18px', letterSpacing: '-0.015em',
+                       margin: '0 0 16px', letterSpacing: '-0.015em',
                        lineHeight: 1.3 }}>
           If sensei has earned a place in your practice, help keep it growing.
         </h2>
-        <p style={{ fontSize: 14, color: 'var(--sumi-2)',
-                     lineHeight: 1.7, margin: '0 0 28px' }}>
+        <p style={{ fontSize: 13, color: 'var(--ink-2)',
+                     lineHeight: 1.7, margin: '0 0 24px' }}>
           Built by a small team. Every coffee buys an hour of focused work.
         </p>
         <a href="#sponsor" style={{
-          display: 'inline-flex', alignItems: 'center', gap: 10,
-          padding: '14px 28px',
-          background: 'linear-gradient(180deg, var(--shu) 0%, oklch(0.52 0.16 30) 100%)',
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '12px 24px',
+          background: 'linear-gradient(180deg, var(--accent) 0%, oklch(0.52 0.16 30) 100%)',
           color: 'var(--paper)',
           borderRadius: 8,
-          fontSize: 14, fontWeight: 500,
+          fontSize: 13, fontWeight: 500,
           textDecoration: 'none',
-          boxShadow: '0 8px 20px -8px var(--shu)'
+          boxShadow: '0 8px 20px -8px var(--accent)'
         }}>
           ♥ Buy me a coffee
         </a>
@@ -740,30 +740,30 @@ function FooterC() {
       padding: '64px 48px 48px',
       background: 'oklch(0.20 0.010 50)',
       color: 'oklch(0.62 0.010 85)',
-      fontSize: 12
+      fontSize: 13
     }}>
       <div style={{ maxWidth: 1280, margin: '0 auto',
                      display: 'flex', alignItems: 'flex-start',
                      justifyContent: 'space-between', gap: 64,
                      flexWrap: 'wrap' }}>
         <div style={{ maxWidth: 320 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10,
-                         marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8,
+                         marginBottom: 12 }}>
             <span className="kanji" style={{ fontSize: 22,
-                           color: 'var(--shu)', letterSpacing: '-0.04em' }}>先生</span>
-            <span className="display" style={{ fontSize: 18,
+                           color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
+            <span className="display" style={{ fontSize: 17,
                            color: 'var(--paper)' }}>Sensei</span>
           </div>
           <div style={{ lineHeight: 1.6 }}>
             A patient observer for AI-assisted work. Built quietly,
             shipped slowly.
           </div>
-          <div className="mono" style={{ fontSize: 10,
+          <div className="mono" style={{ fontSize: 11,
                          marginTop: 16, opacity: 0.7 }}>
             v0.4.2
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 56, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
           <FooterColC title="Product"
             links={["Download", "Privacy", "FAQ", "Changelog"]}/>
           <FooterColC title="Source"
@@ -775,7 +775,7 @@ function FooterC() {
       <div style={{ maxWidth: 1280, margin: '40px auto 0',
                      paddingTop: 24,
                      borderTop: '1px solid oklch(0.32 0.010 50)',
-                     fontSize: 10.5, opacity: 0.6,
+                     fontSize: 11, opacity: 0.6,
                      textAlign: 'center' }}>
         © 2025 Sensei. Made with restraint.
       </div>
@@ -786,14 +786,14 @@ function FooterC() {
 function FooterColC({ title, links }) {
   return (
     <div>
-      <div style={{ fontSize: 9.5, letterSpacing: '0.22em',
-                     color: 'var(--shu)',
+      <div style={{ fontSize: 11, letterSpacing: '0.22em',
+                     color: 'var(--accent)',
                      textTransform: 'uppercase',
-                     marginBottom: 14, fontWeight: 500 }}>{title}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                     marginBottom: 12, fontWeight: 500 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {links.map((l, i) => (
           <a key={i} href={`#${l.toLowerCase()}`}
-             style={{ fontSize: 12,
+             style={{ fontSize: 13,
                        color: 'oklch(0.78 0.008 85)' }}>{l}</a>
         ))}
       </div>
