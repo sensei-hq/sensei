@@ -7,6 +7,7 @@
 
 import { senseiApi } from './api.js';
 import { appState } from './appstate.svelte.js';
+import { hasTauri } from './bootstrap.js';
 import type {
   DaemonAssistantFamily, DaemonWatchRoot, DaemonProject,
   DaemonLibEntry, DaemonMcpEntry, PreferencesData,
@@ -189,7 +190,7 @@ async function guessUserName(): Promise<string> {
     if (stored) return stored;
 
     // In Tauri, homeDir() returns the real home directory (e.g. /Users/jerry)
-    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+    if (hasTauri()) {
       const { homeDir } = await import('@tauri-apps/api/path');
       const home = await homeDir();
       // Strip trailing slash, then take the last path segment
