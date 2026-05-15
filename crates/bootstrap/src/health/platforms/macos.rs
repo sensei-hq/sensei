@@ -37,14 +37,23 @@ impl PlatformProvider for MacOSProvider {
     }
 
     fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+        // Port-checker timeouts are sized for the resolve-phase re-check.
+        // `brew services start postgresql@17` takes 1-5s before the port
+        // is bound; `senseid start` daemonizes and binds within 1-2s.
+        // A 400ms first-check is plenty for "is it already up" — the
+        // longer deadlines only matter on the second check after a
+        // resolver runs.
+        const POSTGRES_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+        const OLLAMA_PORT_TIMEOUT:   std::time::Duration = std::time::Duration::from_secs(5);
+        const DAEMON_PORT_TIMEOUT:   std::time::Duration = std::time::Duration::from_secs(3);
         match id {
             ComponentId::Postgres => Box::new(AndChecker(vec![
                 Box::new(BinaryChecker::with_version("pg_isready", "--version")),
-                Box::new(PortChecker::new("postgres", POSTGRES_PORT)),
+                Box::new(PortChecker::with_timeout("postgres", POSTGRES_PORT, POSTGRES_PORT_TIMEOUT)),
             ])),
             ComponentId::Ollama => Box::new(AndChecker(vec![
                 Box::new(BinaryChecker::with_version("ollama", "--version")),
-                Box::new(PortChecker::new("ollama", OLLAMA_PORT)),
+                Box::new(PortChecker::with_timeout("ollama", OLLAMA_PORT, OLLAMA_PORT_TIMEOUT)),
             ])),
             ComponentId::Sensei => {
                 let cfg = SenseiConfig::from_env();
@@ -57,8 +66,8 @@ impl PlatformProvider for MacOSProvider {
             ComponentId::Database => Box::new(PostgresDatabaseChecker {
                 db_name: SenseiConfig::from_env().db_name,
             }),
-            ComponentId::Daemon => Box::new(PortChecker::new(
-                "daemon", SenseiConfig::from_env().daemon_port,
+            ComponentId::Daemon => Box::new(PortChecker::with_timeout(
+                "daemon", SenseiConfig::from_env().daemon_port, DAEMON_PORT_TIMEOUT,
             )),
         }
     }
