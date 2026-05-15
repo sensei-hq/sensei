@@ -12,9 +12,11 @@
 
 pub mod config;
 pub mod util;
+pub mod database;
 pub mod health;
 pub mod hardware;
 pub mod models;
+pub mod upgrade;
 
 pub use config::{
     SenseiConfig, SenseiMode, SenseiLocalConfig,
