@@ -4,6 +4,7 @@
     import {
         fmtMs,
         outcomeColor,
+        outcomeStatus,
         anonymize,
         formatTime,
         timeOfDay,
@@ -16,7 +17,7 @@
         buildBody,
     } from "./helpers.js";
     import { LogsPageState } from "./state.svelte.js";
-    import { Eyebrow, Kanji } from "$lib/components";
+    import { Eyebrow, Kanji, StatusDot } from "$lib/components";
 
     let { data }: { data: PageData } = $props();
 
@@ -91,10 +92,7 @@
                                 >
                             {/if}
                             <div class="flex items-center gap-1.5 mb-0.5">
-                                <span
-                                    class="w-1.5 h-1.5 rounded-full shrink-0"
-                                    style:background={outcomeColor(s.outcome)}
-                                ></span>
+                                <StatusDot status={outcomeStatus(s.outcome)} size="sm" />
                                 <span
                                     class="session-time text-sm font-medium text-surface-z7"
                                     >{timeOfDay(s.started_at)}</span
