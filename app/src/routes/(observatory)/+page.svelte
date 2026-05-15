@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Sparkline } from '@rokkit/chart';
+  import { sparklinePath } from '$lib/sparkline';
 
   let { data } = $props();
 
@@ -31,7 +31,7 @@
   <!-- Greeting + FTR header -->
   <div class="flex items-start justify-between mb-8">
     <div>
-      <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
+      <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">
         {new Date().toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}
       </p>
       <h1 class="display text-3xl font-normal m-0 tracking-tight">
@@ -42,7 +42,7 @@
     {#if hasData}
       <div class="flex items-end gap-5 text-right">
         <div>
-          <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-1">
+          <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1">
             First-Try-Right · 14d
           </p>
           <div class="flex items-baseline gap-2 justify-end">
@@ -56,7 +56,14 @@
           </div>
         </div>
         {#if data.ftrDaily.length >= 2}
-          <Sparkline data={data.ftrDaily} field="ftr_rate" width={140} height={40} />
+          {@const last = data.ftrDaily[data.ftrDaily.length - 1]}
+          {@const vals = data.ftrDaily.map((p: { ftr_rate: number }) => p.ftr_rate)}
+          {@const minV = Math.min(...vals)}
+          {@const rangeV = Math.max(...vals) - minV || 0.01}
+          <svg width="140" height="40" class="block overflow-visible" style="color: oklch(var(--color-primary-z5) / 1);">
+            <path d={sparklinePath(data.ftrDaily, 140, 40)} fill="none" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="140" cy={40 - (40 - 2) * ((last.ftr_rate - minV) / rangeV) - 1} r="2.5" fill="currentColor" />
+          </svg>
         {/if}
       </div>
     {/if}
@@ -64,17 +71,17 @@
 
   {#if !hasData}
     <!-- Early / listening state -->
-    <div class="grid grid-cols-[auto_1fr] gap-7 px-8.5 py-8 pb-7.5 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
-      <span class="kanji text-7xl text-primary-z5 opacity-55 leading-none">観</span>
+    <div class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
+      <span class="kanji text-4xl text-primary-z5 opacity-55 leading-none">観</span>
       <div>
         <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">Still listening.</p>
-        <p class="text-sm text-surface-z7 leading-relaxed m-0 max-w-[520px]">
+        <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[520px]">
           Sensei is watching your sessions. A few early signals are forming,
           but nothing confident enough to teach yet.
         </p>
       </div>
     </div>
-    <p class="text-xs text-surface-z6 leading-reading max-w-[480px]">
+    <p class="text-xs text-surface-z6 leading-loose max-w-[480px]">
       Start a session with your assistant. Sensei watches in silence,
       learns the shape of each project, and later begins to teach.
     </p>
@@ -82,13 +89,13 @@
     <!-- Hero: top recommendation -->
     {#if data.topRecommendations.length > 0}
       {@const hero = data.topRecommendations[0]}
-      <div class="grid grid-cols-[auto_1fr] gap-7 px-8.5 py-8 pb-7.5 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
-        <span class="kanji text-7xl text-primary-z5 leading-none">
+      <div class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
+        <span class="kanji text-4xl text-primary-z5 leading-none">
           {hero.urgency === 'high' ? '聴' : hero.urgency === 'medium' ? '繰' : '探'}
         </span>
         <div>
           <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">{hero.title}</p>
-          <p class="text-sm text-surface-z7 leading-relaxed m-0 max-w-[520px] mb-4">{hero.why}</p>
+          <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[520px] mb-4">{hero.why}</p>
           {#if hero.impact}
             <div class="flex items-center gap-2 text-xs">
               <span class="w-1.5 h-1.5 rounded-full bg-primary-z5"></span>
@@ -113,7 +120,7 @@
                 {rec.urgency === 'high' ? '繰' : '探'}
               </span>
               <div class="flex-1">
-                <p class="text-xs tracking-loose uppercase text-surface-z6 m-0 mb-1">{rec.urgency}</p>
+                <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1">{rec.urgency}</p>
                 <p class="text-sm text-surface-z7 leading-snug m-0">{rec.title}</p>
               </div>
             </div>
@@ -134,7 +141,7 @@
           {#each data.teachings as t (t.id)}
             <div class="py-3 px-3.5 mb-2.5 rounded-md bg-surface-z2 border border-surface-z3 border-l-2 border-l-primary-z5">
               <p class="text-sm text-surface-z9 m-0 leading-snug">{t.name}</p>
-              <p class="text-2xs text-surface-z6 m-0 mt-1">
+              <p class="text-xs text-surface-z6 m-0 mt-1">
                 {t.family ?? 'pattern'} · {t.instance_count} places
               </p>
             </div>

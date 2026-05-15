@@ -33,6 +33,7 @@ export default {
     sans: "'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif",
     mono: "'JetBrains Mono', 'SF Mono', Menlo, monospace",
     heading: "'Fraunces', 'Iowan Old Style', Georgia, serif",
+    kanji: "'Yu Mincho', 'Hiragino Mincho ProN', 'Songti SC', serif",
   },
 
   /**

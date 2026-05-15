@@ -34,8 +34,8 @@
   };
 </script>
 
-<section class="mt-5.5">
-  <div class="text-2xs tracking-tag uppercase text-surface-z6 mb-2.5">what this resolves</div>
+<section class="mt-6">
+  <div class="text-xs tracking-wide uppercase text-surface-z6 mb-2.5">what this resolves</div>
   <ul class="flex flex-col">
     {#each rows as c (c.id)}
       <li data-row={c.id}
@@ -44,13 +44,13 @@
         <span class="w-2 h-2 rounded-full shrink-0 {dotClass(c.status)}"></span>
         <div>
           <span class="text-sm text-surface-z9">{c.label}</span>
-          {#if c.version}<span data-version class="mono text-2xs text-surface-z6 ml-2">{c.version}</span>{/if}
+          {#if c.version}<span data-version class="mono text-xs text-surface-z6 ml-2">{c.version}</span>{/if}
           {#if c.note}<span class="text-xs text-surface-z5 ml-2">· {c.note}</span>{/if}
           {#if c.status === 'failed' && c.detail}
-            <div data-detail class="text-2xs text-surface-z6 mt-0.5">{c.detail}</div>
+            <div data-detail class="text-xs text-surface-z6 mt-0.5">{c.detail}</div>
           {/if}
         </div>
-        <span data-badge class="mono text-2xs tracking-wider uppercase {badgeClass(c.status)}">
+        <span data-badge class="mono text-xs tracking-wide uppercase {badgeClass(c.status)}">
           {c.status}
         </span>
       </li>

@@ -12,7 +12,7 @@
 <header class="flex flex-col gap-3.5 mb-9">
   <div class="flex items-center gap-2.5">
     <span class="kanji text-xl text-primary-z5">支</span>
-    <span class="text-2xs tracking-tag uppercase text-surface-z7">
+    <span class="text-xs tracking-wide uppercase text-surface-z7">
       bootstrap · {PLATFORM_LABEL[platform]}
     </span>
   </div>

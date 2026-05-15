@@ -21,7 +21,7 @@
 </script>
 
 <div>
-    <p class="text-sm text-surface-z6 leading-relaxed m-0 mb-6">
+    <p class="text-sm text-surface-z6 leading-normal m-0 mb-6">
         Registers plugins, skills, commands, agents, logging and metrics.
     </p>
 
@@ -32,7 +32,7 @@
             ).length}
             {@const anyInstalled = installedCount > 0}
             <button
-                class="card flex items-center gap-4 px-6 py-5 rounded-lg cursor-pointer text-left bg-surface-z1 border border-surface-z3 transition-all duration-140 min-w-0"
+                class="card flex items-center gap-4 px-6 py-5 rounded-lg cursor-pointer text-left bg-surface-z1 border border-surface-z3 transition-all duration-fast min-w-0"
                 class:card-selected={fam.selected}
                 class:card-missing={!anyInstalled}
                 onclick={() => toggle(fam.id)}
@@ -41,30 +41,30 @@
                     <div
                         class="flex items-baseline justify-between gap-2 mb-1.5"
                     >
-                        <span class="text-body font-semibold">{fam.name}</span>
+                        <span class="text-base font-semibold">{fam.name}</span>
                         {#if anyInstalled}
                             <span
-                                class="text-2xs text-surface-z5 whitespace-nowrap"
+                                class="text-xs text-surface-z5 whitespace-nowrap"
                                 >{installedCount} detected</span
                             >
                         {:else}
                             <span
-                                class="text-2xs text-surface-z5 italic whitespace-nowrap"
+                                class="text-xs text-surface-z5 italic whitespace-nowrap"
                                 >not found</span
                             >
                         {/if}
                     </div>
-                    <div class="flex flex-wrap gap-1.25">
+                    <div class="flex flex-wrap gap-1">
                         {#each caps(fam.id) as cap}
                             <span
-                                class="chip text-2xs font-mono text-surface-z7 px-2 py-0.5 bg-surface-z3 rounded-sm whitespace-nowrap"
+                                class="chip text-xs font-mono text-surface-z7 px-2 py-0.5 bg-surface-z3 rounded-sm whitespace-nowrap"
                                 >{cap}</span
                             >
                         {/each}
                     </div>
                 </div>
                 <div
-                    class="checkbox w-5.5 h-5.5 rounded-md border-2 border-surface-z3 flex items-center justify-center shrink-0 bg-surface-z1 transition-all duration-140"
+                    class="checkbox w-5.5 h-5.5 rounded-md border-2 border-surface-z3 flex items-center justify-center shrink-0 bg-surface-z1 transition-all duration-fast"
                     class:checked={fam.selected}
                 >
                     {#if fam.selected}<span
@@ -77,7 +77,7 @@
     </div>
 
     {#if assistants.length === 0}
-        <p class="text-ui text-surface-z6 italic">
+        <p class="text-sm text-surface-z6 italic">
             No AI coding assistants detected. Make sure the daemon is running.
         </p>
     {/if}
