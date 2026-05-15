@@ -56,13 +56,12 @@ function PSItem({ id, kanji, label, badge, active, onClick, dim }) {
   return (
     <button onClick={onClick}
             style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-              alignItems: 'center', width: '100%',
-              padding: '8px 8px', borderRadius: 6, textAlign: 'left',
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
               background: active ? 'var(--paper-3)' : 'transparent',
               color: active ? 'var(--ink)' : (dim ? 'var(--ink-3)' : 'var(--ink-2)'),
               fontSize: 13, cursor: 'pointer', border: 'none'
-            }}>
+}} className="gap-2 py-2 px-2" >
       <span className="kanji" style={{ fontSize: 13, width: 14,
                     color: active ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
       <span>{label}</span>
@@ -75,8 +74,10 @@ function PSItem({ id, kanji, label, badge, active, onClick, dim }) {
 
 function PSSectionLabel({ children }) {
   return (
-    <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                   textTransform: 'uppercase', padding: '0 8px 8px' }}>
+    <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                   textTransform: 'uppercase'
+}} className="pt-0 pb-2 px-2" >
       {children}
     </div>
   );
@@ -86,96 +87,106 @@ function PSSectionLabel({ children }) {
 function CollectiveSidebar({ active = "projects", onProjectClick }) {
   const D = window.OBS_DATA;
   return (
-    <aside style={{ borderRight: 'var(--hairline)', padding: '24px 12px',
+    <aside style={{
+ borderRight: 'var(--hairline)',
                      background: 'var(--paper-2)',
-                     display: 'flex', flexDirection: 'column', gap: 16,
-                     overflow: 'auto', height: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 4px' }}>
+                     display: 'flex', flexDirection: 'column',
+                     overflow: 'auto', height: '100%', boxSizing: 'border-box'
+}} className="py-5 px-3 gap-4" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 px-1" >
         <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>群</span>
         <span className="display" style={{ fontSize: 15 }}>Collective</span>
       </div>
 
       <div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {COLL_SIDEBAR_PRIMARY.map(s => <PSItem key={s.id} {...s} active={s.id === active}/>)}
         </div>
 
         {/* Memories group */}
-        <div style={{ padding: '4px 8px 4px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-                         alignItems: 'center', padding: '8px 0',
-                         color: 'var(--ink-2)', fontSize: 13 }}>
+        <div className="py-1 px-2" >
+          <div style={{
+ display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+                         alignItems: 'center',
+                         color: 'var(--ink-2)', fontSize: 13
+}} className="gap-2 py-2 px-0" >
             <span className="kanji" style={{ fontSize: 13, width: 14,
                           color: 'var(--ink-3)' }}>覚</span>
             <span>Memories</span>
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>24</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 pl-3" >
             {COLL_SIDEBAR_MEMORIES.map(s => <PSItem key={s.id} {...s}/>)}
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {COLL_SIDEBAR_OTHER.map(s => <PSItem key={s.id} {...s}/>)}
         </div>
 
         {/* Instruments group */}
-        <div style={{ padding: '4px 8px 4px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-                         alignItems: 'center', padding: '8px 0',
-                         color: 'var(--ink-2)', fontSize: 13 }}>
+        <div className="py-1 px-2" >
+          <div style={{
+ display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+                         alignItems: 'center',
+                         color: 'var(--ink-2)', fontSize: 13
+}} className="gap-2 py-2 px-0" >
             <span className="kanji" style={{ fontSize: 13, width: 14,
                           color: 'var(--ink-3)' }}>具</span>
             <span>Instruments</span>
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>7</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 pl-3" >
             {COLL_SIDEBAR_INSTRUMENTS.map(s => <PSItem key={s.id} {...s}/>)}
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {COLL_SIDEBAR_BOTTOM.map(s => <PSItem key={s.id} {...s}/>)}
         </div>
       </div>
 
       <div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                       padding: '0 8px 8px' }}>
+        <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="pt-0 pb-2 px-2" >
           <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                           textTransform: 'uppercase' }}>Active projects</span>
           <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
             {D.projects.active.length}
           </span>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {D.projects.active.map(p => (
             <button key={p.id} onClick={() => onProjectClick && onProjectClick(p.id)}
                     style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-              alignItems: 'center', width: '100%',
-              padding: '8px 8px', borderRadius: 6, textAlign: 'left',
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
               background: 'transparent',
               color: 'var(--ink-2)', fontSize: 13, cursor: 'pointer', border: 'none'
-            }}>
+}} className="gap-2 py-2 px-2" >
               <span className="kanji" style={{ fontSize: 13, width: 14,
                           color: p.warn ? 'var(--warning)' : 'var(--accent)' }}>{p.kanji}</span>
               <span>{p.name}</span>
-              <span style={{ fontSize: 11, color: 'var(--ink-4)',
-                              padding: '4px 4px', border: 'var(--hairline)', borderRadius: 3 }}>↗</span>
+              <span style={{
+ fontSize: 11, color: 'var(--ink-4)', border: 'var(--hairline)', borderRadius: 3
+}} className="py-1 px-1" >↗</span>
             </button>
           ))}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-4)',
-                       padding: '8px 8px 0', lineHeight: 1.5, fontStyle: 'italic' }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.5, fontStyle: 'italic'
+}} className="pt-2 pb-0 px-2" >
           ↗ opens in its own window
         </div>
       </div>
 
       <div style={{ flex: 1 }}/>
 
-      <div style={{ padding: '8px 8px 0', borderTop: 'var(--hairline)',
-                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+      <div style={{
+ borderTop: 'var(--hairline)',
+                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6
+}} className="pt-2 pb-0 px-2" >
         <span className="mono">daemon · running</span>
       </div>
     </aside>
@@ -185,41 +196,30 @@ function CollectiveSidebar({ active = "projects", onProjectClick }) {
 // ─── Project sidebar (project-scoped) ───────────────────────
 function ProjectSidebar({ project, active = "overview", onSwitchProject }) {
   return (
-    <aside style={{ borderRight: 'var(--hairline)', padding: '24px 12px',
+    <aside style={{
+ borderRight: 'var(--hairline)',
                      background: 'var(--paper-2)',
-                     display: 'flex', flexDirection: 'column', gap: 16,
-                     overflow: 'auto', height: '100%', boxSizing: 'border-box' }}>
-      {/* Project identity at top */}
-      <div style={{ padding: '0 4px' }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', marginBottom: 4 }}>
-          Project
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="kanji" style={{ fontSize: 28, color: 'var(--accent)', lineHeight: 1 }}>
-            {project.kanji}
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div className="display" style={{ fontSize: 15, color: 'var(--ink)',
-                          letterSpacing: '-0.01em', lineHeight: 1.1 }}>
-              {project.name}
-            </div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
-              {project.client || "lumen-systems"}
-            </div>
-          </div>
+                     display: 'flex', flexDirection: 'column',
+                     overflow: 'auto', height: '100%', boxSizing: 'border-box'
+}} className="py-5 px-3 gap-4" >
+      {/* Project identity at top — h2 header via shared component. */}
+      <div className="px-1" >
+        <KanjiHeader variant="h2" kanji={project.kanji} eyebrow="Project" title={project.name}/>
+        <div className="mono mt-2" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+          {project.client || "lumen-systems"}
         </div>
         <button onClick={onSwitchProject}
-                style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-3)',
-                          padding: '4px 8px', border: 'var(--hairline)', borderRadius: 4,
-                          background: 'transparent', cursor: 'pointer' }}>
+                style={{
+ fontSize: 11, color: 'var(--ink-3)', border: 'var(--hairline)', borderRadius: 4,
+                          background: 'transparent', cursor: 'pointer'
+}} className="mt-2 py-1 px-2" >
           ⇆ switch project
         </button>
       </div>
 
       <div>
         <PSSectionLabel>This project</PSSectionLabel>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {PROJ_SIDEBAR_SECTIONS.map(s => (
             <PSItem key={s.id} {...s} active={s.id === active}/>
           ))}
@@ -228,8 +228,10 @@ function ProjectSidebar({ project, active = "overview", onSwitchProject }) {
 
       <div>
         <PSSectionLabel>Health</PSSectionLabel>
-        <div style={{ padding: '0 8px', fontSize: 11, color: 'var(--ink-3)',
-                       display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                       display: 'flex', flexDirection: 'column'
+}} className="gap-1 px-2" >
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span>FTR · 14d</span>
             <span className="mono" style={{ color: project.warn ? 'var(--warning)' : 'var(--ink)' }}>
@@ -249,8 +251,10 @@ function ProjectSidebar({ project, active = "overview", onSwitchProject }) {
 
       <div style={{ flex: 1 }}/>
 
-      <div style={{ padding: '8px 8px 0', borderTop: 'var(--hairline)',
-                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+      <div style={{
+ borderTop: 'var(--hairline)',
+                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6
+}} className="pt-2 pb-0 px-2" >
         <span className="mono">scoped to this project</span>
       </div>
     </aside>
@@ -263,16 +267,18 @@ function PerspectiveChrome({ title, accent = "var(--accent)", subtitle, onClose 
     <div style={{
       height: 38, background: 'var(--paper-2)',
       borderBottom: 'var(--hairline)',
-      display: 'flex', alignItems: 'center', padding: '0 12px',
+      display: 'flex', alignItems: 'center',
       flexShrink: 0, position: 'relative'
-    }}>
-      <div style={{ display: 'flex', gap: 8 }}>
+}} className="px-3" >
+      <div style={{ display: 'flex' }} className="gap-2" >
         <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#ed6a5e' }}/>
         <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#f5bf4f' }}/>
         <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#62c554' }}/>
       </div>
-      <div style={{ flex: 1, textAlign: 'center', display: 'flex',
-                     alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+      <div style={{
+ flex: 1, textAlign: 'center', display: 'flex',
+                     alignItems: 'center', justifyContent: 'center'
+}} className="gap-2" >
         <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent }}/>
         <span style={{ fontSize: 13, color: 'var(--ink)', letterSpacing: '0.04em' }}>
           {title}
@@ -292,7 +298,7 @@ function PerspectiveChrome({ title, accent = "var(--accent)", subtitle, onClose 
 // ─── A single project window (chrome + sidebar + content) ──
 function ProjectWindow({ project, height = 720, accent = "var(--accent)", onSwitchProject }) {
   return (
-    <div style={{ height, display: 'flex', flexDirection: 'column',
+    <div className="sensei" style={{ height, display: 'flex', flexDirection: 'column',
                    background: 'var(--paper)', overflow: 'hidden',
                    borderRadius: 10,
                    boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 14px 40px rgba(40,30,20,0.16)' }}>
@@ -313,7 +319,7 @@ function ProjectWindow({ project, height = 720, accent = "var(--accent)", onSwit
 // ─── A single collective window (chrome + sidebar + content) ──
 function CollectiveWindow({ height = 720, onProjectClick, dimContent = false, accent = "var(--success)" }) {
   return (
-    <div style={{ height, display: 'flex', flexDirection: 'column',
+    <div className="sensei" style={{ height, display: 'flex', flexDirection: 'column',
                    background: 'var(--paper)', overflow: 'hidden',
                    borderRadius: 10,
                    boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 14px 40px rgba(40,30,20,0.12)',
@@ -335,27 +341,33 @@ function CollectiveWindow({ height = 720, onProjectClick, dimContent = false, ac
 // ─── Project window content (tab-switching showcase) ────────
 function ProjectWindowContent({ project }) {
   return (
-    <div style={{ padding: '32px 32px 48px' }}>
+    <div className="pt-6 pb-7 px-6" >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end' }} className="gap-4 mb-5" >
         <span className="kanji" style={{ fontSize: 56, color: 'var(--accent)', lineHeight: 1 }}>
           {project.kanji}
         </span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             Project · {project.client || "lumen-systems"}
           </div>
-          <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: 0,
-                        letterSpacing: '-0.01em' }}>
+          <h1 className="display m-0" style={{
+ fontSize: 28, fontWeight: 400,
+                        letterSpacing: '-0.01em'
+}}>
             {project.name}
           </h1>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
                          textTransform: 'uppercase' }}>FTR · 14d</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4,
-                         justifyContent: 'flex-end', marginTop: 4 }}>
+          <div style={{
+ display: 'flex', alignItems: 'baseline',
+                         justifyContent: 'flex-end'
+}} className="gap-1 mt-1" >
             <span className="display"
                    style={{ fontSize: 28, fontWeight: 400, lineHeight: 1,
                              color: project.warn ? 'var(--warning)' : 'var(--ink)' }}>
@@ -368,30 +380,33 @@ function ProjectWindowContent({ project }) {
 
       {/* Hero card */}
       <div style={{
-        padding: '24px 24px',
         background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 10,
-        display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 24, marginBottom: 24
-      }}>
+        display: 'grid', gridTemplateColumns: 'auto 1fr'
+}} className="py-5 px-5 gap-5 mb-5" >
         <div className="kanji" style={{ fontSize: 56, color: 'var(--accent)', lineHeight: 1 }}>聴</div>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             This project · sensei speaks
           </div>
-          <div className="display" style={{ fontSize: 22, fontWeight: 400,
-                        letterSpacing: '-0.01em', lineHeight: 1.25, marginBottom: 8,
-                        color: 'var(--ink)' }}>
+          <div className="display mb-2" style={{
+ fontSize: 22, fontWeight: 400,
+                        letterSpacing: '-0.01em', lineHeight: 1.25,
+                        color: 'var(--ink)'
+}}>
             The AI does not know your auth.
           </div>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65, margin: 0 }}>
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65 }} className="m-0" >
             Three sessions corrected this week — all touched refresh or device flow.
             No integration-test persona for this module yet.
           </p>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mt-3" >
             <button style={{
-              padding: '8px 12px', fontSize: 13, background: 'var(--ink)',
+ fontSize: 13, background: 'var(--ink)',
               color: 'var(--paper)', borderRadius: 5, border: 'none', cursor: 'pointer'
-            }}>Draft a persona →</button>
+}} className="py-2 px-3" >Draft a persona →</button>
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               s-2891 · s-2889 · s-2886
             </span>
@@ -400,7 +415,7 @@ function ProjectWindowContent({ project }) {
       </div>
 
       {/* Three quick stat blocks */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-4 mb-5" >
         <ProjStat label="Sessions · 7d" value={project.sessions7d || 28} sub="3 corrected"/>
         <ProjStat label="Memories" value="11" sub="2 to share · 1 to merge" tone="var(--ink)"/>
         <ProjStat label="Doc drift" value="3" sub="of 18 referenced docs" tone="var(--warning)"/>
@@ -408,11 +423,13 @@ function ProjectWindowContent({ project }) {
 
       {/* Sub-section preview list */}
       <div>
-        <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 12px',
-                      color: 'var(--ink-2)' }}>
+        <h2 className="display mt-0 mb-3" style={{
+ fontSize: 15, fontWeight: 400,
+                      color: 'var(--ink-2)'
+}}>
           In this project
         </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }} className="gap-2" >
           {[
             { k: "刻", t: "Sessions",    s: "Every session in this project · what corrected, what didn't", n: 28 },
             { k: "覚", t: "Memories",    s: "What sensei has learned working here · 11 memories · 2 ready to share", n: 11 },
@@ -422,15 +439,15 @@ function ProjectWindowContent({ project }) {
             { k: "果", t: "Impact",       s: "Did sensei's recs work here? 2 verdicts pending review",         n: 2 },
           ].map((x, i) => (
             <div key={i} style={{
-              padding: '12px 12px', background: 'var(--paper-2)',
+ background: 'var(--paper-2)',
               border: 'var(--hairline)', borderRadius: 6,
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
               alignItems: 'center'
-            }}>
+}} className="py-3 px-3 gap-3" >
               <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>{x.k}</span>
               <div>
                 <div style={{ fontSize: 13, color: 'var(--ink)' }}>{x.t}</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{x.s}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >{x.s}</div>
               </div>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{x.n}</span>
             </div>
@@ -443,16 +460,20 @@ function ProjectWindowContent({ project }) {
 
 function ProjStat({ label, value, sub, tone = "var(--ink)" }) {
   return (
-    <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
-                   border: 'var(--hairline)', borderRadius: 8 }}>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                     textTransform: 'uppercase', marginBottom: 4 }}>
+    <div style={{
+ background: 'var(--paper-2)',
+                   border: 'var(--hairline)', borderRadius: 8
+}} className="py-3 px-4" >
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                     textTransform: 'uppercase'
+}} className="mb-1" >
         {label}
       </div>
       <div className="display" style={{ fontSize: 28, fontWeight: 400, color: tone, lineHeight: 1 }}>
         {value}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{sub}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >{sub}</div>
     </div>
   );
 }
@@ -469,31 +490,39 @@ function PerspectiveSplitA() {
     <div style={{
       width: '100%', height: '100%', overflow: 'hidden',
       background: 'linear-gradient(135deg, oklch(0.42 0.02 50), oklch(0.30 0.012 50))',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative'
-    }}>
+}} className="p-5" >
       {/* Faint dock hint at the bottom */}
-      <div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
-                     display: 'flex', gap: 4, opacity: 0.45 }}>
+      <div style={{
+ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+                     display: 'flex', opacity: 0.45
+}} className="gap-1" >
         {Array.from({ length: 8 }).map((_, i) => (
           <div key={i} style={{ width: 26, height: 26, borderRadius: 6,
                                   background: 'rgba(255,255,255,0.15)' }}/>
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24,
-                     width: '100%', maxWidth: 1360 }}>
+      <div style={{
+ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                     width: '100%', maxWidth: 1360
+}} className="gap-5" >
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.55)',
-                         textTransform: 'uppercase', marginBottom: 8, paddingLeft: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.55)',
+                         textTransform: 'uppercase'
+}} className="mb-2 pl-1" >
             Window 1 · Collective perspective
           </div>
           <CollectiveWindow height={680} accent="var(--success)"
                              onProjectClick={() => {}}/>
         </div>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.55)',
-                         textTransform: 'uppercase', marginBottom: 8, paddingLeft: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.55)',
+                         textTransform: 'uppercase'
+}} className="mb-2 pl-1" >
             Window 2 · Project perspective · {project.name}
           </div>
           <ProjectWindow project={project} height={680} accent="var(--accent)"/>
@@ -540,12 +569,14 @@ function PerspectiveSplitC() {
     <div style={{
       width: '100%', height: '100%', overflow: 'hidden',
       background: 'linear-gradient(135deg, oklch(0.40 0.02 50), oklch(0.28 0.012 50))',
-      position: 'relative', padding: 24, boxSizing: 'border-box'
-    }}>
+      position: 'relative', boxSizing: 'border-box'
+}} className="p-5" >
       {/* Back window — collective, slightly offset top-left, dimmed */}
       <div style={{ position: 'absolute', top: 28, left: 28, right: 220, bottom: 120 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.5)',
-                       textTransform: 'uppercase', marginBottom: 8, paddingLeft: 4 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.5)',
+                       textTransform: 'uppercase'
+}} className="mb-2 pl-1" >
           Behind · Collective (still open)
         </div>
         <CollectiveWindow height="calc(100% - 28px)" accent="var(--success)"
@@ -569,8 +600,10 @@ function PerspectiveSplitC() {
       {/* Front window — project, springs forward */}
       <div style={{ position: 'absolute', top: 90, right: 50, bottom: 50,
                      width: 'calc(60% - 50px)', minWidth: 720 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.65)',
-                       textTransform: 'uppercase', marginBottom: 8, paddingLeft: 4 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'rgba(255,255,255,0.65)',
+                       textTransform: 'uppercase'
+}} className="mb-2 pl-1" >
           Front · Project window · just opened
         </div>
         <div style={{ position: 'relative', height: 'calc(100% - 28px)' }}>

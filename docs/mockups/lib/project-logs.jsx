@@ -131,11 +131,10 @@ function PLogActionBadge({ type }) {
   };
   const m = map[type] || map.check;
   return (
-    <span className="mono" style={{
-      fontSize: 11, fontWeight: 600, letterSpacing: '0.12em',
-      padding: '4px 4px', borderRadius: 3, color: m.color, background: m.bg,
+    <span className="mono py-1 px-1" style={{
+      fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', borderRadius: 3, color: m.color, background: m.bg,
       whiteSpace: 'nowrap'
-    }}>{m.label}</span>
+}}>{m.label}</span>
   );
 }
 
@@ -155,10 +154,9 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
     <div style={{ borderBottom: 'var(--hairline)' }}>
       <div onClick={hasDetail ? onToggle : undefined}
            style={{
-             display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px',
-             gap: 12, alignItems: 'center', padding: '8px 0',
+             display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px', alignItems: 'center',
              cursor: hasDetail ? 'pointer' : 'default'
-           }}>
+}} className="gap-3 py-2 px-0" >
         <PLogActionBadge type={trace.action_type}/>
         <span className="mono" style={{ fontSize: 13, color: 'var(--ink-2)',
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
@@ -175,26 +173,33 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
 
       {expanded && (
         <div style={{
-          marginLeft: 96, marginBottom: 12, padding: '12px 12px',
           background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)'
-        }}>
+}} className="mb-3 py-3 px-3 ml-9" >
           {trace.out && (
             <div style={{ marginBottom: trace.err ? 10 : 0 }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--ink-4)', marginBottom: 4 }}>stdout</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11,
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--ink-4)'
+}} className="mb-1" >stdout</div>
+              <pre className="mono m-0" style={{
+ fontSize: 11,
                               color: 'var(--ink-2)', lineHeight: 1.6,
-                              whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-all'
+}}>
                 {anonymize(trace.out)}
               </pre>
             </div>
           )}
           {trace.err && (
             <div>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--accent)', marginBottom: 4 }}>stderr</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11,
-                              color: 'var(--accent)', lineHeight: 1.6 }}>{trace.err}</pre>
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--accent)'
+}} className="mb-1" >stderr</div>
+              <pre className="mono m-0" style={{
+ fontSize: 11,
+                              color: 'var(--accent)', lineHeight: 1.6
+}}>{trace.err}</pre>
             </div>
           )}
           {trace.fix_attempted && (
@@ -203,11 +208,15 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
               paddingTop: trace.out || trace.err ? 10 : 0,
               borderTop: trace.out || trace.err ? 'var(--hairline)' : 'none'
             }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--warning)', marginBottom: 4 }}>auto-fix attempted</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11,
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--warning)'
+}} className="mb-1" >auto-fix attempted</div>
+              <pre className="mono m-0" style={{
+ fontSize: 11,
                               color: trace.fix_ok ? 'var(--success)' : 'var(--accent)',
-                              lineHeight: 1.6 }}>
+                              lineHeight: 1.6
+}}>
                 $ {trace.fix_approach}{'  '}
                 <span style={{ color: 'var(--ink-4)', fontSize: 11 }}>
                   → {trace.fix_ok ? 'succeeded' : 'failed'}
@@ -286,14 +295,15 @@ function PLogIssueModal({ session, project, onClose }) {
            }}>
         {/* Header */}
         <div style={{
-          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-          padding: '16px 24px 12px', borderBottom: 'var(--hairline)', flexShrink: 0
-        }}>
+          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', borderBottom: 'var(--hairline)', flexShrink: 0
+}} className="pt-4 pb-3 px-5" >
           <div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
               <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>診</span>
-              <h3 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                            letterSpacing: '-0.01em' }}>
+              <h3 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                            letterSpacing: '-0.01em'
+}}>
                 Report this session
               </h3>
             </div>
@@ -304,44 +314,56 @@ function PLogIssueModal({ session, project, onClose }) {
             </div>
           </div>
           <button onClick={onClose}
-                  style={{ background: 'transparent', border: 'none', cursor: 'pointer',
-                           color: 'var(--ink-3)', fontSize: 22, padding: '0 4px',
-                           lineHeight: 1 }}>×</button>
+                  style={{
+ background: 'transparent', border: 'none', cursor: 'pointer',
+                           color: 'var(--ink-3)', fontSize: 22,
+                           lineHeight: 1
+}} className="px-1" >×</button>
         </div>
 
         {/* Body — two columns */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px 24px',
-                       display: 'grid', gridTemplateColumns: '1fr 280px', gap: 24, minHeight: 0 }}>
+        <div style={{
+ flex: 1, overflow: 'auto',
+                       display: 'grid', gridTemplateColumns: '1fr 280px', minHeight: 0
+}} className="gap-5 pt-4 pb-5 px-5" >
 
           {/* Preview column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }} className="gap-2" >
             <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
                             color: 'var(--ink-3)' }}>Issue preview · anonymized</div>
 
             {/* Title */}
-            <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                            borderRadius: 5, padding: '8px 12px',
-                            fontSize: 13, color: 'var(--ink)', fontWeight: 500, flexShrink: 0 }}>
+            <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                            borderRadius: 5,
+                            fontSize: 13, color: 'var(--ink)', fontWeight: 500, flexShrink: 0
+}} className="py-2 px-3" >
               {issueTitle}
             </div>
 
             {/* Body */}
-            <pre className="mono" style={{ flex: 1, margin: 0, background: 'var(--paper-2)',
-                              border: 'var(--hairline)', borderRadius: 5, padding: '12px 16px',
+            <pre className="mono py-3 px-4 m-0" style={{
+ flex: 1, background: 'var(--paper-2)',
+                              border: 'var(--hairline)', borderRadius: 5,
                               fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.7,
                               overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                              minHeight: 240 }}>
+                              minHeight: 240
+}}>
               {issueBody}
             </pre>
           </div>
 
           {/* Compose column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
             {/* Included summary */}
-            <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                            borderRadius: 6, padding: '12px 12px' }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--ink-3)', marginBottom: 8 }}>
+            <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                            borderRadius: 6
+}} className="py-3 px-3" >
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--ink-3)'
+}} className="mb-2" >
                 Included in report
               </div>
               {[
@@ -355,8 +377,10 @@ function PLogIssueModal({ session, project, onClose }) {
                 ['Fixes',   session.traces.filter(t => t.fix_attempted).length],
                 ['App',     `v${session.app_version}`],
               ].map(([k, v]) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between',
-                                       fontSize: 11, marginBottom: 4 }}>
+                <div key={k} style={{
+ display: 'flex', justifyContent: 'space-between',
+                                       fontSize: 11
+}} className="mb-1" >
                   <span style={{ color: 'var(--ink-3)' }}>{k}</span>
                   <span className={['Traces','Fixes','App','RAM','Arch','OS'].includes(k) ? 'mono' : ''}
                          style={{ color: 'var(--ink-2)',
@@ -371,45 +395,55 @@ function PLogIssueModal({ session, project, onClose }) {
 
             {/* Compose */}
             <div>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--ink-3)', marginBottom: 4 }}>
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--ink-3)'
+}} className="mb-1" >
                 Additional context
               </div>
               <textarea value={context} onChange={e => setContext(e.target.value)}
                           placeholder="What were you doing? Anything else worth knowing?"
-                          style={{ width: '100%', height: 96, resize: 'none', padding: '8px 8px',
+                          style={{
+ width: '100%', height: 96, resize: 'none',
                                     background: 'var(--paper-2)', border: 'var(--hairline)',
                                     borderRadius: 5, fontSize: 13, color: 'var(--ink)',
-                                    fontFamily: 'inherit', lineHeight: 1.5 }}/>
+                                    fontFamily: 'inherit', lineHeight: 1.5
+}} className="py-2 px-2" />
             </div>
 
             {/* Privacy note */}
             <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.7 }}>
               Paths like{' '}
-              <code className="mono" style={{ background: 'var(--paper-3)',
-                              padding: '4px 4px', borderRadius: 3, fontSize: 11 }}>/Users/jerry/</code>
+              <code className="mono py-1 px-1" style={{
+ background: 'var(--paper-3)', borderRadius: 3, fontSize: 11
+}}>/Users/jerry/</code>
               {' '}are replaced with{' '}
-              <code className="mono" style={{ background: 'var(--paper-3)',
-                              padding: '4px 4px', borderRadius: 3, fontSize: 11 }}>~/</code>.
+              <code className="mono py-1 px-1" style={{
+ background: 'var(--paper-3)', borderRadius: 3, fontSize: 11
+}}>~/</code>.
               No personal data is included.
             </div>
 
             <div style={{ flex: 1 }}/>
 
             {/* Actions */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
               <button onClick={() => alert('Opens github.com/sensei-hq/app/issues/new')}
-                      style={{ width: '100%', padding: '8px 16px', borderRadius: 6,
+                      style={{
+ width: '100%', borderRadius: 6,
                                 fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
-                                background: 'var(--ink)', color: 'var(--paper)' }}>
+                                background: 'var(--ink)', color: 'var(--paper)'
+}} className="py-2 px-4" >
                 Submit to GitHub ↗
               </button>
               <button onClick={copy}
-                      style={{ width: '100%', padding: '8px 16px', borderRadius: 6,
+                      style={{
+ width: '100%', borderRadius: 6,
                                 fontSize: 13, fontWeight: 500, cursor: 'pointer',
                                 background: 'transparent', border: 'var(--hairline)',
                                 color: copied ? 'var(--success)' : 'var(--ink-2)',
-                                transition: 'color 0.2s' }}>
+                                transition: 'color 0.2s'
+}} className="py-2 px-4" >
                 {copied ? 'Copied ✓' : 'Copy markdown'}
               </button>
             </div>
@@ -464,13 +498,13 @@ function ProjLogs({ project, scope = "project" }) {
       {/* ── Session list ── */}
       <aside style={{ borderRight: 'var(--hairline)', background: 'var(--paper-2)',
                        display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '24px 16px 12px', borderBottom: 'var(--hairline)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ borderBottom: 'var(--hairline)' }} className="pt-5 pb-3 px-4" >
+          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
             <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>診</span>
             <span style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
                              color: 'var(--ink-3)' }}>diagnostic logs</span>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
             {collective ? (
               <>every session sensei has run · <span className="mono" style={{ color: 'var(--ink-3)' }}>{PLOG_SESSIONS.length} total</span></>
             ) : (
@@ -479,7 +513,7 @@ function ProjLogs({ project, scope = "project" }) {
           </div>
 
           {collective && (
-            <div style={{ display: 'flex', gap: 4, marginTop: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1 mt-3" >
               {[
                 { id: 'all',       label: 'All' },
                 { id: 'bootstrap', label: 'Bootstrap' },
@@ -489,11 +523,13 @@ function ProjLogs({ project, scope = "project" }) {
                 const on = moduleFilter === f.id;
                 return (
                   <button key={f.id} onClick={() => setModuleFilter(f.id)}
-                          style={{ padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+                          style={{
+ borderRadius: 4, cursor: 'pointer',
                                     border: 'var(--hairline)', fontSize: 11,
                                     background: on ? 'var(--ink)' : 'transparent',
                                     color: on ? 'var(--paper)' : 'var(--ink-2)',
-                                    borderColor: on ? 'var(--ink)' : undefined }}>
+                                    borderColor: on ? 'var(--ink)' : undefined
+}} className="py-1 px-2" >
                     {f.label}
                   </button>
                 );
@@ -502,14 +538,15 @@ function ProjLogs({ project, scope = "project" }) {
           )}
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+        <div style={{ flex: 1, overflowY: 'auto' }} className="py-2 px-0" >
           {dateGroups.map(({ date, groups }) => {
             const open = openDates.has(date);
             return (
               <div key={date}>
                 <div onClick={() => toggleDate(date)}
-                     style={{ display: 'flex', alignItems: 'center', gap: 4,
-                               padding: '8px 16px 4px', cursor: 'pointer', userSelect: 'none' }}>
+                     style={{
+ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none'
+}} className="gap-1 pt-2 pb-1 px-4" >
                   <span style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1,
                                   transform: open ? 'none' : 'rotate(-90deg)',
                                   display: 'inline-block', transition: 'transform 0.15s' }}>▾</span>
@@ -521,8 +558,9 @@ function ProjLogs({ project, scope = "project" }) {
 
                 {open && groups.map(({ mod, sessions }) => (
                   <div key={mod}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4,
-                                   padding: '4px 16px 4px 32px' }}>
+                    <div style={{
+ display: 'flex', alignItems: 'center'
+}} className="gap-1 py-1 pl-6 pr-4" >
                       <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-4)',
                                     lineHeight: 1 }}>
                         {PLOG_MODULES[mod]?.kanji ?? '◆'}
@@ -539,16 +577,20 @@ function ProjLogs({ project, scope = "project" }) {
                       return (
                         <div key={s.id}
                              onClick={() => { setSelectedId(s.id); setExpandedTraceId(null); }}
-                             style={{ padding: '8px 16px 8px 32px', cursor: 'pointer',
+                             style={{
+ cursor: 'pointer',
                                        background: sel ? 'var(--paper)' : 'transparent',
                                        borderLeft: sel ? '2px solid var(--accent)' : '2px solid transparent',
-                                       transition: 'background 0.12s' }}>
+                                       transition: 'background 0.12s'
+}} className="py-2 pl-6 pr-4" >
                           {isCurrent && (
-                            <div style={{ fontSize: 11, letterSpacing: '0.16em',
+                            <div style={{
+ fontSize: 11, letterSpacing: '0.16em',
                                             textTransform: 'uppercase',
-                                            color: 'var(--accent)', marginBottom: 4 }}>current</div>
+                                            color: 'var(--accent)'
+}} className="mb-1" >current</div>
                           )}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mb-1" >
                             <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
                                             background: outcomeTone(s.outcome) }}/>
                             <span style={{ fontSize: 13, fontWeight: 500,
@@ -556,9 +598,11 @@ function ProjLogs({ project, scope = "project" }) {
                               {timeKey(s)}
                             </span>
                             {collective && s.project && (
-                              <span style={{ marginLeft: 'auto', display: 'inline-flex',
-                                              alignItems: 'center', gap: 4, fontSize: 11,
-                                              color: 'var(--ink-3)' }}>
+                              <span style={{
+ display: 'inline-flex',
+                                              alignItems: 'center', fontSize: 11,
+                                              color: 'var(--ink-3)'
+}} className="gap-1 ml-auto" >
                                 <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
                                   {s.project.kanji}
                                 </span>
@@ -569,8 +613,10 @@ function ProjLogs({ project, scope = "project" }) {
                               </span>
                             )}
                           </div>
-                          <div className="mono" style={{ marginLeft: 12, fontSize: 11,
-                                          color: 'var(--ink-3)' }}>
+                          <div className="mono ml-3" style={{
+ fontSize: 11,
+                                          color: 'var(--ink-3)'
+}}>
                             {fmtMs(s.duration_ms)} · {s.traces.length} steps
                             {s.traces.filter(t => t.fix_attempted).length
                               ? ` · ${s.traces.filter(t => t.fix_attempted).length} fix`
@@ -586,8 +632,10 @@ function ProjLogs({ project, scope = "project" }) {
           })}
         </div>
 
-        <div style={{ padding: '8px 16px', borderTop: 'var(--hairline)',
-                       fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6 }}>
+        <div style={{
+ borderTop: 'var(--hairline)',
+                       fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6
+}} className="py-2 px-4" >
           <span className="mono">retention · 30 days</span>
         </div>
       </aside>
@@ -595,11 +643,12 @@ function ProjLogs({ project, scope = "project" }) {
       {/* ── Trace stream ── */}
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
         {/* Session header */}
-        <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-                          gap: 16, marginBottom: 16 }}>
+        <div style={{ borderBottom: 'var(--hairline)' }} className="pt-5 pb-4 px-6" >
+          <div style={{
+ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between'
+}} className="gap-4 mb-4" >
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
                 <span className="kanji" style={{ fontSize: 13, color: 'var(--ink-3)' }}>
                   {PLOG_MODULES[session.module]?.kanji ?? '◆'}
                 </span>
@@ -610,8 +659,10 @@ function ProjLogs({ project, scope = "project" }) {
                 {collective && session.project && (
                   <>
                     <span style={{ color: 'var(--ink-4)', opacity: 0.5 }}>·</span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
-                                    fontSize: 11, color: 'var(--ink-2)' }}>
+                    <span style={{
+ display: 'inline-flex', alignItems: 'center',
+                                    fontSize: 11, color: 'var(--ink-2)'
+}} className="gap-1" >
                       <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>
                         {session.project.kanji}
                       </span>
@@ -620,12 +671,15 @@ function ProjLogs({ project, scope = "project" }) {
                   </>
                 )}
               </div>
-              <h2 className="display" style={{ fontSize: 22, fontWeight: 400,
-                            margin: '0 0 8px', letterSpacing: '-0.01em' }}>
+              <h2 className="display mt-0 mb-2" style={{
+ fontSize: 22, fontWeight: 400, letterSpacing: '-0.01em'
+}}>
                 {session.display_time}
               </h2>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8,
-                             fontSize: 11, color: 'var(--ink-3)' }}>
+              <div style={{
+ display: 'flex', flexWrap: 'wrap',
+                             fontSize: 11, color: 'var(--ink-3)'
+}} className="gap-2" >
                 {[session.system_info.os, session.system_info.arch,
                   `${session.system_info.ram_gb} GB`, `${session.system_info.cpu_cores} cores`,
                   `v${session.app_version}`].map((v, i, a) => (
@@ -639,17 +693,19 @@ function ProjLogs({ project, scope = "project" }) {
               </div>
             </div>
             <button onClick={() => setShowReport(true)}
-                    style={{ flexShrink: 0, padding: '8px 16px', borderRadius: 6,
+                    style={{
+ flexShrink: 0, borderRadius: 6,
                               border: 'none', cursor: 'pointer',
                               background: 'var(--ink)', color: 'var(--paper)',
-                              fontSize: 13, fontWeight: 500 }}>
+                              fontSize: 13, fontWeight: 500
+}} className="py-2 px-4" >
               Report this session ↗
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: 24 }}>
+          <div style={{ display: 'flex' }} className="gap-5" >
             {stats.map(st => (
-              <div key={st.label} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div key={st.label} style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
                 <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
                                 color: 'var(--ink-3)' }}>{st.label}</div>
                 <div className="display" style={{ fontSize: 15, fontWeight: 400,
@@ -662,9 +718,10 @@ function ProjLogs({ project, scope = "project" }) {
         </div>
 
         {/* Column headers */}
-        <div style={{ display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px',
-                       gap: 12, padding: '8px 32px', background: 'var(--paper-2)',
-                       borderBottom: 'var(--hairline)', flexShrink: 0 }}>
+        <div style={{
+ display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px', background: 'var(--paper-2)',
+                       borderBottom: 'var(--hairline)', flexShrink: 0
+}} className="gap-3 py-2 px-6" >
           {['action', 'step', 'command', 'duration', ''].map((h, i) => (
             <div key={i} style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
                                     color: 'var(--ink-4)',
@@ -673,7 +730,7 @@ function ProjLogs({ project, scope = "project" }) {
         </div>
 
         {/* Trace rows */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 32px' }}>
+        <div style={{ flex: 1, overflowY: 'auto' }} className="px-6" >
           {session.traces.map(t => (
             <PLogTraceRow key={t.id} trace={t}
                            expanded={expandedTraceId === t.id}

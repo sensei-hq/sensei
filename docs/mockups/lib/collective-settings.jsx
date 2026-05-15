@@ -49,52 +49,67 @@ function ObsCollectiveSettings() {
                   background: 'var(--paper)', overflow: 'hidden' }}>
 
       {/* Hero */}
-      <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 24 }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center'
+}} className="gap-5 pt-5 pb-4 px-6" >
         <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>群</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             Settings · Collective intelligence
           </div>
-          <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                            color: 'var(--ink)' }}>
+          <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                            color: 'var(--ink)'
+}}>
             What sensei shares with the network.
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                       maxWidth: 720, lineHeight: 1.55 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                       maxWidth: 720, lineHeight: 1.55
+}} className="mt-1 mb-0" >
             You agreed to share anonymized insights at setup. This is where
             you change how, what, and how often. Source code, prompts, file
             paths and project names never leave your machine.
           </p>
         </div>
-        <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)',
-                       display: 'flex', gap: 24 }}>
+        <div style={{
+ borderLeft: 'var(--hairline)',
+                       display: 'flex'
+}} className="gap-5 pl-5" >
           <UgMini n={U.contribution.insightsShared} l="lifetime"/>
           <UgMini n={U.contribution.usersHelped} l="users helped" accent/>
           <UgMini n={U.contribution.streak} l="week streak" mono/>
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '32px 64px 48px',
-                     maxWidth: 980, margin: '0 auto', width: '100%' }}>
+      <div style={{
+ flex: 1, overflow: 'auto',
+                     maxWidth: 980, width: '100%'
+}} className="pt-6 pb-7 px-8 mx-auto" >
 
         {/* Mode picker */}
         <Section title="Sharing mode"
                  sub="Choose how anonymized insights leave your machine.">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-                         gap: 8 }}>
+          <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)'
+}} className="gap-2" >
             {Object.entries(MODE_META).map(([k, m]) => {
               const on = mode === k;
               return (
                 <button key={k} onClick={() => setMode(k)}
-                        style={{ textAlign: 'left',
-                                  padding: '16px 16px',
+                        style={{
+ textAlign: 'left',
                                   background: on ? 'var(--paper)' : 'var(--paper-2)',
                                   border: on ? '1px solid var(--accent)' : 'var(--hairline)',
-                                  borderRadius: 6, cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-                                 marginBottom: 8 }}>
+                                  borderRadius: 6, cursor: 'pointer'
+}} className="py-4 px-4" >
+                  <div style={{
+ display: 'flex', alignItems: 'center'
+}} className="gap-2 mb-2" >
                     <span className="kanji" style={{ fontSize: 17,
                                   color: on ? 'var(--accent)' : 'var(--ink-3)' }}>{m.glyph}</span>
                     <span className="display" style={{ fontSize: 15, fontWeight: 400,
@@ -114,8 +129,9 @@ function ObsCollectiveSettings() {
           </div>
 
           {mode !== "off" && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-                           marginTop: 12, paddingTop: 12, borderTop: 'var(--hairline)' }}>
+            <div style={{
+ display: 'flex', alignItems: 'center', borderTop: 'var(--hairline)'
+}} className="gap-2 mt-3 pt-3" >
               <span style={{ fontSize: 11, color: 'var(--ink-3)',
                               letterSpacing: '0.12em', textTransform: 'uppercase' }}>
                 Cadence
@@ -140,25 +156,32 @@ function ObsCollectiveSettings() {
         <Section title="What gets shared"
                  sub="Each category corresponds to one inference.insights type. Disable any you'd rather keep private."
                  dim={mode === "off"}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4,
+          <div style={{
+ display: 'grid', gridTemplateColumns: '1fr 1fr',
                          background: 'var(--edge)',
-                         borderRadius: 6, overflow: 'hidden' }}>
+                         borderRadius: 6, overflow: 'hidden'
+}} className="gap-1" >
             {cats.map(c => (
               <label key={c.id}
-                     style={{ display: 'flex', alignItems: 'flex-start', gap: 12,
-                               padding: '12px 16px', cursor: 'pointer',
-                               background: 'var(--paper-2)' }}>
+                     style={{
+ display: 'flex', alignItems: 'flex-start', cursor: 'pointer',
+                               background: 'var(--paper-2)'
+}} className="gap-3 py-3 px-4" >
                 <input type="checkbox" checked={c.enabled}
                        onChange={() => toggleCat(c.id)}
                        disabled={mode === "off"}
-                       style={{ marginTop: 4, accentColor: 'var(--accent)',
-                                 width: 14, height: 14 }}/>
+                       style={{
+ accentColor: 'var(--accent)',
+                                 width: 14, height: 14
+}} className="mt-1" />
                 <span className="kanji" style={{ fontSize: 15,
                               color: c.enabled ? 'var(--accent)' : 'var(--ink-4)',
                               marginTop: -1 }}>{c.glyph}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: 'var(--ink)',
-                                 fontWeight: 500, marginBottom: 4 }}>{c.label}</div>
+                  <div style={{
+ fontSize: 13, color: 'var(--ink)',
+                                 fontWeight: 500
+}} className="mb-1" >{c.label}</div>
                   <div style={{ fontSize: 11, color: 'var(--ink-2)',
                                  lineHeight: 1.5 }}>{c.blurb}</div>
                 </div>
@@ -173,27 +196,29 @@ function ObsCollectiveSettings() {
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {U.sharingHistory.map(b => (
               <button key={b.id}
-                      style={{ display: 'grid',
-                                gridTemplateColumns: '90px 60px 1fr auto',
-                                gap: 16, alignItems: 'center',
-                                padding: '12px 8px', textAlign: 'left',
+                      style={{
+ display: 'grid',
+                                gridTemplateColumns: '90px 60px 1fr auto', alignItems: 'center', textAlign: 'left',
                                 borderBottom: 'var(--hairline)',
-                                background: 'transparent', cursor: 'pointer' }}>
+                                background: 'transparent', cursor: 'pointer'
+}} className="gap-4 py-3 px-2" >
                 <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
                   {b.date}
                 </span>
                 <span className="display" style={{ fontSize: 15, fontWeight: 400,
                               color: 'var(--ink)' }}>{b.insights}</span>
-                <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <span style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
                   {b.categories.map(cat => {
                     const m = SHARE_CATEGORIES.find(x => x.id === cat) ||
                               { glyph: "?", label: cat };
                     return (
-                      <span key={cat} className="mono"
-                            style={{ fontSize: 11, padding: '4px 8px',
+                      <span key={cat} className="mono py-1 px-2 gap-1"
+                            style={{
+ fontSize: 11,
                                       borderRadius: 3, background: 'var(--paper-2)',
                                       color: 'var(--ink-3)',
-                                      display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                      display: 'inline-flex', alignItems: 'center'
+}}>
                         <span className="kanji" style={{ fontSize: 11,
                                       color: 'var(--accent)' }}>{m.glyph}</span>
                         {m.label.toLowerCase()}
@@ -212,19 +237,21 @@ function ObsCollectiveSettings() {
         {/* Lifetime contribution */}
         <Section title="Lifetime contribution"
                  sub="Aggregate signal across every batch you've shipped.">
-          <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                         borderRadius: 8, padding: '24px 24px',
-                         display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-                         gap: 24 }}>
+          <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                         borderRadius: 8,
+                         display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)'
+}} className="py-5 px-5 gap-5" >
             <BigStat n={U.contribution.insightsShared} l="insights shared"/>
             <BigStat n={U.contribution.usersHelped} l="users helped" accent/>
             <BigStat n={U.contribution.streak} l="weekly streak" mono/>
             <BigStat n={U.contribution.rank} l="contributor rank" mono accent/>
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6,
-                         marginTop: 16, padding: '12px 16px',
+          <div style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6,
                          background: 'var(--success-soft)', borderRadius: 6,
-                         display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                         display: 'flex', alignItems: 'flex-start'
+}} className="mt-4 py-3 px-4 gap-2" >
             <span className="kanji" style={{ fontSize: 13, color: 'var(--success)' }}>礼</span>
             <span>
               Your <span style={{ fontWeight: 500 }}>{U.contribution.bestCategory}</span>{" "}
@@ -238,7 +265,7 @@ function ObsCollectiveSettings() {
 
         {/* Danger / privacy zone */}
         <Section title="Privacy controls" sub="">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             <PrivacyRow glyph="覗" label="Audit what's anonymized"
                         sub="Show the redaction transforms applied before any insight leaves the machine."/>
             <PrivacyRow glyph="戻" label="Recall a previous batch"
@@ -255,13 +282,17 @@ function ObsCollectiveSettings() {
 
 function Section({ title, sub, children, dim }) {
   return (
-    <section style={{ marginBottom: 32, opacity: dim ? 0.4 : 1 }}>
-      <div style={{ marginBottom: 12 }}>
-        <h2 className="display" style={{ fontSize: 15, fontWeight: 500, margin: 0,
-                      color: 'var(--ink)', letterSpacing: '-0.005em' }}>{title}</h2>
+    <section style={{ opacity: dim ? 0.4 : 1 }} className="mb-6" >
+      <div className="mb-3" >
+        <h2 className="display m-0" style={{
+ fontSize: 15, fontWeight: 500,
+                      color: 'var(--ink)', letterSpacing: '-0.005em'
+}}>{title}</h2>
         {sub && (
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                       lineHeight: 1.55, maxWidth: 720 }}>{sub}</p>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                       lineHeight: 1.55, maxWidth: 720
+}} className="mt-1 mb-0" >{sub}</p>
         )}
       </div>
       {children}
@@ -275,26 +306,31 @@ function BigStat({ n, l, accent, mono }) {
       <div className={mono ? "mono" : "display"}
            style={{ fontSize: mono ? 22 : 28, fontWeight: 300, lineHeight: 1.1,
                      color: accent ? 'var(--success)' : 'var(--ink)' }}>{n}</div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
-                     letterSpacing: '0.12em', textTransform: 'uppercase' }}>{l}</div>
+      <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                     letterSpacing: '0.12em', textTransform: 'uppercase'
+}} className="mt-1" >{l}</div>
     </div>
   );
 }
 
 function PrivacyRow({ glyph, label, sub, danger }) {
   return (
-    <button style={{ display: 'grid',
-                      gridTemplateColumns: 'auto 1fr auto', gap: 12,
-                      alignItems: 'center', padding: '12px 16px',
+    <button style={{
+ display: 'grid',
+                      gridTemplateColumns: 'auto 1fr auto',
+                      alignItems: 'center',
                       background: 'var(--paper-2)', border: 'var(--hairline)',
-                      borderRadius: 6, cursor: 'pointer', textAlign: 'left' }}>
+                      borderRadius: 6, cursor: 'pointer', textAlign: 'left'
+}} className="gap-3 py-3 px-4" >
       <span className="kanji" style={{ fontSize: 17,
                     color: danger ? 'var(--accent)' : 'var(--ink-3)' }}>{glyph}</span>
       <div>
         <div style={{ fontSize: 13, color: danger ? 'var(--accent)' : 'var(--ink)',
                        fontWeight: 500 }}>{label}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5,
-                       marginTop: 4 }}>{sub}</div>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5
+}} className="mt-1" >{sub}</div>
       </div>
       <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>→</span>
     </button>

@@ -13,16 +13,22 @@
 function VariantToggle({ variant, onChange, options }) {
   return (
     <div style={{ flexShrink: 0 }}>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-4)', marginBottom: 4, textAlign: 'right' }}>variant</div>
-      <div style={{ display: 'flex', gap: 0, background: 'var(--paper-2)', padding: 4,
-                     borderRadius: 5, border: 'var(--hairline)' }}>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                     color: 'var(--ink-4)', textAlign: 'right'
+}} className="mb-1" >variant</div>
+      <div style={{
+ display: 'flex', background: 'var(--paper-2)',
+                     borderRadius: 5, border: 'var(--hairline)'
+}} className="p-1 gap-0" >
         {options.map(v => (
           <button key={v.id} onClick={() => onChange(v.id)}
-                  style={{ padding: '4px 12px', fontSize: 11, borderRadius: 3,
+                  style={{
+ fontSize: 11, borderRadius: 3,
                            background: variant === v.id ? 'var(--paper)' : 'transparent',
                            color: variant === v.id ? 'var(--ink)' : 'var(--ink-3)',
-                           border: 'none', cursor: 'pointer', letterSpacing: '0.04em' }}>
+                           border: 'none', cursor: 'pointer', letterSpacing: '0.04em'
+}} className="py-1 px-3" >
             {v.id} · {v.label}
           </button>
         ))}
@@ -38,18 +44,21 @@ function InferenceLadder(s) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                     marginBottom: 8 }}>
-        <h3 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0 }}>Providers</h3>
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-2" >
+        <h3 className="display m-0" style={{ fontSize: 17, fontWeight: 400 }}>Providers</h3>
         <button onClick={() => setShowAdd(true)}
-                style={{ fontSize: 11, color: 'var(--ink-2)', padding: '4px 12px',
+                style={{
+ fontSize: 11, color: 'var(--ink-2)',
                          border: 'var(--hairline)', borderRadius: 4,
-                         background: 'var(--paper)', cursor: 'pointer' }}>
+                         background: 'var(--paper)', cursor: 'pointer'
+}} className="py-1 px-3" >
           + Add provider
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
         {D.providers.map(p => (
           <ProviderCard key={p.id} provider={p}
                         isConfigured={configured[p.id]}
@@ -83,39 +92,43 @@ function ProviderCard({ provider, isConfigured, onConfigure,
     <div style={{ background: 'var(--paper)', border: 'var(--hairline)',
                    borderRadius: 6, overflow: 'hidden' }}>
       <button onClick={() => setOpen(o => !o)}
-              style={{ width: '100%', display: 'grid',
-                       gridTemplateColumns: '36px 1fr auto auto', gap: 12,
-                       alignItems: 'center', padding: '12px 16px',
+              style={{
+ width: '100%', display: 'grid',
+                       gridTemplateColumns: '36px 1fr auto auto',
+                       alignItems: 'center',
                        background: 'transparent', border: 'none',
-                       cursor: 'pointer', textAlign: 'left' }}>
+                       cursor: 'pointer', textAlign: 'left'
+}} className="gap-3 py-3 px-4" >
         <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)',
                                            textAlign: 'center' }}>{provider.kanji}</span>
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
             <span className="display" style={{ fontSize: 15 }}>{provider.name}</span>
             <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
                             color: 'var(--ink-4)' }}>
               {provider.kind === "local" ? "local · ollama" : "cloud"}
             </span>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
             {provider.note}
           </div>
         </div>
         <div>
           {isConfigured ? (
-            <span style={{ fontSize: 11, color: 'var(--success)',
-                            padding: '4px 8px', borderRadius: 3,
+            <span style={{
+ fontSize: 11, color: 'var(--success)', borderRadius: 3,
                             background: 'rgba(122,158,98,.10)',
                             letterSpacing: '0.08em', textTransform: 'uppercase',
-                            display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            display: 'inline-flex', alignItems: 'center'
+}} className="py-1 px-2 gap-1" >
               ✓ {availableModels} of {provider.models.length} model{provider.models.length !== 1 && "s"}
             </span>
           ) : (
-            <span style={{ fontSize: 11, color: 'var(--ink-3)',
-                            padding: '4px 8px', borderRadius: 3,
+            <span style={{
+ fontSize: 11, color: 'var(--ink-3)', borderRadius: 3,
                             background: 'var(--paper-2)',
-                            letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                            letterSpacing: '0.08em', textTransform: 'uppercase'
+}} className="py-1 px-2" >
               not configured
             </span>
           )}
@@ -126,8 +139,10 @@ function ProviderCard({ provider, isConfigured, onConfigure,
       </button>
 
       {open && (
-        <div style={{ borderTop: 'var(--hairline)', padding: '12px 16px 16px',
-                       background: 'var(--paper-2)' }}>
+        <div style={{
+ borderTop: 'var(--hairline)',
+                       background: 'var(--paper-2)'
+}} className="pt-3 pb-4 px-4" >
           {!isConfigured && provider.envVar && (
             <KeyInput envVar={provider.envVar} value={keyInput} onChange={setKeyInput}
                       onSave={() => onConfigure(keyInput)}/>

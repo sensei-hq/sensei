@@ -25,12 +25,15 @@ function ProjMiniSpark({ data, w = 110, h = 28, color = 'var(--accent)' }) {
 // Project header — used at the top of every layout
 function ProjHeader({ project, onBack, showBack = true }) {
   return (
-    <div style={{ padding: '24px 48px 16px', borderBottom: 'var(--hairline)',
-                  display: 'flex', alignItems: 'flex-start', gap: 24, background: 'var(--paper)' }}>
+    <div style={{
+ borderBottom: 'var(--hairline)',
+                  display: 'flex', alignItems: 'flex-start', background: 'var(--paper)'
+}} className="gap-5 pt-5 pb-4 px-7" >
       {showBack && (
         <button onClick={onBack}
-                style={{ fontSize: 11, color: 'var(--ink-3)',
-                         padding: '4px 8px', border: 'var(--ink-line)', borderRadius: 5 }}>
+                style={{
+ fontSize: 11, color: 'var(--ink-3)', border: 'var(--ink-line)', borderRadius: 5
+}} className="py-1 px-2" >
           ← all projects
         </button>
       )}
@@ -38,25 +41,34 @@ function ProjHeader({ project, onBack, showBack = true }) {
         {project.kanji}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                      textTransform: 'uppercase', marginBottom: 4 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                      textTransform: 'uppercase'
+}} className="mb-1" >
           Project · {project.client}
         </div>
-        <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: '0 0 4px',
-                                          letterSpacing: '-0.01em' }}>
+        <h1 className="display mt-0 mb-1" style={{
+ fontSize: 28, fontWeight: 400,
+                                          letterSpacing: '-0.01em'
+}}>
           {project.name}
         </h1>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: 0, maxWidth: 560,
-                    fontStyle: 'italic', lineHeight: 1.5 }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)', maxWidth: 560,
+                    fontStyle: 'italic', lineHeight: 1.5
+}} className="m-0" >
           "{project.goal}"
         </p>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 24,
-                    padding: '4px 0', color: 'var(--ink-2)' }}>
+      <div style={{
+ display: 'flex', alignItems: 'center', color: 'var(--ink-2)'
+}} className="gap-5 py-1 px-0" >
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>FTR · 14d</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >FTR · 14d</div>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-1" >
             <span className="display" style={{ fontSize: 22, fontWeight: 400 }}>
               {Math.round(project.ftr * 100)}
             </span>
@@ -69,13 +81,17 @@ function ProjHeader({ project, onBack, showBack = true }) {
         </div>
         <ProjMiniSpark data={project.ftr14 || window.SENSEI_DATA.ftrHistory}/>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>Sessions · 7d</div>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >Sessions · 7d</div>
           <div className="display" style={{ fontSize: 22, fontWeight: 400 }}>{project.sessions7d}</div>
         </div>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>Preferred ACP</div>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >Preferred ACP</div>
           <div className="mono" style={{ fontSize: 13 }}>{project.preferredAcp}</div>
         </div>
       </div>
@@ -89,15 +105,14 @@ function ProjOverview({ project, openAction }) {
   const D = window.PROJECT_DATA;
   const recs = D.recommendations;
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 32, padding: '24px 48px' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr' }} className="gap-6 py-5 px-7" >
       <div>
         <SectionHeading k="紋" label="Repos in this project"/>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {project.repos.map(r => (
             <div key={r.id} style={{
-              display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12, alignItems: 'baseline',
-              padding: '12px 4px', borderBottom: 'var(--hairline)'
-            }}>
+              display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 py-3 px-1" >
               <div>
                 <div style={{ fontSize: 13, color: 'var(--ink)' }}>{r.id}</div>
                 <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{r.path}</div>
@@ -113,22 +128,21 @@ function ProjOverview({ project, openAction }) {
                         right={<span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                           {recs.length} open
                         </span>}/>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
           {recs.map(r => <ProjRecCard key={r.id} rec={r} openAction={openAction}/>)}
         </div>
       </div>
 
       <div>
         <SectionHeading k="急" label="Hotspots"/>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 24 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 mb-5" >
           {D.files.filter(f => f.tags.includes("hot") || f.tags.includes("god-node")).slice(0, 5).map(f => (
             <div key={f.path} style={{
-              display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'baseline',
-              padding: '8px 4px', borderBottom: 'var(--hairline)'
-            }}>
+              display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-2 py-2 px-1" >
               <div>
                 <div className="mono" style={{ fontSize: 11, color: 'var(--ink)' }}>{f.path}</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
                   {f.repo} · rework {f.rework}× {f.tags.length ? "· " + f.tags.join(", ") : ""}
                 </div>
               </div>
@@ -140,11 +154,11 @@ function ProjOverview({ project, openAction }) {
         </div>
 
         <SectionHeading k="紋" label="Patterns in use"/>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {D.patterns.followed.slice(0, 4).map(p => (
             <div key={p.id} style={{
-              padding: '8px 4px', borderBottom: 'var(--hairline)'
-            }}>
+ borderBottom: 'var(--hairline)'
+}} className="py-2 px-1" >
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
                 <div style={{ fontSize: 13, color: 'var(--ink)' }}>{p.name}</div>
                 <span className="mono" style={{ fontSize: 11,
@@ -153,19 +167,21 @@ function ProjOverview({ project, openAction }) {
                   {p.status}
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
                 {p.family} · {p.places} places
               </div>
             </div>
           ))}
         </div>
         {D.patterns.antiPatterns.length > 0 && (
-          <div style={{ marginTop: 12, padding: '8px 12px',
+          <div style={{
                          background: 'var(--warning-soft)', borderLeft: '2px solid var(--warning)',
                          borderRadius: 5, fontSize: 11, color: 'var(--ink-2)',
-                         lineHeight: 1.5 }}>
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--warning)',
-                          marginRight: 4 }}>避</span>
+                         lineHeight: 1.5
+}} className="mt-3 py-2 px-3" >
+            <span className="kanji mr-1" style={{
+ fontSize: 13, color: 'var(--warning)'
+}}>避</span>
             {D.patterns.antiPatterns.length} anti-patterns detected —{" "}
             {D.patterns.antiPatterns.filter(a => a.suggest).length} have suggested fixes.
           </div>
@@ -177,11 +193,12 @@ function ProjOverview({ project, openAction }) {
 
 function SectionHeading({ k, label, right }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                  marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+    <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-3" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
         <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>{k}</span>
-        <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: 0 }}>{label}</h2>
+        <h2 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>{label}</h2>
       </div>
       {right}
     </div>
@@ -194,36 +211,42 @@ function ProjRecCard({ rec, openAction }) {
     rec.urgency === "medium" ? 'var(--warning)' : 'var(--ink-3)';
   return (
     <div style={{
-      padding: '12px 16px 12px 16px', borderRadius: 6,
+ borderRadius: 6,
       background: 'var(--paper-2)', border: 'var(--hairline)',
       borderLeft: `2px solid ${tone}`, display: 'grid',
-      gridTemplateColumns: 'auto 1fr auto', gap: 12, alignItems: 'start'
-    }}>
+      gridTemplateColumns: 'auto 1fr auto', alignItems: 'start'
+}} className="gap-3 py-3 px-4" >
       <span className="kanji" style={{ fontSize: 22, color: tone, lineHeight: 1 }}>{rec.kanji}</span>
       <div>
-        <div style={{ fontSize: 13, color: 'var(--ink)', marginBottom: 4, lineHeight: 1.45 }}>
+        <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.45 }} className="mb-1" >
           {rec.title}
         </div>
         <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
           {rec.why}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8,
-                      fontSize: 11, color: 'var(--ink-3)' }} className="mono">
+        <div style={{
+ display: 'flex', alignItems: 'center',
+                      fontSize: 11, color: 'var(--ink-3)'
+}} className="mono gap-2 mt-2">
           <span style={{ color: 'var(--accent)' }}>· {rec.impact}</span>
           <span>· {rec.evidence.join(" · ")}</span>
         </div>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
         <button onClick={() => openAction(rec, "send")}
-                style={{ padding: '8px 12px', fontSize: 11,
+                style={{
+ fontSize: 11,
                          background: 'var(--ink)', color: 'var(--paper)',
-                         borderRadius: 5, whiteSpace: 'nowrap' }}>
+                         borderRadius: 5, whiteSpace: 'nowrap'
+}} className="py-2 px-3" >
           send to {rec.defaultAcp} →
         </button>
         <button onClick={() => openAction(rec, "palette")}
-                style={{ padding: '4px 12px', fontSize: 11,
+                style={{
+ fontSize: 11,
                          color: 'var(--ink-2)', border: 'var(--ink-line)',
-                         borderRadius: 5, whiteSpace: 'nowrap' }}>
+                         borderRadius: 5, whiteSpace: 'nowrap'
+}} className="py-1 px-3" >
           customize prompt
         </button>
       </div>
@@ -239,25 +262,28 @@ function ProjGraphLens({ project }) {
   const D = window.PROJECT_DATA.graph;
 
   return (
-    <div style={{ padding: '24px 48px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+    <div className="py-5 px-7" >
+      <div style={{
+ display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+}} className="mb-4" >
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3" >
           <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>構</span>
-          <h2 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0 }}>
+          <h2 className="display m-0" style={{ fontSize: 17, fontWeight: 400 }}>
             Code visualization
           </h2>
           <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
             — three lenses on the same graph
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 4, padding: 4, background: 'var(--paper-3)', borderRadius: 6 }}>
+        <div style={{ display: 'flex', background: 'var(--paper-3)', borderRadius: 6 }} className="gap-1 p-1" >
           {[["graph","Call graph"],["matrix","Matrix"],["hairball","Clusters"]].map(([id, lbl]) => (
             <button key={id} onClick={() => setLens(id)}
-                    style={{ padding: '4px 12px', fontSize: 11,
+                    style={{
+ fontSize: 11,
                              borderRadius: 4,
                              background: lens === id ? 'var(--paper)' : 'transparent',
-                             color: lens === id ? 'var(--ink)' : 'var(--ink-3)' }}>
+                             color: lens === id ? 'var(--ink)' : 'var(--ink-3)'
+}} className="py-1 px-3" >
               {lbl}
             </button>
           ))}
@@ -265,7 +291,7 @@ function ProjGraphLens({ project }) {
       </div>
 
       {/* Overlay chips */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-2 mb-3" >
         {[
           ["rework",    "繰", "Rework heat"],
           ["duplicates","双", "Duplicate clusters"],
@@ -277,13 +303,12 @@ function ProjGraphLens({ project }) {
           return (
             <button key={id} onClick={() => setOverlay(id)}
                     style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 8,
-                      padding: '4px 12px', fontSize: 11,
+                      display: 'inline-flex', alignItems: 'center', fontSize: 11,
                       borderRadius: 999,
                       background: on ? 'var(--accent-soft)' : 'var(--paper-2)',
                       border: on ? '1px solid transparent' : 'var(--hairline)',
                       color: on ? 'var(--accent)' : 'var(--ink-2)'
-                    }}>
+}} className="gap-2 py-1 px-3" >
               <span className="kanji" style={{ fontSize: 11 }}>{k}</span>
               {lbl}
             </button>
@@ -300,18 +325,19 @@ function ProjGraphLens({ project }) {
 
       {/* Legend / selected detail */}
       {overlay === "duplicates" && D.duplicates.length > 0 && (
-        <div style={{ marginTop: 12, padding: '12px 12px',
+        <div style={{
                       background: 'var(--paper-2)', border: 'var(--hairline)',
                       borderLeft: '2px solid var(--warning)', borderRadius: 6,
-                      fontSize: 13, color: 'var(--ink-2)' }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                      fontSize: 13, color: 'var(--ink-2)'
+}} className="mt-3 py-3 px-3" >
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
             <span className="kanji" style={{ color: 'var(--warning)', fontSize: 15 }}>双</span>
             <b style={{ color: 'var(--ink)', fontWeight: 500 }}>{D.duplicates[0].title}</b>
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               confidence {Math.round(D.duplicates[0].confidence * 100)}%
             </span>
           </div>
-          <div style={{ marginTop: 4, color: 'var(--ink-3)' }}>
+          <div style={{ color: 'var(--ink-3)' }} className="mt-1" >
             {D.duplicates[0].sketch} · in <span className="mono">{D.duplicates[0].files.join(" · ")}</span>
           </div>
         </div>
@@ -340,7 +366,7 @@ function LensGraph({ D, overlay }) {
   const pos = (n) => [n.x * W, n.y * H];
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className="p-4" >
       <svg width={W} height={H} style={{ display: 'block' }}>
         {/* edges */}
         {D.edges.map(([a, b], i) => {
@@ -365,8 +391,9 @@ function LensGraph({ D, overlay }) {
           );
         })}
       </svg>
-      <div style={{ display: 'flex', justifyContent: 'space-between',
-                    marginTop: 4, fontSize: 11, color: 'var(--ink-4)' }} className="mono">
+      <div style={{
+ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ink-4)'
+}} className="mono mt-1">
         <span>{D.nodes.length} files · {D.edges.length} edges</span>
         <span>overlay · {overlay}</span>
       </div>
@@ -390,23 +417,25 @@ function LensMatrix({ D, overlay }) {
     return `oklch(${base} / ${0.1 + t * 0.7})`;
   };
   return (
-    <div style={{ padding: '16px 24px', display: 'grid',
-                  gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
+    <div style={{
+ display: 'grid',
+                  gridTemplateColumns: 'repeat(6, 1fr)'
+}} className="py-4 px-5 gap-2" >
       {sorted.map(n => {
         const v = metric(n);
         return (
           <div key={n.id} style={{
-            padding: '12px 8px', borderRadius: 5,
+ borderRadius: 5,
             background: colorFor(v),
             border: 'var(--hairline)',
             minHeight: 76, display: 'flex', flexDirection: 'column', justifyContent: 'space-between'
-          }}>
+}} className="py-3 px-2" >
             <div>
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink)',
                               wordBreak: 'break-all', lineHeight: 1.3 }}>
                 {n.id}
               </div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+              <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 {n.repo}
               </div>
             </div>
@@ -436,7 +465,7 @@ function LensHairball({ D, overlay }) {
   const groupPos = [[0.25, 0.5], [0.55, 0.5], [0.82, 0.5]];
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className="p-4" >
       <svg width={W} height={H}>
         {groups.map((g, gi) => {
           const [cx, cy] = [groupPos[gi][0] * W, groupPos[gi][1] * H];
@@ -491,11 +520,13 @@ function ProjPatterns({ openAction }) {
   const focus = list.find(x => x.id === focusId) || list[0];
 
   return (
-    <div style={{ padding: '24px 48px' }}>
+    <div className="py-5 px-7" >
       {/* Toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <div style={{ display: 'flex', background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 6, padding: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3 mb-4" >
+        <div style={{
+ display: 'flex', background: 'var(--paper-2)',
+                       border: 'var(--hairline)', borderRadius: 6
+}} className="p-1" >
           <PatSideBtn on={side === "follow"} onClick={() => setSide("follow")}
                       kanji="紋" label="Patterns in use" count={P.followed.length}/>
           <PatSideBtn on={side === "avoid"} onClick={() => setSide("avoid")}
@@ -509,7 +540,7 @@ function ProjPatterns({ openAction }) {
         </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.1fr', gap: 32 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.1fr' }} className="gap-6" >
         {/* LEFT — list */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {side === "follow"
@@ -539,11 +570,11 @@ function PatSideBtn({ on, onClick, kanji, label, count, warn }) {
   return (
     <button onClick={onClick}
             style={{
-              padding: '8px 12px', fontSize: 13,
-              display: 'inline-flex', gap: 8, alignItems: 'center', borderRadius: 4,
+ fontSize: 13,
+              display: 'inline-flex', alignItems: 'center', borderRadius: 4,
               background: on ? 'var(--ink)' : 'transparent',
               color: on ? 'var(--paper)' : 'var(--ink-2)'
-            }}>
+}} className="py-2 px-3 gap-2" >
       <span className="kanji" style={{ fontSize: 13,
                     color: on ? 'var(--paper)' : (warn ? 'var(--warning)' : 'var(--accent)') }}>
         {kanji}
@@ -569,20 +600,22 @@ function FollowRow({ p, on, onClick }) {
   return (
     <button onClick={onClick}
             style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
-              alignItems: 'start', padding: '12px 12px', textAlign: 'left',
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'start', textAlign: 'left',
               borderBottom: 'var(--hairline)',
               background: on ? 'var(--paper-2)' : 'transparent'
-            }}>
+}} className="gap-3 py-3 px-3" >
       <span className="kanji" style={{ fontSize: 17, color: tone }}>{p.kanji}</span>
       <div>
         <div style={{ fontSize: 13, color: 'var(--ink)' }}>{p.name}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
           {p.family} · {p.places} places · {p.recent}
         </div>
       </div>
-      <span className="mono" style={{ fontSize: 11, color: tone,
-                    background: bg, padding: '4px 8px', borderRadius: 3 }}>
+      <span className="mono py-1 px-2" style={{
+ fontSize: 11, color: tone,
+                    background: bg, borderRadius: 3
+}}>
         {p.status}
       </span>
     </button>
@@ -599,20 +632,22 @@ function AntiRow({ a, on, onClick }) {
   return (
     <button onClick={onClick}
             style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
-              alignItems: 'start', padding: '12px 12px', textAlign: 'left',
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'start', textAlign: 'left',
               borderBottom: 'var(--hairline)',
               background: on ? 'var(--paper-2)' : 'transparent'
-            }}>
+}} className="gap-3 py-3 px-3" >
       <span className="kanji" style={{ fontSize: 17, color: sevTone }}>{a.kanji}</span>
       <div>
         <div style={{ fontSize: 13, color: 'var(--ink)' }}>{a.name}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
           {a.type} · {a.occurrences}× · {a.suggest ? `fix: ${a.suggest.name}` : "no pattern suggested"}
         </div>
       </div>
-      <span className="mono" style={{ fontSize: 11, color: sevTone,
-                    background: sevBg, padding: '4px 8px', borderRadius: 3 }}>
+      <span className="mono py-1 px-2" style={{
+ fontSize: 11, color: sevTone,
+                    background: sevBg, borderRadius: 3
+}}>
         {a.severity}
       </span>
     </button>
@@ -623,36 +658,43 @@ function FollowDetail({ p, openAction }) {
   return (
     <>
       <SectionHeading k={p.kanji} label={p.name}/>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 8,
-                     letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+      <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                     letterSpacing: '0.06em', textTransform: 'uppercase'
+}} className="mb-2" >
         {p.family}
       </div>
-      <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 12, lineHeight: 1.55 }}>
+      <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }} className="mb-3" >
         {p.summary}
       </div>
-      <div style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 12, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6 }} className="mb-3" >
         Detected in <span className="mono" style={{ color: 'var(--ink)' }}>{p.places}</span> places.
         Confidence <span className="mono" style={{ color: 'var(--ink)' }}>{Math.round(p.confidence * 100)}%</span>.
         First seen in <span className="mono">{p.file}</span>.
       </div>
-      <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
+      <div style={{
+ background: 'var(--paper-2)',
                      border: 'var(--hairline)', borderRadius: 6,
                      fontFamily: 'var(--font-mono)', fontSize: 13,
-                     color: 'var(--ink)', whiteSpace: 'pre-wrap',
-                     marginBottom: 16 }}>
+                     color: 'var(--ink)', whiteSpace: 'pre-wrap'
+}} className="py-3 px-4 mb-4" >
         {p.example}
       </div>
       {p.enforcement && (
-        <div style={{ padding: '8px 12px', background: 'var(--success-soft)', borderRadius: 6,
+        <div style={{
+ background: 'var(--success-soft)', borderRadius: 6,
                        borderLeft: '2px solid var(--success)', fontSize: 13,
-                       color: 'var(--ink-2)', marginBottom: 12 }}>
+                       color: 'var(--ink-2)'
+}} className="py-2 px-3 mb-3" >
           {p.enforcement}
         </div>
       )}
       {p.status === "gap" && (
-        <div style={{ padding: 12, background: 'var(--warning-soft)', borderRadius: 6,
+        <div style={{
+ background: 'var(--warning-soft)', borderRadius: 6,
                        borderLeft: '2px solid var(--warning)',
-                       display: 'flex', gap: 12, alignItems: 'center' }}>
+                       display: 'flex', alignItems: 'center'
+}} className="p-3 gap-3" >
           <div style={{ flex: 1, fontSize: 13, color: 'var(--ink-2)' }}>
             This pattern is recommended but missing. Adopt it as a project rule?
           </div>
@@ -662,17 +704,21 @@ function FollowDetail({ p, openAction }) {
             promptTitle: `Adopt pattern: ${p.name}`,
             prompt: `Adopt pattern "${p.name}" as a project rule.\n\n${p.summary}\n\nGenerate .sensei/rules/${p.id}.md.`
           }, "palette")}
-                  style={{ padding: '8px 12px', fontSize: 11,
+                  style={{
+ fontSize: 11,
                            background: 'var(--ink)', color: 'var(--paper)',
-                           borderRadius: 5, whiteSpace: 'nowrap' }}>
+                           borderRadius: 5, whiteSpace: 'nowrap'
+}} className="py-2 px-3" >
             Adopt →
           </button>
         </div>
       )}
       {p.status === "suggested" && (
-        <div style={{ padding: 12, background: 'var(--accent-soft)', borderRadius: 6,
+        <div style={{
+ background: 'var(--accent-soft)', borderRadius: 6,
                        borderLeft: '2px solid var(--accent)',
-                       display: 'flex', gap: 12, alignItems: 'center' }}>
+                       display: 'flex', alignItems: 'center'
+}} className="p-3 gap-3" >
           <div style={{ flex: 1, fontSize: 13, color: 'var(--ink-2)' }}>
             Emerging pattern — appears in {p.places} places but not yet a project rule. Promote?
           </div>
@@ -682,9 +728,11 @@ function FollowDetail({ p, openAction }) {
             promptTitle: `Promote pattern: ${p.name}`,
             prompt: `Promote pattern "${p.name}" to a project rule.\n\n${p.summary}\n\nExample:\n${p.example}`
           }, "palette")}
-                  style={{ padding: '8px 12px', fontSize: 11,
+                  style={{
+ fontSize: 11,
                            background: 'var(--ink)', color: 'var(--paper)',
-                           borderRadius: 5, whiteSpace: 'nowrap' }}>
+                           borderRadius: 5, whiteSpace: 'nowrap'
+}} className="py-2 px-3" >
             Promote →
           </button>
         </div>
@@ -700,68 +748,80 @@ function AntiDetail({ a, allFollowed, jumpToFollowed, openAction }) {
   return (
     <>
       <SectionHeading k={a.kanji} label={a.name}/>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <span className="mono" style={{ fontSize: 11, color: sevTone,
-                      padding: '4px 8px', borderRadius: 3,
+      <div style={{ display: 'flex' }} className="gap-2 mb-3" >
+        <span className="mono py-1 px-2" style={{
+ fontSize: 11, color: sevTone, borderRadius: 3,
                       background: a.severity === "high" ? 'var(--accent-soft)' :
-                                  a.severity === "medium" ? 'var(--warning-soft)' : 'var(--paper-3)' }}>
+                                  a.severity === "medium" ? 'var(--warning-soft)' : 'var(--paper-3)'
+}}>
           {a.severity} · {a.type}
         </span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                      padding: '4px 8px', borderRadius: 3, background: 'var(--paper-3)' }}>
+        <span className="mono py-1 px-2" style={{
+ fontSize: 11, color: 'var(--ink-3)', borderRadius: 3, background: 'var(--paper-3)'
+}}>
           {a.occurrences}× occurrences
         </span>
       </div>
-      <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 12, lineHeight: 1.55 }}>
+      <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }} className="mb-3" >
         {a.summary}
       </div>
 
       {/* Occurrence list */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', marginBottom: 8 }}>
+      <div className="mb-4" >
+        <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-2" >
           Where
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4,
-                       padding: '8px 8px', background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 6 }}>
+        <div style={{
+ display: 'flex', flexDirection: 'column', background: 'var(--paper-2)',
+                       border: 'var(--hairline)', borderRadius: 6
+}} className="gap-1 py-2 px-2" >
           {a.places.map((p, i) => (
-            <div key={i} className="mono" style={{ fontSize: 11, color: 'var(--ink-2)',
-                          padding: '4px 0' }}>
+            <div key={i} className="mono py-1 px-0" style={{
+ fontSize: 11, color: 'var(--ink-2)'
+}}>
               · {p}
             </div>
           ))}
         </div>
       </div>
 
-      <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
+      <div style={{
+ background: 'var(--paper-2)',
                      border: 'var(--hairline)', borderRadius: 6,
                      fontFamily: 'var(--font-mono)', fontSize: 13,
-                     color: 'var(--ink)', whiteSpace: 'pre-wrap',
-                     marginBottom: 16 }}>
+                     color: 'var(--ink)', whiteSpace: 'pre-wrap'
+}} className="py-3 px-4 mb-4" >
         {a.example}
       </div>
 
       {/* Suggested fix cross-link */}
       {a.suggest && (
-        <div style={{ padding: 12, background: 'var(--success-soft)', borderRadius: 6,
-                       borderLeft: '2px solid var(--success)' }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
+        <div style={{
+ background: 'var(--success-soft)', borderRadius: 6,
+                       borderLeft: '2px solid var(--success)'
+}} className="p-3" >
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
             <span className="kanji" style={{ fontSize: 13, color: 'var(--success)' }}>紋</span>
             <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                            textTransform: 'uppercase' }}>Suggested pattern</span>
             <span style={{ fontSize: 13, color: 'var(--ink)' }}>{a.suggest.name}</span>
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55,
-                         marginBottom: 8 }}>
+          <div style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55
+}} className="mb-2" >
             {a.suggest.reason}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex' }} className="gap-2" >
             {allFollowed.find(f => f.id === a.suggest.patternId) && (
               <button onClick={() => jumpToFollowed(a.suggest.patternId)}
-                      style={{ padding: '4px 12px', fontSize: 11,
+                      style={{
+ fontSize: 11,
                                 background: 'var(--paper)', color: 'var(--ink-2)',
-                                borderRadius: 4, border: 'var(--hairline)' }}>
+                                borderRadius: 4, border: 'var(--hairline)'
+}} className="py-1 px-3" >
                 See {a.suggest.name} →
               </button>
             )}
@@ -771,9 +831,11 @@ function AntiDetail({ a, allFollowed, jumpToFollowed, openAction }) {
               promptTitle: `Refactor: ${a.name}`,
               prompt: `Refactor "${a.name}" using the ${a.suggest.name} pattern.\n\n${a.suggest.reason}\n\nSites:\n${a.places.map(x => "  - " + x).join("\n")}`
             }, "palette")}
-                    style={{ padding: '4px 12px', fontSize: 11,
+                    style={{
+ fontSize: 11,
                               background: 'var(--ink)', color: 'var(--paper)',
-                              borderRadius: 4 }}>
+                              borderRadius: 4
+}} className="py-1 px-3" >
               Refactor with this pattern →
             </button>
           </div>
@@ -781,9 +843,11 @@ function AntiDetail({ a, allFollowed, jumpToFollowed, openAction }) {
       )}
 
       {!a.suggest && (
-        <div style={{ padding: 12, background: 'var(--paper-2)', borderRadius: 6,
+        <div style={{
+ background: 'var(--paper-2)', borderRadius: 6,
                        borderLeft: '2px solid var(--ink-3)',
-                       fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+                       fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55
+}} className="p-3" >
           No constructive pattern applies here — sensei recommends straight removal.
         </div>
       )}
@@ -795,7 +859,7 @@ function AntiDetail({ a, allFollowed, jumpToFollowed, openAction }) {
 // Sessions tab — uses recentSessions
 function ProjSessions() {
   return (
-    <div style={{ padding: '24px 48px' }}>
+    <div className="py-5 px-7" >
       <SectionHeading k="録" label="Sessions in this project"
                       right={<span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                         28 in last 7d
@@ -804,11 +868,9 @@ function ProjSessions() {
         {window.PROJECT_DATA.recentSessions.map(s => (
           <button key={s.id} style={{
             display: 'grid',
-            gridTemplateColumns: 'auto 120px 1fr auto auto auto',
-            gap: 16, alignItems: 'center',
-            padding: '12px 4px', textAlign: 'left',
+            gridTemplateColumns: 'auto 120px 1fr auto auto auto', alignItems: 'center', textAlign: 'left',
             borderBottom: 'var(--hairline)'
-          }}>
+}} className="gap-4 py-3 px-1" >
             <span style={{ width: 8, height: 8, borderRadius: '50%',
                             background: s.ftr ? 'var(--success)' : 'var(--warning)' }}/>
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
@@ -833,8 +895,9 @@ function ProjSessions() {
 function ProjSettings({ project }) {
   const S = window.PROJECT_DATA.settings;
   return (
-    <div style={{ padding: '24px 48px',
-                  display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, alignItems: 'start' }}>
+    <div style={{
+                  display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'start'
+}} className="py-5 px-7 gap-6" >
 
       {/* Compact identity strip — full width */}
       <div style={{ gridColumn: '1 / -1' }}>
@@ -847,9 +910,9 @@ function ProjSettings({ project }) {
 
       <SettingsCard title="Repos" action="+ add repo">
         {project.repos.map(r => (
-          <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto',
-                                    gap: 8, alignItems: 'baseline',
-                                    padding: '8px 0', borderBottom: 'var(--hairline)' }}>
+          <div key={r.id} style={{
+ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-2 py-2 px-0" >
             <div>
               <div className="mono" style={{ fontSize: 13 }}>{r.id}</div>
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{r.path}</div>
@@ -861,9 +924,9 @@ function ProjSettings({ project }) {
 
       <SettingsCard title="Links" action="+ add link">
         {S.links.map(l => (
-          <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '80px 1fr auto',
-                                    gap: 8, alignItems: 'baseline',
-                                    padding: '8px 0', borderBottom: 'var(--hairline)' }}>
+          <div key={l.id} style={{
+ display: 'grid', gridTemplateColumns: '80px 1fr auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-2 py-2 px-0" >
             <span className="mono" style={{ fontSize: 11, color: 'var(--accent)',
                           letterSpacing: '0.1em' }}>{l.kind}</span>
             <div>
@@ -877,8 +940,10 @@ function ProjSettings({ project }) {
 
       <SettingsCard title="Guidelines" action="+ add rule">
         {S.guidelines.map(g => (
-          <div key={g.id} style={{ padding: '8px 0', borderBottom: 'var(--hairline)',
-                                    fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+          <div key={g.id} style={{
+ borderBottom: 'var(--hairline)',
+                                    fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5
+}} className="py-2 px-0" >
             {g.rule}
           </div>
         ))}
@@ -886,10 +951,13 @@ function ProjSettings({ project }) {
 
       <SettingsCard title="Backlog" action="+ add task">
         {S.backlog.map(b => (
-          <div key={b.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8,
-                                    padding: '8px 0', borderBottom: 'var(--hairline)' }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%',
-                            background: 'var(--ink-4)', marginTop: 4 }}/>
+          <div key={b.id} style={{
+ display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-2 py-2 px-0" >
+            <span style={{
+ width: 6, height: 6, borderRadius: '50%',
+                            background: 'var(--ink-4)'
+}} className="mt-1" />
             <div style={{ flex: 1, fontSize: 13, color: 'var(--ink)' }}>{b.task}</div>
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{b.added}</span>
           </div>
@@ -898,9 +966,9 @@ function ProjSettings({ project }) {
 
       <SettingsCard title="Skills enabled">
         {S.skills.map(s => (
-          <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto',
-                                    gap: 8, alignItems: 'center',
-                                    padding: '8px 0', borderBottom: 'var(--hairline)' }}>
+          <div key={s.id} style={{
+ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', borderBottom: 'var(--hairline)'
+}} className="gap-2 py-2 px-0" >
             <span style={{ fontSize: 13, color: s.on ? 'var(--ink)' : 'var(--ink-3)' }}>
               {s.name}
             </span>
@@ -911,8 +979,9 @@ function ProjSettings({ project }) {
 
       <SettingsCard title="Excluded paths" action="+ add pattern">
         {S.excluded.map(p => (
-          <div key={p} className="mono" style={{ fontSize: 11, color: 'var(--ink-2)',
-                        padding: '4px 0', borderBottom: 'var(--hairline)' }}>{p}</div>
+          <div key={p} className="mono py-1 px-0" style={{
+ fontSize: 11, color: 'var(--ink-2)', borderBottom: 'var(--hairline)'
+}}>{p}</div>
         ))}
       </SettingsCard>
 
@@ -930,10 +999,10 @@ function ProjSettings({ project }) {
 function IdentityStrip({ project }) {
   const icon = project.icon || { kind: "kanji", value: project.kanji, bg: 'var(--paper-3)', fg: 'var(--ink)' };
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr auto',
-                   gap: 16, alignItems: 'center',
-                   padding: '16px 16px',
-                   background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 8 }}>
+    <div style={{
+ display: 'grid', gridTemplateColumns: '64px 1fr auto', alignItems: 'center',
+                   background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 8
+}} className="gap-4 py-4 px-4" >
       {/* icon slot — swappable */}
       <button title="Change icon"
               style={{ width: 64, height: 64, borderRadius: 10,
@@ -951,7 +1020,7 @@ function IdentityStrip({ project }) {
         </span>
       </button>
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
           <div className="display" style={{ fontSize: 22, fontWeight: 400, letterSpacing: '-0.01em' }}>
             {project.name}
           </div>
@@ -962,9 +1031,10 @@ function IdentityStrip({ project }) {
           {project.goal}
         </div>
       </div>
-      <button style={{ fontSize: 11, color: 'var(--ink-3)',
-                        padding: '4px 12px', border: 'var(--hairline)',
-                        borderRadius: 4, background: 'var(--paper)' }}>
+      <button style={{
+ fontSize: 11, color: 'var(--ink-3)', border: 'var(--hairline)',
+                        borderRadius: 4, background: 'var(--paper)'
+}} className="py-1 px-3" >
         edit
       </button>
     </div>
@@ -980,21 +1050,22 @@ function StackBlock({ project }) {
     { label: "services",   items: S.services   }
   ].filter(g => g.items.length > 0);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
       {groups.map(g => (
-        <div key={g.label} style={{ display: 'grid', gridTemplateColumns: '80px 1fr',
-                                     gap: 8, alignItems: 'baseline',
-                                     padding: '4px 0', borderBottom: 'var(--hairline)' }}>
+        <div key={g.label} style={{
+ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-2 py-1 px-0" >
           <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                         letterSpacing: '0.12em', textTransform: 'uppercase' }}>
             {g.label}
           </span>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
             {g.items.map(it => (
-              <span key={it} className="mono" style={{ fontSize: 11,
-                            padding: '4px 8px', background: 'var(--paper)',
+              <span key={it} className="mono py-1 px-2" style={{
+ fontSize: 11, background: 'var(--paper)',
                             border: 'var(--hairline)', borderRadius: 3,
-                            color: 'var(--ink-2)' }}>
+                            color: 'var(--ink-2)'
+}}>
                 {it}
               </span>
             ))}
@@ -1016,14 +1087,16 @@ function ProjSettingsV2({ project }) {
   const [active, setActive] = React.useState("identity");
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr',
-                   gap: 0, height: '100%',
-                   background: 'var(--paper)' }}>
+    <div style={{
+ display: 'grid', gridTemplateColumns: '280px 1fr', height: '100%',
+                   background: 'var(--paper)'
+}} className="gap-0" >
       {/* Left rail — sticky summary */}
-      <aside style={{ borderRight: 'var(--hairline)',
-                       padding: '32px 24px 24px',
+      <aside style={{
+ borderRight: 'var(--hairline)',
                        background: 'var(--paper-2)',
-                       display: 'flex', flexDirection: 'column', gap: 16 }}>
+                       display: 'flex', flexDirection: 'column'
+}} className="gap-4 pt-6 pb-5 px-5" >
         <button title="Change icon"
                 style={{ width: 80, height: 80, borderRadius: 12,
                           background: icon.bg, color: icon.fg,
@@ -1042,11 +1115,13 @@ function ProjSettingsV2({ project }) {
                         letterSpacing: '-0.01em', lineHeight: 1.15 }}>
             {project.name}
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-1" >
             {project.client}
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)', marginTop: 8,
-                         lineHeight: 1.5, fontStyle: 'italic' }}>
+          <div style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                         lineHeight: 1.5, fontStyle: 'italic'
+}} className="mt-2" >
             {project.goal}
           </div>
         </div>
@@ -1054,7 +1129,7 @@ function ProjSettingsV2({ project }) {
         <div style={{ height: 1, background: 'var(--edge)' }}/>
 
         {/* quick facts */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
           <QuickFact label="repos"   value={project.repos.length}/>
           <QuickFact label="skills"  value={S.skills.filter(s=>s.on).length + " of " + S.skills.length}/>
           <QuickFact label="links"   value={S.links.length}/>
@@ -1064,16 +1139,18 @@ function ProjSettingsV2({ project }) {
         <div style={{ height: 1, background: 'var(--edge)' }}/>
 
         {/* anchor nav */}
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 'auto' }}>
+        <nav style={{ display: 'flex', flexDirection: 'column', marginTop: 'auto' }} className="gap-1" >
           {sections.map(id => (
             <button key={id} onClick={() => setActive(id)}
-                    style={{ textAlign: 'left', padding: '8px 8px',
+                    style={{
+ textAlign: 'left',
                               fontSize: 13, color: active===id ? 'var(--ink)' : 'var(--ink-3)',
                               background: active===id ? 'var(--paper)' : 'transparent',
                               borderRadius: 4,
                               borderLeft: active===id ? '2px solid var(--accent)' : '2px solid transparent',
                               fontWeight: active===id ? 500 : 400,
-                              textTransform: 'capitalize' }}>
+                              textTransform: 'capitalize'
+}} className="py-2 px-2" >
               {id}
             </button>
           ))}
@@ -1081,7 +1158,7 @@ function ProjSettingsV2({ project }) {
       </aside>
 
       {/* Right — document */}
-      <div style={{ padding: '32px 48px', overflow: 'auto', maxHeight: '100%' }}>
+      <div style={{ overflow: 'auto', maxHeight: '100%' }} className="py-6 px-7" >
         <V2Block id="identity" title="Identity" desc="The human-readable face of this project.">
           <V2Field label="Name"   value={project.name}/>
           <V2Field label="Client" value={project.client}/>
@@ -1095,17 +1172,18 @@ function ProjSettingsV2({ project }) {
             ["Frameworks", stack.frameworks],
             ["Runtimes", stack.runtimes],
             ["Services", stack.services]].map(([label, items]) => (
-              <div key={label} style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto',
-                                          gap: 12, alignItems: 'center',
-                                          padding: '8px 0', borderBottom: 'var(--hairline)' }}>
+              <div key={label} style={{
+ display: 'grid', gridTemplateColumns: '120px 1fr auto', alignItems: 'center', borderBottom: 'var(--hairline)'
+}} className="gap-3 py-2 px-0" >
                 <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                               letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
                   {items.length > 0 ? items.map(it => (
-                    <span key={it} className="mono" style={{ fontSize: 11,
-                                  padding: '4px 8px', background: 'var(--paper-2)',
+                    <span key={it} className="mono py-1 px-2" style={{
+ fontSize: 11, background: 'var(--paper-2)',
                                   border: 'var(--hairline)', borderRadius: 3,
-                                  color: 'var(--ink-2)' }}>{it}</span>
+                                  color: 'var(--ink-2)'
+}}>{it}</span>
                   )) : <span style={{ fontSize: 11, color: 'var(--ink-4)', fontStyle: 'italic' }}>none</span>}
                 </div>
                 <button style={{ fontSize: 11, color: 'var(--accent)' }}>+ add</button>
@@ -1115,12 +1193,12 @@ function ProjSettingsV2({ project }) {
 
         <V2Block id="repos" title="Repos" desc="Folders sensei watches for this project.">
           {project.repos.map(r => (
-            <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto',
-                                      gap: 12, alignItems: 'baseline',
-                                      padding: '12px 0', borderBottom: 'var(--hairline)' }}>
+            <div key={r.id} style={{
+ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 py-3 px-0" >
               <div>
                 <div style={{ fontSize: 13, color: 'var(--ink)' }}>{r.id}</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+                <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
                   {r.path}
                 </div>
               </div>
@@ -1130,50 +1208,54 @@ function ProjSettingsV2({ project }) {
               <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>remove</button>
             </div>
           ))}
-          <button style={{ marginTop: 8, fontSize: 13, color: 'var(--accent)' }}>+ add repo</button>
+          <button style={{ fontSize: 13, color: 'var(--accent)' }} className="mt-2" >+ add repo</button>
         </V2Block>
 
         <V2Block id="links" title="Links" desc="Docs, dashboards, runbooks — anything sensei should remember.">
           {S.links.map(l => (
-            <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '90px 1fr auto',
-                                      gap: 12, alignItems: 'baseline',
-                                      padding: '12px 0', borderBottom: 'var(--hairline)' }}>
+            <div key={l.id} style={{
+ display: 'grid', gridTemplateColumns: '90px 1fr auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 py-3 px-0" >
               <span className="mono" style={{ fontSize: 11, color: 'var(--accent)',
                             letterSpacing: '0.1em' }}>{l.kind}</span>
               <div>
                 <div style={{ fontSize: 13 }}>{l.label}</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>{l.url}</div>
+                <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{l.url}</div>
               </div>
               <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>edit</button>
             </div>
           ))}
-          <button style={{ marginTop: 8, fontSize: 13, color: 'var(--accent)' }}>+ add link</button>
+          <button style={{ fontSize: 13, color: 'var(--accent)' }} className="mt-2" >+ add link</button>
         </V2Block>
 
         <V2Block id="guidelines" title="Guidelines"
                  desc="Rules assistants should follow when working on this project.">
           {S.guidelines.map(g => (
-            <div key={g.id} style={{ padding: '12px 0', borderBottom: 'var(--hairline)',
-                                      fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+            <div key={g.id} style={{
+ borderBottom: 'var(--hairline)',
+                                      fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55
+}} className="py-3 px-0" >
               {g.rule}
             </div>
           ))}
-          <button style={{ marginTop: 8, fontSize: 13, color: 'var(--accent)' }}>+ add rule</button>
+          <button style={{ fontSize: 13, color: 'var(--accent)' }} className="mt-2" >+ add rule</button>
         </V2Block>
 
         <V2Block id="backlog" title="Backlog"
                  desc="Things sensei should surface when relevant.">
           {S.backlog.map(b => (
-            <div key={b.id} style={{ display: 'grid', gridTemplateColumns: '12px 1fr auto',
-                                      gap: 12, alignItems: 'baseline',
-                                      padding: '12px 0', borderBottom: 'var(--hairline)' }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%',
-                              background: 'var(--ink-4)', marginTop: 4 }}/>
+            <div key={b.id} style={{
+ display: 'grid', gridTemplateColumns: '12px 1fr auto', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 py-3 px-0" >
+              <span style={{
+ width: 6, height: 6, borderRadius: '50%',
+                              background: 'var(--ink-4)'
+}} className="mt-1" />
               <div style={{ fontSize: 13, color: 'var(--ink)' }}>{b.task}</div>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{b.added}</span>
             </div>
           ))}
-          <button style={{ marginTop: 8, fontSize: 13, color: 'var(--accent)' }}>+ add task</button>
+          <button style={{ fontSize: 13, color: 'var(--accent)' }} className="mt-2" >+ add task</button>
         </V2Block>
       </div>
     </div>
@@ -1183,16 +1265,20 @@ function ProjSettingsV2({ project }) {
 function V2Block({ id, title, desc, children }) {
   return (
     <section id={id}
-             style={{ paddingBottom: 32, marginBottom: 32,
-                       borderBottom: '1px solid var(--edge)' }}>
-      <div style={{ marginBottom: 16 }}>
-        <h2 className="display" style={{ fontSize: 22, fontWeight: 400,
-                       letterSpacing: '-0.01em', margin: 0 }}>
+             style={{
+                       borderBottom: '1px solid var(--edge)'
+}} className="mb-6 pb-6" >
+      <div className="mb-4" >
+        <h2 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                       letterSpacing: '-0.01em'
+}}>
           {title}
         </h2>
         {desc && (
-          <p style={{ fontSize: 13, color: 'var(--ink-3)',
-                       margin: '4px 0 0', maxWidth: 560, lineHeight: 1.5 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-3)', maxWidth: 560, lineHeight: 1.5
+}} className="mt-1 mb-0" >
             {desc}
           </p>
         )}
@@ -1204,9 +1290,9 @@ function V2Block({ id, title, desc, children }) {
 
 function V2Field({ label, value, multiline, action }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto',
-                   gap: 12, alignItems: multiline ? 'flex-start' : 'baseline',
-                   padding: '12px 0', borderBottom: 'var(--hairline)' }}>
+    <div style={{
+ display: 'grid', gridTemplateColumns: '120px 1fr auto', alignItems: multiline ? 'flex-start' : 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 py-3 px-0" >
       <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                     letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>
       <div style={{ fontSize: 13, color: 'var(--ink)',
@@ -1234,12 +1320,17 @@ function QuickFact({ label, value }) {
 
 function SettingsCard({ title, action, children }) {
   return (
-    <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                  borderRadius: 8, padding: '16px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                    marginBottom: 8 }}>
-        <h3 className="display" style={{ fontSize: 13, fontWeight: 400, margin: 0,
-                                         letterSpacing: '0.01em' }}>{title}</h3>
+    <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                  borderRadius: 8
+}} className="py-4 px-4" >
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-2" >
+        <h3 className="display m-0" style={{
+ fontSize: 13, fontWeight: 400,
+                                         letterSpacing: '0.01em'
+}}>{title}</h3>
         {action && (
           <button style={{ fontSize: 11, color: 'var(--accent)' }}>{action}</button>
         )}
@@ -1250,28 +1341,32 @@ function SettingsCard({ title, action, children }) {
 }
 function Field({ label, value, multiline }) {
   return (
-    <div style={{ padding: '8px 0', borderBottom: 'var(--hairline)' }}>
+    <div style={{ borderBottom: 'var(--hairline)' }} className="py-2 px-0" >
       <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                      textTransform: 'uppercase' }}>{label}</div>
-      <div style={{ fontSize: 13, marginTop: 4,
+      <div style={{
+ fontSize: 13,
                      fontStyle: multiline ? 'italic' : 'normal',
-                     color: multiline ? 'var(--ink-2)' : 'var(--ink)' }}>{value}</div>
+                     color: multiline ? 'var(--ink-2)' : 'var(--ink)'
+}} className="mt-1" >{value}</div>
     </div>
   );
 }
 function ToggleChip({ on }) {
   return (
-    <span className="mono" style={{
-      fontSize: 11, padding: '4px 8px', borderRadius: 3,
+    <span className="mono py-1 px-2" style={{
+      fontSize: 11, borderRadius: 3,
       background: on ? 'var(--success-soft)' : 'var(--paper-3)',
       color: on ? 'var(--success)' : 'var(--ink-3)'
-    }}>{on ? "on" : "off"}</span>
+}}>{on ? "on" : "off"}</span>
   );
 }
 function ToggleRow({ label, on, value, tone }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8,
-                  alignItems: 'center', padding: '8px 0', borderBottom: 'var(--hairline)' }}>
+    <div style={{
+ display: 'grid', gridTemplateColumns: '1fr auto',
+                  alignItems: 'center', borderBottom: 'var(--hairline)'
+}} className="gap-2 py-2 px-0" >
       <span style={{ fontSize: 13, color: tone === "warn" ? 'var(--warning)' : 'var(--ink)' }}>
         {label}
       </span>
@@ -1305,20 +1400,24 @@ function ProjActionDrawer({ rec, mode, onClose }) {
            style={{ width: 520, background: 'var(--paper)',
                     boxShadow: '-12px 0 32px rgba(0,0,0,0.15)',
                     display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div style={{ padding: '24px 24px 12px', borderBottom: 'var(--hairline)',
-                      display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{
+ borderBottom: 'var(--hairline)',
+                      display: 'flex', alignItems: 'flex-start'
+}} className="gap-3 pt-5 pb-3 px-5" >
           <span className="kanji" style={{ fontSize: 28, color: 'var(--accent)', lineHeight: 1 }}>
             {rec.kanji || "送"}
           </span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase', marginBottom: 4 }}>
+            <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                           textTransform: 'uppercase'
+}} className="mb-1" >
               {mode === "send" ? "Send prompt" : "Customize prompt"}
             </div>
             <div className="display" style={{ fontSize: 17, fontWeight: 400, letterSpacing: '-0.005em' }}>
               {rec.promptTitle || rec.title}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }} className="mono">
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mono mt-1">
               cwd · {rec.cwd || "—"}
             </div>
           </div>
@@ -1326,19 +1425,22 @@ function ProjActionDrawer({ rec, mode, onClose }) {
         </div>
 
         {/* ACP picker */}
-        <div style={{ padding: '12px 24px', borderBottom: 'var(--hairline)' }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 8 }}>Send to</div>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        <div style={{ borderBottom: 'var(--hairline)' }} className="py-3 px-5" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-2" >Send to</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
             {acps.map(a => {
               const on = acp === a.id;
               return (
                 <button key={a.id} onClick={() => setAcp(a.id)}
-                        style={{ padding: '8px 12px',
+                        style={{
                                  borderRadius: 5, fontSize: 11, textAlign: 'left',
                                  background: on ? 'var(--ink)' : 'var(--paper-2)',
                                  color: on ? 'var(--paper)' : 'var(--ink)',
-                                 border: on ? 'none' : 'var(--hairline)' }}>
+                                 border: on ? 'none' : 'var(--hairline)'
+}} className="py-2 px-3" >
                   <div style={{ fontWeight: 500 }}>{a.label}</div>
                   <div className="mono" style={{ fontSize: 11, opacity: 0.6 }}>{a.sub}</div>
                 </button>
@@ -1348,9 +1450,11 @@ function ProjActionDrawer({ rec, mode, onClose }) {
         </div>
 
         {/* Prompt editor */}
-        <div style={{ flex: 1, padding: '12px 24px', overflow: 'auto' }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 8 }}>
+        <div style={{ flex: 1, overflow: 'auto' }} className="py-3 px-5" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-2" >
             {mode === "send" ? "Prompt · preview" : "Prompt · editable"}
           </div>
           <textarea
@@ -1358,15 +1462,15 @@ function ProjActionDrawer({ rec, mode, onClose }) {
             onChange={(e) => setText(e.target.value)}
             readOnly={mode === "send"}
             style={{
-              width: '100%', minHeight: 300, padding: 12,
+              width: '100%', minHeight: 300,
               fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: 1.6,
               background: 'var(--paper-2)', border: 'var(--hairline)',
               borderRadius: 6, color: 'var(--ink)', resize: 'vertical'
-            }}/>
+}} className="p-3" />
 
           {rec.evidence && (
-            <div style={{ marginTop: 12, fontSize: 11, color: 'var(--ink-3)' }}>
-              <div style={{ letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-3" >
+              <div style={{ letterSpacing: '0.14em', textTransform: 'uppercase' }} className="mb-1" >
                 Evidence attached
               </div>
               <div className="mono">{rec.evidence.join(" · ")}</div>
@@ -1375,19 +1479,25 @@ function ProjActionDrawer({ rec, mode, onClose }) {
         </div>
 
         {/* Footer actions */}
-        <div style={{ padding: '12px 24px', borderTop: 'var(--hairline)',
-                      display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{
+ borderTop: 'var(--hairline)',
+                      display: 'flex', alignItems: 'center'
+}} className="py-3 px-5 gap-2" >
           <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
             {text.length.toLocaleString()} chars · will launch in {acp}
           </span>
           <span style={{ flex: 1 }}/>
           <button onClick={onClose}
-                  style={{ padding: '8px 12px', fontSize: 13,
-                           color: 'var(--ink-2)', border: 'var(--ink-line)', borderRadius: 5 }}>
+                  style={{
+ fontSize: 13,
+                           color: 'var(--ink-2)', border: 'var(--ink-line)', borderRadius: 5
+}} className="py-2 px-3" >
             cancel
           </button>
-          <button style={{ padding: '8px 16px', fontSize: 13,
-                           background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5 }}>
+          <button style={{
+ fontSize: 13,
+                           background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5
+}} className="py-2 px-4" >
             {acp === "copy" ? "copy to clipboard" : `launch ${acp} →`}
           </button>
         </div>

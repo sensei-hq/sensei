@@ -14,25 +14,35 @@ function InferenceSettings() {
                   background: 'var(--paper)', overflow: 'hidden' }}>
 
       {/* Hero */}
-      <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 24 }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center'
+}} className="gap-5 pt-5 pb-4 px-6" >
         <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>智</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>Configure · Inference</div>
-          <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                            color: 'var(--ink)' }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >Configure · Inference</div>
+          <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                            color: 'var(--ink)'
+}}>
             Where sensei thinks.
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                       maxWidth: 720, lineHeight: 1.55 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                       maxWidth: 720, lineHeight: 1.55
+}} className="mt-1 mb-0" >
             Models live in a fallback chain — sensei tries each in order. For
             high-stakes calls, the panel deliberates: same question to N models,
             cross-critique, refine, converge.
           </p>
         </div>
-        <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)',
-                       display: 'flex', gap: 24 }}>
+        <div style={{
+ borderLeft: 'var(--hairline)',
+                       display: 'flex'
+}} className="gap-5 pl-5" >
           <IfMini n={I.local.filter(m => m.pulled).length} l="local"/>
           <IfMini n={I.providers.filter(p => p.configured).length} l="providers" mono/>
           <IfMini n={I.moe.panelists.filter(p => p.online).length} l="panel" mono accent/>
@@ -40,19 +50,20 @@ function InferenceSettings() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: 'var(--hairline)',
-                     padding: '0 32px', background: 'var(--paper-2)' }}>
+      <div style={{
+ display: 'flex', borderBottom: 'var(--hairline)', background: 'var(--paper-2)'
+}} className="px-6" >
         {[
           ["models",  "具", "Models"],
           ["routing", "路", "Routing & fallback"],
           ["moe",     "群", "MOE panel"],
         ].map(([id, kanji, label]) => (
           <button key={id} onClick={() => setTab(id)} style={{
-            padding: '12px 16px', display: 'inline-flex', alignItems: 'center', gap: 8,
+ display: 'inline-flex', alignItems: 'center',
             borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
             background: 'transparent', color: tab === id ? 'var(--ink)' : 'var(--ink-3)',
             fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-ui)', border: 'none'
-          }}>
+}} className="py-3 px-4 gap-2" >
             <span className="kanji" style={{ fontSize: 13,
               color: tab === id ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
             {label}
@@ -60,7 +71,7 @@ function InferenceSettings() {
         ))}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '24px 32px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }} className="py-5 px-6" >
         {tab === "models" && <IfModelsTab I={I}/>}
         {tab === "routing" && <IfRoutingTab I={I}/>}
         {tab === "moe" && <IfMoeTab I={I}/>}
@@ -71,28 +82,32 @@ function InferenceSettings() {
 
 function IfModelsTab({ I }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-5" >
       {/* Local */}
       <section>
-        <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 4px',
-                                          color: 'var(--ink)' }}>Local · Ollama</h3>
-        <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: '0 0 12px' }}>
+        <h3 className="display mt-0 mb-1" style={{
+ fontSize: 15, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>Local · Ollama</h3>
+        <p style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-0 mb-3" >
           Models pulled to disk. Run offline. Privacy mode forces these.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {I.local.map(m => (
             <div key={m.id} style={{
-              padding: '12px 12px', borderRadius: 5,
+ borderRadius: 5,
               background: m.pulled ? 'var(--paper-2)' : 'transparent',
               border: 'var(--hairline)',
-              display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12,
+              display: 'grid', gridTemplateColumns: '1fr auto auto',
               alignItems: 'center'
-            }}>
+}} className="py-3 px-3 gap-3" >
               <div>
                 <div className="mono" style={{ fontSize: 13,
                   color: m.pulled ? 'var(--ink)' : 'var(--ink-3)' }}>{m.id}</div>
-                <div style={{ display: 'flex', gap: 4, marginTop: 4,
-                               fontSize: 11, color: 'var(--ink-4)' }}>
+                <div style={{
+ display: 'flex',
+                               fontSize: 11, color: 'var(--ink-4)'
+}} className="gap-1 mt-1" >
                   <span className="mono">{m.size}</span>
                   {m.cap.reasoning > 0 && (
                     <span>· reasoning {dotsFor(m.cap.reasoning)}</span>
@@ -114,9 +129,11 @@ function IfModelsTab({ I }) {
               </span>
             </div>
           ))}
-          <button style={{ fontSize: 11, color: 'var(--ink-3)',
+          <button style={{
+ fontSize: 11, color: 'var(--ink-3)',
             background: 'transparent', border: '1px dashed var(--edge)',
-            borderRadius: 4, padding: '8px', cursor: 'pointer', marginTop: 4 }}>
+            borderRadius: 4, cursor: 'pointer'
+}} className="p-2 mt-1" >
             + pull model
           </button>
         </div>
@@ -124,21 +141,25 @@ function IfModelsTab({ I }) {
 
       {/* Providers */}
       <section>
-        <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 4px',
-                                          color: 'var(--ink)' }}>External providers</h3>
-        <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: '0 0 12px' }}>
+        <h3 className="display mt-0 mb-1" style={{
+ fontSize: 15, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>External providers</h3>
+        <p style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-0 mb-3" >
           API keys live in your OS keychain — never in project files.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {I.providers.map(p => (
             <div key={p.id} style={{
-              padding: '12px 12px', borderRadius: 5,
+ borderRadius: 5,
               background: p.configured ? 'var(--paper-2)' : 'transparent',
               border: 'var(--hairline)'
-            }}>
-              <div style={{ display: 'grid',
-                             gridTemplateColumns: '1fr auto auto', gap: 12,
-                             alignItems: 'center' }}>
+}} className="py-3 px-3" >
+              <div style={{
+ display: 'grid',
+                             gridTemplateColumns: '1fr auto auto',
+                             alignItems: 'center'
+}} className="gap-3" >
                 <span style={{ fontSize: 13, color: p.configured ? 'var(--ink)' : 'var(--ink-3)',
                                 fontWeight: 500 }}>{p.label}</span>
                 <span className="mono" style={{ fontSize: 11,
@@ -150,12 +171,13 @@ function IfModelsTab({ I }) {
                 </span>
               </div>
               {p.configured && (
-                <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap' }} className="mt-2 gap-1" >
                   {p.models.map(mm => (
-                    <span key={mm} className="mono" style={{ fontSize: 11,
-                      color: 'var(--ink-3)', background: 'var(--paper)',
-                      padding: '4px 8px', borderRadius: 3,
-                      border: 'var(--hairline)' }}>{mm}</span>
+                    <span key={mm} className="mono py-1 px-2" style={{
+ fontSize: 11,
+                      color: 'var(--ink-3)', background: 'var(--paper)', borderRadius: 3,
+                      border: 'var(--hairline)'
+}}>{mm}</span>
                   ))}
                 </div>
               )}
@@ -169,21 +191,25 @@ function IfModelsTab({ I }) {
 
 function IfRoutingTab({ I }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 32 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr' }} className="gap-6" >
       {/* Fallback chain */}
       <section>
-        <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 4px',
-                                          color: 'var(--ink)' }}>Fallback chain</h3>
-        <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: '0 0 16px' }}>
+        <h3 className="display mt-0 mb-1" style={{
+ fontSize: 15, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>Fallback chain</h3>
+        <p style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-0 mb-4" >
           Sensei tries A → B → C until one succeeds. Drag to reorder.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-0" >
           {I.fallbackChain.map((f, i) => (
-            <div key={f.id} style={{ position: 'relative',
-              display: 'grid', gridTemplateColumns: '40px 1fr auto', gap: 12,
-              alignItems: 'center', padding: '12px 16px',
+            <div key={f.id} style={{
+ position: 'relative',
+              display: 'grid', gridTemplateColumns: '40px 1fr auto',
+              alignItems: 'center',
               border: 'var(--hairline)', borderRadius: 6,
-              background: 'var(--paper-2)', marginBottom: 8 }}>
+              background: 'var(--paper-2)'
+}} className="gap-3 py-3 px-4 mb-2" >
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <span style={{ width: 24, height: 24, borderRadius: '50%',
                   background: i === 0 ? 'var(--accent)' : 'var(--edge)',
@@ -191,15 +217,16 @@ function IfRoutingTab({ I }) {
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 13, fontFamily: 'var(--font-mono)' }}>{i + 1}</span>
                 {i < I.fallbackChain.length - 1 && (
-                  <span style={{ width: 1, height: 18, background: 'var(--edge)',
-                                  marginTop: 4, marginBottom: -10 }}/>
+                  <span style={{
+ width: 1, height: 18, background: 'var(--edge)', marginBottom: -10
+}} className="mt-1" />
                 )}
               </div>
               <div>
                 <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>
                   {f.model}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
                   via <span className="mono">{f.provider}</span>  ·  {f.reason}
                 </div>
               </div>
@@ -208,9 +235,11 @@ function IfRoutingTab({ I }) {
                                 cursor: 'grab' }}>⋮⋮</button>
             </div>
           ))}
-          <button style={{ fontSize: 11, color: 'var(--ink-3)',
+          <button style={{
+ fontSize: 11, color: 'var(--ink-3)',
             background: 'transparent', border: '1px dashed var(--edge)',
-            borderRadius: 4, padding: '8px', cursor: 'pointer', marginTop: 4 }}>
+            borderRadius: 4, cursor: 'pointer'
+}} className="p-2 mt-1" >
             + add fallback
           </button>
         </div>
@@ -218,26 +247,28 @@ function IfRoutingTab({ I }) {
 
       {/* Per-task routing */}
       <section>
-        <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 4px',
-                                          color: 'var(--ink)' }}>Per-task routing</h3>
-        <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: '0 0 16px' }}>
+        <h3 className="display mt-0 mb-1" style={{
+ fontSize: 15, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>Per-task routing</h3>
+        <p style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-0 mb-4" >
           Override the fallback for specific task types.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {I.routing.map(r => (
             <div key={r.task} style={{
-              display: 'grid', gridTemplateColumns: '110px 1fr',
-              gap: 12, alignItems: 'start', padding: '12px 12px',
+              display: 'grid', gridTemplateColumns: '110px 1fr', alignItems: 'start',
               border: 'var(--hairline)', borderRadius: 5
-            }}>
-              <span style={{ fontSize: 11, color: 'var(--ink-3)',
-                              letterSpacing: '0.12em', textTransform: 'uppercase',
-                              paddingTop: 4 }}>{r.task}</span>
+}} className="gap-3 py-3 px-3" >
+              <span style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                              letterSpacing: '0.12em', textTransform: 'uppercase'
+}} className="pt-1" >{r.task}</span>
               <div>
                 <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>
                   {r.model}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
                   {r.reason}
                 </div>
               </div>
@@ -252,32 +283,37 @@ function IfRoutingTab({ I }) {
 function IfMoeTab({ I }) {
   const moe = I.moe;
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 32 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr' }} className="gap-6" >
       <section>
-        <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 4px',
-                                          color: 'var(--ink)' }}>Deliberation panel</h3>
-        <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: '0 0 16px',
-                     lineHeight: 1.55, maxWidth: 520 }}>
+        <h3 className="display mt-0 mb-1" style={{
+ fontSize: 15, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>Deliberation panel</h3>
+        <p style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                     lineHeight: 1.55, maxWidth: 520
+}} className="mt-0 mb-4" >
           Same input goes to every panelist. They draft independently, then
           cross-critique each other's answers, then refine. After {moe.cycles} cycles
           the verdicts are reconciled.
         </p>
 
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                         textTransform: 'uppercase', marginBottom: 8 }}>Panelists</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div className="mb-4" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
+                         textTransform: 'uppercase'
+}} className="mb-2" >Panelists</div>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             {moe.panelists.map(p => (
               <div key={p.id} style={{
-                display: 'grid', gridTemplateColumns: '8px 1fr auto auto',
-                gap: 12, alignItems: 'center', padding: '12px 12px',
+                display: 'grid', gridTemplateColumns: '8px 1fr auto auto', alignItems: 'center',
                 background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 5
-              }}>
+}} className="gap-3 py-3 px-3" >
                 <span style={{ width: 8, height: 8, borderRadius: '50%',
                   background: p.online ? 'var(--success)' : 'var(--ink-4)' }}/>
                 <div>
                   <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{p.label}</div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+                  <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
                     {p.role}
                   </div>
                 </div>
@@ -289,19 +325,25 @@ function IfMoeTab({ I }) {
                                   cursor: 'pointer' }}>×</button>
               </div>
             ))}
-            <button style={{ fontSize: 11, color: 'var(--ink-3)',
+            <button style={{
+ fontSize: 11, color: 'var(--ink-3)',
               background: 'transparent', border: '1px dashed var(--edge)',
-              borderRadius: 4, padding: '8px', cursor: 'pointer' }}>
+              borderRadius: 4, cursor: 'pointer'
+}} className="p-2" >
               + add panelist
             </button>
           </div>
         </div>
 
         {/* Cycles diagram */}
-        <div style={{ padding: '16px 16px', borderRadius: 5,
-                       background: 'var(--paper-2)', border: 'var(--hairline)' }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                         textTransform: 'uppercase', marginBottom: 12 }}>Strategy</div>
+        <div style={{
+ borderRadius: 5,
+                       background: 'var(--paper-2)', border: 'var(--hairline)'
+}} className="py-4 px-4" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
+                         textTransform: 'uppercase'
+}} className="mb-3" >Strategy</div>
           <div className="mono" style={{ fontSize: 13, color: 'var(--ink-2)',
                                           lineHeight: 1.7 }}>
             {moe.strategy.split(' → ').map((step, i, arr) => (
@@ -311,7 +353,7 @@ function IfMoeTab({ I }) {
               </React.Fragment>
             ))}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-2" >
             <span className="mono">{moe.cycles} cycles</span>  ·
             converges when {moe.panelists.length} panelists agree above 0.80.
           </div>
@@ -319,28 +361,38 @@ function IfMoeTab({ I }) {
       </section>
 
       <section>
-        <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 4px',
-                                          color: 'var(--ink)' }}>When to use it</h3>
-        <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: '0 0 12px' }}>
+        <h3 className="display mt-0 mb-1" style={{
+ fontSize: 15, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>When to use it</h3>
+        <p style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-0 mb-3" >
           MOE is expensive. Reserve it for high-stakes calls.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {moe.whenToUse.map(w => (
-            <div key={w} style={{ padding: '8px 12px',
+            <div key={w} style={{
               background: 'var(--paper-2)', border: 'var(--hairline)',
-              borderRadius: 5, fontSize: 13, color: 'var(--ink-2)' }}>{w}</div>
+              borderRadius: 5, fontSize: 13, color: 'var(--ink-2)'
+}} className="py-2 px-3" >{w}</div>
           ))}
         </div>
 
         {/* Last run */}
-        <div style={{ marginTop: 24, padding: '16px 16px', borderRadius: 6,
-                       border: 'var(--hairline)', background: 'var(--paper-2)' }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                         textTransform: 'uppercase', marginBottom: 8 }}>Most recent run</div>
-          <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5,
-                         marginBottom: 8 }}>"{moe.lastRun.topic}"</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 14px',
-                         fontSize: 11, marginBottom: 8 }}>
+        <div style={{
+ borderRadius: 6,
+                       border: 'var(--hairline)', background: 'var(--paper-2)'
+}} className="mt-5 py-4 px-4" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
+                         textTransform: 'uppercase'
+}} className="mb-2" >Most recent run</div>
+          <div style={{
+ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5
+}} className="mb-2" >"{moe.lastRun.topic}"</div>
+          <div style={{
+ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px',
+                         fontSize: 11
+}} className="mb-2" >
             <span style={{ color: 'var(--ink-4)' }}>Duration</span>
             <span className="mono" style={{ color: 'var(--ink-2)' }}>
               {(moe.lastRun.durationMs/1000).toFixed(1)}s
@@ -350,11 +402,14 @@ function IfMoeTab({ I }) {
               {(moe.lastRun.agreement*100).toFixed(0)}%
             </span>
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55,
-                         padding: '8px 12px', background: 'var(--paper)',
-                         borderRadius: 4, borderLeft: '2px solid var(--accent)' }}>
-            <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
-                            textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55, background: 'var(--paper)',
+                         borderRadius: 4, borderLeft: '2px solid var(--accent)'
+}} className="py-2 px-3" >
+            <span style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
+                            textTransform: 'uppercase', display: 'block'
+}} className="mb-1" >
               Verdict
             </span>
             {moe.lastRun.verdict}
@@ -376,8 +431,10 @@ function IfMini({ n, l, mono, accent }) {
         fontSize: mono ? 13 : 22, color: accent ? 'var(--accent)' : 'var(--ink)',
         fontWeight: 400, lineHeight: 1
       }}>{n}</div>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase', marginTop: 4 }}>{l}</div>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
+                     textTransform: 'uppercase'
+}} className="mt-1" >{l}</div>
     </div>
   );
 }

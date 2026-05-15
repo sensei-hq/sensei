@@ -268,13 +268,12 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
   const NavItem = ({ id, kanji, label, badge }) => (
     <button onClick={() => setSection(id)}
             style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-              alignItems: 'center', width: '100%',
-              padding: '8px 8px', borderRadius: 6, textAlign: 'left',
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
               background: section === id ? 'var(--paper-3)' : 'transparent',
               color: section === id ? 'var(--ink)' : 'var(--ink-2)',
               fontSize: 13
-            }}>
+}} className="gap-2 py-2 px-2" >
       <span className="kanji" style={{ fontSize: 13, width: 14,
                     color: section === id ? 'var(--accent)' : 'var(--ink-3)' }}>{kanji}</span>
       <span>{label}</span>
@@ -285,35 +284,42 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
   );
 
   return (
-    <aside style={{ borderRight: 'var(--hairline)', padding: '24px 12px',
+    <aside style={{
+ borderRight: 'var(--hairline)',
                      background: 'var(--paper-2)',
-                     display: 'flex', flexDirection: 'column', gap: 16,
-                     overflow: 'auto' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 4px' }}>
+                     display: 'flex', flexDirection: 'column',
+                     overflow: 'auto'
+}} className="py-5 px-3 gap-4" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 px-1" >
         <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先</span>
         <span className="display" style={{ fontSize: 17 }}>Sensei</span>
       </div>
 
       <div>
-        <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', padding: '0 8px 8px' }}>Observatory</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="pt-0 pb-2 px-2" >Observatory</div>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           <NavItem id="home"      kanji="家" label="Today"/>
           <NavItem id="projects"  kanji="場" label="Projects"   badge={D.projects.active.length + D.projects.recent.length}/>
           <NavItem id="sessions"  kanji="録" label="Sessions"   badge="41"/>
           <NavItem id="logs"      kanji="診" label="Logs"/>
           <NavItem id="insights"  kanji="今" label="Insights"   badge="6"/>
-          <div style={{ padding: '4px 8px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-                           alignItems: 'center', padding: '8px 0',
-                           color: 'var(--ink-2)', fontSize: 13 }}>
+          <div className="py-1 px-2" >
+            <div style={{
+ display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+                           alignItems: 'center',
+                           color: 'var(--ink-2)', fontSize: 13
+}} className="gap-2 py-2 px-0" >
               <span className="kanji" style={{ fontSize: 13, width: 14,
                             color: 'var(--ink-3)' }}>覚</span>
               <span>Memories</span>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>24</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4,
-                           paddingLeft: 24 }}>
+            <div style={{
+ display: 'flex', flexDirection: 'column'
+}} className="gap-1 pl-5" >
               <NavItem id="memories"      kanji="解" label="Anatomy"/>
               <NavItem id="share-review"  kanji="共" label="Sharing"      badge="4"/>
               <NavItem id="consolidation" kanji="結" label="Consolidate"  badge="3"/>
@@ -322,17 +328,20 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
           <NavItem id="upgrades"     kanji="贈" label="Upgrades"   badge="5"/>
           <NavItem id="impact"       kanji="果" label="Impact"     badge="3"/>
           <NavItem id="libraries" kanji="庫" label="Libraries"  badge="14"/>
-          <div style={{ padding: '4px 8px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-                           alignItems: 'center', padding: '8px 0',
-                           color: 'var(--ink-2)', fontSize: 13 }}>
+          <div className="py-1 px-2" >
+            <div style={{
+ display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+                           alignItems: 'center',
+                           color: 'var(--ink-2)', fontSize: 13
+}} className="gap-2 py-2 px-0" >
               <span className="kanji" style={{ fontSize: 13, width: 14,
                             color: 'var(--ink-3)' }}>具</span>
               <span>Instruments</span>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>7</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4,
-                           paddingLeft: 24 }}>
+            <div style={{
+ display: 'flex', flexDirection: 'column'
+}} className="gap-1 pl-5" >
               <NavItem id="instruments-playground" kanji="試" label="Playground"/>
               <NavItem id="instruments-replay"     kanji="録" label="Replay"/>
               <NavItem id="instruments-health"     kanji="健" label="Health"/>
@@ -344,27 +353,27 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
       </div>
 
       <div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                       padding: '0 8px 8px' }}>
+        <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="pt-0 pb-2 px-2" >
           <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                           textTransform: 'uppercase' }}>Active projects</span>
           <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
             {D.projects.active.length}
           </span>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {D.projects.active.map(p => {
             const on = section === "project" && activeProjectId === p.id;
             return (
               <button key={p.id} onClick={() => onOpenProject && onOpenProject(p.id)}
                       style={{
-                display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-                alignItems: 'center', width: '100%',
-                padding: '8px 8px', borderRadius: 6, textAlign: 'left',
+                display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+                alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
                 background: on ? 'var(--paper-3)' : 'transparent',
                 color: on ? 'var(--ink)' : 'var(--ink-2)', fontSize: 13,
                 cursor: 'pointer'
-              }}>
+}} className="gap-2 py-2 px-2" >
                 <span className="kanji" style={{ fontSize: 13, width: 14,
                             color: p.warn ? 'var(--warning)' : 'var(--accent)' }}>{p.kanji}</span>
                 <span>{p.name}</span>
@@ -379,21 +388,22 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
       </div>
 
       <div>
-        <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', padding: '0 8px 8px' }}>Dormant</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="pt-0 pb-2 px-2" >Dormant</div>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {D.projects.recent.map(p => {
             const on = section === "project" && activeProjectId === p.id;
             return (
               <button key={p.id} onClick={() => onOpenProject && onOpenProject(p.id)}
                       style={{
-                display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
-                alignItems: 'center', width: '100%',
-                padding: '8px 8px', borderRadius: 6, textAlign: 'left',
+                display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+                alignItems: 'center', width: '100%', borderRadius: 6, textAlign: 'left',
                 background: on ? 'var(--paper-3)' : 'transparent',
                 color: on ? 'var(--ink-2)' : 'var(--ink-3)', fontSize: 13,
                 opacity: on ? 1 : 0.82, cursor: 'pointer'
-              }}>
+}} className="gap-2 py-2 px-2" >
                 <span className="kanji" style={{ fontSize: 13, width: 14, opacity: 0.6 }}>{p.kanji}</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {p.name}
@@ -405,8 +415,8 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
             );
           })}
           <button style={{
-            padding: '4px 8px', fontSize: 11, color: 'var(--ink-4)', textAlign: 'left'
-          }}>
+ fontSize: 11, color: 'var(--ink-4)', textAlign: 'left'
+}} className="py-1 px-2" >
             + {D.projects.archived.length} archived
           </button>
         </div>
@@ -414,8 +424,10 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
 
       <div style={{ flex: 1 }}/>
 
-      <div style={{ padding: '8px 8px 0', borderTop: 'var(--hairline)',
-                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+      <div style={{
+ borderTop: 'var(--hairline)',
+                     fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6
+}} className="pt-2 pb-0 px-2" >
         <span className="mono">daemon · running</span><br/>
         <span style={{ color: 'var(--ink-4)' }}>last heartbeat 2s ago</span>
       </div>
@@ -426,17 +438,22 @@ function ObsSidebar({ section, setSection, activeProjectId, onOpenProject, mode,
 // ─── Home (today) ───────────────────────────────────────────
 function ObsHome({ mode, hero, insights, adopted, D }) {
   return (
-    <div style={{ padding: '32px 48px 48px', maxWidth: 1060, margin: '0 auto' }}>
+    <div style={{ maxWidth: 1060 }} className="pt-6 pb-7 px-7 mx-auto" >
       {/* Greeting strip */}
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                     marginBottom: 32 }}>
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-6" >
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             {D.today}
           </div>
-          <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: 0,
-                        letterSpacing: '-0.01em' }}>
+          <h1 className="display m-0" style={{
+ fontSize: 28, fontWeight: 400,
+                        letterSpacing: '-0.01em'
+}}>
             Good morning, {(() => {
               // Honor whatever name the user committed in the wizard's
               // Preferences stage. Falls back to the prototype's default
@@ -450,24 +467,30 @@ function ObsHome({ mode, hero, insights, adopted, D }) {
             })()}.
           </h1>
         </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 24,
-                       color: mode === "early" ? 'var(--ink-3)' : 'var(--ink-2)' }}>
+        <div style={{
+ display: 'flex', alignItems: 'flex-end',
+                       color: mode === "early" ? 'var(--ink-3)' : 'var(--ink-2)'
+}} className="gap-5" >
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
                            textTransform: 'uppercase' }}>
               First-Try-Right · 14d
             </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8,
-                           justifyContent: 'flex-end', marginTop: 4 }}>
+            <div style={{
+ display: 'flex', alignItems: 'baseline',
+                           justifyContent: 'flex-end'
+}} className="gap-2 mt-1" >
               <span className="display"
                      style={{ fontSize: 40, fontWeight: 400, lineHeight: 1,
                                color: mode === "early" ? 'var(--ink-3)' : 'var(--ink)' }}>
                 {Math.round(D.ftr.value * 100)}
               </span>
               <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>%</span>
-              <span className="mono"
-                     style={{ fontSize: 11, marginLeft: 4,
-                               color: D.ftr.delta >= 0 ? 'var(--success)' : 'var(--warning)' }}>
+              <span className="mono ml-1"
+                     style={{
+ fontSize: 11,
+                               color: D.ftr.delta >= 0 ? 'var(--success)' : 'var(--warning)'
+}}>
                 {D.ftr.delta >= 0 ? "↑" : "↓"} {Math.abs(Math.round(D.ftr.delta * 100))}%
               </span>
             </div>
@@ -481,8 +504,9 @@ function ObsHome({ mode, hero, insights, adopted, D }) {
       <ObsHero hero={hero} mode={mode}/>
 
       {/* Two columns: Insights + Adopted teachings */}
-      <div style={{ marginTop: 32, display: 'grid', gridTemplateColumns: '1.4fr 1fr',
-                     gap: 32 }}>
+      <div style={{
+ display: 'grid', gridTemplateColumns: '1.4fr 1fr'
+}} className="mt-6 gap-6" >
         <ObsInsights items={insights} mode={mode}/>
         <ObsAdopted items={adopted} mode={mode}/>
       </div>
@@ -497,10 +521,9 @@ function ObsHero({ hero, mode }) {
   return (
     <div style={{
       position: 'relative',
-      padding: '32px 32px 32px',
       background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 12,
-      display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 24
-    }}>
+      display: 'grid', gridTemplateColumns: 'auto 1fr'
+}} className="gap-5 py-6 px-6" >
       {/* Giant kanji — still the focal anchor */}
       <div style={{ position: 'relative' }}>
         <div className="kanji" style={{
@@ -518,30 +541,35 @@ function ObsHero({ hero, mode }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="display" style={{
+        <div className="display mb-3" style={{
           fontSize: 28, fontWeight: 400, letterSpacing: '-0.01em',
-          lineHeight: 1.2, marginBottom: 12, color: 'var(--ink)'
-        }}>
+          lineHeight: 1.2, color: 'var(--ink)'
+}}>
           {hero.koan}
         </div>
-        <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.65,
-                     margin: '0 0 16px', maxWidth: 620 }}>
+        <p style={{
+ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.65, maxWidth: 620
+}} className="mt-0 mb-4" >
           {hero.body}
         </p>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-                       marginTop: 'auto' }}>
+        <div style={{
+ display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+                       marginTop: 'auto'
+}} className="gap-4" >
           {hero.action && (
             <button style={{
-              padding: '8px 16px', fontSize: 13, background: 'var(--ink)',
+ fontSize: 13, background: 'var(--ink)',
               color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2,
-              display: 'inline-flex', alignItems: 'center', gap: 8
-            }}>
+              display: 'inline-flex', alignItems: 'center'
+}} className="py-2 px-4 gap-2" >
               {hero.action} →
             </button>
           )}
-          <div style={{ fontSize: 13, color: 'var(--accent)',
-                         display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{
+ fontSize: 13, color: 'var(--accent)',
+                         display: 'flex', alignItems: 'center'
+}} className="gap-1" >
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }}/>
             {hero.impact}
           </div>
@@ -558,52 +586,59 @@ function ObsHero({ hero, mode }) {
 function ObsInsights({ items, mode }) {
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                     marginBottom: 16 }}>
-        <h2 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0,
-                      letterSpacing: '-0.005em' }}>
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-4" >
+        <h2 className="display m-0" style={{
+ fontSize: 17, fontWeight: 400,
+                      letterSpacing: '-0.005em'
+}}>
           {mode === "early" ? "Early signals" : "Also worth noticing"}
         </h2>
         <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all insights →</button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
         {items.map((x, i) => {
           const toneColor =
             x.tone === "warn" ? 'var(--warning)' :
             x.tone === "good" ? 'var(--success)'  : 'var(--ink-3)';
           return (
             <button key={i} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
-              alignItems: 'start', padding: '12px 16px', textAlign: 'left',
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'start', textAlign: 'left',
               borderRadius: 6, borderBottom: 'var(--hairline)'
-            }}>
+}} className="gap-3 py-3 px-4" >
               <span className="kanji" style={{ fontSize: 22, color: toneColor,
                             width: 26 }}>{x.kanji}</span>
               <div>
-                <div style={{ fontSize: 11, letterSpacing: '0.14em',
-                               textTransform: 'uppercase', color: 'var(--ink-3)',
-                               marginBottom: 4 }}>
+                <div style={{
+ fontSize: 11, letterSpacing: '0.14em',
+                               textTransform: 'uppercase', color: 'var(--ink-3)'
+}} className="mb-1" >
                   {x.label}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
                   {x.text}
                 </div>
               </div>
-              <span className="mono" style={{ fontSize: 11, color: toneColor,
-                            padding: '4px 8px', borderRadius: 3,
+              <span className="mono py-1 px-2" style={{
+ fontSize: 11, color: toneColor, borderRadius: 3,
                             background: x.tone === "warn" ? 'var(--warning-soft)' :
                                          x.tone === "good" ? 'var(--success-soft)' :
                                          'var(--paper-3)',
-                            whiteSpace: 'nowrap' }}>
+                            whiteSpace: 'nowrap'
+}}>
                 {x.tag}
               </span>
             </button>
           );
         })}
         {items.length === 0 && (
-          <div style={{ padding: 16, fontSize: 13, color: 'var(--ink-4)', fontStyle: 'italic',
+          <div style={{
+ fontSize: 13, color: 'var(--ink-4)', fontStyle: 'italic',
                          textAlign: 'center',
-                         border: '1px dashed var(--edge)', borderRadius: 8 }}>
+                         border: '1px dashed var(--edge)', borderRadius: 8
+}} className="p-4" >
             Nothing yet. Keep working — sensei watches.
           </div>
         )}
@@ -615,22 +650,25 @@ function ObsInsights({ items, mode }) {
 function ObsAdopted({ items, mode }) {
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                     marginBottom: 16 }}>
-        <h2 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0,
-                      letterSpacing: '-0.005em' }}>
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-4" >
+        <h2 className="display m-0" style={{
+ fontSize: 17, fontWeight: 400,
+                      letterSpacing: '-0.005em'
+}}>
           System has learned
         </h2>
         <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all teachings →</button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
         {items.map((x, i) => (
           <div key={i} style={{
-            padding: '12px 12px', borderRadius: 6,
+ borderRadius: 6,
             background: 'var(--paper-2)', border: 'var(--hairline)',
             borderLeft: '2px solid var(--accent)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+}} className="py-3 px-3" >
+            <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 {x.when}
               </span>
@@ -642,17 +680,19 @@ function ObsAdopted({ items, mode }) {
             <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.45 }}>
               {x.what}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
               {x.source}
             </div>
           </div>
         ))}
         {items.length === 0 && (
-          <div style={{ padding: '24px 16px',
+          <div style={{
                          border: '1px dashed var(--edge)', borderRadius: 8,
-                         textAlign: 'center' }}>
-            <div className="kanji" style={{ fontSize: 28, color: 'var(--ink-4)',
-                          marginBottom: 8 }}>空</div>
+                         textAlign: 'center'
+}} className="py-5 px-4" >
+            <div className="kanji mb-2" style={{
+ fontSize: 28, color: 'var(--ink-4)'
+}}>空</div>
             <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5 }}>
               No teachings adopted yet.<br/>
               Sensei needs a few more sessions to be confident.
@@ -666,10 +706,11 @@ function ObsAdopted({ items, mode }) {
 
 function ObsRecentSessions({ sessions }) {
   return (
-    <div style={{ marginTop: 32 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                     marginBottom: 12 }}>
-        <h2 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0 }}>
+    <div className="mt-6" >
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-3" >
+        <h2 className="display m-0" style={{ fontSize: 17, fontWeight: 400 }}>
           Recent sessions
         </h2>
         <button style={{ fontSize: 11, color: 'var(--ink-3)' }}>all sessions →</button>
@@ -678,11 +719,9 @@ function ObsRecentSessions({ sessions }) {
         {sessions.map(s => (
           <button key={s.id} style={{
             display: 'grid',
-            gridTemplateColumns: 'auto 120px 1fr auto auto auto',
-            gap: 16, alignItems: 'center',
-            padding: '12px 4px', textAlign: 'left',
+            gridTemplateColumns: 'auto 120px 1fr auto auto auto', alignItems: 'center', textAlign: 'left',
             borderBottom: 'var(--hairline)'
-          }}>
+}} className="gap-4 py-3 px-1" >
             <span style={{ width: 8, height: 8, borderRadius: '50%',
                             background: s.ftr ? 'var(--success)' : 'var(--warning)' }}/>
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
@@ -720,16 +759,19 @@ function ObsPlaceholder({ section, onBack }) {
   };
   const L = labels[section];
   return (
-    <div style={{ padding: 64, textAlign: 'center', maxWidth: 520, margin: '0 auto' }}>
-      <div className="kanji" style={{ fontSize: 56, color: 'var(--accent)', opacity: 0.5,
-                                       marginBottom: 12 }}>{L.k}</div>
-      <h1 className="display" style={{ fontSize: 28, fontWeight: 300, margin: '0 0 8px' }}>
+    <div style={{ textAlign: 'center', maxWidth: 520 }} className="p-8 mx-auto" >
+      <div className="kanji mb-3" style={{
+ fontSize: 56, color: 'var(--accent)', opacity: 0.5
+}}>{L.k}</div>
+      <h1 className="display mt-0 mb-2" style={{ fontSize: 28, fontWeight: 300 }}>
         {L.t}
       </h1>
-      <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: '0 0 24px' }}>{L.s}</p>
+      <p style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mt-0 mb-5" >{L.s}</p>
       <button onClick={onBack}
-              style={{ fontSize: 13, padding: '8px 16px', border: 'var(--ink-line)',
-                        borderRadius: 5, color: 'var(--ink-2)' }}>
+              style={{
+ fontSize: 13, border: 'var(--ink-line)',
+                        borderRadius: 5, color: 'var(--ink-2)'
+}} className="py-2 px-4" >
         ← Today
       </button>
     </div>
@@ -762,15 +804,14 @@ function FirstEntryToast({ onDismiss, mode }) {
   return (
     <div style={{
       position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)',
-      background: 'var(--ink)', color: 'var(--paper)',
-      padding: '12px 24px 12px 16px', borderRadius: 10,
-      display: 'flex', alignItems: 'center', gap: 16,
+      background: 'var(--ink)', color: 'var(--paper)', borderRadius: 10,
+      display: 'flex', alignItems: 'center',
       boxShadow: '0 6px 24px rgba(0,0,0,0.2)', zIndex: 20,
       animation: 'toast-in .45s ease-out'
-    }}>
+}} className="gap-4 py-3 pl-4 pr-5" >
       <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>礼</span>
       <div>
-        <div className="display" style={{ fontSize: 13, fontWeight: 400, marginBottom: 4 }}>
+        <div className="display mb-1" style={{ fontSize: 13, fontWeight: 400 }}>
           The observatory is open.
         </div>
         <div style={{ fontSize: 11, color: 'var(--edge)', opacity: 0.75 }}>
@@ -779,16 +820,18 @@ function FirstEntryToast({ onDismiss, mode }) {
             : "Three projects · 81 sessions watched · 3 teachings adopted so far."}
         </div>
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 4,
+      <label style={{
+ display: 'flex', alignItems: 'center',
                        fontSize: 11, color: 'var(--edge)',
-                       opacity: 0.85, cursor: 'pointer', marginLeft: 8,
-                       paddingLeft: 12, borderLeft: '1px solid rgba(255,255,255,0.18)' }}>
+                       opacity: 0.85, cursor: 'pointer', borderLeft: '1px solid rgba(255,255,255,0.18)'
+}} className="gap-1 ml-2 pl-3" >
         <input type="checkbox" checked={hide} onChange={toggleHide}
                 style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}/>
         Don't show again
       </label>
-      <button onClick={onDismiss} style={{ fontSize: 11, color: 'var(--ink-4)',
-                padding: '4px 8px', marginLeft: 4 }}>dismiss</button>
+      <button onClick={onDismiss} style={{
+ fontSize: 11, color: 'var(--ink-4)'
+}} className="py-1 px-2 ml-1" >dismiss</button>
       <style>{`@keyframes toast-in {
         from { opacity: 0; transform: translate(-50%, -12px) }
         to { opacity: 1; transform: translateX(-50%) }
