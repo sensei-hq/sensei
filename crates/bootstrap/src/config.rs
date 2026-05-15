@@ -146,8 +146,9 @@ pub struct SenseiConfig {
 }
 
 impl SenseiConfig {
-    /// Build configuration. All values derived from the compile-time `dev` Cargo feature.
-    /// No runtime env var overrides — what you compiled is what you get.
+    /// Build configuration. All values derived from the compile-time `dev`
+    /// Cargo feature. No runtime env var overrides — what you compiled is
+    /// what you get.
     pub fn from_env() -> Self {
         let mode = SenseiMode::from_env();
         let daemon_port = DAEMON_PORT;
@@ -242,23 +243,22 @@ impl SenseiConfig {
     /// ACP config without overwriting each other.
     pub fn mcp_registry_key(&self) -> &'static str { MCP_REGISTRY_KEY }
 
-    /// Resolve the database schema source for dbd-core's `resolve_source()`.
+    /// Resolve the database schema source string for dbd-core's
+    /// `resolve_source()`.
     ///
-    /// Priority:
-    /// Schema source for database deployment.
-    /// Dev builds: local `database/` directory via `SENSEI_DB_SCHEMA_PATH` if set.
-    /// Prod builds: GitHub download at matching release tag.
-    pub fn db_schema_source(version: &str) -> String {
-        // Dev builds always look for a local schema path first.
-        // The Tauri sidecar sets SENSEI_DB_SCHEMA_PATH; standalone daemon does not.
+    /// - Prod build → the GitHub-tagged release matching `version`.
+    /// - Dev build  → the local `database/` directory in this workspace,
+    ///   resolved at compile time from this crate's `CARGO_MANIFEST_DIR`.
+    ///
+    /// Pure compile-time decision driven by the `dev` Cargo feature.
+    /// No env vars; the dev path is baked into the binary at build time.
+    pub fn db_schema_source(&self, version: &str) -> String {
         if COMPILE_DEV {
-            if let Ok(path) = std::env::var("SENSEI_DB_SCHEMA_PATH") {
-                if !path.is_empty() {
-                    return path;
-                }
-            }
+            // crates/bootstrap → ../../database in the workspace.
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../database").to_string()
+        } else {
+            format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
         }
-        format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
     }
 }
 

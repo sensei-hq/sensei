@@ -9,9 +9,9 @@
 //!
 //! All public functions return `Result<(), String>` so resolvers can convert
 //! errors to a `Remedy`. The `deploy` path uses dbd-core with the schema
-//! source produced by `SenseiConfig::db_schema_source(version)` — GitHub
-//! download at the matching release tag in prod, local directory via
-//! `SENSEI_DB_SCHEMA_PATH` in dev.
+//! source produced by `SenseiConfig::db_schema_source(version)` — the
+//! GitHub-tagged release in prod, the workspace `database/` directory in
+//! dev. Compile-time decision; no env vars involved.
 
 use dbd_core::adapter::postgres::PostgresAdapter;
 use dbd_core::{deploy::resolve_source, Design};
@@ -90,13 +90,13 @@ pub fn ensure_extensions(db_name: &str) -> Result<(), String> {
 ///
 /// `app_version` chooses the schema source: in prod builds the GitHub tag
 /// `v{app_version}` of `sensei-hq/sensei/database`; in dev builds the local
-/// path from `SENSEI_DB_SCHEMA_PATH` if set, otherwise GitHub.
+/// workspace `database/` directory (baked in at compile time).
 pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
     let cfg = SenseiConfig::from_env();
     let env = if cfg.is_dev() { "dev" } else { "prod" };
     // postgres:// with no user — psql / dbd use the OS user by default.
     let db_url = format!("postgres://localhost/{db_name}");
-    let source = SenseiConfig::db_schema_source(app_version);
+    let source = cfg.db_schema_source(app_version);
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -172,11 +172,18 @@ mod tests {
     }
 
     #[test]
-    fn deploy_source_parses_as_github_tagged_release() {
+    fn deploy_source_resolves_per_mode() {
+        let cfg = SenseiConfig::from_env();
         let version = "0.2.14";
-        let source = SenseiConfig::db_schema_source(version);
-        // In dev with SENSEI_DB_SCHEMA_PATH the source is a local path; skip then.
-        if std::env::var("SENSEI_DB_SCHEMA_PATH").is_err() {
+        let source = cfg.db_schema_source(version);
+        if cfg.is_dev() {
+            // Dev: workspace `database/` directory baked in at compile time.
+            assert!(
+                source.ends_with("/database"),
+                "dev schema source must end with /database, got: {source}",
+            );
+        } else {
+            // Prod: GitHub-tagged source.
             let parsed = dbd_core::github::parse_github_source(&source).unwrap();
             assert_eq!(parsed.owner, "sensei-hq");
             assert_eq!(parsed.repo, "sensei");
