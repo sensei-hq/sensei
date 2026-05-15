@@ -11,7 +11,7 @@
     import { goto } from "$app/navigation";
     import { onMount } from "svelte";
     import { hasTauri } from "$lib/bootstrap.js";
-    import { Eyebrow, Kanji } from "$lib/components";
+    import { Eyebrow, Kanji, StatusDot } from "$lib/components";
 
     type StepStatus = "pending" | "running" | "done" | "failed";
 
@@ -215,12 +215,7 @@
                             class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-surface-z2 transition-opacity duration"
                             class:opacity-50={s === "pending"}
                         >
-                            <span
-                                class="w-2 h-2 rounded-full shrink-0 transition-colors duration-slow"
-                                class:bg-success-z5={s === "done"}
-                                class:bg-primary-z5={s === "running" || s === "failed"}
-                                class:bg-surface-z4={s === "pending"}
-                            ></span>
+                            <StatusDot status={s === "done" ? "ok" : s === "running" ? "busy" : s === "failed" ? "fail" : "idle"} />
 
                             <div>
                                 <span class="text-sm text-surface-z9">{step.label}</span>
