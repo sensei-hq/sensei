@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Sparkline } from '@rokkit/chart';
+
   let { data } = $props();
 
   let holisticFtr = $derived(
@@ -23,21 +25,6 @@
     if (h < 17) return 'Good afternoon';
     return 'Good evening';
   });
-
-  // SVG sparkline from ftr_daily data
-  function sparklinePath(points: Array<{ ftr_rate: number }>, w: number, h: number): string {
-    if (points.length < 2) return '';
-    const vals = points.map(p => p.ftr_rate);
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const range = max - min || 0.01;
-    const step = w / (vals.length - 1);
-    return vals.map((v, i) => {
-      const x = i * step;
-      const y = h - (h - 2) * ((v - min) / range) - 1;
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(' ');
-  }
 </script>
 
 <div class="max-w-[860px] mx-auto px-12 py-10 pb-16">
@@ -69,19 +56,7 @@
           </div>
         </div>
         {#if data.ftrDaily.length >= 2}
-          {@const last = data.ftrDaily[data.ftrDaily.length - 1]}
-          {@const vals = data.ftrDaily.map(p => p.ftr_rate)}
-          {@const minV = Math.min(...vals)}
-          {@const rangeV = Math.max(...vals) - minV || 0.01}
-          <svg width="140" height="40" class="block overflow-visible" style="color: oklch(var(--color-primary-z5) / 1);">
-            <path d={sparklinePath(data.ftrDaily, 140, 40)} fill="none" stroke="currentColor" stroke-width="1.5" />
-            <circle
-              cx="140"
-              cy={40 - (40 - 2) * ((last.ftr_rate - minV) / rangeV) - 1}
-              r="2.5"
-              fill="currentColor"
-            />
-          </svg>
+          <Sparkline data={data.ftrDaily} field="ftr_rate" width={140} height={40} />
         {/if}
       </div>
     {/if}

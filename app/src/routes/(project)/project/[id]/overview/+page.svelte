@@ -1,24 +1,12 @@
 <script lang="ts">
+    import { Sparkline } from '@rokkit/chart';
+
     let { data } = $props();
     let ftr = $derived(Math.round((data.ftrMetrics?.ftr14d ?? 0) * 100));
     let ftrPrev = $derived(
         Math.round((data.ftrMetrics?.ftr14dPrev ?? 0) * 100),
     );
     let ftrDelta = $derived(ftr - ftrPrev);
-
-    function sparklinePath(points: Array<{ ftr_rate: number }>, w: number, h: number): string {
-        if (points.length < 2) return '';
-        const vals = points.map(p => p.ftr_rate);
-        const min = Math.min(...vals);
-        const max = Math.max(...vals);
-        const range = max - min || 0.01;
-        const step = w / (vals.length - 1);
-        return vals.map((v, i) => {
-            const x = i * step;
-            const y = h - (h - 2) * ((v - min) / range) - 1;
-            return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
-        }).join(' ');
-    }
 
     function signalStatus(value: number | null, threshold: number): 'pass' | 'warn' | 'fail' | 'unknown' {
         if (value == null) return 'unknown';
@@ -65,9 +53,7 @@
         </div>
         {#if data.ftrDaily.length >= 2}
             <div class="bg-surface-z2 rounded-lg p-4">
-                <svg width="120" height="32" class="block overflow-visible" style="color: oklch(var(--color-primary-z5) / 1);">
-                    <path d={sparklinePath(data.ftrDaily, 120, 32)} fill="none" stroke="currentColor" stroke-width="1.5" />
-                </svg>
+                <Sparkline data={data.ftrDaily} field="ftr_rate" width={120} height={32} />
                 <span class="text-2xs opacity-50 block mt-1">14d trend</span>
             </div>
         {/if}
