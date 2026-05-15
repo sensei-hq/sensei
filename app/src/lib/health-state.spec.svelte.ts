@@ -396,4 +396,50 @@ describe('HealthState — B4: apply() writes sessionStorage cache', () => {
   });
 });
 
+describe('HealthState — VITE_BYPASS_HEALTH bypass', () => {
+  let sessionStore: Map<string, string>;
+
+  beforeEach(() => {
+    sessionStore = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem:    (k: string) => sessionStore.get(k) ?? null,
+      setItem:    (k: string, v: string) => sessionStore.set(k, v),
+      removeItem: (k: string) => sessionStore.delete(k),
+    });
+    vi.stubEnv('VITE_BYPASS_HEALTH', 'true');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('constructor marks status as ok and writes the cache key when bypass is set', () => {
+    const transport = new MockTransport({ checkPayload: needsActionPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    expect(s.status).toBe('ok');
+    expect(sessionStore.get('sensei:health')).toBe('ready');
+    expect(transport.checkCalls).toHaveLength(0);
+  });
+
+  it('init() does not call transport.check() when bypass is set', async () => {
+    const transport = new MockTransport({ checkPayload: needsActionPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.checkCalls).toHaveLength(0);
+    expect(transport.resolveCalls).toHaveLength(0);
+    expect(s.status).toBe('ok');
+  });
+
+  it('verify() does not call transport.check() when bypass is set', async () => {
+    const transport = new MockTransport({ checkPayload: needsActionPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.verify();
+    expect(transport.checkCalls).toHaveLength(0);
+    expect(transport.resolveCalls).toHaveLength(0);
+    expect(s.status).toBe('ok');
+    expect(sessionStore.get('sensei:health')).toBe('ready');
+  });
+});
+
 export { okPayload, needsActionPayload, remedyFixture };

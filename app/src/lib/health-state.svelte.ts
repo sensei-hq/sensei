@@ -4,6 +4,9 @@ import type {
 } from './health-types.js';
 import { COMPONENT_ORDER } from './health-types.js';
 import { RealTransport, type HealthTransport } from './health-transport.js';
+import {
+  isHealthBypass, setHealthReady, clearHealthCache,
+} from './health-cache.js';
 
 /** Display labels for each ledger component. The Rust crate provides these in Phase 2/3 — here they live as cold-load defaults so the UI matches the mockup before any transport runs. */
 const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | null }> = {
@@ -30,6 +33,22 @@ export const emptyPayload: HealthPayload = {
   remedy: null,
 };
 
+/** Synthetic ok payload used by VITE_BYPASS_HEALTH mode — never hits Tauri/daemon. */
+function bypassOkPayload(): HealthPayload {
+  return {
+    version: '',
+    uptimeSeconds: 0,
+    platform: 'macos',
+    packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: null, detail: null },
+    components: COMPONENT_ORDER.map((id) => {
+      const d = COMPONENT_DEFAULTS[id];
+      return { id, label: d.label, note: d.note, status: 'ready', version: null, detail: null };
+    }),
+    status: 'ok',
+    remedy: null,
+  };
+}
+
 export class HealthState {
   status         = $state<HealthStatus>('checking');
   version        = $state<string>('');
@@ -42,6 +61,10 @@ export class HealthState {
   #transport: HealthTransport;
   #initPromise: Promise<void> | null = null;
   #verifyPromise: Promise<void> | null = null;
+  /** When true, neither transport.check() nor transport.resolve() is ever called.
+   *  Set from VITE_BYPASS_HEALTH=true at construction so HealthState is the sole
+   *  owner of the bypass — no other module reads the env var. */
+  readonly #bypass: boolean;
 
   get isOk():        boolean { return this.status === 'ok'; }
   get isBusy():      boolean { return this.status === 'checking' || this.status === 'resolving'; }
@@ -52,13 +75,16 @@ export class HealthState {
     transport: HealthTransport = new RealTransport(),
   ) {
     this.#transport = transport;
+    this.#bypass = isHealthBypass();
     this.apply(seed);
+    if (this.#bypass) this.apply(bypassOkPayload());
   }
 
   /** Force a fresh check. Clears the session cache. Same idempotency while in flight. */
   verify(): Promise<void> {
+    if (this.#bypass) return Promise.resolve();
     if (this.#verifyPromise) return this.#verifyPromise;
-    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('sensei:health');
+    clearHealthCache();
     this.#initPromise = null;
     this.#verifyPromise = this.#runCheckThenMaybeResolve().then(() => {
       this.#verifyPromise = null;
@@ -69,6 +95,7 @@ export class HealthState {
 
   /** Idempotent — runs the check once per app load. Concurrent callers share one in-flight promise. */
   async init(): Promise<void> {
+    if (this.#bypass) return;
     if (this.#initPromise) return this.#initPromise;
     this.#initPromise = this.#runCheckThenMaybeResolve();
     return this.#initPromise;
@@ -110,10 +137,8 @@ export class HealthState {
     this.remedy         = p.remedy;
     this.status         = p.status;
 
-    if (typeof sessionStorage !== 'undefined') {
-      if (p.status === 'ok') sessionStorage.setItem('sensei:health', 'ready');
-      else                   sessionStorage.removeItem('sensei:health');
-    }
+    if (p.status === 'ok') setHealthReady();
+    else                   clearHealthCache();
   }
 
   applyEvent(e: HealthEvent): void {

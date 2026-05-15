@@ -72,10 +72,10 @@
           goto('/logs');
         }).then(fn => unlistens.push(fn));
 
-        // Dev View-menu navigation — bypasses routing guards for testing.
-        // Sets health=ready in sessionStorage so the guard doesn't intercept.
+        // View-menu navigation — just navigates. The routing guard still
+        // applies; if health is not ready, reroute will intercept and send
+        // the user to /health (HealthState owns the cache, not this listener).
         listen<string>('dev-navigate', (e) => {
-          sessionStorage.setItem('sensei:health', 'ready');
           goto(e.payload, { replaceState: true });
         }).then(fn => unlistens.push(fn));
       });

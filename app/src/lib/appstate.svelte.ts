@@ -116,9 +116,7 @@ export class AppState {
     this.config = {};
     this.loaded = false;
 
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.removeItem('sensei:health');
-    }
+    // sensei:health is owned by HealthState — do not touch it here.
     if (typeof localStorage !== 'undefined') {
       const port = localStorage.getItem('sensei:port');
       localStorage.clear();
