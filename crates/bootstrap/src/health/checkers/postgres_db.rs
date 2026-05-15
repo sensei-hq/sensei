@@ -3,6 +3,7 @@
 
 use std::process::Command;
 use crate::health::checker::{Checker, CheckOutcome};
+use crate::health::process_util::{output_with_timeout, TimedOutcome, DEFAULT_CHECKER_TIMEOUT};
 
 pub struct PostgresDatabaseChecker {
     pub db_name: String,
@@ -11,26 +12,27 @@ pub struct PostgresDatabaseChecker {
 impl Checker for PostgresDatabaseChecker {
     fn check(&self) -> CheckOutcome {
         // 1) database exists?
-        let exists = Command::new("psql")
-            .args(["-tAc", &format!("SELECT 1 FROM pg_database WHERE datname='{}'", self.db_name)])
-            .output();
-        match exists {
-            Ok(o) if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "1" => {}
-            Ok(o) => return CheckOutcome::failed(format!(
+        let mut exists_cmd = Command::new("psql");
+        exists_cmd.args(["-tAc", &format!("SELECT 1 FROM pg_database WHERE datname='{}'", self.db_name)]);
+        match output_with_timeout(exists_cmd, DEFAULT_CHECKER_TIMEOUT) {
+            TimedOutcome::Done(o) if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "1" => {}
+            TimedOutcome::Done(o) => return CheckOutcome::failed(format!(
                 "database {} not found (psql exit {}): {}",
                 self.db_name, o.status, String::from_utf8_lossy(&o.stderr).trim()
             )),
-            Err(e) => return CheckOutcome::failed(format!("psql failed: {e}")),
+            TimedOutcome::TimedOut => return CheckOutcome::failed(format!(
+                "psql timed out probing database existence after {}s", DEFAULT_CHECKER_TIMEOUT.as_secs()
+            )),
+            TimedOutcome::Failed(e) => return CheckOutcome::failed(format!("psql failed: {e}")),
         }
         // 2) pgvector + sessions table present?
         let check_sql =
             "SELECT 1 FROM pg_extension WHERE extname='vector' UNION ALL \
              SELECT 1 FROM information_schema.tables WHERE table_name='sessions' AND table_schema='public'";
-        let probe = Command::new("psql")
-            .args(["-d", &self.db_name, "-tAc", check_sql])
-            .output();
-        match probe {
-            Ok(o) if o.status.success() => {
+        let mut probe_cmd = Command::new("psql");
+        probe_cmd.args(["-d", &self.db_name, "-tAc", check_sql]);
+        match output_with_timeout(probe_cmd, DEFAULT_CHECKER_TIMEOUT) {
+            TimedOutcome::Done(o) if o.status.success() => {
                 let count = String::from_utf8_lossy(&o.stdout).lines().count();
                 if count >= 2 {
                     CheckOutcome::ready_no_version()
@@ -40,10 +42,13 @@ impl Checker for PostgresDatabaseChecker {
                     )
                 }
             }
-            Ok(o) => CheckOutcome::failed(format!(
+            TimedOutcome::Done(o) => CheckOutcome::failed(format!(
                 "schema probe failed: {}", String::from_utf8_lossy(&o.stderr).trim()
             )),
-            Err(e) => CheckOutcome::failed(format!("psql: {e}")),
+            TimedOutcome::TimedOut => CheckOutcome::failed(format!(
+                "psql timed out on schema probe after {}s", DEFAULT_CHECKER_TIMEOUT.as_secs()
+            )),
+            TimedOutcome::Failed(e) => CheckOutcome::failed(format!("psql: {e}")),
         }
     }
 }
