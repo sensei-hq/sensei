@@ -25,10 +25,14 @@ impl Checker for PostgresDatabaseChecker {
             )),
             TimedOutcome::Failed(e) => return CheckOutcome::failed(format!("psql failed: {e}")),
         }
-        // 2) pgvector + sessions table present?
+        // 2) pgvector extension + sensei schema deployed.
+        // We probe for the `sensei` schema rather than a specific table —
+        // the schema is the stable "is deploy done" signal, and survives
+        // DDL reorganization (tables move between `sensei`/`activity`/
+        // `extensions` schemas as the model evolves).
         let check_sql =
             "SELECT 1 FROM pg_extension WHERE extname='vector' UNION ALL \
-             SELECT 1 FROM information_schema.tables WHERE table_name='sessions' AND table_schema='public'";
+             SELECT 1 FROM information_schema.schemata WHERE schema_name='sensei'";
         let mut probe_cmd = Command::new("psql");
         probe_cmd.args(["-d", &self.db_name, "-tAc", check_sql]);
         match output_with_timeout(probe_cmd, DEFAULT_CHECKER_TIMEOUT) {
@@ -38,7 +42,7 @@ impl Checker for PostgresDatabaseChecker {
                     CheckOutcome::ready_no_version()
                 } else {
                     CheckOutcome::failed(
-                        "database exists but pgvector or sessions table missing".to_string()
+                        "database exists but pgvector or sensei schema missing".to_string()
                     )
                 }
             }

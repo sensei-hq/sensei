@@ -128,6 +128,63 @@ pub(crate) fn brew_install_to_outcome(formula: &str, args: &[&str]) -> ResolveOu
     }
 }
 
+/// Run `brew services start <service>`. Returns `Ok(())` on success or if
+/// the service is already running. Anything else is surfaced as `Other` so
+/// the caller can build a sensible remedy.
+pub fn brew_services_start(service: &str) -> Result<(), BrewError> {
+    let brew = match which_binary("brew") {
+        Some(p) => p,
+        None    => return Err(BrewError::BrewNotFound),
+    };
+    let output = Command::new(brew)
+        .args(["services", "start", service])
+        .output()
+        .map_err(|e| BrewError::Other(format!("spawn failed: {e}")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // `brew services start` exits non-zero when the service is already
+    // running; that's a success for us.
+    if stderr.contains("already started") || stderr.contains("Service `") && stderr.contains("` already started") {
+        return Ok(());
+    }
+    Err(BrewError::Other(truncate_to_tail(&stderr, 500)))
+}
+
+pub(crate) fn brew_services_start_remedy(service: &str, stderr_tail: &str) -> Remedy {
+    Remedy {
+        message: format!(
+            "Couldn't start `{service}` automatically. Last brew output was:\n\n```\n{stderr_tail}\n```\n\nRun the script below to retry."
+        ),
+        script: format!("brew services start {service}"),
+        url:    None,
+    }
+}
+
+/// Install `formula` (with `args`) and then `brew services start service`.
+/// Used by postgres_install and ollama_install — both formulas are
+/// service-style and a "successful install but service not running" is the
+/// blocker we keep hitting.
+pub(crate) fn brew_install_and_start_to_outcome(
+    formula: &str,
+    args: &[&str],
+    service: &str,
+) -> ResolveOutcome {
+    match brew_install_to_outcome(formula, args) {
+        ResolveOutcome::Resolved => match brew_services_start(service) {
+            Ok(()) => ResolveOutcome::Resolved,
+            Err(BrewError::BrewNotFound) =>
+                ResolveOutcome::NeedsHumanAction(homebrew_install_remedy()),
+            Err(BrewError::Other(stderr)) =>
+                ResolveOutcome::NeedsHumanAction(brew_services_start_remedy(service, &stderr)),
+            Err(other) =>
+                ResolveOutcome::NeedsHumanAction(brew_services_start_remedy(service, &format!("{other:?}"))),
+        },
+        not_resolved => not_resolved,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
