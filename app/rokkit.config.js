@@ -17,6 +17,7 @@ export default {
    */
   skin: {
     surface: { light: "kami", dark: "sumi" },
+    paper: { light: "kami", dark: "sumi" }, // alias of surface — bg-paper-z0 = page, z1 = card, …
     ink: { light: "sumi", dark: "kami" },
     primary: "shu", // vermillion — the one accent (朱)
     secondary: "murasaki", // muted purple (紫)
