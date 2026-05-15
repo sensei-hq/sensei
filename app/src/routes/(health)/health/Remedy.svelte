@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Remedy } from '$lib/health-types.js';
+  import { Kanji } from '$lib/components';
 
   interface Props {
     remedy: Remedy;
@@ -11,7 +12,7 @@
 
 <section class="mt-4 border border-primary-z5/30 rounded-xl bg-surface-z1 overflow-hidden">
   <header class="flex items-center gap-2.5 px-4 py-3.5 border-b border-surface-z2">
-    <span class="kanji text-base text-primary-z5">手</span>
+    <Kanji char="手" />
     <div class="flex-1">
       <div class="text-sm text-surface-z9">Run this in your terminal</div>
       <div class="text-xs text-surface-z7 mt-0.5">{remedy.message}</div>

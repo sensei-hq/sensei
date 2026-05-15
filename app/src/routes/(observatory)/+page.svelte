@@ -1,5 +1,6 @@
 <script lang="ts">
   import { sparklinePath } from '$lib/sparkline';
+  import { Eyebrow, Kanji } from '$lib/components';
 
   let { data } = $props();
 
@@ -31,9 +32,7 @@
   <!-- Greeting + FTR header -->
   <div class="flex items-start justify-between mb-8">
     <div>
-      <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">
-        {new Date().toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}
-      </p>
+      <p class="m-0 mb-2"><Eyebrow>{new Date().toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}</Eyebrow></p>
       <h1 class="display text-3xl font-normal m-0 tracking-tight">
         {greeting()}.
       </h1>
@@ -42,9 +41,7 @@
     {#if hasData}
       <div class="flex items-end gap-5 text-right">
         <div>
-          <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1">
-            First-Try-Right · 14d
-          </p>
+          <p class="m-0 mb-1"><Eyebrow>First-Try-Right · 14d</Eyebrow></p>
           <div class="flex items-baseline gap-2 justify-end">
             <span class="display text-3xl font-normal">{holisticFtr}</span>
             <span class="text-xs text-surface-z6">%</span>
@@ -72,7 +69,7 @@
   {#if !hasData}
     <!-- Early / listening state -->
     <div class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
-      <span class="kanji text-4xl text-primary-z5 opacity-55 leading-none">観</span>
+      <Kanji char="観" size="4xl" tone="watermark" />
       <div>
         <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">Still listening.</p>
         <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[520px]">
@@ -90,9 +87,7 @@
     {#if data.topRecommendations.length > 0}
       {@const hero = data.topRecommendations[0]}
       <div class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
-        <span class="kanji text-4xl text-primary-z5 leading-none">
-          {hero.urgency === 'high' ? '聴' : hero.urgency === 'medium' ? '繰' : '探'}
-        </span>
+        <Kanji char={hero.urgency === 'high' ? '聴' : hero.urgency === 'medium' ? '繰' : '探'} size="4xl" />
         <div>
           <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">{hero.title}</p>
           <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[520px] mb-4">{hero.why}</p>
@@ -120,7 +115,7 @@
                 {rec.urgency === 'high' ? '繰' : '探'}
               </span>
               <div class="flex-1">
-                <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1">{rec.urgency}</p>
+                <p class="m-0 mb-1"><Eyebrow>{rec.urgency}</Eyebrow></p>
                 <p class="text-sm text-surface-z7 leading-snug m-0">{rec.title}</p>
               </div>
             </div>
@@ -148,7 +143,7 @@
           {/each}
         {:else}
           <div class="py-6 text-center border border-dashed border-surface-z3 rounded-lg">
-            <span class="kanji text-2xl text-surface-z5 block mb-2">空</span>
+            <span class="block mb-2"><Kanji char="空" size="2xl" tone="muted" /></span>
             <p class="text-xs text-surface-z6 leading-snug m-0">
               No teachings adopted yet.<br />
               Sensei needs a few more sessions.
