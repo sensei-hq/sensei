@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component } from '$lib/health-types.js';
   import { COMPONENT_ORDER } from '$lib/health-types.js';
+  import { Eyebrow } from '$lib/components';
 
   interface Props { components: Component[]; }
   let { components }: Props = $props();
@@ -35,7 +36,7 @@
 </script>
 
 <section class="mt-6">
-  <div class="text-xs tracking-wide uppercase text-surface-z6 mb-2.5">what this resolves</div>
+  <div class="mb-2.5"><Eyebrow>what this resolves</Eyebrow></div>
   <ul class="flex flex-col">
     {#each rows as c (c.id)}
       <li data-row={c.id}

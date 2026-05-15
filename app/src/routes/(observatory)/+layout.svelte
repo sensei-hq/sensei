@@ -4,6 +4,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { openProjectWindow } from "$lib/stores/windows.svelte.js";
+    import { Eyebrow } from "$lib/components";
 
     let { children } = $props();
 
@@ -142,11 +143,7 @@
                 </div>
             {:else}
                 <div class="flex flex-col gap-0.5">
-                    <p
-                        class="text-xs tracking-wide uppercase text-surface-z6 px-2.5 pb-2 m-0"
-                    >
-                        Observatory
-                    </p>
+                    <p class="px-2.5 pb-2 m-0"><Eyebrow>Observatory</Eyebrow></p>
                     <nav class="flex flex-col gap-px">
                         {#each NAV_ITEMS as item (item.href)}
                             {@render navItem(item, false)}
@@ -156,11 +153,7 @@
 
                 {#if projects.length > 0}
                     <div class="flex flex-col gap-0.5">
-                        <p
-                            class="text-xs tracking-wide uppercase text-surface-z6 px-2.5 pb-2 m-0"
-                        >
-                            Projects
-                        </p>
+                        <p class="px-2.5 pb-2 m-0"><Eyebrow>Projects</Eyebrow></p>
                         <nav class="flex flex-col gap-px">
                             {#each projects as proj (proj.id)}
                                 {@render projectItem(proj, false)}
