@@ -21,19 +21,19 @@ function ObsConsolidation() {
                   background: 'var(--paper)', overflow: 'hidden' }}>
 
       {/* Hero */}
-      <div style={{ padding: '22px 36px 18px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 22 }}>
-        <div className="kanji" style={{ fontSize: 42, color: 'var(--shu)', lineHeight: 1 }}>結</div>
+      <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center', gap: 24 }}>
+        <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>結</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                         textTransform: 'uppercase', marginBottom: 5 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase', marginBottom: 4 }}>
             Memories · consolidation
           </div>
           <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                            color: 'var(--sumi)' }}>
+                                            color: 'var(--ink)' }}>
             Three pairs of memories say nearly the same thing.
           </h1>
-          <p style={{ fontSize: 12, color: 'var(--sumi-2)', margin: '4px 0 0',
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
                        maxWidth: 720, lineHeight: 1.55 }}>
             Merging keeps the canonical statement, combines evidence, and
             archives the originals. The audit trail is preserved in
@@ -41,8 +41,8 @@ function ObsConsolidation() {
             is lost — only deduplicated.
           </p>
         </div>
-        <div style={{ paddingLeft: 22, borderLeft: 'var(--hairline)',
-                       display: 'flex', gap: 22 }}>
+        <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)',
+                       display: 'flex', gap: 24 }}>
           <UgMini n={items.length} l="proposals"/>
           <UgMini n={items.reduce((s,x)=>s+x.sources.length,0)} l="memories"/>
           <UgMini n={`-${items.reduce((s,x)=>s+x.sources.length-1,0)}`}
@@ -61,32 +61,32 @@ function ObsConsolidation() {
             return (
               <button key={p.id} onClick={() => setOpen(p.id)}
                       style={{ width: '100%', textAlign: 'left',
-                                padding: '14px 18px',
+                                padding: '12px 16px',
                                 background: open ? 'var(--paper-2)' : 'transparent',
-                                borderLeft: open ? '2px solid var(--shu)'
+                                borderLeft: open ? '2px solid var(--accent)'
                                                  : '2px solid transparent',
                                 cursor: 'pointer' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span className="kanji" style={{ fontSize: 13, color: 'var(--shu)' }}>結</span>
-                  <span style={{ fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--sumi-3)',
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>結</span>
+                  <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                                   textTransform: 'uppercase' }}>
                     {p.sources.length} → 1
                   </span>
                   <span style={{ flex: 1 }}/>
                   {d && (
-                    <span style={{ fontSize: 9.5, letterSpacing: '0.1em',
+                    <span style={{ fontSize: 11, letterSpacing: '0.1em',
                                     textTransform: 'uppercase',
-                                    color: d === "merged" ? 'var(--jade)' : 'var(--sumi-3)' }}>
+                                    color: d === "merged" ? 'var(--success)' : 'var(--ink-3)' }}>
                       {d}
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 12.5,
-                               color: open ? 'var(--sumi)' : 'var(--sumi-2)',
-                               lineHeight: 1.4, fontWeight: 500, marginBottom: 6 }}>
+                <div style={{ fontSize: 13,
+                               color: open ? 'var(--ink)' : 'var(--ink-2)',
+                               lineHeight: 1.4, fontWeight: 500, marginBottom: 4 }}>
                   {p.title}
                 </div>
-                <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)',
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
                               lineHeight: 1.5 }}>
                   {p.sourceIds.join(" + ")}
                 </div>
@@ -96,7 +96,7 @@ function ObsConsolidation() {
         </aside>
 
         {/* Detail */}
-        <main style={{ overflow: 'auto', padding: '24px 40px 36px' }}>
+        <main style={{ overflow: 'auto', padding: '24px 32px 32px' }}>
           {item && <ConsolidationDetail
                       p={item}
                       decision={decisions[item.id]}
@@ -111,19 +111,19 @@ function ConsolidationDetail({ p, decision, onDecide }) {
   return (
     <div style={{ maxWidth: 920 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12,
-                     fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+                     fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                      textTransform: 'uppercase', marginBottom: 12 }}>
         <span>Consolidation proposal</span>
         <Sep/>
         <span className="mono" style={{ letterSpacing: 0 }}>{p.id}</span>
       </div>
-      <h2 className="display" style={{ fontSize: 26, fontWeight: 300,
+      <h2 className="display" style={{ fontSize: 28, fontWeight: 300,
                                         lineHeight: 1.2, letterSpacing: '-0.015em',
-                                        margin: '0 0 10px', color: 'var(--sumi)' }}>
+                                        margin: '0 0 8px', color: 'var(--ink)' }}>
         {p.title}
       </h2>
-      <p style={{ fontSize: 13.5, color: 'var(--sumi-2)', lineHeight: 1.65,
-                   margin: '0 0 26px', maxWidth: 720 }}>{p.reason}</p>
+      <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65,
+                   margin: '0 0 24px', maxWidth: 720 }}>{p.reason}</p>
 
       {/* Sources column → Merged column visualization */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 24px 1fr',
@@ -131,11 +131,11 @@ function ConsolidationDetail({ p, decision, onDecide }) {
 
         {/* Sources */}
         <div>
-          <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                          textTransform: 'uppercase', marginBottom: 12 }}>
             Source memories ({p.sources.length})
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {p.sources.map(s => <MemorySnippet key={s.id} m={s} dim/>)}
           </div>
         </div>
@@ -144,21 +144,21 @@ function ConsolidationDetail({ p, decision, onDecide }) {
         <div style={{ display: 'flex', flexDirection: 'column',
                        alignItems: 'center', justifyContent: 'center',
                        padding: '0 4px' }}>
-          <div style={{ width: 1, flex: 1, background: 'var(--paper-edge)' }}/>
-          <span className="kanji" style={{ fontSize: 18, color: 'var(--shu)',
+          <div style={{ width: 1, flex: 1, background: 'var(--edge)' }}/>
+          <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)',
                         margin: '8px 0' }}>→</span>
-          <div style={{ width: 1, flex: 1, background: 'var(--paper-edge)' }}/>
+          <div style={{ width: 1, flex: 1, background: 'var(--edge)' }}/>
         </div>
 
         {/* Proposed merged */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center',
-                         marginBottom: 12, gap: 6 }}>
-            <span style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--shu)',
+                         marginBottom: 12, gap: 4 }}>
+            <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
                             textTransform: 'uppercase', fontWeight: 500 }}>
               Proposed merged memory
             </span>
-            <span className="kanji" style={{ fontSize: 12, color: 'var(--shu)' }}>新</span>
+            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>新</span>
           </div>
           <MergedMemory m={p.proposed}/>
         </div>
@@ -166,8 +166,8 @@ function ConsolidationDetail({ p, decision, onDecide }) {
 
       {/* Diff strip — what changes about evidence + strength */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-                     gap: 1, background: 'var(--paper-edge)',
-                     borderRadius: 6, overflow: 'hidden', marginBottom: 22 }}>
+                     gap: 4, background: 'var(--edge)',
+                     borderRadius: 6, overflow: 'hidden', marginBottom: 24 }}>
         <DiffStat label="Strength"
                   before={Math.max(...p.sources.map(s => s.strength))}
                   after={p.proposed.strength}
@@ -191,47 +191,47 @@ function ConsolidationDetail({ p, decision, onDecide }) {
       {!decision ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingTop: 4 }}>
           <button onClick={() => onDecide("merged")}
-                  style={{ padding: '9px 18px', fontSize: 13,
-                            background: 'var(--sumi)', color: 'var(--paper)',
+                  style={{ padding: '8px 16px', fontSize: 13,
+                            background: 'var(--ink)', color: 'var(--paper)',
                             border: 'none', borderRadius: 6, cursor: 'pointer',
                             display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <span className="kanji" style={{ fontSize: 13, color: 'var(--shu)' }}>結</span>
+            <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>結</span>
             Accept · merge & archive originals
           </button>
           <button onClick={() => onDecide("kept")}
-                  style={{ padding: '9px 16px', fontSize: 12.5,
-                            background: 'var(--paper-2)', color: 'var(--sumi)',
+                  style={{ padding: '8px 16px', fontSize: 13,
+                            background: 'var(--paper-2)', color: 'var(--ink)',
                             border: 'var(--hairline)', borderRadius: 6, cursor: 'pointer',
-                            display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-            <span className="kanji" style={{ fontSize: 12.5, color: 'var(--sumi-3)' }}>別</span>
+                            display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span className="kanji" style={{ fontSize: 13, color: 'var(--ink-3)' }}>別</span>
             Keep separate
           </button>
           <span style={{ flex: 1 }}/>
           <FlatBtn glyph="編" label="Edit before merging"/>
         </div>
       ) : (
-        <div style={{ padding: '14px 18px',
-                       background: decision === "merged" ? 'var(--jade-soft)'
+        <div style={{ padding: '12px 16px',
+                       background: decision === "merged" ? 'var(--success-soft)'
                                                           : 'var(--paper-2)',
                        border: 'var(--hairline)',
-                       borderLeft: `2px solid ${decision === "merged" ? 'var(--jade)' : 'var(--sumi-3)'}`,
+                       borderLeft: `2px solid ${decision === "merged" ? 'var(--success)' : 'var(--ink-3)'}`,
                        borderRadius: 6,
                        display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span className="kanji" style={{ fontSize: 16,
-                        color: decision === "merged" ? 'var(--jade)' : 'var(--sumi-3)' }}>
+          <span className="kanji" style={{ fontSize: 15,
+                        color: decision === "merged" ? 'var(--success)' : 'var(--ink-3)' }}>
             {decision === "merged" ? "結" : "別"}
           </span>
-          <div style={{ flex: 1, fontSize: 12.5, color: 'var(--sumi)' }}>
+          <div style={{ flex: 1, fontSize: 13, color: 'var(--ink)' }}>
             {decision === "merged"
-              ? <>Merged. <span className="mono" style={{ color: 'var(--sumi-3)' }}>
+              ? <>Merged. <span className="mono" style={{ color: 'var(--ink-3)' }}>
                     {p.sourceIds.join(", ")}
                   </span> archived to history.past_memories.</>
               : <>Kept separate. Sensei will not surface this proposal again
                   unless new evidence accumulates.</>}
           </div>
           <button onClick={() => onDecide(null)}
-                  style={{ fontSize: 11, color: 'var(--sumi-3)',
-                            padding: '4px 10px',
+                  style={{ fontSize: 11, color: 'var(--ink-3)',
+                            padding: '4px 8px',
                             background: 'transparent', border: 'var(--hairline)',
                             borderRadius: 4, cursor: 'pointer' }}>undo</button>
         </div>
@@ -243,26 +243,26 @@ function ConsolidationDetail({ p, decision, onDecide }) {
 function MemorySnippet({ m, dim }) {
   return (
     <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 5, padding: '12px 14px',
+                   borderRadius: 5, padding: '12px 12px',
                    opacity: dim ? 0.78 : 1 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>{m.id}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{m.id}</span>
         <span style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--shu)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
           str {m.strength}
         </span>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
           {m.evidence.length} ev
         </span>
         {m.violated > 0 && (
-          <span className="mono" style={{ fontSize: 10, color: 'var(--amber)' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--warning)' }}>
             {m.violated}× violated
           </span>
         )}
       </div>
-      <div style={{ fontSize: 12.5, color: 'var(--sumi)', lineHeight: 1.5,
-                     marginBottom: 5 }}>{m.what}</div>
-      <div style={{ fontSize: 11.5, color: 'var(--sumi-2)', lineHeight: 1.55,
+      <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5,
+                     marginBottom: 4 }}>{m.what}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55,
                      fontStyle: 'italic' }}>{m.because}</div>
     </div>
   );
@@ -271,30 +271,30 @@ function MemorySnippet({ m, dim }) {
 function MergedMemory({ m }) {
   return (
     <div style={{ background: 'var(--paper)',
-                   border: '1px solid var(--shu)',
-                   borderRadius: 5, padding: '12px 14px',
-                   boxShadow: '0 1px 0 var(--paper-edge)' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--shu)' }}>m-merged-pending</span>
+                   border: '1px solid var(--accent)',
+                   borderRadius: 5, padding: '12px 12px',
+                   boxShadow: '0 1px 0 var(--edge)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>m-merged-pending</span>
         <span style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--shu)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
           str {m.strength}
         </span>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
           {m.evidence.length} ev
         </span>
       </div>
-      <div style={{ fontSize: 12.5, color: 'var(--sumi)', lineHeight: 1.5,
-                     marginBottom: 5, fontWeight: 500 }}>{m.what}</div>
-      <div style={{ fontSize: 11.5, color: 'var(--sumi-2)', lineHeight: 1.55,
+      <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5,
+                     marginBottom: 4, fontWeight: 500 }}>{m.what}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55,
                      fontStyle: 'italic', marginBottom: 8 }}>{m.because}</div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap',
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap',
                      paddingTop: 8, borderTop: 'var(--hairline)' }}>
         <ScopeChip s={m.scope}/>
         {m.scope.filePatterns?.map(g => (
-          <span key={g} className="mono" style={{ fontSize: 9.5, padding: '2px 6px',
+          <span key={g} className="mono" style={{ fontSize: 11, padding: '4px 4px',
                        borderRadius: 3, background: 'var(--paper-2)',
-                       color: 'var(--sumi-3)' }}>{g}</span>
+                       color: 'var(--ink-3)' }}>{g}</span>
         ))}
       </div>
     </div>
@@ -308,10 +308,10 @@ function ScopeChip({ s }) {
     s.level === "project" ? `project · ${s.project}${s.modules ? ` · ${s.modules.join(",")}` : ""}` :
     s.level || "scoped";
   return (
-    <span className="mono" style={{ fontSize: 9.5, padding: '2px 7px',
+    <span className="mono" style={{ fontSize: 11, padding: '4px 8px',
                   borderRadius: 3,
                   background: 'var(--paper-2)',
-                  color: 'var(--sumi-2)',
+                  color: 'var(--ink-2)',
                   letterSpacing: 0 }}>
       {txt}
     </span>
@@ -320,18 +320,18 @@ function ScopeChip({ s }) {
 
 function DiffStat({ label, before, after, delta, same, positiveLow }) {
   const positive = same ? null : positiveLow ? delta < 0 : delta > 0;
-  const color = same ? 'var(--sumi-3)' :
-                positive ? 'var(--jade)' :
-                positive === false ? 'var(--shu)' : 'var(--sumi-3)';
+  const color = same ? 'var(--ink-3)' :
+                positive ? 'var(--success)' :
+                positive === false ? 'var(--accent)' : 'var(--ink-3)';
   return (
-    <div style={{ background: 'var(--paper-2)', padding: '12px 14px' }}>
-      <div style={{ fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--sumi-4)',
-                     textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+    <div style={{ background: 'var(--paper-2)', padding: '12px 12px' }}>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
+                     textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>{before}</span>
-        <span style={{ fontSize: 11, color: 'var(--sumi-4)' }}>→</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{before}</span>
+        <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>→</span>
         <span className="display" style={{ fontSize: 17, fontWeight: 400,
-                      color: 'var(--sumi)' }}>{after}</span>
+                      color: 'var(--ink)' }}>{after}</span>
         {!same && (
           <span className="mono" style={{ fontSize: 11, color, marginLeft: 'auto' }}>
             {delta > 0 ? "+" : ""}{delta}

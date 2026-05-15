@@ -43,18 +43,20 @@ function writeSenseiSettings(patch) {
 //   想 inference   · "thought / reasoning" — what models do
 //   任 assignments · "entrust / assign" roles to models
 //   入 done        · "enter" — the door at the end
+// Rail subs are written in the same voice as the page taglines —
+// short complete sentences, lowercase sensei, second-person, periods.
 const WIZ_STAGES = [
-  { id: "welcome",     n: "礼",  title: "Welcome",         sub: "先生 · a quiet observer of your work" },
-  { id: "preferences", n: "名",  title: "Preferences",     sub: "what to call you · how sensei behaves · sharing" },
-  { id: "acps",        n: "連",  title: "Assistants",      sub: "plugins · skills · commands · logging" },
-  { id: "folders",     n: "庵",  title: "Folders",         sub: "where does your work live" },
-  { id: "scan",        n: "観",  title: "Scan",            sub: "watching the worker" },
-  { id: "projects",    n: "組",  title: "Projects",        sub: "one or more repos each" },
-  { id: "libraries",   n: "書",  title: "Libraries",       sub: "what sensei should wrap" },
-  { id: "registry",    n: "器",  title: "Instruments",     sub: "recommended MCPs for your stack" },
-  { id: "inference",   n: "想",  title: "Inference",       sub: "providers · models" },
-  { id: "assignments", n: "任",  title: "Assignments",     sub: "which models handle which roles" },
-  { id: "done",        n: "入",  title: "Enter",           sub: "the observatory is ready" }
+  { id: "welcome",     n: "礼",  title: "Welcome",         sub: "A quiet observer. Nothing more." },
+  { id: "preferences", n: "名",  title: "Preferences",     sub: "A few small choices before you step in." },
+  { id: "acps",        n: "連",  title: "Assistants",      sub: "Connect the AI tools you already use." },
+  { id: "folders",     n: "庵",  title: "Folders",         sub: "Where your work lives." },
+  { id: "scan",        n: "観",  title: "Scan",            sub: "Workers recurse. Repos surface." },
+  { id: "projects",    n: "組",  title: "Projects",        sub: "Each project, one or more repos." },
+  { id: "libraries",   n: "書",  title: "Libraries",       sub: "What sensei should wrap." },
+  { id: "registry",    n: "器",  title: "Instruments",     sub: "Tools sensei can reach for." },
+  { id: "inference",   n: "想",  title: "Inference",       sub: "Local models, and a few clouds." },
+  { id: "assignments", n: "任",  title: "Assignments",     sub: "Which model handles which role." },
+  { id: "done",        n: "入",  title: "Enter",           sub: "The observatory is ready." }
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -127,7 +129,7 @@ function SetupWizard({ onDone, onExit }) {
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: 0 }}>
         <WizRail stages={WIZ_STAGES} stageIdx={stageIdx} setStageIdx={setStageIdx} onExit={onExit}/>
         <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ flex: 1, overflow: 'auto', padding: '44px 64px 32px' }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: '48px 64px 32px' }}>
             {stage.id === "welcome"    && <WizWelcome/>}
             {stage.id === "components" && <WizComponents state={state} upd={upd}/>}
             {stage.id === "acps"       && <WizAcps state={state} upd={upd}/>}
@@ -171,15 +173,15 @@ function ServicesStatus() {
   });
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ width: 7, height: 7, borderRadius: 4,
-                      background: anyBad ? 'var(--shu)' : 'var(--matcha)' }}/>
-      <div style={{ fontSize: 11, color: 'var(--sumi-2)', lineHeight: 1.4 }}>
+                      background: anyBad ? 'var(--accent)' : 'var(--success)' }}/>
+      <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.4 }}>
         <div style={{ letterSpacing: '0.1em', textTransform: 'uppercase',
-                       fontSize: 10, color: 'var(--sumi-3)' }}>
+                       fontSize: 11, color: 'var(--ink-3)' }}>
           Services
         </div>
-        <div style={{ marginTop: 2 }}>
+        <div style={{ marginTop: 4 }}>
           {anyBad ? "one or more down" : "all green"}
         </div>
       </div>
@@ -190,23 +192,23 @@ function ServicesStatus() {
 // ─── Left rail ───────────────────────────────────────────────
 function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
   return (
-    <aside style={{ borderRight: 'var(--hairline)', padding: '26px 22px',
+    <aside style={{ borderRight: 'var(--hairline)', padding: '24px 24px',
                     display: 'flex', flexDirection: 'column',
                     background: 'var(--paper-2)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 28 }}>
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>先生</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 24 }}>
+        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先生</span>
         <span className="display" style={{ fontSize: 17 }}>Sensei</span>
         <span style={{ flex: 1 }}/>
         <button onClick={onExit} title="Exit setup"
-                style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.1em' }}>
+                style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>
           ESC
         </button>
       </div>
 
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                    textTransform: 'uppercase', marginBottom: 14 }}>Setup</div>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                    textTransform: 'uppercase', marginBottom: 12 }}>Setup</div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {stages.map((s, i) => {
           const isCur = i === stageIdx;
           const isDone = i < stageIdx;
@@ -217,27 +219,27 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '24px 1fr 14px',
-                      gap: 10, alignItems: 'center',
+                      gap: 8, alignItems: 'center',
                       padding: isCur ? '10px 10px' : '7px 10px',
                       borderRadius: 6, textAlign: 'left',
                       background: isCur ? 'var(--paper)' : 'transparent',
                       border: isCur ? 'var(--hairline)' : '1px solid transparent',
-                      color: isCur ? 'var(--sumi)' : isDone ? 'var(--sumi-2)' : 'var(--sumi-4)',
+                      color: isCur ? 'var(--ink)' : isDone ? 'var(--ink-2)' : 'var(--ink-4)',
                       cursor: i > stageIdx ? 'default' : 'pointer',
                       transition: 'all .14s'
                     }}>
               {/* Always show the stage's kanji label so re-entering the
                   wizard reads as the same stepper, not a column of ✓s. */}
               <span className="kanji" style={{
-                fontSize: 14, textAlign: 'center',
-                color: isCur  ? 'var(--shu)'
-                     : isDone ? 'var(--sumi-2)'
-                              : 'var(--sumi-4)'
+                fontSize: 13, textAlign: 'center',
+                color: isCur  ? 'var(--accent)'
+                     : isDone ? 'var(--ink-2)'
+                              : 'var(--ink-4)'
               }}>{s.n}</span>
               <div style={{ overflow: 'hidden' }}>
                 <div style={{ fontSize: 13 }}>{s.title}</div>
                 {isCur && (
-                  <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 2 }}>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                     {s.sub}
                   </div>
                 )}
@@ -246,7 +248,7 @@ function WizRail({ stages, stageIdx, setStageIdx, onExit }) {
                   identity; tick is the status. */}
               <span style={{
                 fontSize: 11, textAlign: 'center', lineHeight: 1,
-                color: 'var(--jade)',
+                color: 'var(--success)',
                 opacity: isDone ? 1 : 0,
                 transition: 'opacity .14s'
               }}>✓</span>
@@ -279,13 +281,13 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, state }) {
   })();
 
   return (
-    <div style={{ borderTop: 'var(--hairline)', padding: '14px 64px',
-                  display: 'flex', alignItems: 'center', gap: 20,
+    <div style={{ borderTop: 'var(--hairline)', padding: '12px 64px',
+                  display: 'flex', alignItems: 'center', gap: 16,
                   background: 'var(--paper)' }}>
-      <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--sumi-3)',
+      <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-3)',
                     textTransform: 'uppercase' }}>
-        {String(stageIdx + 1).padStart(2, "0")} <span style={{ color: 'var(--sumi-4)' }}>/ {total}</span>
-        <span style={{ marginLeft: 12, color: 'var(--sumi-2)', textTransform: 'none',
+        {String(stageIdx + 1).padStart(2, "0")} <span style={{ color: 'var(--ink-4)' }}>/ {total}</span>
+        <span style={{ marginLeft: 12, color: 'var(--ink-2)', textTransform: 'none',
                        letterSpacing: 0, fontSize: 13 }}>{stage.title}</span>
       </div>
 
@@ -294,30 +296,30 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, state }) {
         {Array.from({ length: total }).map((_, i) => (
           <span key={i} style={{
             flex: 1, height: 2, borderRadius: 1,
-            background: i <= stageIdx ? 'var(--sumi)' : 'var(--paper-edge)',
+            background: i <= stageIdx ? 'var(--ink)' : 'var(--edge)',
             transition: 'background .2s'
           }}/>
         ))}
       </div>
 
       <button onClick={back} disabled={isFirst}
-              style={{ fontSize: 12, color: isFirst ? 'var(--sumi-4)' : 'var(--sumi-2)',
-                       padding: '8px 14px' }}>
+              style={{ fontSize: 13, color: isFirst ? 'var(--ink-4)' : 'var(--ink-2)',
+                       padding: '8px 12px' }}>
         ← Back
       </button>
 
       {isLast ? (
         <button onClick={onDone}
-                style={{ fontSize: 13, background: 'var(--sumi)', color: 'var(--paper)',
-                         padding: '10px 22px', borderRadius: 6, letterSpacing: 0.2 }}>
+                style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
+                         padding: '8px 24px', borderRadius: 6, letterSpacing: 0.2 }}>
           Enter observatory →
         </button>
       ) : (
         <button onClick={next} disabled={!canAdvance}
                 style={{ fontSize: 13,
-                         background: canAdvance ? 'var(--sumi)' : 'var(--paper-edge)',
-                         color: canAdvance ? 'var(--paper)' : 'var(--sumi-3)',
-                         padding: '10px 22px', borderRadius: 6, letterSpacing: 0.2 }}>
+                         background: canAdvance ? 'var(--ink)' : 'var(--edge)',
+                         color: canAdvance ? 'var(--paper)' : 'var(--ink-3)',
+                         padding: '8px 24px', borderRadius: 6, letterSpacing: 0.2 }}>
           Continue →
         </button>
       )}
@@ -329,37 +331,37 @@ function WizBottom({ stage, stageIdx, total, back, next, onDone, state }) {
 function WizWelcome() {
   return (
     <div style={{ maxWidth: 680, margin: '10px auto 0' }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                     textTransform: 'uppercase', marginBottom: 8 }}>礼 · Welcome</div>
-      <h1 className="display" style={{ fontSize: 54, fontWeight: 300, lineHeight: 1.08,
+      <h1 className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 1.08,
                     margin: '0 0 32px', letterSpacing: '-0.02em' }}>
         A teacher does not<br/>
-        <span style={{ color: 'var(--shu)' }}>write the code.</span>
+        <span style={{ color: 'var(--accent)' }}>write the code.</span>
       </h1>
 
-      <p style={{ fontSize: 16, color: 'var(--sumi-2)', lineHeight: 1.7, maxWidth: 560,
-                   margin: '0 0 28px' }}>
+      <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.7, maxWidth: 560,
+                   margin: '0 0 24px' }}>
         Sensei watches how you and your AI assistants work together — the sessions that
         completed cleanly, the ones that didn't, and the patterns underneath both.
       </p>
 
-      <p style={{ fontSize: 14, color: 'var(--sumi-3)', lineHeight: 1.7, maxWidth: 560,
-                   margin: '0 0 44px' }}>
+      <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7, maxWidth: 560,
+                   margin: '0 0 48px' }}>
         The next few minutes: install the local components, point to your folders, confirm
         what was found. Nothing leaves your machine.
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 18,
-                     padding: '22px 0', borderTop: 'var(--hairline)', borderBottom: 'var(--hairline)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16,
+                     padding: '24px 0', borderTop: 'var(--hairline)', borderBottom: 'var(--hairline)' }}>
         {[
           { k: "観", t: "Observe", s: "FTR · turns · corrections" },
           { k: "師", t: "Teach",   s: "patterns · rules · skills" },
           { k: "静", t: "Local",   s: "on your machine" }
         ].map(item => (
           <div key={item.k}>
-            <div className="kanji" style={{ fontSize: 26, color: 'var(--shu)', marginBottom: 8 }}>{item.k}</div>
-            <div className="display" style={{ fontSize: 20 }}>{item.t}</div>
-            <div style={{ fontSize: 12, color: 'var(--sumi-3)', marginTop: 3 }}>{item.s}</div>
+            <div className="kanji" style={{ fontSize: 28, color: 'var(--accent)', marginBottom: 8 }}>{item.k}</div>
+            <div className="display" style={{ fontSize: 22 }}>{item.t}</div>
+            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>{item.s}</div>
           </div>
         ))}
       </div>
@@ -402,10 +404,10 @@ function WizComponents({ state, upd }) {
                  tagline={overallReady ? "Everything is in place." : "Detecting, installing, starting. No input needed."}/>
 
       {/* Variant toggle kept only as a subtle demo aid */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22 }}>
-        <span style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                        color: 'var(--sumi-4)' }}>demo · starting state</span>
-        <div style={{ display: 'flex', gap: 0, background: 'var(--paper-2)', padding: 2,
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
+        <span style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                        color: 'var(--ink-4)' }}>demo · starting state</span>
+        <div style={{ display: 'flex', gap: 0, background: 'var(--paper-2)', padding: 4,
                        borderRadius: 5, border: 'var(--hairline)' }}>
           {D.componentsVariants.map(v => (
             <button key={v.id}
@@ -415,9 +417,9 @@ function WizComponents({ state, upd }) {
                       setPhases(nv.components.reduce((a, c) =>
                         (a[c.id] = c.status === "installed" ? "ready" : "detecting", a), {}));
                     }}
-                    style={{ padding: '5px 10px', fontSize: 10.5, borderRadius: 3,
+                    style={{ padding: '4px 8px', fontSize: 11, borderRadius: 3,
                              background: state.components.variant === v.id ? 'var(--paper)' : 'transparent',
-                             color: state.components.variant === v.id ? 'var(--sumi-2)' : 'var(--sumi-3)',
+                             color: state.components.variant === v.id ? 'var(--ink-2)' : 'var(--ink-3)',
                              border: 'none' }}>
               {v.label}
             </button>
@@ -425,7 +427,7 @@ function WizComponents({ state, upd }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {variant.components.map(c => {
           const phase = phases[c.id] || "detecting";
           const isBusy = phase === "installing" || phase === "starting";
@@ -434,32 +436,32 @@ function WizComponents({ state, upd }) {
             phase === "installing" ? "installing · 12.4 MB" :
             phase === "starting"   ? "starting…" : `${c.version || "0.9.3"} · ready`;
           const dotColor =
-            phase === "ready" ? 'var(--jade)' : 'var(--shu)';
+            phase === "ready" ? 'var(--success)' : 'var(--accent)';
 
           return (
             <div key={c.id} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 18,
-              padding: '16px 20px', border: 'var(--hairline)', borderRadius: 8,
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 16,
+              padding: '16px 16px', border: 'var(--hairline)', borderRadius: 8,
               background: 'var(--paper-2)', alignItems: 'center',
               transition: 'all .3s'
             }}>
               <div style={{ width: 36, height: 36, borderRadius: 6,
                              background: 'var(--paper)', border: 'var(--hairline)',
                              display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span className="mono" style={{ fontSize: 13, color: 'var(--sumi-2)' }}>
+                <span className="mono" style={{ fontSize: 13, color: 'var(--ink-2)' }}>
                   {c.id === "cli" ? "$" : c.id === "mcp" ? "⟷" : "◇"}
                 </span>
               </div>
               <div>
-                <div style={{ fontSize: 14 }}>{c.name}</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)', marginTop: 2 }}>
+                <div style={{ fontSize: 13 }}>{c.name}</div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                   {statusLabel}
                 </div>
                 {isBusy && (
-                  <div style={{ height: 2, background: 'var(--paper-edge)', borderRadius: 1,
+                  <div style={{ height: 2, background: 'var(--edge)', borderRadius: 1,
                                  marginTop: 8, overflow: 'hidden' }}>
                     <div style={{
-                      height: '100%', width: '40%', background: 'var(--shu)',
+                      height: '100%', width: '40%', background: 'var(--accent)',
                       animation: 'cSlide 1.2s ease-in-out infinite'
                     }}/>
                   </div>
@@ -472,7 +474,7 @@ function WizComponents({ state, upd }) {
                   animation: phase !== "ready" ? "cPulse 1.2s ease-in-out infinite" : 'none'
                 }}/>
                 <span className="mono" style={{ fontSize: 11,
-                               color: phase === "ready" ? 'var(--jade)' : 'var(--sumi-2)',
+                               color: phase === "ready" ? 'var(--success)' : 'var(--ink-2)',
                                letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                   {phase === "ready" ? "ready" : phase}
                 </span>
@@ -486,7 +488,7 @@ function WizComponents({ state, upd }) {
         `}</style>
       </div>
 
-      <p style={{ fontSize: 12, color: 'var(--sumi-3)', marginTop: 20, lineHeight: 1.7 }}>
+      <p style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 16, lineHeight: 1.7 }}>
         Nothing leaves <span className="mono">localhost:9823</span>.
       </p>
     </div>
@@ -495,10 +497,10 @@ function WizComponents({ state, upd }) {
 
 function StatusDot({ status }) {
   const map = {
-    installed: { c: 'var(--jade)',  l: "Ready" },
-    missing:   { c: 'var(--sumi-4)', l: "Missing" },
-    stopped:   { c: 'var(--amber)', l: "Stopped" },
-    working:   { c: 'var(--shu)',   l: "Working" }
+    installed: { c: 'var(--success)',  l: "Ready" },
+    missing:   { c: 'var(--ink-4)', l: "Missing" },
+    stopped:   { c: 'var(--warning)', l: "Stopped" },
+    working:   { c: 'var(--accent)',   l: "Working" }
   };
   const m = map[status] || map.missing;
   return (
@@ -508,13 +510,17 @@ function StatusDot({ status }) {
         boxShadow: status === "working" ? `0 0 0 4px ${m.c}22` : 'none',
         animation: status === "working" ? "pulse 1.2s ease-in-out infinite" : 'none'
       }}/>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-2)' }}>{m.l}</span>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{m.l}</span>
       <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }`}</style>
     </div>
   );
 }
 
 // ─── 3 ACPs ──────────────────────────────────────────────────
+// Grouped by vendor family. A family card shows once even if it has
+// multiple products (e.g. Claude Code + Claude Desktop). Toggling the
+// card connects every found product in that family at once. Each
+// product surfaces as a small chip with its own path on hover.
 function WizAcps({ state, upd }) {
   const D = window.SENSEI_SETUP;
   return (
@@ -522,34 +528,81 @@ function WizAcps({ state, upd }) {
       <WizHeader n="連" title="Assistants" tagline="Registers plugins, skills, commands, agents, logging and metrics."/>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        {D.acps.map(a => {
-          const on = state.acps[a.id];
+        {D.acps.map(family => {
+          const on = state.acps[family.id];
+          const foundProducts = family.products.filter(p => p.found);
+          const hasMultiple = family.products.length > 1;
           return (
-            <button key={a.id}
-                    disabled={!a.found}
-                    onClick={() => upd({ acps: { ...state.acps, [a.id]: !on } })}
+            <button key={family.id}
+                    disabled={!family.found}
+                    onClick={() => upd({ acps: { ...state.acps, [family.id]: !on } })}
                     style={{
-                      textAlign: 'left', padding: '18px 20px', borderRadius: 8,
-                      border: on ? '1.5px solid var(--sumi)' : 'var(--hairline)',
+                      textAlign: 'left', padding: '16px 16px', borderRadius: 8,
+                      border: on ? '1.5px solid var(--ink)' : 'var(--hairline)',
                       background: on ? 'var(--paper-2)' : 'var(--paper)',
-                      opacity: a.found ? 1 : 0.55,
-                      cursor: a.found ? 'pointer' : 'default',
-                      display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'center'
+                      opacity: family.found ? 1 : 0.55,
+                      cursor: family.found ? 'pointer' : 'default',
+                      display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
+                      alignItems: 'start'
                     }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                  <span style={{ fontSize: 15 }}>{a.name}</span>
-                  {a.version && <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>v{a.version}</span>}
-                </div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)', marginTop: 4 }}>
-                  {a.found ? a.path : "not found"}
-                </div>
+              {/* Family glyph */}
+              <div style={{
+                width: 36, height: 36, borderRadius: 6,
+                background: 'var(--paper-2)', border: 'var(--hairline)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 15, fontWeight: 600, color: 'var(--ink)',
+                marginTop: 4
+              }}>
+                {family.kanji}
               </div>
+
+              {/* Title + product chips */}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 15 }}>{family.name}</span>
+                  {family.found && hasMultiple && (
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                      {foundProducts.length} found
+                    </span>
+                  )}
+                </div>
+
+                {family.found ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+                    {family.products.map(p => (
+                      <span key={p.id}
+                            title={p.path || "not detected"}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                              padding: '4px 8px', borderRadius: 3,
+                              fontSize: 11,
+                              background: p.found ? 'var(--paper)' : 'transparent',
+                              border: p.found ? 'var(--hairline)' : '1px dashed var(--sumi-4, #d8d4cc)',
+                              color: p.found ? 'var(--ink)' : 'var(--ink-3)'
+                            }}>
+                        <span style={{
+                          width: 5, height: 5, borderRadius: '50%',
+                          background: p.found ? 'var(--jade, #6b8e7f)' : 'var(--sumi-4, #c8c4bc)'
+                        }}/>
+                        {p.label}
+                        {p.version && <span className="mono" style={{ color: 'var(--ink-3)' }}>v{p.version}</span>}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+                    not installed
+                  </div>
+                )}
+              </div>
+
+              {/* Toggle */}
               <div style={{
                 width: 22, height: 22, borderRadius: 4, flexShrink: 0,
-                background: on ? 'var(--sumi)' : 'transparent',
+                background: on ? 'var(--ink)' : 'transparent',
                 border: on ? 'none' : 'var(--ink-line)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--paper)'
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'var(--paper)', marginTop: 8
               }}>
                 {on && <svg width="12" height="12" viewBox="0 0 16 16"><path d="M3 8 L7 12 L13 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>}
               </div>
@@ -558,6 +611,9 @@ function WizAcps({ state, upd }) {
         })}
       </div>
 
+      <div style={{ marginTop: 16, fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7 }}>
+        Connecting a family registers sensei across every product it finds — Code &amp; Desktop, CLI &amp; app. You can disable individual products from <span className="mono">Settings → Assistants</span>.
+      </div>
     </div>
   );
 }
@@ -574,23 +630,23 @@ function WizFolders({ state, upd }) {
     <div style={{ maxWidth: 820, margin: '0 auto' }}>
       <WizHeader n="庵" title="Folders" tagline="Where your work lives. Sensei recurses and finds repos."/>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input value={state.newFolder}
                onChange={e => upd({ newFolder: e.target.value })}
                onKeyDown={e => e.key === "Enter" && add()}
                placeholder="~/code/my-project"
                className="mono"
                style={{
-                 flex: 1, padding: '10px 14px', fontSize: 13,
+                 flex: 1, padding: '8px 12px', fontSize: 13,
                  background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
                  outline: 'none'
                }}/>
         <button onClick={add}
-                style={{ padding: '10px 18px', fontSize: 13, borderRadius: 6,
-                         background: 'var(--sumi)', color: 'var(--paper)' }}>
+                style={{ padding: '8px 16px', fontSize: 13, borderRadius: 6,
+                         background: 'var(--ink)', color: 'var(--paper)' }}>
           Add
         </button>
-        <button style={{ padding: '10px 18px', fontSize: 13, borderRadius: 6,
+        <button style={{ padding: '8px 16px', fontSize: 13, borderRadius: 6,
                           border: 'var(--ink-line)' }}>
           Browse…
         </button>
@@ -599,27 +655,27 @@ function WizFolders({ state, upd }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {state.folders.map(f => (
           <div key={f.id} style={{
-            display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: 14,
-            padding: '14px 16px', border: 'var(--hairline)', borderRadius: 6,
+            display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: 12,
+            padding: '12px 16px', border: 'var(--hairline)', borderRadius: 6,
             background: 'var(--paper-2)', alignItems: 'center'
           }}>
-            <span style={{ color: 'var(--sumi-3)', fontSize: 14 }}>▸</span>
+            <span style={{ color: 'var(--ink-3)', fontSize: 13 }}>▸</span>
             <div>
               <div className="mono" style={{ fontSize: 13 }}>{f.path}</div>
-              <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 2 }}>{f.note}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{f.note}</div>
             </div>
-            <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)',
-                          padding: '3px 8px', background: 'var(--paper)',
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
+                          padding: '4px 8px', background: 'var(--paper)',
                           borderRadius: 3, border: 'var(--hairline)' }}>recursive</span>
             <button onClick={() => remove(f.id)}
-                    style={{ fontSize: 11, color: 'var(--sumi-3)', padding: '4px 8px' }}>
+                    style={{ fontSize: 11, color: 'var(--ink-3)', padding: '4px 8px' }}>
               remove
             </button>
           </div>
         ))}
       </div>
 
-      <div style={{ marginTop: 20, fontSize: 12, color: 'var(--sumi-3)', lineHeight: 1.7 }}>
+      <div style={{ marginTop: 16, fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7 }}>
         You can manage folders and exclusions later from <span className="mono">Settings</span>.
       </div>
     </div>
@@ -664,17 +720,17 @@ function WizScan({ state, upd }) {
     return (
       <div style={{ maxWidth: 820, margin: '0 auto' }}>
         <WizHeader n="観" title="Scan" tagline={`Ready to scan ${state.folders.length} ${state.folders.length === 1 ? "root" : "roots"}.`}/>
-        <div style={{ padding: '50px 40px', background: 'var(--paper-2)',
+        <div style={{ padding: '48px 32px', background: 'var(--paper-2)',
                        borderRadius: 10, border: 'var(--hairline)', textAlign: 'center' }}>
-          <div className="kanji" style={{ fontSize: 60, color: 'var(--shu)', opacity: 0.4,
-                                           marginBottom: 20 }}>探</div>
-          <p style={{ fontSize: 15, color: 'var(--sumi-2)', margin: '0 0 20px',
+          <div className="kanji" style={{ fontSize: 56, color: 'var(--accent)', opacity: 0.4,
+                                           marginBottom: 16 }}>探</div>
+          <p style={{ fontSize: 15, color: 'var(--ink-2)', margin: '0 0 16px',
                        lineHeight: 1.6, maxWidth: 440, marginInline: 'auto' }}>
             The daemon will recurse your folders, identify repositories, and extract the
             code graph. Two workers, ~2M files / minute on this machine.
           </p>
           <button onClick={start}
-                  style={{ padding: '12px 28px', fontSize: 14, background: 'var(--sumi)',
+                  style={{ padding: '12px 24px', fontSize: 13, background: 'var(--ink)',
                            color: 'var(--paper)', borderRadius: 6 }}>
             Begin scan →
           </button>
@@ -757,7 +813,7 @@ function WizScan({ state, upd }) {
       {/* Stats strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0,
                      border: 'var(--hairline)', borderRadius: 8, background: 'var(--paper-2)',
-                     marginBottom: 18, overflow: 'hidden' }}>
+                     marginBottom: 16, overflow: 'hidden' }}>
         <ScanStat label="Roots"      value={state.folders.length}/>
         <ScanStat label="Discovered" value={stats.discovered}/>
         <ScanStat label="Queued"     value={stats.queued}/>
@@ -765,22 +821,22 @@ function WizScan({ state, upd }) {
       </div>
 
       {/* Progress line */}
-      <div style={{ height: 2, background: 'var(--paper-edge)', borderRadius: 1,
-                     marginBottom: 22, overflow: 'hidden' }}>
+      <div style={{ height: 2, background: 'var(--edge)', borderRadius: 1,
+                     marginBottom: 24, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${progress * 100}%`,
-                       background: done ? 'var(--jade)' : 'var(--sumi)',
+                       background: done ? 'var(--success)' : 'var(--ink)',
                        transition: 'width 80ms linear' }}/>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, alignItems: 'start' }}>
         {/* ─── Left: solutions + repos materializing ─── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 360 }}>
           {discoveredSolutions.length === 0 && (
-            <div style={{ padding: 40, border: '1px dashed var(--paper-edge)',
-                           borderRadius: 10, textAlign: 'center', color: 'var(--sumi-4)',
+            <div style={{ padding: 32, border: '1px dashed var(--edge)',
+                           borderRadius: 10, textAlign: 'center', color: 'var(--ink-4)',
                            fontSize: 13, fontStyle: 'italic' }}>
-              <div className="kanji" style={{ fontSize: 38, color: 'var(--shu)',
-                             opacity: 0.3, marginBottom: 10 }}>待</div>
+              <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)',
+                             opacity: 0.3, marginBottom: 8 }}>待</div>
               listening…
             </div>
           )}
@@ -796,13 +852,13 @@ function WizScan({ state, upd }) {
           border: 'var(--hairline)', borderRadius: 8, background: 'var(--paper-2)',
           overflow: 'hidden', position: 'sticky', top: 0
         }}>
-          <div style={{ padding: '10px 14px', borderBottom: 'var(--hairline)',
-                         fontSize: 10, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+          <div style={{ padding: '8px 12px', borderBottom: 'var(--hairline)',
+                         fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                          textTransform: 'uppercase', display: 'flex',
                          alignItems: 'center', gap: 8 }}>
             <span style={{
               width: 6, height: 6, borderRadius: '50%',
-              background: done ? 'var(--jade)' : 'var(--shu)',
+              background: done ? 'var(--success)' : 'var(--accent)',
               animation: done ? 'none' : 'pulseSm 1.2s ease-in-out infinite'
             }}/>
             <span>SSE · /events</span>
@@ -811,21 +867,21 @@ function WizScan({ state, upd }) {
               {(tick/1000).toFixed(1)}s
             </span>
           </div>
-          <div style={{ height: 360, overflow: 'auto', padding: '8px 14px' }}>
+          <div style={{ height: 360, overflow: 'auto', padding: '8px 12px' }}>
             {events.slice().reverse().map((e, i) => (
               <div key={e.t} style={{
                 display: 'grid', gridTemplateColumns: '42px 60px 1fr',
-                gap: 8, fontSize: 10.5, padding: '3px 0',
-                color: i === 0 ? 'var(--sumi)' : 'var(--sumi-2)',
+                gap: 8, fontSize: 11, padding: '4px 0',
+                color: i === 0 ? 'var(--ink)' : 'var(--ink-2)',
                 opacity: i === 0 ? 1 : Math.max(0.28, 1 - i * 0.07),
                 animation: i === 0 ? 'eventIn .26s ease-out' : 'none'
               }}>
-                <span className="mono" style={{ color: 'var(--sumi-3)' }}>+{(e.t/1000).toFixed(2)}s</span>
+                <span className="mono" style={{ color: 'var(--ink-3)' }}>+{(e.t/1000).toFixed(2)}s</span>
                 <span className="mono" style={{
-                  color: e.level === "success"  ? 'var(--jade)' :
-                         e.level === "discover" ? 'var(--shu)'  :
-                         e.level === "process"  ? 'var(--sumi)' :
-                         e.level === "queue"    ? 'var(--amber)' : 'var(--sumi-3)'
+                  color: e.level === "success"  ? 'var(--success)' :
+                         e.level === "discover" ? 'var(--accent)'  :
+                         e.level === "process"  ? 'var(--ink)' :
+                         e.level === "queue"    ? 'var(--warning)' : 'var(--ink-3)'
                 }}>
                   {e.level}
                 </span>
@@ -845,10 +901,10 @@ function WizScan({ state, upd }) {
       </div>
 
       {done && (
-        <div style={{ marginTop: 20, padding: '14px 18px', borderRadius: 8,
-                       background: 'var(--jade-soft)', fontSize: 13, color: 'var(--sumi)',
-                       display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="kanji" style={{ fontSize: 18, color: 'var(--jade)' }}>✓</span>
+        <div style={{ marginTop: 16, padding: '12px 16px', borderRadius: 8,
+                       background: 'var(--success-soft)', fontSize: 13, color: 'var(--ink)',
+                       display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="kanji" style={{ fontSize: 17, color: 'var(--success)' }}>✓</span>
           8 repos indexed across 3 roots · graph extracted · you may continue.
         </div>
       )}
@@ -867,35 +923,35 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
 
   return (
     <div style={{
-      border: allDone ? '1.5px solid var(--sumi-2)' : 'var(--hairline)',
+      border: allDone ? '1.5px solid var(--ink-2)' : 'var(--hairline)',
       borderRadius: 10, background: 'var(--paper-2)',
-      padding: '16px 18px',
+      padding: '16px 16px',
       animation: 'cardIn .34s ease-out',
       transition: 'border .3s'
     }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 14, alignItems: 'center' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12, alignItems: 'center' }}>
         <div className="kanji" style={{
           fontSize: 22, width: 38, height: 38, borderRadius: '50%',
           background: 'var(--paper)', border: 'var(--hairline)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: allDone ? 'var(--shu)' : 'var(--sumi-3)',
+          color: allDone ? 'var(--accent)' : 'var(--ink-3)',
           transition: 'color .3s'
         }}>{sol.kanji}</div>
         <div style={{ minWidth: 0 }}>
           <div className="display" style={{ fontSize: 17 }}>{sol.name}</div>
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 1 }}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
             {sol.path} · {discoveredRepos.length} {discoveredRepos.length === 1 ? "repo" : "repos"}
             {!allDone && discoveredRepos.length > 0 && ` · ${doneCount} ready`}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div className="mono" style={{ fontSize: 10,
-                         color: allDone ? 'var(--jade)' : 'var(--sumi-3)',
+          <div className="mono" style={{ fontSize: 11,
+                         color: allDone ? 'var(--success)' : 'var(--ink-3)',
                          letterSpacing: '0.1em', textTransform: 'uppercase' }}>
             {allDone ? "ready" : solState.state}
           </div>
           {totalFiles > 0 && !allDone && (
-            <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-2)', marginTop: 2 }}>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)', marginTop: 4 }}>
               {processedFiles.toLocaleString()} / {totalFiles.toLocaleString()}
             </div>
           )}
@@ -904,8 +960,8 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
 
       {/* Repos list */}
       {discoveredRepos.length > 0 && (
-        <div style={{ marginTop: 14, paddingLeft: 52,
-                       display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <div style={{ marginTop: 12, paddingLeft: 48,
+                       display: 'flex', flexDirection: 'column', gap: 4 }}>
           {discoveredRepos.map(([p, rs]) => {
             const pct = rs.totalFiles > 0 ? rs.processed / rs.totalFiles : 0;
             const isDone = rs.state === "done";
@@ -916,25 +972,25 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
                 gap: 12, alignItems: 'center',
                 animation: 'repoIn .26s ease-out'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <span style={{
                     width: 5, height: 5, borderRadius: '50%',
-                    background: isDone ? 'var(--jade)' :
-                                isProcessing ? 'var(--shu)' :
-                                rs.state === "queued" ? 'var(--amber)' : 'var(--sumi-4)',
+                    background: isDone ? 'var(--success)' :
+                                isProcessing ? 'var(--accent)' :
+                                rs.state === "queued" ? 'var(--warning)' : 'var(--ink-4)',
                     animation: isProcessing ? 'pulseSm 1.2s ease-in-out infinite' : 'none'
                   }}/>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-2)',
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)',
                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.name}
                   </span>
                 </div>
                 {/* progress track */}
-                <div style={{ height: 2, background: 'var(--paper-edge)', borderRadius: 1,
+                <div style={{ height: 2, background: 'var(--edge)', borderRadius: 1,
                                overflow: 'hidden', position: 'relative' }}>
                   <div style={{
                     position: 'absolute', inset: 0, width: `${pct * 100}%`,
-                    background: isDone ? 'var(--jade)' : 'var(--sumi)',
+                    background: isDone ? 'var(--success)' : 'var(--ink)',
                     transition: 'width .3s ease-out'
                   }}/>
                   {isProcessing && (
@@ -947,7 +1003,7 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
                     }}/>
                   )}
                 </div>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)',
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                                 textAlign: 'right' }}>
                   {isDone ? p.lang.split(' ')[0] :
                    rs.state === "queued" ? `${rs.queued}f` :
@@ -964,11 +1020,11 @@ function ScanSolutionCard({ sol, solState, repoStates }) {
 
 function ScanStat({ label, value, accent }) {
   return (
-    <div style={{ padding: '16px 18px', borderRight: 'var(--hairline)' }}>
-      <div className="display" style={{ fontSize: 30, fontWeight: 400,
-                     color: accent ? 'var(--shu)' : 'var(--sumi)' }}>{value}</div>
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--sumi-3)', marginTop: 2 }}>{label}</div>
+    <div style={{ padding: '16px 16px', borderRight: 'var(--hairline)' }}>
+      <div className="display" style={{ fontSize: 28, fontWeight: 400,
+                     color: accent ? 'var(--accent)' : 'var(--ink)' }}>{value}</div>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                     color: 'var(--ink-3)', marginTop: 4 }}>{label}</div>
     </div>
   );
 }
@@ -1065,11 +1121,11 @@ function WizProjects({ state, upd }) {
       <WizHeader n="組" title="Projects"
                  tagline="A project has one or more repos. Edit, split, or confirm."/>
 
-      <div style={{ fontSize: 12, color: 'var(--sumi-3)', marginBottom: 18 }}>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 16 }}>
         A single-repo project is the default. Multi-repo projects are auto-grouped from sibling folders and name patterns. Split when they shouldn't be together.
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {sols.map(s => {
           const isMulti = s.projects.length > 1;
           const isExpanded = selected === s.id;
@@ -1079,14 +1135,14 @@ function WizProjects({ state, upd }) {
           <div key={s.id} style={{
             border: 'var(--hairline)',
             borderRadius: 10, background: s.confirmed ? 'var(--paper-2)' : 'var(--paper)',
-            padding: 18, opacity: s.confirmed ? 1 : 0.55, transition: 'all .2s',
+            padding: 16, opacity: s.confirmed ? 1 : 0.55, transition: 'all .2s',
             position: 'relative'
           }}>
             <div style={{ display: 'grid',
                            gridTemplateColumns: 'auto 1fr auto auto auto auto',
                            gap: 12, alignItems: 'center' }}>
               <div className="kanji" style={{
-                fontSize: 26, color: 'var(--shu)',
+                fontSize: 28, color: 'var(--accent)',
                 width: 42, height: 42, borderRadius: '50%',
                 background: 'var(--paper)', border: 'var(--hairline)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center'
@@ -1096,21 +1152,21 @@ function WizProjects({ state, upd }) {
                        onChange={e => rename(s.id, e.target.value)}
                        className="display"
                        style={{
-                         fontSize: 19, fontWeight: 400, background: 'transparent',
+                         fontSize: 22, fontWeight: 400, background: 'transparent',
                          border: 'none', outline: 'none', padding: 0,
                          borderBottom: '1px dashed transparent', width: '100%'
                        }}
-                       onFocus={e => e.target.style.borderBottom = '1px dashed var(--sumi-3)'}
+                       onFocus={e => e.target.style.borderBottom = '1px dashed var(--ink-3)'}
                        onBlur={e => e.target.style.borderBottom = '1px dashed transparent'}/>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)', marginTop: 2 }}>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                   {s.path} · {s.projects.length} {s.projects.length === 1 ? "repo" : "repos"}
                 </div>
               </div>
               {isMulti ? (
-                <span className="mono" style={{ fontSize: 9.5, color: 'var(--shu)',
+                <span className="mono" style={{ fontSize: 11, color: 'var(--accent)',
                               letterSpacing: '0.1em', textTransform: 'uppercase',
-                              padding: '3px 8px', border: '1px solid var(--shu)',
-                              borderRadius: 3, background: 'var(--shu-soft)' }}>
+                              padding: '4px 8px', border: '1px solid var(--accent)',
+                              borderRadius: 3, background: 'var(--accent-soft)' }}>
                   multi-repo
                 </span>
               ) : <span/>}
@@ -1118,23 +1174,23 @@ function WizProjects({ state, upd }) {
               {/* merge button (only shown when there's another project to merge with) */}
               {mergeTargets.length > 0 ? (
                 <button onClick={() => { setMergeMenu(isMergeOpen ? null : s.id); setRepoMenu(null); }}
-                        style={{ fontSize: 11, color: 'var(--sumi-3)', padding: '6px 10px',
+                        style={{ fontSize: 11, color: 'var(--ink-3)', padding: '4px 8px',
                                   borderRadius: 4 }}>
                   merge…
                 </button>
               ) : <span/>}
 
               <button onClick={() => setSelected(isExpanded ? null : s.id)}
-                      style={{ fontSize: 11, color: 'var(--sumi-3)', padding: '6px 10px',
+                      style={{ fontSize: 11, color: 'var(--ink-3)', padding: '4px 8px',
                                 borderRadius: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                 {isExpanded ? "hide" : "edit"}
-                <span style={{ fontSize: 9, transform: isExpanded ? 'rotate(180deg)' : 'none',
+                <span style={{ fontSize: 11, transform: isExpanded ? 'rotate(180deg)' : 'none',
                                 transition: 'transform .2s' }}>▾</span>
               </button>
               <button onClick={() => toggle(s.id)}
                       style={{
                         width: 22, height: 22, borderRadius: 4,
-                        background: s.confirmed ? 'var(--sumi)' : 'transparent',
+                        background: s.confirmed ? 'var(--ink)' : 'transparent',
                         border: s.confirmed ? 'none' : 'var(--ink-line)',
                         color: 'var(--paper)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center'
@@ -1146,38 +1202,38 @@ function WizProjects({ state, upd }) {
             {/* Merge target picker */}
             {isMergeOpen && (
               <div style={{
-                marginTop: 14, padding: '12px 14px', paddingLeft: 56,
+                marginTop: 12, padding: '12px 12px', paddingLeft: 48,
                 background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 6,
                 animation: 'expandIn .2s ease-out'
               }}>
-                <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
+                <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                                textTransform: 'uppercase', marginBottom: 8 }}>
                   Merge {s.renamed ?? s.name} into…
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {mergeTargets.map(t => (
                     <button key={t.id} onClick={() => mergeInto(s.id, t.id)}
                             className="mono" style={{
-                              fontSize: 11, padding: '6px 10px', borderRadius: 4,
+                              fontSize: 11, padding: '4px 8px', borderRadius: 4,
                               border: 'var(--hairline)', background: 'var(--paper-2)',
-                              color: 'var(--sumi-2)', display: 'inline-flex',
-                              alignItems: 'center', gap: 6
+                              color: 'var(--ink-2)', display: 'inline-flex',
+                              alignItems: 'center', gap: 4
                             }}>
-                      <span className="kanji" style={{ color: 'var(--shu)', fontSize: 12 }}>{t.kanji}</span>
+                      <span className="kanji" style={{ color: 'var(--accent)', fontSize: 13 }}>{t.kanji}</span>
                       {t.renamed ?? t.name}
-                      <span style={{ color: 'var(--sumi-4)', fontSize: 10 }}>({t.projects.length})</span>
+                      <span style={{ color: 'var(--ink-4)', fontSize: 11 }}>({t.projects.length})</span>
                     </button>
                   ))}
                   <button onClick={() => setMergeMenu(null)} className="mono" style={{
-                    fontSize: 10.5, padding: '6px 10px', color: 'var(--sumi-3)'
+                    fontSize: 11, padding: '4px 8px', color: 'var(--ink-3)'
                   }}>cancel</button>
                 </div>
               </div>
             )}
 
             {/* Repo chips — compact, always visible */}
-            <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 6,
-                           paddingLeft: 56 }}>
+            <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 4,
+                           paddingLeft: 48 }}>
               {s.projects.map(p => {
                 const role = D.roles.find(r => r.id === state.roles[p.id]);
                 const isOpen = repoMenu && repoMenu.sid === s.id && repoMenu.pid === p.id;
@@ -1185,16 +1241,16 @@ function WizProjects({ state, upd }) {
                 return (
                   <span key={p.id} style={{ position: 'relative', display: 'inline-block' }}>
                     <span className="mono" style={{
-                      fontSize: 11, padding: '4px 4px 4px 10px',
+                      fontSize: 11, padding: '4px 4px 4px 8px',
                       background: 'var(--paper)', border: 'var(--hairline)',
-                      borderRadius: 3, color: 'var(--sumi-2)',
+                      borderRadius: 3, color: 'var(--ink-2)',
                       display: 'inline-flex', alignItems: 'center', gap: 8
                     }}>
                       {p.name}
-                      <span style={{ color: 'var(--sumi-4)' }}>{p.files}f</span>
+                      <span style={{ color: 'var(--ink-4)' }}>{p.files}f</span>
                       {role && (
-                        <span style={{ color: 'var(--shu)', fontSize: 10,
-                                        borderLeft: '1px solid var(--paper-edge)',
+                        <span style={{ color: 'var(--accent)', fontSize: 11,
+                                        borderLeft: '1px solid var(--edge)',
                                         paddingLeft: 8 }}>
                           {role.label.toLowerCase()}
                         </span>
@@ -1206,9 +1262,9 @@ function WizProjects({ state, upd }) {
                               }}
                               title="Move this repo"
                               style={{
-                                padding: '0 6px', fontSize: 13, color: 'var(--sumi-3)',
-                                borderLeft: '1px solid var(--paper-edge)',
-                                lineHeight: 1, marginLeft: 2
+                                padding: '0 4px', fontSize: 13, color: 'var(--ink-3)',
+                                borderLeft: '1px solid var(--edge)',
+                                lineHeight: 1, marginLeft: 4
                               }}>
                         ⋯
                       </button>
@@ -1216,32 +1272,32 @@ function WizProjects({ state, upd }) {
                     {isOpen && (
                       <div style={{
                         position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 10,
-                        minWidth: 220, padding: 6,
+                        minWidth: 220, padding: 4,
                         background: 'var(--paper)', border: 'var(--hairline)', borderRadius: 6,
                         boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
                         animation: 'expandIn .15s ease-out'
                       }}>
-                        <div style={{ fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                                       textTransform: 'uppercase', padding: '4px 8px 6px' }}>
+                        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                                       textTransform: 'uppercase', padding: '4px 8px 4px' }}>
                           Move {p.name} to…
                         </div>
                         {moveTargets.map(t => (
                           <button key={t.id} onClick={() => moveRepo(s.id, p.id, t.id)}
                                   className="mono" style={{
-                                    display: 'flex', width: '100%', padding: '7px 8px',
-                                    fontSize: 11, color: 'var(--sumi-2)', borderRadius: 3,
+                                    display: 'flex', width: '100%', padding: '8px 8px',
+                                    fontSize: 11, color: 'var(--ink-2)', borderRadius: 3,
                                     alignItems: 'center', gap: 8, textAlign: 'left'
                                   }}>
-                            <span className="kanji" style={{ color: 'var(--shu)' }}>{t.kanji}</span>
+                            <span className="kanji" style={{ color: 'var(--accent)' }}>{t.kanji}</span>
                             {t.renamed ?? t.name}
                           </button>
                         ))}
                         {isMulti && (
                           <button onClick={() => moveRepo(s.id, p.id, "__new__")}
                                   style={{
-                                    display: 'flex', width: '100%', padding: '7px 8px',
-                                    fontSize: 11, color: 'var(--sumi-3)', borderRadius: 3,
-                                    borderTop: 'var(--hairline)', marginTop: 4, paddingTop: 9,
+                                    display: 'flex', width: '100%', padding: '8px 8px',
+                                    fontSize: 11, color: 'var(--ink-3)', borderRadius: 3,
+                                    borderTop: 'var(--hairline)', marginTop: 4, paddingTop: 8,
                                     textAlign: 'left'
                                   }}>
                             + split out as new project
@@ -1254,8 +1310,8 @@ function WizProjects({ state, upd }) {
               })}
               {isMulti && (
                 <button onClick={() => split(s.id)} className="mono" style={{
-                  fontSize: 10.5, padding: '4px 10px', color: 'var(--sumi-3)',
-                  border: '1px dashed var(--paper-edge)', borderRadius: 3
+                  fontSize: 11, padding: '4px 8px', color: 'var(--ink-3)',
+                  border: '1px dashed var(--edge)', borderRadius: 3
                 }}>
                   split all into {s.projects.length} projects
                 </button>
@@ -1265,13 +1321,13 @@ function WizProjects({ state, upd }) {
             {/* Expanded: rename + role picker per repo */}
             {isExpanded && (
               <div style={{
-                marginTop: 16, paddingTop: 14, paddingLeft: 56,
+                marginTop: 16, paddingTop: 12, paddingLeft: 48,
                 borderTop: 'var(--hairline)',
-                display: 'flex', flexDirection: 'column', gap: 6,
+                display: 'flex', flexDirection: 'column', gap: 4,
                 animation: 'expandIn .22s ease-out'
               }}>
-                <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                               textTransform: 'uppercase', marginBottom: 6 }}>
+                <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                               textTransform: 'uppercase', marginBottom: 4 }}>
                   Repo roles
                 </div>
                 {s.projects.map(p => (
@@ -1280,20 +1336,20 @@ function WizProjects({ state, upd }) {
                     padding: '8px 0', alignItems: 'center'
                   }}>
                     <div>
-                      <div className="mono" style={{ fontSize: 12, color: 'var(--sumi-2)' }}>{p.name}</div>
-                      <div style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 1 }}>
+                      <div className="mono" style={{ fontSize: 13, color: 'var(--ink-2)' }}>{p.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                         {p.lang} · {p.files} files
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 2, padding: 2,
+                    <div style={{ display: 'flex', gap: 4, padding: 4,
                                    background: 'var(--paper)', borderRadius: 4 }}>
                       {D.roles.map(r => (
                         <button key={r.id} onClick={() => setRole(p.id, r.id)}
                                 title={r.label}
                                 style={{
-                                  padding: '4px 8px', fontSize: 10.5, borderRadius: 3,
-                                  background: state.roles[p.id] === r.id ? 'var(--sumi)' : 'transparent',
-                                  color: state.roles[p.id] === r.id ? 'var(--paper)' : 'var(--sumi-3)'
+                                  padding: '4px 8px', fontSize: 11, borderRadius: 3,
+                                  background: state.roles[p.id] === r.id ? 'var(--ink)' : 'transparent',
+                                  color: state.roles[p.id] === r.id ? 'var(--paper)' : 'var(--ink-3)'
                                 }}>
                           {r.label}
                         </button>
@@ -1311,7 +1367,7 @@ function WizProjects({ state, upd }) {
         `}</style>
       </div>
 
-      <div style={{ marginTop: 20, fontSize: 12, color: 'var(--sumi-3)' }}>
+      <div style={{ marginTop: 16, fontSize: 13, color: 'var(--ink-3)' }}>
         More options — external integrations, clients, custom rules — per project later from its Settings.
       </div>
     </div>
@@ -1332,28 +1388,28 @@ function WizMetadata({ state, upd }) {
     <div style={{ maxWidth: 820, margin: '0 auto' }}>
       <WizHeader n="七" title="Context" tagline="Optional. Helps sensei tailor its coaching."/>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {state.solutions.filter(s => s.confirmed).map(s => (
           <div key={s.id} style={{
-            padding: 22, border: 'var(--hairline)', borderRadius: 10,
+            padding: 24, border: 'var(--hairline)', borderRadius: 10,
             background: 'var(--paper-2)'
           }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 18 }}>
-              <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>{s.kanji}</span>
-              <span className="display" style={{ fontSize: 20 }}>{s.renamed ?? s.name}</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 16 }}>
+              <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>{s.kanji}</span>
+              <span className="display" style={{ fontSize: 22 }}>{s.renamed ?? s.name}</span>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               <MetaField label="Stage">
-                <div style={{ display: 'flex', gap: 3, padding: 3,
+                <div style={{ display: 'flex', gap: 4, padding: 4,
                                background: 'var(--paper)', borderRadius: 5 }}>
                   {D.metadata.statuses.map(st => (
                     <button key={st.id}
                             onClick={() => setMeta(s.id, "status", st.id)}
                             style={{
-                              flex: 1, padding: '6px 8px', fontSize: 11, borderRadius: 3,
-                              background: state.metadata[s.id].status === st.id ? 'var(--sumi)' : 'transparent',
-                              color: state.metadata[s.id].status === st.id ? 'var(--paper)' : 'var(--sumi-3)'
+                              flex: 1, padding: '4px 8px', fontSize: 11, borderRadius: 3,
+                              background: state.metadata[s.id].status === st.id ? 'var(--ink)' : 'transparent',
+                              color: state.metadata[s.id].status === st.id ? 'var(--paper)' : 'var(--ink-3)'
                             }}>
                       {st.label}
                     </button>
@@ -1389,7 +1445,7 @@ function WizMetadata({ state, upd }) {
         ))}
       </div>
 
-      <div style={{ marginTop: 16, fontSize: 12, color: 'var(--sumi-3)' }}>
+      <div style={{ marginTop: 16, fontSize: 13, color: 'var(--ink-3)' }}>
         Skip if you like. These can be edited per-solution from the Coaching page.
       </div>
     </div>
@@ -1399,8 +1455,8 @@ function WizMetadata({ state, upd }) {
 function MetaField({ label, children }) {
   return (
     <div>
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--sumi-3)', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                     color: 'var(--ink-3)', marginBottom: 4 }}>{label}</div>
       {children}
     </div>
   );
@@ -1438,20 +1494,20 @@ function WizLibraries({ state, upd }) {
                  tagline="Libraries without their own MCP — sensei indexes docs & code and wraps them with its own tools. Anything with a proper MCP (like Postgres or Stripe) comes in the next step."/>
 
       {/* Summary bar */}
-      <div style={{ display: 'flex', gap: 14, marginBottom: 20, alignItems: 'center' }}>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-2)',
-                      padding: '5px 10px', background: 'var(--paper-2)',
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)',
+                      padding: '4px 8px', background: 'var(--paper-2)',
                       border: 'var(--hairline)', borderRadius: 4 }}>
           {D.detected.length} detected
         </span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--jade)',
-                      padding: '5px 10px', background: 'var(--jade-soft)',
+        <span className="mono" style={{ fontSize: 11, color: 'var(--success)',
+                      padding: '4px 8px', background: 'var(--success-soft)',
                       borderRadius: 4 }}>
           {activeCount} will be wrapped
         </span>
         {state.libExtras.length > 0 && (
-          <span className="mono" style={{ fontSize: 11, color: 'var(--shu)',
-                        padding: '5px 10px', background: 'var(--shu-soft)',
+          <span className="mono" style={{ fontSize: 11, color: 'var(--accent)',
+                        padding: '4px 8px', background: 'var(--accent-soft)',
                         borderRadius: 4 }}>
             {state.libExtras.length} added by you
           </span>
@@ -1459,8 +1515,8 @@ function WizLibraries({ state, upd }) {
       </div>
 
       {/* Detected libraries */}
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                     textTransform: 'uppercase', marginBottom: 10 }}>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                     textTransform: 'uppercase', marginBottom: 8 }}>
         Detected · sensei will wrap
       </div>
       <div style={{ display: 'flex', flexDirection: 'column',
@@ -1472,31 +1528,31 @@ function WizLibraries({ state, upd }) {
             <div key={lib.id}
                  style={{ display: 'grid',
                            gridTemplateColumns: 'auto 1fr auto auto auto',
-                           gap: 14, alignItems: 'center',
-                           padding: '11px 14px',
+                           gap: 12, alignItems: 'center',
+                           padding: '12px 12px',
                            borderBottom: i < D.detected.length - 1 ? 'var(--hairline)' : 'none',
                            opacity: on ? 1 : 0.45 }}>
               <button onClick={() => toggle(lib.id)}
                       style={{ width: 18, height: 18, borderRadius: 3,
-                                border: '1.5px solid ' + (on ? 'var(--shu)' : 'var(--sumi-4)'),
-                                background: on ? 'var(--shu)' : 'transparent',
+                                border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
+                                background: on ? 'var(--accent)' : 'transparent',
                                 color: 'var(--paper)', fontSize: 11, lineHeight: 1 }}>
                 {on ? "✓" : ""}
               </button>
               <div>
-                <div style={{ fontSize: 13, color: 'var(--sumi)' }}>
+                <div style={{ fontSize: 13, color: 'var(--ink)' }}>
                   {lib.name}
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)',
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
                                 marginLeft: 8 }}>{lib.version}</span>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--sumi-3)', marginTop: 2 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                   {lib.why}
                 </div>
               </div>
-              <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 {lib.lang}
               </span>
-              <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 {lib.usage}× uses
               </span>
               <LibDocChip status={lib.docs}/>
@@ -1508,8 +1564,8 @@ function WizLibraries({ state, upd }) {
       {/* User-added */}
       {state.libExtras.length > 0 && (
         <>
-          <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                         textTransform: 'uppercase', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase', marginBottom: 8 }}>
             Added by you
           </div>
           <div style={{ display: 'flex', flexDirection: 'column',
@@ -1521,28 +1577,28 @@ function WizLibraries({ state, upd }) {
                 <div key={lib.id}
                      style={{ display: 'grid',
                                gridTemplateColumns: 'auto 1fr auto auto',
-                               gap: 14, alignItems: 'center',
-                               padding: '11px 14px',
+                               gap: 12, alignItems: 'center',
+                               padding: '12px 12px',
                                borderBottom: i < state.libExtras.length - 1 ? 'var(--hairline)' : 'none',
                                opacity: on ? 1 : 0.45 }}>
                   <button onClick={() => toggleExtra(lib.id)}
                           style={{ width: 18, height: 18, borderRadius: 3,
-                                    border: '1.5px solid ' + (on ? 'var(--shu)' : 'var(--sumi-4)'),
-                                    background: on ? 'var(--shu)' : 'transparent',
+                                    border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
+                                    background: on ? 'var(--accent)' : 'transparent',
                                     color: 'var(--paper)', fontSize: 11, lineHeight: 1 }}>
                     {on ? "✓" : ""}
                   </button>
                   <div>
-                    <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{lib.name}</div>
-                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 2 }}>
+                    <div style={{ fontSize: 13, color: 'var(--ink)' }}>{lib.name}</div>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                       {lib.url || "no URL"}
                     </div>
                   </div>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                     {lib.lang}
                   </span>
                   <button onClick={() => removeExtra(lib.id)}
-                          style={{ fontSize: 11, color: 'var(--sumi-4)' }}>remove</button>
+                          style={{ fontSize: 11, color: 'var(--ink-4)' }}>remove</button>
                 </div>
               );
             })}
@@ -1553,32 +1609,32 @@ function WizLibraries({ state, upd }) {
       {/* Add custom library */}
       {!showAdd ? (
         <button onClick={() => setShowAdd(true)}
-                style={{ padding: '10px 16px', fontSize: 12.5,
+                style={{ padding: '8px 16px', fontSize: 13,
                           background: 'var(--paper-2)',
-                          border: '1px dashed var(--sumi-4)', borderRadius: 6,
-                          color: 'var(--sumi-2)' }}>
+                          border: '1px dashed var(--ink-4)', borderRadius: 6,
+                          color: 'var(--ink-2)' }}>
           + Add a library
         </button>
       ) : (
-        <div style={{ padding: '18px 20px', background: 'var(--paper-2)',
+        <div style={{ padding: '16px 16px', background: 'var(--paper-2)',
                        border: 'var(--hairline)', borderRadius: 8,
                        maxWidth: 640 }}>
-          <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                          textTransform: 'uppercase', marginBottom: 12 }}>
             Add a library sensei should wrap
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 0.5fr',
-                         gap: 10, marginBottom: 12 }}>
+                         gap: 8, marginBottom: 12 }}>
             <div>
-              <div style={{ fontSize: 10.5, color: 'var(--sumi-2)', marginBottom: 4 }}>Name</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-2)', marginBottom: 4 }}>Name</div>
               <input value={form.name}
                      onChange={e => setForm({ ...form, name: e.target.value })}
                      placeholder="e.g. @internal/fx"
                      style={wizInputStyle}/>
             </div>
             <div>
-              <div style={{ fontSize: 10.5, color: 'var(--sumi-2)', marginBottom: 4 }}>
-                Docs URL <span style={{ color: 'var(--sumi-4)' }}>· optional</span>
+              <div style={{ fontSize: 11, color: 'var(--ink-2)', marginBottom: 4 }}>
+                Docs URL <span style={{ color: 'var(--ink-4)' }}>· optional</span>
               </div>
               <input value={form.url}
                      onChange={e => setForm({ ...form, url: e.target.value })}
@@ -1586,7 +1642,7 @@ function WizLibraries({ state, upd }) {
                      style={wizInputStyle}/>
             </div>
             <div>
-              <div style={{ fontSize: 10.5, color: 'var(--sumi-2)', marginBottom: 4 }}>Lang</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-2)', marginBottom: 4 }}>Lang</div>
               <select value={form.lang}
                       onChange={e => setForm({ ...form, lang: e.target.value })}
                       style={wizInputStyle}>
@@ -1600,19 +1656,19 @@ function WizLibraries({ state, upd }) {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={addExtra} disabled={!form.name.trim()}
-                    style={{ padding: '7px 14px', fontSize: 12,
-                              background: form.name.trim() ? 'var(--sumi)' : 'var(--paper-3)',
-                              color: form.name.trim() ? 'var(--paper)' : 'var(--sumi-3)',
+                    style={{ padding: '8px 12px', fontSize: 13,
+                              background: form.name.trim() ? 'var(--ink)' : 'var(--paper-3)',
+                              color: form.name.trim() ? 'var(--paper)' : 'var(--ink-3)',
                               borderRadius: 4 }}>
               Add
             </button>
             <button onClick={() => setShowAdd(false)}
-                    style={{ padding: '7px 14px', fontSize: 12,
-                              color: 'var(--sumi-3)' }}>
+                    style={{ padding: '8px 12px', fontSize: 13,
+                              color: 'var(--ink-3)' }}>
               Cancel
             </button>
             <span style={{ flex: 1 }}/>
-            <span style={{ fontSize: 11, color: 'var(--sumi-3)', alignSelf: 'center' }}>
+            <span style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center' }}>
               Sensei will index docs and expose tools that answer questions about this library.
             </span>
           </div>
@@ -1642,19 +1698,19 @@ function WizRegistry({ state, upd }) {
                  tagline="Tools sensei can reach for — recommended based on what's in your stack. Each MCP brings its own capabilities, no wrapping needed."/>
 
       {/* Detected stack summary */}
-      <div style={{ padding: '14px 18px', background: 'var(--paper-2)',
+      <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
                      border: 'var(--hairline)', borderRadius: 8,
                      marginBottom: 24 }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase', marginBottom: 8 }}>
           Detected in your stack
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {[...stack.languages, ...stack.frameworks, ...stack.services].map(s => (
             <span key={s} className="mono" style={{ fontSize: 11,
-                          padding: '3px 9px', background: 'var(--paper)',
+                          padding: '4px 8px', background: 'var(--paper)',
                           border: 'var(--hairline)', borderRadius: 3,
-                          color: 'var(--sumi-2)' }}>
+                          color: 'var(--ink-2)' }}>
               {s}
             </span>
           ))}
@@ -1662,22 +1718,22 @@ function WizRegistry({ state, upd }) {
       </div>
 
       {/* Summary row */}
-      <div style={{ display: 'flex', gap: 14, marginBottom: 16, alignItems: 'center' }}>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--jade)',
-                      padding: '5px 10px', background: 'var(--jade-soft)',
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--success)',
+                      padding: '4px 8px', background: 'var(--success-soft)',
                       borderRadius: 4 }}>
           {recommended.length} recommended
         </span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-2)',
-                      padding: '5px 10px', background: 'var(--paper-2)',
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)',
+                      padding: '4px 8px', background: 'var(--paper-2)',
                       border: 'var(--hairline)', borderRadius: 4 }}>
           {installCount} will be installed
         </span>
       </div>
 
       {/* Recommended */}
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                     textTransform: 'uppercase', marginBottom: 10 }}>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                     textTransform: 'uppercase', marginBottom: 8 }}>
         Recommended for your stack
       </div>
       <div style={{ display: 'flex', flexDirection: 'column',
@@ -1691,8 +1747,8 @@ function WizRegistry({ state, upd }) {
       </div>
 
       {/* Available */}
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                     textTransform: 'uppercase', marginBottom: 10 }}>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                     textTransform: 'uppercase', marginBottom: 8 }}>
         Also available
       </div>
       <div style={{ display: 'flex', flexDirection: 'column',
@@ -1712,54 +1768,54 @@ function McpRow({ mcp, on, onToggle, last }) {
   return (
     <div style={{ display: 'grid',
                    gridTemplateColumns: 'auto auto 1fr auto auto',
-                   gap: 14, alignItems: 'center',
-                   padding: '12px 14px',
+                   gap: 12, alignItems: 'center',
+                   padding: '12px 12px',
                    borderBottom: last ? 'none' : 'var(--hairline)',
                    opacity: on ? 1 : 0.55 }}>
       <button onClick={onToggle}
               style={{ width: 18, height: 18, borderRadius: 3,
-                        border: '1.5px solid ' + (on ? 'var(--shu)' : 'var(--sumi-4)'),
-                        background: on ? 'var(--shu)' : 'transparent',
+                        border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-4)'),
+                        background: on ? 'var(--accent)' : 'transparent',
                         color: 'var(--paper)', fontSize: 11, lineHeight: 1 }}>
         {on ? "✓" : ""}
       </button>
       <div style={{ width: 32, height: 32, borderRadius: 6,
                      background: 'var(--paper-3)', display: 'flex',
                      alignItems: 'center', justifyContent: 'center' }}>
-        <span className="kanji" style={{ fontSize: 15, color: 'var(--shu)' }}>
+        <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>
           {mcp.kanji}
         </span>
       </div>
       <div>
-        <div style={{ fontSize: 13, color: 'var(--sumi)' }}>
+        <div style={{ fontSize: 13, color: 'var(--ink)' }}>
           {mcp.name}
-          <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)', marginLeft: 8 }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginLeft: 8 }}>
             by {mcp.publisher}
           </span>
           {mcp.verified && (
-            <span className="mono" style={{ fontSize: 9.5, color: 'var(--jade)',
-                          marginLeft: 8, padding: '1px 6px',
-                          background: 'var(--jade-soft)', borderRadius: 3 }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--success)',
+                          marginLeft: 8, padding: '4px 4px',
+                          background: 'var(--success-soft)', borderRadius: 3 }}>
               verified
             </span>
           )}
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--sumi-3)', marginTop: 2,
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
                        lineHeight: 1.45 }}>
           {mcp.summary}
         </div>
       </div>
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
         {mcp.tools} tools
       </span>
       {mcp.trigger && mcp.trigger.length > 0 ? (
-        <span className="mono" style={{ fontSize: 10, color: 'var(--jade)',
-                      padding: '2px 7px', background: 'var(--jade-soft)',
+        <span className="mono" style={{ fontSize: 11, color: 'var(--success)',
+                      padding: '4px 8px', background: 'var(--success-soft)',
                       borderRadius: 3, whiteSpace: 'nowrap' }}>
           matches {mcp.trigger[0]}
         </span>
       ) : (
-        <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
           {mcp.kind}
         </span>
       )}
@@ -1769,14 +1825,14 @@ function McpRow({ mcp, on, onToggle, last }) {
 
 function LibDocChip({ status }) {
   const map = {
-    indexed: { label: "docs indexed", tone: 'var(--jade)',  bg: 'var(--jade-soft)' },
-    partial: { label: "partial",      tone: 'var(--amber)', bg: 'var(--amber-soft)' },
-    schema:  { label: "schema only",  tone: 'var(--sumi-2)', bg: 'var(--paper-3)'   },
-    none:    { label: "no docs",      tone: 'var(--sumi-3)', bg: 'var(--paper-3)'   }
+    indexed: { label: "docs indexed", tone: 'var(--success)',  bg: 'var(--success-soft)' },
+    partial: { label: "partial",      tone: 'var(--warning)', bg: 'var(--warning-soft)' },
+    schema:  { label: "schema only",  tone: 'var(--ink-2)', bg: 'var(--paper-3)'   },
+    none:    { label: "no docs",      tone: 'var(--ink-3)', bg: 'var(--paper-3)'   }
   };
   const m = map[status] || map.none;
   return (
-    <span className="mono" style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3,
+    <span className="mono" style={{ fontSize: 11, padding: '4px 8px', borderRadius: 3,
                 background: m.bg, color: m.tone, whiteSpace: 'nowrap' }}>
       {m.label}
     </span>
@@ -1784,9 +1840,9 @@ function LibDocChip({ status }) {
 }
 
 const wizInputStyle = {
-  width: '100%', padding: '7px 10px', fontSize: 12,
+  width: '100%', padding: '8px 8px', fontSize: 13,
   border: 'var(--hairline)', borderRadius: 5,
-  background: 'var(--paper)', color: 'var(--sumi)',
+  background: 'var(--paper)', color: 'var(--ink)',
   fontFamily: 'var(--font-mono)', outline: 'none'
 };
 
@@ -1816,17 +1872,16 @@ function WizPreferences({ state, upd }) {
   // whole vertical block. When `right` is provided, the section renders as
   // a single row; `children` is omitted.
   const Section = ({ kanji, title, sub, children, right }) => (
-    <section style={{ paddingTop: 24, paddingBottom: 4,
-                       borderTop: 'var(--hairline)' }}>
-      <header style={{ display: 'flex', alignItems: 'baseline', gap: 14,
+    <section style={{ paddingTop: 24, paddingBottom: 4 }}>
+      <header style={{ display: 'flex', alignItems: 'baseline', gap: 12,
                         marginBottom: right ? 0 : 14 }}>
-        <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)',
+        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)',
                                            lineHeight: 1, width: 30 }}>{kanji}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h3 className="display" style={{ fontSize: 17, fontWeight: 400, margin: 0,
-                          color: 'var(--sumi)' }}>{title}</h3>
+                          color: 'var(--ink)' }}>{title}</h3>
           {sub && (
-            <p style={{ fontSize: 12, color: 'var(--sumi-3)', margin: '3px 0 0',
+            <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: '4px 0 0',
                           maxWidth: 540, lineHeight: 1.5 }}>{sub}</p>
           )}
         </div>
@@ -1836,16 +1891,15 @@ function WizPreferences({ state, upd }) {
           </div>
         )}
       </header>
-      {!right && <div style={{ paddingLeft: 44 }}>{children}</div>}
+      {!right && <div className="divide-y" style={{ paddingLeft: 48 }}>{children}</div>}
     </section>
   );
   const Row = ({ label, hint, children }) => (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 32,
-                   alignItems: 'center', padding: '11px 0',
-                   borderBottom: '1px solid var(--paper-edge)' }}>
+                   alignItems: 'center', padding: '12px 0' }}>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{label}</div>
-        {hint && <div style={{ fontSize: 11.5, color: 'var(--sumi-3)', marginTop: 3,
+        <div style={{ fontSize: 13, color: 'var(--ink)' }}>{label}</div>
+        {hint && <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
                                  lineHeight: 1.45, maxWidth: 460 }}>{hint}</div>}
       </div>
       <div style={{ flexShrink: 0 }}>{children}</div>
@@ -1854,7 +1908,7 @@ function WizPreferences({ state, upd }) {
   const Toggle = ({ value, onChange }) => (
     <button onClick={() => onChange(!value)}
             style={{ width: 36, height: 20, borderRadius: 999,
-                      background: value ? 'var(--shu)' : 'var(--paper-edge)',
+                      background: value ? 'var(--accent)' : 'var(--edge)',
                       position: 'relative', cursor: 'pointer',
                       transition: 'background 0.15s', padding: 0,
                       border: 'none' }}>
@@ -1870,10 +1924,10 @@ function WizPreferences({ state, upd }) {
                    borderRadius: 5, overflow: 'hidden' }}>
       {options.map((opt, i) => (
         <button key={opt.value} onClick={() => onChange(opt.value)}
-                style={{ padding: '6px 12px', fontSize: 11.5,
+                style={{ padding: '4px 12px', fontSize: 11,
                           borderLeft: i === 0 ? 'none' : 'var(--hairline)',
                           background: value === opt.value ? 'var(--paper-3)' : 'var(--paper)',
-                          color: value === opt.value ? 'var(--sumi)' : 'var(--sumi-3)',
+                          color: value === opt.value ? 'var(--ink)' : 'var(--ink-3)',
                           cursor: 'pointer' }}>
           {opt.label}
         </button>
@@ -1882,9 +1936,9 @@ function WizPreferences({ state, upd }) {
   );
   const Sel = ({ value, onChange, options }) => (
     <select value={value} onChange={e => onChange(e.target.value)}
-            style={{ fontSize: 12, padding: '6px 10px', border: 'var(--hairline)',
+            style={{ fontSize: 13, padding: '4px 8px', border: 'var(--hairline)',
                       borderRadius: 5, background: 'var(--paper)',
-                      color: 'var(--sumi)', cursor: 'pointer',
+                      color: 'var(--ink)', cursor: 'pointer',
                       fontFamily: 'inherit' }}>
       {options.map(o =>
         <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -1896,6 +1950,7 @@ function WizPreferences({ state, upd }) {
       <WizHeader n="名" title="Preferences"
                  tagline="A few small choices before you step in. Anything here can be changed later by re-opening this wizard."/>
 
+      <div className="divide-y">
       {/* ── What should sensei call you ──────────────────────────────
           Inline single-row layout: kanji + title + description on the
           left, prefilled input on the right. Prefilled with the user's
@@ -1907,11 +1962,12 @@ function WizPreferences({ state, upd }) {
                    value={p.displayName || ""}
                    onChange={e => setP({ displayName: e.target.value })}
                    placeholder={homeBase || "your name"}
-                   style={{ width: 240, padding: '9px 12px', fontSize: 14,
+                   style={{ width: 240, padding: '8px 12px', fontSize: 13,
                              border: 'var(--hairline)', borderRadius: 5,
-                             background: 'var(--paper)', color: 'var(--sumi)',
-                             fontFamily: 'inherit', outline: 'none' }}
-                   onFocus={e => e.target.style.borderColor = 'var(--shu)'}
+                             background: 'var(--paper)', color: 'var(--ink)',
+                             fontFamily: 'inherit', outline: 'none',
+                             textAlign: 'right' }}
+                   onFocus={e => e.target.style.borderColor = 'var(--accent)'}
                    onBlur={e => e.target.style.borderColor = ''}
                  />
                }/>
@@ -1997,10 +2053,12 @@ function WizPreferences({ state, upd }) {
         </Row>
       </Section>
 
-      <p style={{ fontSize: 12, color: 'var(--sumi-3)', margin: '28px 0 0',
+      </div>
+
+      <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: '24px 0 0',
                    fontStyle: 'italic', lineHeight: 1.6, textAlign: 'center' }}>
-        These save when you press <span style={{ color: 'var(--sumi-2)' }}>Enter observatory</span>.
-        Re-open this wizard from the sidebar's <span style={{ color: 'var(--sumi-2)' }}>調 Configure</span> link to change them later.
+        These save when you press <span style={{ color: 'var(--ink-2)' }}>Enter observatory</span>.
+        Re-open this wizard from the sidebar's <span style={{ color: 'var(--ink-2)' }}>調 Configure</span> link to change them later.
       </p>
     </div>
   );
@@ -2017,12 +2075,12 @@ function WizDone({ state }) {
 
   return (
     <div style={{ maxWidth: 680, margin: '20px auto 0', textAlign: 'center' }}>
-      <div className="kanji" style={{ fontSize: 92, color: 'var(--shu)', marginBottom: 10 }}>観</div>
-      <h1 className="display" style={{ fontSize: 44, fontWeight: 300, letterSpacing: '-0.02em',
+      <div className="kanji" style={{ fontSize: 56, color: 'var(--accent)', marginBottom: 8 }}>観</div>
+      <h1 className="display" style={{ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em',
                     margin: '0 0 16px' }}>
         The observatory is ready.
       </h1>
-      <p style={{ fontSize: 15, color: 'var(--sumi-2)', lineHeight: 1.6, maxWidth: 480,
+      <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.6, maxWidth: 480,
                    margin: '0 auto 36px' }}>
         Start a session with your assistant. Sensei will watch in silence for a few days,
         then begin to teach.
@@ -2039,8 +2097,8 @@ function WizDone({ state }) {
         <DoneStat label="Assistants" value={activeAcps} last/>
       </div>
 
-      <p className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)',
-                     marginTop: 36, fontStyle: 'italic' }}>
+      <p className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
+                     marginTop: 32, fontStyle: 'italic' }}>
         師 · the first session is always the teacher
       </p>
     </div>
@@ -2049,10 +2107,10 @@ function WizDone({ state }) {
 
 function DoneStat({ label, value, last }) {
   return (
-    <div style={{ padding: '18px 20px', borderRight: last ? 'none' : 'var(--hairline)' }}>
-      <div className="display" style={{ fontSize: 30, fontWeight: 400 }}>{value}</div>
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--sumi-3)', marginTop: 2 }}>{label}</div>
+    <div style={{ padding: '16px 16px', borderRight: last ? 'none' : 'var(--hairline)' }}>
+      <div className="display" style={{ fontSize: 28, fontWeight: 400 }}>{value}</div>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                     color: 'var(--ink-3)', marginTop: 4 }}>{label}</div>
     </div>
   );
 }
@@ -2067,20 +2125,20 @@ function WizHeader({ n, title, tagline }) {
     <div style={{
       position: 'sticky', top: -44, zIndex: 5,
       background: 'var(--paper)',
-      paddingTop: 4, paddingBottom: 18,
+      paddingTop: 4, paddingBottom: 16,
       marginBottom: 24,
       borderBottom: 'var(--hairline)',
     }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                     textTransform: 'uppercase', marginBottom: 6 }}>
-        <span className="kanji" style={{ color: 'var(--shu)', marginRight: 8 }}>{n}</span>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
+                     textTransform: 'uppercase', marginBottom: 4 }}>
+        <span className="kanji" style={{ color: 'var(--accent)', marginRight: 8 }}>{n}</span>
         Step
       </div>
-      <h1 className="display" style={{ fontSize: 32, fontWeight: 300,
+      <h1 className="display" style={{ fontSize: 28, fontWeight: 300,
                      letterSpacing: '-0.02em', margin: '0 0 4px' }}>
         {title}
       </h1>
-      <p style={{ fontSize: 13.5, color: 'var(--sumi-3)', margin: 0 }}>{tagline}</p>
+      <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0 }}>{tagline}</p>
     </div>
   );
 }
@@ -2096,12 +2154,12 @@ function EmptyObservatoryApp({ onBeginSetup }) {
       <TauriChrome title="Sensei  先生"/>
       <main style={{ flex: 1, overflow: 'auto', position: 'relative',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      padding: '40px 60px' }}>
+                      padding: '32px 64px' }}>
         {/* faint watermark — 空 = emptiness */}
         <div className="kanji" style={{
           position: 'absolute', top: '50%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          fontSize: 640, color: 'var(--shu)', opacity: 0.035,
+          fontSize: 56, color: 'var(--accent)', opacity: 0.035,
           lineHeight: 1, userSelect: 'none', pointerEvents: 'none'
         }}>空</div>
 
@@ -2110,49 +2168,49 @@ function EmptyObservatoryApp({ onBeginSetup }) {
                        alignItems: 'center' }}>
           {/* Left: the invitation */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 28 }}>
-              <span className="kanji" style={{ fontSize: 28, color: 'var(--shu)' }}>先生</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 24 }}>
+              <span className="kanji" style={{ fontSize: 28, color: 'var(--accent)' }}>先生</span>
               <span className="display" style={{ fontSize: 22, fontWeight: 400 }}>Sensei</span>
             </div>
-            <div style={{ fontSize: 10, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                           textTransform: 'uppercase', marginBottom: 14 }}>
+            <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                           textTransform: 'uppercase', marginBottom: 12 }}>
               Welcome
             </div>
-            <h1 className="display" style={{ fontSize: 48, fontWeight: 300,
-                          letterSpacing: '-0.02em', lineHeight: 1.08, margin: '0 0 20px' }}>
+            <h1 className="display" style={{ fontSize: 56, fontWeight: 300,
+                          letterSpacing: '-0.02em', lineHeight: 1.08, margin: '0 0 16px' }}>
               A quiet<br/>
-              <span style={{ color: 'var(--shu)' }}>empty room.</span>
+              <span style={{ color: 'var(--accent)' }}>empty room.</span>
             </h1>
-            <p style={{ fontSize: 14.5, color: 'var(--sumi-2)', lineHeight: 1.7,
-                         margin: '0 0 36px' }}>
+            <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.7,
+                         margin: '0 0 32px' }}>
               Point sensei at your folders and keep working. It watches in silence, learns
               the shape of each project, and later begins to teach.
             </p>
 
             <button onClick={onBeginSetup}
-                    style={{ padding: '13px 28px', fontSize: 14, background: 'var(--sumi)',
+                    style={{ padding: '12px 24px', fontSize: 13, background: 'var(--ink)',
                               color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2 }}>
               Begin setup →
             </button>
 
-            <div style={{ marginTop: 18, fontSize: 11, color: 'var(--sumi-3)' }}>
+            <div style={{ marginTop: 16, fontSize: 11, color: 'var(--ink-3)' }}>
               <span className="mono">~4 minutes</span>
-              <span style={{ margin: '0 8px', color: 'var(--sumi-4)' }}>·</span>
+              <span style={{ margin: '0 8px', color: 'var(--ink-4)' }}>·</span>
               nothing leaves your machine
             </div>
           </div>
 
           {/* Right: what sensei will do — a real preview, not placeholder stats */}
           <div style={{
-            padding: '24px 22px',
+            padding: '24px 24px',
             border: 'var(--hairline)', borderRadius: 10,
             background: 'var(--paper-2)'
           }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.16em', color: 'var(--sumi-3)',
+            <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                            textTransform: 'uppercase', marginBottom: 16 }}>
               What sensei does
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {[
                 { k: "観", label: "Watches",
                   note: "Every assistant session — prompts, tool calls, diffs." },
@@ -2162,18 +2220,18 @@ function EmptyObservatoryApp({ onBeginSetup }) {
                   note: "After ~3 sessions per project, offers concrete suggestions." }
               ].map((x, i) => (
                 <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr',
-                                        gap: 14, alignItems: 'start' }}>
+                                        gap: 12, alignItems: 'start' }}>
                   <div className="kanji" style={{
-                    fontSize: 18, color: 'var(--shu)',
+                    fontSize: 17, color: 'var(--accent)',
                     width: 32, height: 32, borderRadius: '50%',
                     background: 'var(--paper)', border: 'var(--hairline)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center'
                   }}>{x.k}</div>
                   <div>
-                    <div className="display" style={{ fontSize: 14, fontWeight: 400, marginBottom: 2 }}>
+                    <div className="display" style={{ fontSize: 13, fontWeight: 400, marginBottom: 4 }}>
                       {x.label}
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--sumi-3)', lineHeight: 1.5 }}>
+                    <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.5 }}>
                       {x.note}
                     </div>
                   </div>
@@ -2181,13 +2239,13 @@ function EmptyObservatoryApp({ onBeginSetup }) {
               ))}
             </div>
 
-            <div style={{ marginTop: 20, paddingTop: 16, borderTop: 'var(--hairline)',
-                           fontSize: 11, color: 'var(--sumi-3)', lineHeight: 1.6 }}>
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: 'var(--hairline)',
+                           fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6 }}>
               Works with{' '}
-              <span className="mono" style={{ color: 'var(--sumi-2)' }}>claude-code</span>,{' '}
-              <span className="mono" style={{ color: 'var(--sumi-2)' }}>cursor</span>,{' '}
-              <span className="mono" style={{ color: 'var(--sumi-2)' }}>codex</span>,{' '}
-              <span className="mono" style={{ color: 'var(--sumi-2)' }}>aider</span>.
+              <span className="mono" style={{ color: 'var(--ink-2)' }}>claude-code</span>,{' '}
+              <span className="mono" style={{ color: 'var(--ink-2)' }}>cursor</span>,{' '}
+              <span className="mono" style={{ color: 'var(--ink-2)' }}>codex</span>,{' '}
+              <span className="mono" style={{ color: 'var(--ink-2)' }}>aider</span>.
             </div>
           </div>
         </div>

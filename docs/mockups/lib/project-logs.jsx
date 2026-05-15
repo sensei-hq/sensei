@@ -98,9 +98,9 @@ const PLOG_MODULES = {
 
 const fmtMs = n => n >= 1000 ? (n/1000).toFixed(1)+'s' : n+'ms';
 const outcomeTone = o =>
-  o === 'success' ? 'var(--jade)' :
-  o === 'partial' ? 'var(--amber)' :
-  o === 'failed'  ? 'var(--shu)'   : 'var(--sumi-3)';
+  o === 'success' ? 'var(--success)' :
+  o === 'partial' ? 'var(--warning)' :
+  o === 'failed'  ? 'var(--accent)'   : 'var(--ink-3)';
 const anonymize = str => (str || "").replace(/\/Users\/[^/]+\//g, '~/');
 
 const dateKey = s => s.display_time.split(' · ')[0];
@@ -125,27 +125,27 @@ function groupSessions(sessions) {
 // ── Action badge — type pill on each trace row ────────────────────────
 function PLogActionBadge({ type }) {
   const map = {
-    check:    { label: 'CHECK',    color: 'var(--sumi-3)', bg: 'var(--paper-3)' },
-    resolve:  { label: 'RESOLVE',  color: 'var(--amber)',  bg: 'var(--amber-soft)' },
-    instruct: { label: 'INSTRUCT', color: 'var(--shu)',    bg: 'var(--shu-soft)' },
+    check:    { label: 'CHECK',    color: 'var(--ink-3)', bg: 'var(--paper-3)' },
+    resolve:  { label: 'RESOLVE',  color: 'var(--warning)',  bg: 'var(--warning-soft)' },
+    instruct: { label: 'INSTRUCT', color: 'var(--accent)',    bg: 'var(--accent-soft)' },
   };
   const m = map[type] || map.check;
   return (
     <span className="mono" style={{
-      fontSize: 9, fontWeight: 600, letterSpacing: '0.12em',
-      padding: '2px 6px', borderRadius: 3, color: m.color, background: m.bg,
+      fontSize: 11, fontWeight: 600, letterSpacing: '0.12em',
+      padding: '4px 4px', borderRadius: 3, color: m.color, background: m.bg,
       whiteSpace: 'nowrap'
     }}>{m.label}</span>
   );
 }
 
 function PLogStatus({ trace }) {
-  if (trace.ok) return <span style={{ color: 'var(--jade)', fontSize: 13, lineHeight: 1 }}>✓</span>;
+  if (trace.ok) return <span style={{ color: 'var(--success)', fontSize: 13, lineHeight: 1 }}>✓</span>;
   if (trace.fix_ok) return (
-    <span className="mono" style={{ fontSize: 9, color: 'var(--amber)',
+    <span className="mono" style={{ fontSize: 11, color: 'var(--warning)',
                   fontWeight: 600, letterSpacing: '0.06em' }}>FIXED</span>
   );
-  return <span style={{ color: 'var(--shu)', fontSize: 13, lineHeight: 1 }}>✗</span>;
+  return <span style={{ color: 'var(--accent)', fontSize: 13, lineHeight: 1 }}>✗</span>;
 }
 
 // ── A single trace row + its expanded detail block ────────────────────
@@ -156,34 +156,34 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
       <div onClick={hasDetail ? onToggle : undefined}
            style={{
              display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px',
-             gap: 14, alignItems: 'center', padding: '10px 0',
+             gap: 12, alignItems: 'center', padding: '8px 0',
              cursor: hasDetail ? 'pointer' : 'default'
            }}>
         <PLogActionBadge type={trace.action_type}/>
-        <span className="mono" style={{ fontSize: 12, color: 'var(--sumi-2)',
+        <span className="mono" style={{ fontSize: 13, color: 'var(--ink-2)',
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
           {trace.step}
         </span>
-        <span className="mono" style={{ fontSize: 11.5, color: 'var(--sumi-3)',
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
           {anonymize(trace.cmd)}
         </span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)',
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                       textAlign: 'right', fontFeatureSettings: '"tnum"' }}>{fmtMs(trace.ms)}</span>
         <div style={{ textAlign: 'center' }}><PLogStatus trace={trace}/></div>
       </div>
 
       {expanded && (
         <div style={{
-          marginLeft: 88, marginBottom: 12, padding: '12px 14px',
+          marginLeft: 96, marginBottom: 12, padding: '12px 12px',
           background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)'
         }}>
           {trace.out && (
             <div style={{ marginBottom: trace.err ? 10 : 0 }}>
-              <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--sumi-4)', marginBottom: 4 }}>stdout</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11.5,
-                              color: 'var(--sumi-2)', lineHeight: 1.6,
+              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--ink-4)', marginBottom: 4 }}>stdout</div>
+              <pre className="mono" style={{ margin: 0, fontSize: 11,
+                              color: 'var(--ink-2)', lineHeight: 1.6,
                               whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                 {anonymize(trace.out)}
               </pre>
@@ -191,10 +191,10 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
           )}
           {trace.err && (
             <div>
-              <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--shu)', marginBottom: 4 }}>stderr</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11.5,
-                              color: 'var(--shu)', lineHeight: 1.6 }}>{trace.err}</pre>
+              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--accent)', marginBottom: 4 }}>stderr</div>
+              <pre className="mono" style={{ margin: 0, fontSize: 11,
+                              color: 'var(--accent)', lineHeight: 1.6 }}>{trace.err}</pre>
             </div>
           )}
           {trace.fix_attempted && (
@@ -203,13 +203,13 @@ function PLogTraceRow({ trace, expanded, onToggle }) {
               paddingTop: trace.out || trace.err ? 10 : 0,
               borderTop: trace.out || trace.err ? 'var(--hairline)' : 'none'
             }}>
-              <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--amber)', marginBottom: 4 }}>auto-fix attempted</div>
-              <pre className="mono" style={{ margin: 0, fontSize: 11.5,
-                              color: trace.fix_ok ? 'var(--jade)' : 'var(--shu)',
+              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--warning)', marginBottom: 4 }}>auto-fix attempted</div>
+              <pre className="mono" style={{ margin: 0, fontSize: 11,
+                              color: trace.fix_ok ? 'var(--success)' : 'var(--accent)',
                               lineHeight: 1.6 }}>
                 $ {trace.fix_approach}{'  '}
-                <span style={{ color: 'var(--sumi-4)', fontSize: 10 }}>
+                <span style={{ color: 'var(--ink-4)', fontSize: 11 }}>
                   → {trace.fix_ok ? 'succeeded' : 'failed'}
                 </span>
               </pre>
@@ -287,17 +287,17 @@ function PLogIssueModal({ session, project, onClose }) {
         {/* Header */}
         <div style={{
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-          padding: '18px 28px 14px', borderBottom: 'var(--hairline)', flexShrink: 0
+          padding: '16px 24px 12px', borderBottom: 'var(--hairline)', flexShrink: 0
         }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
-              <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>診</span>
-              <h3 className="display" style={{ fontSize: 20, fontWeight: 400, margin: 0,
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+              <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>診</span>
+              <h3 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
                             letterSpacing: '-0.01em' }}>
                 Report this session
               </h3>
             </div>
-            <div style={{ fontSize: 11.5, color: 'var(--sumi-3)' }}>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               {session.display_time} · {session.traces.length} traces ·
               {' '}{session.traces.filter(t => t.fix_attempted).length} auto-fixes ·
               {' '}<span className="mono">{session.id}</span>
@@ -305,30 +305,30 @@ function PLogIssueModal({ session, project, onClose }) {
           </div>
           <button onClick={onClose}
                   style={{ background: 'transparent', border: 'none', cursor: 'pointer',
-                           color: 'var(--sumi-3)', fontSize: 22, padding: '0 4px',
+                           color: 'var(--ink-3)', fontSize: 22, padding: '0 4px',
                            lineHeight: 1 }}>×</button>
         </div>
 
         {/* Body — two columns */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '20px 28px 24px',
-                       display: 'grid', gridTemplateColumns: '1fr 280px', gap: 22, minHeight: 0 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px 24px',
+                       display: 'grid', gridTemplateColumns: '1fr 280px', gap: 24, minHeight: 0 }}>
 
           {/* Preview column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                            color: 'var(--sumi-3)' }}>Issue preview · anonymized</div>
+            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                            color: 'var(--ink-3)' }}>Issue preview · anonymized</div>
 
             {/* Title */}
             <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                            borderRadius: 5, padding: '9px 13px',
-                            fontSize: 13, color: 'var(--sumi)', fontWeight: 500, flexShrink: 0 }}>
+                            borderRadius: 5, padding: '8px 12px',
+                            fontSize: 13, color: 'var(--ink)', fontWeight: 500, flexShrink: 0 }}>
               {issueTitle}
             </div>
 
             {/* Body */}
             <pre className="mono" style={{ flex: 1, margin: 0, background: 'var(--paper-2)',
-                              border: 'var(--hairline)', borderRadius: 5, padding: '14px 16px',
-                              fontSize: 11.5, color: 'var(--sumi-2)', lineHeight: 1.7,
+                              border: 'var(--hairline)', borderRadius: 5, padding: '12px 16px',
+                              fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.7,
                               overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                               minHeight: 240 }}>
               {issueBody}
@@ -336,12 +336,12 @@ function PLogIssueModal({ session, project, onClose }) {
           </div>
 
           {/* Compose column */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {/* Included summary */}
             <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                            borderRadius: 6, padding: '13px 14px' }}>
-              <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--sumi-3)', marginBottom: 9 }}>
+                            borderRadius: 6, padding: '12px 12px' }}>
+              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--ink-3)', marginBottom: 8 }}>
                 Included in report
               </div>
               {[
@@ -356,10 +356,10 @@ function PLogIssueModal({ session, project, onClose }) {
                 ['App',     `v${session.app_version}`],
               ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between',
-                                       fontSize: 11.5, marginBottom: 4 }}>
-                  <span style={{ color: 'var(--sumi-3)' }}>{k}</span>
+                                       fontSize: 11, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--ink-3)' }}>{k}</span>
                   <span className={['Traces','Fixes','App','RAM','Arch','OS'].includes(k) ? 'mono' : ''}
-                         style={{ color: 'var(--sumi-2)',
+                         style={{ color: 'var(--ink-2)',
                                    fontSize: ['OS','Arch'].includes(k) ? 10.5 : 11.5,
                                    maxWidth: 160, overflow: 'hidden',
                                    whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
@@ -371,26 +371,26 @@ function PLogIssueModal({ session, project, onClose }) {
 
             {/* Compose */}
             <div>
-              <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--sumi-3)', marginBottom: 6 }}>
+              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                              color: 'var(--ink-3)', marginBottom: 4 }}>
                 Additional context
               </div>
               <textarea value={context} onChange={e => setContext(e.target.value)}
                           placeholder="What were you doing? Anything else worth knowing?"
-                          style={{ width: '100%', height: 96, resize: 'none', padding: '8px 10px',
+                          style={{ width: '100%', height: 96, resize: 'none', padding: '8px 8px',
                                     background: 'var(--paper-2)', border: 'var(--hairline)',
-                                    borderRadius: 5, fontSize: 12.5, color: 'var(--sumi)',
+                                    borderRadius: 5, fontSize: 13, color: 'var(--ink)',
                                     fontFamily: 'inherit', lineHeight: 1.5 }}/>
             </div>
 
             {/* Privacy note */}
-            <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', lineHeight: 1.7 }}>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.7 }}>
               Paths like{' '}
               <code className="mono" style={{ background: 'var(--paper-3)',
-                              padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>/Users/jerry/</code>
+                              padding: '4px 4px', borderRadius: 3, fontSize: 11 }}>/Users/jerry/</code>
               {' '}are replaced with{' '}
               <code className="mono" style={{ background: 'var(--paper-3)',
-                              padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>~/</code>.
+                              padding: '4px 4px', borderRadius: 3, fontSize: 11 }}>~/</code>.
               No personal data is included.
             </div>
 
@@ -399,16 +399,16 @@ function PLogIssueModal({ session, project, onClose }) {
             {/* Actions */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <button onClick={() => alert('Opens github.com/sensei-hq/app/issues/new')}
-                      style={{ width: '100%', padding: '10px 16px', borderRadius: 6,
+                      style={{ width: '100%', padding: '8px 16px', borderRadius: 6,
                                 fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
-                                background: 'var(--sumi)', color: 'var(--paper)' }}>
+                                background: 'var(--ink)', color: 'var(--paper)' }}>
                 Submit to GitHub ↗
               </button>
               <button onClick={copy}
                       style={{ width: '100%', padding: '8px 16px', borderRadius: 6,
-                                fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
+                                fontSize: 13, fontWeight: 500, cursor: 'pointer',
                                 background: 'transparent', border: 'var(--hairline)',
-                                color: copied ? 'var(--jade)' : 'var(--sumi-2)',
+                                color: copied ? 'var(--success)' : 'var(--ink-2)',
                                 transition: 'color 0.2s' }}>
                 {copied ? 'Copied ✓' : 'Copy markdown'}
               </button>
@@ -464,17 +464,17 @@ function ProjLogs({ project, scope = "project" }) {
       {/* ── Session list ── */}
       <aside style={{ borderRight: 'var(--hairline)', background: 'var(--paper-2)',
                        display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '22px 20px 14px', borderBottom: 'var(--hairline)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span className="kanji" style={{ fontSize: 18, color: 'var(--shu)' }}>診</span>
+        <div style={{ padding: '24px 16px 12px', borderBottom: 'var(--hairline)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>診</span>
             <span style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
-                             color: 'var(--sumi-3)' }}>diagnostic logs</span>
+                             color: 'var(--ink-3)' }}>diagnostic logs</span>
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--sumi-4)', marginTop: 6 }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
             {collective ? (
-              <>every session sensei has run · <span className="mono" style={{ color: 'var(--sumi-3)' }}>{PLOG_SESSIONS.length} total</span></>
+              <>every session sensei has run · <span className="mono" style={{ color: 'var(--ink-3)' }}>{PLOG_SESSIONS.length} total</span></>
             ) : (
-              <>scoped to <span className="mono" style={{ color: 'var(--sumi-3)' }}>{project?.name}</span></>
+              <>scoped to <span className="mono" style={{ color: 'var(--ink-3)' }}>{project?.name}</span></>
             )}
           </div>
 
@@ -489,11 +489,11 @@ function ProjLogs({ project, scope = "project" }) {
                 const on = moduleFilter === f.id;
                 return (
                   <button key={f.id} onClick={() => setModuleFilter(f.id)}
-                          style={{ padding: '4px 9px', borderRadius: 4, cursor: 'pointer',
-                                    border: 'var(--hairline)', fontSize: 10.5,
-                                    background: on ? 'var(--sumi)' : 'transparent',
-                                    color: on ? 'var(--paper)' : 'var(--sumi-2)',
-                                    borderColor: on ? 'var(--sumi)' : undefined }}>
+                          style={{ padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+                                    border: 'var(--hairline)', fontSize: 11,
+                                    background: on ? 'var(--ink)' : 'transparent',
+                                    color: on ? 'var(--paper)' : 'var(--ink-2)',
+                                    borderColor: on ? 'var(--ink)' : undefined }}>
                     {f.label}
                   </button>
                 );
@@ -508,27 +508,27 @@ function ProjLogs({ project, scope = "project" }) {
             return (
               <div key={date}>
                 <div onClick={() => toggleDate(date)}
-                     style={{ display: 'flex', alignItems: 'center', gap: 6,
-                               padding: '7px 20px 5px', cursor: 'pointer', userSelect: 'none' }}>
-                  <span style={{ fontSize: 9, color: 'var(--sumi-4)', lineHeight: 1,
+                     style={{ display: 'flex', alignItems: 'center', gap: 4,
+                               padding: '8px 16px 4px', cursor: 'pointer', userSelect: 'none' }}>
+                  <span style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1,
                                   transform: open ? 'none' : 'rotate(-90deg)',
                                   display: 'inline-block', transition: 'transform 0.15s' }}>▾</span>
                   <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em',
-                                  textTransform: 'uppercase', color: 'var(--sumi-2)' }}>
+                                  textTransform: 'uppercase', color: 'var(--ink-2)' }}>
                     {date}
                   </span>
                 </div>
 
                 {open && groups.map(({ mod, sessions }) => (
                   <div key={mod}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6,
-                                   padding: '4px 20px 2px 30px' }}>
-                      <span className="kanji" style={{ fontSize: 11, color: 'var(--sumi-4)',
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4,
+                                   padding: '4px 16px 4px 32px' }}>
+                      <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-4)',
                                     lineHeight: 1 }}>
                         {PLOG_MODULES[mod]?.kanji ?? '◆'}
                       </span>
-                      <span style={{ fontSize: 9, letterSpacing: '0.14em',
-                                      textTransform: 'uppercase', color: 'var(--sumi-4)' }}>
+                      <span style={{ fontSize: 11, letterSpacing: '0.14em',
+                                      textTransform: 'uppercase', color: 'var(--ink-4)' }}>
                         {PLOG_MODULES[mod]?.label ?? mod}
                       </span>
                     </div>
@@ -539,27 +539,27 @@ function ProjLogs({ project, scope = "project" }) {
                       return (
                         <div key={s.id}
                              onClick={() => { setSelectedId(s.id); setExpandedTraceId(null); }}
-                             style={{ padding: '8px 20px 8px 36px', cursor: 'pointer',
+                             style={{ padding: '8px 16px 8px 32px', cursor: 'pointer',
                                        background: sel ? 'var(--paper)' : 'transparent',
-                                       borderLeft: sel ? '2px solid var(--shu)' : '2px solid transparent',
+                                       borderLeft: sel ? '2px solid var(--accent)' : '2px solid transparent',
                                        transition: 'background 0.12s' }}>
                           {isCurrent && (
-                            <div style={{ fontSize: 9, letterSpacing: '0.16em',
+                            <div style={{ fontSize: 11, letterSpacing: '0.16em',
                                             textTransform: 'uppercase',
-                                            color: 'var(--shu)', marginBottom: 2 }}>current</div>
+                                            color: 'var(--accent)', marginBottom: 4 }}>current</div>
                           )}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
                             <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
                                             background: outcomeTone(s.outcome) }}/>
-                            <span style={{ fontSize: 12.5, fontWeight: 500,
-                                            color: sel ? 'var(--sumi)' : 'var(--sumi-2)' }}>
+                            <span style={{ fontSize: 13, fontWeight: 500,
+                                            color: sel ? 'var(--ink)' : 'var(--ink-2)' }}>
                               {timeKey(s)}
                             </span>
                             {collective && s.project && (
                               <span style={{ marginLeft: 'auto', display: 'inline-flex',
-                                              alignItems: 'center', gap: 3, fontSize: 10,
-                                              color: 'var(--sumi-3)' }}>
-                                <span className="kanji" style={{ fontSize: 10, color: 'var(--sumi-4)' }}>
+                                              alignItems: 'center', gap: 4, fontSize: 11,
+                                              color: 'var(--ink-3)' }}>
+                                <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
                                   {s.project.kanji}
                                 </span>
                                 <span style={{ maxWidth: 80, whiteSpace: 'nowrap',
@@ -569,8 +569,8 @@ function ProjLogs({ project, scope = "project" }) {
                               </span>
                             )}
                           </div>
-                          <div className="mono" style={{ marginLeft: 12, fontSize: 10.5,
-                                          color: 'var(--sumi-3)' }}>
+                          <div className="mono" style={{ marginLeft: 12, fontSize: 11,
+                                          color: 'var(--ink-3)' }}>
                             {fmtMs(s.duration_ms)} · {s.traces.length} steps
                             {s.traces.filter(t => t.fix_attempted).length
                               ? ` · ${s.traces.filter(t => t.fix_attempted).length} fix`
@@ -586,8 +586,8 @@ function ProjLogs({ project, scope = "project" }) {
           })}
         </div>
 
-        <div style={{ padding: '10px 20px', borderTop: 'var(--hairline)',
-                       fontSize: 10, color: 'var(--sumi-4)', lineHeight: 1.6 }}>
+        <div style={{ padding: '8px 16px', borderTop: 'var(--hairline)',
+                       fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6 }}>
           <span className="mono">retention · 30 days</span>
         </div>
       </aside>
@@ -595,24 +595,24 @@ function ProjLogs({ project, scope = "project" }) {
       {/* ── Trace stream ── */}
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
         {/* Session header */}
-        <div style={{ padding: '24px 36px 18px', borderBottom: 'var(--hairline)' }}>
+        <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-                          gap: 16, marginBottom: 18 }}>
+                          gap: 16, marginBottom: 16 }}>
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                <span className="kanji" style={{ fontSize: 13, color: 'var(--sumi-3)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span className="kanji" style={{ fontSize: 13, color: 'var(--ink-3)' }}>
                   {PLOG_MODULES[session.module]?.kanji ?? '◆'}
                 </span>
-                <span style={{ fontSize: 9.5, letterSpacing: '0.16em', textTransform: 'uppercase',
-                                color: 'var(--sumi-3)' }}>
+                <span style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
+                                color: 'var(--ink-3)' }}>
                   {PLOG_MODULES[session.module]?.label ?? session.module} · session
                 </span>
                 {collective && session.project && (
                   <>
-                    <span style={{ color: 'var(--sumi-4)', opacity: 0.5 }}>·</span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
-                                    fontSize: 11, color: 'var(--sumi-2)' }}>
-                      <span className="kanji" style={{ fontSize: 12, color: 'var(--shu)' }}>
+                    <span style={{ color: 'var(--ink-4)', opacity: 0.5 }}>·</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+                                    fontSize: 11, color: 'var(--ink-2)' }}>
+                      <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>
                         {session.project.kanji}
                       </span>
                       {session.project.name}
@@ -620,12 +620,12 @@ function ProjLogs({ project, scope = "project" }) {
                   </>
                 )}
               </div>
-              <h2 className="display" style={{ fontSize: 24, fontWeight: 400,
+              <h2 className="display" style={{ fontSize: 22, fontWeight: 400,
                             margin: '0 0 8px', letterSpacing: '-0.01em' }}>
                 {session.display_time}
               </h2>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10,
-                             fontSize: 11.5, color: 'var(--sumi-3)' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8,
+                             fontSize: 11, color: 'var(--ink-3)' }}>
                 {[session.system_info.os, session.system_info.arch,
                   `${session.system_info.ram_gb} GB`, `${session.system_info.cpu_cores} cores`,
                   `v${session.app_version}`].map((v, i, a) => (
@@ -639,21 +639,21 @@ function ProjLogs({ project, scope = "project" }) {
               </div>
             </div>
             <button onClick={() => setShowReport(true)}
-                    style={{ flexShrink: 0, padding: '9px 16px', borderRadius: 6,
+                    style={{ flexShrink: 0, padding: '8px 16px', borderRadius: 6,
                               border: 'none', cursor: 'pointer',
-                              background: 'var(--sumi)', color: 'var(--paper)',
-                              fontSize: 12.5, fontWeight: 500 }}>
+                              background: 'var(--ink)', color: 'var(--paper)',
+                              fontSize: 13, fontWeight: 500 }}>
               Report this session ↗
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: 28 }}>
+          <div style={{ display: 'flex', gap: 24 }}>
             {stats.map(st => (
-              <div key={st.label} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                                color: 'var(--sumi-3)' }}>{st.label}</div>
-                <div className="display" style={{ fontSize: 16, fontWeight: 400,
-                                color: st.color || 'var(--sumi)' }}>
+              <div key={st.label} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                                color: 'var(--ink-3)' }}>{st.label}</div>
+                <div className="display" style={{ fontSize: 15, fontWeight: 400,
+                                color: st.color || 'var(--ink)' }}>
                   {st.value}
                 </div>
               </div>
@@ -663,17 +663,17 @@ function ProjLogs({ project, scope = "project" }) {
 
         {/* Column headers */}
         <div style={{ display: 'grid', gridTemplateColumns: '74px 168px 1fr 60px 40px',
-                       gap: 14, padding: '8px 36px', background: 'var(--paper-2)',
+                       gap: 12, padding: '8px 32px', background: 'var(--paper-2)',
                        borderBottom: 'var(--hairline)', flexShrink: 0 }}>
           {['action', 'step', 'command', 'duration', ''].map((h, i) => (
-            <div key={i} style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                                    color: 'var(--sumi-4)',
+            <div key={i} style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                                    color: 'var(--ink-4)',
                                     textAlign: i === 3 ? 'right' : 'left' }}>{h}</div>
           ))}
         </div>
 
         {/* Trace rows */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 36px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 32px' }}>
           {session.traces.map(t => (
             <PLogTraceRow key={t.id} trace={t}
                            expanded={expandedTraceId === t.id}
@@ -714,7 +714,7 @@ function ProjectLogsPage() {
       <PerspectiveChrome
         title="先生  ·  Sensei"
         subtitle="logs · all projects"
-        accent="var(--matcha)"/>
+        accent="var(--success)"/>
       <div style={{ flex: 1, minHeight: 0 }}>
         <ProjLogs scope="collective"/>
       </div>
@@ -734,7 +734,7 @@ function ProjectLogsReportPage() {
       <PerspectiveChrome
         title="先生  ·  Sensei"
         subtitle="logs · report"
-        accent="var(--matcha)"/>
+        accent="var(--success)"/>
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         <ProjLogs scope="collective"/>
         {open && (

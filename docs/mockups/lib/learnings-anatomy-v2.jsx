@@ -48,15 +48,15 @@ function LearningsAnatomyV2() {
               right={<HealthChart memories={all}/>}/>
 
       {/* ── Toolbar · the single place to scope + search ───────────── */}
-      <div style={{ padding: '12px 36px',
+      <div style={{ padding: '12px 32px',
                      borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 18,
+                     display: 'flex', alignItems: 'center', gap: 16,
                      flexWrap: 'wrap' }}>
         <ProjectFilter value={project} onChange={setProj}
                         projects={L.projects}/>
-        <span style={{ width: 1, height: 18, background: 'var(--paper-edge)' }}/>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6,
-                       padding: '4px 10px',
+        <span style={{ width: 1, height: 18, background: 'var(--edge)' }}/>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4,
+                       padding: '4px 8px',
                        background: 'var(--paper-2)',
                        border: 'var(--hairline)', borderRadius: 16,
                        minWidth: 200 }}>
@@ -68,20 +68,20 @@ function LearningsAnatomyV2() {
           </svg>
           <input value={query} onChange={e => setQuery(e.target.value)}
                  placeholder="search memories…"
-                 style={{ flex: 1, padding: 0, fontSize: 11.5,
+                 style={{ flex: 1, padding: 0, fontSize: 11,
                            background: 'transparent', border: 'none',
-                           color: 'var(--sumi)', fontFamily: 'inherit',
+                           color: 'var(--ink)', fontFamily: 'inherit',
                            outline: 'none', minWidth: 0 }}/>
           {query && (
             <button onClick={() => setQuery("")}
                     style={{ background: 'transparent', border: 'none',
-                              color: 'var(--sumi-4)', cursor: 'pointer',
-                              padding: 0, fontSize: 12, lineHeight: 1,
+                              color: 'var(--ink-4)', cursor: 'pointer',
+                              padding: 0, fontSize: 13, lineHeight: 1,
                               fontFamily: 'inherit' }}>×</button>
           )}
         </div>
         <span style={{ flex: 1 }}/>
-        <span style={{ fontSize: 11, color: 'var(--sumi-4)' }}>
+        <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
           {filtered.length} of {all.length} memories
         </span>
       </div>
@@ -91,10 +91,10 @@ function LearningsAnatomyV2() {
                      minHeight: 0 }}>
         {/* ── Calm rail · just the list ────────────────────────── */}
         <aside style={{ borderRight: 'var(--hairline)',
-                         overflow: 'auto', padding: '6px 0' }}>
+                         overflow: 'auto', padding: '4px 0' }}>
           {filtered.length === 0 && (
-            <div style={{ padding: '24px 18px', fontSize: 11,
-                           color: 'var(--sumi-4)', textAlign: 'center' }}>
+            <div style={{ padding: '24px 16px', fontSize: 11,
+                           color: 'var(--ink-4)', textAlign: 'center' }}>
               no matches
             </div>
           )}
@@ -105,20 +105,20 @@ function LearningsAnatomyV2() {
               <button key={m.id} onClick={() => setOpen(m.id)}
                       title={how.label}
                       style={{ width: '100%', textAlign: 'left',
-                                padding: '10px 14px 10px 14px',
+                                padding: '8px 12px 8px 12px',
                                 background: open ? 'var(--paper-2)' : 'transparent',
-                                borderLeft: open ? '2px solid var(--shu)'
+                                borderLeft: open ? '2px solid var(--accent)'
                                                  : '2px solid transparent',
                                 cursor: 'pointer',
-                                display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                 <span className="kanji"
                       style={{ fontSize: 15, lineHeight: 1.3,
-                                color: open ? 'var(--shu)' : 'var(--sumi-3)',
-                                flexShrink: 0, marginTop: 1 }}>
+                                color: open ? 'var(--accent)' : 'var(--ink-3)',
+                                flexShrink: 0, marginTop: 4 }}>
                   {how.glyph}
                 </span>
-                <span style={{ fontSize: 12.5, flex: 1, minWidth: 0,
-                               color: open ? 'var(--sumi)' : 'var(--sumi-2)',
+                <span style={{ fontSize: 13, flex: 1, minWidth: 0,
+                               color: open ? 'var(--ink)' : 'var(--ink-2)',
                                lineHeight: 1.4,
                                display: '-webkit-box', WebkitLineClamp: 2,
                                WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -130,7 +130,7 @@ function LearningsAnatomyV2() {
         </aside>
 
         {/* ── Stage ────────────────────────────────────── */}
-        <main style={{ overflow: 'auto', padding: '32px 44px 40px' }}>
+        <main style={{ overflow: 'auto', padding: '32px 48px 32px' }}>
           <AnatomyStageV2 memory={memory}/>
         </main>
       </div>
@@ -156,55 +156,55 @@ function AnatomyStageV2({ memory }) {
     <div style={{ maxWidth: 720, margin: '4px auto 0',
                    display: 'flex', flexDirection: 'column' }}>
       {/* Eyebrow + surface tag, on one row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14,
-                     fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                     textTransform: 'uppercase', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12,
+                     fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
+                     textTransform: 'uppercase', marginBottom: 12 }}>
         <span>{memory.category.replace("_", "-")}</span>
         <span style={{ width: 3, height: 3, borderRadius: '50%',
-                        background: 'var(--sumi-4)' }}/>
+                        background: 'var(--ink-4)' }}/>
         <span>{memory.state}</span>
         <span style={{ flex: 1 }}/>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7,
-                        color: 'var(--shu)', letterSpacing: '0.12em' }}>
-          <span className="kanji" style={{ fontSize: 14, lineHeight: 1 }}>{how.glyph}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8,
+                        color: 'var(--accent)', letterSpacing: '0.12em' }}>
+          <span className="kanji" style={{ fontSize: 13, lineHeight: 1 }}>{how.glyph}</span>
           {SURFACE_LABEL[how.kind] || how.label}
         </span>
       </div>
 
       {/* The memory message — display-scale, like the welcome page */}
-      <h2 className="display" style={{ fontSize: 38, fontWeight: 300, lineHeight: 1.15,
+      <h2 className="display" style={{ fontSize: 40, fontWeight: 300, lineHeight: 1.15,
                                         letterSpacing: '-0.015em',
-                                        margin: '0 0 28px', color: 'var(--sumi)' }}>
+                                        margin: '0 0 24px', color: 'var(--ink)' }}>
         {memory.what}
       </h2>
 
       {/* Why — a quiet paragraph */}
-      <p style={{ fontSize: 16, color: 'var(--sumi-2)', lineHeight: 1.7,
+      <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.7,
                    margin: '0 0 16px' }}>
         {memory.because}
       </p>
 
       {/* Consequence of NOT following it — only when we have evidence */}
       {memory.violated > 0 && (
-        <p style={{ fontSize: 14, color: 'var(--sumi-3)', lineHeight: 1.7,
+        <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7,
                      margin: '0 0 32px' }}>
           When this slipped, sensei saw{" "}
-          <span style={{ color: 'var(--shu)' }}>
+          <span style={{ color: 'var(--accent)' }}>
             {memory.violated} correction{memory.violated === 1 ? "" : "s"}
           </span>{" "}
           across recent sessions
           {memory.references.bad_example && (
-            <> — most often in <span className="mono" style={{ color: 'var(--sumi-2)' }}>
+            <> — most often in <span className="mono" style={{ color: 'var(--ink-2)' }}>
               {memory.references.bad_example}
             </span></>
           )}.
         </p>
       )}
       {memory.violated === 0 && (
-        <p style={{ fontSize: 14, color: 'var(--sumi-3)', lineHeight: 1.7,
+        <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7,
                      margin: '0 0 32px' }}>
           Reinforced{" "}
-          <span style={{ color: 'var(--sumi-2)' }}>{memory.reinforced} times</span>
+          <span style={{ color: 'var(--ink-2)' }}>{memory.reinforced} times</span>
           {" "}without a violation. Last seen {memory.lastRelevant}.
         </p>
       )}
@@ -216,17 +216,17 @@ function AnatomyStageV2({ memory }) {
         {/* HOW · surfaced as */}
         <ObservationRow kanji={how.glyph} title="Surfaced as"
                         value={SURFACE_LABEL[how.kind] || how.label}
-                        sub={<span className="mono" style={{ fontSize: 11.5,
-                                       color: 'var(--sumi-2)' }}>{how.target}</span>}/>
+                        sub={<span className="mono" style={{ fontSize: 11,
+                                       color: 'var(--ink-2)' }}>{how.target}</span>}/>
 
         {/* WHERE · scope */}
         <ObservationRow kanji="域" title="Applies in"
                         value={scope.find(c => c.label === "project")?.value || "global"}
                         sub={
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                             {scope.filter(c => c.label !== "project").slice(0, 4).map((c, i) => (
                               <span key={i} className={c.mono ? "mono" : ""}
-                                    style={{ fontSize: 11, color: 'var(--sumi-3)' }}>
+                                    style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                                 {c.value}{i < 3 ? " ·" : ""}
                               </span>
                             ))}
@@ -236,19 +236,19 @@ function AnatomyStageV2({ memory }) {
 
       {/* Examples — when present, as a quiet note row */}
       {(memory.references.good_example || memory.references.bad_example) && (
-        <div style={{ borderTop: 'var(--hairline)', padding: '20px 0',
-                       display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 10, letterSpacing: '0.16em', color: 'var(--sumi-4)',
+        <div style={{ borderTop: 'var(--hairline)', padding: '16px 0',
+                       display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
                          textTransform: 'uppercase', marginBottom: 4 }}>
             In the codebase
           </div>
           {memory.references.good_example && (
-            <div className="mono" style={{ fontSize: 12, color: 'var(--jade)' }}>
+            <div className="mono" style={{ fontSize: 13, color: 'var(--success)' }}>
               ✓ {memory.references.good_example}
             </div>
           )}
           {memory.references.bad_example && (
-            <div className="mono" style={{ fontSize: 12, color: 'var(--shu)' }}>
+            <div className="mono" style={{ fontSize: 13, color: 'var(--accent)' }}>
               ✗ {memory.references.bad_example}
             </div>
           )}
@@ -256,12 +256,12 @@ function AnatomyStageV2({ memory }) {
       )}
 
       {/* Strength · meta */}
-      <div style={{ borderTop: 'var(--hairline)', paddingTop: 18,
-                     display: 'flex', alignItems: 'center', gap: 14,
-                     fontSize: 11.5, color: 'var(--sumi-3)' }}>
+      <div style={{ borderTop: 'var(--hairline)', paddingTop: 16,
+                     display: 'flex', alignItems: 'center', gap: 12,
+                     fontSize: 11, color: 'var(--ink-3)' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <StrengthBar value={memory.strength}/>
-          <span className="mono" style={{ color: 'var(--sumi-2)' }}>
+          <span className="mono" style={{ color: 'var(--ink-2)' }}>
             strength {memory.strength}/5
           </span>
         </span>
@@ -272,16 +272,16 @@ function AnatomyStageV2({ memory }) {
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 22 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 24 }}>
         <FlatBtn glyph="昇" label="Promote to rule"/>
         <FlatBtn glyph="育" label="Enrich"/>
         <FlatBtn glyph="渡" label="Apply elsewhere"/>
         <span style={{ flex: 1 }}/>
         <button title="More"
-                style={{ width: 30, height: 28, fontSize: 14,
+                style={{ width: 30, height: 28, fontSize: 13,
                           background: 'transparent',
                           border: 'var(--hairline)', borderRadius: 5,
-                          color: 'var(--sumi-3)', cursor: 'pointer',
+                          color: 'var(--ink-3)', cursor: 'pointer',
                           letterSpacing: 1 }}>···</button>
       </div>
     </div>
@@ -291,18 +291,18 @@ function AnatomyStageV2({ memory }) {
 // One observation row in the "teacher" voice — kanji, eyebrow, value, sub.
 function ObservationRow({ kanji, title, value, sub }) {
   return (
-    <div style={{ padding: '20px 24px 20px 0', display: 'flex', gap: 14,
+    <div style={{ padding: '16px 24px 16px 0', display: 'flex', gap: 12,
                    alignItems: 'flex-start' }}>
-      <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)',
-                                         lineHeight: 1, marginTop: 2 }}>{kanji}</span>
+      <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)',
+                                         lineHeight: 1, marginTop: 4 }}>{kanji}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.16em', color: 'var(--sumi-4)',
+        <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
                        textTransform: 'uppercase', marginBottom: 4 }}>{title}</div>
-        <div className="display" style={{ fontSize: 17, color: 'var(--sumi)',
+        <div className="display" style={{ fontSize: 17, color: 'var(--ink)',
                                             marginBottom: 4, lineHeight: 1.3 }}>
           {value}
         </div>
-        {sub && <div style={{ fontSize: 11.5, color: 'var(--sumi-3)',
+        {sub && <div style={{ fontSize: 11, color: 'var(--ink-3)',
                                 lineHeight: 1.5 }}>{sub}</div>}
       </div>
     </div>
@@ -311,7 +311,7 @@ function ObservationRow({ kanji, title, value, sub }) {
 
 function Sep() {
   return <span style={{ width: 3, height: 3, borderRadius: '50%',
-                         background: 'var(--sumi-4)', display: 'inline-block' }}/>;
+                         background: 'var(--ink-4)', display: 'inline-block' }}/>;
 }
 
 window.LearningsAnatomyV2 = LearningsAnatomyV2;
