@@ -33,7 +33,7 @@ export const emptyPayload: HealthPayload = {
   remedy: null,
 };
 
-/** Synthetic ok payload used by VITE_BYPASS_HEALTH mode — never hits Tauri/daemon. */
+/** Synthetic ok payload used by browser-only (non-Tauri) builds — never hits Tauri/daemon. */
 function bypassOkPayload(): HealthPayload {
   return {
     version: '',
@@ -62,8 +62,9 @@ export class HealthState {
   #initPromise: Promise<void> | null = null;
   #verifyPromise: Promise<void> | null = null;
   /** When true, neither transport.check() nor transport.resolve() is ever called.
-   *  Set from VITE_BYPASS_HEALTH=true at construction so HealthState is the sole
-   *  owner of the bypass — no other module reads the env var. */
+   *  Derived from `health-cache::isHealthBypass()` (true when the bundle was NOT
+   *  built inside a Tauri context — no sidecar exists to answer). HealthState is
+   *  the sole consumer of the bypass; no other module reads the build-time flag. */
   readonly #bypass: boolean;
 
   get isOk():        boolean { return this.status === 'ok'; }
