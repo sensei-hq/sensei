@@ -4,6 +4,14 @@ import { MockTransport } from './health-transport.js';
 import { COMPONENT_ORDER } from './health-types.js';
 import type { HealthPayload, Remedy } from './health-types.js';
 
+// Pretend Tauri is present so HealthState's runtime bypass check
+// (`window.__TAURI__`) resolves to "Tauri build" — i.e. non-bypass —
+// which is what every test in this file except the dedicated bypass
+// block assumes. Bypass-specific tests delete the global temporarily.
+const win = (globalThis as unknown as { window?: Record<string, unknown> }).window
+  ?? ((globalThis as unknown as { window: Record<string, unknown> }).window = {});
+win.__TAURI__ = {};
+
 const remedyFixture = (): Remedy => ({
   message: 'Run the script in your terminal.',
   script: 'brew install sensei-hq/tap/sensei',
@@ -396,8 +404,9 @@ describe('HealthState — B4: apply() writes sessionStorage cache', () => {
   });
 });
 
-describe('HealthState — bypass when not built inside Tauri', () => {
+describe('HealthState — bypass when no Tauri runtime', () => {
   let sessionStore: Map<string, string>;
+  let savedTauri: unknown;
 
   beforeEach(() => {
     sessionStore = new Map<string, string>();
@@ -406,16 +415,17 @@ describe('HealthState — bypass when not built inside Tauri', () => {
       setItem:    (k: string, v: string) => sessionStore.set(k, v),
       removeItem: (k: string) => sessionStore.delete(k),
     });
-    // Bypass is derived from `__SENSEI_HAS_TAURI__`, a constant injected
-    // by vite.config.ts. vitest doesn't apply vite's `define`, so the
-    // health-cache default is "has Tauri" (non-bypass) to match every
-    // other test in this file. Stubbing the global to `false` flips
-    // health-cache's typeof check and forces bypass mode for this block.
-    vi.stubGlobal('__SENSEI_HAS_TAURI__', false);
+    // Bypass is decided by `window.__TAURI__` at runtime. The file-level
+    // stub sets it for every other test in this file; for this block we
+    // temporarily delete it to simulate a browser-only (no-Tauri)
+    // context.
+    savedTauri = (win as { __TAURI__?: unknown }).__TAURI__;
+    delete (win as { __TAURI__?: unknown }).__TAURI__;
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (savedTauri !== undefined) (win as { __TAURI__?: unknown }).__TAURI__ = savedTauri;
   });
 
   it('constructor marks status as ok and writes the cache key when bypass is set', () => {

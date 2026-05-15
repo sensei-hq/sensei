@@ -15,6 +15,12 @@ vi.stubGlobal('localStorage', {
   removeItem: (k: string) => localStore.delete(k),
 });
 
+// Pretend Tauri is present so HealthState constructor doesn't take the
+// bypass path; the wire-compat test needs to drive .apply() explicitly.
+const win = (globalThis as unknown as { window?: Record<string, unknown> }).window
+  ?? ((globalThis as unknown as { window: Record<string, unknown> }).window = {});
+win.__TAURI__ = {};
+
 import { HealthState } from '$lib/health-state.svelte.js';
 import { COMPONENT_ORDER } from '$lib/health-types.js';
 import type { HealthPayload } from '$lib/health-types.js';
