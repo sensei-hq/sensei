@@ -41,7 +41,7 @@
 
 <div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
     <div class="mb-6">
-        <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
+        <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">
             {pageLabel}
         </p>
         <h1 class="display text-2xl font-normal m-0">{pageTitle}</h1>
@@ -50,7 +50,7 @@
     <TabBar {tabs} bind:active={tab} class="mb-7" />
 
     {#if loading}
-        <p class="text-ui text-surface-z6">Loading...</p>
+        <p class="text-sm text-surface-z6">Loading...</p>
     {:else if memories.length === 0}
         <EmptyState
             kanji="學"
@@ -63,27 +63,27 @@
             <div class="flex flex-col gap-1">
                 {#each memories as mem (mem.id)}
                     <button
-                        class="memory-card text-left px-4 py-3.5 border border-surface-z3 rounded-md bg-surface-z1 cursor-pointer transition-colors duration-100"
+                        class="memory-card text-left px-4 py-3.5 border border-surface-z3 rounded-md bg-surface-z1 cursor-pointer transition-colors duration-fast"
                         class:selected={selectedMemory?.id === mem.id}
                         onclick={() => (selectedMemory = mem)}
                     >
                         <div class="flex justify-between mb-1.5">
                             <span
-                                class="text-3xs text-primary-z5 tracking-wide"
+                                class="text-xs text-primary-z5 tracking-wide"
                                 title="Strength {mem.strength}/5"
                                 >{strengthDots(mem.strength)}</span
                             >
                             <span
-                                class="text-3xs text-surface-z5 uppercase tracking-widest"
+                                class="text-xs text-surface-z5 uppercase tracking-wide"
                                 >{mem.scope}</span
                             >
                         </div>
-                        <p class="text-ui text-surface-z9 m-0 leading-normal">
+                        <p class="text-sm text-surface-z9 m-0 leading-normal">
                             {mem.title}
                         </p>
                         {#if mem.project_name}
                             <span
-                                class="text-2xs text-surface-z6 mt-1 inline-block"
+                                class="text-xs text-surface-z6 mt-1 inline-block"
                                 >{mem.project_name}</span
                             >
                         {/if}
@@ -99,12 +99,12 @@
                     {#each [{ label: "What", text: selectedMemory.title }, { label: "Why", text: selectedMemory.content }] as section}
                         <div>
                             <p
-                                class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-1.5"
+                                class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1.5"
                             >
                                 {section.label}
                             </p>
                             <p
-                                class="text-ui text-surface-z9 m-0 leading-relaxed"
+                                class="text-sm text-surface-z9 m-0 leading-normal"
                             >
                                 {section.text}
                             </p>
@@ -112,34 +112,34 @@
                     {/each}
                     <div>
                         <p
-                            class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-1.5"
+                            class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1.5"
                         >
                             Scope
                         </p>
                         <span
-                            class="inline-block px-2.5 py-0.75 rounded-full text-2xs bg-surface-z3 text-surface-z7"
+                            class="inline-block px-2.5 py-1 rounded-full text-xs bg-surface-z3 text-surface-z7"
                             >{selectedMemory.scope}</span
                         >
                     </div>
                     <div>
                         <p
-                            class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-1.5"
+                            class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1.5"
                         >
                             Strength
                         </p>
-                        <span class="text-ui text-primary-z5"
+                        <span class="text-sm text-primary-z5"
                             >{strengthDots(selectedMemory.strength)}
                             {selectedMemory.strength}/5</span
                         >
                     </div>
                     <div>
                         <p
-                            class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-1.5"
+                            class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-1.5"
                         >
                             Status
                         </p>
                         <span
-                            class="inline-block px-2.5 py-0.75 rounded-full text-2xs bg-surface-z3 text-surface-z7"
+                            class="inline-block px-2.5 py-1 rounded-full text-xs bg-surface-z3 text-surface-z7"
                             >{selectedMemory.status}</span
                         >
                     </div>

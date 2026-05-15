@@ -47,7 +47,7 @@
 
 <div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
     <div class="mb-6">
-        <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
+        <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">
             Instruments
         </p>
         <h1 class="display text-2xl font-normal m-0">具 Instruments</h1>
@@ -57,7 +57,7 @@
 
     {#if tab === "playground"}
         {#if loading}
-            <p class="text-ui text-surface-z6">Loading tools...</p>
+            <p class="text-sm text-surface-z6">Loading tools...</p>
         {:else if tools.length === 0}
             <EmptyState
                 kanji="具"
@@ -70,7 +70,7 @@
                 <div class="flex flex-col gap-0.5">
                     {#each tools as tool (tool.name)}
                         <button
-                            class="tool-card text-left px-3.5 py-2.5 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-100"
+                            class="tool-card text-left px-3.5 py-2.5 rounded-md bg-transparent border-none cursor-pointer transition-colors duration-fast"
                             class:selected={selectedTool?.name === tool.name}
                             onclick={() => {
                                 selectedTool = tool;
@@ -79,10 +79,10 @@
                             }}
                         >
                             <span
-                                class="block text-ui font-medium text-surface-z9 font-mono"
+                                class="block text-sm font-medium text-surface-z9 font-mono"
                                 >{tool.name}</span
                             >
-                            <span class="block text-2xs text-surface-z6 mt-0.5"
+                            <span class="block text-xs text-surface-z6 mt-0.5"
                                 >{tool.description}</span
                             >
                         </button>
@@ -98,7 +98,7 @@
                             {selectedTool.name}
                         </h3>
                         <p
-                            class="text-ui text-surface-z7 m-0 mb-5 leading-normal"
+                            class="text-sm text-surface-z7 m-0 mb-5 leading-normal"
                         >
                             {selectedTool.description}
                         </p>
@@ -108,12 +108,12 @@
                                 {#each selectedTool.params as param}
                                     <div class="flex flex-col gap-1">
                                         <label
-                                            class="text-2xs text-surface-z6 font-mono"
+                                            class="text-xs text-surface-z6 font-mono"
                                             for="param-{param}">{param}</label
                                         >
                                         <input
                                             id="param-{param}"
-                                            class="param-input px-3 py-2 border border-surface-z3 rounded-md bg-surface-z1 text-surface-z9 text-ui font-mono outline-none"
+                                            class="param-input px-3 py-2 border border-surface-z3 rounded-md bg-surface-z1 text-surface-z9 text-sm font-mono outline-none"
                                             type="text"
                                             placeholder={param}
                                             bind:value={toolParams[param]}
@@ -134,7 +134,7 @@
                         {#if toolResult}
                             <div class="mt-5">
                                 <p
-                                    class="text-micro tracking-label uppercase text-surface-z6 m-0 mb-2"
+                                    class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2"
                                 >
                                     Response
                                 </p>
@@ -143,7 +143,7 @@
                             </div>
                         {/if}
                     {:else}
-                        <p class="text-ui text-surface-z6">
+                        <p class="text-sm text-surface-z6">
                             Select a tool to try it.
                         </p>
                     {/if}
@@ -170,7 +170,7 @@
         />
     {:else}
         <div class="flex flex-col gap-1">
-            <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-2xs text-surface-z6 tracking-loose uppercase">
+            <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-xs text-surface-z6 tracking-wide uppercase">
                 <span>Tool</span>
                 <span class="text-right">Calls</span>
                 <span class="text-right">Errors</span>
@@ -179,19 +179,19 @@
             </div>
             {#each toolStats as stat (stat.tool_name)}
                 {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
-                <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-surface-z2 text-ui items-center">
+                <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-surface-z2 text-sm items-center">
                     <span class="font-mono text-xs">{stat.tool_name}</span>
                     <span class="text-right mono text-xs">{stat.call_count}</span>
                     <span class="text-right mono text-xs" class:text-error={errorRate > 0.1}>
                         {stat.error_count}
                         {#if errorRate > 0}
-                            <span class="text-2xs opacity-50">({Math.round(errorRate * 100)}%)</span>
+                            <span class="text-xs opacity-50">({Math.round(errorRate * 100)}%)</span>
                         {/if}
                     </span>
                     <span class="text-right mono text-xs opacity-70">
                         {stat.avg_duration_ms != null ? Math.round(stat.avg_duration_ms) : '—'}
                     </span>
-                    <span class="text-right text-2xs text-surface-z6">
+                    <span class="text-right text-xs text-surface-z6">
                         {new Date(stat.last_used_at).toLocaleDateString()}
                     </span>
                 </div>
