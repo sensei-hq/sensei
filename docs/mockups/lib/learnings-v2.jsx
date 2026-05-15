@@ -19,18 +19,26 @@ const { useState: l2S, useMemo: l2M } = React;
 // ═══════════════════════════════════════════════════════════════════════
 function L2Hero({ title, sub, kanji, right }) {
   return (
-    <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center', gap: 24, background: 'var(--paper)' }}>
+    <div style={{
+ borderBottom: 'var(--hairline)',
+                   display: 'flex', alignItems: 'center', background: 'var(--paper)'
+}} className="gap-5 pt-5 pb-4 px-6" >
       <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>{kanji}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', marginBottom: 4 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-1" >
           Observatory · Learnings
         </div>
-        <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                          color: 'var(--ink)' }}>{title}</h1>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                     maxWidth: 720, lineHeight: 1.55 }}>{sub}</p>
+        <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>{title}</h1>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     maxWidth: 720, lineHeight: 1.55
+}} className="mt-1 mb-0" >{sub}</p>
       </div>
       {right}
     </div>
@@ -117,13 +125,14 @@ function LearningsTriage() {
               right={<TriageStats counts={L.counts}/>}/>
 
       {/* shared project filter */}
-      <div style={{ padding: '12px 32px', borderBottom: 'var(--hairline)' }}>
+      <div style={{ borderBottom: 'var(--hairline)' }} className="py-3 px-6" >
         <ProjectFilter value={project} onChange={setProject} projects={L.projects}/>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0,
-                     display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-                     gap: 0 }}>
+      <div style={{
+ flex: 1, overflow: 'auto', minHeight: 0,
+                     display: 'grid', gridTemplateColumns: '1fr 1fr 1fr'
+}} className="gap-0" >
         <TriageColumn
           accent="var(--accent)"
           kanji="今"
@@ -164,7 +173,7 @@ function LearningsTriage() {
 
 function TriageStats({ counts }) {
   return (
-    <div style={{ display: 'flex', gap: 24, paddingLeft: 24, borderLeft: 'var(--hairline)' }}>
+    <div style={{ display: 'flex', borderLeft: 'var(--hairline)' }} className="gap-5 pl-5" >
       <Mini n={counts.recs} l="to act" accent/>
       <Mini n={counts.memories} l="memories"/>
       <Mini n={`+${Math.round(counts.ftrFromMemory*100)}%`} l="ftr lift" mono/>
@@ -178,8 +187,9 @@ function Mini({ n, l, accent, mono }) {
            style={{ fontSize: 17, lineHeight: 1, fontWeight: 300,
                      color: accent ? 'var(--accent)' : 'var(--ink)',
                      fontFeatureSettings: '"tnum"' }}>{n}</div>
-      <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)',
-                     marginTop: 4, textTransform: 'uppercase' }}>{l}</div>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
+}} className="mt-1" >{l}</div>
     </div>
   );
 }
@@ -188,20 +198,24 @@ function TriageColumn({ accent, kanji, title, sub, count, children }) {
   return (
     <div style={{ borderRight: 'var(--hairline)', display: 'flex',
                    flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ padding: '16px 24px 12px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'baseline', gap: 8 }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'baseline'
+}} className="gap-2 pt-4 pb-3 px-5" >
         <span className="kanji" style={{ fontSize: 22, color: accent, lineHeight: 1 }}>{kanji}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{title}</div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{sub}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >{sub}</div>
         </div>
         {count != null && (
           <span className="mono" style={{ fontSize: 11, color: accent,
                         fontFeatureSettings: '"tnum"' }}>{count}</span>
         )}
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px',
-                     display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{
+ flex: 1, overflow: 'auto',
+                     display: 'flex', flexDirection: 'column'
+}} className="py-3 px-4 gap-2" >
         {children}
       </div>
     </div>
@@ -210,18 +224,21 @@ function TriageColumn({ accent, kanji, title, sub, count, children }) {
 
 function Quiet({ text }) {
   return (
-    <div style={{ padding: '32px 8px', textAlign: 'center', fontSize: 11,
-                   color: 'var(--ink-4)', fontStyle: 'italic' }}>{text}</div>
+    <div style={{
+ textAlign: 'center', fontSize: 11,
+                   color: 'var(--ink-4)', fontStyle: 'italic'
+}} className="py-6 px-2" >{text}</div>
   );
 }
 
 function ViolationCard({ memory }) {
   const how = inferHow(memory);
   return (
-    <div style={{ background: 'var(--accent-soft)', border: '1px solid transparent',
-                   borderLeft: '2px solid var(--accent)', borderRadius: 5,
-                   padding: '8px 12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+    <div style={{
+ background: 'var(--accent-soft)', border: '1px solid transparent',
+                   borderLeft: '2px solid var(--accent)', borderRadius: 5
+}} className="py-2 px-3" >
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mb-1" >
         <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
                         textTransform: 'uppercase', fontWeight: 500 }}>
           violated · {memory.violated}×
@@ -232,7 +249,7 @@ function ViolationCard({ memory }) {
       <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4, fontWeight: 500 }}>
         {memory.what}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
         <span className="kanji" style={{ color: 'var(--accent)' }}>{how.glyph}</span>{" "}
         reinforce in <span className="mono">{how.target}</span>
       </div>
@@ -246,9 +263,11 @@ function RecCardSlim({ rec }) {
     "archive-memory": "納", "enrich-memory": "育", "cross-project": "渡"
   }[rec.kind] || "?";
   return (
-    <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 5, padding: '8px 12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+    <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                   borderRadius: 5
+}} className="py-2 px-3" >
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mb-1" >
         <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{kindGlyph}</span>
         <span style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.14em',
                         textTransform: 'uppercase' }}>{rec.action}</span>
@@ -256,17 +275,20 @@ function RecCardSlim({ rec }) {
         <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>{rec.targetKind}</span>
       </div>
       <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>{rec.title}</div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
-                     lineHeight: 1.5 }}>{rec.reasoning}</div>
+      <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                     lineHeight: 1.5
+}} className="mt-1" >{rec.reasoning}</div>
     </div>
   );
 }
 
 function CorrectionMini({ c }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8,
-                   padding: '8px 12px', background: 'var(--paper-2)',
-                   border: 'var(--hairline)', borderRadius: 5 }}>
+    <div style={{
+ display: 'flex', alignItems: 'baseline', background: 'var(--paper-2)',
+                   border: 'var(--hairline)', borderRadius: 5
+}} className="gap-2 py-2 px-3" >
       <span className="kanji" style={{ fontSize: 11, color: 'var(--warning)' }}>直</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 11, color: 'var(--ink)', lineHeight: 1.4,
@@ -281,10 +303,11 @@ function CorrectionMini({ c }) {
 
 function PatternMini({ pattern }) {
   return (
-    <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderLeft: '2px solid var(--warning)', borderRadius: 5,
-                   padding: '8px 12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+    <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                   borderLeft: '2px solid var(--warning)', borderRadius: 5
+}} className="py-2 px-3" >
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
         <span className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>{pattern.name}</span>
         <span style={{ flex: 1 }}/>
         <span className="mono" style={{ fontSize: 11, color: 'var(--success)' }}>
@@ -300,10 +323,14 @@ function PatternMini({ pattern }) {
 
 function ChallengedMini({ memory }) {
   return (
-    <div style={{ background: 'var(--warning-soft)', border: '1px solid transparent',
-                   borderRadius: 5, padding: '8px 12px' }}>
-      <div style={{ fontSize: 11, color: 'var(--warning)', letterSpacing: '0.14em',
-                     textTransform: 'uppercase', marginBottom: 4 }}>challenged</div>
+    <div style={{
+ background: 'var(--warning-soft)', border: '1px solid transparent',
+                   borderRadius: 5
+}} className="py-2 px-3" >
+      <div style={{
+ fontSize: 11, color: 'var(--warning)', letterSpacing: '0.14em',
+                     textTransform: 'uppercase'
+}} className="mb-1" >challenged</div>
       <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>{memory.what}</div>
     </div>
   );
@@ -311,7 +338,7 @@ function ChallengedMini({ memory }) {
 
 function SettledRow({ memory }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 0' }}>
+    <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 py-1 px-0" >
       <StrengthBar value={memory.strength} compact/>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>{memory.what}</div>
@@ -324,9 +351,11 @@ function SettledRow({ memory }) {
 function StrengthBar({ value, compact }) {
   return (
     <div title={`strength ${value}/5`}
-         style={{ width: compact ? 24 : 60, height: 3, borderRadius: 2,
+         style={{
+ width: compact ? 24 : 60, height: 3, borderRadius: 2,
                    background: 'var(--edge)', position: 'relative',
-                   flexShrink: 0, marginTop: 4 }}>
+                   flexShrink: 0
+}} className="mt-1" >
       <div style={{ position: 'absolute', inset: 0,
                      width: `${(value/5)*100}%`,
                      background: value === 5 ? 'var(--success)' : 'var(--ink-2)',
@@ -367,16 +396,19 @@ function LearningsAnatomy() {
                      gridTemplateColumns: '260px 1fr',
                      minHeight: 0 }}>
         {/* List rail */}
-        <aside style={{ borderRight: 'var(--hairline)', overflow: 'auto',
-                         padding: '14px 0' }}>
+        <aside style={{
+ borderRight: 'var(--hairline)', overflow: 'auto'
+}} className="py-3 px-0" >
           {groups.map(g => {
             const items = active.filter(m => m.category === g.id ||
               (g.id === "pattern" && m.category === "anti_pattern"));
             if (items.length === 0) return null;
             return (
-              <div key={g.id} style={{ marginBottom: 12 }}>
-                <div style={{ padding: '4px 16px 4px', display: 'flex',
-                               alignItems: 'baseline', gap: 8 }}>
+              <div key={g.id} className="mb-3" >
+                <div style={{
+ display: 'flex',
+                               alignItems: 'baseline'
+}} className="gap-2 py-1 px-4" >
                   <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{g.glyph}</span>
                   <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                                   textTransform: 'uppercase' }}>{g.label}</span>
@@ -384,17 +416,18 @@ function LearningsAnatomy() {
                 </div>
                 {items.map(m => (
                   <button key={m.id} onClick={() => setOpen(m.id)}
-                          style={{ width: '100%', textAlign: 'left',
-                                    padding: '8px 16px 8px 24px',
+                          style={{
+ width: '100%', textAlign: 'left',
                                     background: openId === m.id ? 'var(--paper-2)' : 'transparent',
                                     borderLeft: openId === m.id ? '2px solid var(--accent)' : '2px solid transparent',
-                                    cursor: 'pointer' }}>
+                                    cursor: 'pointer'
+}} className="py-2 pl-5 pr-4" >
                     <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
                                    display: '-webkit-box', WebkitLineClamp: 2,
                                    WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                       {m.what}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mt-1" >
                       <StrengthBar value={m.strength} compact/>
                       {m.violated > 0 && (
                         <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
@@ -410,7 +443,7 @@ function LearningsAnatomy() {
         </aside>
 
         {/* Anatomy stage */}
-        <main style={{ overflow: 'auto', padding: '24px 32px 32px' }}>
+        <main style={{ overflow: 'auto' }} className="pt-5 pb-6 px-6" >
           <AnatomyStage memory={memory}/>
         </main>
       </div>
@@ -422,10 +455,10 @@ function AnatomyStage({ memory }) {
   const L = window.LEARNINGS;
   const how = inferHow(memory);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-4" >
       {/* Title + meta */}
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
           <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                           textTransform: 'uppercase' }}>{memory.category.replace("_", "-")}</span>
           <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>·</span>
@@ -436,15 +469,19 @@ function AnatomyStage({ memory }) {
             {memory.strength}/5
           </span>
         </div>
-        <h2 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                          color: 'var(--ink)', lineHeight: 1.3 }}>
+        <h2 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                          color: 'var(--ink)', lineHeight: 1.3
+}}>
           {memory.what}
         </h2>
       </div>
 
       {/* 2×2 anatomy grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                     gridTemplateRows: 'auto auto', gap: 12 }}>
+      <div style={{
+ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                     gridTemplateRows: 'auto auto'
+}} className="gap-3" >
         <AnatomyBlock label="What" kanji="何" tone="ink">
           <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5 }}>
             {memory.what}
@@ -458,18 +495,21 @@ function AnatomyStage({ memory }) {
         </AnatomyBlock>
 
         <AnatomyBlock label="How · surface" kanji={how.glyph} tone="shu">
-          <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5,
-                         marginBottom: 4 }}>
+          <div style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.5
+}} className="mb-1" >
             sensei surfaces this as a{" "}
             <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{how.label}</span>
           </div>
-          <div className="mono" style={{ fontSize: 11, padding: '4px 8px',
+          <div className="mono py-1 px-2" style={{
+ fontSize: 11,
                        background: 'var(--paper)', borderRadius: 4,
-                       border: 'var(--hairline)', color: 'var(--ink)' }}>
+                       border: 'var(--hairline)', color: 'var(--ink)'
+}}>
             {how.target}
           </div>
           {memory.references.good_example && (
-            <div className="mono" style={{ fontSize: 11, color: 'var(--success)', marginTop: 8 }}>
+            <div className="mono mt-2" style={{ fontSize: 11, color: 'var(--success)' }}>
               ✓ {memory.references.good_example}
             </div>
           )}
@@ -481,14 +521,16 @@ function AnatomyStage({ memory }) {
         </AnatomyBlock>
 
         <AnatomyBlock label="Where · scope" kanji="域" tone="jade">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1 mb-2" >
             {scopeChips(memory.scope, L).map((c, i) => (
-              <span key={i} className={c.mono ? "mono" : ""}
-                    style={{ fontSize: 11, padding: '4px 8px',
+              <span key={i} className={(c.mono ? "mono" : "") + ' py-1 px-2'}
+                    style={{
+ fontSize: 11,
                               background: 'var(--paper)', border: 'var(--hairline)',
                               borderRadius: 12, color: c.dim ? 'var(--ink-3)' : 'var(--ink-2)',
                               textTransform: c.upper ? 'uppercase' : 'none',
-                              letterSpacing: c.upper ? '0.12em' : 0 }}>
+                              letterSpacing: c.upper ? '0.12em' : 0
+}}>
                 {c.label}: {c.value}
               </span>
             ))}
@@ -500,7 +542,7 @@ function AnatomyStage({ memory }) {
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-2 pt-1" >
         <FlatBtn glyph="昇" label="Promote to rule"/>
         <FlatBtn glyph="育" label="Enrich"/>
         <FlatBtn glyph="渡" label="Apply elsewhere"/>
@@ -528,10 +570,12 @@ function AnatomyBlock({ label, kanji, tone, children }) {
   const accent = tone === "shu" ? "var(--accent)" :
                  tone === "jade" ? "var(--success)" : "var(--ink-2)";
   return (
-    <section style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 8, padding: '12px 16px',
-                       display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+    <section style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                       borderRadius: 8,
+                       display: 'flex', flexDirection: 'column'
+}} className="py-3 px-4" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-2" >
         <span className="kanji" style={{ fontSize: 15, color: accent, lineHeight: 1 }}>{kanji}</span>
         <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                         textTransform: 'uppercase' }}>{label}</span>
@@ -543,10 +587,12 @@ function AnatomyBlock({ label, kanji, tone, children }) {
 
 function FlatBtn({ glyph, label, subtle }) {
   return (
-    <button style={{ padding: '8px 12px', fontSize: 11,
+    <button style={{
+ fontSize: 11,
                       background: 'var(--paper-2)', border: 'var(--hairline)',
                       borderRadius: 5, color: subtle ? 'var(--ink-3)' : 'var(--ink)',
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      cursor: 'pointer', display: 'flex', alignItems: 'center'
+}} className="py-2 px-3 gap-2" >
       <span className="kanji" style={{ fontSize: 13,
                     color: subtle ? 'var(--ink-3)' : 'var(--accent)' }}>{glyph}</span>
       {label}
@@ -561,9 +607,11 @@ function HealthChart({ memories }) {
   const max = Math.max(...buckets, 1);
   const W = 130, H = 46, gap = 4, bw = (W - gap*4) / 5;
   return (
-    <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)' }}>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase', marginBottom: 4 }}>
+    <div style={{ borderLeft: 'var(--hairline)' }} className="pl-5" >
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
+                     textTransform: 'uppercase'
+}} className="mb-1" >
         memory strength
       </div>
       <svg width={W} height={H + 14} style={{ display: 'block' }}>
@@ -635,9 +683,10 @@ function LearningsBrief() {
       <L2Hero kanji="学" title="A daily brief of what sensei knows."
               sub="Two questions only — what should I act on, and what's been learned."/>
 
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0,
-                     padding: '16px 32px 32px', display: 'flex',
-                     flexDirection: 'column', gap: 24 }}>
+      <div style={{
+ flex: 1, overflow: 'auto', minHeight: 0, display: 'flex',
+                     flexDirection: 'column'
+}} className="gap-5 pt-4 pb-6 px-6" >
 
         {/* Memory shape chart */}
         <MemoryShapeChart memories={L.memories.filter(m => m.state !== "archived" && inProj(m))}/>
@@ -650,7 +699,7 @@ function LearningsBrief() {
           <BriefHeader kanji="令" title="Things to act on"
                        sub="recommendations and recurring corrections, by impact"
                        count={acts.length}/>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             {acts.map(a => <ActRow key={a.id} act={a}/>)}
           </div>
         </section>
@@ -660,7 +709,7 @@ function LearningsBrief() {
           <BriefHeader kanji="覚" title="What I've learned"
                        sub="memories grouped by what they govern"
                        count={L.memories.filter(m => m.state !== "archived" && inProj(m)).length}/>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             {cats.map(c => {
               const items = L.memories.filter(m =>
                 m.state !== "archived" && inProj(m) &&
@@ -681,11 +730,14 @@ function LearningsBrief() {
 
 function BriefHeader({ kanji, title, sub, count }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12,
-                   paddingBottom: 8, borderBottom: 'var(--hairline)' }}>
+    <div style={{
+ display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 mb-3 pb-2" >
       <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>{kanji}</span>
-      <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: 0,
-                    color: 'var(--ink)' }}>{title}</h3>
+      <h3 className="display m-0" style={{
+ fontSize: 15, fontWeight: 400,
+                    color: 'var(--ink)'
+}}>{title}</h3>
       <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>· {sub}</span>
       <span style={{ flex: 1 }}/>
       <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{count}</span>
@@ -697,27 +749,32 @@ function ActRow({ act }) {
   const dot = act.impact === "high" ? 'var(--accent)' :
               act.impact === "medium" ? 'var(--warning)' : 'var(--ink-4)';
   return (
-    <article style={{ display: 'grid',
-                       gridTemplateColumns: '14px 1fr auto',
-                       gap: 12, alignItems: 'start',
-                       padding: '12px 12px',
+    <article style={{
+ display: 'grid',
+                       gridTemplateColumns: '14px 1fr auto', alignItems: 'start',
                        background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 5 }}>
-      <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot,
-                      marginTop: 4 }}/>
+                       border: 'var(--hairline)', borderRadius: 5
+}} className="gap-3 py-3 px-3" >
+      <span style={{
+ width: 7, height: 7, borderRadius: '50%', background: dot
+}} className="mt-1" />
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
                        fontWeight: 500 }}>{act.title}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55,
-                       marginTop: 4 }}>{act.why}</div>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
-                       marginTop: 4 }}>{act.target}</div>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55
+}} className="mt-1" >{act.why}</div>
+        <div className="mono mt-1" style={{
+ fontSize: 11, color: 'var(--ink-4)'
+}}>{act.target}</div>
       </div>
-      <button style={{ padding: '4px 12px', fontSize: 11,
+      <button style={{
+ fontSize: 11,
                         background: act.impact === "high" ? 'var(--ink)' : 'transparent',
                         color: act.impact === "high" ? 'var(--paper)' : 'var(--ink-2)',
                         border: act.impact === "high" ? 'none' : '1px solid var(--edge)',
-                        borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap'
+}} className="py-1 px-3" >
         {act.cta} →
       </button>
     </article>
@@ -729,10 +786,12 @@ function CategorySection({ cat, items, open, onToggle }) {
     <div style={{ border: 'var(--hairline)', borderRadius: 6,
                    background: 'var(--paper-2)', overflow: 'hidden' }}>
       <button onClick={onToggle}
-              style={{ width: '100%', padding: '12px 16px',
-                        display: 'flex', alignItems: 'center', gap: 12,
+              style={{
+ width: '100%',
+                        display: 'flex', alignItems: 'center',
                         background: 'transparent', border: 'none', cursor: 'pointer',
-                        textAlign: 'left' }}>
+                        textAlign: 'left'
+}} className="py-3 px-4 gap-3" >
         <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{cat.glyph}</span>
         <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{cat.label}</span>
         <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>· {cat.desc}</span>
@@ -743,7 +802,7 @@ function CategorySection({ cat, items, open, onToggle }) {
                         transition: 'transform 0.15s' }}>›</span>
       </button>
       {open && items.length > 0 && (
-        <div style={{ borderTop: 'var(--hairline)', padding: '4px 16px 12px' }}>
+        <div style={{ borderTop: 'var(--hairline)' }} className="pt-1 pb-3 px-4" >
           {items.map(m => <BriefMemoryLine key={m.id} memory={m}/>)}
         </div>
       )}
@@ -754,22 +813,26 @@ function CategorySection({ cat, items, open, onToggle }) {
 function BriefMemoryLine({ memory }) {
   const how = inferHow(memory);
   return (
-    <div style={{ display: 'grid',
-                   gridTemplateColumns: '52px 1fr 130px',
-                   gap: 12, alignItems: 'start', padding: '9px 0',
-                   borderBottom: '1px dashed var(--edge)' }}>
+    <div style={{
+ display: 'grid',
+                   gridTemplateColumns: '52px 1fr 130px', alignItems: 'start',
+                   borderBottom: '1px dashed var(--edge)'
+}} className="gap-3 py-2 px-0" >
       <StrengthBar value={memory.strength}/>
       <div>
         <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.45,
                        fontWeight: 500 }}>{memory.what}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55,
-                       marginTop: 4, fontStyle: 'italic' }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55, fontStyle: 'italic'
+}} className="mt-1" >
           because <span style={{ fontStyle: 'normal' }}>{memory.because}</span>
         </div>
-        <div style={{ display: 'flex', gap: 12, marginTop: 4,
-                       fontSize: 11, color: 'var(--ink-3)' }}>
+        <div style={{
+ display: 'flex',
+                       fontSize: 11, color: 'var(--ink-3)'
+}} className="gap-3 mt-1" >
           <span>
-            <span className="kanji" style={{ color: 'var(--accent)', marginRight: 4 }}>{how.glyph}</span>
+            <span className="kanji mr-1" style={{ color: 'var(--accent)' }}>{how.glyph}</span>
             {how.label}
           </span>
           <L2WhereLine scope={memory.scope}/>
@@ -786,7 +849,7 @@ function BriefMemoryLine({ memory }) {
             {memory.state}
           </span>
         )}
-        <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
           {memory.lastRelevant}
         </div>
       </div>
@@ -824,9 +887,11 @@ function MemoryShapeChart({ memories }) {
   });
 
   return (
-    <section style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 8, padding: '16px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+    <section style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                       borderRadius: 8
+}} className="py-4 px-4" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-3" >
         <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>形</span>
         <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                         textTransform: 'uppercase' }}>memory shape</span>
@@ -857,8 +922,10 @@ function MemoryShapeChart({ memories }) {
         ))}
       </svg>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between',
-                     fontSize: 11, color: 'var(--ink-4)', marginTop: 8 }}>
+      <div style={{
+ display: 'flex', justifyContent: 'space-between',
+                     fontSize: 11, color: 'var(--ink-4)'
+}} className="mt-2" >
         <span>area = share of memories · fill height = avg strength · ● = active violations</span>
         <span className="mono">avg {(memories.reduce((s,m)=>s+m.strength,0)/Math.max(memories.length,1)).toFixed(1)}/5</span>
       </div>

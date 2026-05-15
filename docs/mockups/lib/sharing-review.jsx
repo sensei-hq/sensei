@@ -37,55 +37,68 @@ function ObsSharingReview() {
                   background: 'var(--paper)', overflow: 'hidden' }}>
 
       {/* Hero */}
-      <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 24 }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center'
+}} className="gap-5 pt-5 pb-4 px-6" >
         <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>共</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             Memories · review before sharing
           </div>
-          <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                            color: 'var(--ink)' }}>
+          <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                            color: 'var(--ink)'
+}}>
             The next share will include {included.length} insights.
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                       maxWidth: 720, lineHeight: 1.55 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                       maxWidth: 720, lineHeight: 1.55
+}} className="mt-1 mb-0" >
             Scheduled for <span style={{ color: 'var(--ink)' }}>{U.nextBatch.scheduledFor}</span>{" "}
             ({U.cadence}). Sensei anonymizes paths, project names and identifiers
             before any item leaves your machine. Uncheck anything you'd rather keep private.
           </p>
         </div>
-        <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)',
-                       display: 'flex', gap: 24 }}>
+        <div style={{
+ borderLeft: 'var(--hairline)',
+                       display: 'flex'
+}} className="gap-5 pl-5" >
           <UgMini n={included.length} l="will share" accent/>
           <UgMini n={excluded.size} l="excluded"/>
           <UgMini n={U.contribution.streak} l="week streak" mono/>
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0,
-                     padding: '24px 32px 24px', maxWidth: 980, margin: '0 auto', width: '100%' }}>
+      <div style={{
+ flex: 1, overflow: 'auto', minHeight: 0, maxWidth: 980, width: '100%'
+}} className="py-5 px-6 mx-auto" >
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2 mb-5" >
           {U.nextBatch.insights.map(ins => {
             const cm = CAT_META[ins.category] || CAT_META.pattern;
             const out = excluded.has(ins.id);
             return (
               <article key={ins.id}
-                       style={{ display: 'grid',
-                                 gridTemplateColumns: '24px 1fr auto',
-                                 gap: 16, alignItems: 'flex-start',
-                                 padding: '16px 16px',
+                       style={{
+ display: 'grid',
+                                 gridTemplateColumns: '24px 1fr auto', alignItems: 'flex-start',
                                  background: out ? 'transparent' : 'var(--paper-2)',
                                  border: 'var(--hairline)', borderRadius: 6,
-                                 opacity: out ? 0.5 : 1 }}>
+                                 opacity: out ? 0.5 : 1
+}} className="gap-4 py-4 px-4" >
                 <input type="checkbox" checked={!out}
                        onChange={() => toggle(ins.id)}
-                       style={{ marginTop: 4, accentColor: 'var(--accent)',
-                                 cursor: 'pointer', width: 14, height: 14 }}/>
+                       style={{
+ accentColor: 'var(--accent)',
+                                 cursor: 'pointer', width: 14, height: 14
+}} className="mt-1" />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
                     <span className="kanji" style={{ fontSize: 13, color: cm.color }}>{cm.glyph}</span>
                     <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                                     textTransform: 'uppercase' }}>{cm.label}</span>
@@ -98,23 +111,33 @@ function ObsSharingReview() {
                       conf {Math.round(ins.confidence*100)}%
                     </span>
                   </div>
-                  <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
-                                 fontWeight: 500, marginBottom: 4 }}>{ins.title}</div>
-                  <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55,
-                                 marginBottom: 8 }}>{ins.summary}</div>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4,
-                                 fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5 }}>
-                    <span className="kanji" style={{ fontSize: 11, color: 'var(--success)',
-                                  marginTop: 4 }}>匿</span>
+                  <div style={{
+ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
+                                 fontWeight: 500
+}} className="mb-1" >{ins.title}</div>
+                  <div style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55
+}} className="mb-2" >{ins.summary}</div>
+                  <div style={{
+ display: 'flex', alignItems: 'flex-start',
+                                 fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.5
+}} className="gap-1" >
+                    <span className="kanji mt-1" style={{
+ fontSize: 11, color: 'var(--success)'
+}}>匿</span>
                     <span style={{ fontStyle: 'italic' }}>{ins.anonymizationNote}</span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4,
-                               alignItems: 'flex-end' }}>
-                  <button style={{ fontSize: 11, padding: '4px 8px',
+                <div style={{
+ display: 'flex', flexDirection: 'column',
+                               alignItems: 'flex-end'
+}} className="gap-1" >
+                  <button style={{
+ fontSize: 11,
                                     background: 'transparent',
                                     border: 'var(--hairline)', borderRadius: 4,
-                                    color: 'var(--ink-2)', cursor: 'pointer' }}>
+                                    color: 'var(--ink-2)', cursor: 'pointer'
+}} className="py-1 px-2" >
                     view source →
                   </button>
                   <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
@@ -127,13 +150,17 @@ function ObsSharingReview() {
         </div>
 
         {/* Contribution summary */}
-        <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 8, padding: '16px 24px', marginBottom: 24 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 12 }}>
+        <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                       borderRadius: 8
+}} className="py-4 px-5 mb-5" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-3" >
             Your contribution to the network
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }} className="gap-3" >
             <ContribStat n={U.contribution.insightsShared} l="insights shared"/>
             <ContribStat n={U.contribution.usersHelped} l="users helped" accent/>
             <ContribStat n={U.contribution.bestCategory} l={`best · ${U.contribution.bestCategoryCount}× · pattern`} mono/>
@@ -142,11 +169,13 @@ function ObsSharingReview() {
         </div>
 
         {/* Footer actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button style={{ padding: '8px 16px', fontSize: 13,
+        <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+          <button style={{
+ fontSize: 13,
                             background: 'var(--ink)', color: 'var(--paper)',
                             border: 'none', borderRadius: 6, cursor: 'pointer',
-                            display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                            display: 'inline-flex', alignItems: 'center'
+}} className="py-2 px-4 gap-2" >
             <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>送</span>
             Send {included.length} insights now
           </button>
@@ -170,8 +199,10 @@ function ContribStat({ n, l, accent, mono }) {
                      fontWeight: 300, lineHeight: 1.1 }}>
         {n}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
-                     letterSpacing: '0.1em', textTransform: 'uppercase' }}>{l}</div>
+      <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                     letterSpacing: '0.1em', textTransform: 'uppercase'
+}} className="mt-1" >{l}</div>
     </div>
   );
 }

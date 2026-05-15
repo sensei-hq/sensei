@@ -183,12 +183,15 @@ function ZenScrollLayout({ chart, setChart, chartNode, sessions, days, totals, r
       </div>
 
       {/* ── Retrospective (below the chart, grows freely) ─────── */}
-      <section style={{ padding: '24px 32px 48px', minHeight: 1100 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12,
-                       paddingBottom: 8, borderBottom: 'var(--hairline)' }}>
+      <section style={{ minHeight: 1100 }} className="pt-5 pb-7 px-6" >
+        <div style={{
+ display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 mb-3 pb-2" >
           <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>省</span>
-          <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: 0,
-                        color: 'var(--ink)' }}>Retrospective · last 7 days</h3>
+          <h3 className="display m-0" style={{
+ fontSize: 15, fontWeight: 400,
+                        color: 'var(--ink)'
+}}>Retrospective · last 7 days</h3>
           <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
             · what sensei sees across your sessions
           </span>
@@ -197,7 +200,7 @@ function ZenScrollLayout({ chart, setChart, chartNode, sessions, days, totals, r
             {totalGoingWell + totalNotGoing + totalInsights} observations
           </span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3" >
           <RetroLane title="Going well"     accent="var(--success)"   items={retro.going_well} positive/>
           <RetroLane title="Not going well" accent="var(--accent)"    items={retro.not_going}/>
           <RetroLane title="Insights"       accent="var(--ink-2)" items={retro.insights}/>
@@ -352,7 +355,6 @@ function MiniTrend({ sessions, days, checkpoints = [] }) {
           left: Math.max(0, Math.min(W - 200, hover.x - 100)),
           bottom: H + 6,
           width: 200,
-          padding: '8px 8px 8px',
           background: 'var(--paper)',
           border: 'var(--hairline)',
           borderRadius: 4,
@@ -360,8 +362,8 @@ function MiniTrend({ sessions, days, checkpoints = [] }) {
           fontSize: 11, lineHeight: 1.4,
           pointerEvents: 'none',
           zIndex: 5
-        }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 4 }}>
+}} className="py-2 px-2" >
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-1 mb-1" >
             <span style={{ fontSize: 11, letterSpacing: '0.14em',
                             textTransform: 'uppercase', color: 'var(--ink-3)' }}>
               {hover.ck.when}
@@ -374,8 +376,9 @@ function MiniTrend({ sessions, days, checkpoints = [] }) {
           <div style={{ color: 'var(--ink)', fontWeight: 500 }}>
             {hover.ck.title}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)',
-                          marginTop: 4, fontStyle: 'italic' }}>
+          <div style={{
+ fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic'
+}} className="mt-1" >
             click for memory view →
           </div>
         </div>
@@ -494,7 +497,7 @@ function MiniPulse({ sessions, days }) {
 // Numbers mode — original 3 dots + median.
 function MiniNumbers({ totals }) {
   return (
-    <div style={{ display: 'flex', gap: 16 }}>
+    <div style={{ display: 'flex' }} className="gap-4" >
       <DotStat dot={QUALITY.good.color} n={totals.good}  l="first-try"/>
       <DotStat dot={QUALITY.bad.color}  n={totals.bad}   l="corrected"/>
       <DotStat dot={QUALITY.ugly.color} n={totals.ugly}  l="abandoned"/>
@@ -534,13 +537,14 @@ function MiniView({ mode, totals, sessions, days, checkpoints = [] }) {
   })();
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
       <ChartEl sessions={sessions} days={days} checkpoints={checkpoints}/>
       <div style={{ minWidth: 56 }}>
         <div style={{ fontSize: 17, lineHeight: 1, fontWeight: 300, color: 'var(--ink)',
                        fontFeatureSettings: '"tnum"' }}>{headline.v}</div>
-        <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)',
-                       marginTop: 4, textTransform: 'uppercase' }}>{headline.l}</div>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
+}} className="mt-1" >{headline.l}</div>
       </div>
     </div>
   );
@@ -550,14 +554,16 @@ function MiniView({ mode, totals, sessions, days, checkpoints = [] }) {
 function MiniCycler({ mode, onCycle }) {
   return (
     <button onClick={onCycle} title={`viewing ${mode} · click to cycle`}
-            style={{ width: 32, height: 32, borderRadius: '50%',
+            style={{
+ width: 32, height: 32, borderRadius: '50%',
                       background: 'var(--paper-2)',
                       border: 'var(--hairline)',
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: 'pointer', padding: 0, marginLeft: 12,
-                      transition: 'background 0.15s' }}
+                      cursor: 'pointer',
+                      transition: 'background 0.15s'
+}}
             onMouseEnter={e => e.currentTarget.style.background = 'var(--paper)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'var(--paper-2)'}>
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--paper-2)'} className="p-0 ml-3" >
       <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)',
                                          lineHeight: 1 }}>
         {MINI_GLYPH[mode]}
@@ -590,7 +596,7 @@ function ZenMiniChart({ chart, sessions = [], days = [] }) {
   const latestPct = latest != null ? Math.round(latest * 100) : null;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
       {points.length > 0 && (
         <svg width={W} height={H} style={{ overflow: 'visible' }}>
           <path d={areaPath} fill="var(--success)" opacity="0.12"/>
@@ -608,8 +614,9 @@ function ZenMiniChart({ chart, sessions = [], days = [] }) {
                        fontFeatureSettings: '"tnum"' }}>
           {latestPct != null ? `${latestPct}%` : "—"}
         </div>
-        <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)',
-                       marginTop: 4, textTransform: 'uppercase' }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
+}} className="mt-1" >
           first-try · 7d
         </div>
       </div>
@@ -625,12 +632,12 @@ function ZenMiniRetro({ going, notGoing, insights }) {
     { c: 'var(--ink-2)', n: insights, l: "insights" }
   ];
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-4" >
       <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)',
                                          lineHeight: 1 }}>省</span>
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div style={{ display: 'flex' }} className="gap-4" >
         {dots.map(d => (
-          <div key={d.l} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div key={d.l} style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: d.c }}/>
             <span className="mono" style={{ fontSize: 13, color: 'var(--ink)',
                           fontFeatureSettings: '"tnum"' }}>{d.n}</span>
@@ -647,27 +654,32 @@ function ZenHero({ totals, range, setRange,
                    collapsed = false, miniMode = "trend", onCycleMiniMode,
                    sessions = [], days = [], checkpoints = [], projectLabel = null }) {
   return (
-    <div style={{ padding: '24px 32px 16px',
+    <div style={{
                    borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center', gap: 24 }}>
+                   display: 'flex', alignItems: 'center'
+}} className="gap-5 pt-5 pb-4 px-6" >
       <div className="kanji"
            style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>録</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', marginBottom: 4 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-1" >
           {projectLabel ? `Project · ${projectLabel} · Sessions` : 'Observatory · Sessions'}
         </div>
-        <h1 className="display"
-            style={{ fontSize: 22, fontWeight: 400, margin: 0 }}>
+        <h1 className="display m-0"
+            style={{ fontSize: 22, fontWeight: 400 }}>
           {projectLabel ? `Sessions in ${projectLabel}.` : 'The shape of your week.'}
         </h1>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                     maxWidth: 720, lineHeight: 1.55 }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     maxWidth: 720, lineHeight: 1.55
+}} className="mt-1 mb-0" >
           {projectLabel
             ? 'A retrospective scoped to this project. Same shape as the collective view, filtered down.'
             : 'A retrospective. Then one quiet chart — drawn the way you want to read it.'}
         </p>
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3" >
           <RangeFilter value={range} onChange={setRange}/>
         </div>
       </div>
@@ -675,8 +687,9 @@ function ZenHero({ totals, range, setRange,
       {/* Right cluster — mini view + floating cycler.
             When not collapsed, shows the original numbers stats; the cycler is
             still there so users can preview different chart styles up here too. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0,
-                      paddingLeft: 24, borderLeft: '1px solid var(--edge)' }}>
+      <div style={{
+ display: 'flex', alignItems: 'center', borderLeft: '1px solid var(--edge)'
+}} className="gap-0 pl-5" >
         {collapsed ? (
           <MiniView mode={miniMode} totals={totals} sessions={sessions} days={days}
                      checkpoints={checkpoints}/>
@@ -693,15 +706,18 @@ function ZenHero({ totals, range, setRange,
 function DotStat({ dot, n, l, mono }) {
   return (
     <div style={{ textAlign: 'center', minWidth: 56 }}>
-      <div className={mono ? "mono" : ""}
-           style={{ fontSize: 17, lineHeight: 1, fontWeight: 300, color: 'var(--ink)',
+      <div className={(mono ? "mono" : "") + ' gap-1'}
+           style={{
+ fontSize: 17, lineHeight: 1, fontWeight: 300, color: 'var(--ink)',
                      fontFeatureSettings: '"tnum"',
-                     display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                     display: 'inline-flex', alignItems: 'center'
+}}>
         {dot && <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot }}/>}
         {n}
       </div>
-      <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)',
-                     marginTop: 4, textTransform: 'uppercase' }}>{l}</div>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-4)', textTransform: 'uppercase'
+}} className="mt-1" >{l}</div>
     </div>
   );
 }
@@ -710,12 +726,12 @@ function DotStat({ dot, n, l, mono }) {
 function RetroLane({ title, accent, items, positive }) {
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-2" >
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: accent }}/>
         <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                         textTransform: 'uppercase', fontWeight: 500 }}>{title}</span>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
         {items.map(it => <RetroCard key={it.id} item={it} accent={accent} positive={positive}/>)}
       </div>
     </div>
@@ -723,17 +739,19 @@ function RetroLane({ title, accent, items, positive }) {
 }
 function RetroCard({ item, accent, positive }) {
   return (
-    <article style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderLeft: `2px solid ${accent}`, borderRadius: 6,
-                       padding: '12px 12px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+    <article style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                       borderLeft: `2px solid ${accent}`, borderRadius: 6
+}} className="py-3 px-3" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
         <span className="kanji" style={{ fontSize: 13, color: accent }}>{item.kanji}</span>
         <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500,
                        lineHeight: 1.4, flex: 1 }}>{item.title}</div>
       </div>
       <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>{item.body}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8,
-                     paddingTop: 8, borderTop: '1px dashed var(--edge)' }}>
+      <div style={{
+ display: 'flex', alignItems: 'center', borderTop: '1px dashed var(--edge)'
+}} className="gap-2 mt-2 pt-2" >
         {item.delta && (
           <span className="mono" style={{ fontSize: 11,
                         color: positive ? 'var(--success)' :
@@ -766,31 +784,40 @@ function ZenChartFrame({ chart, setChart, children }) {
   const m = meta[chart];
   return (
     <section>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12,
-                     paddingBottom: 8, borderBottom: 'var(--hairline)' }}>
+      <div style={{
+ display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 mb-3 pb-2" >
         <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>{m.kanji}</span>
-        <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: 0,
-                      color: 'var(--ink)' }}>Sessions · {m.label}</h3>
+        <h3 className="display m-0" style={{
+ fontSize: 15, fontWeight: 400,
+                      color: 'var(--ink)'
+}}>Sessions · {m.label}</h3>
         <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>· {m.sub}</span>
         <span style={{ flex: 1 }}/>
 
         {/* Tab switch */}
-        <div style={{ display: 'flex', gap: 0, padding: 4, background: 'var(--paper-2)',
-                       border: 'var(--hairline)', borderRadius: 6 }}>
+        <div style={{
+ display: 'flex', background: 'var(--paper-2)',
+                       border: 'var(--hairline)', borderRadius: 6
+}} className="p-1 gap-0" >
           {["trend","stream","constellation","bands","pulse"].map(c => (
             <button key={c} onClick={() => setChart(c)}
-                    style={{ padding: '4px 12px', fontSize: 11,
+                    style={{
+ fontSize: 11,
                               background: chart === c ? 'var(--paper)' : 'transparent',
                               color: chart === c ? 'var(--ink)' : 'var(--ink-3)',
                               border: chart === c ? '1px solid var(--edge)' : '1px solid transparent',
-                              borderRadius: 4, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                              borderRadius: 4, cursor: 'pointer', letterSpacing: '0.04em'
+}} className="py-1 px-3" >
               {c}
             </button>
           ))}
         </div>
       </div>
-      <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                     borderRadius: 10, padding: '24px 24px 16px' }}>
+      <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                     borderRadius: 10
+}} className="pt-5 pb-4 px-5" >
         {children}
       </div>
       <ChartLegend/>
@@ -800,10 +827,12 @@ function ZenChartFrame({ chart, setChart, children }) {
 
 function ChartLegend() {
   return (
-    <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11,
-                   color: 'var(--ink-3)', justifyContent: 'flex-end' }}>
+    <div style={{
+ display: 'flex', fontSize: 11,
+                   color: 'var(--ink-3)', justifyContent: 'flex-end'
+}} className="gap-4 mt-3" >
       {Object.entries(QUALITY).map(([k, v]) => (
-        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <span key={k} style={{ display: 'inline-flex', alignItems: 'center' }} className="gap-1" >
           <span style={{ width: 8, height: 8, borderRadius: 2, background: v.color }}/>
           {v.label}
         </span>
@@ -821,21 +850,23 @@ function RangeFilter({ value, onChange }) {
     { id: "all", label: "all"     }
   ];
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
       <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
                        textTransform: 'uppercase' }}>range</span>
       {opts.map(o => {
         const active = value === o.id;
         return (
           <button key={o.id} onClick={() => onChange(o.id)}
-                  style={{ padding: '4px 8px', fontSize: 11,
+                  style={{
+ fontSize: 11,
                             background: active ? 'var(--ink)' : 'transparent',
                             color: active ? 'var(--paper)' : 'var(--ink-2)',
                             border: active
                               ? '1px solid var(--ink)'
                               : '1px solid var(--edge)',
                             borderRadius: 20, cursor: 'pointer',
-                            fontFamily: 'inherit' }}>
+                            fontFamily: 'inherit'
+}} className="py-1 px-2" >
             {o.label}
           </button>
         );
@@ -1391,14 +1422,15 @@ function SessionsDigestZenMiniHeaderPreview() {
   const [miniMode, setMiniMode] = ss2S("trend"); // numbers | trend | stream | constellation | bands | pulse
 
   const Caption = ({ tag, title, body }) => (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+    <div className="mb-2" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-3" >
         <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
                       letterSpacing: '0.14em' }}>{tag}</span>
         <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{title}</span>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
-                      paddingLeft: 12, borderLeft: '2px solid var(--edge)' }}>{body}</div>
+      <div style={{
+ fontSize: 11, color: 'var(--ink-3)', borderLeft: '2px solid var(--edge)'
+}} className="mt-1 pl-3" >{body}</div>
     </div>
   );
 
@@ -1419,26 +1451,34 @@ function SessionsDigestZenMiniHeaderPreview() {
                   display: 'flex', flexDirection: 'column' }}>
 
       {/* Spec hero */}
-      <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'baseline', gap: 16 }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'baseline'
+}} className="gap-4 pt-5 pb-4 px-6" >
         <span className="kanji" style={{ fontSize: 28, color: 'var(--accent)' }}>縮</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             Spec · header collapse
           </div>
-          <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0 }}>
+          <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400 }}>
             The mini graph slots into the header.
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                       maxWidth: 760, lineHeight: 1.55 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                       maxWidth: 760, lineHeight: 1.55
+}} className="mt-1 mb-0" >
             The header stays full-size on scroll — kanji, title, copy, and range pills all hold their place. Only the right cluster swaps: where 8 / 5 / 2 / 1h 4m normally sits, the mini view takes over, and a small floating icon next to it cycles between the numbers and the different chart styles.
           </p>
         </div>
       </div>
 
-      <div style={{ flex: 1, padding: '24px 32px 32px',
-                     display: 'flex', flexDirection: 'column', gap: 32 }}>
+      <div style={{
+ flex: 1,
+                     display: 'flex', flexDirection: 'column'
+}} className="gap-6 pt-5 pb-6 px-6" >
 
         {/* BEFORE — expanded */}
         <div>
@@ -1469,17 +1509,21 @@ function SessionsDigestZenMiniHeaderPreview() {
               days={days}
               checkpoints={D.checkpoints}/>
           </Frame>
-          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-3)',
-                          display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
-            <span style={{ marginRight: 4 }}>jump to a mode:</span>
+          <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                          display: 'flex', alignItems: 'center', flexWrap: 'wrap'
+}} className="mt-2 gap-1" >
+            <span className="mr-1" >jump to a mode:</span>
             {MINI_MODES.map(m => (
               <button key={m} onClick={() => setMiniMode(m)}
-                      style={{ padding: '4px 8px', fontSize: 11,
+                      style={{
+ fontSize: 11,
                                 background: miniMode === m ? 'var(--paper-2)' : 'transparent',
                                 border: 'var(--hairline)', borderRadius: 4,
                                 cursor: 'pointer',
                                 color: miniMode === m ? 'var(--ink)' : 'var(--ink-3)',
-                                display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                display: 'inline-flex', alignItems: 'center'
+}} className="py-1 px-2 gap-1" >
                 <span className="kanji" style={{ fontSize: 11, color: 'var(--accent)' }}>
                   {MINI_GLYPH[m]}
                 </span>
@@ -1504,17 +1548,20 @@ function SessionsDigestZenMiniHeaderPreview() {
               sessions={enriched}
               days={days}
               checkpoints={D.checkpoints}/>
-            <div style={{ padding: '16px 24px 24px' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12,
-                              paddingBottom: 8, borderBottom: 'var(--hairline)' }}>
+            <div className="pt-4 pb-5 px-5" >
+              <div style={{
+ display: 'flex', alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-3 mb-3 pb-2" >
                 <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>省</span>
-                <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: 0,
-                              color: 'var(--ink)' }}>Retrospective · last 7 days</h3>
+                <h3 className="display m-0" style={{
+ fontSize: 15, fontWeight: 400,
+                              color: 'var(--ink)'
+}}>Retrospective · last 7 days</h3>
                 <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                   · what sensei sees across your sessions
                 </span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }} className="gap-3" >
                 <RetroLane title="Going well"     accent="var(--success)"   items={D.retro.going_well} positive/>
                 <RetroLane title="Not going well" accent="var(--accent)"    items={D.retro.not_going}/>
                 <RetroLane title="Insights"       accent="var(--ink-2)" items={D.retro.insights}/>
