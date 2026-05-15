@@ -8,19 +8,29 @@ const { useState: bnS } = React;
 // ─── Shared bits ───────────────────────────────────────────
 function BnHero({ subtitle, title, blurb, stats }) {
   return (
-    <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center', gap: 24 }}>
+    <div style={{
+ borderBottom: 'var(--hairline)',
+                   display: 'flex', alignItems: 'center'
+}} className="gap-5 pt-5 pb-4 px-6" >
       <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>較</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', marginBottom: 4 }}>{subtitle}</div>
-        <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                          color: 'var(--ink)' }}>{title}</h1>
-        <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                     maxWidth: 760, lineHeight: 1.55 }}>{blurb}</p>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-1" >{subtitle}</div>
+        <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>{title}</h1>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     maxWidth: 760, lineHeight: 1.55
+}} className="mt-1 mb-0" >{blurb}</p>
       </div>
-      <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)',
-                     display: 'flex', gap: 24 }}>
+      <div style={{
+ borderLeft: 'var(--hairline)',
+                     display: 'flex'
+}} className="gap-5 pl-5" >
         {stats.map((s, i) => (
           <div key={i} style={{ textAlign: 'right' }}>
             <div className={s.mono ? "mono" : "display"} style={{
@@ -28,8 +38,10 @@ function BnHero({ subtitle, title, blurb, stats }) {
               color: s.accent ? 'var(--accent)' : 'var(--ink)',
               fontWeight: 400, lineHeight: 1
             }}>{s.n}</div>
-            <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                           textTransform: 'uppercase', marginTop: 4 }}>{s.l}</div>
+            <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
+                           textTransform: 'uppercase'
+}} className="mt-1" >{s.l}</div>
           </div>
         ))}
       </div>
@@ -65,60 +77,67 @@ function BenchmarkRunnerDashboard() {
       <div style={{ flex: 1, minHeight: 0, display: 'grid',
                      gridTemplateColumns: '1fr 1.4fr' }}>
         {/* Left: corpora + runs lists */}
-        <div style={{ overflow: 'auto', padding: '24px 24px',
-                       borderRight: 'var(--hairline)' }}>
+        <div style={{
+ overflow: 'auto',
+                       borderRight: 'var(--hairline)'
+}} className="py-5 px-5" >
           <BnSection title="Corpora">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
               {B.corpora.map(c => (
                 <button key={c.id} onClick={() => setActiveCorpus(c.id)} style={{
-                  textAlign: 'left', padding: '12px 12px', borderRadius: 5,
+                  textAlign: 'left', borderRadius: 5,
                   background: activeCorpus === c.id ? 'var(--paper-3)' : 'var(--paper-2)',
                   border: activeCorpus === c.id ? '1px solid var(--ink-3)' : 'var(--hairline)',
                   cursor: 'pointer', fontFamily: 'var(--font-ui)'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-                                 marginBottom: 4 }}>
+}} className="py-3 px-3" >
+                  <div style={{
+ display: 'flex', alignItems: 'center'
+}} className="gap-2 mb-1" >
                     <span style={{ fontSize: 13, color: 'var(--ink)' }}>{c.label}</span>
                     <span style={{ fontSize: 11,
                       color: c.kind === "private" ? 'var(--warning)' : 'var(--success)',
                       letterSpacing: '0.12em', textTransform: 'uppercase' }}>{c.kind}</span>
                   </div>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                                                   marginBottom: 4 }}>{c.repo}</div>
-                  <div style={{ display: 'flex', gap: 8, fontSize: 11,
-                                 color: 'var(--ink-4)' }}>
+                  <div className="mono mb-1" style={{
+ fontSize: 11, color: 'var(--ink-3)'
+}}>{c.repo}</div>
+                  <div style={{
+ display: 'flex', fontSize: 11,
+                                 color: 'var(--ink-4)'
+}} className="gap-2" >
                     <span>{c.tasks} tasks</span>
                     <span>· {c.langs.join(', ')}</span>
                     <span>· {c.lastSync}</span>
                   </div>
                 </button>
               ))}
-              <button style={{ fontSize: 11, color: 'var(--ink-3)',
+              <button style={{
+ fontSize: 11, color: 'var(--ink-3)',
                 background: 'transparent', border: '1px dashed var(--edge)',
-                borderRadius: 4, padding: '8px', cursor: 'pointer' }}>
+                borderRadius: 4, cursor: 'pointer'
+}} className="p-2" >
                 + import corpus from repo
               </button>
             </div>
           </BnSection>
 
           <BnSection title="Recent runs">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
               {B.runs.map(r => {
                 const win = r.delta.passed > 0;
                 return (
                   <button key={r.id} onClick={() => setActiveRun(r.id)} style={{
-                    textAlign: 'left', padding: '8px 12px', borderRadius: 4,
+                    textAlign: 'left', borderRadius: 4,
                     background: activeRun === r.id ? 'var(--paper-2)' : 'transparent',
                     border: activeRun === r.id ? '1px solid var(--ink-3)' : 'var(--hairline)',
                     cursor: 'pointer', fontFamily: 'var(--font-ui)',
-                    display: 'grid', gridTemplateColumns: '1fr auto auto',
-                    gap: 8, alignItems: 'center'
-                  }}>
+                    display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center'
+}} className="py-2 px-3 gap-2" >
                     <div>
                       <div style={{ fontSize: 13, color: 'var(--ink)' }}>
                         {r.corpus}  <span className="mono" style={{ color: 'var(--ink-4)' }}>· {r.id}</span>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
                         {r.started}  ·  {r.duration}
                       </div>
                     </div>
@@ -137,38 +156,49 @@ function BenchmarkRunnerDashboard() {
           </BnSection>
 
           {/* Run new */}
-          <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
-                         border: 'var(--hairline)', borderRadius: 6 }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                           textTransform: 'uppercase', marginBottom: 8 }}>New run</div>
-            <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: '0 0 8px',
-                         lineHeight: 1.55 }}>
+          <div style={{
+ background: 'var(--paper-2)',
+                         border: 'var(--hairline)', borderRadius: 6
+}} className="py-3 px-4" >
+            <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
+                           textTransform: 'uppercase'
+}} className="mb-2" >New run</div>
+            <p style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                         lineHeight: 1.55
+}} className="mt-0 mb-2" >
               Will execute every task on <strong style={{ color: 'var(--ink-2)', fontWeight: 500 }}>
               {corpus.label}</strong> twice — first without sensei, then with sensei + MCPs enabled.
             </p>
             <button style={{
-              padding: '8px 12px', fontSize: 13, background: 'var(--ink)',
+ fontSize: 13, background: 'var(--ink)',
               color: 'var(--paper)', borderRadius: 5, border: 'none',
               cursor: 'pointer', width: '100%', fontFamily: 'var(--font-ui)'
-            }}>Run benchmark  ({corpus.tasks} tasks · ~{Math.ceil(corpus.tasks*2.5)}m)</button>
+}} className="py-2 px-3" >Run benchmark  ({corpus.tasks} tasks · ~{Math.ceil(corpus.tasks*2.5)}m)</button>
           </div>
         </div>
 
         {/* Right: run detail */}
-        <div style={{ overflow: 'auto', padding: '24px 32px' }}>
+        <div style={{ overflow: 'auto' }} className="py-5 px-6" >
           {/* Run header */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase', marginBottom: 4 }}>
+          <div className="mb-4" >
+            <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                           textTransform: 'uppercase'
+}} className="mb-1" >
               Run {run.id}  ·  {run.corpus}  ·  {run.started}
             </div>
-            <h2 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                              color: 'var(--ink)' }}>{run.verdict}</h2>
+            <h2 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                              color: 'var(--ink)'
+}}>{run.verdict}</h2>
           </div>
 
           {/* A vs B card */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 24px 1fr',
-                         gap: 12, marginBottom: 24 }}>
+          <div style={{
+ display: 'grid', gridTemplateColumns: '1fr 24px 1fr'
+}} className="gap-3 mb-5" >
             <BnRunCard side="A" data={run.a} accent="var(--ink-3)"/>
             <div style={{ display: 'flex', flexDirection: 'column',
                            alignItems: 'center', justifyContent: 'center',
@@ -179,8 +209,9 @@ function BenchmarkRunnerDashboard() {
           </div>
 
           {/* Delta strip */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-                         gap: 12, marginBottom: 24 }}>
+          <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)'
+}} className="gap-3 mb-5" >
             <BnDelta label="passed"  v={run.delta.passed}  unit="" good={run.delta.passed > 0}/>
             <BnDelta label="score"   v={run.delta.score}   unit="" pct good={run.delta.score > 0}/>
             <BnDelta label="tool calls" v={run.delta.toolCalls} unit="" good={run.delta.toolCalls < 0} invert/>
@@ -188,21 +219,23 @@ function BenchmarkRunnerDashboard() {
           </div>
 
           {/* Task table */}
-          <div style={{ marginBottom: 12 }}>
-            <h3 className="display" style={{ fontSize: 15, fontWeight: 400,
-                                              margin: '0 0 4px', color: 'var(--ink)' }}>
+          <div className="mb-3" >
+            <h3 className="display mt-0 mb-1" style={{
+ fontSize: 15, fontWeight: 400, color: 'var(--ink)'
+}}>
               Per-task results
             </h3>
-            <p style={{ fontSize: 11, color: 'var(--ink-3)', margin: 0 }}>
+            <p style={{ fontSize: 11, color: 'var(--ink-3)' }} className="m-0" >
               {B.taskBreakdown.length} of {run.b.total} tasks shown.
             </p>
           </div>
           <div style={{ border: 'var(--hairline)', borderRadius: 6, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr 70px 70px 1.4fr',
-                           padding: '8px 12px', background: 'var(--paper-2)',
+            <div style={{
+ display: 'grid', gridTemplateColumns: '60px 1fr 70px 70px 1.4fr', background: 'var(--paper-2)',
                            borderBottom: 'var(--hairline)',
                            fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                           textTransform: 'uppercase' }}>
+                           textTransform: 'uppercase'
+}} className="py-2 px-3" >
               <span>id</span><span>task</span>
               <span style={{ textAlign: 'center' }}>without</span>
               <span style={{ textAlign: 'center' }}>with</span>
@@ -211,10 +244,9 @@ function BenchmarkRunnerDashboard() {
             {B.taskBreakdown.map((t, i) => (
               <div key={t.id} style={{
                 display: 'grid', gridTemplateColumns: '60px 1fr 70px 70px 1.4fr',
-                padding: '8px 12px',
                 borderBottom: i < B.taskBreakdown.length-1 ? 'var(--hairline)' : 'none',
                 fontSize: 13, alignItems: 'center'
-              }}>
+}} className="py-2 px-3" >
                 <span className="mono" style={{ color: 'var(--ink-3)' }}>{t.id}</span>
                 <span style={{ color: 'var(--ink)' }}>{t.title}</span>
                 <BnPF v={t.a}/>
@@ -232,22 +264,25 @@ function BenchmarkRunnerDashboard() {
 function BnRunCard({ side, data, accent, highlight }) {
   return (
     <div style={{
-      padding: '16px 16px', borderRadius: 6,
+ borderRadius: 6,
       background: highlight ? 'var(--paper-2)' : 'transparent',
       border: highlight ? '1px solid var(--accent)' : 'var(--hairline)'
-    }}>
-      <div style={{ display: 'flex', alignItems: 'baseline',
-                     justifyContent: 'space-between', marginBottom: 12 }}>
+}} className="py-4 px-4" >
+      <div style={{
+ display: 'flex', alignItems: 'baseline',
+                     justifyContent: 'space-between'
+}} className="mb-3" >
         <span className="display" style={{ fontSize: 28, color: accent, lineHeight: 1 }}>{side}</span>
         <span style={{ fontSize: 11, letterSpacing: '0.14em', color: accent,
                         textTransform: 'uppercase' }}>
           {side === "A" ? "without sensei" : "with sensei"}
         </span>
       </div>
-      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-2)',
-                                       marginBottom: 12 }}>{data.label}</div>
+      <div className="mono mb-3" style={{
+ fontSize: 11, color: 'var(--ink-2)'
+}}>{data.label}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr',
-                     gap: '6px 14px', fontSize: 11 }}>
+                     gap: '4px 12px', fontSize: 11 }}>
         <span style={{ color: 'var(--ink-4)' }}>passed</span>
         <span className="mono" style={{ color: 'var(--ink)' }}>
           {data.passed} / {data.total}
@@ -276,10 +311,14 @@ function BnDelta({ label, v, good, pct, k, invert }) {
   else if (k) display = `${sign}${(v/1000).toFixed(0)}k`;
   else display = `${sign}${v}`;
   return (
-    <div style={{ padding: '12px 12px', background: 'var(--paper-2)',
-                   border: 'var(--hairline)', borderRadius: 5 }}>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+    <div style={{
+ background: 'var(--paper-2)',
+                   border: 'var(--hairline)', borderRadius: 5
+}} className="py-3 px-3" >
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
+                     textTransform: 'uppercase'
+}} className="mb-1" >{label}</div>
       <div className="mono" style={{ fontSize: 17, color, lineHeight: 1 }}>{display}</div>
     </div>
   );
@@ -296,9 +335,11 @@ function BnPF({ v }) {
 
 function BnSection({ title, children }) {
   return (
-    <section style={{ marginBottom: 24 }}>
-      <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '0 0 8px',
-                                        color: 'var(--ink)' }}>{title}</h3>
+    <section className="mb-5" >
+      <h3 className="display mt-0 mb-2" style={{
+ fontSize: 15, fontWeight: 400,
+                                        color: 'var(--ink)'
+}}>{title}</h3>
       {children}
     </section>
   );
@@ -325,13 +366,16 @@ function BenchmarkRunnerNotebook() {
         ]}
       />
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '32px 64px 64px',
-                     maxWidth: 1100, margin: '0 auto', width: '100%' }}>
+      <div style={{
+ flex: 1, minHeight: 0, overflow: 'auto',
+                     maxWidth: 1100, width: '100%'
+}} className="pt-6 pb-8 px-8 mx-auto" >
 
         {/* Abstract */}
         <NbBlock label="Abstract">
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7,
-                       margin: 0, maxWidth: 760 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7, maxWidth: 760
+}} className="m-0" >
             We executed the <strong>{corpus.label}</strong> corpus ({corpus.tasks} tasks)
             twice with <span className="mono" style={{ color: 'var(--accent)' }}>{run.a.label.split('·')[0].trim()}</span>:
             once with sensei's tools, MCPs and memory disabled (run A), and once with them
@@ -341,37 +385,45 @@ function BenchmarkRunnerNotebook() {
 
         {/* Setup */}
         <NbBlock label="Setup · what changed between A and B">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div style={{ padding: '12px 16px', borderRadius: 5,
-                           background: 'var(--paper-2)', border: 'var(--hairline)' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8,
-                             marginBottom: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-3" >
+            <div style={{
+ borderRadius: 5,
+                           background: 'var(--paper-2)', border: 'var(--hairline)'
+}} className="py-3 px-4" >
+              <div style={{
+ display: 'flex', alignItems: 'baseline'
+}} className="gap-2 mb-2" >
                 <span className="display" style={{ fontSize: 22, color: 'var(--ink-3)' }}>A</span>
                 <span style={{ fontSize: 11, letterSpacing: '0.14em',
                                 color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                   baseline
                 </span>
               </div>
-              <ul style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7,
-                            margin: 0, paddingLeft: 16 }}>
+              <ul style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7
+}} className="m-0 pl-4" >
                 <li>Bare assistant. No sensei extensions, no MCPs.</li>
                 <li>No project memory loaded.</li>
                 <li>Single fallback model.</li>
                 <li>Tool budget: assistant defaults.</li>
               </ul>
             </div>
-            <div style={{ padding: '12px 16px', borderRadius: 5,
-                           background: 'var(--paper-2)', border: '1px solid var(--accent)' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8,
-                             marginBottom: 8 }}>
+            <div style={{
+ borderRadius: 5,
+                           background: 'var(--paper-2)', border: '1px solid var(--accent)'
+}} className="py-3 px-4" >
+              <div style={{
+ display: 'flex', alignItems: 'baseline'
+}} className="gap-2 mb-2" >
                 <span className="display" style={{ fontSize: 22, color: 'var(--accent)' }}>B</span>
                 <span style={{ fontSize: 11, letterSpacing: '0.14em',
                                 color: 'var(--accent)', textTransform: 'uppercase' }}>
                   with sensei
                 </span>
               </div>
-              <ul style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7,
-                            margin: 0, paddingLeft: 16 }}>
+              <ul style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7
+}} className="m-0 pl-4" >
                 <li>All installed extensions enabled.</li>
                 <li>Project memories surfaced on context match.</li>
                 <li>Fallback chain · MOE on for high-stakes calls.</li>
@@ -383,14 +435,15 @@ function BenchmarkRunnerNotebook() {
 
         {/* Headline numbers */}
         <NbBlock label="Headline numbers">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-                         gap: 12, marginBottom: 12 }}>
+          <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)'
+}} className="gap-3 mb-3" >
             <BnDelta label="passed"     v={run.delta.passed} good={run.delta.passed > 0}/>
             <BnDelta label="score"      v={run.delta.score} pct good={run.delta.score > 0}/>
             <BnDelta label="tool calls" v={run.delta.toolCalls} good={run.delta.toolCalls < 0} invert/>
             <BnDelta label="tokens"     v={run.delta.tokens} k good={run.delta.tokens < 0} invert/>
           </div>
-          <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: 0, lineHeight: 1.6 }}>
+          <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6 }} className="m-0" >
             Sensei produced more passes with fewer tool calls and fewer tokens —
             efficiency improved on every axis we measure.
           </p>
@@ -399,11 +452,12 @@ function BenchmarkRunnerNotebook() {
         {/* Per-task narrative table */}
         <NbBlock label="Per-task results">
           <div style={{ border: 'var(--hairline)', borderRadius: 6, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr 60px 60px 1.6fr',
-                           padding: '8px 12px', background: 'var(--paper-2)',
+            <div style={{
+ display: 'grid', gridTemplateColumns: '60px 1fr 60px 60px 1.6fr', background: 'var(--paper-2)',
                            borderBottom: 'var(--hairline)',
                            fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                           textTransform: 'uppercase' }}>
+                           textTransform: 'uppercase'
+}} className="py-2 px-3" >
               <span>id</span><span>task</span>
               <span style={{ textAlign: 'center' }}>A</span>
               <span style={{ textAlign: 'center' }}>B</span>
@@ -412,10 +466,9 @@ function BenchmarkRunnerNotebook() {
             {B.taskBreakdown.map((t, i) => (
               <div key={t.id} style={{
                 display: 'grid', gridTemplateColumns: '60px 1fr 60px 60px 1.6fr',
-                padding: '8px 12px',
                 borderBottom: i < B.taskBreakdown.length-1 ? 'var(--hairline)' : 'none',
                 fontSize: 13, alignItems: 'center'
-              }}>
+}} className="py-2 px-3" >
                 <span className="mono" style={{ color: 'var(--ink-3)' }}>{t.id}</span>
                 <span style={{ color: 'var(--ink)' }}>{t.title}</span>
                 <BnPF v={t.a}/>
@@ -428,29 +481,39 @@ function BenchmarkRunnerNotebook() {
 
         {/* Where sensei made the difference */}
         <NbBlock label="Where sensei made the difference">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
-                           border: 'var(--hairline)', borderRadius: 5 }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
-                             textTransform: 'uppercase', marginBottom: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-3" >
+            <div style={{
+ background: 'var(--paper-2)',
+                           border: 'var(--hairline)', borderRadius: 5
+}} className="py-3 px-4" >
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--accent)',
+                             textTransform: 'uppercase'
+}} className="mb-2" >
                 Tasks won by skill / agent triggers
               </div>
-              <ul style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7,
-                            margin: 0, paddingLeft: 16 }}>
+              <ul style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7
+}} className="m-0 pl-4" >
                 <li><strong>t01</strong> — react-perf-watch caught render-thrash.</li>
                 <li><strong>t02</strong> — boundary memory surfaced before the touch.</li>
                 <li><strong>t04</strong> — migration-runner agent generated the SQL.</li>
                 <li><strong>t08</strong> — doc-drift skill caught README mismatch.</li>
               </ul>
             </div>
-            <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
-                           border: 'var(--hairline)', borderRadius: 5 }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--warning)',
-                             textTransform: 'uppercase', marginBottom: 8 }}>
+            <div style={{
+ background: 'var(--paper-2)',
+                           border: 'var(--hairline)', borderRadius: 5
+}} className="py-3 px-4" >
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--warning)',
+                             textTransform: 'uppercase'
+}} className="mb-2" >
                 Where both still failed
               </div>
-              <ul style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7,
-                            margin: 0, paddingLeft: 16 }}>
+              <ul style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.7
+}} className="m-0 pl-4" >
                 <li><strong>t06</strong> — borrow-check fix in canvas/event.rs.
                     No memory exists yet for this pattern. Tagged as a candidate.</li>
               </ul>
@@ -460,10 +523,12 @@ function BenchmarkRunnerNotebook() {
 
         {/* Reproduce */}
         <NbBlock label="Reproduce">
-          <pre className="mono" style={{ fontSize: 13, color: 'var(--ink-2)',
+          <pre className="mono py-3 px-3 m-0" style={{
+ fontSize: 13, color: 'var(--ink-2)',
             background: 'var(--paper-2)', border: 'var(--hairline)',
-            borderRadius: 5, padding: '12px 12px', margin: 0,
-            lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+            borderRadius: 5,
+            lineHeight: 1.7, whiteSpace: 'pre-wrap'
+}}>
 {`$ sensei bench run --corpus ${corpus.repo} \\
     --model claude-sonnet-4.5 \\
     --baseline none \\
@@ -474,23 +539,23 @@ $ sensei bench resume ${run.id}`}
           </pre>
         </NbBlock>
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <div style={{ display: 'flex' }} className="gap-2 mt-2" >
           <button style={{
-            padding: '8px 16px', fontSize: 13, background: 'var(--ink)',
+ fontSize: 13, background: 'var(--ink)',
             color: 'var(--paper)', borderRadius: 5, border: 'none',
             cursor: 'pointer', fontFamily: 'var(--font-ui)'
-          }}>Re-run on latest sensei</button>
+}} className="py-2 px-4" >Re-run on latest sensei</button>
           <button style={{
-            padding: '8px 16px', fontSize: 13, background: 'transparent',
+ fontSize: 13, background: 'transparent',
             color: 'var(--ink-2)', borderRadius: 5,
             border: '1px solid var(--ink-3)', cursor: 'pointer',
             fontFamily: 'var(--font-ui)'
-          }}>Export markdown</button>
+}} className="py-2 px-4" >Export markdown</button>
           <button style={{
-            padding: '8px 12px', fontSize: 13, background: 'transparent',
+ fontSize: 13, background: 'transparent',
             color: 'var(--ink-3)', borderRadius: 5, border: 'none',
             cursor: 'pointer', fontFamily: 'var(--font-ui)'
-          }}>Share with collective →</button>
+}} className="py-2 px-3" >Share with collective →</button>
         </div>
       </div>
     </div>
@@ -499,10 +564,11 @@ $ sensei bench resume ${run.id}`}
 
 function NbBlock({ label, children }) {
   return (
-    <section style={{ marginBottom: 32 }}>
-      <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase', marginBottom: 12,
-                     paddingBottom: 8, borderBottom: 'var(--hairline)' }}>
+    <section className="mb-6" >
+      <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-4)',
+                     textTransform: 'uppercase', borderBottom: 'var(--hairline)'
+}} className="mb-3 pb-2" >
         {label}
       </div>
       {children}

@@ -178,30 +178,34 @@ function BootstrapSimple({ scenario = "auto-fixing-mac", onReady, onSkip }) {
                    background: 'var(--paper)', color: 'var(--ink)' }}>
       <TauriChrome title="Sensei  先生  ·  bootstrap"/>
 
-      <div style={{ flex: 1, overflow: 'auto', display: 'flex',
-                     justifyContent: 'center', alignItems: 'flex-start',
-                     padding: '48px 32px 48px' }}>
+      <div style={{
+ flex: 1, overflow: 'auto', display: 'flex',
+                     justifyContent: 'center', alignItems: 'flex-start'
+}} className="py-7 px-6" >
         <div style={{ maxWidth: 640, width: '100%' }}>
 
           {/* ── Header ──────────────────────────────── */}
-          <div style={{ marginBottom: 32 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <div className="mb-6" >
+            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-3" >
               <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>支</span>
               <span style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
                               color: 'var(--ink-3)' }}>
                 Bootstrap · {platform.label}
               </span>
             </div>
-            <h1 className="display" style={{ fontSize: 40, fontWeight: 300, lineHeight: 1.15,
-                          margin: '0 0 12px', letterSpacing: '-0.015em' }}>
+            <h1 className="display mt-0 mb-3" style={{
+ fontSize: 40, fontWeight: 300, lineHeight: 1.15, letterSpacing: '-0.015em'
+}}>
               {state === "all-green"
                 ? <>The foundation <span style={{ color: 'var(--success)' }}>holds.</span></>
               : state === "auto-fixing"
                 ? <>Setting up your <span style={{ color: 'var(--accent)' }}>foundation.</span></>
               : <>One last <span style={{ color: 'var(--accent)' }}>step.</span></>}
             </h1>
-            <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.65, margin: 0,
-                         maxWidth: 540 }}>
+            <p style={{
+ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.65,
+                         maxWidth: 540
+}} className="m-0" >
               {state === "all-green"
                 ? "Everything sensei needs is here. Opening the observatory."
               : state === "auto-fixing"
@@ -230,26 +234,29 @@ function BootstrapSimple({ scenario = "auto-fixing-mac", onReady, onSkip }) {
           <BSItemLedger state={state} activeItem={activeItem}/>
 
           {/* ── Footer ──────────────────────────────── */}
-          <div style={{ display: 'flex', justifyContent: 'space-between',
-                         alignItems: 'center', gap: 16, marginTop: 32,
-                         paddingTop: 24, borderTop: 'var(--hairline)' }}>
+          <div style={{
+ display: 'flex', justifyContent: 'space-between',
+                         alignItems: 'center', borderTop: 'var(--hairline)'
+}} className="gap-4 mt-6 pt-5" >
             <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6 }}>
               Bootstrap runs once. The next launch will be quick.
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex' }} className="gap-2" >
               {onSkip && (
                 <button onClick={onSkip}
-                        style={{ fontSize: 13, color: 'var(--ink-3)',
-                                 padding: '8px 12px', border: 'none',
-                                 background: 'transparent', cursor: 'pointer' }}>
+                        style={{
+ fontSize: 13, color: 'var(--ink-3)', border: 'none',
+                                 background: 'transparent', cursor: 'pointer'
+}} className="py-2 px-3" >
                   Quit
                 </button>
               )}
               {state === "all-green" && (
                 <button onClick={onReady}
-                        style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
-                                 padding: '8px 24px', borderRadius: 6, letterSpacing: 0.2,
-                                 border: 'none', cursor: 'pointer' }}>
+                        style={{
+ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 6, letterSpacing: 0.2,
+                                 border: 'none', cursor: 'pointer'
+}} className="py-2 px-5" >
                   Continue →
                 </button>
               )}
@@ -277,9 +284,8 @@ function BSHeroCard({ state, platform, activeItem, progress, onContinue }) {
     <div style={{
       border: 'var(--hairline)', borderRadius: 10,
       background: 'var(--paper-2)',
-      padding: '24px 24px',
       position: 'relative', overflow: 'hidden',
-    }}>
+}} className="py-5 px-5" >
       {/* live progress bar across the top while auto-fixing */}
       {isFixing && (
         <div style={{ position: 'absolute', left: 0, top: 0, right: 0, height: 2,
@@ -290,7 +296,7 @@ function BSHeroCard({ state, platform, activeItem, progress, onContinue }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-4" >
         {/* Big indicator — one symbol per state */}
         <div style={{ width: 56, height: 56, borderRadius: 28,
                        background: 'var(--paper)',
@@ -309,7 +315,7 @@ function BSHeroCard({ state, platform, activeItem, progress, onContinue }) {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
             <span className="display" style={{ fontSize: 17, fontWeight: 500 }}>
               {platform.pmName}
             </span>
@@ -325,7 +331,7 @@ function BSHeroCard({ state, platform, activeItem, progress, onContinue }) {
                 <span style={{ color: 'var(--ink)' }}>
                   {BS_ITEMS[Math.min(activeItem, BS_ITEMS.length - 1)].label}
                 </span>
-                <span className="mono" style={{ marginLeft: 8, color: 'var(--ink-4)', fontSize: 11 }}>
+                <span className="mono ml-2" style={{ color: 'var(--ink-4)', fontSize: 11 }}>
                   ({Math.min(activeItem + 1, BS_ITEMS.length)}/{BS_ITEMS.length})
                 </span>
               </span>
@@ -336,10 +342,11 @@ function BSHeroCard({ state, platform, activeItem, progress, onContinue }) {
 
         {isGreen && (
           <button onClick={onContinue}
-                  style={{ fontSize: 13, background: 'var(--success)', color: 'var(--paper)',
-                           padding: '8px 16px', borderRadius: 5,
+                  style={{
+ fontSize: 13, background: 'var(--success)', color: 'var(--paper)', borderRadius: 5,
                            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                           letterSpacing: 0.3, flexShrink: 0 }}>
+                           letterSpacing: 0.3, flexShrink: 0
+}} className="py-2 px-4" >
             Enter
           </button>
         )}
@@ -360,27 +367,29 @@ function BSHeroCard({ state, platform, activeItem, progress, onContinue }) {
 function BSScriptCard({ platform, reason, scriptOpen, setScriptOpen, onCopy, copied, onRecheck }) {
   return (
     <div style={{
-      marginTop: 16,
       border: '1px solid var(--accent)', borderRadius: 10,
       background: 'var(--paper)', overflow: 'hidden',
-    }}>
+}} className="mt-4" >
       {/* Header bar */}
-      <div style={{ padding: '12px 16px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center'
+}} className="py-3 px-4 gap-2" >
         <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>手</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, color: 'var(--ink)' }}>
             Run this in your terminal
           </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
             Same steps sensei would run automatically · {platform.label}
           </div>
         </div>
         <button onClick={() => setScriptOpen(o => !o)}
-                style={{ fontSize: 11, background: 'transparent',
-                         color: 'var(--ink-3)',
-                         padding: '4px 8px', border: 'var(--hairline)',
-                         borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit' }}>
+                style={{
+ fontSize: 11, background: 'transparent',
+                         color: 'var(--ink-3)', border: 'var(--hairline)',
+                         borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit'
+}} className="py-1 px-2" >
           {scriptOpen ? "Hide" : "Show"}
         </button>
       </div>
@@ -389,29 +398,32 @@ function BSScriptCard({ platform, reason, scriptOpen, setScriptOpen, onCopy, cop
         <>
           {/* Script body */}
           <pre style={{
-            margin: 0, padding: '16px 16px',
             fontFamily: 'var(--font-mono)', fontSize: 13,
             color: 'var(--ink)', background: 'var(--paper-3)',
             lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             maxHeight: 220, overflow: 'auto',
-          }}>{platform.fullScript}</pre>
+}} className="py-4 px-4 m-0" >{platform.fullScript}</pre>
 
           {/* Action bar */}
-          <div style={{ padding: '12px 16px', display: 'flex', gap: 8,
+          <div style={{
+ display: 'flex',
                          alignItems: 'center', justifyContent: 'space-between',
-                         borderTop: 'var(--hairline)' }}>
+                         borderTop: 'var(--hairline)'
+}} className="py-3 px-4 gap-2" >
             <button onClick={onCopy}
-                    style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
-                             padding: '8px 12px', borderRadius: 5,
+                    style={{
+ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5,
                              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                             letterSpacing: 0.2 }}>
+                             letterSpacing: 0.2
+}} className="py-2 px-3" >
               {copied ? "Copied ✓" : "Copy script"}
             </button>
             <button onClick={onRecheck}
-                    style={{ fontSize: 13, background: 'transparent',
-                             color: 'var(--accent)',
-                             padding: '8px 12px', border: '1px solid var(--accent)',
-                             borderRadius: 5, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    style={{
+ fontSize: 13, background: 'transparent',
+                             color: 'var(--accent)', border: '1px solid var(--accent)',
+                             borderRadius: 5, cursor: 'pointer', fontFamily: 'inherit'
+}} className="py-2 px-3" >
               I've run it · re-check
             </button>
           </div>
@@ -427,12 +439,14 @@ function BSScriptCard({ platform, reason, scriptOpen, setScriptOpen, onCopy, cop
 // quiet. In all-green state, everything is checked off.
 function BSItemLedger({ state, activeItem }) {
   return (
-    <div style={{ marginTop: 24 }}>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--ink-4)', marginBottom: 8 }}>
+    <div className="mt-5" >
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                     color: 'var(--ink-4)'
+}} className="mb-2" >
         what this resolves
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-0" >
         {BS_ITEMS.map((it, i) => {
           let s;
           if (state === "all-green")    s = "ready";
@@ -449,12 +463,12 @@ function BSItemLedger({ state, activeItem }) {
                         : 'var(--edge)';
           return (
             <div key={it.id} style={{
-              display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
-              alignItems: 'center', padding: '8px 0',
+              display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'center',
               borderBottom: '1px solid var(--edge)',
               opacity: s === "pending" ? 0.55 : 1,
               transition: 'opacity .25s',
-            }}>
+}} className="gap-3 py-2 px-0" >
               <span style={{ width: 8, height: 8, borderRadius: '50%',
                               background: dotColor,
                               boxShadow: s === "running" ? `0 0 0 4px ${dotColor}22` : 'none',
@@ -462,7 +476,7 @@ function BSItemLedger({ state, activeItem }) {
               <div>
                 <span style={{ fontSize: 13, color: 'var(--ink)' }}>{it.label}</span>
                 {it.note && (
-                  <span style={{ fontSize: 11, color: 'var(--ink-4)', marginLeft: 8 }}>
+                  <span style={{ fontSize: 11, color: 'var(--ink-4)' }} className="ml-2" >
                     · {it.note}
                   </span>
                 )}
@@ -495,21 +509,26 @@ function BootstrapSimpleDemo() {
       <BootstrapSimple scenario={scenario} onReady={() => {}} onSkip={() => {}}/>
 
       {/* Floating scenario picker — demo only */}
-      <div style={{ position: 'absolute', top: 52, right: 16, zIndex: 5,
+      <div style={{
+ position: 'absolute', top: 52, right: 16, zIndex: 5,
                      background: 'var(--paper)', border: 'var(--hairline)',
-                     borderRadius: 8, padding: '12px 12px',
-                     boxShadow: '0 4px 12px rgba(0,0,0,.06)' }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                       color: 'var(--ink-4)', marginBottom: 8 }}>demo · scenario</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                     borderRadius: 8,
+                     boxShadow: '0 4px 12px rgba(0,0,0,.06)'
+}} className="py-3 px-3" >
+        <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                       color: 'var(--ink-4)'
+}} className="mb-2" >demo · scenario</div>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {Object.keys(BS_SIMPLE_PRESETS).map(k => (
             <button key={k} onClick={() => setScenario(k)}
-                    style={{ textAlign: 'left', fontSize: 11,
-                             padding: '4px 8px', borderRadius: 4, border: 'none',
+                    style={{
+ textAlign: 'left', fontSize: 11, borderRadius: 4, border: 'none',
                              background: scenario === k ? 'var(--paper-2)' : 'transparent',
                              color: scenario === k ? 'var(--ink)' : 'var(--ink-3)',
                              cursor: 'pointer', fontFamily: 'inherit',
-                             whiteSpace: 'nowrap' }}>
+                             whiteSpace: 'nowrap'
+}} className="py-1 px-2" >
               {k.replace(/-/g, ' ')}
             </button>
           ))}

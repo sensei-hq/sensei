@@ -157,6 +157,100 @@ function EventGlyph({ kind, size = 14 }) {
   }
 }
 
+// ─── Zen-Sumi text + header primitives ─────────────────────
+// Reusable building blocks for the recurring header / label shapes.
+// One place to tweak; no more 122 inline copies of the eyebrow.
+
+// Small uppercase label — replaces 100+ inline copies of the shape
+//   fontSize:11, letterSpacing:0.18em, textTransform:uppercase, color:ink-3
+function Eyebrow({ children, className = '', as: As = 'div', style }) {
+  return (
+    <As className={'zs-eyebrow ' + className} style={style}>
+      {children}
+    </As>
+  );
+}
+
+// A kanji glyph with consistent sizing tokens.
+// size: "xs" 11 · "sm" 13 · "base" 15 · "lg" 17 · "xl" 22 · "2xl" 28 · "3xl" 40 · "4xl" 56
+const KANJI_SIZE = { xs: 11, sm: 13, base: 15, lg: 17, xl: 22, '2xl': 28, '3xl': 40, '4xl': 56 };
+function Kanji({ size = 'base', color = 'var(--accent)', children, className = '', style }) {
+  const px = typeof size === 'number' ? size : (KANJI_SIZE[size] || KANJI_SIZE.base);
+  return (
+    <span className={'kanji ' + className}
+          style={{ fontSize: px, color, lineHeight: 1, flexShrink: 0, ...style }}>
+      {children}
+    </span>
+  );
+}
+
+// The canonical kanji + eyebrow + title block.
+//   variant="h1" → page header   (kanji 40, eyebrow xs, title 2xl)
+//   variant="h2" → identity header (kanji 28, eyebrow xs, title lg)
+//   variant="h3" → minor section header (kanji 22, eyebrow xs, title base)
+// Description (if present) sits BELOW the kanji+title block, never inside the
+// alignment — same rule across every screen. Right slot is an optional inline
+// action that aligns with the eyebrow row.
+function KanjiHeader({ variant = 'h1', kanji, eyebrow, title, description, right,
+                       accent = 'var(--accent)', className = '', style }) {
+  const spec = {
+    h1: { k: '3xl', t: 28, w: 400, mb: 4 },
+    h2: { k: '2xl', t: 17, w: 400, mb: 4 },
+    h3: { k: 'xl',  t: 15, w: 400, mb: 4 },
+  }[variant] || { k: '2xl', t: 17, w: 400, mb: 4 };
+  return (
+    <div className={(className) + ' gap-3'} style={style}>
+      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+        {kanji && <Kanji size={spec.k} color={accent}>{kanji}</Kanji>}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {eyebrow && <Eyebrow style={{ marginBottom: spec.mb }}>{eyebrow}</Eyebrow>}
+          {title && (
+            <h1 className="display m-0" style={{
+              fontSize: spec.t, fontWeight: spec.w,
+              letterSpacing: '-0.02em', lineHeight: 1, color: 'var(--ink)'
+}}>{title}</h1>
+          )}
+        </div>
+        {right && <div style={{ flexShrink: 0 }}>{right}</div>}
+      </div>
+      {description && (
+        <p style={{
+ fontSize: 13, color: 'var(--ink-3)',
+                     lineHeight: 1.5, maxWidth: 540
+}} className="mt-3 mb-0" >
+          {description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Small section label used inside sidebars and column heads.
+// Same shape as Eyebrow but with built-in horizontal padding for the typical
+// sidebar group context.
+function SectionLabel({ children, className = '', style }) {
+  return (
+    <Eyebrow className={(className) + ' pt-0 pb-2 px-2'} style={{ display: 'block', ...style }}>
+      {children}
+    </Eyebrow>
+  );
+}
+
+// Small colored status dot. Tone: 'accent' | 'success' | 'warning' | 'ink-3'
+function StatusDot({ tone = 'accent', size = 7, className = '', style }) {
+  const color = tone.startsWith('var(') ? tone :
+                tone === 'success' ? 'var(--success)' :
+                tone === 'warning' ? 'var(--warning)' :
+                tone === 'ink-3'   ? 'var(--ink-3)'  :
+                tone === 'accent'  ? 'var(--accent)' : tone;
+  return (
+    <span className={className}
+          style={{ width: size, height: size, borderRadius: '50%',
+                   background: color, display: 'inline-block', flexShrink: 0,
+                   ...style }}/>
+  );
+}
+
 // ─── Nav item (generic, direction-agnostic) ─────────────────
 const PAGES = [
   { id: "overview",     label: "Overview",     kanji: "全" },
@@ -170,5 +264,7 @@ const PAGES = [
 
 Object.assign(window, {
   Sparkline, EnsoRing, BarRow, TauriChrome, Avatar, EventGlyph,
-  KANJI, PAGES, pct, signedPct
+  KANJI, PAGES, pct, signedPct,
+  // Zen-Sumi primitives
+  Eyebrow, Kanji, KanjiHeader, SectionLabel, StatusDot, KANJI_SIZE,
 });
