@@ -60,7 +60,7 @@
 
 <div class="max-w-[820px] mx-auto px-12 py-12 pb-16">
     <div class="mb-8">
-        <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
+        <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">
             Sessions
         </p>
         <h1 class="display text-2xl font-normal m-0">刻 Sessions</h1>
@@ -78,7 +78,7 @@
         ] as stat}
             <div class="flex flex-col gap-0.5">
                 <span class="display text-2xl font-normal">{stat.value ?? "—"}</span>
-                <span class="text-2xs text-surface-z6">{stat.label}</span>
+                <span class="text-xs text-surface-z6">{stat.label}</span>
             </div>
         {/each}
     </div>
@@ -87,7 +87,7 @@
     <div class="flex gap-1.5 mb-6">
         {#each ["all", "completed", "corrected", "abandoned"] as f}
             <button
-                class="filter-chip px-3.5 py-1.25 rounded-full border border-surface-z3 bg-transparent text-xs cursor-pointer text-surface-z7 capitalize"
+                class="filter-chip px-3.5 py-1 rounded-full border border-surface-z3 bg-transparent text-xs cursor-pointer text-surface-z7 capitalize"
                 class:active={filter === f}
                 onclick={() => (filter = f as any)}>{f}</button
             >
@@ -96,7 +96,7 @@
 
     <!-- Sessions list -->
     {#if loading}
-        <p class="text-ui text-surface-z6">Loading sessions...</p>
+        <p class="text-sm text-surface-z6">Loading sessions...</p>
     {:else if filtered.length === 0}
         <EmptyState
             kanji="刻"
@@ -107,7 +107,7 @@
         <div class="flex flex-col gap-px">
             {#each filtered as session (session.id)}
                 <div
-                    class="session-row flex items-center gap-3 px-4 py-3 rounded-md transition-colors duration-100"
+                    class="session-row flex items-center gap-3 px-4 py-3 rounded-md transition-colors duration-fast"
                 >
                     <span
                         class="ftr-dot w-1.75 h-1.75 rounded-full shrink-0"
@@ -116,18 +116,18 @@
                     ></span>
                     <div class="flex-1 flex flex-col gap-0.5 min-w-0">
                         <span
-                            class="text-ui text-surface-z9 whitespace-nowrap overflow-hidden text-ellipsis"
+                            class="text-sm text-surface-z9 whitespace-nowrap overflow-hidden text-ellipsis"
                             >{session.task || session.id.slice(0, 8)}</span
                         >
-                        <span class="text-2xs text-surface-z6"
+                        <span class="text-xs text-surface-z6"
                             >{session.project || "unknown"}</span
                         >
                     </div>
                     <span
-                        class="text-2xs text-surface-z6 capitalize w-20 text-right"
+                        class="text-xs text-surface-z6 capitalize w-20 text-right"
                         >{session.outcome ?? "—"}</span
                     >
-                    <span class="text-2xs text-surface-z5 w-[140px] text-right"
+                    <span class="text-xs text-surface-z5 w-[140px] text-right"
                         >{formatTime(session.startedAt)}</span
                     >
                 </div>

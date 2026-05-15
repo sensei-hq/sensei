@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { Sparkline } from '@rokkit/chart';
+    import { sparklinePath } from '$lib/sparkline';
 
     let { data } = $props();
     let ftr = $derived(Math.round((data.ftrMetrics?.ftr14d ?? 0) * 100));
@@ -20,19 +20,19 @@
     <!-- Hero: top recommendation -->
     {#if data.topRecommendation}
         <div class="bg-surface-z2 rounded-lg p-5 mb-5">
-            <span class="text-2xs opacity-60 block mb-1.5"
+            <span class="text-xs opacity-60 block mb-1.5"
                 >Top recommendation</span
             >
             <p class="text-base font-semibold m-0 mb-2">
                 {data.topRecommendation.title}
             </p>
-            <span class="text-2xs px-2 py-0.5 rounded-lg bg-surface-z3"
+            <span class="text-xs px-2 py-0.5 rounded-lg bg-surface-z3"
                 >{data.topRecommendation.urgency}</span
             >
         </div>
     {:else}
         <div class="bg-surface-z2 rounded-lg p-5 mb-5 opacity-50">
-            <p class="text-ui opacity-50 m-0">No pending recommendations.</p>
+            <p class="text-sm opacity-50 m-0">No pending recommendations.</p>
         </div>
     {/if}
 
@@ -40,7 +40,7 @@
     <div class="flex gap-4 mb-6 flex-wrap items-end">
         <div class="bg-surface-z2 rounded-lg p-4 min-w-[100px]">
             <span class="text-3xl font-bold block">{ftr}%</span>
-            <span class="text-2xs opacity-50 block">FTR 14d</span>
+            <span class="text-xs opacity-50 block">FTR 14d</span>
             {#if ftrDelta !== 0}
                 <span
                     class="stat-delta text-xs"
@@ -53,23 +53,25 @@
         </div>
         {#if data.ftrDaily.length >= 2}
             <div class="bg-surface-z2 rounded-lg p-4">
-                <Sparkline data={data.ftrDaily} field="ftr_rate" width={120} height={32} />
-                <span class="text-2xs opacity-50 block mt-1">14d trend</span>
+                <svg width="120" height="32" class="block overflow-visible" style="color: oklch(var(--color-primary-z5) / 1);">
+                    <path d={sparklinePath(data.ftrDaily, 120, 32)} fill="none" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+                <span class="text-xs opacity-50 block mt-1">14d trend</span>
             </div>
         {/if}
         <div class="bg-surface-z2 rounded-lg p-4 min-w-[100px]">
             <span class="text-3xl font-bold block"
                 >{data.ftrMetrics?.sessions7d ?? 0}</span
             >
-            <span class="text-2xs opacity-50 block">Sessions 7d</span>
+            <span class="text-xs opacity-50 block">Sessions 7d</span>
         </div>
         <div class="bg-surface-z2 rounded-lg p-4 min-w-[100px]">
             <span class="text-3xl font-bold block">{data.memoryCount}</span>
-            <span class="text-2xs opacity-50 block">Memories</span>
+            <span class="text-xs opacity-50 block">Memories</span>
         </div>
         <div class="bg-surface-z2 rounded-lg p-4 min-w-[100px]">
             <span class="text-3xl font-bold block">{data.repos.length}</span>
-            <span class="text-2xs opacity-50 block">Repos</span>
+            <span class="text-xs opacity-50 block">Repos</span>
         </div>
     </div>
 
@@ -108,12 +110,12 @@
             <!-- Recent sessions -->
             {#if data.recentSessions.length > 0}
                 <section class="mb-6">
-                    <h3 class="text-ui font-semibold m-0 mb-2.5 opacity-70">
+                    <h3 class="text-sm font-semibold m-0 mb-2.5 opacity-70">
                         Recent sessions
                     </h3>
                     {#each data.recentSessions as session (session.id)}
                         <div
-                            class="session-row flex justify-between py-1.5 border-b border-surface-z2 text-ui"
+                            class="session-row flex justify-between py-1.5 border-b border-surface-z2 text-sm"
                         >
                             <span>{session.task}</span>
                             <span
@@ -135,9 +137,9 @@
             <!-- Hotspots -->
             {#if data.hotspots.length > 0}
                 <section>
-                    <h3 class="text-ui font-semibold m-0 mb-2.5 opacity-70">Hotspots</h3>
+                    <h3 class="text-sm font-semibold m-0 mb-2.5 opacity-70">Hotspots</h3>
                     {#each data.hotspots.slice(0, 5) as h}
-                        <div class="flex justify-between py-1.5 border-b border-surface-z2 text-ui">
+                        <div class="flex justify-between py-1.5 border-b border-surface-z2 text-sm">
                             <span class="mono text-xs truncate flex-1 mr-3">{h.file_path}</span>
                             <span class="mono text-xs opacity-50 shrink-0">
                                 {h.correction_count > 0 ? `${h.correction_count}× rework` : `${h.edit_count} edits`}
@@ -152,11 +154,11 @@
         <div>
             {#if data.teachings.length > 0}
                 <section>
-                    <h3 class="text-ui font-semibold m-0 mb-2.5 opacity-70">Adopted teachings</h3>
+                    <h3 class="text-sm font-semibold m-0 mb-2.5 opacity-70">Adopted teachings</h3>
                     {#each data.teachings as t (t.id)}
                         <div class="teaching-card py-3 px-3.5 mb-2 rounded-md bg-surface-z2 border border-surface-z3">
                             <p class="text-sm m-0 leading-snug">{t.name}</p>
-                            <p class="text-2xs text-surface-z6 m-0 mt-1">
+                            <p class="text-xs text-surface-z6 m-0 mt-1">
                                 {t.family ?? 'pattern'} · {t.instance_count} places
                             </p>
                         </div>

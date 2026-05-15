@@ -2,50 +2,53 @@ import { defineConfig, transformerDirectives } from "unocss";
 import { presetRokkit } from "@rokkit/unocss";
 import config from "./rokkit.config.js";
 
+/**
+ * Source of truth: docs/mockups/lib/tokens.css.
+ * Every value below traces back to a stop in the mockup spec.
+ */
 export default defineConfig({
   transformers: [transformerDirectives()],
   presets: [presetRokkit(config)],
   theme: {
-    // Custom font sizes for UI token scale
-    // Standard Tailwind: xs=12, sm=14, base=16, lg=18, xl=20, 2xl=24, 3xl=30, 4xl=36, 5xl=48, 6xl=60, 7xl=72
     fontSize: {
-      nano:  ["9px",   { lineHeight: "1.4" }], // tiny meta labels
-      micro: ["9.5px", { lineHeight: "1.4" }], // sidebar section headers
-      "3xs": ["10px",  { lineHeight: "1.4" }], // very small labels
-      "2xs": ["11px",  { lineHeight: "1.4" }], // small labels, badges
-      ui:    ["13px",  { lineHeight: "1.5" }], // standard UI text (default)
-      body:  ["15px",  { lineHeight: "1.5" }], // comfortable body text
-      prose: ["17px",  { lineHeight: "1.5" }], // roomy reading text
-      wm:    ["220px", { lineHeight: "1"   }], // watermark / decorative kanji
+      xs:    ["11px", { lineHeight: "1.4" }],
+      sm:    ["13px", { lineHeight: "1.5" }],
+      base:  ["15px", { lineHeight: "1.6" }],
+      lg:    ["17px", { lineHeight: "1.5" }],
+      xl:    ["22px", { lineHeight: "1.2" }],
+      "2xl": ["28px", { lineHeight: "1.2" }],
+      "3xl": ["40px", { lineHeight: "1.2" }],
+      "4xl": ["56px", { lineHeight: "1.05" }],
     },
-    // Custom letter-spacing tokens (complements Tailwind's tighter/tight/normal/wide/wider/widest)
     letterSpacing: {
-      cap:   "0.12em", // all-caps short labels
-      tag:   "0.14em", // medium-spaced tags
-      label: "0.16em", // UI section labels
-      loose: "0.18em", // spacious display text
+      tight:  "-0.02em",
+      normal: "0",
+      wide:   "0.18em",
     },
-    // Custom line-height token
     lineHeight: {
-      reading: "1.7", // comfortable reading line height
+      tight:  "1.2",
+      snug:   "1.4",
+      normal: "1.6",
+      loose:  "1.75",
     },
-    // Off-grid spacing (complements Tailwind's 0.5=2px, 1=4px, 1.5=6px, 2=8px, 2.5=10px, 3=12px, 3.5=14px, 4=16px, 5=20px, 6=24px)
-    spacing: {
-      "0.75": "3px",  // fine-tune offset
-      "1.25": "5px",  // compact chip padding
-      "1.75": "7px",  // compact row padding
-      "2.25": "9px",  // mid-step padding
-      "2.75": "11px", // mid-step padding
-      "4.5":  "18px", // between p-4 (16px) and p-5 (20px)
-      "5.5":  "22px", // between p-5 (20px) and p-6 (24px)
-      "6.5":  "26px", // between p-6 (24px) and p-7 (28px)
-      "7.5":  "30px", // between p-7 (28px) and p-8 (32px)
-      "8.5":  "34px", // between p-8 (32px) and p-9 (36px)
+    borderRadius: {
+      sm:      "4px",
+      DEFAULT: "6px",
+      lg:      "10px",
+      full:    "9999px",
     },
-    // Custom animation durations (complements Tailwind's 75/100/150/200/300/500/700/1000ms)
     transitionDuration: {
-      120: "120ms",
-      140: "140ms",
+      fast:    "120ms",
+      DEFAULT: "180ms",
+      slow:    "280ms",
+    },
+    transitionTimingFunction: {
+      DEFAULT: "cubic-bezier(0.2, 0.6, 0.2, 1)",
+    },
+    boxShadow: {
+      sm:      "0 1px 2px oklch(var(--color-ink-z9) / 0.04)",
+      DEFAULT: "0 1px 3px oklch(var(--color-ink-z9) / 0.06), 0 8px 24px oklch(var(--color-ink-z9) / 0.06)",
+      lg:      "0 24px 60px oklch(var(--color-ink-z9) / 0.18)",
     },
   },
 });

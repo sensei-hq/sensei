@@ -7,17 +7,17 @@
     {#if data.followed.length > 0}
         <section class="mb-5">
             <h3
-                class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wider"
+                class="text-xs font-semibold opacity-60 m-0 mb-2 uppercase tracking-wide"
             >
                 Followed ({data.followed.length})
             </h3>
             <ul class="list-none m-0 p-0">
                 {#each data.followed as p (p.id)}
                     <li
-                        class="pattern-row flex gap-3 py-1.75 border-b border-surface-z2 text-ui"
+                        class="pattern-row flex gap-3 py-2 border-b border-surface-z2 text-sm"
                     >
                         <span class="flex-1">{p.name}</span>
-                        <span class="text-2xs opacity-50 font-mono"
+                        <span class="text-xs opacity-50 font-mono"
                             >{p.lifecycle}</span
                         >
                     </li>
@@ -28,7 +28,7 @@
     {#if data.antiPatterns.length > 0}
         <section>
             <h3
-                class="text-xs font-semibold m-0 mb-2 uppercase tracking-wider"
+                class="text-xs font-semibold m-0 mb-2 uppercase tracking-wide"
                 style="color: oklch(var(--color-primary-z5) / 1);"
             >
                 Anti-patterns ({data.antiPatterns.length})
@@ -36,10 +36,10 @@
             <ul class="list-none m-0 p-0">
                 {#each data.antiPatterns as p (p.id)}
                     <li
-                        class="pattern-row flex gap-3 py-1.75 border-b border-surface-z2 text-ui opacity-80"
+                        class="pattern-row flex gap-3 py-2 border-b border-surface-z2 text-sm opacity-80"
                     >
                         <span class="flex-1">{p.name}</span>
-                        <span class="text-2xs opacity-50 font-mono"
+                        <span class="text-xs opacity-50 font-mono"
                             >{p.lifecycle}</span
                         >
                     </li>
