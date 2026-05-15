@@ -3,7 +3,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { appState } from '$lib/appstate.svelte.js';
+  import { hasTauri } from '$lib/bootstrap.js';
 
   let { children } = $props();
 
@@ -66,7 +66,7 @@
     mq.addEventListener('change', applyColorScheme);
 
     const unlistens: Array<() => void> = [];
-    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+    if (hasTauri()) {
       import('@tauri-apps/api/event').then(({ listen }) => {
         listen<void>('open-logs', () => {
           goto('/logs');
