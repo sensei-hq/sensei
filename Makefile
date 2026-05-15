@@ -35,10 +35,11 @@
 
 VERSION := $(shell cat VERSION)
 
-# VITE_BYPASS_HEALTH is bound to the `bun run dev` script in app/package.json
-# (frontend-only vite dev — no Tauri sidecar, so the bootstrap check cannot
-# run). All other dev paths (`make app-dev`, `make app-dev-bundle`) embed the
-# real sidecar and must NOT bypass the health gate.
+# Health-bypass is derived automatically from Tauri's own env vars
+# (TAURI_PLATFORM / TAURI_ENV_PLATFORM / TAURI_ENV_DEBUG) by vite.config.ts:
+# `bun run dev` runs vite without those set, so it bypasses; `make app-dev`
+# and `make app-dev-bundle` run under `tauri dev`/`tauri build` which DO set
+# them, so the real health gate runs. No custom env var, no leak surface.
 #
 # Mode (dev/prod) is compile-time via --features dev, not env vars.
 

@@ -396,7 +396,7 @@ describe('HealthState — B4: apply() writes sessionStorage cache', () => {
   });
 });
 
-describe('HealthState — VITE_BYPASS_HEALTH bypass', () => {
+describe('HealthState — bypass when not built inside Tauri', () => {
   let sessionStore: Map<string, string>;
 
   beforeEach(() => {
@@ -406,12 +406,16 @@ describe('HealthState — VITE_BYPASS_HEALTH bypass', () => {
       setItem:    (k: string, v: string) => sessionStore.set(k, v),
       removeItem: (k: string) => sessionStore.delete(k),
     });
-    vi.stubEnv('VITE_BYPASS_HEALTH', 'true');
+    // Bypass is derived from `__SENSEI_HAS_TAURI__`, a constant injected
+    // by vite.config.ts. vitest doesn't apply vite's `define`, so the
+    // health-cache default is "has Tauri" (non-bypass) to match every
+    // other test in this file. Stubbing the global to `false` flips
+    // health-cache's typeof check and forces bypass mode for this block.
+    vi.stubGlobal('__SENSEI_HAS_TAURI__', false);
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
   });
 
   it('constructor marks status as ok and writes the cache key when bypass is set', () => {

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "VITE_BYPASS_HEALTH=true vite dev",
+    "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",

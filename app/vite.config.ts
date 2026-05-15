@@ -59,25 +59,18 @@ function webkitNodeReexportFix(): Plugin {
 // Injected at build time so the frontend default is always correct.
 const daemonPort = process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production' ? 7745 : 7744;
 
-// ── VITE_BYPASS_HEALTH safety guard ───────────────────────────────────────
-// VITE_BYPASS_HEALTH=true is meant to be set EXCLUSIVELY by the
-// `bun run dev` script in package.json (frontend-only browser dev mode,
-// where no Tauri sidecar exists to answer the health check). Letting it
-// leak into a Tauri-context build (tauri:dev, tauri:build) would silently
-// disable the health gate and let the observatory render against a daemon
-// that may not be running. Refuse to build in that case.
-const insideTauri =
+// ── Tauri-context detection ───────────────────────────────────────────────
+// Tauri sets these env vars whenever vite runs under `tauri dev` or
+// `tauri build` (the cargo + tauri-cli code path), so they are the
+// canonical "are we building inside a Tauri app" signal. We inject the
+// boolean as `__SENSEI_HAS_TAURI__`; HealthState bypasses the daemon
+// health check when this is false (= browser-only dev or static preview,
+// where no Tauri sidecar exists to answer). No custom bypass env var is
+// needed — there is nothing to leak.
+const hasTauri =
   process.env.TAURI_PLATFORM !== undefined
   || process.env.TAURI_ENV_PLATFORM !== undefined
   || process.env.TAURI_ENV_DEBUG !== undefined;
-if (process.env.VITE_BYPASS_HEALTH === 'true' && insideTauri) {
-  throw new Error(
-    'VITE_BYPASS_HEALTH=true is set while building inside a Tauri context '
-    + '(TAURI_PLATFORM/TAURI_ENV_PLATFORM/TAURI_ENV_DEBUG are set). The bypass '
-    + 'flag is only valid for `bun run dev` (frontend-only browser mode). '
-    + 'Unset it before running tauri dev/build.',
-  );
-}
 
 // App version: read from package.json so reroute can compare against the
 // `sensei:app-version` localStorage flag (set by the updater pre-restart).
@@ -92,6 +85,7 @@ export default defineConfig({
   define: {
     __SENSEI_DEFAULT_PORT__: JSON.stringify(daemonPort),
     __SENSEI_APP_VERSION__: JSON.stringify(pkg.version),
+    __SENSEI_HAS_TAURI__:   JSON.stringify(hasTauri),
   },
 
   // Tauri: don't open browser, use Tauri window
