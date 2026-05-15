@@ -1,16 +1,18 @@
 <script lang="ts">
+    import { PageHeader } from '$lib/components';
     let { data } = $props();
 </script>
 
-<div class="px-6 py-6">
-    <header class="flex items-baseline gap-4 mb-5">
-        <h2 class="text-xl font-normal m-0">Libraries</h2>
-        <div class="text-sm opacity-60">
+<PageHeader title="Libraries">
+    {#snippet right()}
+        <div class="text-sm text-ink-z6">
             <span>{data.wrappedCount} wrapped</span>
             <span class="opacity-40"> · </span>
             <span>{data.unwrappedCount} unwrapped</span>
         </div>
-    </header>
+    {/snippet}
+</PageHeader>
+<div class="px-6 py-6">
 
     {#if data.libraries.length === 0}
         <p class="text-sm opacity-50">

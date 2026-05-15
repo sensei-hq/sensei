@@ -3,7 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import EmptyState from "$lib/components/EmptyState.svelte";
-    import { Eyebrow } from "$lib/components";
+    import { PageHeader } from "$lib/components";
     import type { SessionData } from "$lib/types.js";
 
     type Session = SessionData["sessions"][number];
@@ -59,12 +59,8 @@
     }
 </script>
 
-<div class="max-w-[820px] mx-auto px-12 py-12 pb-16">
-    <div class="mb-8">
-        <p class="m-0 mb-2"><Eyebrow>Sessions</Eyebrow></p>
-        <h1 class="display text-2xl font-normal m-0">刻 Sessions</h1>
-    </div>
-
+<PageHeader kanji="刻" eyebrow="Sessions" title="Sessions" />
+<div class="max-w-[820px] mx-auto px-12 pt-8 pb-16">
     <!-- Stats strip -->
     <div
         class="flex gap-8 mb-7 px-6 py-5 bg-surface-z2 border border-surface-z3 rounded-lg"

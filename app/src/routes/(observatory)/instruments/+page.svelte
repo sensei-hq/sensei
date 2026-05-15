@@ -4,7 +4,7 @@
     import { senseiApi } from "$lib/api.js";
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
-    import { Eyebrow } from "$lib/components";
+    import { Eyebrow, PageHeader } from "$lib/components";
 
     type Tool = { name: string; description: string; params: string[] };
     type ToolStat = { tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string };
@@ -46,11 +46,8 @@
     }
 </script>
 
-<div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
-    <div class="mb-6">
-        <p class="m-0 mb-2"><Eyebrow>Instruments</Eyebrow></p>
-        <h1 class="display text-2xl font-normal m-0">具 Instruments</h1>
-    </div>
+<PageHeader kanji="具" eyebrow="Instruments" title="Instruments" />
+<div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
     <TabBar tabs={instrumentTabs} bind:active={tab} class="mb-7" />
 
