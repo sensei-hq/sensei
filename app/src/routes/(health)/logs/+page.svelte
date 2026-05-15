@@ -16,6 +16,7 @@
         buildBody,
     } from "./helpers.js";
     import { LogsPageState } from "./state.svelte.js";
+    import { Eyebrow, Kanji } from "$lib/components";
 
     let { data }: { data: PageData } = $props();
 
@@ -51,10 +52,8 @@
         <div
             class="px-5 pt-6 pb-3.5 border-b border-surface-z2 flex items-center gap-2.5 shrink-0"
         >
-            <span class="kanji text-lg text-primary-z5">診</span>
-            <span class="text-xs tracking-wide uppercase text-surface-z6"
-                >diagnostic logs</span
-            >
+            <Kanji char="診" size="lg" />
+            <Eyebrow>diagnostic logs</Eyebrow>
         </div>
 
         <div class="flex-1 overflow-y-auto py-2">
@@ -129,11 +128,7 @@
             <div class="shrink-0 pt-6 px-9 border-b border-surface-z2">
                 <div class="flex items-start justify-between mb-4">
                     <div>
-                        <div
-                            class="text-xs tracking-wide uppercase text-surface-z5 mb-1.5"
-                        >
-                            {moduleLabel(s.module)}
-                        </div>
+                        <div class="mb-1.5"><Eyebrow>{moduleLabel(s.module)}</Eyebrow></div>
                         <h2
                             class="display text-2xl font-normal mb-1.5 tracking-tight"
                         >
@@ -162,11 +157,7 @@
                 <div class="flex gap-6 pb-4">
                     {#each [{ label: "Total time", value: fmtMs(s.duration_ms) }, { label: "Traces", value: String(bt.length) }, { label: "Auto-fixes", value: String(fixes), color: fixes > 0 ? "oklch(var(--color-warning-z5) / 1)" : undefined }, { label: "Outcome", value: s.outcome, color: outcomeColor(s.outcome) }] as stat (stat.label)}
                         <div class="flex flex-col gap-0.5">
-                            <div
-                                class="text-xs tracking-wide uppercase text-surface-z5"
-                            >
-                                {stat.label}
-                            </div>
+                            <Eyebrow>{stat.label}</Eyebrow>
                             <div
                                 class="text-sm font-medium"
                                 style:color={stat.color ??
@@ -263,11 +254,7 @@
                             >
                                 {#if t.out}
                                     <div class="flex flex-col gap-1">
-                                        <div
-                                            class="text-xs tracking-wide uppercase text-surface-z5"
-                                        >
-                                            stdout
-                                        </div>
+                                        <Eyebrow>stdout</Eyebrow>
                                         <pre
                                             class="m-0 text-xs font-mono text-surface-z7 leading-normal whitespace-pre-wrap break-all">{anonymize(
                                                 t.out,
@@ -365,11 +352,7 @@
             <div class="flex-1 overflow-auto pt-5 pb-6 px-7 flex gap-5">
                 <!-- Issue preview -->
                 <div class="flex-1 flex flex-col gap-2 min-h-0 overflow-hidden">
-                    <div
-                        class="text-xs tracking-wide uppercase text-surface-z5"
-                    >
-                        Issue preview — anonymized
-                    </div>
+                    <Eyebrow>Issue preview — anonymized</Eyebrow>
                     <div
                         class="bg-surface-z2 border border-surface-z2 rounded-md px-3 py-2 text-sm text-surface-z9 font-medium shrink-0"
                     >
@@ -387,11 +370,7 @@
                     <div
                         class="bg-surface-z2 border border-surface-z2 rounded-md px-3.5 py-3"
                     >
-                        <div
-                            class="text-xs tracking-wide uppercase text-surface-z5 mb-2"
-                        >
-                            Included in report
-                        </div>
+                        <div class="mb-2"><Eyebrow>Included in report</Eyebrow></div>
                         {#each [["Session", formatTime(s.started_at)], ["OS", anonymize(si.os)], ["Arch", si.arch], ["RAM", `${si.ram_gb} GB`], ["Traces", String(s.traces.length)], ["Fixes", String(s.traces.filter((t) => isBootstrapTrace(t) && t.fix_attempted).length)], ["App", `v${s.app_version}`]] as [k, v]}
                             <div class="flex justify-between text-xs mb-1">
                                 <span class="text-surface-z5">{k}</span>
@@ -403,11 +382,7 @@
                     </div>
 
                     <div>
-                        <div
-                            class="text-xs tracking-wide uppercase text-surface-z5 mb-2"
-                        >
-                            Additional context
-                        </div>
+                        <div class="mb-2"><Eyebrow>Additional context</Eyebrow></div>
                         <textarea
                             class="ctx-input w-full resize-none font-sans text-sm text-surface-z9 bg-surface-z2 border border-surface-z2 rounded-md px-2.5 py-2 leading-normal"
                             bind:value={state.addCtx}

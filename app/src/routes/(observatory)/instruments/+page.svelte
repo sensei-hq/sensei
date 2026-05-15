@@ -4,6 +4,7 @@
     import { senseiApi } from "$lib/api.js";
     import TabBar from "$lib/components/TabBar.svelte";
     import EmptyState from "$lib/components/EmptyState.svelte";
+    import { Eyebrow } from "$lib/components";
 
     type Tool = { name: string; description: string; params: string[] };
     type ToolStat = { tool_name: string; call_count: number; error_count: number; avg_duration_ms: number | null; last_used_at: string };
@@ -47,9 +48,7 @@
 
 <div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
     <div class="mb-6">
-        <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">
-            Instruments
-        </p>
+        <p class="m-0 mb-2"><Eyebrow>Instruments</Eyebrow></p>
         <h1 class="display text-2xl font-normal m-0">具 Instruments</h1>
     </div>
 
@@ -133,11 +132,7 @@
 
                         {#if toolResult}
                             <div class="mt-5">
-                                <p
-                                    class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2"
-                                >
-                                    Response
-                                </p>
+                                <p class="m-0 mb-2"><Eyebrow>Response</Eyebrow></p>
                                 <pre
                                     class="px-4 py-4 bg-surface-z1 border border-surface-z3 rounded-md text-xs font-mono text-surface-z9 overflow-auto max-h-[400px] whitespace-pre-wrap break-all m-0">{toolResult}</pre>
                             </div>
