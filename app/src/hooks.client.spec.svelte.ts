@@ -46,3 +46,31 @@ describe('hooks.client.ts ↔ HealthState wire compat', () => {
     expect(reroute({ url: new URL('http://localhost/observatory') })).toBeUndefined();
   });
 });
+
+describe('hooks.client.ts — upgrade gate (L2)', () => {
+  beforeEach(() => {
+    sessionStore.clear();
+    localStore.clear();
+    sessionStorage.setItem('sensei:health', 'ready');
+    localStorage.setItem('sensei:setup-complete', '1');
+  });
+
+  it('redirects "/" to /upgrade when sensei:app-version is set', () => {
+    localStorage.setItem('sensei:app-version', '0.2.13');
+    expect(reroute({ url: new URL('http://localhost/') })).toBe('/upgrade');
+  });
+
+  it('redirects /observatory to /upgrade when sensei:app-version is set', () => {
+    localStorage.setItem('sensei:app-version', '0.2.13');
+    expect(reroute({ url: new URL('http://localhost/observatory') })).toBe('/upgrade');
+  });
+
+  it('does not redirect /upgrade itself (exempt)', () => {
+    localStorage.setItem('sensei:app-version', '0.2.13');
+    expect(reroute({ url: new URL('http://localhost/upgrade') })).toBeUndefined();
+  });
+
+  it('does not redirect when no upgrade is pending', () => {
+    expect(reroute({ url: new URL('http://localhost/') })).toBeUndefined();
+  });
+});
