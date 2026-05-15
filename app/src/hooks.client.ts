@@ -29,6 +29,13 @@
 
 import { initHealthCache, isHealthReady } from '$lib/health-cache.js';
 
+declare const __SENSEI_APP_VERSION__: string;
+
+// Build-time fallback: vite injects __SENSEI_APP_VERSION__ from package.json.
+// vitest doesn't apply vite's `define`, so guard against undefined in tests.
+const APP_VERSION =
+  typeof __SENSEI_APP_VERSION__ !== 'undefined' ? __SENSEI_APP_VERSION__ : '';
+
 const HEALTH_EXEMPT = new Set(['/health', '/logs', '/upgrade']);
 const SETUP_PREFIX = '/setup';
 
@@ -44,11 +51,17 @@ export function reroute({ url }: { url: URL }): string | undefined {
 
   // ── Tier 0: Upgrade gate ──────────────────────────────────────────────────
   // If the app was just updated, run upgrade steps before health checks.
-  // The updater writes `sensei:app-version` to localStorage before restarting;
-  // the /upgrade page clears it once the health resolvers + db deploy have completed.
+  // The updater writes `sensei:app-version` (= the version it upgraded FROM)
+  // to localStorage before restarting; the /upgrade page clears it once the
+  // resolvers + dbd deploy complete. Compare against the running binary's
+  // version so stale flags or manual writes that already match don't keep
+  // looping users through /upgrade.
+  const storedVersion =
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem('sensei:app-version')
+      : null;
   const pendingUpgrade =
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem('sensei:app-version') !== null;
+    storedVersion !== null && storedVersion !== APP_VERSION;
 
   if (pendingUpgrade && !HEALTH_EXEMPT.has(path)) {
     return '/upgrade';
