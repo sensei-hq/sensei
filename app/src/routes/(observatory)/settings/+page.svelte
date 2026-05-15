@@ -3,7 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import TabBar from "$lib/components/TabBar.svelte";
-    import { PageHeader } from "$lib/components";
+    import { PageHeader, StatusDot } from "$lib/components";
 
     type Assistant = {
         family: string;
@@ -114,11 +114,7 @@
                                     >{asst.version}</span
                                 >
                             {/if}
-                            <span
-                                class="status-dot w-1.75 h-1.75 rounded-full"
-                                class:configured={asst.configured}
-                                class:unconfigured={!asst.configured}
-                            ></span>
+                            <StatusDot status={asst.configured ? 'ok' : 'idle'} />
                             <span class="text-xs text-surface-z6 w-20"
                                 >{asst.configured
                                     ? "configured"
@@ -193,13 +189,6 @@
     }
     .extension-row:last-child {
         border-bottom: none;
-    }
-
-    .status-dot.configured {
-        background: oklch(var(--color-success-z5) / 1);
-    }
-    .status-dot.unconfigured {
-        background: oklch(var(--color-warning-z5) / 1);
     }
 
     .extension-enabled.on {

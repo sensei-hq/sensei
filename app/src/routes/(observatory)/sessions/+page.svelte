@@ -3,7 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import EmptyState from "$lib/components/EmptyState.svelte";
-    import { PageHeader } from "$lib/components";
+    import { PageHeader, StatusDot } from "$lib/components";
     import type { SessionData } from "$lib/types.js";
 
     type Session = SessionData["sessions"][number];
@@ -104,11 +104,7 @@
                 <div
                     class="session-row flex items-center gap-3 px-4 py-3 rounded-md transition-colors duration-fast"
                 >
-                    <span
-                        class="ftr-dot w-1.75 h-1.75 rounded-full shrink-0"
-                        class:green={session.ftr === 1}
-                        class:amber={session.ftr !== 1}
-                    ></span>
+                    <StatusDot status={session.ftr === 1 ? 'ok' : 'warn'} />
                     <div class="flex-1 flex flex-col gap-0.5 min-w-0">
                         <span
                             class="text-sm text-surface-z9 whitespace-nowrap overflow-hidden text-ellipsis"
@@ -145,10 +141,4 @@
         background: oklch(var(--color-surface-z2) / 1);
     }
 
-    .ftr-dot.green {
-        background: oklch(var(--color-success-z5) / 1);
-    }
-    .ftr-dot.amber {
-        background: oklch(var(--color-warning-z5) / 1);
-    }
 </style>

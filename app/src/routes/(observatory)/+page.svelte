@@ -1,6 +1,6 @@
 <script lang="ts">
   import { sparklinePath } from '$lib/sparkline';
-  import { Eyebrow, Kanji } from '$lib/components';
+  import { Eyebrow, Kanji, StatusDot } from '$lib/components';
 
   let { data } = $props();
 
@@ -93,7 +93,7 @@
           <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[520px] mb-4">{hero.why}</p>
           {#if hero.impact}
             <div class="flex items-center gap-2 text-xs">
-              <span class="w-1.5 h-1.5 rounded-full bg-primary-z5"></span>
+              <StatusDot status="busy" size="sm" />
               <span class="text-primary-z5">{hero.impact}</span>
             </div>
           {/if}
@@ -111,7 +111,7 @@
         {#if data.topRecommendations.length > 1}
           {#each data.topRecommendations.slice(1) as rec (rec.id)}
             <div class="flex gap-3 py-3.5 border-b border-surface-z3 text-left">
-              <span class="kanji text-lg w-6.5" class:text-amber={rec.urgency === 'high'} class:text-surface-z6={rec.urgency !== 'high'}>
+              <span class="kanji text-lg w-6" class:text-amber={rec.urgency === 'high'} class:text-surface-z6={rec.urgency !== 'high'}>
                 {rec.urgency === 'high' ? '繰' : '探'}
               </span>
               <div class="flex-1">
