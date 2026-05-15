@@ -1,12 +1,14 @@
 <script lang="ts">
+    import { PageHeader } from '$lib/components';
     let { data } = $props();
 </script>
 
+<PageHeader title="Instruments">
+    {#snippet right()}
+        <span class="text-sm text-ink-z6">{data.tools.length} tools</span>
+    {/snippet}
+</PageHeader>
 <div class="px-6 py-6">
-    <header class="flex items-baseline gap-4 mb-5">
-        <h2 class="text-xl font-normal m-0">Instruments</h2>
-        <span class="text-sm opacity-60">{data.tools.length} tools</span>
-    </header>
 
     {#if data.tools.length === 0}
         <p class="text-sm opacity-50">

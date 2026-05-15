@@ -1,14 +1,12 @@
 <script lang="ts">
+    import { PageHeader } from '$lib/components';
     let { data } = $props();
     let p = $derived(data.project);
 </script>
 
+<PageHeader title={p?.name ?? "—"} description={p?.goal ?? undefined} />
 <div class="px-6 py-6 max-w-[600px]">
-    <h2 class="text-xl font-normal m-0 mb-3">{p?.name ?? "—"}</h2>
-    {#if p?.client}<p class="text-sm opacity-70 my-1">
-            Client: {p.client}
-        </p>{/if}
-    {#if p?.goal}<p class="text-sm opacity-70 my-1">{p.goal}</p>{/if}
+    {#if p?.client}<p class="text-sm text-ink-z6 mb-3">Client: {p.client}</p>{/if}
 
     <section class="mt-5">
         <h3

@@ -3,7 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import TabBar from "$lib/components/TabBar.svelte";
-    import { Eyebrow } from "$lib/components";
+    import { PageHeader } from "$lib/components";
 
     type Assistant = {
         family: string;
@@ -51,11 +51,8 @@
     });
 </script>
 
-<div class="max-w-[720px] mx-auto px-12 py-12 pb-16">
-    <div class="mb-6">
-        <p class="m-0 mb-2"><Eyebrow>Settings</Eyebrow></p>
-        <h1 class="display text-2xl font-normal m-0">設 Settings</h1>
-    </div>
+<PageHeader kanji="設" eyebrow="Settings" title="Settings" />
+<div class="max-w-[720px] mx-auto px-12 pt-8 pb-16">
 
     <TabBar tabs={sectionTabs} bind:active={section} class="mb-8" />
 

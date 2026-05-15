@@ -3,7 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import EmptyState from "$lib/components/EmptyState.svelte";
-    import { Eyebrow } from "$lib/components";
+    import { Eyebrow, PageHeader } from "$lib/components";
     import type { LibEntry } from "$lib/types.js";
 
     type UsageEntry = { library_name: string; folder: string; version_used: string | null; import_count: number };
@@ -43,11 +43,8 @@
     );
 </script>
 
-<div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
-    <div class="mb-6">
-        <p class="m-0 mb-2"><Eyebrow>Libraries</Eyebrow></p>
-        <h1 class="display text-2xl font-normal m-0">書 Libraries</h1>
-    </div>
+<PageHeader kanji="書" eyebrow="Libraries" title="Libraries" />
+<div class="max-w-[960px] mx-auto px-12 pt-8 pb-16">
 
     <!-- Search + filters -->
     <div class="flex items-center gap-4 mb-6">

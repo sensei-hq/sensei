@@ -1,9 +1,10 @@
 <script lang="ts">
+    import { PageHeader } from '$lib/components';
     let { data } = $props();
 </script>
 
+<PageHeader title="Memories" />
 <div class="px-6 py-6">
-    <h2 class="text-xl font-normal m-0 mb-4">Memories</h2>
     {#if data.pendingShare > 0}
         <div
             class="text-sm px-3.5 py-2.5 rounded-md mb-4"

@@ -1,10 +1,11 @@
 <script lang="ts">
   import { openProjectWindow } from '$lib/stores/windows.svelte.js';
+  import { PageHeader } from '$lib/components';
   let { data } = $props();
 </script>
 
+<PageHeader kanji="場" eyebrow="Observatory" title="Projects" />
 <div class="p-6">
-  <h2 class="text-2xl font-normal m-0 mb-4">Projects</h2>
   {#if data.projects.length === 0}
     <p class="text-sm text-surface-z6 opacity-50">No projects yet. Set up a project to get started.</p>
   {:else}

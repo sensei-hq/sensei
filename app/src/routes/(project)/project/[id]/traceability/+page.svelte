@@ -1,20 +1,20 @@
 <script lang="ts">
+    import { PageHeader } from '$lib/components';
     let { data } = $props();
 </script>
 
+<PageHeader title="Traceability">
+    {#snippet right()}
+        <div class="text-sm text-ink-z7">
+            <span>{data.total} tracked</span>
+            <span> · </span>
+            <span style="color: oklch(var(--color-warning-z5) / 1);">{data.drifted} drifted</span>
+            <span> · </span>
+            <span style="color: oklch(var(--color-primary-z5) / 1);">{data.broken} broken</span>
+        </div>
+    {/snippet}
+</PageHeader>
 <div class="px-6 py-6">
-    <h2 class="text-xl font-normal m-0 mb-2">Traceability</h2>
-    <div class="text-sm opacity-70 mb-4">
-        <span>{data.total} tracked</span>
-        <span> · </span>
-        <span style="color: oklch(var(--color-warning-z5) / 1);"
-            >{data.drifted} drifted</span
-        >
-        <span> · </span>
-        <span style="color: oklch(var(--color-primary-z5) / 1);"
-            >{data.broken} broken</span
-        >
-    </div>
     <ul class="list-none m-0 p-0">
         {#each data.driftItems as item (item.id)}
             <li
