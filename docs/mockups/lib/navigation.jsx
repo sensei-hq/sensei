@@ -4,9 +4,9 @@
 const { useState: nvS, useEffect: nvE, useMemo: nvM } = React;
 
 function StatusDot({ ftr, warn }) {
-  const color = warn ? 'var(--amber)' :
-                ftr >= 0.8 ? 'var(--jade)' :
-                ftr >= 0.6 ? 'var(--sumi-3)' : 'var(--amber)';
+  const color = warn ? 'var(--warning)' :
+                ftr >= 0.8 ? 'var(--success)' :
+                ftr >= 0.6 ? 'var(--ink-3)' : 'var(--warning)';
   return <span style={{ width: 7, height: 7, borderRadius: '50%', background: color,
                  display: 'inline-block', flexShrink: 0 }}/>;
 }
@@ -46,25 +46,25 @@ function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
          style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
                   background: 'var(--paper)', overflow: 'hidden' }}>
       {!embedded && <TauriChrome title="Sensei  先生  ·  projects"/>}
-      <div style={{ padding: '28px 56px 20px',
-                    display: 'flex', alignItems: 'flex-end', gap: 20, borderBottom: 'var(--hairline)' }}>
-        <div className="kanji" style={{ fontSize: 46, color: 'var(--shu)', lineHeight: 1 }}>場</div>
+      <div style={{ padding: '24px 48px 16px',
+                    display: 'flex', alignItems: 'flex-end', gap: 16, borderBottom: 'var(--hairline)' }}>
+        <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>場</div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                        textTransform: 'uppercase', marginBottom: 6 }}>Projects</div>
-          <h1 className="display" style={{ fontSize: 26, fontWeight: 400, margin: 0 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                        textTransform: 'uppercase', marginBottom: 4 }}>Projects</div>
+          <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: 0 }}>
             All the places you work.
           </h1>
         </div>
-        <button style={{ padding: '9px 14px', fontSize: 12,
-                         background: 'var(--sumi)', color: 'var(--paper)', borderRadius: 5 }}>
+        <button style={{ padding: '8px 12px', fontSize: 13,
+                         background: 'var(--ink)', color: 'var(--paper)', borderRadius: 5 }}>
           + new project
         </button>
       </div>
 
-      <div style={{ padding: '14px 56px', borderBottom: 'var(--hairline)',
-                    display: 'flex', gap: 18, alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 2 }}>
+      <div style={{ padding: '12px 48px', borderBottom: 'var(--hairline)',
+                    display: 'flex', gap: 16, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 4 }}>
           {[
             ["all",      "All",       "全", counts.all],
             ["active",   "Active",    "動", counts.active],
@@ -74,14 +74,14 @@ function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
             const on = status === v;
             return (
               <button key={v} onClick={() => setStatus(v)}
-                      style={{ padding: '6px 12px', fontSize: 11.5,
-                                borderRadius: 4, display: 'inline-flex', gap: 7, alignItems: 'center',
-                                background: on ? 'var(--sumi)' : 'transparent',
-                                color: on ? 'var(--paper)' : 'var(--sumi-2)' }}>
+                      style={{ padding: '4px 12px', fontSize: 11,
+                                borderRadius: 4, display: 'inline-flex', gap: 8, alignItems: 'center',
+                                background: on ? 'var(--ink)' : 'transparent',
+                                color: on ? 'var(--paper)' : 'var(--ink-2)' }}>
                 <span className="kanji" style={{ fontSize: 11 }}>{k}</span>
                 {l}
-                <span className="mono" style={{ fontSize: 10,
-                              color: on ? 'var(--paper)' : 'var(--sumi-4)', opacity: 0.85 }}>
+                <span className="mono" style={{ fontSize: 11,
+                              color: on ? 'var(--paper)' : 'var(--ink-4)', opacity: 0.85 }}>
                   {n}
                 </span>
               </button>
@@ -91,28 +91,28 @@ function ProjectsIndexA({ embedded = false, onOpenProject } = {}) {
         <span style={{ flex: 1 }}/>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8,
                        background: 'var(--paper-2)', borderRadius: 5,
-                       padding: '6px 10px', border: 'var(--hairline)', minWidth: 260 }}>
-          <span className="kanji" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>探</span>
+                       padding: '4px 8px', border: 'var(--hairline)', minWidth: 260 }}>
+          <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-3)' }}>探</span>
           <input value={query} onChange={e => setQuery(e.target.value)}
                  placeholder="search projects or clients…"
                  style={{ border: 'none', outline: 'none', background: 'transparent',
-                          fontSize: 12, flex: 1, color: 'var(--sumi)' }}/>
+                          fontSize: 13, flex: 1, color: 'var(--ink)' }}/>
           {query && (
             <button onClick={() => setQuery("")}
-                    style={{ fontSize: 11, color: 'var(--sumi-4)' }}>×</button>
+                    style={{ fontSize: 11, color: 'var(--ink-4)' }}>×</button>
           )}
         </div>
-        <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
           {filtered.length} of {D.projects.length}
         </span>
       </div>
 
-      <main style={{ flex: 1, overflow: 'auto', padding: '24px 56px 40px',
+      <main style={{ flex: 1, overflow: 'auto', padding: '24px 48px 32px',
                      display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
                      gap: 12, alignContent: 'start' }}>
         {filtered.length === 0 && (
           <div style={{ gridColumn: '1/-1', textAlign: 'center',
-                         padding: '40px 0', fontSize: 12, color: 'var(--sumi-3)' }}>
+                         padding: '32px 0', fontSize: 13, color: 'var(--ink-3)' }}>
             No projects match.
           </div>
         )}
@@ -130,34 +130,34 @@ function ProjectCard({ p, onOpen }) {
 
   return (
     <button onClick={() => onOpen && onOpen(p.id)} style={{
-      padding: '12px 14px', background: 'var(--paper-2)',
+      padding: '12px 12px', background: 'var(--paper-2)',
       border: 'var(--hairline)', borderRadius: 8,
       opacity: p.status === "archived" ? 0.6 : 1,
-      display: 'flex', flexDirection: 'column', gap: 10,
+      display: 'flex', flexDirection: 'column', gap: 8,
       textAlign: 'left', cursor: onOpen ? 'pointer' : 'default',
       transition: 'background 0.12s, border-color 0.12s'
     }}
     onMouseEnter={(e) => { if (onOpen) e.currentTarget.style.background = 'var(--paper-3)'; }}
     onMouseLeave={(e) => { if (onOpen) e.currentTarget.style.background = 'var(--paper-2)'; }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="kanji" style={{ fontSize: 20, color: 'var(--shu)', lineHeight: 1,
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)', lineHeight: 1,
                       width: 24, textAlign: 'center', flexShrink: 0 }}>
           {p.kanji}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <StatusDot ftr={p.ftr} warn={p.warn}/>
-            <span style={{ fontSize: 13, color: 'var(--sumi)',
+            <span style={{ fontSize: 13, color: 'var(--ink)',
                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {p.name}
             </span>
           </div>
-          <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 1 }}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
             {p.client}
           </div>
         </div>
         {p.status !== "active" && (
-          <span className="mono" style={{ fontSize: 9.5, color: 'var(--sumi-3)',
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                         textTransform: 'uppercase', letterSpacing: '0.12em' }}>
             {p.status === "recent" ? "dormant" : p.status}
           </span>
@@ -165,15 +165,15 @@ function ProjectCard({ p, onOpen }) {
       </div>
 
       {hasStats ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10,
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8,
                        paddingTop: 4, borderTop: 'var(--hairline)' }}>
           <Stat label="FTR" value={Math.round(p.ftr * 100)}
-                tone={p.warn ? 'var(--amber)' : 'var(--sumi)'}/>
+                tone={p.warn ? 'var(--warning)' : 'var(--ink)'}/>
           <Stat label="7d" value={p.sessions7d}/>
           <Stat label="repos·libs" value={`${p.repos}·${p.libs}`}/>
         </div>
       ) : (
-        <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-4)',
+        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
                       paddingTop: 4, borderTop: 'var(--hairline)',
                       display: 'flex', justifyContent: 'space-between' }}>
           <span>{p.repos} repo{p.repos !== 1 ? 's' : ''} · {p.libs} libs</span>
@@ -184,12 +184,12 @@ function ProjectCard({ p, onOpen }) {
   );
 }
 
-function Stat({ label, value, tone = 'var(--sumi)' }) {
+function Stat({ label, value, tone = 'var(--ink)' }) {
   return (
     <div>
-      <div style={{ fontSize: 9, letterSpacing: '0.12em', color: 'var(--sumi-3)',
+      <div style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--ink-3)',
                     textTransform: 'uppercase' }}>{label}</div>
-      <div className="display" style={{ fontSize: 16, fontWeight: 400, color: tone,
+      <div className="display" style={{ fontSize: 15, fontWeight: 400, color: tone,
                     lineHeight: 1.1 }}>
         {value}
       </div>
@@ -219,9 +219,9 @@ function ProjectsPaletteB() {
 
       {/* Dimmed observatory underneath (illustrative only) */}
       <div style={{ position: 'absolute', inset: '38px 0 0', background: 'var(--paper)',
-                    padding: '40px 56px', filter: 'blur(1px)', opacity: 0.7 }}>
-        <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                      textTransform: 'uppercase', marginBottom: 6 }}>Wed · 22 Apr</div>
+                    padding: '32px 48px', filter: 'blur(1px)', opacity: 0.7 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                      textTransform: 'uppercase', marginBottom: 4 }}>Wed · 22 Apr</div>
         <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: 0 }}>
           Good morning, Aiko.
         </h1>
@@ -237,19 +237,19 @@ function ProjectsPaletteB() {
                     boxShadow: '0 24px 60px rgba(0,0,0,0.3)',
                     border: 'var(--hairline)', overflow: 'hidden',
                     display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '14px 18px', borderBottom: 'var(--hairline)',
-                      display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="kanji" style={{ fontSize: 16, color: 'var(--shu)' }}>探</span>
+        <div style={{ padding: '12px 16px', borderBottom: 'var(--hairline)',
+                      display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>探</span>
           <input value={q} onChange={(e) => setQ(e.target.value)}
                  placeholder="jump to a project, library, session…"
                  autoFocus
                  style={{ flex: 1, fontSize: 15, border: 'none', outline: 'none',
                           background: 'transparent' }}/>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)',
-                        padding: '3px 7px', border: 'var(--hairline)', borderRadius: 3 }}>⌘K</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
+                        padding: '4px 8px', border: 'var(--hairline)', borderRadius: 3 }}>⌘K</span>
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto', padding: '10px 0' }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '8px 0' }}>
           <PaletteGroup label="Projects" count={matches.projHits.length}>
             {matches.projHits.map((p, i) => (
               <PaletteRow key={p.id}
@@ -261,7 +261,7 @@ function ProjectsPaletteB() {
                 warn={p.warn}/>
             ))}
             {matches.projHits.length === 0 && (
-              <div style={{ padding: '10px 18px', fontSize: 11.5, color: 'var(--sumi-4)' }}>
+              <div style={{ padding: '8px 16px', fontSize: 11, color: 'var(--ink-4)' }}>
                 no projects match
               </div>
             )}
@@ -297,10 +297,10 @@ function ProjectsPaletteB() {
           </PaletteGroup>
         </div>
 
-        <div style={{ padding: '10px 18px', borderTop: 'var(--hairline)',
+        <div style={{ padding: '8px 16px', borderTop: 'var(--hairline)',
                       background: 'var(--paper-2)',
-                      display: 'flex', alignItems: 'center', gap: 14,
-                      fontSize: 10.5, color: 'var(--sumi-3)' }}>
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      fontSize: 11, color: 'var(--ink-3)' }}>
           <span><span className="mono">↑↓</span> move</span>
           <span><span className="mono">↵</span> open</span>
           <span><span className="mono">⌘↵</span> open in new tab</span>
@@ -314,11 +314,11 @@ function ProjectsPaletteB() {
 
 function PaletteGroup({ label, count, children }) {
   return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ padding: '8px 18px 4px', fontSize: 9.5, letterSpacing: '0.16em',
-                    color: 'var(--sumi-3)', textTransform: 'uppercase' }}>
+    <div style={{ marginBottom: 4 }}>
+      <div style={{ padding: '8px 16px 4px', fontSize: 11, letterSpacing: '0.16em',
+                    color: 'var(--ink-3)', textTransform: 'uppercase' }}>
         {label}
-        <span className="mono" style={{ marginLeft: 6, color: 'var(--sumi-4)' }}>· {count}</span>
+        <span className="mono" style={{ marginLeft: 4, color: 'var(--ink-4)' }}>· {count}</span>
       </div>
       {children}
     </div>
@@ -328,19 +328,19 @@ function PaletteGroup({ label, count, children }) {
 function PaletteRow({ kanji, title, sub, trail, highlight, warn }) {
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 14,
-      alignItems: 'center', padding: '9px 18px',
+      display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
+      alignItems: 'center', padding: '8px 16px',
       background: highlight ? 'var(--paper-2)' : 'transparent'
     }}>
       <span className="kanji" style={{ fontSize: 15,
-                    color: warn ? 'var(--amber)' : 'var(--shu)', width: 20 }}>
+                    color: warn ? 'var(--warning)' : 'var(--accent)', width: 20 }}>
         {kanji}
       </span>
       <div>
-        <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{title}</div>
-        <div style={{ fontSize: 11, color: 'var(--sumi-3)', marginTop: 1 }}>{sub}</div>
+        <div style={{ fontSize: 13, color: 'var(--ink)' }}>{title}</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{sub}</div>
       </div>
-      <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>{trail}</span>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{trail}</span>
     </div>
   );
 }
@@ -363,45 +363,45 @@ function ProjectsBrowserC() {
 
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '260px 1fr', minHeight: 0 }}>
         <aside style={{ borderRight: 'var(--hairline)', background: 'var(--paper-2)',
-                         overflow: 'auto', padding: '22px 10px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 10px 18px' }}>
-            <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>場</span>
+                         overflow: 'auto', padding: '24px 8px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 8px 16px' }}>
+            <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>場</span>
             <span className="display" style={{ fontSize: 17 }}>Projects</span>
           </div>
           <TreeGroup label="Active" kanji="動" items={active} selected={selected} setSelected={setSelected}/>
           <TreeGroup label="Recent" kanji="旧" items={recent} selected={selected} setSelected={setSelected} dim/>
           <TreeGroup label="Archived" kanji="蔵" items={archived} selected={selected} setSelected={setSelected} dim/>
-          <button style={{ padding: '8px 10px', fontSize: 11.5, marginTop: 12,
-                            color: 'var(--shu)' }}>+ new project</button>
+          <button style={{ padding: '8px 8px', fontSize: 11, marginTop: 12,
+                            color: 'var(--accent)' }}>+ new project</button>
         </aside>
 
         <main style={{ overflow: 'auto', padding: '32px 48px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
-            <span className="kanji" style={{ fontSize: 32, color: 'var(--shu)' }}>場</span>
+            <span className="kanji" style={{ fontSize: 28, color: 'var(--accent)' }}>場</span>
             <div>
-              <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
+              <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
                              textTransform: 'uppercase' }}>Workspace</div>
-              <h1 className="display" style={{ fontSize: 24, fontWeight: 400, margin: 0 }}>
+              <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0 }}>
                 3 active · 2 dormant · 1 archived
               </h1>
             </div>
             <span style={{ flex: 1 }}/>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)',
-                          padding: '5px 10px', border: 'var(--hairline)', borderRadius: 3 }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
+                          padding: '4px 8px', border: 'var(--hairline)', borderRadius: 3 }}>
               ⌘K to jump
             </span>
           </div>
 
-          <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '28px 0 10px' }}>
+          <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '24px 0 8px' }}>
             Active
           </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
             {active.map(p => <BrowserCard key={p.id} p={p} big
               selected={selected === p.id} onClick={() => setSelected(p.id)}/>)}
           </div>
 
-          <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '28px 0 10px',
-                        color: 'var(--sumi-2)' }}>
+          <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '24px 0 8px',
+                        color: 'var(--ink-2)' }}>
             Recent
           </h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
@@ -409,8 +409,8 @@ function ProjectsBrowserC() {
               selected={selected === p.id} onClick={() => setSelected(p.id)}/>)}
           </div>
 
-          <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '28px 0 10px',
-                        color: 'var(--sumi-3)' }}>
+          <h2 className="display" style={{ fontSize: 15, fontWeight: 400, margin: '24px 0 8px',
+                        color: 'var(--ink-3)' }}>
             Archived
           </h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
@@ -425,13 +425,13 @@ function ProjectsBrowserC() {
 
 function TreeGroup({ label, kanji, items, selected, setSelected, dim }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ padding: '2px 10px 6px',
-                     fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--sumi-3)',
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ padding: '4px 8px 4px',
+                     fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                      textTransform: 'uppercase', display: 'flex', gap: 8, alignItems: 'center' }}>
         <span className="kanji" style={{ fontSize: 11 }}>{kanji}</span>
         <span>{label}</span>
-        <span className="mono" style={{ marginLeft: 'auto', color: 'var(--sumi-4)' }}>
+        <span className="mono" style={{ marginLeft: 'auto', color: 'var(--ink-4)' }}>
           {items.length}
         </span>
       </div>
@@ -440,15 +440,15 @@ function TreeGroup({ label, kanji, items, selected, setSelected, dim }) {
         return (
           <button key={p.id} onClick={() => setSelected(p.id)}
                   style={{
-                    display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10,
-                    alignItems: 'center', padding: '7px 10px', borderRadius: 5,
+                    display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 8,
+                    alignItems: 'center', padding: '8px 8px', borderRadius: 5,
                     textAlign: 'left', width: '100%',
                     background: on ? 'var(--paper)' : 'transparent',
-                    color: on ? 'var(--sumi)' : 'var(--sumi-2)',
-                    opacity: dim ? 0.75 : 1, fontSize: 12.5
+                    color: on ? 'var(--ink)' : 'var(--ink-2)',
+                    opacity: dim ? 0.75 : 1, fontSize: 13
                   }}>
-            <span className="kanji" style={{ fontSize: 12, width: 12,
-                          color: on ? 'var(--shu)' : 'var(--sumi-3)' }}>{p.kanji}</span>
+            <span className="kanji" style={{ fontSize: 13, width: 12,
+                          color: on ? 'var(--accent)' : 'var(--ink-3)' }}>{p.kanji}</span>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {p.name}
             </span>
@@ -466,32 +466,32 @@ function BrowserCard({ p, big, dim, selected, onClick }) {
       style={{
         padding: big ? '18px 20px' : '14px 16px',
         background: selected ? 'var(--paper)' : 'var(--paper-2)',
-        border: selected ? '1px solid var(--shu)' : 'var(--hairline)',
+        border: selected ? '1px solid var(--accent)' : 'var(--hairline)',
         borderRadius: 10, textAlign: 'left',
-        display: 'flex', flexDirection: 'column', gap: 10,
+        display: 'flex', flexDirection: 'column', gap: 8,
         opacity: dim ? 0.7 : 1,
         minHeight: big ? 120 : 84
       }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span className="kanji" style={{ fontSize: big ? 26 : 18, color: 'var(--shu)' }}>
+        <span className="kanji" style={{ fontSize: big ? 26 : 18, color: 'var(--accent)' }}>
           {p.kanji}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <StatusDot ftr={p.ftr} warn={p.warn}/>
-            <span style={{ fontSize: big ? 14.5 : 13, color: 'var(--sumi)' }}>{p.name}</span>
+            <span style={{ fontSize: big ? 14.5 : 13, color: 'var(--ink)' }}>{p.name}</span>
           </div>
-          <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 2 }}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
             {p.client}
           </div>
         </div>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
           {Math.round(p.ftr * 100)}
         </span>
       </div>
       {big && (
-        <div style={{ display: 'flex', gap: 14, fontSize: 10.5,
-                       color: 'var(--sumi-3)', marginTop: 'auto' }} className="mono">
+        <div style={{ display: 'flex', gap: 12, fontSize: 11,
+                       color: 'var(--ink-3)', marginTop: 'auto' }} className="mono">
           <span>{p.sessions7d}× 7d</span>
           <span>·</span>
           <span>{p.repos} repos</span>

@@ -121,33 +121,33 @@ function Bootstrap({ scenario = "missing-prereqs", onReady, onSkip }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%',
-                   background: 'var(--paper)', color: 'var(--sumi)' }}>
+                   background: 'var(--paper)', color: 'var(--ink)' }}>
       <TauriChrome title="Sensei  先生  ·  bootstrap"/>
 
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr', minHeight: 0,
                      overflow: 'auto' }}>
         <div style={{ maxWidth: 760, width: '100%', margin: '0 auto',
-                       padding: '56px 40px 48px', display: 'flex',
-                       flexDirection: 'column', gap: 40 }}>
+                       padding: '48px 32px 48px', display: 'flex',
+                       flexDirection: 'column', gap: 32 }}>
 
           {/* ── Header ──────────────────────────────── */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>支</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>支</span>
               <span style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                              color: 'var(--sumi-3)' }}>
+                              color: 'var(--ink-3)' }}>
                 bootstrap · checking the foundation
               </span>
             </div>
-            <h1 className="display" style={{ fontSize: 38, fontWeight: 300, lineHeight: 1.12,
-                          margin: '0 0 14px', letterSpacing: '-0.015em' }}>
+            <h1 className="display" style={{ fontSize: 40, fontWeight: 300, lineHeight: 1.12,
+                          margin: '0 0 12px', letterSpacing: '-0.015em' }}>
               {allReady
-                ? <>The foundation <span style={{ color: 'var(--matcha)' }}>holds.</span></>
+                ? <>The foundation <span style={{ color: 'var(--success)' }}>holds.</span></>
                 : firstBlockedIdx >= 0
-                  ? <>A few pieces are <span style={{ color: 'var(--shu)' }}>missing.</span></>
+                  ? <>A few pieces are <span style={{ color: 'var(--accent)' }}>missing.</span></>
                   : <>Checking the foundation…</>}
             </h1>
-            <p style={{ fontSize: 14, color: 'var(--sumi-3)', lineHeight: 1.7, margin: 0,
+            <p style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.7, margin: 0,
                          maxWidth: 540 }}>
               {allReady
                 ? "Homebrew, Postgres, Ollama, sensei components, database, and the daemon are all present. Opening the observatory."
@@ -159,17 +159,17 @@ function Bootstrap({ scenario = "missing-prereqs", onReady, onSkip }) {
 
           {/* ── Progress rail ──────────────────────── */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                           color: 'var(--sumi-4)', fontFeatureSettings: '"tnum"' }}>
-              {String(readyCount).padStart(2, "0")} <span style={{ color: 'var(--sumi-4)' }}>/ {String(BOOT_GATES.length).padStart(2, "0")} ready</span>
+            <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                           color: 'var(--ink-4)', fontFeatureSettings: '"tnum"' }}>
+              {String(readyCount).padStart(2, "0")} <span style={{ color: 'var(--ink-4)' }}>/ {String(BOOT_GATES.length).padStart(2, "0")} ready</span>
             </div>
-            <div style={{ flex: 1, display: 'flex', gap: 3 }}>
+            <div style={{ flex: 1, display: 'flex', gap: 4 }}>
               {BOOT_GATES.map((g, i) => {
                 const s = statuses[g.id];
-                const color = s === "ready" ? 'var(--matcha)'
-                            : s === "checking" || s === "starting" ? 'var(--sumi-2)'
-                            : s === "missing" || s === "error" ? 'var(--shu)'
-                            : 'var(--paper-edge)';
+                const color = s === "ready" ? 'var(--success)'
+                            : s === "checking" || s === "starting" ? 'var(--ink-2)'
+                            : s === "missing" || s === "error" ? 'var(--accent)'
+                            : 'var(--edge)';
                 return <span key={g.id} style={{
                   flex: 1, height: 2, borderRadius: 1, background: color,
                   transition: 'background .3s', opacity: s === "pending" ? 0.5 : 1
@@ -221,22 +221,22 @@ function Bootstrap({ scenario = "missing-prereqs", onReady, onSkip }) {
           {/* ── Footer ────────────────────────────── */}
           <div style={{ display: 'flex', justifyContent: 'space-between',
                          alignItems: 'center', gap: 16,
-                         paddingTop: 22, borderTop: 'var(--hairline)' }}>
-            <div style={{ fontSize: 11, color: 'var(--sumi-4)', lineHeight: 1.6 }}>
+                         paddingTop: 24, borderTop: 'var(--hairline)' }}>
+            <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6 }}>
               Bootstrap runs on every launch. Once a gate is green it'll stay that way — the next startup is quick.
             </div>
-            <div style={{ display: 'flex', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
               {onSkip && (
                 <button onClick={onSkip}
-                        style={{ fontSize: 12, color: 'var(--sumi-3)',
-                                 padding: '8px 14px', border: 'none', background: 'transparent' }}>
+                        style={{ fontSize: 13, color: 'var(--ink-3)',
+                                 padding: '8px 12px', border: 'none', background: 'transparent' }}>
                   Quit
                 </button>
               )}
               {allReady && (
                 <button onClick={onReady}
-                        style={{ fontSize: 13, background: 'var(--sumi)', color: 'var(--paper)',
-                                 padding: '10px 22px', borderRadius: 6, letterSpacing: 0.2,
+                        style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
+                                 padding: '8px 24px', borderRadius: 6, letterSpacing: 0.2,
                                  border: 'none', cursor: 'pointer' }}>
                   Continue →
                 </button>
@@ -265,19 +265,19 @@ function BootGate({ gate, status, isFirstBlocked, dbUrl, setDbUrl, onRetry }) {
                      alignItems: 'center' }}>
         <div className="kanji" style={{
           fontSize: 22,
-          color: isReady ? 'var(--matcha)'
-               : isBlocked ? 'var(--shu)'
-               : isBusy ? 'var(--sumi-2)'
-               : 'var(--sumi-4)',
+          color: isReady ? 'var(--success)'
+               : isBlocked ? 'var(--accent)'
+               : isBusy ? 'var(--ink-2)'
+               : 'var(--ink-4)',
           textAlign: 'center'
         }}>{gate.n}</div>
 
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <div className="display" style={{ fontSize: 17, fontWeight: 400 }}>{gate.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--sumi-4)' }}>· {gate.detail}</div>
+            <div style={{ fontSize: 13, color: 'var(--ink-4)' }}>· {gate.detail}</div>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--sumi-4)', fontFamily: 'var(--font-mono)',
+          <div style={{ fontSize: 11, color: 'var(--ink-4)', fontFamily: 'var(--font-mono)',
                          marginTop: 4 }}>
             {gate.check}
           </div>
@@ -289,14 +289,14 @@ function BootGate({ gate, status, isFirstBlocked, dbUrl, setDbUrl, onRetry }) {
       {/* Sub-check breakdown — only for sensei-components while busy or blocked */}
       {gate.sub && (isBusy || isBlocked || isReady) && (
         <div style={{ marginTop: 12, marginLeft: 48, display: 'flex', flexDirection: 'column',
-                       gap: 4, paddingLeft: 14, borderLeft: '1px dashed var(--paper-edge-2)' }}>
+                       gap: 4, paddingLeft: 12, borderLeft: '1px dashed var(--edge)' }}>
           {gate.sub.map((s, i) => {
             const sStatus = isReady ? "ready" : isBusy ? (i === 0 ? "checking" : "pending") : "missing";
             return (
-              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <StatusDot status={sStatus}/>
-                <span style={{ fontSize: 12, color: 'var(--sumi-2)' }}>{s.name}</span>
-                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--sumi-4)' }}>
+                <span style={{ fontSize: 13, color: 'var(--ink-2)' }}>{s.name}</span>
+                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-4)' }}>
                   {s.check}
                 </span>
               </div>
@@ -316,33 +316,33 @@ function BootGate({ gate, status, isFirstBlocked, dbUrl, setDbUrl, onRetry }) {
 // ─── Status pill ────────────────────────────────────────────
 function StatusPill({ status }) {
   const map = {
-    ready:    { label: "ready",     color: "var(--matcha)", bg: "rgba(122,158,98,.10)" },
-    checking: { label: "checking",  color: "var(--sumi-2)", bg: "var(--paper-2)" },
-    starting: { label: "starting",  color: "var(--sumi-2)", bg: "var(--paper-2)" },
-    missing:  { label: "missing",   color: "var(--shu)",    bg: "rgba(192,71,45,.08)" },
-    error:    { label: "blocked",   color: "var(--shu)",    bg: "rgba(192,71,45,.08)" },
-    pending:  { label: "waiting",   color: "var(--sumi-4)", bg: "transparent" },
+    ready:    { label: "ready",     color: "var(--success)", bg: "rgba(122,158,98,.10)" },
+    checking: { label: "checking",  color: "var(--ink-2)", bg: "var(--paper-2)" },
+    starting: { label: "starting",  color: "var(--ink-2)", bg: "var(--paper-2)" },
+    missing:  { label: "missing",   color: "var(--accent)",    bg: "rgba(192,71,45,.08)" },
+    error:    { label: "blocked",   color: "var(--accent)",    bg: "rgba(192,71,45,.08)" },
+    pending:  { label: "waiting",   color: "var(--ink-4)", bg: "transparent" },
   };
   const m = map[status] || map.pending;
   const isBusy = status === "checking" || status === "starting";
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-                   padding: '4px 10px', borderRadius: 4, background: m.bg,
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+                   padding: '4px 8px', borderRadius: 4, background: m.bg,
                    fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase',
                    color: m.color, fontFeatureSettings: '"tnum"' }}>
       {isBusy && <Spinner/>}
-      {status === "ready"   && <span style={{ fontSize: 10 }}>✓</span>}
-      {(status === "missing" || status === "error") && <span style={{ fontSize: 12 }}>·</span>}
+      {status === "ready"   && <span style={{ fontSize: 11 }}>✓</span>}
+      {(status === "missing" || status === "error") && <span style={{ fontSize: 13 }}>·</span>}
       {m.label}
     </div>
   );
 }
 
 function StatusDot({ status }) {
-  const color = status === "ready" ? 'var(--matcha)'
-              : status === "checking" ? 'var(--sumi-2)'
-              : status === "missing" ? 'var(--shu)'
-              : 'var(--sumi-4)';
+  const color = status === "ready" ? 'var(--success)'
+              : status === "checking" ? 'var(--ink-2)'
+              : status === "missing" ? 'var(--accent)'
+              : 'var(--ink-4)';
   return <span style={{ width: 6, height: 6, borderRadius: 3, background: color,
                          opacity: status === "pending" ? 0.4 : 1,
                          display: 'inline-block' }}/>;
@@ -371,15 +371,15 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
     return (
       <RemedyShell title="Install Homebrew" intro="Homebrew is the base that installs everything else. Run the command from the official installer, then return here and retry.">
         <CommandBlock cmd='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'/>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
           <a href="https://brew.sh" target="_blank" rel="noreferrer"
-             style={{ fontSize: 12, color: 'var(--sumi)', textDecoration: 'none',
-                       padding: '8px 14px', border: 'var(--hairline)', borderRadius: 5,
-                       display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            Open brew.sh <span style={{ color: 'var(--sumi-3)' }}>↗</span>
+             style={{ fontSize: 13, color: 'var(--ink)', textDecoration: 'none',
+                       padding: '8px 12px', border: 'var(--hairline)', borderRadius: 5,
+                       display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Open brew.sh <span style={{ color: 'var(--ink-3)' }}>↗</span>
           </a>
           <button onClick={onRetry}
-                  style={{ fontSize: 12, background: 'var(--sumi)', color: 'var(--paper)',
+                  style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
                            padding: '8px 16px', borderRadius: 5, border: 'none', cursor: 'pointer' }}>
             I've installed it — retry
           </button>
@@ -405,19 +405,19 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
               ? "brew install postgresql@16 && brew services start postgresql@16"
               : "brew install ollama && brew services start ollama"
         }/>
-        <div style={{ fontSize: 11, color: 'var(--sumi-4)', lineHeight: 1.6, marginTop: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6, marginTop: 8 }}>
           Or install everything sensei needs in one pass:
         </div>
         <CommandBlock cmd="brew bundle --file=$(curl -fsSL https://sensei.dev/Brewfile)" muted/>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
           <a href="https://github.com/sensei-dev/sensei" target="_blank" rel="noreferrer"
-             style={{ fontSize: 12, color: 'var(--sumi)', textDecoration: 'none',
-                       padding: '8px 14px', border: 'var(--hairline)', borderRadius: 5,
-                       display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            View Brewfile on GitHub <span style={{ color: 'var(--sumi-3)' }}>↗</span>
+             style={{ fontSize: 13, color: 'var(--ink)', textDecoration: 'none',
+                       padding: '8px 12px', border: 'var(--hairline)', borderRadius: 5,
+                       display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            View Brewfile on GitHub <span style={{ color: 'var(--ink-3)' }}>↗</span>
           </a>
           <button onClick={onRetry}
-                  style={{ fontSize: 12, background: 'var(--sumi)', color: 'var(--paper)',
+                  style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
                            padding: '8px 16px', borderRadius: 5, border: 'none', cursor: 'pointer' }}>
             Retry check
           </button>
@@ -433,25 +433,25 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
         title="Could not create the sensei database"
         intro="Postgres is running but sensei couldn't create its database automatically. Either create one manually and paste its URL, or let sensei retry.">
         <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
-                       color: 'var(--sumi-4)', marginBottom: 6 }}>Manual create</div>
+                       color: 'var(--ink-4)', marginBottom: 4 }}>Manual create</div>
         <CommandBlock cmd="createdb sensei && psql sensei -c 'CREATE EXTENSION IF NOT EXISTS vector;'"/>
 
         <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
-                       color: 'var(--sumi-4)', marginTop: 18, marginBottom: 6 }}>Database URL</div>
+                       color: 'var(--ink-4)', marginTop: 16, marginBottom: 4 }}>Database URL</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input value={dbUrl} onChange={e => setDbUrl(e.target.value)}
-                 style={{ flex: 1, fontSize: 12, fontFamily: 'var(--font-mono)',
-                          padding: '8px 10px', borderRadius: 5,
+                 style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)',
+                          padding: '8px 8px', borderRadius: 5,
                           border: 'var(--hairline)', background: 'var(--paper)',
-                          color: 'var(--sumi)' }}/>
+                          color: 'var(--ink)' }}/>
           <button onClick={onRetry}
-                  style={{ fontSize: 12, background: 'var(--sumi)', color: 'var(--paper)',
+                  style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
                            padding: '8px 16px', borderRadius: 5, border: 'none', cursor: 'pointer',
                            whiteSpace: 'nowrap' }}>
             Connect
           </button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--sumi-4)', lineHeight: 1.6, marginTop: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-4)', lineHeight: 1.6, marginTop: 8 }}>
           Sensei stores this in <span style={{ fontFamily: 'var(--font-mono)' }}>~/.sensei/config.toml</span>. You can change it later in Settings → Database.
         </div>
       </RemedyShell>
@@ -466,20 +466,20 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
         <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
                        borderRadius: 5, padding: 12,
                        fontFamily: 'var(--font-mono)', fontSize: 11,
-                       color: 'var(--sumi-2)', lineHeight: 1.7 }}>
-          <div><span style={{ color: 'var(--sumi-4)' }}>10:42:18</span> daemon · starting</div>
-          <div><span style={{ color: 'var(--sumi-4)' }}>10:42:18</span> daemon · loading config ~/.sensei/config.toml</div>
-          <div><span style={{ color: 'var(--sumi-4)' }}>10:42:19</span> daemon · connecting to postgres</div>
-          <div><span style={{ color: 'var(--shu)' }}>10:42:19 ERR</span> daemon · port 7714 already in use</div>
+                       color: 'var(--ink-2)', lineHeight: 1.7 }}>
+          <div><span style={{ color: 'var(--ink-4)' }}>10:42:18</span> daemon · starting</div>
+          <div><span style={{ color: 'var(--ink-4)' }}>10:42:18</span> daemon · loading config ~/.sensei/config.toml</div>
+          <div><span style={{ color: 'var(--ink-4)' }}>10:42:19</span> daemon · connecting to postgres</div>
+          <div><span style={{ color: 'var(--accent)' }}>10:42:19 ERR</span> daemon · port 7714 already in use</div>
         </div>
-        <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <button onClick={onRetry}
-                  style={{ fontSize: 12, background: 'var(--sumi)', color: 'var(--paper)',
+                  style={{ fontSize: 13, background: 'var(--ink)', color: 'var(--paper)',
                            padding: '8px 16px', borderRadius: 5, border: 'none', cursor: 'pointer' }}>
             Retry
           </button>
-          <button style={{ fontSize: 12, color: 'var(--sumi-2)',
-                           padding: '8px 14px', border: 'var(--hairline)', borderRadius: 5,
+          <button style={{ fontSize: 13, color: 'var(--ink-2)',
+                           padding: '8px 12px', border: 'var(--hairline)', borderRadius: 5,
                            background: 'transparent' }}>
             Change port
           </button>
@@ -493,11 +493,11 @@ function GateRemedy({ gate, dbUrl, setDbUrl, onRetry }) {
 
 function RemedyShell({ title, intro, children }) {
   return (
-    <div style={{ marginTop: 16, marginLeft: 48, padding: '18px 20px',
+    <div style={{ marginTop: 16, marginLeft: 48, padding: '16px 16px',
                    background: 'var(--paper-2)', border: 'var(--hairline)',
                    borderRadius: 6 }}>
       <div className="display" style={{ fontSize: 15, marginBottom: 4 }}>{title}</div>
-      <div style={{ fontSize: 12.5, color: 'var(--sumi-3)', lineHeight: 1.65, marginBottom: 14,
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.65, marginBottom: 12,
                      maxWidth: 580 }}>
         {intro}
       </div>
@@ -514,19 +514,19 @@ function CommandBlock({ cmd, muted }) {
     setTimeout(() => setCopied(false), 1100);
   };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10,
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8,
                    background: muted ? 'transparent' : 'var(--paper)',
-                   border: muted ? '1px dashed var(--paper-edge)' : 'var(--hairline)',
-                   borderRadius: 5, padding: '10px 12px',
-                   fontFamily: 'var(--font-mono)', fontSize: 12,
-                   color: muted ? 'var(--sumi-3)' : 'var(--sumi)' }}>
-      <span style={{ color: 'var(--sumi-4)', userSelect: 'none' }}>$</span>
+                   border: muted ? '1px dashed var(--edge)' : 'var(--hairline)',
+                   borderRadius: 5, padding: '8px 12px',
+                   fontFamily: 'var(--font-mono)', fontSize: 13,
+                   color: muted ? 'var(--ink-3)' : 'var(--ink)' }}>
+      <span style={{ color: 'var(--ink-4)', userSelect: 'none' }}>$</span>
       <span style={{ flex: 1, overflow: 'auto', whiteSpace: 'nowrap' }}>{cmd}</span>
       <button onClick={doCopy}
-              style={{ fontSize: 10.5, letterSpacing: '0.1em', textTransform: 'uppercase',
-                       color: copied ? 'var(--matcha)' : 'var(--sumi-3)',
+              style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                       color: copied ? 'var(--success)' : 'var(--ink-3)',
                        border: 'none', background: 'transparent', cursor: 'pointer',
-                       padding: '2px 6px' }}>
+                       padding: '4px 4px' }}>
         {copied ? "copied" : "copy"}
       </button>
     </div>
@@ -544,17 +544,17 @@ function BootstrapDemo() {
       {/* Scenario picker — floating, demo-only */}
       <div style={{ position: 'absolute', top: 52, right: 16, zIndex: 5,
                      background: 'var(--paper)', border: 'var(--hairline)',
-                     borderRadius: 6, padding: 10, width: 200,
+                     borderRadius: 6, padding: 8, width: 200,
                      boxShadow: '0 4px 12px rgba(0,0,0,.06)' }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                       color: 'var(--sumi-4)', marginBottom: 8 }}>demo · scenario</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                       color: 'var(--ink-4)', marginBottom: 8 }}>demo · scenario</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {Object.keys(BOOT_PRESETS).map(k => (
             <button key={k} onClick={() => setScenario(k)}
-                    style={{ textAlign: 'left', fontSize: 11.5,
-                             padding: '6px 8px', borderRadius: 4, border: 'none',
+                    style={{ textAlign: 'left', fontSize: 11,
+                             padding: '4px 8px', borderRadius: 4, border: 'none',
                              background: scenario === k ? 'var(--paper-2)' : 'transparent',
-                             color: scenario === k ? 'var(--sumi)' : 'var(--sumi-3)',
+                             color: scenario === k ? 'var(--ink)' : 'var(--ink-3)',
                              cursor: 'pointer' }}>
               {k.replace(/-/g, ' ')}
             </button>

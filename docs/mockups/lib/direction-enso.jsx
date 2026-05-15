@@ -44,13 +44,13 @@ const EnsoApp = () => {
 function EnsoSidebar({ page, setPage, solutions, activeSolution, setActiveSolution, data }) {
   return (
     <aside style={{
-      width: 64, borderRight: 'var(--hairline)', padding: '18px 0',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18,
+      width: 64, borderRight: 'var(--hairline)', padding: '16px 0',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
       flexShrink: 0, background: 'var(--paper-2)'
     }}>
-      <div className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>先</div>
+      <div className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先</div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
         {solutions.map(s => {
           const isActive = activeSolution === s.id;
           return (
@@ -59,13 +59,13 @@ function EnsoSidebar({ page, setPage, solutions, activeSolution, setActiveSoluti
                     onClick={() => setActiveSolution(s.id)}
                     style={{
                       width: 40, height: 40, borderRadius: '50%',
-                      background: isActive ? 'var(--sumi)' : 'var(--paper)',
-                      color: isActive ? 'var(--paper)' : 'var(--sumi)',
+                      background: isActive ? 'var(--ink)' : 'var(--paper)',
+                      color: isActive ? 'var(--paper)' : 'var(--ink)',
                       border: isActive ? 'none' : 'var(--hairline)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       transition: 'all .14s'
                     }}>
-              <span className="kanji" style={{ fontSize: 18 }}>{s.kanji}</span>
+              <span className="kanji" style={{ fontSize: 17 }}>{s.kanji}</span>
             </button>
           );
         })}
@@ -80,12 +80,12 @@ function EnsoSidebar({ page, setPage, solutions, activeSolution, setActiveSoluti
                   onClick={() => setPage(p.id)}
                   style={{
                     width: 36, height: 36, borderRadius: 6,
-                    background: page === p.id ? 'var(--shu-soft)' : 'transparent',
-                    color: page === p.id ? 'var(--shu)' : 'var(--sumi-3)',
+                    background: page === p.id ? 'var(--accent-soft)' : 'transparent',
+                    color: page === p.id ? 'var(--accent)' : 'var(--ink-3)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     transition: 'all .12s'
                   }}>
-            <span className="kanji" style={{ fontSize: 14 }}>{p.kanji}</span>
+            <span className="kanji" style={{ fontSize: 13 }}>{p.kanji}</span>
           </button>
         ))}
       </div>
@@ -106,37 +106,37 @@ function EnsoObservatory({ data, sol, setPage, setFocusedSession, applied, setAp
   const delta = Math.round((sol.ftr - sol.ftrPrev) * 100);
 
   return (
-    <div style={{ padding: '40px 56px', display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 56 }}>
+    <div style={{ padding: '32px 48px', display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 48 }}>
       {/* LEFT: the ring + orbit of sessions */}
       <div>
-        <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                       textTransform: 'uppercase', marginBottom: 4 }}>
           Observatory · {sol.name}
         </div>
-        <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: '0 0 36px' }}>
+        <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: '0 0 32px' }}>
           {sol.description}
         </h1>
 
         <div style={{ position: 'relative', width: 440, height: 440, margin: '0 auto' }}>
           {/* The ENSO ring itself */}
-          <div style={{ position: 'absolute', inset: 0, color: delta >= 0 ? 'var(--jade)' : 'var(--shu)' }}>
+          <div style={{ position: 'absolute', inset: 0, color: delta >= 0 ? 'var(--success)' : 'var(--accent)' }}>
             <EnsoRing progress={sol.ftr} size={440} stroke={18}
                       color={delta >= 0 ? 'oklch(0.58 0.15 35)' : 'oklch(0.58 0.15 35)'}
-                      trackColor="var(--sumi)"/>
+                      trackColor="var(--ink)"/>
           </div>
           {/* Center readout */}
           <div style={{ position: 'absolute', inset: 0, display: 'flex',
                         flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                         pointerEvents: 'none' }}>
-            <div className="display" style={{ fontSize: 98, fontWeight: 300, lineHeight: 1,
+            <div className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 1,
                           letterSpacing: '-0.03em' }}>
               {Math.round(sol.ftr * 100)}
-              <span style={{ fontSize: 30, color: 'var(--sumi-3)' }}>%</span>
+              <span style={{ fontSize: 28, color: 'var(--ink-3)' }}>%</span>
             </div>
             <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                          color: 'var(--sumi-3)', marginTop: 6 }}>一  First try right</div>
-            <div className="mono" style={{ fontSize: 12, marginTop: 14,
-                          color: delta >= 0 ? 'var(--jade)' : 'var(--shu)' }}>
+                          color: 'var(--ink-3)', marginTop: 4 }}>一  First try right</div>
+            <div className="mono" style={{ fontSize: 13, marginTop: 12,
+                          color: delta >= 0 ? 'var(--success)' : 'var(--accent)' }}>
               {delta >= 0 ? '↗' : '↘'} {delta >= 0 ? '+' : ''}{delta}% week
             </div>
           </div>
@@ -155,9 +155,9 @@ function EnsoObservatory({ data, sol, setPage, setFocusedSession, applied, setAp
                       style={{
                         position: 'absolute', left: x - 7, top: y - 7,
                         width: 14, height: 14, borderRadius: '50%',
-                        background: s.ftr ? 'var(--jade)' : 'var(--shu)',
+                        background: s.ftr ? 'var(--success)' : 'var(--accent)',
                         border: '2px solid var(--paper)',
-                        boxShadow: '0 0 0 1px ' + (s.ftr ? 'var(--jade)' : 'var(--shu)'),
+                        boxShadow: '0 0 0 1px ' + (s.ftr ? 'var(--success)' : 'var(--accent)'),
                         transition: 'transform .15s'
                       }}
                       onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.6)'}
@@ -166,8 +166,8 @@ function EnsoObservatory({ data, sol, setPage, setFocusedSession, applied, setAp
           })}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 28,
-                      padding: '16px 20px', border: 'var(--hairline)', borderRadius: 10,
+        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 24,
+                      padding: '16px 16px', border: 'var(--hairline)', borderRadius: 10,
                       background: 'var(--paper-2)' }}>
           <Stat label="Sessions"  value={sol.sessions7d}     suffix="· 7d"/>
           <Divider/>
@@ -182,33 +182,33 @@ function EnsoObservatory({ data, sol, setPage, setFocusedSession, applied, setAp
       {/* RIGHT: the koan + signals */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
         <div style={{ background: 'var(--paper-2)', borderRadius: 14,
-                      padding: '32px 28px', border: 'var(--hairline)', position: 'relative',
+                      padding: '32px 24px', border: 'var(--hairline)', position: 'relative',
                       overflow: 'hidden' }}>
           {/* small enso watermark */}
           <svg width="120" height="120" style={{ position: 'absolute', top: -20, right: -20, opacity: 0.12 }}>
-            <EnsoRingInline size={120} stroke={4} color="var(--shu)"/>
+            <EnsoRingInline size={120} stroke={4} color="var(--accent)"/>
           </svg>
 
           <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                        color: 'var(--shu)', marginBottom: 18 }}>師 · sensei says</div>
+                        color: 'var(--accent)', marginBottom: 16 }}>師 · sensei says</div>
           <p className="display" style={{ fontSize: 28, fontWeight: 300, lineHeight: 1.25,
                         margin: 0, textWrap: 'balance' }}>
             {topCoach.koan}
           </p>
-          <p style={{ fontSize: 13, color: 'var(--sumi-2)', lineHeight: 1.6, marginTop: 18, marginBottom: 24 }}>
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6, marginTop: 16, marginBottom: 24 }}>
             {topCoach.body}
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button onClick={() => setApplied({...applied, [topCoach.id]: true})}
                     style={{
-                      padding: '10px 18px',
-                      background: applied[topCoach.id] ? 'var(--jade-soft)' : 'var(--shu)',
-                      color: applied[topCoach.id] ? 'var(--jade)' : 'var(--paper)',
-                      borderRadius: 8, fontSize: 12.5, fontWeight: 500, letterSpacing: '0.01em'
+                      padding: '8px 16px',
+                      background: applied[topCoach.id] ? 'var(--success-soft)' : 'var(--accent)',
+                      color: applied[topCoach.id] ? 'var(--success)' : 'var(--paper)',
+                      borderRadius: 8, fontSize: 13, fontWeight: 500, letterSpacing: '0.01em'
                     }}>
               {applied[topCoach.id] ? "✓  Applied" : topCoach.action + " →"}
             </button>
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               {topCoach.impact}
             </span>
           </div>
@@ -216,19 +216,19 @@ function EnsoObservatory({ data, sol, setPage, setFocusedSession, applied, setAp
 
         <div>
           <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                        color: 'var(--sumi-3)', marginBottom: 16 }}>Quality signals</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        color: 'var(--ink-3)', marginBottom: 16 }}>Quality signals</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {[
               { k: "Pattern compliance", v: "94%",      d: "+3", good: true },
               { k: "Test coverage Δ",    v: "+2.1%",    d: "this week", good: true },
               { k: "Doc drift",          v: "3 files",  d: "brand-kit", good: false },
               { k: "Tokens / session",   v: "14.2k",    d: "−1.8k", good: true },
             ].map(s => (
-              <div key={s.k} style={{ padding: 14, border: 'var(--hairline)', borderRadius: 8,
+              <div key={s.k} style={{ padding: 12, border: 'var(--hairline)', borderRadius: 8,
                             background: 'var(--paper)' }}>
-                <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', letterSpacing: '0.05em' }}>{s.k}</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.05em' }}>{s.k}</div>
                 <div className="display" style={{ fontSize: 22, fontWeight: 400, marginTop: 4 }}>{s.v}</div>
-                <div className="mono" style={{ fontSize: 10, color: s.good ? 'var(--jade)' : 'var(--shu)', marginTop: 2 }}>
+                <div className="mono" style={{ fontSize: 11, color: s.good ? 'var(--success)' : 'var(--accent)', marginTop: 4 }}>
                   {s.d}
                 </div>
               </div>
@@ -236,10 +236,10 @@ function EnsoObservatory({ data, sol, setPage, setFocusedSession, applied, setAp
           </div>
         </div>
 
-        <div style={{ marginTop: 8, color: 'var(--shu)' }}>
+        <div style={{ marginTop: 8, color: 'var(--accent)' }}>
           <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                        color: 'var(--sumi-3)', marginBottom: 8 }}>FTR · 14 days</div>
-          <Sparkline data={history} width={440} height={46} fill="var(--shu-soft)" showDots/>
+                        color: 'var(--ink-3)', marginBottom: 8 }}>FTR · 14 days</div>
+          <Sparkline data={history} width={440} height={46} fill="var(--accent-soft)" showDots/>
         </div>
       </div>
     </div>
@@ -249,18 +249,18 @@ function EnsoObservatory({ data, sol, setPage, setFocusedSession, applied, setAp
 function Stat({ label, value, suffix }) {
   return (
     <div>
-      <div style={{ fontSize: 10, color: 'var(--sumi-3)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</div>
-      <div className="display" style={{ fontSize: 20, fontWeight: 400, marginTop: 2 }}>{value}</div>
-      <div className="mono" style={{ fontSize: 9.5, color: 'var(--sumi-3)', marginTop: 1 }}>{suffix}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</div>
+      <div className="display" style={{ fontSize: 22, fontWeight: 400, marginTop: 4 }}>{value}</div>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{suffix}</div>
     </div>
   );
 }
 function Divider() {
-  return <div style={{ width: 1, background: 'var(--paper-edge)' }}/>;
+  return <div style={{ width: 1, background: 'var(--edge)' }}/>;
 }
 
 // A small variant of the ring for inline use in overview cards
-function EnsoRingInline({ progress = 1, size = 120, stroke = 4, color = 'var(--shu)', startAngle = -140, sweep = 300 }) {
+function EnsoRingInline({ progress = 1, size = 120, stroke = 4, color = 'var(--accent)', startAngle = -140, sweep = 300 }) {
   const r = (size - stroke) / 2;
   const cx = size / 2, cy = size / 2;
   const toXY = d => { const rd = d*Math.PI/180; return [cx + r*Math.cos(rd), cy + r*Math.sin(rd)] };
@@ -280,43 +280,43 @@ function EnsoRingInline({ progress = 1, size = 120, stroke = 4, color = 'var(--s
 // ────────────────────────────────────────────────────────────
 function EnsoOverview({ data, setPage, setActiveSolution }) {
   return (
-    <div style={{ padding: '40px 56px', maxWidth: 1120 }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+    <div style={{ padding: '32px 48px', maxWidth: 1120 }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                     textTransform: 'uppercase', marginBottom: 4 }}>全 · Overview</div>
-      <h1 className="display" style={{ fontSize: 30, fontWeight: 300, margin: '0 0 32px' }}>
-        All solutions · <span className="mono" style={{ fontSize: 22, color: 'var(--shu)' }}>78%</span> global
+      <h1 className="display" style={{ fontSize: 28, fontWeight: 300, margin: '0 0 32px' }}>
+        All solutions · <span className="mono" style={{ fontSize: 22, color: 'var(--accent)' }}>78%</span> global
       </h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
         {data.solutions.map(s => {
           const up = s.ftr >= s.ftrPrev;
           return (
             <button key={s.id} onClick={() => { setActiveSolution(s.id); setPage("observatory"); }}
-                    style={{ padding: '28px 24px', borderRadius: 16, border: 'var(--hairline)',
+                    style={{ padding: '24px 24px', borderRadius: 16, border: 'var(--hairline)',
                             background: 'var(--paper-2)', textAlign: 'left', position: 'relative',
                             display: 'flex', flexDirection: 'column', alignItems: 'center',
                             transition: 'transform .15s, border-color .15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--sumi-3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--ink-3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
                     onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.transform = ''; }}>
-              <div className="kanji" style={{ fontSize: 14, color: 'var(--shu)', alignSelf: 'flex-start' }}>{s.kanji}</div>
-              <div className="display" style={{ fontSize: 18, fontWeight: 400, alignSelf: 'flex-start', marginTop: 4 }}>{s.name}</div>
-              <div style={{ fontSize: 11, color: 'var(--sumi-3)', alignSelf: 'flex-start', marginBottom: 18 }}>{s.description}</div>
+              <div className="kanji" style={{ fontSize: 13, color: 'var(--accent)', alignSelf: 'flex-start' }}>{s.kanji}</div>
+              <div className="display" style={{ fontSize: 17, fontWeight: 400, alignSelf: 'flex-start', marginTop: 4 }}>{s.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'flex-start', marginBottom: 16 }}>{s.description}</div>
               <div style={{ position: 'relative', width: 180, height: 180 }}>
                 <EnsoRing progress={s.ftr} size={180} stroke={10}
                           color="oklch(0.58 0.15 35)"/>
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
                               justifyContent: 'center', flexDirection: 'column' }}>
-                  <span className="display" style={{ fontSize: 38, fontWeight: 300, lineHeight: 1 }}>
+                  <span className="display" style={{ fontSize: 40, fontWeight: 300, lineHeight: 1 }}>
                     {Math.round(s.ftr*100)}
                   </span>
-                  <span style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 4, letterSpacing: '0.12em' }}>FTR</span>
+                  <span style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4, letterSpacing: '0.12em' }}>FTR</span>
                 </div>
               </div>
-              <div className="mono" style={{ marginTop: 20, fontSize: 11,
-                            color: up ? 'var(--jade)' : 'var(--shu)' }}>
+              <div className="mono" style={{ marginTop: 16, fontSize: 11,
+                            color: up ? 'var(--success)' : 'var(--accent)' }}>
                 {up ? '↗' : '↘'} {((s.ftr - s.ftrPrev)*100 >= 0 ? '+' : '')}{Math.round((s.ftr - s.ftrPrev)*100)}% week
               </div>
-              <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 4 }}>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                 {s.sessions7d} sessions · {s.tokens7d}M
               </div>
             </button>
@@ -340,21 +340,21 @@ function EnsoSessions({ data, sol, focused, setFocused }) {
   });
 
   return (
-    <div style={{ padding: '36px 48px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 20, marginBottom: 28 }}>
+    <div style={{ padding: '32px 48px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 24 }}>
         <h1 className="display" style={{ fontSize: 28, fontWeight: 300, margin: 0 }}>
           刻 · Sessions
         </h1>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>
+        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
           {sessions.length} of {data.sessions.length}
         </div>
         <div style={{ flex: 1 }}/>
         <div style={{ display: 'flex', gap: 4 }}>
           {["all", "first-try", "corrected"].map(f => (
             <button key={f} onClick={() => setFilter(f)}
-                    style={{ padding: '5px 11px', fontSize: 11, borderRadius: 999,
-                              background: filter === f ? 'var(--sumi)' : 'transparent',
-                              color: filter === f ? 'var(--paper)' : 'var(--sumi-2)',
+                    style={{ padding: '4px 12px', fontSize: 11, borderRadius: 999,
+                              background: filter === f ? 'var(--ink)' : 'transparent',
+                              color: filter === f ? 'var(--paper)' : 'var(--ink-2)',
                               border: 'var(--hairline)' }}>
               {f}
             </button>
@@ -362,7 +362,7 @@ function EnsoSessions({ data, sol, focused, setFocused }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {sessions.map(s => (
           <EnsoSessionCard key={s.id} s={s} expanded={focused === s.id}
                            onToggle={() => setFocused(focused === s.id ? null : s.id)}/>
@@ -379,50 +379,50 @@ function EnsoSessionCard({ s, expanded, onToggle }) {
                   overflow: 'hidden', transition: 'background .15s' }}>
       <button onClick={onToggle}
               style={{ display: 'grid', gridTemplateColumns: '12px 80px 1fr 220px 80px 20px',
-                        gap: 16, padding: '14px 18px', alignItems: 'center', width: '100%',
+                        gap: 16, padding: '12px 16px', alignItems: 'center', width: '100%',
                         textAlign: 'left' }}>
-        <span className="ink-dot" style={{ background: s.ftr ? 'var(--jade)' : 'var(--shu)' }}/>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>{s.id}</span>
+        <span className="ink-dot" style={{ background: s.ftr ? 'var(--success)' : 'var(--accent)' }}/>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.id}</span>
         <div>
-          <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{s.title}</div>
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 2 }}>
+          <div style={{ fontSize: 13, color: 'var(--ink)' }}>{s.title}</div>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
             {s.project} · {s.module}
           </div>
         </div>
         {/* Event ribbon */}
-        <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
           {(s.events || [{kind:'start'},{kind:'edit'},{kind:'test'},{kind:'end'}]).map((e, i) => (
             <div key={i} style={{
               width: 12, height: 16, borderRadius: 2,
-              background: e.kind === 'correction' ? 'var(--shu)' :
-                          e.kind === 'test' ? 'var(--jade-soft)' :
-                          e.kind === 'edit' ? 'var(--sumi-4)' : 'var(--paper-edge)'
+              background: e.kind === 'correction' ? 'var(--accent)' :
+                          e.kind === 'test' ? 'var(--success-soft)' :
+                          e.kind === 'edit' ? 'var(--ink-4)' : 'var(--edge)'
             }} title={e.kind}/>
           ))}
         </div>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)', textAlign: 'right' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'right' }}>
           {s.duration}
         </span>
-        <span style={{ color: 'var(--sumi-3)', transform: expanded ? 'rotate(90deg)' : '',
+        <span style={{ color: 'var(--ink-3)', transform: expanded ? 'rotate(90deg)' : '',
                         transition: 'transform .15s' }}>›</span>
       </button>
 
       {expanded && s.events && (
-        <div style={{ padding: '0 18px 20px 122px', borderTop: 'var(--hairline)' }}>
-          <div style={{ padding: '16px 0 12px', fontSize: 12, color: 'var(--sumi-2)',
+        <div style={{ padding: '0 16px 16px 96px', borderTop: 'var(--hairline)' }}>
+          <div style={{ padding: '16px 0 12px', fontSize: 13, color: 'var(--ink-2)',
                         fontStyle: 'italic', lineHeight: 1.55 }}>
             {s.summary}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {s.events.map((e, i) => (
               <div key={i} style={{ display: 'grid', gridTemplateColumns: '16px 46px 1fr',
                             gap: 12, alignItems: 'center' }}>
-                <span style={{ color: e.kind === 'correction' ? 'var(--shu)' :
-                                      e.kind === 'test' ? 'var(--jade)' : 'var(--sumi-3)' }}>
+                <span style={{ color: e.kind === 'correction' ? 'var(--accent)' :
+                                      e.kind === 'test' ? 'var(--success)' : 'var(--ink-3)' }}>
                   <EventGlyph kind={e.kind} size={12}/>
                 </span>
-                <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>{e.t}</span>
-                <span style={{ fontSize: 12, color: e.kind === 'correction' ? 'var(--shu)' : 'var(--sumi-2)' }}>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{e.t}</span>
+                <span style={{ fontSize: 13, color: e.kind === 'correction' ? 'var(--accent)' : 'var(--ink-2)' }}>
                   {e.text}
                 </span>
               </div>
@@ -439,69 +439,69 @@ function EnsoSessionCard({ s, expanded, onToggle }) {
 // ────────────────────────────────────────────────────────────
 function EnsoCodebase({ data, sol }) {
   return (
-    <div style={{ padding: '36px 48px' }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+    <div style={{ padding: '32px 48px' }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                     textTransform: 'uppercase', marginBottom: 4 }}>構 · Codebase</div>
-      <h1 className="display" style={{ fontSize: 28, fontWeight: 300, margin: '0 0 28px' }}>{sol.name}</h1>
+      <h1 className="display" style={{ fontSize: 28, fontWeight: 300, margin: '0 0 24px' }}>{sol.name}</h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 36 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 32 }}>
         {/* Orbital graph */}
-        <div style={{ border: 'var(--hairline)', borderRadius: 12, padding: 20,
+        <div style={{ border: 'var(--hairline)', borderRadius: 12, padding: 16,
                       background: 'var(--paper-2)', position: 'relative', minHeight: 420 }}>
-          <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                         textTransform: 'uppercase' }}>Graph · communities</div>
-          <svg viewBox="0 0 500 400" width="100%" height="400" style={{ marginTop: 10 }}>
+          <svg viewBox="0 0 500 400" width="100%" height="400" style={{ marginTop: 8 }}>
             {/* community rings */}
             {[90, 160, 220].map((r, i) => (
               <circle key={i} cx="250" cy="200" r={r} fill="none"
-                      stroke="var(--paper-edge)" strokeWidth="0.8" strokeDasharray="2 3"/>
+                      stroke="var(--edge)" strokeWidth="0.8" strokeDasharray="2 3"/>
             ))}
             {/* nodes per community */}
             {Array.from({length: 8}).map((_, i) => {
               const a = (i/8) * Math.PI * 2;
               return <circle key={'c1'+i} cx={250 + 90*Math.cos(a)} cy={200 + 90*Math.sin(a)}
-                             r="5" fill="var(--sumi-2)"/>;
+                             r="5" fill="var(--ink-2)"/>;
             })}
             {Array.from({length: 14}).map((_, i) => {
               const a = (i/14) * Math.PI * 2 + 0.2;
               return <circle key={'c2'+i} cx={250 + 160*Math.cos(a)} cy={200 + 160*Math.sin(a)}
-                             r="3.5" fill="var(--sumi-3)"/>;
+                             r="3.5" fill="var(--ink-3)"/>;
             })}
             {Array.from({length: 22}).map((_, i) => {
               const a = (i/22) * Math.PI * 2;
               return <circle key={'c3'+i} cx={250 + 220*Math.cos(a)} cy={200 + 220*Math.sin(a)}
-                             r="2.5" fill="var(--sumi-4)"/>;
+                             r="2.5" fill="var(--ink-4)"/>;
             })}
             {/* god node */}
-            <circle cx="250" cy="200" r="14" fill="var(--shu-soft)" stroke="var(--shu)" strokeWidth="2"/>
-            <text x="250" y="204" textAnchor="middle" fontSize="10" fill="var(--shu)"
+            <circle cx="250" cy="200" r="14" fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth="2"/>
+            <text x="250" y="204" textAnchor="middle" fontSize="10" fill="var(--accent)"
                   fontFamily="var(--font-mono)">router</text>
             {/* spokes */}
-            <g stroke="var(--shu)" strokeWidth="0.5" opacity="0.35">
+            <g stroke="var(--accent)" strokeWidth="0.5" opacity="0.35">
               {Array.from({length: 8}).map((_, i) => {
                 const a = (i/8) * Math.PI * 2;
                 return <line key={i} x1="250" y1="200"
                              x2={250 + 85*Math.cos(a)} y2={200 + 85*Math.sin(a)}/>;
               })}
             </g>
-            <text x="340" y="92"  fontSize="9.5" fill="var(--sumi-3)" fontFamily="var(--font-mono)">core · 8</text>
-            <text x="100" y="120" fontSize="9.5" fill="var(--sumi-3)" fontFamily="var(--font-mono)">api · 14</text>
-            <text x="370" y="330" fontSize="9.5" fill="var(--sumi-3)" fontFamily="var(--font-mono)">ui · 22</text>
+            <text x="340" y="92"  fontSize="9.5" fill="var(--ink-3)" fontFamily="var(--font-mono)">core · 8</text>
+            <text x="100" y="120" fontSize="9.5" fill="var(--ink-3)" fontFamily="var(--font-mono)">api · 14</text>
+            <text x="370" y="330" fontSize="9.5" fill="var(--ink-3)" fontFamily="var(--font-mono)">ui · 22</text>
           </svg>
         </div>
 
         <div>
-          <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                        textTransform: 'uppercase', marginBottom: 14 }}>Hotspots</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
+                        textTransform: 'uppercase', marginBottom: 12 }}>Hotspots</div>
           {data.hotspots.map((h, i) => (
-            <div key={i} style={{ padding: 14, border: 'var(--hairline)', borderRadius: 8,
+            <div key={i} style={{ padding: 12, border: 'var(--hairline)', borderRadius: 8,
                           marginBottom: 8, background: 'var(--paper)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <span className="ink-dot" style={{
-                  background: h.severity === 'god' ? 'var(--shu)' :
-                              h.severity === 'cluster' ? 'var(--amber)' : 'var(--jade)'
+                  background: h.severity === 'god' ? 'var(--accent)' :
+                              h.severity === 'cluster' ? 'var(--warning)' : 'var(--success)'
                 }}/>
-                <span className="mono" style={{ fontSize: 11.5, color: 'var(--sumi)' }}>{h.name}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink)' }}>{h.name}</span>
               </div>
               <div style={{ display: 'flex', gap: 16 }}>
                 <Mini label="in"     value={h.fanIn}/>
@@ -519,8 +519,8 @@ function EnsoCodebase({ data, sol }) {
 function Mini({ label, value, warn }) {
   return (
     <div>
-      <div style={{ fontSize: 9.5, color: 'var(--sumi-3)', letterSpacing: '0.08em' }}>{label}</div>
-      <div className="mono" style={{ fontSize: 14, color: warn ? 'var(--shu)' : 'var(--sumi)' }}>{value}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.08em' }}>{label}</div>
+      <div className="mono" style={{ fontSize: 13, color: warn ? 'var(--accent)' : 'var(--ink)' }}>{value}</div>
     </div>
   );
 }
@@ -530,24 +530,24 @@ function Mini({ label, value, warn }) {
 // ────────────────────────────────────────────────────────────
 function EnsoCoaching({ data, applied, setApplied }) {
   return (
-    <div style={{ padding: '40px 56px', maxWidth: 900 }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+    <div style={{ padding: '32px 48px', maxWidth: 900 }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                     textTransform: 'uppercase', marginBottom: 4 }}>師 · Coaching</div>
-      <h1 className="display" style={{ fontSize: 30, fontWeight: 300, margin: '0 0 40px' }}>
+      <h1 className="display" style={{ fontSize: 28, fontWeight: 300, margin: '0 0 32px' }}>
         Recommendations from the week.
       </h1>
 
       {data.coaching.map((c, i) => {
         const isApplied = applied[c.id];
         return (
-          <div key={c.id} style={{ marginBottom: 14, border: 'var(--hairline)', borderRadius: 12,
+          <div key={c.id} style={{ marginBottom: 12, border: 'var(--hairline)', borderRadius: 12,
                           background: 'var(--paper-2)', overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 28, padding: 28 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 24, padding: 24 }}>
               <div style={{ textAlign: 'center' }}>
                 <EnsoRing progress={c.urgency === 'high' ? 0.9 : c.urgency === 'medium' ? 0.55 : 0.25}
                           size={96} stroke={6}
                           color="oklch(0.58 0.15 35)"/>
-                <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 8,
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 8,
                               letterSpacing: '0.12em', textTransform: 'uppercase' }}>
                   {c.urgency}
                 </div>
@@ -556,22 +556,22 @@ function EnsoCoaching({ data, applied, setApplied }) {
                 <p className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0, lineHeight: 1.3 }}>
                   {c.koan}
                 </p>
-                <p style={{ fontSize: 13, color: 'var(--sumi-2)', lineHeight: 1.6, marginTop: 10 }}>
+                <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6, marginTop: 8 }}>
                   {c.body}
                 </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
                   <button onClick={() => setApplied({...applied, [c.id]: !isApplied})}
-                          style={{ padding: '8px 16px', borderRadius: 8, fontSize: 12,
-                                    background: isApplied ? 'var(--jade-soft)' : 'var(--shu)',
-                                    color: isApplied ? 'var(--jade)' : 'var(--paper)',
+                          style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13,
+                                    background: isApplied ? 'var(--success-soft)' : 'var(--accent)',
+                                    color: isApplied ? 'var(--success)' : 'var(--paper)',
                                     fontWeight: 500 }}>
                     {isApplied ? "✓ Applied" : c.action}
                   </button>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                     {c.actionDetail}
                   </span>
                   <span style={{ flex: 1 }}/>
-                  <span style={{ fontSize: 11, color: 'var(--sumi-2)', fontStyle: 'italic' }}>
+                  <span style={{ fontSize: 11, color: 'var(--ink-2)', fontStyle: 'italic' }}>
                     {c.impact}
                   </span>
                 </div>
@@ -589,21 +589,21 @@ function EnsoCoaching({ data, applied, setApplied }) {
 // ────────────────────────────────────────────────────────────
 function EnsoConfig({ data }) {
   return (
-    <div style={{ padding: '40px 56px', maxWidth: 960 }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
+    <div style={{ padding: '32px 48px', maxWidth: 960 }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
                     textTransform: 'uppercase', marginBottom: 4 }}>設 · Configuration</div>
       <h1 className="display" style={{ fontSize: 28, fontWeight: 300, margin: '0 0 32px' }}>
         Skills · Libraries · Assistants
       </h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
         <Card title="Skills" kanji="技">
           {data.skills.slice(0, 5).map(s => (
-            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0',
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0',
                           borderBottom: 'var(--hairline)' }}>
-              <span className="ink-dot" style={{ background: s.active ? 'var(--jade)' : 'var(--sumi-4)' }}/>
-              <span style={{ flex: 1, fontSize: 12.5 }}>{s.name}</span>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>
+              <span className="ink-dot" style={{ background: s.active ? 'var(--success)' : 'var(--ink-4)' }}/>
+              <span style={{ flex: 1, fontSize: 13 }}>{s.name}</span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 {s.solutions.length}
               </span>
             </div>
@@ -611,11 +611,11 @@ function EnsoConfig({ data }) {
         </Card>
         <Card title="Libraries" kanji="書">
           {data.libraries.map(l => (
-            <div key={l.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0',
+            <div key={l.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0',
                           borderBottom: 'var(--hairline)' }}>
-              <span style={{ flex: 1, fontSize: 12.5 }}>{l.name}</span>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>v{l.version}</span>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>{l.pages}p</span>
+              <span style={{ flex: 1, fontSize: 13 }}>{l.name}</span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>v{l.version}</span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{l.pages}p</span>
             </div>
           ))}
         </Card>
@@ -626,13 +626,13 @@ function EnsoConfig({ data }) {
           { name: "Cursor",      version: "0.42",  status: "connected" },
           { name: "Zed",         version: "0.148", status: "available" }
         ].map(a => (
-          <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0',
+          <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0',
                         borderBottom: 'var(--hairline)' }}>
-            <span className="ink-dot" style={{ background: a.status === 'connected' ? 'var(--jade)' : 'var(--sumi-4)' }}/>
+            <span className="ink-dot" style={{ background: a.status === 'connected' ? 'var(--success)' : 'var(--ink-4)' }}/>
             <span style={{ flex: 1, fontSize: 13 }}>{a.name}</span>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>v{a.version}</span>
-            <button style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6,
-                          border: 'var(--hairline)', color: 'var(--sumi-2)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>v{a.version}</span>
+            <button style={{ fontSize: 11, padding: '4px 8px', borderRadius: 6,
+                          border: 'var(--hairline)', color: 'var(--ink-2)' }}>
               {a.status === 'connected' ? 'Configure' : 'Connect'}
             </button>
           </div>
@@ -644,10 +644,10 @@ function EnsoConfig({ data }) {
 
 function Card({ title, kanji, children }) {
   return (
-    <div style={{ padding: 22, border: 'var(--hairline)', borderRadius: 12, background: 'var(--paper-2)' }}>
+    <div style={{ padding: 24, border: 'var(--hairline)', borderRadius: 12, background: 'var(--paper-2)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
-        <span className="kanji" style={{ fontSize: 14, color: 'var(--shu)' }}>{kanji}</span>
-        <span style={{ fontSize: 13, color: 'var(--sumi)' }}>{title}</span>
+        <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{kanji}</span>
+        <span style={{ fontSize: 13, color: 'var(--ink)' }}>{title}</span>
       </div>
       {children}
     </div>
@@ -667,40 +667,40 @@ function EnsoOnboarding() {
     "First index"
   ];
   return (
-    <div style={{ padding: 60, display: 'flex', alignItems: 'center', gap: 72, minHeight: '100%' }}>
+    <div style={{ padding: 64, display: 'flex', alignItems: 'center', gap: 64, minHeight: '100%' }}>
       <div style={{ position: 'relative', width: 320, height: 320 }}>
         <EnsoRing progress={progress} size={320} stroke={14} color="oklch(0.58 0.15 35)"/>
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
                       alignItems: 'center', justifyContent: 'center' }}>
-          <div className="display" style={{ fontSize: 72, fontWeight: 300, lineHeight: 1 }}>{step}</div>
-          <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.2em',
+          <div className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 1 }}>{step}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.2em',
                         textTransform: 'uppercase', marginTop: 4 }}>of four</div>
         </div>
       </div>
 
       <div style={{ flex: 1, maxWidth: 460 }}>
-        <div className="kanji" style={{ fontSize: 48, color: 'var(--shu)' }}>始</div>
-        <h1 className="display" style={{ fontSize: 34, fontWeight: 300, margin: '14px 0 14px' }}>Begin.</h1>
-        <p style={{ fontSize: 14, color: 'var(--sumi-2)', lineHeight: 1.6, marginBottom: 28 }}>
+        <div className="kanji" style={{ fontSize: 56, color: 'var(--accent)' }}>始</div>
+        <h1 className="display" style={{ fontSize: 40, fontWeight: 300, margin: '12px 0 12px' }}>Begin.</h1>
+        <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6, marginBottom: 24 }}>
           Sensei watches how you work and, in time, helps you work better.
           One circle, four strokes.
         </p>
 
         {steps.map((t, i) => (
-          <div key={i} style={{ display: 'flex', gap: 14, padding: '10px 0',
+          <div key={i} style={{ display: 'flex', gap: 12, padding: '8px 0',
                         borderTop: i === 0 ? 'var(--hairline)' : 'none',
                         borderBottom: 'var(--hairline)', alignItems: 'center',
                         opacity: i + 1 > step ? 0.4 : 1 }}>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)', width: 24 }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', width: 24 }}>
               {i+1 < step ? '✓' : '0' + (i+1)}
             </span>
-            <span style={{ flex: 1, fontSize: 14 }}>{t}</span>
-            {i+1 === step && <span className="mono" style={{ fontSize: 10, color: 'var(--shu)' }}>active</span>}
+            <span style={{ flex: 1, fontSize: 13 }}>{t}</span>
+            {i+1 === step && <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>active</span>}
           </div>
         ))}
 
         <button onClick={() => setStep(Math.min(4, step+1))}
-                style={{ marginTop: 28, padding: '11px 24px', background: 'var(--shu)',
+                style={{ marginTop: 24, padding: '12px 24px', background: 'var(--accent)',
                           color: 'var(--paper)', borderRadius: 8, fontSize: 13 }}>
           {step === 4 ? "Enter observatory →" : "Continue"}
         </button>
