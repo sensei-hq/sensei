@@ -111,7 +111,7 @@ app-dev:
 
 # Build debug .app bundle and launch it (full native bundle, slower than app-dev)
 app-dev-bundle: install-dev
-	cd app && SENSEI_DB_SCHEMA_PATH=../database bunx tauri build --debug --features dev && SENSEI_DB_SCHEMA_PATH=../database ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
+	cd app && bunx tauri build --debug --features dev && ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
 
 app-release:
 	cd app && bunx tauri build
