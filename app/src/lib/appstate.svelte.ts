@@ -4,6 +4,7 @@
  * The health gate (`sensei:health` in sessionStorage) is owned by HealthState.
  */
 import { senseiApi } from './api.js';
+import { hasTauri } from './bootstrap.js';
 
 // Build-time port injected by vite.config.ts — 7745 for dev/debug, 7744 for prod.
 // No async resolution needed; page loaders can read appState.port immediately.
@@ -121,7 +122,7 @@ export class AppState {
     }
 
     // Browser (no Tauri) → skip daemon calls
-    if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
+    if (!hasTauri()) {
       this.config = {};
       this.loaded = true;
       return true;
