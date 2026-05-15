@@ -126,7 +126,7 @@ function Avatar({ name, size = 24 }) {
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
-      background: 'var(--paper-3)', color: 'var(--sumi-2)',
+      background: 'var(--paper-3)', color: 'var(--ink-2)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize: size * 0.45, fontWeight: 500, fontFamily: 'var(--font-ui)',
       border: 'var(--ink-line)'

@@ -9,16 +9,16 @@ const { useState: pLS } = React;
 //  Shared bits
 // ───────────────────────────────────────────────────────────
 
-function PaneHeader({ kanji, eyebrow, title, accent = "var(--shu)", right }) {
+function PaneHeader({ kanji, eyebrow, title, accent = "var(--accent)", right }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 18, marginBottom: 24 }}>
-      <span className="kanji" style={{ fontSize: 48, color: accent, lineHeight: 1 }}>{kanji}</span>
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginBottom: 24 }}>
+      <span className="kanji" style={{ fontSize: 56, color: accent, lineHeight: 1 }}>{kanji}</span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginBottom: 6 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase', marginBottom: 4 }}>
           {eyebrow}
         </div>
-        <h1 className="display" style={{ fontSize: 26, fontWeight: 400, margin: 0,
+        <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: 0,
                       letterSpacing: '-0.01em' }}>
           {title}
         </h1>
@@ -28,37 +28,37 @@ function PaneHeader({ kanji, eyebrow, title, accent = "var(--shu)", right }) {
   );
 }
 
-function HeroCard({ kanji, eyebrow, headline, body, action, meta, tone = "var(--shu)" }) {
+function HeroCard({ kanji, eyebrow, headline, body, action, meta, tone = "var(--accent)" }) {
   return (
     <div style={{
-      padding: '24px 26px', marginBottom: 28,
+      padding: '24px 24px', marginBottom: 24,
       background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 10,
-      display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 22
+      display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 24
     }}>
-      <div className="kanji" style={{ fontSize: 60, color: tone, lineHeight: 1 }}>{kanji}</div>
+      <div className="kanji" style={{ fontSize: 56, color: tone, lineHeight: 1 }}>{kanji}</div>
       <div>
-        <div style={{ fontSize: 10.5, letterSpacing: '0.16em', color: 'var(--sumi-3)',
+        <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                        textTransform: 'uppercase', marginBottom: 4 }}>
           {eyebrow}
         </div>
-        <div className="display" style={{ fontSize: 20, fontWeight: 400,
+        <div className="display" style={{ fontSize: 22, fontWeight: 400,
                       letterSpacing: '-0.01em', lineHeight: 1.3, marginBottom: 8,
-                      color: 'var(--sumi)' }}>
+                      color: 'var(--ink)' }}>
           {headline}
         </div>
-        <p style={{ fontSize: 13, color: 'var(--sumi-2)', lineHeight: 1.65, margin: 0 }}>
+        <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.65, margin: 0 }}>
           {body}
         </p>
         {(action || meta) && (
-          <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 14 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
             {action && (
               <button style={{
-                padding: '7px 14px', fontSize: 12, background: 'var(--sumi)',
+                padding: '8px 12px', fontSize: 13, background: 'var(--ink)',
                 color: 'var(--paper)', borderRadius: 5, border: 'none', cursor: 'pointer'
               }}>{action} →</button>
             )}
             {meta && (
-              <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                 {meta}
               </span>
             )}
@@ -69,32 +69,32 @@ function HeroCard({ kanji, eyebrow, headline, body, action, meta, tone = "var(--
   );
 }
 
-function StatBlock({ label, value, sub, tone = "var(--sumi)" }) {
+function StatBlock({ label, value, sub, tone = "var(--ink)" }) {
   return (
-    <div style={{ padding: '14px 16px', background: 'var(--paper-2)',
+    <div style={{ padding: '12px 16px', background: 'var(--paper-2)',
                    border: 'var(--hairline)', borderRadius: 8 }}>
-      <div style={{ fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                     textTransform: 'uppercase', marginBottom: 6 }}>
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                     textTransform: 'uppercase', marginBottom: 4 }}>
         {label}
       </div>
-      <div className="display" style={{ fontSize: 26, fontWeight: 400, color: tone, lineHeight: 1 }}>
+      <div className="display" style={{ fontSize: 28, fontWeight: 400, color: tone, lineHeight: 1 }}>
         {value}
       </div>
-      <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 6 }}>{sub}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{sub}</div>
     </div>
   );
 }
 
-function SimpleRow({ left, right, leftSub, rightTone = 'var(--sumi-3)' }) {
+function SimpleRow({ left, right, leftSub, rightTone = 'var(--ink-3)' }) {
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '1fr auto', gap: 14, alignItems: 'baseline',
-      padding: '11px 2px', borderBottom: 'var(--hairline)'
+      display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'baseline',
+      padding: '12px 4px', borderBottom: 'var(--hairline)'
     }}>
       <div>
-        <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{left}</div>
+        <div style={{ fontSize: 13, color: 'var(--ink)' }}>{left}</div>
         {leftSub && (
-          <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-4)', marginTop: 2 }}>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
             {leftSub}
           </div>
         )}
@@ -108,10 +108,10 @@ function MiniHeading({ kanji, label, right }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
                   marginBottom: 12, marginTop: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-        <span className="kanji" style={{ fontSize: 13, color: 'var(--shu)' }}>{kanji}</span>
-        <h2 className="display" style={{ fontSize: 13.5, fontWeight: 400, margin: 0,
-                      letterSpacing: '0.01em', color: 'var(--sumi-2)',
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{kanji}</span>
+        <h2 className="display" style={{ fontSize: 13, fontWeight: 400, margin: 0,
+                      letterSpacing: '0.01em', color: 'var(--ink-2)',
                       textTransform: 'uppercase' }}>
           {label}
         </h2>
@@ -137,16 +137,16 @@ function ProjOverviewLite({ project, openAction }) {
         title={project.name}
         right={
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.18em', color: 'var(--sumi-3)',
+            <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
                            textTransform: 'uppercase' }}>FTR · 14d</div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6,
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4,
                            justifyContent: 'flex-end', marginTop: 4 }}>
               <span className="display"
                      style={{ fontSize: 28, fontWeight: 400, lineHeight: 1,
-                               color: project.warn ? 'var(--amber)' : 'var(--sumi)' }}>
+                               color: project.warn ? 'var(--warning)' : 'var(--ink)' }}>
                 {Math.round((project.ftr || 0.78) * 100)}
               </span>
-              <span style={{ fontSize: 11, color: 'var(--sumi-3)' }}>%</span>
+              <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>%</span>
             </div>
           </div>
         }/>
@@ -157,14 +157,14 @@ function ProjOverviewLite({ project, openAction }) {
         body={topRec ? topRec.why : "Sensei is observing. The next correction or pattern will surface here."}
         action={topRec ? `send to ${topRec.defaultAcp}` : null}
         meta={topRec ? topRec.evidence.join(" · ") : null}
-        tone="var(--shu)"/>
+        tone="var(--accent)"/>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
         <StatBlock label="Sessions · 7d" value={project.sessions7d || 28}
                    sub={`${(D.recentSessions || []).filter(s => !s.ftr).length} corrected`}/>
         <StatBlock label="Memories" value="11" sub="2 to share · 1 to merge"/>
         <StatBlock label="Doc drift" value="3" sub="of 18 referenced docs"
-                   tone="var(--amber)"/>
+                   tone="var(--warning)"/>
       </div>
 
       <div>
@@ -175,7 +175,7 @@ function ProjOverviewLite({ project, openAction }) {
               left={s.title}
               leftSub={`${s.id} · ${s.duration} · ${s.corrections > 0 ? s.corrections + " corrections" : "first-try right"}`}
               right={s.time}
-              rightTone={s.ftr ? 'var(--jade)' : 'var(--sumi-3)'}/>
+              rightTone={s.ftr ? 'var(--success)' : 'var(--ink-3)'}/>
           ))}
         </div>
       </div>
@@ -218,29 +218,29 @@ function ProjMemoriesLite({ project }) {
         body="Sensei has rewritten them stack-agnostic — your auth-handler convention and the CRDT commutativity rule. Both are queued for the next sharing batch in 2 days."
         action="review next batch"
         meta="reviewed batches · 47 / 47"
-        tone="var(--matcha)"/>
+        tone="var(--success)"/>
 
       <div>
         <MiniHeading kanji="覚" label="Active memories"
-          right={<span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>
+          right={<span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
             9 active · 2 sharing
           </span>}/>
         {memories.map((m, i) => (
           <div key={i} style={{
-            padding: '12px 14px', marginBottom: 8,
+            padding: '12px 12px', marginBottom: 8,
             background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
-            borderLeft: m.status === 'share' ? '2px solid var(--matcha)' : '2px solid transparent',
+            borderLeft: m.status === 'share' ? '2px solid var(--success)' : '2px solid transparent',
             display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12, alignItems: 'start'
           }}>
-            <span className="kanji" style={{ fontSize: 16,
-                  color: m.status === 'share' ? 'var(--matcha)' : 'var(--shu)' }}>{m.kanji}</span>
+            <span className="kanji" style={{ fontSize: 15,
+                  color: m.status === 'share' ? 'var(--success)' : 'var(--accent)' }}>{m.kanji}</span>
             <div>
-              <div style={{ fontSize: 13, color: 'var(--sumi)', lineHeight: 1.4 }}>{m.title}</div>
-              <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 4 }}>
+              <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>{m.title}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
                 {m.kind} · {m.source}
               </div>
             </div>
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               {m.places}× used
             </span>
           </div>
@@ -279,28 +279,28 @@ function ProjTraceabilityLite({ project }) {
         body="The doc still says tokens rotate every 7d, but rotate_token has been changing on every use since s-2891. Sensei has a fix-drift prompt ready — it will update the doc and add a regression note."
         action="run fix-drift prompt"
         meta="checked nightly · 18 docs tracked"
-        tone="var(--amber)"/>
+        tone="var(--warning)"/>
 
       <div>
         <MiniHeading kanji="巻" label="Drifted documents"/>
         {drift.map((d, i) => (
           <div key={i} style={{
-            padding: '12px 14px', marginBottom: 8,
+            padding: '12px 12px', marginBottom: 8,
             background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
-            borderLeft: `2px solid ${d.severity === 'high' ? 'var(--shu)' : 'var(--amber)'}`
+            borderLeft: `2px solid ${d.severity === 'high' ? 'var(--accent)' : 'var(--warning)'}`
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between',
                            alignItems: 'baseline', marginBottom: 4 }}>
-              <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{d.doc}</div>
-              <span className="mono" style={{ fontSize: 10.5,
-                    color: d.lastSync === 'broken' ? 'var(--shu)' : 'var(--sumi-3)' }}>
+              <div style={{ fontSize: 13, color: 'var(--ink)' }}>{d.doc}</div>
+              <span className="mono" style={{ fontSize: 11,
+                    color: d.lastSync === 'broken' ? 'var(--accent)' : 'var(--ink-3)' }}>
                 {d.lastSync === 'broken' ? '⚠ broken link' : 'synced ' + d.lastSync}
               </span>
             </div>
-            <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-4)', marginBottom: 6 }}>
+            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginBottom: 4 }}>
               ↪ {d.symbol}
             </div>
-            <div style={{ fontSize: 11.5, color: 'var(--sumi-2)', lineHeight: 1.5 }}>
+            <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5 }}>
               {d.note}
             </div>
           </div>
@@ -332,7 +332,7 @@ function ProjLibrariesLite({ project }) {
         body="The other four have sensei-wrapped instruments, so any AI session in this project can ask them structural questions. Wrapping tailwindcss adds the same kind of coverage."
         action="wrap tailwindcss"
         meta="4 of 5 wrapped"
-        tone="var(--matcha)"/>
+        tone="var(--success)"/>
 
       <div>
         <MiniHeading kanji="庫" label="In this project"/>
@@ -341,7 +341,7 @@ function ProjLibrariesLite({ project }) {
             left={l.name}
             leftSub={l.source}
             right={`${l.uses}× used  ·  ${l.hasInstr ? '具 wrapped' : '— unwrapped'}`}
-            rightTone={l.hasInstr ? 'var(--matcha)' : 'var(--amber)'}/>
+            rightTone={l.hasInstr ? 'var(--success)' : 'var(--warning)'}/>
         ))}
       </div>
     </div>
@@ -372,7 +372,7 @@ function ProjInstrumentsLite({ project }) {
         body="91% first-try right across 22 calls in the last 7 days. The two miss-cases both involved the new Repository pattern (p4). One reinforcement pass would close the gap."
         action="open replay for patterns.find-similar"
         meta="164 calls · 7d"
-        tone="var(--amber)"/>
+        tone="var(--warning)"/>
 
       <div>
         <MiniHeading kanji="具" label="Project-scoped tools"/>
@@ -381,7 +381,7 @@ function ProjInstrumentsLite({ project }) {
             left={t.name}
             leftSub={`scope · ${t.scope}`}
             right={`${t.calls7d} calls  ·  ${Math.round(t.ftr * 100)}% FTR`}
-            rightTone={t.ftr >= 0.95 ? 'var(--matcha)' : 'var(--amber)'}/>
+            rightTone={t.ftr >= 0.95 ? 'var(--success)' : 'var(--warning)'}/>
         ))}
       </div>
     </div>
@@ -419,33 +419,33 @@ function ProjImpactLite({ project }) {
         body="The auth-test persona moved FTR from 62% → 79% over 14 days. The withAuth middleware extraction added another 5 points. One more verdict is pending; no negative-impact alerts for this project."
         action="see all impact reports"
         meta="2 positive · 0 negative · 1 pending"
-        tone="var(--jade)"/>
+        tone="var(--success)"/>
 
       <div>
         <MiniHeading kanji="果" label="Accepted recommendations · this project"/>
         {verdicts.map((v, i) => {
-          const tone = v.verdict === 'positive' ? 'var(--jade)' :
-                       v.verdict === 'negative' ? 'var(--shu)'  : 'var(--sumi-3)';
+          const tone = v.verdict === 'positive' ? 'var(--success)' :
+                       v.verdict === 'negative' ? 'var(--accent)'  : 'var(--ink-3)';
           return (
             <div key={i} style={{
-              padding: '14px 16px', marginBottom: 10,
+              padding: '12px 16px', marginBottom: 8,
               background: 'var(--paper-2)', border: 'var(--hairline)', borderRadius: 6,
               borderLeft: `2px solid ${tone}`
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between',
-                             alignItems: 'baseline', marginBottom: 6 }}>
-                <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{v.title}</div>
-                <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+                             alignItems: 'baseline', marginBottom: 4 }}>
+                <div style={{ fontSize: 13, color: 'var(--ink)' }}>{v.title}</div>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                   accepted {v.acceptedAt}
                 </span>
               </div>
               {v.before && v.after && (
-                <div style={{ display: 'flex', gap: 18, alignItems: 'baseline', marginBottom: 6 }}>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>
-                    {v.before.label} <span style={{ color: 'var(--sumi)' }}>{Math.round(v.before.ftr * 100)}%</span>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginBottom: 4 }}>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                    {v.before.label} <span style={{ color: 'var(--ink)' }}>{Math.round(v.before.ftr * 100)}%</span>
                   </div>
-                  <span style={{ fontSize: 12, color: tone }}>→</span>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>
+                  <span style={{ fontSize: 13, color: tone }}>→</span>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                     {v.after.label} <span style={{ color: tone }}>{Math.round(v.after.ftr * 100)}%</span>
                   </div>
                   <span className="mono" style={{ fontSize: 11, color: tone, marginLeft: 'auto' }}>
@@ -453,7 +453,7 @@ function ProjImpactLite({ project }) {
                   </span>
                 </div>
               )}
-              <div style={{ fontSize: 11.5, color: 'var(--sumi-2)', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.5 }}>
                 {v.note}
               </div>
             </div>
@@ -477,33 +477,33 @@ function ProjAboutPane({ project }) {
       {/* Mode bar — minimal, sits above the document */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '14px 28px 14px 32px',
+        padding: '12px 24px 12px 32px',
         borderBottom: 'var(--hairline)',
         background: editing ? 'var(--paper-2)' : 'var(--paper)'
       }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-          <span className="kanji" style={{ fontSize: 16, color: 'var(--shu)' }}>識</span>
-          <div className="display" style={{ fontSize: 15, color: 'var(--sumi)',
+          <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>識</span>
+          <div className="display" style={{ fontSize: 15, color: 'var(--ink)',
                         letterSpacing: '-0.005em' }}>
             About {project.name}
           </div>
-          <span style={{ fontSize: 11, color: 'var(--sumi-3)' }}>
+          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
             — identity, stack, repos, links, guidelines, backlog
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {editing && (
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--shu)',
+            <span className="mono" style={{ fontSize: 11, color: 'var(--accent)',
                           letterSpacing: '0.14em', textTransform: 'uppercase' }}>
               ● editing
             </span>
           )}
           <button onClick={() => setEditing(e => !e)}
                   style={{
-                    padding: '6px 14px', fontSize: 11.5, borderRadius: 5,
+                    padding: '4px 12px', fontSize: 11, borderRadius: 5,
                     border: 'var(--hairline)',
-                    background: editing ? 'var(--sumi)' : 'transparent',
-                    color: editing ? 'var(--paper)' : 'var(--sumi-2)',
+                    background: editing ? 'var(--ink)' : 'transparent',
+                    color: editing ? 'var(--paper)' : 'var(--ink-2)',
                     cursor: 'pointer'
                   }}>
             {editing ? "✓  Done" : "✎  Edit"}

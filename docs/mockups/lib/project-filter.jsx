@@ -65,13 +65,13 @@ function ProjectFilter({
   const showPopover = focused && ql.length > 0;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       {label && (
-        <span style={{ fontSize: 10, color: 'var(--sumi-4)', letterSpacing: '0.14em',
+        <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
                         textTransform: 'uppercase' }}>{label}</span>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
         <PfChip active={value === "all"} onClick={() => onChange("all")}>all</PfChip>
         {inlineKeys.map(k => (
           <PfChip key={k} active={value === k} onClick={() => onChange(k)}>
@@ -84,8 +84,8 @@ function ProjectFilter({
 
       {/* Search input — to the right */}
       <div style={{ position: 'relative' }} ref={popRef}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6,
-                       padding: '4px 10px',
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4,
+                       padding: '4px 8px',
                        background: 'var(--paper-2)',
                        border: 'var(--hairline)', borderRadius: 16,
                        minWidth: 170 }}>
@@ -99,15 +99,15 @@ function ProjectFilter({
                  onChange={e => setQuery(e.target.value)}
                  onFocus={() => setFocused(true)}
                  placeholder="search projects…"
-                 style={{ flex: 1, padding: 0, fontSize: 11.5,
+                 style={{ flex: 1, padding: 0, fontSize: 11,
                            background: 'transparent', border: 'none',
-                           color: 'var(--sumi)', fontFamily: 'inherit',
+                           color: 'var(--ink)', fontFamily: 'inherit',
                            outline: 'none', minWidth: 0 }}/>
           {query && (
             <button onClick={() => setQuery("")}
                     style={{ background: 'transparent', border: 'none',
-                              color: 'var(--sumi-4)', cursor: 'pointer',
-                              padding: 0, fontSize: 12, lineHeight: 1,
+                              color: 'var(--ink-4)', cursor: 'pointer',
+                              padding: 0, fontSize: 13, lineHeight: 1,
                               fontFamily: 'inherit' }}>×</button>
           )}
         </div>
@@ -122,8 +122,8 @@ function ProjectFilter({
             padding: 4, zIndex: 30, maxHeight: 240, overflow: 'auto'
           }}>
             {matches.length === 0 && (
-              <div style={{ padding: '10px 8px', fontSize: 11,
-                              color: 'var(--sumi-4)', textAlign: 'center' }}>
+              <div style={{ padding: '8px 8px', fontSize: 11,
+                              color: 'var(--ink-4)', textAlign: 'center' }}>
                 no matches
               </div>
             )}
@@ -135,20 +135,20 @@ function ProjectFilter({
                           onChange(k); setQuery(""); setFocused(false);
                         }}
                         style={{ width: '100%', textAlign: 'left',
-                                  padding: '6px 9px', fontSize: 11.5,
+                                  padding: '4px 8px', fontSize: 11,
                                   background: active ? 'var(--paper-2)' : 'transparent',
                                   border: 'none', borderRadius: 4,
-                                  color: active ? 'var(--sumi)' : 'var(--sumi-2)',
+                                  color: active ? 'var(--ink)' : 'var(--ink-2)',
                                   cursor: 'pointer',
-                                  display: 'flex', alignItems: 'center', gap: 7 }}>
+                                  display: 'flex', alignItems: 'center', gap: 8 }}>
                   {all[k]?.kanji && (
-                    <span className="kanji" style={{ fontSize: 12, color: 'var(--shu)' }}>
+                    <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>
                       {all[k].kanji}
                     </span>
                   )}
                   <span style={{ flex: 1 }}>{fullName(k)}</span>
                   {all[k]?.client && (
-                    <span style={{ fontSize: 9.5, color: 'var(--sumi-4)',
+                    <span style={{ fontSize: 11, color: 'var(--ink-4)',
                                      letterSpacing: '0.1em',
                                      textTransform: 'uppercase' }}>
                       {all[k].client}
@@ -167,12 +167,12 @@ function ProjectFilter({
 function PfChip({ active, onClick, children }) {
   return (
     <button onClick={onClick}
-            style={{ padding: '3px 10px', fontSize: 11,
-                      background: active ? 'var(--sumi)' : 'transparent',
-                      color: active ? 'var(--paper)' : 'var(--sumi-2)',
+            style={{ padding: '4px 8px', fontSize: 11,
+                      background: active ? 'var(--ink)' : 'transparent',
+                      color: active ? 'var(--paper)' : 'var(--ink-2)',
                       border: active
-                        ? '1px solid var(--sumi)'
-                        : '1px solid var(--paper-edge)',
+                        ? '1px solid var(--ink)'
+                        : '1px solid var(--edge)',
                       borderRadius: 20, cursor: 'pointer',
                       fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
       {children}
