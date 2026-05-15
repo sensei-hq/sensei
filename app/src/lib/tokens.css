@@ -38,21 +38,47 @@
   --border-active: 1px solid oklch(var(--color-surface-z9) / 1);
   --ink-line:      1px solid oklch(var(--color-surface-z9) / 0.06);
 
+  /* ── Type scale (8 sizes) ───────────────────────────────── */
+  --text-xs:   11px;
+  --text-sm:   13px;
+  --text-base: 15px;
+  --text-lg:   17px;
+  --text-xl:   22px;
+  --text-2xl:  28px;
+  --text-3xl:  40px;
+  --text-4xl:  56px;
+
+  --leading-tight:  1.2;
+  --leading-snug:   1.4;
+  --leading-normal: 1.6;
+  --leading-loose:  1.75;
+
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide:   0.18em;
+
+  /* ── Motion ─────────────────────────────────────────────── */
+  --ease:     cubic-bezier(0.2, 0.6, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur:      180ms;
+  --dur-slow: 280ms;
+
   /* ── Radii ──────────────────────────────────────────────── */
+  --radius-sm: 4px;
   --radius:    6px;
   --radius-lg: 10px;
 
-  /* ── Spacing scale (4px base) ───────────────────────────── */
+  /* ── Spacing scale (4px base, 9 stops) ──────────────────── */
+  --space-0: 0;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
-  --space-12: 48px;
-  --space-16: 64px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
 }
 
 /* ── Typography classes ───────────────────────────────────── */
