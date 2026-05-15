@@ -80,7 +80,7 @@
     <div class="drag-region h-9 flex items-center gap-2 px-4 shrink-0">
         <span class="kanji text-lg text-primary-z5">{kanji}</span>
         <span class="text-sm font-semibold">{data.project?.name ?? "…"}</span>
-        <span class="text-2xs opacity-50">· project window</span>
+        <span class="text-xs opacity-50">· project window</span>
     </div>
 
     <div class="flex flex-1 overflow-hidden">
@@ -89,7 +89,7 @@
         >
             <div class="px-4 pb-4 pt-2">
                 <span class="text-2xl font-bold block">{ftr}%</span>
-                <span class="text-2xs opacity-50">FTR 14d</span>
+                <span class="text-xs opacity-50">FTR 14d</span>
             </div>
 
             <nav class="flex flex-col" aria-label="Project sections">
@@ -97,7 +97,7 @@
                     {@const active = isActive(section.id)}
                     <a
                         href={section.href()}
-                        class="proj-nav-item flex items-center gap-2.5 px-4 py-1.75 no-underline text-inherit text-ui transition-colors duration-100"
+                        class="proj-nav-item flex items-center gap-2.5 px-4 py-2 no-underline text-inherit text-sm transition-colors duration-fast"
                         class:active
                     >
                         <span class="kanji w-4.5 text-center" aria-hidden="true"

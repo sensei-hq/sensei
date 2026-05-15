@@ -5,9 +5,9 @@
 </script>
 
 <div class="max-w-[780px]">
-  <p class="text-sm text-surface-z6 leading-relaxed m-0 mb-6">Review and confirm the detected project groupings. Merge, rename, or reorganize as needed.</p>
+  <p class="text-sm text-surface-z6 leading-normal m-0 mb-6">Review and confirm the detected project groupings. Merge, rename, or reorganize as needed.</p>
   <div class="text-center p-12 bg-surface-z2 rounded-lg border border-surface-z3">
-    <span class="kanji text-5xl text-primary-z5 opacity-20 block mb-4">場</span>
-    <p class="text-ui text-surface-z6">Projects will appear here after scan completes.</p>
+    <span class="kanji text-4xl text-primary-z5 opacity-20 block mb-4">場</span>
+    <p class="text-sm text-surface-z6">Projects will appear here after scan completes.</p>
   </div>
 </div>

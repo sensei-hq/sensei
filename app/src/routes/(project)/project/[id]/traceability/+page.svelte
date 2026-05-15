@@ -4,7 +4,7 @@
 
 <div class="px-6 py-6">
     <h2 class="text-xl font-normal m-0 mb-2">Traceability</h2>
-    <div class="text-ui opacity-70 mb-4">
+    <div class="text-sm opacity-70 mb-4">
         <span>{data.total} tracked</span>
         <span> · </span>
         <span style="color: oklch(var(--color-warning-z5) / 1);"
@@ -18,7 +18,7 @@
     <ul class="list-none m-0 p-0">
         {#each data.driftItems as item (item.id)}
             <li
-                class="drift-row flex gap-2.5 py-2 border-b border-surface-z2 text-ui"
+                class="drift-row flex gap-2.5 py-2 border-b border-surface-z2 text-sm"
                 class:drifted={item.status === "drifted"}
                 class:broken={item.status === "broken"}
             >

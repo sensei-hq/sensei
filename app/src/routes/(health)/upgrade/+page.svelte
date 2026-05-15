@@ -123,7 +123,7 @@
 
             <div class="flex items-center gap-2.5 mb-3.5">
                 <span class="kanji text-xl text-primary-z5">更</span>
-                <span class="text-2xs tracking-tag uppercase text-surface-z6">
+                <span class="text-xs tracking-wide uppercase text-surface-z6">
                     upgrade · post-restart
                 </span>
             </div>
@@ -138,7 +138,7 @@
                 {/if}
             </h1>
 
-            <p class="text-sm text-surface-z6 leading-reading max-w-[540px]">
+            <p class="text-sm text-surface-z6 leading-loose max-w-[540px]">
                 {#if isComplete && !anyFailed}
                     Homebrew and the database schema are up to date. Running health checks now.
                 {:else if isComplete && anyFailed}
@@ -156,7 +156,7 @@
         <div class="max-w-[640px] w-full mx-auto">
 
             <!-- ── Hero card ─────────────────────────────────────────────── -->
-            <div class="hero-card relative overflow-hidden border border-surface-z2 rounded-xl bg-surface-z2 p-6.5">
+            <div class="hero-card relative overflow-hidden border border-surface-z2 rounded-xl bg-surface-z2 p-6">
                 <!-- Progress bar -->
                 {#if !isComplete}
                     <div class="absolute top-0 left-0 right-0 h-0.5 bg-surface-z3">
@@ -167,7 +167,7 @@
                     </div>
                 {/if}
 
-                <div class="flex items-center gap-4.5">
+                <div class="flex items-center gap-4">
                     <!-- Status indicator -->
                     <div
                         class="indicator w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
@@ -187,8 +187,8 @@
                     <!-- Status info -->
                     <div class="flex-1 min-w-0">
                         <div class="flex items-baseline gap-2.5 mb-1">
-                            <span class="display text-prose font-medium">Sensei update</span>
-                            <span class="mono text-2xs text-surface-z5">health resolvers · dbd</span>
+                            <span class="display text-lg font-medium">Sensei update</span>
+                            <span class="mono text-xs text-surface-z5">health resolvers · dbd</span>
                         </div>
                         <div class="text-sm text-surface-z7 leading-snug">
                             {#if isComplete && !anyFailed}
@@ -197,7 +197,7 @@
                                 Completed with warnings. Continuing to health check.
                             {:else}
                                 {activeStepLabel}…
-                                <span class="mono text-2xs text-surface-z5 ml-2">
+                                <span class="mono text-xs text-surface-z5 ml-2">
                                     ({doneCount + 1}/{STEPS.length})
                                 </span>
                             {/if}
@@ -207,19 +207,19 @@
             </div>
 
             <!-- ── Step ledger ─────────────────────────────────────────────── -->
-            <div class="mt-5.5">
-                <div class="text-2xs tracking-tag uppercase text-surface-z5 mb-2.5">
+            <div class="mt-6">
+                <div class="text-xs tracking-wide uppercase text-surface-z5 mb-2.5">
                     upgrade steps
                 </div>
                 <div class="flex flex-col">
                     {#each STEPS as step}
                         {@const s = stepState(step.id)}
                         <div
-                            class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-surface-z2 transition-opacity duration-200"
+                            class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-surface-z2 transition-opacity duration"
                             class:opacity-50={s === "pending"}
                         >
                             <span
-                                class="w-2 h-2 rounded-full shrink-0 transition-colors duration-300"
+                                class="w-2 h-2 rounded-full shrink-0 transition-colors duration-slow"
                                 class:bg-success-z5={s === "done"}
                                 class:bg-primary-z5={s === "running" || s === "failed"}
                                 class:bg-surface-z4={s === "pending"}
@@ -227,16 +227,16 @@
 
                             <div>
                                 <span class="text-sm text-surface-z9">{step.label}</span>
-                                <span class="mono text-2xs text-surface-z5 ml-2">· {step.note}</span>
+                                <span class="mono text-xs text-surface-z5 ml-2">· {step.note}</span>
                                 {#if s === "failed" && stepErrors[step.id]}
-                                    <div class="mono text-2xs text-primary-z5 mt-0.5">
+                                    <div class="mono text-xs text-primary-z5 mt-0.5">
                                         {stepErrors[step.id]}
                                     </div>
                                 {/if}
                             </div>
 
                             <span
-                                class="mono text-2xs tracking-wider uppercase"
+                                class="mono text-xs tracking-wide uppercase"
                                 class:text-success-z5={s === "done"}
                                 class:text-primary-z5={s === "running" || s === "failed"}
                                 class:text-surface-z5={s === "pending"}
@@ -249,8 +249,8 @@
             </div>
 
             <!-- ── Footer ─────────────────────────────────────────────────── -->
-            <div class="flex justify-between items-center gap-4 mt-8 pt-5.5 border-t border-surface-z2">
-                <div class="text-2xs text-surface-z5 leading-relaxed">
+            <div class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-surface-z2">
+                <div class="text-xs text-surface-z5 leading-normal">
                     Upgrade steps run once after each update. The next launch will be quick.
                 </div>
             </div>

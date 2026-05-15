@@ -14,10 +14,10 @@
                 >名</span
             >
             <div class="flex-1 min-w-0">
-                <h3 class="display text-prose font-normal m-0 text-surface-z9">
+                <h3 class="display text-lg font-normal m-0 text-surface-z9">
                     What should sensei call you?
                 </h3>
-                <p class="text-xs text-surface-z6 mt-0.75 leading-normal m-0">
+                <p class="text-xs text-surface-z6 mt-1 leading-normal m-0">
                     Used in the morning digest and when raising a teaching.
                 </p>
             </div>
@@ -41,10 +41,10 @@
                 >共</span
             >
             <div class="flex-1 min-w-0">
-                <h3 class="display text-prose font-normal m-0 text-surface-z9">
+                <h3 class="display text-lg font-normal m-0 text-surface-z9">
                     Shared learnings
                 </h3>
-                <p class="text-xs text-surface-z6 mt-0.75 leading-normal m-0">
+                <p class="text-xs text-surface-z6 mt-1 leading-normal m-0">
                     Contribute anonymized patterns to a collective pool — and
                     pull what others have learned.
                 </p>
@@ -53,8 +53,8 @@
         <div class="pl-11 divide-y divide-surface-z3">
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Contribute my learnings</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Contribute my learnings</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         Anonymized patterns only. No code, no commit messages,
                         no project names.
                     </div>
@@ -63,8 +63,8 @@
             </div>
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Review before sharing</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Review before sharing</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         Each learning shows up in a queue for your approval
                         before it leaves your machine.
                     </div>
@@ -73,7 +73,7 @@
             </div>
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Sharing schedule</div>
+                    <div class="text-sm text-surface-z9">Sharing schedule</div>
                 </div>
                 <select
                     class="text-xs px-2.5 py-1.5 border border-surface-z2 rounded-md bg-surface-z1 text-surface-z9 cursor-pointer"
@@ -90,8 +90,8 @@
             </div>
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Download collective learnings</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Download collective learnings</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         Reviewed before they enter your library.
                     </div>
                 </div>
@@ -119,10 +119,10 @@
                 >師</span
             >
             <div class="flex-1 min-w-0">
-                <h3 class="display text-prose font-normal m-0 text-surface-z9">
+                <h3 class="display text-lg font-normal m-0 text-surface-z9">
                     Sensei behavior
                 </h3>
-                <p class="text-xs text-surface-z6 mt-0.75 leading-normal m-0">
+                <p class="text-xs text-surface-z6 mt-1 leading-normal m-0">
                     How forward sensei is — when it nudges, how it phrases
                     corrections.
                 </p>
@@ -131,8 +131,8 @@
         <div class="pl-11 divide-y divide-surface-z3">
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Correction tone</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Correction tone</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         How direct sensei is when something repeats.
                     </div>
                 </div>
@@ -150,8 +150,8 @@
             </div>
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Morning digest</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Morning digest</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         The Today view. Off keeps the dashboard quiet.
                     </div>
                 </div>
@@ -169,8 +169,8 @@
             </div>
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Nudge on regression</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Nudge on regression</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         If FTR drops sharply on a project, sensei surfaces it on
                         Today.
                     </div>
@@ -188,10 +188,10 @@
                 >守</span
             >
             <div class="flex-1 min-w-0">
-                <h3 class="display text-prose font-normal m-0 text-surface-z9">
+                <h3 class="display text-lg font-normal m-0 text-surface-z9">
                     Telemetry
                 </h3>
-                <p class="text-xs text-surface-z6 mt-0.75 leading-normal m-0">
+                <p class="text-xs text-surface-z6 mt-1 leading-normal m-0">
                     Help us improve sensei itself — separate from shared
                     learnings, this is about the app, not your work.
                 </p>
@@ -200,8 +200,8 @@
         <div class="pl-11 divide-y divide-surface-z3">
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Anonymized usage telemetry</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Anonymized usage telemetry</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         Crashes, performance, which views you visit. Never code,
                         prompts, or session content.
                     </div>
@@ -210,8 +210,8 @@
             </div>
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
-                    <div class="text-ui text-surface-z9">Show welcome message on first entry</div>
-                    <div class="text-xs text-surface-z6 mt-0.75 leading-snug max-w-[460px]">
+                    <div class="text-sm text-surface-z9">Show welcome message on first entry</div>
+                    <div class="text-xs text-surface-z6 mt-1 leading-snug max-w-[460px]">
                         The greeting toast that appears when you first open the
                         observatory each day.
                     </div>
