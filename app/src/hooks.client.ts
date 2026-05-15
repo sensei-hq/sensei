@@ -44,6 +44,14 @@ const SETUP_PREFIX = '/setup';
 // pre-populates 'ready' in bypass mode so reroute passes without a /health
 // hop. This is the only sessionStorage interaction here; the actual cache
 // writes during the app's lifetime are owned by HealthState.
+//
+// Diagnostic — remove once first-run cycle is verified stable.
+if (typeof window !== 'undefined') {
+  const w = window as { __TAURI__?: unknown; __TAURI_INTERNALS__?: unknown };
+  // eslint-disable-next-line no-console
+  console.log('[sensei] hooks.client init',
+    { hasInternals: !!w.__TAURI_INTERNALS__, hasGlobalTauri: !!w.__TAURI__ });
+}
 initHealthCache();
 
 export function reroute({ url }: { url: URL }): string | undefined {

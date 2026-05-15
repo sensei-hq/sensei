@@ -26,11 +26,19 @@ const KEY = 'sensei:health';
 const VALUE_READY = 'ready';
 
 /** True when the app is running inside a Tauri webview.
- *  Tauri sets `window.__TAURI__` via a script that runs before any
- *  bundle code. In `vite dev` / `vite preview` it is absent. */
+ *
+ *  We check `window.__TAURI_INTERNALS__` — the IPC bridge installed by
+ *  Tauri's webview preload script that runs BEFORE any HTML script tag.
+ *  `window.__TAURI__` (from `withGlobalTauri: true`) is loaded later via
+ *  the JS API and may not be present yet when hooks.client.ts module-init
+ *  fires — which is the bug we hit on cold start.
+ *
+ *  Belt-and-suspenders: check `__TAURI__` too in case future Tauri
+ *  versions reshuffle the globals. Either signal counts as "in Tauri". */
 function hasTauriRuntime(): boolean {
-  return typeof window !== 'undefined'
-    && !!(window as { __TAURI__?: unknown }).__TAURI__;
+  if (typeof window === 'undefined') return false;
+  const w = window as { __TAURI__?: unknown; __TAURI_INTERNALS__?: unknown };
+  return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__;
 }
 
 /** True when the health check should be bypassed (no Tauri sidecar to
