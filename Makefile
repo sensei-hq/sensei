@@ -35,11 +35,10 @@
 
 VERSION := $(shell cat VERSION)
 
-# Health-bypass is derived automatically from Tauri's own env vars
-# (TAURI_PLATFORM / TAURI_ENV_PLATFORM / TAURI_ENV_DEBUG) by vite.config.ts:
-# `bun run dev` runs vite without those set, so it bypasses; `make app-dev`
-# and `make app-dev-bundle` run under `tauri dev`/`tauri build` which DO set
-# them, so the real health gate runs. No custom env var, no leak surface.
+# Health-bypass is decided at runtime via `window.__TAURI__` — Tauri
+# injects it before any user script runs (`withGlobalTauri: true`).
+# `vite dev`/`vite preview` outside Tauri never sees it, so they auto-
+# bypass. No env vars, no build-time flags.
 #
 # Mode (dev/prod) is compile-time via --features dev, not env vars.
 

@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
+
+// Pretend Tauri is present so HealthState doesn't take the bypass path —
+// these tests drive .apply() / .applyEvent() and inspect rendered UI.
+(window as { __TAURI__?: unknown }).__TAURI__ = {};
+
 import { mountComponent } from '$lib/test-mount.js';
 import HealthView from './HealthView.svelte';
 import { HealthState } from '$lib/health-state.svelte.js';
