@@ -105,7 +105,16 @@ export class AppState {
     }
   }
 
-  async load() {
+  /**
+   * Hydrate from the daemon (Tauri) or skip in browser-only dev mode.
+   *
+   * Returns `true` if appState is usable after this call — either daemon
+   * config landed or we deliberately skipped the daemon. Returns `false`
+   * only when we expected the daemon (Tauri mode) and couldn't reach it;
+   * group layouts (`(observatory)/+layout.ts` etc.) translate that into
+   * a 503 so non-health pages never silently mount with empty config.
+   */
+  async load(): Promise<boolean> {
     if (typeof localStorage !== 'undefined') {
       const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
       if (!isNaN(stored) && stored > 0) this.port = stored;
@@ -115,30 +124,32 @@ export class AppState {
     if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
       this.config = {};
       this.loaded = true;
-      return;
+      return true;
     }
 
     const api = senseiApi(this.port);
     const result = await api.tryGetConfig();
-    if (result.ok) {
-      this.config = result.data;
-      // Daemon is the canonical source for setup completion. Reconcile the
-      // localStorage cache (the sync gate read by hooks.client.ts) so it
-      // can never drift past a daemon write that didn't actually land.
-      if (typeof localStorage !== 'undefined') {
-        if (this.config['setup_complete'] === '1') {
-          localStorage.setItem('sensei:setup-complete', '1');
-        } else {
-          localStorage.removeItem('sensei:setup-complete');
-        }
-      }
-    } else {
-      // Daemon unreachable — leave the cache untouched. A transient outage
-      // must not clear setup-complete and force the user back through setup.
+    if (!result.ok) {
+      // Daemon unreachable — leave the cache untouched so a transient
+      // outage doesn't bounce the user back through setup. Don't mark
+      // loaded — the caller decides whether to retry or surface 503.
       this.config = {};
+      return false;
     }
 
+    this.config = result.data;
+    // Daemon is the canonical source for setup completion. Reconcile the
+    // localStorage cache (the sync gate read by hooks.client.ts) so it
+    // can never drift past a daemon write that didn't actually land.
+    if (typeof localStorage !== 'undefined') {
+      if (this.config['setup_complete'] === '1') {
+        localStorage.setItem('sensei:setup-complete', '1');
+      } else {
+        localStorage.removeItem('sensei:setup-complete');
+      }
+    }
     this.loaded = true;
+    return true;
   }
 
   async reset() {
@@ -146,10 +157,16 @@ export class AppState {
     this.loaded = false;
 
     // sensei:health is owned by HealthState — do not touch it here.
+    // The PROTECTED list captures localStorage keys that other subsystems
+    // own (port discovery, the upgrader's staged-version flag, …). Clearing
+    // them here would silently skip an in-flight upgrade or strand the port.
     if (typeof localStorage !== 'undefined') {
-      const port = localStorage.getItem('sensei:port');
+      const PROTECTED = ['sensei:port', 'sensei:app-version'] as const;
+      const preserved = PROTECTED
+        .map((k) => [k, localStorage.getItem(k)] as const)
+        .filter(([, v]) => v !== null);
       localStorage.clear();
-      if (port) localStorage.setItem('sensei:port', port);
+      for (const [k, v] of preserved) localStorage.setItem(k, v as string);
     }
   }
 }
