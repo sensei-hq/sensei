@@ -21,6 +21,7 @@
     "@iconify-json/solar": "^1.2.5",
     "@rokkit/actions": "^1.0.5",
     "@rokkit/app": "^1.0.5",
+    "@rokkit/chart": "^1.0.5",
     "@rokkit/core": "^1.0.5",
     "@rokkit/icons": "^1.0.5",
     "@rokkit/states": "^1.0.5",
