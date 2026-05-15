@@ -50,7 +50,7 @@ export function reroute({ url }: { url: URL }): string | undefined {
     typeof localStorage !== 'undefined' &&
     localStorage.getItem('sensei:app-version') !== null;
 
-  if (pendingUpgrade && !HEALTH_EXEMPT.has(path) && path !== '/') {
+  if (pendingUpgrade && !HEALTH_EXEMPT.has(path)) {
     return '/upgrade';
   }
 
