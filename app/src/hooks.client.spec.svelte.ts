@@ -73,4 +73,12 @@ describe('hooks.client.ts — upgrade gate (L2)', () => {
   it('does not redirect when no upgrade is pending', () => {
     expect(reroute({ url: new URL('http://localhost/') })).toBeUndefined();
   });
+
+  it('does not redirect when stored version equals running app version (L10)', () => {
+    // hooks.client.ts compares the stored value against the build-time-injected
+    // __SENSEI_APP_VERSION__. In tests that constant is undefined and falls back
+    // to "", so a stored "" should be treated as matching and skip the redirect.
+    localStorage.setItem('sensei:app-version', '');
+    expect(reroute({ url: new URL('http://localhost/') })).toBeUndefined();
+  });
 });
