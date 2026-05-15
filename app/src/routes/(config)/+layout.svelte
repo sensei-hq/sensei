@@ -37,7 +37,7 @@
         if (isLast) {
             await wizardState.commitStage("done");
             committing = false;
-            goto("/observatory");
+            goto("/");
             return;
         }
         const ok = await wizardState.commitStage(stage.id);
