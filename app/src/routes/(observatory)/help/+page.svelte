@@ -1,5 +1,9 @@
-<div class="max-w-[640px] px-8 py-8">
-    <h1 class="text-2xl font-normal m-0 mb-6">Sensei Help</h1>
+<script lang="ts">
+    import { PageHeader } from '$lib/components';
+</script>
+
+<PageHeader kanji="助" eyebrow="Sensei" title="Help" variant="h1" />
+<div class="max-w-[640px] px-8 pt-8 pb-16">
 
     <section class="mb-7">
         <h2 class="text-base font-bold m-0 mb-2.5">Quick Start</h2>

@@ -1,9 +1,10 @@
 <script lang="ts">
+    import { PageHeader } from '$lib/components';
     let { data } = $props();
 </script>
 
+<PageHeader title="Patterns" />
 <div class="px-6 py-6">
-    <h2 class="text-xl font-normal m-0 mb-4">Patterns</h2>
     {#if data.followed.length > 0}
         <section class="mb-5">
             <h3

@@ -1,10 +1,10 @@
 <script lang="ts">
+  import { PageHeader } from '$lib/components';
   let { data } = $props();
 </script>
 
+<PageHeader title="Sessions" description="{data.ftrMetrics?.sessions7d ?? 0} in last 7 days" />
 <div class="px-6 py-6">
-  <h2 class="text-xl font-normal m-0 mb-1">Sessions</h2>
-  <p class="text-sm opacity-60 mb-4">{data.ftrMetrics?.sessions7d ?? 0} in last 7 days</p>
   <ul class="list-none m-0 p-0">
     {#each data.sessions as s (s.id)}
       <li class="session-row flex gap-3 py-2 border-b border-surface-z2 text-sm">
