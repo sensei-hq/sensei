@@ -27,13 +27,12 @@ const SOURCE_META = {
 function ExtKindChip({ kind, active, count, onClick }) {
   return (
     <button onClick={onClick} style={{
-      display: 'inline-flex', alignItems: 'center', gap: 8,
-      padding: '4px 12px', borderRadius: 5,
+      display: 'inline-flex', alignItems: 'center', borderRadius: 5,
       border: active ? '1px solid var(--ink)' : '1px solid var(--edge)',
       background: active ? 'var(--ink)' : 'transparent',
       color: active ? 'var(--paper)' : 'var(--ink-2)',
       fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-ui)'
-    }}>
+}} className="gap-2 py-1 px-3" >
       <span className="kanji" style={{ fontSize: 13,
         color: active ? 'var(--paper)' : 'var(--accent)' }}>{kind.kanji}</span>
       <span>{kind.label}</span>
@@ -52,14 +51,14 @@ function ExtListRow({ ext, kind, active, onClick, projectScoped, projectId }) {
 
   return (
     <button onClick={onClick} style={{
-      display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12,
-      alignItems: 'start', textAlign: 'left', width: '100%',
-      padding: '12px 16px', borderBottom: 'var(--hairline)',
+      display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+      alignItems: 'start', textAlign: 'left', width: '100%', borderBottom: 'var(--hairline)',
       background: active ? 'var(--paper-2)' : 'transparent',
       cursor: 'pointer', borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent'
-    }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                     paddingTop: 4 }}>
+}} className="gap-3 py-3 px-4" >
+      <div style={{
+ display: 'flex', flexDirection: 'column', alignItems: 'center'
+}} className="gap-1 pt-1" >
         <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)', lineHeight: 1 }}>
           {kind.kanji}
         </span>
@@ -71,7 +70,7 @@ function ExtListRow({ ext, kind, active, onClick, projectScoped, projectId }) {
       </div>
 
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
           <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>
             {ext.name}
           </span>
@@ -96,8 +95,10 @@ function ExtListRow({ ext, kind, active, onClick, projectScoped, projectId }) {
                        WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
           {ext.desc}
         </div>
-        <div style={{ display: 'flex', gap: 12, marginTop: 8,
-                       fontSize: 11, color: 'var(--ink-3)' }}>
+        <div style={{
+ display: 'flex',
+                       fontSize: 11, color: 'var(--ink-3)'
+}} className="gap-3 mt-2" >
           <span>{ext.author}</span>
           <span style={{ color: source.color }}>· {source.label}</span>
           {ext.evidence != null && (
@@ -107,7 +108,7 @@ function ExtListRow({ ext, kind, active, onClick, projectScoped, projectId }) {
         </div>
       </div>
 
-      <div style={{ textAlign: 'right', paddingTop: 4 }}>
+      <div style={{ textAlign: 'right' }} className="pt-1" >
         {ext.installed ? (
           <span style={{ fontSize: 11, color: 'var(--success)',
                           letterSpacing: '0.12em', textTransform: 'uppercase' }}>
@@ -119,7 +120,7 @@ function ExtListRow({ ext, kind, active, onClick, projectScoped, projectId }) {
             available
           </span>
         )}
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+        <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
           {ext.downloads}
         </div>
       </div>
@@ -136,28 +137,37 @@ function ExtDetail({ ext, kind, projectScoped, projectId, projectName }) {
   const isInherited  = projectScoped && ext.scope === "global" && ext.installed;
 
   return (
-    <div style={{ padding: '24px 32px 32px', overflow: 'auto', height: '100%' }}>
+    <div style={{ overflow: 'auto', height: '100%' }} className="pt-5 pb-6 px-6" >
       {/* header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16,
-                     paddingBottom: 24, borderBottom: 'var(--hairline)' }}>
+      <div style={{
+ display: 'flex', alignItems: 'flex-start', borderBottom: 'var(--hairline)'
+}} className="gap-4 pb-5" >
         <div className="kanji" style={{ fontSize: 56, color: 'var(--accent)', lineHeight: 1 }}>
           {kind.kanji}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             {kind.label.replace(/s$/, '')}  ·  v{ext.version}
           </div>
-          <h2 className="display" style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px',
-                                            color: 'var(--ink)' }}>
+          <h2 className="display mt-0 mb-1" style={{
+ fontSize: 22, fontWeight: 400,
+                                            color: 'var(--ink)'
+}}>
             {ext.name}
           </h2>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6, margin: 0,
-                       maxWidth: 640 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6,
+                       maxWidth: 640
+}} className="m-0" >
             {ext.desc}
           </p>
-          <div style={{ display: 'flex', gap: 12, marginTop: 12,
-                         fontSize: 11, color: 'var(--ink-3)' }}>
+          <div style={{
+ display: 'flex',
+                         fontSize: 11, color: 'var(--ink-3)'
+}} className="gap-3 mt-3" >
             <span>by <strong style={{ color: 'var(--ink-2)', fontWeight: 500 }}>{ext.author}</strong></span>
             <span style={{ color: source.color }}>{source.label}</span>
             {ext.stars && <span className="mono">★ {ext.stars}</span>}
@@ -167,20 +177,23 @@ function ExtDetail({ ext, kind, projectScoped, projectId, projectName }) {
       </div>
 
       {/* properties grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-                     gap: 16, padding: '24px 0', borderBottom: 'var(--hairline)' }}>
+      <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderBottom: 'var(--hairline)'
+}} className="gap-4 py-5 px-0" >
         <ExtProp label="Scope">
-          <span className="kanji" style={{ fontSize: 13, color: scope.color, marginRight: 4 }}>
+          <span className="kanji mr-1" style={{ fontSize: 13, color: scope.color }}>
             {scope.glyph}
           </span>
           <span style={{ color: scope.color, fontSize: 13 }}>{scope.label}</span>
         </ExtProp>
         <ExtProp label="Tags">
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
             {ext.tags.map(t => (
-              <span key={t} style={{ fontSize: 11, color: 'var(--ink-2)',
-                background: 'var(--paper-3)', padding: '4px 8px', borderRadius: 3,
-                fontFamily: 'var(--font-mono)' }}>{t}</span>
+              <span key={t} style={{
+ fontSize: 11, color: 'var(--ink-2)',
+                background: 'var(--paper-3)', borderRadius: 3,
+                fontFamily: 'var(--font-mono)'
+}} className="py-1 px-2" >{t}</span>
             ))}
           </div>
         </ExtProp>
@@ -194,10 +207,12 @@ function ExtDetail({ ext, kind, projectScoped, projectId, projectName }) {
               {ext.scope === "global" ? "global · always on" : "no projects pinned"}
             </span>
           ) : (
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
               {ext.pinnedTo.map(p => (
-                <span key={p} style={{ fontSize: 11, color: 'var(--ink-2)',
-                  background: 'var(--paper-3)', padding: '4px 8px', borderRadius: 3 }}>{p}</span>
+                <span key={p} style={{
+ fontSize: 11, color: 'var(--ink-2)',
+                  background: 'var(--paper-3)', borderRadius: 3
+}} className="py-1 px-2" >{p}</span>
               ))}
             </div>
           )}
@@ -206,22 +221,27 @@ function ExtDetail({ ext, kind, projectScoped, projectId, projectName }) {
 
       {/* evidence */}
       {ext.evidence != null && (
-        <div style={{ padding: '16px 0', borderBottom: 'var(--hairline)' }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 8 }}>
+        <div style={{ borderBottom: 'var(--hairline)' }} className="py-4 px-0" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-2" >
             Evidence trail
           </div>
           <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }}>
-            <span className="display" style={{ fontSize: 22, color: 'var(--ink)',
-                                                 marginRight: 8 }}>{ext.evidence}</span>
+            <span className="display mr-2" style={{
+ fontSize: 22, color: 'var(--ink)'
+}}>{ext.evidence}</span>
             sessions across the collective have justified this extension's use.
           </div>
         </div>
       )}
 
       {/* CTA */}
-      <div style={{ padding: '24px 0 0', display: 'flex', gap: 8,
-                     alignItems: 'center' }}>
+      <div style={{
+ display: 'flex',
+                     alignItems: 'center'
+}} className="gap-2 pt-5 pb-0" >
         {ext.installed ? (
           <>
             {projectScoped && !isPinnedHere && !isInherited && (
@@ -245,7 +265,7 @@ function ExtDetail({ ext, kind, projectScoped, projectId, projectName }) {
         )}
         <span style={{ flex: 1 }}/>
         {ext.source === "local" && !projectScoped && (
-          <button style={btnGhost}>Publish to collective →</button>
+          <button style={btnGhost} className="mb-2" >Publish to collective →</button>
         )}
       </div>
     </div>
@@ -255,8 +275,10 @@ function ExtDetail({ ext, kind, projectScoped, projectId, projectName }) {
 function ExtProp({ label, children }) {
   return (
     <div>
-      <div style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase', marginBottom: 8 }}>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-4)',
+                     textTransform: 'uppercase'
+}}>
         {label}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap',
@@ -314,29 +336,39 @@ function ExtensionsBrowser({ projectScoped = false, projectId = null, projectNam
                   background: 'var(--paper)', overflow: 'hidden' }}>
 
       {/* Hero */}
-      <div style={{ padding: '24px 32px 16px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 24 }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center'
+}} className="gap-5 pt-5 pb-4 px-6" >
         <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>具</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             {projectScoped ? `${projectName}  ·  Extensions` : "Observatory · Extensions"}
           </div>
-          <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                            color: 'var(--ink)' }}>
+          <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                            color: 'var(--ink)'
+}}>
             {projectScoped
               ? `What sensei brings to ${projectName}.`
               : "Skills · commands · agents · personas · hooks · plugins."}
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                       maxWidth: 720, lineHeight: 1.55 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                       maxWidth: 720, lineHeight: 1.55
+}} className="mt-1 mb-0" >
             {projectScoped
               ? "Globals are always on. Project-pinned ones live in this project's toolkit. Pin or unpin to shape sensei's hands here."
               : "Six kinds of extension. Some run globally; others can be pinned per-project so sensei brings only the right tools to the bench."}
           </p>
         </div>
-        <div style={{ paddingLeft: 24, borderLeft: 'var(--hairline)',
-                       display: 'flex', gap: 24 }}>
+        <div style={{
+ borderLeft: 'var(--hairline)',
+                       display: 'flex'
+}} className="gap-5 pl-5" >
           <ExtMini n={E.extensions.filter(e => e.installed).length} l="installed"/>
           <ExtMini n={E.extensions.filter(e => !e.installed).length} l="available" mono/>
           {!projectScoped && (
@@ -351,8 +383,10 @@ function ExtensionsBrowser({ projectScoped = false, projectId = null, projectNam
       </div>
 
       {/* Filter bar */}
-      <div style={{ padding: '12px 32px', borderBottom: 'var(--hairline)',
-                     display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center', flexWrap: 'wrap'
+}} className="py-3 px-6 gap-2" >
         <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
                         textTransform: 'uppercase' }}>kind</span>
         <ExtKindChip kind={{ kanji: "全", label: "All" }}
@@ -375,15 +409,17 @@ function ExtensionsBrowser({ projectScoped = false, projectId = null, projectNam
           );
         })}
         <span style={{ flex: 1 }}/>
-        <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
-                        textTransform: 'uppercase', marginRight: 4 }}>show</span>
+        <span style={{
+ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
+                        textTransform: 'uppercase'
+}} className="mr-1" >show</span>
         {["all", "installed", "available"].map(f => (
           <button key={f} onClick={() => setInstalledFilter(f)} style={{
-            padding: '4px 8px', fontSize: 11, borderRadius: 4,
+ fontSize: 11, borderRadius: 4,
             background: installedFilter === f ? 'var(--paper-3)' : 'transparent',
             color: installedFilter === f ? 'var(--ink)' : 'var(--ink-3)',
             border: 'none', cursor: 'pointer', fontFamily: 'var(--font-ui)'
-          }}>{f}</button>
+}} className="py-1 px-2" >{f}</button>
         ))}
       </div>
 
@@ -393,8 +429,10 @@ function ExtensionsBrowser({ projectScoped = false, projectId = null, projectNam
         {/* List */}
         <div style={{ borderRight: 'var(--hairline)', overflow: 'auto' }}>
           {filtered.length === 0 ? (
-            <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-3)',
-                           fontSize: 13 }}>
+            <div style={{
+ textAlign: 'center', color: 'var(--ink-3)',
+                           fontSize: 13
+}} className="p-6" >
               No extensions match these filters.
             </div>
           ) : (
@@ -417,7 +455,7 @@ function ExtensionsBrowser({ projectScoped = false, projectId = null, projectNam
             <ExtDetail ext={item} kind={itemKind}
               projectScoped={projectScoped} projectId={projectId} projectName={projectName}/>
           ) : (
-            <div style={{ padding: 32, color: 'var(--ink-3)', fontSize: 13 }}>
+            <div style={{ color: 'var(--ink-3)', fontSize: 13 }} className="p-6" >
               Select an extension.
             </div>
           )}
@@ -434,8 +472,10 @@ function ExtMini({ n, l, mono, accent }) {
         fontSize: mono ? 13 : 22, color: accent ? 'var(--accent)' : 'var(--ink)',
         fontWeight: 400, lineHeight: 1
       }}>{n}</div>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
-                     textTransform: 'uppercase', marginTop: 4 }}>{l}</div>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
+                     textTransform: 'uppercase'
+}} className="mt-1" >{l}</div>
     </div>
   );
 }

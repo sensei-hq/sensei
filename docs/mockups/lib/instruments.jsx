@@ -52,24 +52,32 @@ function InstrumentsShell({ activeTab, onTab, embedded = false,
         /* Slim one-line hero for the simple layout — used when this
            component is its own destination in the observatory sidebar
            and the old tab strip is gone. */
-        <div style={{ padding: '24px 48px 16px', borderBottom: 'var(--hairline)',
-                       display: 'flex', alignItems: 'center', gap: 16, background: 'var(--paper)' }}>
+        <div style={{
+ borderBottom: 'var(--hairline)',
+                       display: 'flex', alignItems: 'center', background: 'var(--paper)'
+}} className="gap-4 pt-5 pb-4 px-7" >
           <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>
             {kanji || "具"}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                           textTransform: 'uppercase', marginBottom: 4 }}>
+            <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                           textTransform: 'uppercase'
+}} className="mb-1" >
               Instruments · {activeTab}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                                color: 'var(--ink)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
+              <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                                color: 'var(--ink)'
+}}>
                 {tagline}
               </h1>
               {sub && (
-                <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: 0,
-                             maxWidth: 680, lineHeight: 1.55 }}>
+                <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                             maxWidth: 680, lineHeight: 1.55
+}} className="m-0" >
                   {sub}
                 </p>
               )}
@@ -80,22 +88,28 @@ function InstrumentsShell({ activeTab, onTab, embedded = false,
       ) : (
         <>
           {/* Full hero */}
-          <div style={{ padding: '24px 48px 16px', display: 'flex',
-                         alignItems: 'flex-end', gap: 16, borderBottom: 'var(--hairline)' }}>
+          <div style={{
+ display: 'flex',
+                         alignItems: 'flex-end', borderBottom: 'var(--hairline)'
+}} className="gap-4 pt-5 pb-4 px-7" >
             <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>
               {kanji || "具"}
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
-                             textTransform: 'uppercase', marginBottom: 4 }}>
+              <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                             textTransform: 'uppercase'
+}} className="mb-1" >
                 Instruments · {activeTab}
               </div>
-              <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0 }}>
+              <h1 className="display m-0" style={{ fontSize: 22, fontWeight: 400 }}>
                 {tagline}
               </h1>
               {sub && (
-                <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '4px 0 0',
-                             maxWidth: 680, lineHeight: 1.55 }}>
+                <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                             maxWidth: 680, lineHeight: 1.55
+}} className="mt-1 mb-0" >
                   {sub}
                 </p>
               )}
@@ -104,19 +118,22 @@ function InstrumentsShell({ activeTab, onTab, embedded = false,
           </div>
 
           {/* Tab nav */}
-          <div style={{ padding: '0 48px', borderBottom: 'var(--hairline)',
-                         display: 'flex', gap: 0, background: 'var(--paper)' }}>
+          <div style={{
+ borderBottom: 'var(--hairline)',
+                         display: 'flex', background: 'var(--paper)'
+}} className="px-7 gap-0" >
             {tabs.map(t => {
               const on = t.id === activeTab;
               return (
                 <button key={t.id} onClick={() => onTab && onTab(t.id)}
-                        style={{ padding: '12px 16px 12px',
-                                  display: 'flex', alignItems: 'center', gap: 8,
+                        style={{
+                                  display: 'flex', alignItems: 'center',
                                   background: 'transparent', border: 'none',
                                   borderBottom: on ? '2px solid var(--ink)' : '2px solid transparent',
                                   marginBottom: -1,
                                   color: on ? 'var(--ink)' : 'var(--ink-3)',
-                                  cursor: 'pointer' }}>
+                                  cursor: 'pointer'
+}} className="gap-2 py-3 px-4" >
                   <span className="kanji" style={{ fontSize: 15,
                                 color: on ? 'var(--accent)' : 'var(--ink-3)' }}>{t.kanji}</span>
                   <span className="display" style={{ fontSize: 13 }}>{t.label}</span>
@@ -169,7 +186,7 @@ function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
         ? "Sensei's own MCP — tools that run against your local index of code, libraries, patterns, and sessions. Any assistant with sensei attached can call them."
         : `${mcp.name} is an MCP server. Sensei lists the tools from its manifest and lets you try each one. Third-party MCPs aren't wrapped — sensei just surfaces them.`}
       chip={
-        <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--ink-3)' }}>
+        <div style={{ display: 'flex', fontSize: 11, color: 'var(--ink-3)' }} className="gap-3" >
           <Stat2 label="tools"   v={mcp.toolCount}/>
           <Stat2 label="actions" v={mcp.actionCount}/>
           <Stat2 label="queries" v={mcp.queryCount}/>
@@ -177,29 +194,37 @@ function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
       }>
 
       {/* MCP chooser — primary axis */}
-      <div style={{ padding: '12px 48px', borderBottom: 'var(--hairline)',
+      <div style={{
+ borderBottom: 'var(--hairline)',
                      background: 'var(--paper-2)',
-                     display: 'flex', gap: 8, alignItems: 'center', overflow: 'auto' }}>
-        <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
-                        textTransform: 'uppercase', marginRight: 8, flexShrink: 0 }}>
+                     display: 'flex', alignItems: 'center', overflow: 'auto'
+}} className="py-3 px-7 gap-2" >
+        <span style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                        textTransform: 'uppercase', flexShrink: 0
+}} className="mr-2" >
           MCP
         </span>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap' }} className="gap-1" >
           {I.mcps.map(m => (
             <MCPPill key={m.id} mcp={m} on={m.id === mcpId}
                      onClick={() => { setMcpId(m.id); setFocusId(null); setKind("all"); setQ(""); }}/>
           ))}
-          <button style={{ padding: '8px 12px', fontSize: 11,
+          <button style={{
+ fontSize: 11,
                             color: 'var(--ink-3)', border: '1px dashed var(--edge)',
-                            borderRadius: 5, background: 'transparent', cursor: 'pointer' }}>
+                            borderRadius: 5, background: 'transparent', cursor: 'pointer'
+}} className="py-2 px-3" >
             + Add MCP
           </button>
         </div>
       </div>
 
       {/* Kind + search strip */}
-      <div style={{ padding: '8px 48px', borderBottom: 'var(--hairline)',
-                     display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{
+ borderBottom: 'var(--hairline)',
+                     display: 'flex', alignItems: 'center'
+}} className="py-2 px-7 gap-2" >
         <KindChip kanji="全" label="All"     on={kind === "all"}
                    count={mcpTools.length}         onClick={() => setKind("all")}/>
         <KindChip kanji="作" label="Actions" on={kind === "action"}
@@ -209,9 +234,10 @@ function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
                    count={mcpTools.filter(t => t.kind === "query").length}
                    onClick={() => setKind("query")} tone="matcha"/>
         <span style={{ flex: 1 }}/>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-                       background: 'var(--paper-2)', borderRadius: 5,
-                       padding: '4px 8px', border: 'var(--hairline)', minWidth: 260 }}>
+        <div style={{
+ display: 'flex', alignItems: 'center',
+                       background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)', minWidth: 260
+}} className="gap-2 py-1 px-2" >
           <span className="kanji" style={{ fontSize: 11, color: 'var(--ink-3)' }}>探</span>
           <input value={q} onChange={e => setQ(e.target.value)}
                  placeholder={`search ${mcp.name.toLowerCase()} tools…`}
@@ -230,12 +256,14 @@ function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
         <aside style={{ overflow: 'auto', borderRight: 'var(--hairline)',
                          background: 'var(--paper-2)' }}>
           {filtered.length === 0 ? (
-            <div style={{ padding: '24px 16px', textAlign: 'center',
-                           fontSize: 13, color: 'var(--ink-4)' }}>
+            <div style={{
+ textAlign: 'center',
+                           fontSize: 13, color: 'var(--ink-4)'
+}} className="py-5 px-4" >
               No tools match.
             </div>
           ) : (
-            <div style={{ padding: '4px 0' }}>
+            <div className="py-1 px-0" >
               {filtered.map(t => (
                 <ToolRowFlat key={t.id} tool={t}
                              active={focus && focus.id === t.id}
@@ -245,7 +273,7 @@ function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
           )}
         </aside>
 
-        <main style={{ overflow: 'auto', padding: '24px 48px 32px' }}>
+        <main style={{ overflow: 'auto' }} className="pt-5 pb-6 px-7" >
           {focus
             ? <ToolDetailFlat tool={focus} mcp={mcp}/>
             : <EmptyFocus/>}
@@ -257,7 +285,7 @@ function InstrumentsPlayground({ activeTab = "playground", onTab = () => {},
 
 function Stat2({ label, v }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'baseline' }} className="gap-1" >
       <span className="mono" style={{ fontSize: 13, color: 'var(--ink)',
                     fontFeatureSettings: '"tnum"' }}>{v}</span>
       <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
@@ -269,12 +297,13 @@ function Stat2({ label, v }) {
 function MCPPill({ mcp, on, onClick }) {
   return (
     <button onClick={onClick}
-            style={{ display: 'inline-flex', gap: 8, alignItems: 'center',
-                      padding: '8px 12px', fontSize: 13, borderRadius: 5,
+            style={{
+ display: 'inline-flex', alignItems: 'center', fontSize: 13, borderRadius: 5,
                       background: on ? 'var(--paper)' : 'transparent',
                       border: on ? '1px solid var(--ink-4)' : '1px solid transparent',
                       color: on ? 'var(--ink)' : 'var(--ink-2)',
-                      cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      cursor: 'pointer', whiteSpace: 'nowrap'
+}} className="gap-2 py-2 px-3" >
       <span className="kanji" style={{ fontSize: 13,
                     color: on ? 'var(--accent)' : 'var(--ink-3)' }}>{mcp.kanji}</span>
       <span>{mcp.name}</span>
@@ -297,11 +326,12 @@ function KindChip({ kanji, label, on, count, onClick, tone }) {
                     tone === "matcha" ? "var(--success)" : "var(--ink-3)";
   return (
     <button onClick={onClick}
-            style={{ display: 'inline-flex', gap: 4, alignItems: 'center',
-                      padding: '4px 12px', fontSize: 11, borderRadius: 4,
+            style={{
+ display: 'inline-flex', alignItems: 'center', fontSize: 11, borderRadius: 4,
                       background: on ? 'var(--ink)' : 'transparent',
                       border: 'none',
-                      color: on ? 'var(--paper)' : 'var(--ink-2)', cursor: 'pointer' }}>
+                      color: on ? 'var(--paper)' : 'var(--ink-2)', cursor: 'pointer'
+}} className="gap-1 py-1 px-3" >
       <span className="kanji" style={{ fontSize: 11,
                     color: on ? 'var(--paper)' : toneColor }}>{kanji}</span>
       <span>{label}</span>
@@ -318,14 +348,15 @@ function ToolRowFlat({ tool, active, onClick }) {
   const kindColor = tool.kind === "action" ? "var(--accent)" : "var(--success)";
   return (
     <button onClick={onClick}
-            style={{ display: 'grid', gridTemplateColumns: '14px 1fr',
-                      gap: 8, padding: '12px 16px',
+            style={{
+ display: 'grid', gridTemplateColumns: '14px 1fr',
                       width: '100%', textAlign: 'left',
                       background: active ? 'var(--paper)' : 'transparent',
                       border: 'none',
                       borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-                      cursor: 'pointer' }}>
-      <span className="kanji" style={{ fontSize: 13, color: kindColor, marginTop: 4 }}>
+                      cursor: 'pointer'
+}} className="gap-2 py-3 px-4" >
+      <span className="kanji mt-1" style={{ fontSize: 13, color: kindColor }}>
         {kindGlyph}
       </span>
       <div>
@@ -334,10 +365,12 @@ function ToolRowFlat({ tool, active, onClick }) {
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {tool.name}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4,
+        <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
                        lineHeight: 1.4,
                        overflow: 'hidden', display: '-webkit-box',
-                       WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                       WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
+}} className="mt-1" >
           {tool.summary}
         </div>
       </div>
@@ -376,39 +409,49 @@ function ToolDetailFlat({ tool, mcp }) {
   return (
     <div>
       {/* Heading */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12,
-                     marginBottom: 16 }}>
+      <div style={{
+ display: 'flex', alignItems: 'flex-start'
+}} className="gap-3 mb-4" >
         <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2 mb-1" >
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               {mcp.kanji} {mcp.name.toLowerCase()}
             </span>
             <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>·</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
-                            padding: '4px 8px', fontSize: 11,
+            <span style={{
+ display: 'inline-flex', alignItems: 'center', fontSize: 11,
                             background: 'var(--paper-2)', border: 'var(--hairline)',
                             borderRadius: 3, color: kindBadge.color,
-                            letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                            letterSpacing: '0.12em', textTransform: 'uppercase'
+}} className="gap-1 py-1 px-2" >
               <span className="kanji" style={{ fontSize: 11 }}>{kindBadge.glyph}</span>
               {kindBadge.label}
             </span>
           </div>
-          <h2 className="mono" style={{ fontSize: 17, color: 'var(--ink)',
-                        fontWeight: 400, margin: 0 }}>
+          <h2 className="mono m-0" style={{
+ fontSize: 17, color: 'var(--ink)',
+                        fontWeight: 400
+}}>
             {tool.name}
           </h2>
-          <p style={{ fontSize: 13, color: 'var(--ink-2)', margin: '8px 0 0',
-                       lineHeight: 1.55, maxWidth: 720 }}>
+          <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                       lineHeight: 1.55, maxWidth: 720
+}} className="mt-2 mb-0" >
             {tool.summary}
           </p>
         </div>
       </div>
 
       {/* Inputs form */}
-      <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                     borderRadius: 7, padding: '16px 16px', marginBottom: 16 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', marginBottom: 8 }}>
+      <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                     borderRadius: 7
+}} className="py-4 px-4 mb-4" >
+        <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-2" >
           Inputs
         </div>
         {(tool.inputs || []).length === 0 && (
@@ -417,7 +460,7 @@ function ToolDetailFlat({ tool, mcp }) {
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)',
-                       gap: '12px 20px' }}>
+                       gap: '12px 16px' }}>
           {(tool.inputs || []).map(i => (
             <InputRow key={i.key} input={i}
                       value={values[i.key]}
@@ -425,13 +468,16 @@ function ToolDetailFlat({ tool, mcp }) {
           ))}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-                       marginTop: 12, paddingTop: 12, borderTop: 'var(--hairline)' }}>
+        <div style={{
+ display: 'flex', alignItems: 'center', borderTop: 'var(--hairline)'
+}} className="gap-2 mt-3 pt-3" >
           <button onClick={runExample}
-                  style={{ padding: '8px 12px', fontSize: 13,
+                  style={{
+ fontSize: 13,
                             background: 'var(--ink)', color: 'var(--paper)',
                             border: 'none', borderRadius: 5,
-                            cursor: 'pointer', letterSpacing: '0.04em' }}>
+                            cursor: 'pointer', letterSpacing: '0.04em'
+}} className="py-2 px-3" >
             {tool.kind === "action" ? "Run →" : "Query →"}
           </button>
           <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
@@ -453,22 +499,27 @@ function ToolDetailFlat({ tool, mcp }) {
 
       {/* Response */}
       <div>
-        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                       textTransform: 'uppercase', marginBottom: 8 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-2" >
           Response {status === "idle" && "· preview"}
         </div>
-        <pre style={{ margin: 0, padding: '12px 16px',
+        <pre style={{
                        fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6,
                        background: 'var(--paper-2)', border: 'var(--hairline)',
                        borderLeft: `2px solid ${kindBadge.color}`,
                        borderRadius: 5, color: 'var(--ink-2)',
                        whiteSpace: 'pre-wrap', overflow: 'auto',
-                       maxHeight: 380, opacity: status === "idle" ? 0.68 : 1 }}>
+                       maxHeight: 380, opacity: status === "idle" ? 0.68 : 1
+}} className="py-3 px-4 m-0" >
 {status === "idle" ? tool.example?.response || "—" : response}
         </pre>
         {status === "idle" && (
-          <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4,
-                         fontStyle: 'italic' }}>
+          <div style={{
+ fontSize: 11, color: 'var(--ink-4)',
+                         fontStyle: 'italic'
+}} className="mt-1" >
             Example response. Click {tool.kind === "action" ? "Run" : "Query"} to invoke.
           </div>
         )}
@@ -479,8 +530,10 @@ function ToolDetailFlat({ tool, mcp }) {
 
 function InputRow({ input, value, onChange }) {
   const labelBlock = (
-    <label style={{ fontSize: 11, color: 'var(--ink-2)',
-                     display: 'flex', alignItems: 'baseline', gap: 4 }}>
+    <label style={{
+ fontSize: 11, color: 'var(--ink-2)',
+                     display: 'flex', alignItems: 'baseline'
+}} className="gap-1" >
       <span>{input.label}</span>
       {input.required && <span style={{ color: 'var(--accent)' }}>*</span>}
       <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
@@ -493,7 +546,7 @@ function InputRow({ input, value, onChange }) {
   if (input.kind === "enum" || input.kind === "since") {
     control = (
       <select value={value ?? ""} onChange={e => onChange(e.target.value)}
-              style={fieldStyle}>
+              style={fieldStyle} className="gap-1" >
         {(input.options || []).map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     );
@@ -513,7 +566,7 @@ function InputRow({ input, value, onChange }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
       {labelBlock}
       {control}
       {input.help && (
@@ -533,8 +586,10 @@ const fieldStyle = {
 
 function EmptyFocus() {
   return (
-    <div style={{ padding: 32, color: 'var(--ink-4)', fontSize: 13,
-                   textAlign: 'center' }}>
+    <div style={{
+ color: 'var(--ink-4)', fontSize: 13,
+                   textAlign: 'center'
+}} className="p-6" >
       Select a tool to inspect it.
     </div>
   );
@@ -563,8 +618,9 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
       tagline="Every instrument call, in order."
       sub="Step through the tools the assistant reached for during a session. Pure request + response — what was asked, what came back, how long it took."
       chip={
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
-                      padding: '4px 8px', border: 'var(--hairline)', borderRadius: 3 }}>
+        <span className="mono py-1 px-2" style={{
+ fontSize: 11, color: 'var(--ink-3)', border: 'var(--hairline)', borderRadius: 3
+}}>
           {sessionIds.length} sessions indexed
         </span>
       }>
@@ -574,9 +630,10 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
         {/* Session picker */}
         <aside style={{ overflow: 'auto', borderRight: 'var(--hairline)',
                          background: 'var(--paper-2)' }}>
-          <div style={{ padding: '12px 12px 8px',
+          <div style={{
                          fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase' }}>
+                         textTransform: 'uppercase'
+}} className="pt-3 pb-2 px-3" >
             sessions
           </div>
           {sessionIds.map(sid => {
@@ -586,13 +643,14 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
             return (
               <button key={sid}
                       onClick={() => { setPickedId(sid); setFocusCall(1); }}
-                      style={{ display: 'block', width: '100%', textAlign: 'left',
-                                padding: '8px 12px',
+                      style={{
+ display: 'block', width: '100%', textAlign: 'left',
                                 background: on ? 'var(--paper)' : 'transparent',
                                 border: 'none',
                                 borderLeft: on ? '2px solid var(--accent)' : '2px solid transparent',
-                                cursor: 'pointer' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                                cursor: 'pointer'
+}} className="py-2 px-3" >
+                <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-1" >
                   <span className="mono" style={{ fontSize: 11,
                                 color: on ? 'var(--ink)' : 'var(--ink-2)' }}>{sid}</span>
                   <span style={{ fontSize: 11,
@@ -601,13 +659,15 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
                     {m.ftr ? "ftr" : `${m.corrections}c`}
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-2)', marginTop: 4,
+                <div style={{
+ fontSize: 11, color: 'var(--ink-2)',
                                lineHeight: 1.4,
                                overflow: 'hidden', display: '-webkit-box',
-                               WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                               WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
+}} className="mt-1" >
                   {sg.title}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
                   {m.project} · {sg.toolCallCount} calls · {m.duration || "–"}
                 </div>
               </button>
@@ -616,14 +676,15 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
         </aside>
 
         {/* Detail */}
-        <main style={{ overflow: 'auto', padding: '24px 32px 32px' }}>
+        <main style={{ overflow: 'auto' }} className="pt-5 pb-6 px-6" >
           {/* Session summary strip */}
-          <div style={{ display: 'grid',
+          <div style={{
+ display: 'grid',
                          gridTemplateColumns: 'auto auto auto auto 1fr',
-                         alignItems: 'baseline', gap: 24, marginBottom: 16,
-                         paddingBottom: 12, borderBottom: 'var(--hairline)' }}>
+                         alignItems: 'baseline', borderBottom: 'var(--hairline)'
+}} className="gap-5 mb-4 pb-3" >
             <div>
-              <div className="display" style={{ fontSize: 15, marginBottom: 4 }}>{sess.title}</div>
+              <div className="display mb-1" style={{ fontSize: 15 }}>{sess.title}</div>
               <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{pickedId}</div>
             </div>
             <StatR label="turns"      value={sess.totalTurns}/>
@@ -634,28 +695,30 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
           </div>
 
           {/* Timeline + detail */}
-          <div style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.4fr', gap: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.4fr' }} className="gap-5" >
             {/* Left: timeline */}
             <div>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                             textTransform: 'uppercase', marginBottom: 8 }}>
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                             textTransform: 'uppercase'
+}} className="mb-2" >
                 timeline ({sess.calls.length})
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-0" >
                 {sess.calls.map(c => {
                   const on = focusCall === c.i;
                   const kindFromName = inferKind(c.tool);
                   const dot = kindFromName === "action" ? "var(--accent)" : "var(--success)";
                   return (
                     <button key={c.i} onClick={() => setFocusCall(c.i)}
-                            style={{ display: 'grid',
-                                      gridTemplateColumns: '22px 38px 1fr auto',
-                                      gap: 8, alignItems: 'center',
-                                      padding: '8px 8px 8px 12px',
+                            style={{
+ display: 'grid',
+                                      gridTemplateColumns: '22px 38px 1fr auto', alignItems: 'center',
                                       textAlign: 'left', borderRadius: 5,
                                       background: on ? 'var(--paper-2)' : 'transparent',
                                       border: on ? '1px solid var(--edge)' : '1px solid transparent',
-                                      cursor: 'pointer' }}>
+                                      cursor: 'pointer'
+}} className="gap-2 py-2 pl-3 pr-2" >
                       <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                                     fontFeatureSettings: '"tnum"' }}>{c.i}</span>
                       <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
@@ -665,7 +728,7 @@ function InstrumentsReplay({ activeTab = "replay", onTab = () => {},
                                     whiteSpace: 'nowrap' }}>
                         {shortName(c.tool)}
                       </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ display: 'flex', alignItems: 'center' }} className="gap-1" >
                         <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot }}/>
                         <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
                                       fontFeatureSettings: '"tnum"' }}>
@@ -693,23 +756,27 @@ function CallDetailSimple({ call }) {
     ? { label: "action", color: "var(--accent)",    glyph: "作" }
     : { label: "query",  color: "var(--success)", glyph: "問" };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                     paddingBottom: 12, borderBottom: 'var(--hairline)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-3" >
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', borderBottom: 'var(--hairline)'
+}} className="pb-3" >
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             call #{call.i} · turn {call.turn} · {call.t}
           </div>
           <div className="mono" style={{ fontSize: 13, color: 'var(--ink)' }}>
             {call.tool}
           </div>
         </div>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
-                        padding: '4px 8px', fontSize: 11,
+        <span style={{
+ display: 'inline-flex', alignItems: 'center', fontSize: 11,
                         background: 'var(--paper-2)', border: 'var(--hairline)',
                         borderRadius: 3, color: kindBadge.color,
-                        letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                        letterSpacing: '0.1em', textTransform: 'uppercase'
+}} className="gap-1 py-1 px-2" >
           <span className="kanji" style={{ fontSize: 11 }}>{kindBadge.glyph}</span>
           {kindBadge.label}
         </span>
@@ -726,8 +793,10 @@ function CallDetailSimple({ call }) {
                        color: 'var(--ink)' }}>
           {call.responseSnippet}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4,
-                       fontStyle: 'italic' }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-4)',
+                       fontStyle: 'italic'
+}} className="mt-1" >
           {kind === "action"
             ? "Action response — describes what the call did."
             : "Query response — the data the assistant received."}
@@ -740,8 +809,10 @@ function CallDetailSimple({ call }) {
 function CallPanelR({ label, children }) {
   return (
     <div>
-      <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                     textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                     textTransform: 'uppercase'
+}} className="mb-1" >{label}</div>
       {children}
     </div>
   );
@@ -761,8 +832,10 @@ function StatR({ label, value, tone }) {
     <div>
       <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-4)',
                      textTransform: 'uppercase' }}>{label}</div>
-      <div className="display" style={{ fontSize: 15, color,
-                    fontFeatureSettings: '"tnum"', marginTop: 4 }}>{value}</div>
+      <div className="display mt-1" style={{
+ fontSize: 15, color,
+                    fontFeatureSettings: '"tnum"'
+}}>{value}</div>
     </div>
   );
 }
@@ -791,21 +864,25 @@ function InstrumentsHealth({ activeTab = "health", onTab = () => {},
       tagline="Which instruments earn their keep — and what to change."
       sub="Aggregated across every session in the window. Usage alone isn't success; the signal is whether the assistant DID something with the response, and whether sessions that touched the tool landed first-try more often than ones that didn't."
       chip={
-        <div style={{ display: 'flex', gap: 4, background: 'var(--paper-2)',
-                       padding: 4, borderRadius: 5, border: 'var(--hairline)' }}>
+        <div style={{
+ display: 'flex', background: 'var(--paper-2)', borderRadius: 5, border: 'var(--hairline)'
+}} className="gap-1 p-1" >
           {["7d", "30d", "90d"].map(w => (
             <button key={w} onClick={() => setWindow(w)}
-                    style={{ padding: '4px 8px', fontSize: 11, borderRadius: 3,
+                    style={{
+ fontSize: 11, borderRadius: 3,
                               background: window_ === w ? 'var(--paper)' : 'transparent',
                               color: window_ === w ? 'var(--ink)' : 'var(--ink-3)',
-                              border: 'none', cursor: 'pointer' }}>{w}</button>
+                              border: 'none', cursor: 'pointer'
+}} className="py-1 px-2" >{w}</button>
           ))}
         </div>
       }>
 
-      <main style={{ overflow: 'auto', padding: '24px 48px 32px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
-                       gap: 12, marginBottom: 24 }}>
+      <main style={{ overflow: 'auto' }} className="pt-5 pb-6 px-7" >
+        <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)'
+}} className="gap-3 mb-5" >
           <Kpi kanji="録" label="sessions analyzed"
                value={I.sessionsAnalyzed} hint={window_}/>
           <Kpi kanji="計" label="total tool calls"
@@ -824,12 +901,14 @@ function InstrumentsHealth({ activeTab = "health", onTab = () => {},
                tone={I.deltas.unusedTools > 0 ? "warn" : "neutral"}/>
         </div>
 
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline',
-                         justifyContent: 'space-between', marginBottom: 12 }}>
-            <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: 0 }}>
+        <div className="mb-5" >
+          <div style={{
+ display: 'flex', alignItems: 'baseline',
+                         justifyContent: 'space-between'
+}} className="mb-3" >
+            <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
               Signals
-              <span style={{ fontSize: 13, color: 'var(--ink-3)', marginLeft: 8 }}>
+              <span style={{ fontSize: 13, color: 'var(--ink-3)' }} className="ml-2" >
                 · what the data suggests you change
               </span>
             </h3>
@@ -837,17 +916,20 @@ function InstrumentsHealth({ activeTab = "health", onTab = () => {},
               {I.signals.length} signals
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-                         gap: 12 }}>
+          <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))'
+}} className="gap-3" >
             {I.signals.map((s, i) => <SignalCard key={i} s={s}/>)}
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr' }} className="gap-5" >
           <div>
-            <div style={{ display: 'flex', alignItems: 'baseline',
-                           justifyContent: 'space-between', marginBottom: 12 }}>
-              <h3 className="display" style={{ fontSize: 15, fontWeight: 400, margin: 0 }}>
+            <div style={{
+ display: 'flex', alignItems: 'baseline',
+                           justifyContent: 'space-between'
+}} className="mb-3" >
+              <h3 className="display m-0" style={{ fontSize: 15, fontWeight: 400 }}>
                 Per-tool usage
               </h3>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
@@ -869,19 +951,23 @@ function InstrumentsHealth({ activeTab = "health", onTab = () => {},
           </div>
 
           <div>
-            <h3 className="display" style={{ fontSize: 15, fontWeight: 400,
-                          margin: '0 0 12px' }}>
+            <h3 className="display mt-0 mb-3" style={{
+ fontSize: 15, fontWeight: 400
+}}>
               By project
             </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
               {I.byProject.map(p => <ProjectUsageRow key={p.project} p={p}/>)}
             </div>
 
-            <div style={{ marginTop: 24, padding: '12px 16px',
+            <div style={{
                            background: 'var(--paper-2)', border: 'var(--hairline)',
-                           borderRadius: 7 }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                             textTransform: 'uppercase', marginBottom: 4 }}>
+                           borderRadius: 7
+}} className="mt-5 py-3 px-4" >
+              <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                             textTransform: 'uppercase'
+}} className="mb-1" >
                 how insights work
               </div>
               <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.6 }}>
@@ -902,20 +988,23 @@ function InstrumentsHealth({ activeTab = "health", onTab = () => {},
 function Kpi({ kanji, label, value, delta, deltaTone, hint, tone }) {
   const valueColor = tone === "warn" ? "var(--warning)" : "var(--ink)";
   return (
-    <div style={{ padding: '12px 12px', background: 'var(--paper-2)',
-                   border: 'var(--hairline)', borderRadius: 7 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+    <div style={{
+ background: 'var(--paper-2)',
+                   border: 'var(--hairline)', borderRadius: 7
+}} className="py-3 px-3" >
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1 mb-1" >
         <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>{kanji}</span>
         <span style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                         textTransform: 'uppercase' }}>{label}</span>
       </div>
       <div className="display" style={{ fontSize: 22, color: valueColor,
                     fontFeatureSettings: '"tnum"' }}>{value}</div>
-      <div style={{ marginTop: 4, fontSize: 11, color: 'var(--ink-3)' }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
         {delta && (
-          <span style={{ color: deltaTone === "good" ? "var(--success)" :
-                                deltaTone === "warn" ? "var(--accent)" : "var(--ink-3)",
-                         marginRight: 4 }}>
+          <span style={{
+ color: deltaTone === "good" ? "var(--success)" :
+                                deltaTone === "warn" ? "var(--accent)" : "var(--ink-3)"
+}} className="mr-1" >
             {delta}
           </span>
         )}
@@ -934,22 +1023,26 @@ function SignalCard({ s }) {
   };
   const p = palette[s.kind] || palette.warn;
   return (
-    <div style={{ padding: '12px 16px', background: p.tintBg,
+    <div style={{
+ background: p.tintBg,
                    border: 'var(--hairline)', borderLeft: `3px solid ${p.border}`,
-                   borderRadius: 5 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+                   borderRadius: 5
+}} className="py-3 px-4" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-1" >
         <span className="kanji" style={{ fontSize: 13, color: p.border }}>{s.kanji}</span>
         <span style={{ fontSize: 11, letterSpacing: '0.16em', color: p.border,
                         textTransform: 'uppercase' }}>{p.label}</span>
       </div>
-      <div className="display" style={{ fontSize: 13, marginBottom: 4 }}>{s.title}</div>
+      <div className="display mb-1" style={{ fontSize: 13 }}>{s.title}</div>
       <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>
         {s.body}
       </div>
-      <div style={{ marginTop: 8, paddingTop: 8, borderTop: 'var(--hairline)' }}>
-        <button style={{ fontSize: 11, color: p.border, padding: 0,
+      <div style={{ borderTop: 'var(--hairline)' }} className="mt-2 pt-2" >
+        <button style={{
+ fontSize: 11, color: p.border,
                           background: 'transparent', border: 'none', cursor: 'pointer',
-                          letterSpacing: '0.04em' }}>
+                          letterSpacing: '0.04em'
+}} className="p-0" >
           {s.action} →
         </button>
       </div>
@@ -959,10 +1052,11 @@ function SignalCard({ s }) {
 
 function ToolRowHeader() {
   return (
-    <div style={{ display: 'grid',
+    <div style={{
+ display: 'grid',
                    gridTemplateColumns: '1.8fr 56px 120px 1.2fr 80px',
-                   gap: 12, padding: '8px 12px',
-                   background: 'var(--paper-2)', borderBottom: 'var(--hairline)' }}>
+                   background: 'var(--paper-2)', borderBottom: 'var(--hairline)'
+}} className="gap-3 py-2 px-3" >
       {["tool", "calls", "trend 14d", "usage split", "ftr Δ"].map(h => (
         <div key={h} style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
                                textTransform: 'uppercase' }}>{h}</div>
@@ -983,16 +1077,17 @@ function ToolUsageRow({ t, focus, onFocus, last }) {
   return (
     <div>
       <button onClick={onFocus}
-              style={{ width: '100%', display: 'grid',
+              style={{
+ width: '100%', display: 'grid',
                         gridTemplateColumns: '1.8fr 56px 120px 1.2fr 80px',
-                        gap: 12, padding: '8px 12px',
                         background: focus ? 'var(--paper-2)' : 'transparent',
                         border: 'none',
                         borderBottom: last && !focus ? 'none' : 'var(--hairline)',
                         textAlign: 'left', cursor: 'pointer',
-                        alignItems: 'center' }}>
+                        alignItems: 'center'
+}} className="gap-3 py-2 px-3" >
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
             <span className="kanji" style={{ fontSize: 11, color: verdict.color }}>
               {verdict.glyph}
             </span>
@@ -1015,11 +1110,14 @@ function ToolUsageRow({ t, focus, onFocus, last }) {
         </div>
       </button>
       {focus && (
-        <div style={{ padding: '8px 12px 12px 48px',
+        <div style={{
                        borderBottom: last ? 'none' : 'var(--hairline)',
-                       background: 'var(--paper-2)' }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
-                         textTransform: 'uppercase', marginBottom: 4 }}>
+                       background: 'var(--paper-2)'
+}} className="pt-2 pb-3 pl-7 pr-3" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-1" >
             verdict · {t.verdict}
           </div>
           <div style={{ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55 }}>
@@ -1054,9 +1152,11 @@ function UsageBar({ used, partial, ignored }) {
         <div style={{ width: `${partial}%`, background: 'var(--warning)' }}/>
         <div style={{ width: `${ignored}%`, background: 'var(--accent)' }}/>
       </div>
-      <div style={{ display: 'flex', gap: 4, marginTop: 4,
+      <div style={{
+ display: 'flex',
                      fontSize: 11, color: 'var(--ink-3)',
-                     fontFeatureSettings: '"tnum"' }}>
+                     fontFeatureSettings: '"tnum"'
+}} className="gap-1 mt-1" >
         <span>{used}% used</span>
         {ignored > 0 && <span style={{ color: 'var(--accent)' }}>{ignored}% ignored</span>}
       </div>
@@ -1066,13 +1166,14 @@ function UsageBar({ used, partial, ignored }) {
 
 function ProjectUsageRow({ p }) {
   return (
-    <div style={{ padding: '8px 12px', background: 'var(--paper-2)',
+    <div style={{
+ background: 'var(--paper-2)',
                    border: 'var(--hairline)', borderRadius: 5,
-                   display: 'grid', gridTemplateColumns: '1fr auto',
-                   gap: 8, alignItems: 'baseline' }}>
+                   display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'baseline'
+}} className="py-2 px-3 gap-2" >
       <div>
         <div style={{ fontSize: 13, color: 'var(--ink)' }}>{p.project}</div>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+        <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
           {p.sessions} sessions · {p.toolCalls} calls · top: {shortName(p.topTool)}
         </div>
       </div>
