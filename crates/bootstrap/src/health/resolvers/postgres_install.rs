@@ -1,16 +1,18 @@
 //! PostgresInstallResolver — resolves ComponentId::Postgres via
-//! `brew install postgresql@17`. Auto-attempts brew; escalates to
-//! NeedsHumanAction only when brew itself fails. The dmg / Postgres.app
-//! case never reaches this resolver — the binary checker passes first
-//! and the orchestrator skips us entirely.
+//! `brew install postgresql@17` AND `brew services start postgresql@17`.
+//! Install alone leaves the server stopped — every downstream checker
+//! (PortChecker for 5432, database setup) would then fail. Both steps are
+//! idempotent: brew skips installed formulas and treats "already started"
+//! as success.
 
 use crate::health::resolver::{Resolver, ResolveOutcome};
-use crate::health::resolvers::brew_helpers::brew_install_to_outcome;
+use crate::health::resolvers::brew_helpers::brew_install_and_start_to_outcome;
 use crate::health::types::ComponentId;
 
 pub struct PostgresInstallResolver;
 
 const FORMULA: &str = "postgresql@17";
+const SERVICE: &str = "postgresql@17";
 const TARGETS: &[ComponentId] = &[ComponentId::Postgres];
 
 impl Resolver for PostgresInstallResolver {
@@ -18,7 +20,7 @@ impl Resolver for PostgresInstallResolver {
     fn resolves(&self) -> &'static [ComponentId] { TARGETS }
 
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
-        brew_install_to_outcome(FORMULA, &[])
+        brew_install_and_start_to_outcome(FORMULA, &[], SERVICE)
     }
 }
 
