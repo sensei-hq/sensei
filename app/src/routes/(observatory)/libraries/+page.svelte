@@ -3,6 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import EmptyState from "$lib/components/EmptyState.svelte";
+    import { Eyebrow } from "$lib/components";
     import type { LibEntry } from "$lib/types.js";
 
     type UsageEntry = { library_name: string; folder: string; version_used: string | null; import_count: number };
@@ -44,9 +45,7 @@
 
 <div class="max-w-[960px] mx-auto px-12 py-12 pb-16">
     <div class="mb-6">
-        <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">
-            Libraries
-        </p>
+        <p class="m-0 mb-2"><Eyebrow>Libraries</Eyebrow></p>
         <h1 class="display text-2xl font-normal m-0">書 Libraries</h1>
     </div>
 
@@ -113,7 +112,7 @@
                     </p>
 
                     <div class="mb-4">
-                        <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">Used in</p>
+                        <p class="m-0 mb-2"><Eyebrow>Used in</Eyebrow></p>
                         <div class="flex flex-wrap gap-1.5">
                             {#each selectedLib.repos as repo}
                                 <span class="inline-block px-2 py-0.5 rounded-full text-xs bg-surface-z3 text-surface-z6 lowercase">{repo}</span>
@@ -125,7 +124,7 @@
                         <p class="text-xs text-surface-z6">Loading usage...</p>
                     {:else if usageData.length > 0}
                         <div>
-                            <p class="text-xs tracking-wide uppercase text-surface-z6 m-0 mb-2">Usage by folder</p>
+                            <p class="m-0 mb-2"><Eyebrow>Usage by folder</Eyebrow></p>
                             {#each usageData as u}
                                 <div class="flex justify-between py-1.5 border-b border-surface-z3 text-sm">
                                     <div>

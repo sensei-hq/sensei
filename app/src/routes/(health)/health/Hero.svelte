@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Component, HealthStatus } from '$lib/health-types.js';
+  import { Kanji } from '$lib/components';
 
   interface Props {
     packageManager: Component;
@@ -32,7 +33,7 @@
       {#if status === 'ok'}
         <span class="text-2xl text-success-z5 leading-none">✓</span>
       {:else if status === 'needs-action'}
-        <span class="kanji text-xl text-primary-z5">?</span>
+        <Kanji char="?" size="xl" />
       {:else}
         <span class="spinner-ring"></span>
       {/if}

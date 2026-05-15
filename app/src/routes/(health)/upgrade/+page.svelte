@@ -11,6 +11,7 @@
     import { goto } from "$app/navigation";
     import { onMount } from "svelte";
     import { hasTauri } from "$lib/bootstrap.js";
+    import { Eyebrow, Kanji } from "$lib/components";
 
     type StepStatus = "pending" | "running" | "done" | "failed";
 
@@ -122,10 +123,8 @@
         <div class="max-w-[640px] w-full mx-auto pb-9">
 
             <div class="flex items-center gap-2.5 mb-3.5">
-                <span class="kanji text-xl text-primary-z5">更</span>
-                <span class="text-xs tracking-wide uppercase text-surface-z6">
-                    upgrade · post-restart
-                </span>
+                <Kanji char="更" size="xl" />
+                <Eyebrow>upgrade · post-restart</Eyebrow>
             </div>
 
             <h1 class="display text-4xl font-light leading-tight mb-3.5 tracking-tight">
@@ -178,7 +177,7 @@
                         {#if isComplete && !anyFailed}
                             <span class="text-2xl text-success-z5 leading-none">✓</span>
                         {:else if isComplete && anyFailed}
-                            <span class="kanji text-xl text-primary-z5">△</span>
+                            <Kanji char="△" size="xl" />
                         {:else}
                             <span class="spinner-ring"></span>
                         {/if}
@@ -208,9 +207,7 @@
 
             <!-- ── Step ledger ─────────────────────────────────────────────── -->
             <div class="mt-6">
-                <div class="text-xs tracking-wide uppercase text-surface-z5 mb-2.5">
-                    upgrade steps
-                </div>
+                <div class="mb-2.5"><Eyebrow>upgrade steps</Eyebrow></div>
                 <div class="flex flex-col">
                     {#each STEPS as step}
                         {@const s = stepState(step.id)}
