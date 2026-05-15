@@ -10,7 +10,7 @@
     <section class="pt-6">
         <header class="flex items-center gap-3.5 mb-3.5">
             <span
-                class="kanji text-2xl text-primary-z5 leading-none w-7.5 text-center shrink-0"
+                class="kanji text-2xl text-primary-z5 leading-none w-8 text-center shrink-0"
                 >名</span
             >
             <div class="flex-1 min-w-0">
@@ -37,7 +37,7 @@
     <section class="pt-6 pb-1 border-t border-surface-z2">
         <header class="flex items-center gap-3.5 mb-3.5">
             <span
-                class="kanji text-2xl text-primary-z5 leading-none w-7.5 text-center shrink-0"
+                class="kanji text-2xl text-primary-z5 leading-none w-8 text-center shrink-0"
                 >共</span
             >
             <div class="flex-1 min-w-0">
@@ -115,7 +115,7 @@
     <section class="pt-6 pb-1 border-t border-surface-z2">
         <header class="flex items-center gap-3.5 mb-3.5">
             <span
-                class="kanji text-2xl text-primary-z5 leading-none w-7.5 text-center shrink-0"
+                class="kanji text-2xl text-primary-z5 leading-none w-8 text-center shrink-0"
                 >師</span
             >
             <div class="flex-1 min-w-0">
@@ -184,7 +184,7 @@
     <section class="pt-6 pb-1 border-t border-surface-z2">
         <header class="flex items-center gap-3.5 mb-3.5">
             <span
-                class="kanji text-2xl text-primary-z5 leading-none w-7.5 text-center shrink-0"
+                class="kanji text-2xl text-primary-z5 leading-none w-8 text-center shrink-0"
                 >守</span
             >
             <div class="flex-1 min-w-0">

@@ -64,7 +64,7 @@
                     </div>
                 </div>
                 <div
-                    class="checkbox w-5.5 h-5.5 rounded-md border-2 border-surface-z3 flex items-center justify-center shrink-0 bg-surface-z1 transition-all duration-fast"
+                    class="checkbox w-6 h-6 rounded-md border-2 border-surface-z3 flex items-center justify-center shrink-0 bg-surface-z1 transition-all duration-fast"
                     class:checked={fam.selected}
                 >
                     {#if fam.selected}<span

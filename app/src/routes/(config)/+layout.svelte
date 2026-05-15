@@ -11,6 +11,7 @@
     import { wizardState } from "$lib/wizard-state.svelte.js";
     import { loadWizardData } from "$lib/setup/loaders.js";
     import { appState } from "$lib/appstate.svelte.js";
+    import { StatusDot } from "$lib/components";
 
     let { children } = $props();
 
@@ -116,9 +117,7 @@
 
             <div class="mt-auto border-t border-surface-z2 pt-3">
                 <div class="flex items-center gap-2.5">
-                    <span
-                        class="w-1.75 h-1.75 rounded-full bg-success-z6 shrink-0"
-                    ></span>
+                    <StatusDot status="ok" />
                     <div class="text-xs text-surface-z7 leading-snug">
                         <div
                             class="tracking-wide uppercase text-xs text-surface-z6"
