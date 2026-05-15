@@ -59,6 +59,26 @@ function webkitNodeReexportFix(): Plugin {
 // Injected at build time so the frontend default is always correct.
 const daemonPort = process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production' ? 7745 : 7744;
 
+// ── VITE_BYPASS_HEALTH safety guard ───────────────────────────────────────
+// VITE_BYPASS_HEALTH=true is meant to be set EXCLUSIVELY by the
+// `bun run dev` script in package.json (frontend-only browser dev mode,
+// where no Tauri sidecar exists to answer the health check). Letting it
+// leak into a Tauri-context build (tauri:dev, tauri:build) would silently
+// disable the health gate and let the observatory render against a daemon
+// that may not be running. Refuse to build in that case.
+const insideTauri =
+  process.env.TAURI_PLATFORM !== undefined
+  || process.env.TAURI_ENV_PLATFORM !== undefined
+  || process.env.TAURI_ENV_DEBUG !== undefined;
+if (process.env.VITE_BYPASS_HEALTH === 'true' && insideTauri) {
+  throw new Error(
+    'VITE_BYPASS_HEALTH=true is set while building inside a Tauri context '
+    + '(TAURI_PLATFORM/TAURI_ENV_PLATFORM/TAURI_ENV_DEBUG are set). The bypass '
+    + 'flag is only valid for `bun run dev` (frontend-only browser mode). '
+    + 'Unset it before running tauri dev/build.',
+  );
+}
+
 // App version: read from package.json so reroute can compare against the
 // `sensei:app-version` localStorage flag (set by the updater pre-restart).
 // Avoids triggering the upgrade flow when the stored version matches the
