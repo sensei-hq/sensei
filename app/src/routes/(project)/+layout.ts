@@ -1,7 +1,10 @@
+import { error } from '@sveltejs/kit';
 import { appState } from '$lib/appstate.svelte.js';
 import type { LayoutLoad } from './$types.js';
 
-/** Project group needs daemon config (active project, etc.). */
 export const load: LayoutLoad = async () => {
-  if (!appState.loaded) await appState.load();
+  if (appState.loaded) return;
+  if (!(await appState.load())) {
+    throw error(503, 'Daemon is unreachable. Refresh to retry the health check.');
+  }
 };

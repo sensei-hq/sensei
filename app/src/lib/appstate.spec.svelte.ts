@@ -251,6 +251,17 @@ describe('AppState', () => {
     expect(storage.get('sensei:setup-complete')).toBe('1');
   });
 
+  it('load returns true on daemon success (L5)', async () => {
+    expect(await state.load()).toBe(true);
+    expect(state.loaded).toBe(true);
+  });
+
+  it('load returns false when daemon unreachable in Tauri mode (L5)', async () => {
+    apiMock.tryGetConfig.mockResolvedValueOnce({ ok: false, error: { status: 0, message: 'Network error' } });
+    expect(await state.load()).toBe(false);
+    expect(state.loaded).toBe(false);
+  });
+
   // ── reset ──────────────────────────────────────────────────
 
   it('reset clears config and loaded', async () => {
@@ -268,5 +279,18 @@ describe('AppState', () => {
     state.loaded = true;
     await state.reset();
     expect(sessionStore.get('sensei:health')).toBe('ready');
+  });
+
+  it('reset preserves sensei:app-version so a staged upgrade is not skipped (L7)', async () => {
+    storage.set('sensei:port', '7745');
+    storage.set('sensei:app-version', '0.2.13');
+    storage.set('sensei:setup-complete', '1');
+    storage.set('something-else', 'x');
+    await state.reset();
+    expect(storage.get('sensei:port')).toBe('7745');           // already preserved
+    expect(storage.get('sensei:app-version')).toBe('0.2.13');  // NEW — must survive reset
+    // non-protected keys can still be cleared
+    expect(storage.has('sensei:setup-complete')).toBe(false);
+    expect(storage.has('something-else')).toBe(false);
   });
 });
