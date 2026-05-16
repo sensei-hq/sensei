@@ -10,11 +10,34 @@
     -moz-osx-font-smoothing: grayscale;
 }
 
+/*
+ * Hardcoded background fallback for the Tauri webview.
+ *
+ * `tauri.conf.json` has `transparent: true` (+ window_vibrancy on macOS),
+ * so the window paints nothing on its own. The body MUST always have an
+ * opaque background or the desktop wallpaper shows through and the page
+ * appears blank.
+ *
+ * Rokkit's `--color-surface-z*` vars only resolve when `<body>` has a
+ * `data-mode` attribute set (light/dark). The js code that sets it
+ * runs onMount, which is AFTER first paint — so a Rokkit-only
+ * background leaves a flash of transparency on every cold start. The
+ * hardcoded `oklch(...)` below matches kami-50 (light mode page bg)
+ * and is overridden by Rokkit for `[data-mode="dark"]`.
+ */
 html,
 body {
     height: 100%;
     overflow: hidden;
     font-family: var(--font-sans);
+    color: oklch(0.220 0.012 50 / 1);          /* sumi-900 — primary ink */
+    background: oklch(0.985 0.005 85 / 1);     /* kami-50 — page bg */
+}
+body[data-mode="dark"] {
+    color: oklch(var(--color-surface-z9) / 1);
+    background: oklch(var(--color-surface-z0) / 1);
+}
+body[data-mode="light"] {
     color: oklch(var(--color-surface-z9) / 1);
     background: oklch(var(--color-surface-z0) / 1);
 }

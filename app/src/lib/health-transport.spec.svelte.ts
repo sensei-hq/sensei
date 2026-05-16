@@ -5,12 +5,6 @@ import type { HealthEvent, HealthPayload } from './health-types.js';
 import { MockTransport, RealTransport } from './health-transport.js';
 import { okPayload, needsActionPayload, remedyFixture } from './health-state.spec.svelte.js';
 
-// Pretend Tauri is present so HealthState's runtime bypass check resolves
-// to "Tauri build" — every test in this file constructs HealthState
-// against a transport mock and expects the production code path.
-const win = (globalThis as unknown as { window?: Record<string, unknown> }).window
-  ?? ((globalThis as unknown as { window: Record<string, unknown> }).window = {});
-win.__TAURI__ = {};
 
 // ── Hoisted Tauri mocks (must precede any import of health-transport) ─────────
 
@@ -297,18 +291,46 @@ describe('RealTransport', () => {
     expect(received[2]).toEqual({ kind: 'report', payload: terminal });
   });
 
-  it('resolve() resolves with the payload of the first kind:"report" event', async () => {
+  // `health::check_and_resolve` emits TWO Report events when the system
+  // needs action: an INITIAL one (with default_remedy) right after the
+  // initial check, then a TERMINAL one after resolve() completes (with
+  // per-component remedies). The transport must wait for the terminal one
+  // — settling on the initial Report would unlisten before the resolve
+  // phase's Component/Remedy events arrive, leaving the UI stuck on
+  // default_remedy.
+  it('resolve() ignores the initial Report and settles on the terminal Report after Phase(Resolving)', async () => {
+    const initial = needsActionPayload();
     const terminal = needsActionPayload();
     const { fire } = rigListen();
 
     invokeMock.mockImplementation(async () => {
-      fire({ kind: 'report', payload: terminal });
+      // Pipeline: check, initial Report, resolve, terminal Report.
+      fire({ kind: 'phase', phase: 'checking' });
+      fire({ kind: 'report', payload: initial });   // initial — must NOT settle
+      fire({ kind: 'phase', phase: 'resolving' });
+      fire({ kind: 'report', payload: terminal });  // terminal — must settle
     });
 
     const t = new RealTransport();
     const result = await t.resolve(okPayload(), () => {});
-
     expect(result).toBe(terminal);
+  });
+
+  it('resolve() settles on the first Report when its status is "ok" (no resolve phase runs)', async () => {
+    // When the initial check is healthy, the library emits a single Report
+    // with status='ok' and never emits Phase(Resolving). The transport
+    // settles on that report directly.
+    const ok = okPayload();
+    const { fire } = rigListen();
+
+    invokeMock.mockImplementation(async () => {
+      fire({ kind: 'phase', phase: 'checking' });
+      fire({ kind: 'report', payload: ok });
+    });
+
+    const t = new RealTransport();
+    const result = await t.resolve(okPayload(), () => {});
+    expect(result).toBe(ok);
   });
 
   it('resolve() ignores events that arrive after the terminal report (settled flag)', async () => {

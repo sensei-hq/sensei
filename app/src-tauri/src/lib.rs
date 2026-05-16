@@ -6,6 +6,32 @@ mod log_collector;
 
 use log_collector::LogCollector;
 use tauri::{Emitter, Manager};
+use tracing_subscriber::EnvFilter;
+
+/// Send `tracing::info!` / `debug!` events from `sensei-bootstrap` to the
+/// same `/tmp/sensei-bootstrap.log` file the `flog::log` helper writes to.
+/// Idempotent — `try_init` skips if a subscriber is already installed.
+fn install_tracing() {
+    use std::fs::OpenOptions;
+    let writer = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/sensei-bootstrap.log")
+        .ok();
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("sensei_bootstrap=info"));
+
+    if let Some(file) = writer {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .with_target(false)
+            .compact()
+            .try_init();
+    }
+}
 
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -38,6 +64,15 @@ pub fn run() {
             commands::update::check_for_update,
         ])
         .setup(|app| {
+            // ── Tracing subscriber → flog ────────────────────────────────
+            // The sidecar links `sensei-bootstrap`, which emits structured
+            // tracing events at every probe / brew shell-out / dbd step.
+            // Without a subscriber installed those events go nowhere; with
+            // this one they get appended to /tmp/sensei-bootstrap.log next
+            // to the explicit flog::log lines. Default level is `info`;
+            // bump via RUST_LOG=sensei_bootstrap=debug when launching.
+            install_tracing();
+
             // ── Startup banner ────────────────────────────────────────────
             let cfg = sensei_bootstrap::SenseiConfig::from_env();
             flog::log(&format!(

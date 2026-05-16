@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [svelte()],
@@ -16,7 +17,11 @@ export default defineConfig({
     conditions: ['browser'],
     alias: {
       '$lib': '/src/lib',
-      '$app': '/src/app',
+      // SvelteKit generates `$app/*` modules at build time. Under Vitest
+      // there's no SvelteKit runtime, so any component or hook that
+      // imports `$app/navigation` fails Vite's resolution. Point it at a
+      // local stub that lives outside src/ — see tests/stubs/app-navigation.ts.
+      '$app/navigation': fileURLToPath(new URL('./tests/stubs/app-navigation.ts', import.meta.url)),
     },
   },
 });

@@ -1,51 +1,23 @@
 /**
  * Sole owner of the `sensei:health` sessionStorage cache.
  *
- * Every read and write of this key in the app goes through this module.
- * Two callers:
- *   - `HealthState.apply()` writes 'ready' on ok, clears otherwise.
- *   - `hooks.client.ts` calls `initHealthCache()` once at module init
- *     (cold start, before any HealthState code can run) and
- *     `isHealthReady()` in reroute. It cannot import HealthState directly
- *     because that module uses `$state` runes, which crash the Svelte
- *     runtime if loaded before the SvelteKit hook entry point.
+ * Pure module — no `$state` runes, no Svelte runtime dependencies — so
+ * `hooks.ts`/`hooks.client.ts` can safely import it at module-init time
+ * (importing a rune module from hooks causes a blank screen).
  *
- * This file deliberately has no Svelte-rune dependencies so hooks.client.ts
- * can use it safely.
- *
- * Bypass semantics:
- *   The health gate is bypassed when the app is NOT running inside Tauri
- *   (= no `window.__TAURI__`). Tauri injects its global before any user
- *   script runs (`withGlobalTauri: true` in tauri.conf.json), so by the
- *   time `initHealthCache()` is called the global is reliably present in
- *   Tauri builds and reliably absent in plain `vite dev`. No env vars,
- *   no build-time constants, no leak surface.
+ * Lifecycle:
+ *   - `initHealthCache()` runs once at hook module-init: clears the key
+ *     so a stale 'ready' from a previous session (or surviving a tauri
+ *     hot reload) cannot bypass the gate on a fresh launch.
+ *   - `HealthState.apply()` writes 'ready' via `setHealthReady()` when
+ *     status becomes ok; clears via `clearHealthCache()` otherwise.
+ *   - Reroute consults `isHealthReady()` to decide whether the gate is
+ *     open. Anything not on the exempt list and not ready goes to
+ *     `/health`.
  */
 
 const KEY = 'sensei:health';
 const VALUE_READY = 'ready';
-
-/** True when the app is running inside a Tauri webview.
- *
- *  We check `window.__TAURI_INTERNALS__` — the IPC bridge installed by
- *  Tauri's webview preload script that runs BEFORE any HTML script tag.
- *  `window.__TAURI__` (from `withGlobalTauri: true`) is loaded later via
- *  the JS API and may not be present yet when hooks.client.ts module-init
- *  fires — which is the bug we hit on cold start.
- *
- *  Belt-and-suspenders: check `__TAURI__` too in case future Tauri
- *  versions reshuffle the globals. Either signal counts as "in Tauri". */
-function hasTauriRuntime(): boolean {
-  if (typeof window === 'undefined') return false;
-  const w = window as { __TAURI__?: unknown; __TAURI_INTERNALS__?: unknown };
-  return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__;
-}
-
-/** True when the health check should be bypassed (no Tauri sidecar to
- *  answer it, so there is nothing to check). */
-export function isHealthBypass(): boolean {
-  return !hasTauriRuntime();
-}
 
 /** Reroute consults this to decide whether to redirect to /health. */
 export function isHealthReady(): boolean {
@@ -65,17 +37,9 @@ export function clearHealthCache(): void {
   sessionStorage.removeItem(KEY);
 }
 
-/**
- * Cold-start initializer. Runs once from hooks.client.ts at module init,
- * before any reroute or HealthState code.
- *
- * - No Tauri (browser dev / static preview): pre-populate 'ready' so the
- *   reroute hook passes without a /health hop.
- * - Tauri: clear any stale 'ready' that survived a hot reload in
- *   tauri:dev. (WKWebView clears sessionStorage on app exit but not
- *   across hot reloads.)
- */
+/** Cold-start initializer. Always clears the key — fresh launches must
+ *  re-prove health, and a stale 'ready' that survived a Tauri hot
+ *  reload must not bypass the new check. */
 export function initHealthCache(): void {
-  if (isHealthBypass()) setHealthReady();
-  else clearHealthCache();
+  clearHealthCache();
 }

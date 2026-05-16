@@ -739,8 +739,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.2.0"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.2.0#913aa4b9230c53f951a15d72e5d48527268033db"
+version = "0.4.1"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.4.1#6e99965ea5c0ffeb9efcfbb4496c48be300e60ea"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2204,6 +2204,7 @@ version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -2250,6 +2251,15 @@ dependencies = [
  "log",
  "tendril",
  "web_atoms",
+]
+
+[[package]]
+name = "matchers"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
+dependencies = [
+ "regex-automata",
 ]
 
 [[package]]
@@ -3680,6 +3690,7 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3698,6 +3709,8 @@ dependencies = [
  "tauri-plugin-playwright",
  "tauri-plugin-shell",
  "tempfile",
+ "tracing",
+ "tracing-subscriber",
  "ureq",
  "window-vibrancy 0.5.3",
 ]
@@ -3904,6 +3917,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "sharded-slab"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
+dependencies = [
+ "lazy_static",
 ]
 
 [[package]]
@@ -4849,6 +4871,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "thread_local"
+version = "1.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "time"
 version = "0.3.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5161,6 +5192,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "tracing-subscriber"
+version = "0.3.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
+dependencies = [
+ "matchers",
+ "once_cell",
+ "regex-automata",
+ "sharded-slab",
+ "thread_local",
+ "tracing",
+ "tracing-core",
 ]
 
 [[package]]

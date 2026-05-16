@@ -33,6 +33,26 @@
       case 'pending':    return 'text-surface-z6';
     }
   };
+
+  /** Per-component verb for the `installing` status. The library uses a
+   *  single value, but the resolver behind it does different things per
+   *  component — service-style deps (postgres/ollama/daemon) are *started*
+   *  via brew services, not installed from scratch; the database is *set up*
+   *  via dbd. Only sensei is genuinely a brew install. */
+  const installingVerb = (id: string): string => {
+    switch (id) {
+      case 'postgres':
+      case 'ollama':
+      case 'daemon':   return 'starting';
+      case 'database': return 'setting up';
+      default:         return 'installing';
+    }
+  };
+
+  const badgeText = (c: Component): string => {
+    if (c.status === 'installing') return installingVerb(c.id);
+    return c.status;
+  };
 </script>
 
 <section class="mt-6">
@@ -52,7 +72,7 @@
           {/if}
         </div>
         <span data-badge class="mono text-xs tracking-wide uppercase {badgeClass(c.status)}">
-          {c.status}
+          {badgeText(c)}
         </span>
       </li>
     {/each}
