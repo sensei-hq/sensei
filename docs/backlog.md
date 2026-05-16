@@ -13,6 +13,48 @@ One screen at a time. Each screen: read mockup → state class → component →
 - **Health remedy: text not selectable / copyable.** The remedy script `<pre>` block and the "what this resolves" detail rows in the health page need to support manual selection + copy (cmd-c). Today only the "Copy script" button works; users can't copy partial text or the message itself. Likely a Tauri webview `user-select: none` somewhere in the global CSS. Audit other human-action UI for the same restriction.
 - **Setup pages — scan stage had problems last time.** When working through setup pages step by step, expect similar resolve/state bugs to surface; main page is assistants, then scan.
 
+## Audit: bootstrap resolve-flow refactor (commit 481806fb)
+
+A long session of fixes landed across `crates/bootstrap/src/health/`, the
+Tauri sidecar, CLI, and frontend on 2026-05-16. Walk back through the
+diff and check for places where the cumulative changes added maintenance
+weight beyond what the bug fix needed. Specific things to look at:
+
+- **provider.rs::resolve()** — three distinct remedy-handling code paths
+  now (push during walk, drop-stale before consolidation, retroactive
+  fallback after final check). Could the three collapse into one
+  post-pass that derives remedies from `failed_in_terminal` + the
+  dependency graph? The during-walk Remedy events are still needed for
+  live UI updates, but the bookkeeping for `applied_remedies` may be
+  redundant if we just rebuild it at the end.
+- **ServiceCascadeSpec** has two consumers (postgres, ollama). If we
+  don't add a third within the next few weeks, this abstraction is
+  pulling its weight only marginally — consider inlining.
+- **`installing_verb()` mapping** is duplicated in Rust (CLI doctor) and
+  Svelte (Ledger). When we add another service-style dep, both lists
+  need updating. Either move to a single source (e.g. bootstrap library
+  exposes it) or accept the duplication explicitly.
+- **Test mocks in `provider.rs`** — `ResolveMock`, `MultiResolverMock`,
+  `TransientMock`, `Mock`, `SeqChecker` were added incrementally for
+  each new scenario. Some could be unified.
+- **Hand-rolled ANSI in `crates/cli/src/doctor.rs`** — colour helpers
+  (`green()`, `red()`, etc.) could be replaced with the `owo-colors` or
+  `nu-ansi-term` crate to centralize palette + handle no-TTY contexts.
+- **Tracing instrumentation density** — quick scan to confirm every
+  `tracing::info!`/`debug!` is genuinely useful in `RUST_LOG=info`
+  output, not noise.
+- **Two tracing subscribers** (one in CLI doctor → stdout, one in Tauri
+  sidecar → /tmp/sensei-bootstrap.log). Both pull `tracing-subscriber`.
+  Confirm the daemon (`senseid`) doesn't need its own — if it does,
+  consider a shared init function in bootstrap.
+- **Dead code / unused exports** — after `health::check_and_resolve()`
+  was added, are `health::check` and `health::resolve` still needed as
+  separate public exports? The daemon's `/health` endpoint uses
+  `check()` but no one calls `resolve()` directly anymore.
+- **Stale integration test** — `app/src-tauri/tests/bootstrap_integration.rs`
+  hasn't compiled since the `5e40ffd1` refactor and is invoked by
+  `make test-app-sidecar`. Delete or rewrite.
+
 ## 1. Bootstrap (6 gates)
 
 **Mockup:** [mockups/lib/bootstrap.jsx](./mockups/lib/bootstrap.jsx)
