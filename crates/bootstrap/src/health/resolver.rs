@@ -25,6 +25,13 @@ pub trait Resolver: Send + Sync {
     /// failed. Resolver decides whether to batch all targets in one shell-out
     /// or iterate.
     fn resolve(&self, targets: &[ComponentId]) -> ResolveOutcome;
+
+    /// Remedy to surface when `resolve()` returned `Resolved` but the
+    /// orchestrator's post-resolve re-check still reports the target(s) as
+    /// Failed. Lets each resolver own the manual fallback for its own
+    /// component (e.g. `brew link --force postgresql@17` when the install
+    /// succeeded but the keg-only formula isn't on PATH).
+    fn fallback_remedy(&self) -> Remedy;
 }
 
 #[cfg(test)]
@@ -37,6 +44,9 @@ mod tests {
         fn id(&self) -> &'static str { "noop" }
         fn resolves(&self) -> &'static [ComponentId] { &[ComponentId::Daemon] }
         fn resolve(&self, _: &[ComponentId]) -> ResolveOutcome { ResolveOutcome::Resolved }
+        fn fallback_remedy(&self) -> Remedy {
+            Remedy { message: "fallback".into(), script: "noop".into(), url: None }
+        }
     }
 
     #[test]

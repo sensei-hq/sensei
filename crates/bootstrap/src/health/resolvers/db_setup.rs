@@ -25,18 +25,18 @@ impl Resolver for DatabaseResolver {
             Err(e) => ResolveOutcome::NeedsHumanAction(db_failed_remedy(&self.db_name, e)),
         }
     }
+
+    fn fallback_remedy(&self) -> Remedy {
+        db_failed_remedy(&self.db_name, "post-resolve check still failing".to_string())
+    }
 }
 
 fn db_failed_remedy(db_name: &str, detail: String) -> Remedy {
     Remedy {
         message: format!(
-            "Couldn't set up the database automatically ({detail}). Make sure PostgreSQL is running, then create the database and the pgvector extension manually."
+            "Couldn't set up the database automatically ({detail}). Make sure PostgreSQL is running, then create the database manually. The pgvector extension and schema are deployed by `dbd` on the next run."
         ),
-        // Minimum manual fallback. Schema deploy still needs dbd-core; the
-        // user is referred to the docs for that.
-        script: format!(
-            "createdb {db_name} && psql -d {db_name} -c 'CREATE EXTENSION IF NOT EXISTS vector'"
-        ),
+        script: format!("createdb {db_name}"),
         url: None,
     }
 }
@@ -60,13 +60,20 @@ mod tests {
     #[test]
     fn failed_remedy_uses_db_name_in_script() {
         let r = db_failed_remedy("sensei_dev", "bang".to_string());
-        assert!(r.script.contains("sensei_dev"));
-        assert!(r.script.contains("CREATE EXTENSION"));
+        assert_eq!(r.script, "createdb sensei_dev");
         assert!(r.message.contains("bang"));
+        assert!(r.message.contains("dbd"),
+            "remedy message should explain that dbd handles the extension + schema");
     }
 
     #[test]
     fn app_version_matches_cargo_pkg_version() {
         assert_eq!(APP_VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn fallback_remedy_carries_db_name_and_manual_script() {
+        let r = DatabaseResolver { db_name: "sensei_dev".to_string() }.fallback_remedy();
+        assert_eq!(r.script, "createdb sensei_dev");
     }
 }

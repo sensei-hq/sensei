@@ -20,26 +20,44 @@ impl BinaryChecker {
 
 impl Checker for BinaryChecker {
     fn check(&self) -> CheckOutcome {
-        if crate::util::which_binary(self.bin).is_none() {
-            return CheckOutcome::failed(format!("{} not found on PATH", self.bin));
+        tracing::debug!(check = "binary", binary = self.bin, "looking up on PATH");
+        match crate::util::which_binary(self.bin) {
+            None => {
+                tracing::info!(check = "binary", binary = self.bin, result = "not_found", "binary not on PATH");
+                return CheckOutcome::failed(format!("{} not found on PATH", self.bin));
+            }
+            Some(path) => {
+                tracing::debug!(check = "binary", binary = self.bin, path = %path, "located");
+            }
         }
         match self.version_arg {
-            None => CheckOutcome::ready_no_version(),
+            None => {
+                tracing::info!(check = "binary", binary = self.bin, result = "ready", "ready (no version probe)");
+                CheckOutcome::ready_no_version()
+            }
             Some(arg) => {
+                tracing::debug!(check = "binary", binary = self.bin, arg = arg, "probing version");
                 let mut cmd = Command::new(self.bin);
                 cmd.arg(arg);
                 match output_with_timeout(cmd, DEFAULT_CHECKER_TIMEOUT) {
                     TimedOutcome::Done(out) if out.status.success() => {
                         let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
                         let v = if raw.is_empty() { "unknown".to_string() } else { raw };
+                        tracing::info!(check = "binary", binary = self.bin, result = "ready", version = %v, "ready");
                         CheckOutcome::ready(v)
                     }
-                    TimedOutcome::Done(out) =>
-                        CheckOutcome::failed(format!("{} {} exited {}", self.bin, arg, out.status)),
-                    TimedOutcome::TimedOut =>
-                        CheckOutcome::failed(format!("{} {} timed out after {}s", self.bin, arg, DEFAULT_CHECKER_TIMEOUT.as_secs())),
-                    TimedOutcome::Failed(e) =>
-                        CheckOutcome::failed(format!("{}: {e}", self.bin)),
+                    TimedOutcome::Done(out) => {
+                        tracing::warn!(check = "binary", binary = self.bin, exit = %out.status, "version probe exited non-zero");
+                        CheckOutcome::failed(format!("{} {} exited {}", self.bin, arg, out.status))
+                    }
+                    TimedOutcome::TimedOut => {
+                        tracing::warn!(check = "binary", binary = self.bin, "version probe timed out");
+                        CheckOutcome::failed(format!("{} {} timed out after {}s", self.bin, arg, DEFAULT_CHECKER_TIMEOUT.as_secs()))
+                    }
+                    TimedOutcome::Failed(e) => {
+                        tracing::warn!(check = "binary", binary = self.bin, error = %e, "spawn failed");
+                        CheckOutcome::failed(format!("{}: {e}", self.bin))
+                    }
                 }
             }
         }

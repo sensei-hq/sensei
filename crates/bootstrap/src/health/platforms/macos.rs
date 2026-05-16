@@ -15,6 +15,11 @@
 use crate::config::{POSTGRES_PORT, OLLAMA_PORT, SenseiConfig};
 use crate::health::checker::Checker;
 use crate::health::checkers::{BinaryChecker, PortChecker, AndChecker, PostgresDatabaseChecker};
+// Note: Ollama deliberately uses *only* PortChecker (not AndChecker over the
+// CLI binary too). Sensei talks to Ollama via HTTP on `OLLAMA_PORT`; the
+// `ollama` CLI on PATH is incidental. This matters when Ollama is installed
+// via the `ollama-app` cask, which runs the server via launchd but doesn't
+// put a CLI shim on PATH — the AndChecker variant would fail spuriously.
 use crate::health::provider::PlatformProvider;
 use crate::health::resolver::Resolver;
 use crate::health::resolvers::{
@@ -51,10 +56,9 @@ impl PlatformProvider for MacOSProvider {
                 Box::new(BinaryChecker::with_version("pg_isready", "--version")),
                 Box::new(PortChecker::with_timeout("postgres", POSTGRES_PORT, POSTGRES_PORT_TIMEOUT)),
             ])),
-            ComponentId::Ollama => Box::new(AndChecker(vec![
-                Box::new(BinaryChecker::with_version("ollama", "--version")),
-                Box::new(PortChecker::with_timeout("ollama", OLLAMA_PORT, OLLAMA_PORT_TIMEOUT)),
-            ])),
+            ComponentId::Ollama => Box::new(
+                PortChecker::with_timeout("ollama", OLLAMA_PORT, OLLAMA_PORT_TIMEOUT),
+            ),
             ComponentId::Sensei => {
                 let cfg = SenseiConfig::from_env();
                 Box::new(AndChecker(vec![

@@ -16,7 +16,7 @@
 use super::types::*;
 use super::checker::Checker;
 use super::resolver::{Resolver, ResolveOutcome};
-use super::graph::dependency_specs;
+use super::graph::{dependency_specs, spec_for};
 use super::ids::{component_id_str, package_manager_id_str, parse_component_id};
 
 pub trait PlatformProvider: Send + Sync {
@@ -87,19 +87,56 @@ pub trait PlatformProvider: Send + Sync {
     fn resolve(&self, current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
         emit(HealthEvent::Phase { phase: HealthStatus::Resolving });
 
-        let failed: Vec<ComponentId> = current.components.iter()
+        // `now_failing` is the live set of components whose state we have not
+        // yet seen recover during this pass. We start it from the initial
+        // check's failed list, then remove components as resolvers verify
+        // they're back. Downstream resolvers (Database, Daemon) use it as a
+        // dependency gate: a resolver whose target's `depends_on` includes
+        // anything in `now_failing` is skipped — its run would just produce
+        // a noise remedy since the real fix is the upstream that's still
+        // broken. Brew is the bottleneck either way (no parallel installs),
+        // so this just trims the wasted attempts.
+        let mut now_failing: Vec<ComponentId> = current.components.iter()
             .filter(|c| c.status == ComponentStatus::Failed)
             .filter_map(|c| parse_component_id(&c.id))
             .collect();
+        tracing::info!(failed = ?now_failing, "resolve phase: walking resolvers");
 
         let resolvers = self.resolvers();
-        let mut applied_remedy: Option<Remedy> = None;
+        // Accumulate every per-component remedy that gets surfaced during
+        // the resolve walk. At terminal time these get consolidated into
+        // a single Remedy whose script concatenates each component's fix.
+        // See `consolidate_remedies` below.
+        let mut applied_remedies: Vec<(ComponentId, Remedy)> = Vec::new();
 
         for resolver in &resolvers {
             let targets: Vec<ComponentId> = resolver.resolves().iter().copied()
-                .filter(|id| failed.contains(id))
+                .filter(|id| now_failing.contains(id))
                 .collect();
-            if targets.is_empty() { continue; }
+            if targets.is_empty() {
+                tracing::debug!(resolver = resolver.id(), "skipping (no failed targets)");
+                continue;
+            }
+
+            // Dependency gate: if any target depends on a component that's
+            // still failing in this pass, defer. The next /resolve
+            // invocation (after the user runs the upstream remedy) will
+            // pick it up.
+            let unmet_deps: Vec<ComponentId> = targets.iter()
+                .flat_map(|tid| spec_for(*tid).depends_on.iter().copied())
+                .filter(|dep| now_failing.contains(dep))
+                .collect();
+            if !unmet_deps.is_empty() {
+                tracing::info!(
+                    resolver = resolver.id(),
+                    targets = ?targets,
+                    unmet_deps = ?unmet_deps,
+                    "skipping: dependencies still failing — retry after upstream is resolved"
+                );
+                continue;
+            }
+
+            tracing::info!(resolver = resolver.id(), targets = ?targets, "running resolver");
 
             // Mark each target as Installing so the UI ledger animates.
             for tid in &targets {
@@ -114,8 +151,33 @@ pub trait PlatformProvider: Send + Sync {
 
             match resolver.resolve(&targets) {
                 ResolveOutcome::Resolved => {
+                    tracing::info!(resolver = resolver.id(), "resolver returned Resolved — re-checking targets");
+                    // Re-check each target so we don't trust a "Resolved"
+                    // verdict that brew/etc handed back without confirming the
+                    // component is actually up. If any target is still
+                    // Failed, treat this as if the resolver had returned
+                    // NeedsHumanAction with its own fallback_remedy — that
+                    // way the UI shows the per-component fix rather than
+                    // the generic `default_remedy()` that `check()` would
+                    // otherwise re-apply in the terminal payload.
+                    let mut first_still_failed: Option<ComponentId> = None;
                     for tid in &targets {
                         let outcome = self.checker_for(*tid).check();
+                        if outcome.status == ComponentStatus::Failed {
+                            if first_still_failed.is_none() { first_still_failed = Some(*tid); }
+                        } else {
+                            // Target recovered — drop it from now_failing
+                            // so dependents can clear their dependency gate
+                            // later in this same pass.
+                            now_failing.retain(|id| id != tid);
+                        }
+                        tracing::info!(
+                            resolver = resolver.id(),
+                            component = component_id_str(*tid),
+                            recheck_status = ?outcome.status,
+                            detail = ?outcome.detail,
+                            "post-resolve re-check verdict"
+                        );
                         emit(HealthEvent::Component {
                             id: component_id_str(*tid).to_string(),
                             patch: ComponentPatch {
@@ -126,9 +188,19 @@ pub trait PlatformProvider: Send + Sync {
                             },
                         });
                     }
+                    if let Some(attributed) = first_still_failed {
+                        let remedy = resolver.fallback_remedy();
+                        tracing::warn!(resolver = resolver.id(), remedy_script = %remedy.script, "post-resolve re-check still failed — surfacing fallback_remedy");
+                        applied_remedies.push((attributed, remedy.clone()));
+                        emit(HealthEvent::Remedy { remedy });
+                    } else {
+                        tracing::info!(resolver = resolver.id(), "post-resolve re-check ok");
+                    }
                 }
                 ResolveOutcome::NeedsHumanAction(remedy) => {
-                    applied_remedy.get_or_insert(remedy.clone());
+                    tracing::warn!(resolver = resolver.id(), remedy_script = %remedy.script, "resolver returned NeedsHumanAction");
+                    let attributed = targets[0];
+                    applied_remedies.push((attributed, remedy.clone()));
                     emit(HealthEvent::Remedy { remedy });
                 }
             }
@@ -137,9 +209,58 @@ pub trait PlatformProvider: Send + Sync {
         // Final re-check builds the terminal payload.
         let mut terminal = self.check(app_version);
         if terminal.status == HealthStatus::NeedsAction {
-            // Prefer the resolver-supplied remedy over the generic default.
-            if let Some(r) = applied_remedy {
-                terminal.remedy = Some(r);
+            let failed_in_terminal: Vec<ComponentId> = terminal.components.iter()
+                .filter(|c| c.status == ComponentStatus::Failed)
+                .filter_map(|c| parse_component_id(&c.id))
+                .collect();
+
+            // Drop stale remedies: a resolver may have pushed a remedy
+            // during the walk (e.g. `NeedsHumanAction` from a partial
+            // failure), but by the final check the component recovered
+            // independently — its remedy is no longer relevant and would
+            // be confusing in the consolidated message. Keep only
+            // remedies for components STILL failing now.
+            applied_remedies.retain(|(id, _)| failed_in_terminal.contains(id));
+
+            // Retroactive fallback: any component still failing in the
+            // terminal that didn't already get a remedy during the walk
+            // — likely a "transient-success" case where the post-resolve
+            // re-check briefly saw the port open but it had closed again
+            // by the final check — gets its resolver's fallback_remedy()
+            // attached now. Without this, the orchestrator would fall
+            // back to the generic `default_remedy()` and the user would
+            // see "install sensei" instead of the per-component fix.
+            //
+            // Respects the dependency graph: if a component's deps are
+            // ALSO failing in the terminal, we skip the retroactive remedy
+            // — the upstream's remedy is the real fix; surfacing a
+            // downstream remedy would be the noise we already explicitly
+            // suppress during the walk via the dependency gate.
+            for tid in &failed_in_terminal {
+                if applied_remedies.iter().any(|(id, _)| id == tid) { continue; }
+                // Skip if a dependency is also failing — upstream is the real fix.
+                if spec_for(*tid).depends_on.iter().any(|dep| failed_in_terminal.contains(dep)) {
+                    tracing::debug!(component = component_id_str(*tid),
+                        "skipping retroactive fallback: upstream dep also failing");
+                    continue;
+                }
+                if let Some(resolver) = resolvers.iter().find(|r| r.resolves().contains(tid)) {
+                    let remedy = resolver.fallback_remedy();
+                    tracing::warn!(
+                        component = component_id_str(*tid),
+                        resolver = resolver.id(),
+                        remedy_script = %remedy.script,
+                        "still failed in terminal but no remedy was captured during the walk — attaching fallback_remedy retroactively (transient success?)"
+                    );
+                    applied_remedies.push((*tid, remedy.clone()));
+                    emit(HealthEvent::Remedy { remedy });
+                }
+            }
+            // Prefer the resolver-supplied remedies over the generic
+            // default. If multiple resolvers surfaced remedies, build a
+            // consolidated script so the user can run a single block.
+            if !applied_remedies.is_empty() {
+                terminal.remedy = Some(consolidate_remedies(&applied_remedies));
             }
         } else {
             terminal.remedy = None;
@@ -147,6 +268,37 @@ pub trait PlatformProvider: Send + Sync {
         terminal.validate().expect("PlatformProvider::resolve produced an invalid terminal payload");
         emit(HealthEvent::Report { payload: terminal.clone() });
         terminal
+    }
+}
+
+/// Merge per-component remedies into a single Remedy. For a single entry,
+/// the input remedy is returned verbatim (no consolidation cruft). For
+/// multiple entries, the script joins each entry's script with newlines —
+/// so each line runs independently in a shell — and the message lists
+/// each component's reason as a bullet.
+///
+/// Newline-joined (not `&&`-chained) on purpose: even if one component's
+/// fix fails, the others still attempt to run. This matches the user's
+/// expectation that a multi-component remedy is a "best-effort recovery
+/// batch" rather than an all-or-nothing transaction.
+pub(crate) fn consolidate_remedies(remedies: &[(ComponentId, Remedy)]) -> Remedy {
+    if remedies.len() == 1 {
+        return remedies[0].1.clone();
+    }
+    let bullets: Vec<String> = remedies.iter()
+        .map(|(id, r)| format!("• {}: {}", component_id_str(*id), r.message))
+        .collect();
+    let scripts: Vec<&str> = remedies.iter()
+        .map(|(_, r)| r.script.as_str())
+        .collect();
+    Remedy {
+        message: format!(
+            "{} components need attention:\n\n{}",
+            remedies.len(),
+            bullets.join("\n"),
+        ),
+        script: scripts.join("\n"),
+        url: None,
     }
 }
 
@@ -186,10 +338,11 @@ mod tests {
     }
 
     struct StubResolver {
-        id:      &'static str,
-        targets: &'static [ComponentId],
-        outcome: ResolveOutcome,
-        calls:   Arc<Mutex<Vec<Vec<ComponentId>>>>,
+        id:               &'static str,
+        targets:          &'static [ComponentId],
+        outcome:          ResolveOutcome,
+        fallback:         Remedy,
+        calls:            Arc<Mutex<Vec<Vec<ComponentId>>>>,
     }
     impl Resolver for StubResolver {
         fn id(&self) -> &'static str { self.id }
@@ -198,6 +351,11 @@ mod tests {
             self.calls.lock().unwrap().push(t.to_vec());
             self.outcome.clone()
         }
+        fn fallback_remedy(&self) -> Remedy { self.fallback.clone() }
+    }
+
+    fn test_fallback() -> Remedy {
+        Remedy { message: "stub fallback".into(), script: "stub script".into(), url: None }
     }
 
     /// Simple provider whose checkers return preconfigured outcomes.
@@ -236,6 +394,7 @@ mod tests {
         resolver_id:       &'static str,
         resolver_targets:  &'static [ComponentId],
         resolver_outcome:  ResolveOutcome,
+        resolver_fallback: Remedy,
         calls:             Arc<Mutex<Vec<Vec<ComponentId>>>>,
     }
     impl PlatformProvider for ResolveMock {
@@ -254,6 +413,7 @@ mod tests {
                 id: self.resolver_id,
                 targets: self.resolver_targets,
                 outcome: self.resolver_outcome.clone(),
+                fallback: self.resolver_fallback.clone(),
                 calls: self.calls.clone(),
             })]
         }
@@ -362,6 +522,7 @@ mod tests {
             resolver_id: "brew_bundle",
             resolver_targets: TARGETS,
             resolver_outcome: ResolveOutcome::Resolved,
+            resolver_fallback: test_fallback(),
             calls: calls.clone(),
         };
         let current = p.check("0.0.0-test");
@@ -401,6 +562,7 @@ mod tests {
             resolver_id: "brew_bundle",
             resolver_targets: &[ComponentId::Postgres],
             resolver_outcome: ResolveOutcome::Resolved,
+            resolver_fallback: test_fallback(),
             calls: Arc::new(Mutex::new(Vec::new())),
         };
         let current = p.check("0.0.0-test");
@@ -423,6 +585,7 @@ mod tests {
                 script: "brew install postgres".into(),
                 url: None,
             }),
+            resolver_fallback: test_fallback(),
             calls: Arc::new(Mutex::new(Vec::new())),
         };
         let current = p.check("0.0.0-test");
@@ -444,6 +607,7 @@ mod tests {
             resolver_id: "daemon_start",
             resolver_targets: &[ComponentId::Daemon],
             resolver_outcome: ResolveOutcome::Resolved,
+            resolver_fallback: test_fallback(),
             calls: Arc::new(Mutex::new(Vec::new())),
         };
         let current = p.check("0.0.0-test");
@@ -454,5 +618,488 @@ mod tests {
         let terminal = p.resolve(&current, "0.0.0-test", &|_| {});
         terminal.validate().expect("terminal must validate");
         assert_eq!(terminal.status, HealthStatus::Ok);
+    }
+
+    /// Regression: when a resolver returns `Resolved` but the post-resolve
+    /// re-check still reports the target as `Failed` (e.g. brew install
+    /// succeeded but `postgresql@17` is keg-only, or `brew services start
+    /// ollama` raced the port-check), the orchestrator must surface the
+    /// resolver's `fallback_remedy()` in the terminal payload instead of
+    /// silently re-using `default_remedy()` from the final `check()`.
+    #[test]
+    fn resolve_resolved_but_recheck_failed_uses_resolver_fallback_remedy() {
+        let mut outcomes = ready_outcomes();
+        outcomes.insert(ComponentId::Ollama, CheckOutcome::failed("ollama not on PATH"));
+        let p = ResolveMock {
+            pm_outcome: CheckOutcome::ready("4.0"),
+            outcomes: Mutex::new(outcomes),
+            resolver_id: "ollama_install",
+            resolver_targets: &[ComponentId::Ollama],
+            resolver_outcome: ResolveOutcome::Resolved,  // resolver claims success…
+            resolver_fallback: Remedy {
+                message: "Ollama didn't come up after install.".into(),
+                script: "brew services restart ollama".into(),
+                url: None,
+            },
+            calls: Arc::new(Mutex::new(Vec::new())),
+        };
+        let current = p.check("0.0.0-test");
+        // …but the world still says ollama is failed on the re-check
+        // (we deliberately do NOT swap the outcomes map to Ready here).
+        let events = Arc::new(Mutex::new(Vec::<HealthEvent>::new()));
+        let ec = events.clone();
+        let terminal = p.resolve(&current, "0.0.0-test", &|e| ec.lock().unwrap().push(e));
+
+        assert_eq!(terminal.status, HealthStatus::NeedsAction);
+        let r = terminal.remedy.as_ref().expect("terminal must carry a remedy");
+        assert_eq!(r.script, "brew services restart ollama",
+            "terminal remedy must come from resolver.fallback_remedy(), not default_remedy()");
+        let evs = events.lock().unwrap();
+        assert!(evs.iter().any(|e| matches!(e, HealthEvent::Remedy { .. })),
+            "a Remedy event should be emitted when post-check still failed");
+    }
+
+    // ── consolidate_remedies tests ──────────────────────────────────────
+
+    fn r(msg: &str, script: &str) -> Remedy {
+        Remedy { message: msg.into(), script: script.into(), url: None }
+    }
+
+    #[test]
+    fn consolidate_single_remedy_passes_through_verbatim() {
+        let r1 = r("just postgres", "brew install postgresql@17");
+        let merged = consolidate_remedies(&[(ComponentId::Postgres, r1.clone())]);
+        assert_eq!(merged.message, r1.message,
+            "single-remedy consolidation must not wrap with N-components verbiage");
+        assert_eq!(merged.script, r1.script);
+    }
+
+    #[test]
+    fn consolidate_multiple_remedies_joins_scripts_with_newlines() {
+        let pg = r(
+            "PostgreSQL needs relinking.",
+            "brew link --force --overwrite postgresql@17 && brew services restart postgresql@17",
+        );
+        let ol = r("Ollama needs restart.", "brew services restart ollama");
+        let db = r("Database doesn't exist.", "createdb sensei_dev");
+        let merged = consolidate_remedies(&[
+            (ComponentId::Postgres, pg),
+            (ComponentId::Ollama, ol),
+            (ComponentId::Database, db),
+        ]);
+        // Script: newline-joined so each line runs independently.
+        let expected_script = "\
+brew link --force --overwrite postgresql@17 && brew services restart postgresql@17
+brew services restart ollama
+createdb sensei_dev";
+        assert_eq!(merged.script, expected_script);
+        // Message: each component appears as a bullet with its reason.
+        assert!(merged.message.starts_with("3 components need attention:"),
+            "message must lead with count, got: {}", merged.message);
+        assert!(merged.message.contains("• postgres: PostgreSQL needs relinking."));
+        assert!(merged.message.contains("• ollama: Ollama needs restart."));
+        assert!(merged.message.contains("• database: Database doesn't exist."));
+    }
+
+    /// End-to-end via resolve(): two failing components, both with
+    /// per-component remedies, must surface a consolidated terminal remedy.
+    #[test]
+    fn resolve_two_failed_components_yields_consolidated_remedy() {
+        // Use two ResolveMock providers? The mock only takes one resolver.
+        // Easier: a small custom provider here with two stub resolvers.
+        struct TwoResolverMock {
+            outcomes: Mutex<HashMap<ComponentId, CheckOutcome>>,
+            calls:    Arc<Mutex<Vec<&'static str>>>,
+        }
+        impl PlatformProvider for TwoResolverMock {
+            fn platform(&self) -> Platform { Platform::Macos }
+            fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+            fn package_manager_checker(&self) -> Box<dyn Checker> {
+                Box::new(StubChecker(CheckOutcome::ready("4.0")))
+            }
+            fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+                let m = self.outcomes.lock().unwrap();
+                Box::new(StubChecker(m.get(&id).cloned()
+                    .unwrap_or_else(|| CheckOutcome::failed("none"))))
+            }
+            fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
+                let calls1 = self.calls.clone();
+                let calls2 = self.calls.clone();
+                vec![
+                    Box::new(StubResolver {
+                        id: "postgres_install",
+                        targets: &[ComponentId::Postgres],
+                        outcome: ResolveOutcome::NeedsHumanAction(r(
+                            "PostgreSQL needs relinking.",
+                            "brew link --force --overwrite postgresql@17",
+                        )),
+                        fallback: test_fallback(),
+                        calls: Arc::new(Mutex::new(Vec::new())),
+                    }) as Box<dyn Resolver>,
+                    {
+                        let _ = (calls1, calls2);
+                        Box::new(StubResolver {
+                            id: "ollama_install",
+                            targets: &[ComponentId::Ollama],
+                            outcome: ResolveOutcome::NeedsHumanAction(r(
+                                "Ollama needs restart.",
+                                "brew services restart ollama",
+                            )),
+                            fallback: test_fallback(),
+                            calls: Arc::new(Mutex::new(Vec::new())),
+                        }) as Box<dyn Resolver>
+                    },
+                ]
+            }
+            fn default_remedy(&self) -> Remedy { r("default", "noop") }
+        }
+
+        let mut outcomes = ready_outcomes();
+        outcomes.insert(ComponentId::Postgres, CheckOutcome::failed("pg down"));
+        outcomes.insert(ComponentId::Ollama,   CheckOutcome::failed("ollama down"));
+        let p = TwoResolverMock {
+            outcomes: Mutex::new(outcomes),
+            calls:    Arc::new(Mutex::new(Vec::new())),
+        };
+        let current = p.check("0.0.0-test");
+        let terminal = p.resolve(&current, "0.0.0-test", &|_| {});
+        assert_eq!(terminal.status, HealthStatus::NeedsAction);
+        let merged = terminal.remedy.as_ref().expect("consolidated remedy");
+        assert!(merged.script.contains("brew link --force --overwrite postgresql@17"));
+        assert!(merged.script.contains("brew services restart ollama"));
+        assert!(merged.script.contains('\n'), "script must be newline-joined");
+        assert!(merged.message.starts_with("2 components need attention:"));
+    }
+
+    // ── dependency-aware skip tests ─────────────────────────────────────
+
+    /// Reusable mock for tests that need multiple resolvers with
+    /// individually-configured outcomes. Each resolver gets its own
+    /// outcome and fallback; the checker outcomes are shared and mutable
+    /// so a "Resolved" resolver can flip its target to Ready for the
+    /// post-resolve re-check.
+    struct MultiResolverMock {
+        outcomes: Mutex<HashMap<ComponentId, CheckOutcome>>,
+        specs:    Vec<(&'static str, &'static [ComponentId], ResolveOutcome, Remedy)>,
+    }
+    impl PlatformProvider for MultiResolverMock {
+        fn platform(&self) -> Platform { Platform::Macos }
+        fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+        fn package_manager_checker(&self) -> Box<dyn Checker> {
+            Box::new(StubChecker(CheckOutcome::ready("4.0")))
+        }
+        fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+            let m = self.outcomes.lock().unwrap();
+            Box::new(StubChecker(m.get(&id).cloned()
+                .unwrap_or_else(|| CheckOutcome::failed("none"))))
+        }
+        fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
+            self.specs.iter().map(|(id, targets, outcome, fallback)| {
+                Box::new(StubResolver {
+                    id,
+                    targets,
+                    outcome: outcome.clone(),
+                    fallback: fallback.clone(),
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }) as Box<dyn Resolver>
+            }).collect()
+        }
+        fn default_remedy(&self) -> Remedy { r("default", "noop") }
+    }
+
+    /// When postgres is failing and database depends on postgres, the
+    /// db_setup resolver MUST be skipped — running it would just produce a
+    /// remedy whose root cause is upstream. Only the postgres remedy
+    /// surfaces.
+    #[test]
+    fn dependent_resolver_skipped_when_dependency_still_failing() {
+        let mut outcomes = ready_outcomes();
+        outcomes.insert(ComponentId::Postgres, CheckOutcome::failed("pg down"));
+        outcomes.insert(ComponentId::Database, CheckOutcome::failed("db can't connect"));
+        let p = MultiResolverMock {
+            outcomes: Mutex::new(outcomes),
+            specs: vec![
+                ("postgres_install",
+                 &[ComponentId::Postgres],
+                 ResolveOutcome::NeedsHumanAction(r("Fix postgres", "brew link postgresql@17")),
+                 test_fallback()),
+                ("db_setup",
+                 &[ComponentId::Database],
+                 // Set up a SUCCESS outcome here — if it ever ran, the test
+                 // would pass with the wrong remedy. Failing means the skip
+                 // gate actually fired.
+                 ResolveOutcome::Resolved,
+                 r("would-be db remedy", "createdb sensei_dev")),
+            ],
+        };
+        let current = p.check("0.0.0-test");
+        let terminal = p.resolve(&current, "0.0.0-test", &|_| {});
+        let remedy = terminal.remedy.as_ref().expect("must have a remedy");
+        // Single remedy, single component — pass-through (not consolidated).
+        assert_eq!(remedy.script, "brew link postgresql@17",
+            "only postgres remedy must surface; database resolver should have been skipped");
+        assert!(!remedy.script.contains("createdb"),
+            "db_setup must NOT have contributed to the consolidated script");
+    }
+
+    /// Regression: a resolver may report `NeedsHumanAction` mid-walk
+    /// (e.g. dbd partial deploy fails) and push a remedy. But by the time
+    /// the final check runs, the component may have independently
+    /// recovered (e.g. the partial schema is enough for the checker to
+    /// say Ready). That stale remedy must NOT appear in the consolidated
+    /// terminal remedy — otherwise users see a "fix database" message
+    /// for a database that's already green.
+    #[test]
+    fn stale_remedy_for_recovered_component_is_dropped_before_consolidation() {
+        // A checker that returns Failed initially but Ready later (the
+        // component recovered between resolve walk and final check).
+        struct SeqChecker {
+            seq: Vec<CheckOutcome>,
+            n:   Arc<Mutex<usize>>,
+        }
+        impl Checker for SeqChecker {
+            fn check(&self) -> CheckOutcome {
+                let mut idx = self.n.lock().unwrap();
+                let i = *idx;
+                *idx += 1;
+                self.seq.get(i).cloned()
+                    .unwrap_or_else(|| self.seq.last().unwrap().clone())
+            }
+        }
+
+        struct Mock {
+            db_calls:     Arc<Mutex<usize>>,
+            daemon_calls: Arc<Mutex<usize>>,
+        }
+        impl PlatformProvider for Mock {
+            fn platform(&self) -> Platform { Platform::Macos }
+            fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+            fn package_manager_checker(&self) -> Box<dyn Checker> {
+                Box::new(StubChecker(CheckOutcome::ready("4.0")))
+            }
+            fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+                match id {
+                    // Database: Failed initially, Ready at the final check
+                    // (partial dbd deploy was "enough" for the schema probe).
+                    ComponentId::Database => Box::new(SeqChecker {
+                        seq: vec![
+                            CheckOutcome::failed("schema incomplete"),
+                            CheckOutcome::ready_no_version(),
+                        ],
+                        n: self.db_calls.clone(),
+                    }),
+                    // Daemon stays failed throughout.
+                    ComponentId::Daemon => Box::new(SeqChecker {
+                        seq: vec![CheckOutcome::failed("port closed")],
+                        n: self.daemon_calls.clone(),
+                    }),
+                    _ => Box::new(StubChecker(CheckOutcome::ready("1.0"))),
+                }
+            }
+            fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
+                vec![
+                    Box::new(StubResolver {
+                        id: "db_setup",
+                        targets: &[ComponentId::Database],
+                        outcome: ResolveOutcome::NeedsHumanAction(r(
+                            "dbd partial deploy",
+                            "createdb sensei_dev",
+                        )),
+                        fallback: r("db fallback", "createdb sensei_dev"),
+                        calls: Arc::new(Mutex::new(Vec::new())),
+                    }),
+                    Box::new(StubResolver {
+                        id: "daemon_start",
+                        targets: &[ComponentId::Daemon],
+                        outcome: ResolveOutcome::Resolved,
+                        fallback: r("daemon fallback", "senseid-dev start"),
+                        calls: Arc::new(Mutex::new(Vec::new())),
+                    }),
+                ]
+            }
+            fn default_remedy(&self) -> Remedy { r("default", "install") }
+        }
+
+        let p = Mock {
+            db_calls:     Arc::new(Mutex::new(0)),
+            daemon_calls: Arc::new(Mutex::new(0)),
+        };
+        let current = p.check("0.0.0-test");
+        let terminal = p.resolve(&current, "0.0.0-test", &|_| {});
+
+        // Final check: database is Ready (recovered), daemon is Failed.
+        // Database row should be green, daemon row should be red.
+        let db = terminal.components.iter().find(|c| c.id == "database").unwrap();
+        assert_eq!(db.status, ComponentStatus::Ready);
+        let dm = terminal.components.iter().find(|c| c.id == "daemon").unwrap();
+        assert_eq!(dm.status, ComponentStatus::Failed);
+
+        let remedy = terminal.remedy.as_ref().expect("must have a remedy");
+        assert!(!remedy.script.contains("createdb"),
+            "database remedy must be dropped — database recovered. Got: {}", remedy.script);
+        assert!(remedy.script.contains("senseid-dev start"),
+            "daemon remedy must be present. Got: {}", remedy.script);
+        assert!(!remedy.message.contains("database:"),
+            "consolidated message must NOT mention database. Got: {}", remedy.message);
+    }
+
+    /// Regression: a "transient success" where the post-resolve re-check
+    /// briefly saw the target as Ready (so applied_remedies stays empty
+    /// for that target during the walk) but the FINAL check at the end
+    /// of resolve() sees it as Failed again. Without the retroactive
+    /// fallback, the orchestrator would default_remedy() the terminal
+    /// — which is what was happening in the Tauri UI while the CLI
+    /// (running against steady-state services) saw consistent results.
+    #[test]
+    fn transient_success_falls_back_to_resolver_fallback_remedy_retroactively() {
+        // A checker that returns a different outcome per call. Used to
+        // simulate ollama's port flickering: initial=Failed,
+        // post-resolve-recheck=Ready, final-check=Failed.
+        struct SequenceChecker {
+            seq:   Vec<CheckOutcome>,
+            calls: Arc<Mutex<usize>>,
+        }
+        impl Checker for SequenceChecker {
+            fn check(&self) -> CheckOutcome {
+                let mut n = self.calls.lock().unwrap();
+                let i = *n;
+                *n += 1;
+                self.seq.get(i).cloned()
+                    .unwrap_or_else(|| self.seq.last().unwrap().clone())
+            }
+        }
+
+        struct TransientMock {
+            ollama_calls: Arc<Mutex<usize>>,
+        }
+        impl PlatformProvider for TransientMock {
+            fn platform(&self) -> Platform { Platform::Macos }
+            fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+            fn package_manager_checker(&self) -> Box<dyn Checker> {
+                Box::new(StubChecker(CheckOutcome::ready("4.0")))
+            }
+            fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+                match id {
+                    ComponentId::Ollama => Box::new(SequenceChecker {
+                        seq: vec![
+                            CheckOutcome::failed("port closed"),           // initial check
+                            CheckOutcome::ready_no_version(),              // post-resolve recheck
+                            CheckOutcome::failed("port flickered closed"), // final check
+                        ],
+                        calls: self.ollama_calls.clone(),
+                    }),
+                    _ => Box::new(StubChecker(CheckOutcome::ready("1.0"))),
+                }
+            }
+            fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
+                vec![Box::new(StubResolver {
+                    id: "ollama_install",
+                    targets: &[ComponentId::Ollama],
+                    outcome: ResolveOutcome::Resolved,
+                    fallback: r("ollama fallback", "brew services restart ollama"),
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                })]
+            }
+            fn default_remedy(&self) -> Remedy {
+                r("install sensei (default)", "brew install --HEAD sensei-hq/tap/sensei-dev")
+            }
+        }
+
+        let p = TransientMock { ollama_calls: Arc::new(Mutex::new(0)) };
+        let current = p.check("0.0.0-test");
+        let terminal = p.resolve(&current, "0.0.0-test", &|_| {});
+
+        assert_eq!(terminal.status, HealthStatus::NeedsAction,
+            "ollama failed in final check, so terminal must be NeedsAction");
+        let remedy = terminal.remedy.as_ref()
+            .expect("retroactive fallback must attach a remedy");
+        assert_eq!(remedy.script, "brew services restart ollama",
+            "remedy must be the resolver's fallback_remedy, NOT default_remedy");
+        assert!(!remedy.script.contains("sensei-hq/tap"),
+            "must not fall through to default_remedy");
+    }
+
+    /// When the upstream resolver succeeds in the same pass, the
+    /// downstream resolver's dependency gate clears and it gets a shot.
+    /// Postgres recovers → Database resolver runs → both green.
+    #[test]
+    fn dependent_resolver_runs_when_upstream_recovers_in_same_pass() {
+        let mut outcomes = ready_outcomes();
+        outcomes.insert(ComponentId::Postgres, CheckOutcome::failed("pg down"));
+        outcomes.insert(ComponentId::Database, CheckOutcome::failed("can't connect"));
+        let p = MultiResolverMock {
+            outcomes: Mutex::new(outcomes),
+            specs: vec![
+                ("postgres_install",
+                 &[ComponentId::Postgres],
+                 ResolveOutcome::Resolved,  // ← claims success
+                 test_fallback()),
+                ("db_setup",
+                 &[ComponentId::Database],
+                 ResolveOutcome::Resolved,  // ← also claims success
+                 test_fallback()),
+            ],
+        };
+        let current = p.check("0.0.0-test");
+        // After postgres resolver runs, the world says postgres is Ready.
+        // After db_setup runs, the world says database is Ready too.
+        // We can't sequence those mutations precisely without per-resolver
+        // hooks, so we flip both to Ready up-front — the test still proves
+        // the gate works because db_setup is skipped via Postgres being in
+        // now_failing at the start of its iteration.
+        {
+            let mut m = p.outcomes.lock().unwrap();
+            m.insert(ComponentId::Postgres, CheckOutcome::ready("17"));
+            m.insert(ComponentId::Database, CheckOutcome::ready_no_version());
+        }
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let cc = calls.clone();
+        let terminal = p.resolve(&current, "0.0.0-test", &|ev| {
+            if let HealthEvent::Component { id, patch } = &ev {
+                if matches!(patch.status, Some(ComponentStatus::Installing)) {
+                    cc.lock().unwrap().push(id.clone());
+                }
+            }
+        });
+        assert_eq!(terminal.status, HealthStatus::Ok,
+            "both resolvers should have run and recovered");
+        let installing = calls.lock().unwrap();
+        assert!(installing.contains(&"postgres".to_string()),
+            "postgres resolver must have entered Installing state");
+        assert!(installing.contains(&"database".to_string()),
+            "database resolver must have entered Installing state — its dependency gate cleared after postgres recovered");
+    }
+
+    /// Counterpart: when `Resolved` is followed by a clean re-check, no
+    /// remedy event is emitted and the terminal payload is `Ok` with no
+    /// remedy.
+    #[test]
+    fn resolve_resolved_with_clean_recheck_emits_no_remedy() {
+        let mut outcomes = ready_outcomes();
+        outcomes.insert(ComponentId::Ollama, CheckOutcome::failed("not yet"));
+        let p = ResolveMock {
+            pm_outcome: CheckOutcome::ready("4.0"),
+            outcomes: Mutex::new(outcomes),
+            resolver_id: "ollama_install",
+            resolver_targets: &[ComponentId::Ollama],
+            resolver_outcome: ResolveOutcome::Resolved,
+            resolver_fallback: test_fallback(),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        };
+        let current = p.check("0.0.0-test");
+        // Resolver "fix" took effect: subsequent checker reads return ready.
+        {
+            let mut m = p.outcomes.lock().unwrap();
+            m.insert(ComponentId::Ollama, CheckOutcome::ready("0.4"));
+        }
+        let events = Arc::new(Mutex::new(Vec::<HealthEvent>::new()));
+        let ec = events.clone();
+        let terminal = p.resolve(&current, "0.0.0-test", &|e| ec.lock().unwrap().push(e));
+        assert_eq!(terminal.status, HealthStatus::Ok);
+        assert!(terminal.remedy.is_none(), "no remedy on a fully resolved terminal");
+        assert!(
+            !events.lock().unwrap().iter().any(|e| matches!(e, HealthEvent::Remedy { .. })),
+            "no Remedy event should be emitted when re-check is clean",
+        );
     }
 }

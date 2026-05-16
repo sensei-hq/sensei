@@ -8,6 +8,11 @@ date: 2026-04-28
 
 One screen at a time. Each screen: read mockup → state class → component → wire API → test.
 
+## Known bugs (next)
+
+- **Health remedy: text not selectable / copyable.** The remedy script `<pre>` block and the "what this resolves" detail rows in the health page need to support manual selection + copy (cmd-c). Today only the "Copy script" button works; users can't copy partial text or the message itself. Likely a Tauri webview `user-select: none` somewhere in the global CSS. Audit other human-action UI for the same restriction.
+- **Setup pages — scan stage had problems last time.** When working through setup pages step by step, expect similar resolve/state bugs to surface; main page is assistants, then scan.
+
 ## 1. Bootstrap (6 gates)
 
 **Mockup:** [mockups/lib/bootstrap.jsx](./mockups/lib/bootstrap.jsx)
@@ -319,7 +324,51 @@ Each step: mockup → state → component → API → test. No skipping.
 
 ---
 
-## 7. CSS Migration — inline utility classes and semantic design tokens
+## 7. Mockup component migration
+
+**Plan:** [mockups/MIGRATION-PLAN.md](./mockups/MIGRATION-PLAN.md)
+**Audits:** [mockups/MOCKUP-AUDIT.md](./mockups/MOCKUP-AUDIT.md) · [mockups/APP-AUDIT.md](./mockups/APP-AUDIT.md)
+**Companion ledgers:** [mockups/CHART-GAPS.md](./mockups/CHART-GAPS.md) · [mockups/THEME-OVERRIDES.md](./mockups/THEME-OVERRIDES.md)
+
+Extract reusable components one at a time, replace inline usages route-by-route, verify with co-located `*.spec.svelte.ts` + `bun run check/test/build`. Rokkit-first: adopt where Rokkit ships the primitive, wrap thinly for variants, build only what Rokkit doesn't cover.
+
+| # | Component | Status | Notes |
+|---|-----------|--------|------|
+| 0  | Preparation: remove OS-accent override, delete dead components, install `@rokkit/chart`, extract `sparklinePath` | Done (2026-05-15) | `ca97bc09` — `@rokkit/chart@1.0.5` blocked by upstream missing `palette.json` (CHART-GAPS #3); `sparklinePath` kept in `$lib/sparkline.ts` |
+| 0a | Token harmonization: mockup spec → uno.config + rokkit.config; shrink lib/tokens.css | Done (2026-05-15) | `5395a234` — 8-stop type scale, strict 4px spacing, 3-stop letter/4-stop line-height/3-stop motion, radii in Uno, kanji added to Rokkit typography |
+| 1  | `Eyebrow` + `Kanji` primitives | Done (2026-05-15) | `1da27932` — 19 tests; 20+ inline eyebrow + 9 inline kanji swept |
+| 2  | `PageHeader` | Done (2026-05-15) | `7e628a7d` — 15 tests; 13 routes swept (h1/h2/h3 variants, bordered toggle, right Snippet) |
+| 3  | `StatusDot` | Done (2026-05-15) | `05aa1a89` — 13 tests; 8 sites swept; 5+ duplicated CSS rules deleted |
+| 4  | `Card` (variants: default · accent-edge · dashed-empty · selectable; padding sm/md/lg) | Pending | Wrap `@rokkit/ui/Card` or build; ~30 inline cards in observatory, project, setup, health routes |
+| 5  | `ListRow` (3-slot row + hairline + active/selected) | Pending | 22 routes — every list of sessions / libs / tools / repos / patterns / drifts / logs; deletes 10+ duplicated `:last-child` CSS rules |
+| 6  | `Button` (wrap Rokkit) + `Badge`/`Pill` (wrap Rokkit) | Pending | Retires `.btn-solid/.btn-outline/.btn-cta/.btn-primary/.btn-back/.collapse-btn/.report-btn/.outline-btn`; consolidates `.maturity-pill / .stack-tag / .scope-badge / .repo-role` |
+| 7  | Adopt `@rokkit/ui/Tabs`; delete local `TabBar` | Pending | After Tabs lands, split `MemoryList.svelte` into PageHeader + Tabs + ListDetail and delete it |
+| 8  | `ChipRow` / `SegmentedControl` | Pending | Sessions/libraries filter-chip duplicates; preferences segmented controls |
+| 9  | `TextField` + `SearchField` | Pending | Libraries search, setup name/root inputs, instruments param input |
+| 10 | `MiniStat` (sparkline = `@rokkit/chart/Sparkline` once gap #3 clears) | Pending | Observatory home/sessions, project overview/impact 4-up tiles, setup scan; needs `@rokkit/chart` palette.json fix |
+| 10b| Adopt `@rokkit/ui/Switch`; delete local `Switch` | Pending | Trivial: 4 callsites in setup/preferences |
+| 11 | `Sidebar` + `NavItem` (wrap Rokkit `ItemContent`) + `SidebarGroup` | Pending | Unifies 3 sidebars (observatory, config, project), folds in stateful kanji active styling deferred from Step 1 |
+| 12 | `TauriChrome` (`accent`, `kanji`, `title` props) | Pending | Applied across all 4 layouts |
+| 13 | `SplitPane` / `ListDetail` / `SidePanel` | Pending | Master-detail layouts: libraries, instruments, impact, settings |
+| 13b| Adopt `@rokkit/ui/Timeline` + `StatusList` | Pending | Scan SSE feed; health logs trace rows; rebuild Ledger atop StatusList |
+| 14+| Greenfield: `EnsoRing`/`BarStrip` (= `@rokkit/chart`), `HairlineGrid`, `Toast`, `Drawer`, `BottomBar`, `KeyValueRow` | Pending | Build only when a route needs them |
+
+**Pending route-headers blocked on later steps:**
+- Observatory home greeting (hero size — fold when `MiniStat` lands, step 10)
+- `observatory/projects/[id]` (maturity pill + stack chips — step 6)
+- Health `Header.svelte` (platform-aware headline; consider folding into `PageHeader.variant="hero"`)
+- `(config)/+layout.svelte` wizard step header — step 11 covers this when Sidebar/Stepper migrate
+- `(project)/project/[id]/+layout.svelte` titlebar — step 12 `TauriChrome` covers this
+- `(project)/.../overview/+page.svelte`, `(project)/.../impact/+page.svelte` MiniStat 4-up grids — step 10
+
+**Cross-cutting:**
+- Track Rokkit chart-component feature gaps in `CHART-GAPS.md`; propose upstream PRs rather than fork.
+- Track zen-sumi theme overrides in `THEME-OVERRIDES.md`; promote stable ones to `@rokkit/themes/zen-sumi`.
+- Re-enable `@rokkit/chart/Sparkline` adoption after upstream palette.json fix; first user is `MiniStat` (step 10).
+
+---
+
+## 8. CSS Migration — inline utility classes and semantic design tokens (largely superseded)
 
 **Priority:** Medium (quality / maintainability — do screen-by-screen alongside other work)
 **Goal:** Replace `<style>` block CSS with Tailwind/UnoCSS utility classes, eliminate

@@ -33,6 +33,25 @@ pub fn resolve(current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthE
     detect_provider().resolve(current, app_version, emit)
 }
 
+/// Full pipeline: emit Phase(Checking) → run `check()` → emit
+/// Report(initial) → if not Ok, run `resolve()` which emits its own
+/// Phase(Resolving), per-component patches, optional Remedy, and a final
+/// Report(terminal).
+///
+/// This is the single entry point every transport (Tauri sidecar, CLI
+/// `doctor`, daemon HTTP) should use when it wants the full
+/// check-and-fix flow. The transport's only responsibility is the `emit`
+/// closure.
+pub fn check_and_resolve(app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
+    emit(HealthEvent::Phase { phase: HealthStatus::Checking });
+    let state = check(app_version);
+    emit(HealthEvent::Report { payload: state.clone() });
+    if state.status == HealthStatus::Ok {
+        return state;
+    }
+    resolve(&state, app_version, emit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,6 +62,28 @@ mod tests {
         let payload = check("0.0.0-test");
         payload.validate().expect("validate must pass");
         assert_eq!(payload.components.len(), 5);
+    }
+
+    #[test]
+    fn check_and_resolve_emits_initial_report_before_resolving() {
+        let events = Mutex::new(Vec::<HealthEvent>::new());
+        let _final = check_and_resolve("0.0.0-test", &|e| events.lock().unwrap().push(e));
+        let evs = events.lock().unwrap();
+
+        // Phase(Checking) is always first.
+        assert!(matches!(evs.first(), Some(HealthEvent::Phase { phase: HealthStatus::Checking })));
+
+        // A Report event arrives before any Phase(Resolving) — that's the
+        // initial broadcast so the UI never goes blank.
+        let first_report = evs.iter().position(|e| matches!(e, HealthEvent::Report { .. }));
+        let phase_resolving = evs.iter().position(|e| matches!(
+            e, HealthEvent::Phase { phase: HealthStatus::Resolving }
+        ));
+        assert!(first_report.is_some(), "must emit at least one Report");
+        if let Some(pr) = phase_resolving {
+            assert!(first_report.unwrap() < pr,
+                "initial Report must precede Phase(Resolving)");
+        }
     }
 
     #[test]
