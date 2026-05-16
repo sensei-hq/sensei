@@ -32,15 +32,21 @@ impl PortChecker {
 impl Checker for PortChecker {
     fn check(&self) -> CheckOutcome {
         let addr: SocketAddr = ([127, 0, 0, 1], self.port).into();
+        tracing::debug!(check = "port", label = self.label, port = self.port, timeout_ms = self.timeout.as_millis() as u64, "probing");
         // Retry up to the configured timeout in 250ms slices. Each individual
         // connect_timeout uses the SHORT default so a closed port returns
         // fast; only legitimately-starting services exhaust the budget.
         let deadline = std::time::Instant::now() + self.timeout;
+        let start = std::time::Instant::now();
         loop {
             match TcpStream::connect_timeout(&addr, DEFAULT_PORT_TIMEOUT) {
-                Ok(_) => return CheckOutcome::ready_no_version(),
+                Ok(_) => {
+                    tracing::info!(check = "port", label = self.label, port = self.port, result = "open", elapsed_ms = start.elapsed().as_millis() as u64, "port reachable");
+                    return CheckOutcome::ready_no_version();
+                }
                 Err(e) => {
                     if std::time::Instant::now() >= deadline {
+                        tracing::info!(check = "port", label = self.label, port = self.port, result = "closed", error = %e, "port not listening");
                         return CheckOutcome::failed(format!(
                             "{} not listening on :{}: {e}", self.label, self.port,
                         ));

@@ -2,11 +2,14 @@ use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use sensei_bootstrap::{
     SenseiConfig, SenseiLocalConfig,
     SENSEI_BIN, SENSEID_BIN, SENSEI_MCP_BIN, MCP_REGISTRY_KEY,
 };
+
+mod doctor;
 
 fn cfg() -> &'static SenseiConfig {
     sensei_bootstrap::config()
@@ -85,9 +88,13 @@ enum Commands {
         #[arg(long)]
         url: Option<String>,
     },
+
+    /// Diagnose bootstrap state: check + auto-fix dependencies with full
+    /// step-by-step trace output. Exits 0 if everything is healthy.
+    Doctor,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Commands::Init {
@@ -110,7 +117,9 @@ fn main() {
         Commands::Status => daemon_cmd("status", None),
         Commands::Scan { path } => scan(&path),
         Commands::AddLib { name, url } => add_lib(&name, url.as_deref()),
+        Commands::Doctor => return ExitCode::from(doctor::run() as u8),
     }
+    ExitCode::SUCCESS
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

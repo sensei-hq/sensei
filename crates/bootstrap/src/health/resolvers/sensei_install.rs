@@ -6,7 +6,7 @@
 use crate::config::SenseiConfig;
 use crate::health::resolver::{Resolver, ResolveOutcome};
 use crate::health::resolvers::brew_helpers::brew_install_to_outcome;
-use crate::health::types::ComponentId;
+use crate::health::types::{ComponentId, Remedy};
 
 pub struct SenseiInstallResolver;
 
@@ -23,6 +23,14 @@ impl Resolver for SenseiInstallResolver {
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         let (formula, args) = formula_and_args();
         brew_install_to_outcome(formula, args)
+    }
+
+    fn fallback_remedy(&self) -> Remedy {
+        Remedy {
+            message: "Sensei binaries (sensei, senseid, sensei-mcp) aren't on PATH after install. Re-run the brew install — it will relink the binaries.".to_string(),
+            script: SenseiConfig::from_env().brew_install_script(),
+            url: None,
+        }
     }
 }
 
@@ -63,5 +71,11 @@ mod tests {
         let (formula, args) = formula_and_args();
         assert_eq!(formula, "sensei-hq/tap/sensei");
         assert_eq!(args, &[] as &[&str]);
+    }
+
+    #[test]
+    fn fallback_remedy_uses_brew_install_script() {
+        let r = SenseiInstallResolver.fallback_remedy();
+        assert_eq!(r.script, SenseiConfig::from_env().brew_install_script());
     }
 }

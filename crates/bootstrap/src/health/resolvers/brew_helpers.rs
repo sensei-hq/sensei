@@ -66,19 +66,29 @@ fn truncate_to_tail(stderr: &str, max_bytes: usize) -> String {
 pub fn brew_install(formula: &str, args: &[&str]) -> Result<(), BrewError> {
     let brew = match which_binary("brew") {
         Some(p) => p,
-        None    => return Err(BrewError::BrewNotFound),
+        None    => {
+            tracing::warn!(formula = formula, "brew not on PATH");
+            return Err(BrewError::BrewNotFound);
+        }
     };
+    let cmdline = format!("brew install {} {}", args.join(" "), formula);
+    tracing::info!(formula = formula, command = %cmdline.trim(), "running brew install");
+    let started = std::time::Instant::now();
     let output = Command::new(brew)
         .arg("install")
         .args(args)
         .arg(formula)
         .output()
         .map_err(|e| BrewError::Other(format!("spawn failed: {e}")))?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
     if output.status.success() {
+        tracing::info!(formula = formula, exit = 0, elapsed_ms, "brew install ok");
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(parse_brew_error(&stderr))
+    let err = parse_brew_error(&stderr);
+    tracing::warn!(formula = formula, exit = %output.status, elapsed_ms, error = ?err, "brew install failed");
+    Err(err)
 }
 
 pub(crate) fn homebrew_install_remedy() -> Remedy {
@@ -134,21 +144,30 @@ pub(crate) fn brew_install_to_outcome(formula: &str, args: &[&str]) -> ResolveOu
 pub fn brew_services_start(service: &str) -> Result<(), BrewError> {
     let brew = match which_binary("brew") {
         Some(p) => p,
-        None    => return Err(BrewError::BrewNotFound),
+        None    => {
+            tracing::warn!(service = service, "brew not on PATH");
+            return Err(BrewError::BrewNotFound);
+        }
     };
+    tracing::info!(service = service, command = %format!("brew services start {service}"), "starting service");
+    let started = std::time::Instant::now();
     let output = Command::new(brew)
         .args(["services", "start", service])
         .output()
         .map_err(|e| BrewError::Other(format!("spawn failed: {e}")))?;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
     if output.status.success() {
+        tracing::info!(service = service, exit = 0, elapsed_ms, "brew services start ok");
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     // `brew services start` exits non-zero when the service is already
     // running; that's a success for us.
     if stderr.contains("already started") || stderr.contains("Service `") && stderr.contains("` already started") {
+        tracing::info!(service = service, "service already started (treated as ok)");
         return Ok(());
     }
+    tracing::warn!(service = service, exit = %output.status, elapsed_ms, stderr_tail = %truncate_to_tail(&stderr, 200), "brew services start failed");
     Err(BrewError::Other(truncate_to_tail(&stderr, 500)))
 }
 

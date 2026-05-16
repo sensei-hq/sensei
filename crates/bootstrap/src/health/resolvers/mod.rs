@@ -4,6 +4,7 @@ pub mod postgres_install;
 pub mod ollama_install;
 pub mod sensei_install;
 pub(crate) mod brew_helpers;
+pub(crate) mod service_cascade;
 
 pub use db_setup::DatabaseResolver;
 pub use daemon_start::DaemonStartResolver;

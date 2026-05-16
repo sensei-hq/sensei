@@ -460,8 +460,8 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.2.0"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.2.0#913aa4b9230c53f951a15d72e5d48527268033db"
+version = "0.4.1"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.4.1#6e99965ea5c0ffeb9efcfbb4496c48be300e60ea"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1376,6 +1376,7 @@ version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]
@@ -2477,6 +2478,7 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2489,6 +2491,8 @@ dependencies = [
  "sensei-bootstrap",
  "serde",
  "serde_json",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -38,6 +38,20 @@ export class RealTransport implements HealthTransport {
     return new Promise<HealthPayload>((resolveFn, rejectFn) => {
       let unlisten: (() => void) | null = null;
       let settled = false;
+      // `health::check_and_resolve` emits TWO Report events when the
+      // system needs action: an INITIAL one right after check() (still
+      // carrying default_remedy), and a TERMINAL one after resolve()
+      // completes (with per-component remedies). We must only settle on
+      // the terminal one — otherwise we unlisten before any Remedy or
+      // Component event from the resolve phase reaches us, and the UI
+      // ends up stuck with the initial state's default_remedy.
+      //
+      // Heuristic: settle when either
+      //   (a) we see a Report whose status is 'ok' — the system was
+      //       already healthy, no resolve will run, so this IS terminal;
+      //   (b) we've seen Phase(Resolving) — the next Report is the
+      //       terminal one.
+      let resolvingStarted = false;
 
       const cleanup = () => {
         try { unlisten?.(); } catch { /* ignore */ }
@@ -47,7 +61,13 @@ export class RealTransport implements HealthTransport {
         if (settled) return;
         const ev = e.payload;
         onEvent(ev);
+        if (ev.kind === 'phase' && ev.phase === 'resolving') {
+          resolvingStarted = true;
+          return;
+        }
         if (ev.kind === 'report') {
+          const isTerminal = ev.payload.status === 'ok' || resolvingStarted;
+          if (!isTerminal) return;  // initial report — keep listening
           settled = true;
           cleanup();
           resolveFn(ev.payload);

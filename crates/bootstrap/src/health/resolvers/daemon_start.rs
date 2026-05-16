@@ -28,6 +28,11 @@ impl Resolver for DaemonStartResolver {
                          failed_remedy(bin, format!("{bin}: {e}"))),
         }
     }
+
+    fn fallback_remedy(&self) -> Remedy {
+        let bin = SenseiConfig::from_env().senseid_binary();
+        failed_remedy(bin, "daemon port still not listening after start".to_string())
+    }
 }
 
 fn missing_remedy(bin: &str) -> Remedy {
@@ -71,6 +76,13 @@ mod tests {
     fn failed_remedy_script_uses_current_mode_binary() {
         let bin = SenseiConfig::from_env().senseid_binary();
         let r = failed_remedy(bin, "test".to_string());
+        assert_eq!(r.script, format!("{bin} start"));
+    }
+
+    #[test]
+    fn fallback_remedy_runs_senseid_start() {
+        let bin = SenseiConfig::from_env().senseid_binary();
+        let r = DaemonStartResolver.fallback_remedy();
         assert_eq!(r.script, format!("{bin} start"));
     }
 }

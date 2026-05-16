@@ -23,8 +23,12 @@ describe('Ledger', () => {
     expect(labels).toEqual([...COMPONENT_ORDER]);
   });
 
+  // For non-installing statuses the badge mirrors the status word
+  // verbatim. The `installing` status maps to a per-component verb
+  // (service-style deps say "starting", database says "setting up",
+  // sensei stays "installing") — covered by a separate test below.
   it.each(
-    (['pending', 'checking', 'installing', 'ready', 'failed'] as ComponentStatus[]).map(
+    (['pending', 'checking', 'ready', 'failed'] as ComponentStatus[]).map(
       (s) => [s] as const,
     ),
   )('renders the %s badge', (s) => {
@@ -34,6 +38,22 @@ describe('Ledger', () => {
     cleanup.push(m.destroy);
     const badge = m.container.querySelector('[data-row="postgres"] [data-badge]');
     expect(badge?.textContent?.trim().toLowerCase()).toBe(s);
+  });
+
+  it.each([
+    ['postgres', 'starting'],
+    ['ollama',   'starting'],
+    ['daemon',   'starting'],
+    ['database', 'setting up'],
+    ['sensei',   'installing'],
+  ])('renders %s installing badge as "%s"', (id, expectedVerb) => {
+    const cs = allReady();
+    const idx = ['postgres', 'ollama', 'sensei', 'database', 'daemon'].indexOf(id);
+    cs[idx] = row(id, 'installing');
+    const m = mountComponent(Ledger, { components: cs });
+    cleanup.push(m.destroy);
+    const badge = m.container.querySelector(`[data-row="${id}"] [data-badge]`);
+    expect(badge?.textContent?.trim().toLowerCase()).toBe(expectedVerb);
   });
 
   it('failed row shows detail text', () => {

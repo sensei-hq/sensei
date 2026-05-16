@@ -69,7 +69,7 @@ pub fn detect_dependencies(path: String) -> Vec<DetectedDep> {
             total_files: total,
         })
         .collect();
-    deps.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+    deps.sort_by_key(|d| std::cmp::Reverse(d.file_count));
     deps.truncate(60);
     deps
 }
@@ -269,7 +269,7 @@ fn normalize_remote(url: &str) -> String {
         .to_lowercase()
 }
 
-fn find_duplicates(repos: &mut Vec<AnalyzedRepo>) {
+fn find_duplicates(repos: &mut [AnalyzedRepo]) {
     let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for repo in repos.iter() {
         if let Some(remote) = &repo.remote {
@@ -307,7 +307,7 @@ fn name_stem(name: &str) -> String {
     n
 }
 
-fn find_variants(repos: &mut Vec<AnalyzedRepo>) {
+fn find_variants(repos: &mut [AnalyzedRepo]) {
     use std::collections::HashMap;
     let names_lower: Vec<String> = repos.iter().map(|r| r.name.to_lowercase()).collect();
     let stem_for = |name: &str| -> String {
@@ -382,16 +382,15 @@ fn parse_pkg_specifier(s: &str) -> Option<String> {
     if !matches!(quote, '\'' | '"' | '`') { return None; }
     let inner = &s[1..];
     if inner.starts_with('.') || inner.starts_with('/') { return None; }
-    if inner.starts_with('@') {
-        let inner = &inner[1..];
+    if let Some(inner) = inner.strip_prefix('@') {
         let slash = inner.find('/')?;
         let org = &inner[..slash];
         let rest = &inner[slash + 1..];
-        let end = rest.find(|c: char| matches!(c, '\'' | '"' | '`' | '/'))?;
+        let end = rest.find(['\'', '"', '`', '/'])?;
         let name = &rest[..end];
         if !org.is_empty() && !name.is_empty() { return Some(format!("@{org}/{name}")); }
     } else {
-        let end = inner.find(|c: char| matches!(c, '\'' | '"' | '`' | '/'))?;
+        let end = inner.find(['\'', '"', '`', '/'])?;
         let name = &inner[..end];
         if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.')) {
             return Some(name.to_string());
