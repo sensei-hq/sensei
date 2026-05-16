@@ -98,6 +98,8 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
     let db_url = format!("postgres://localhost/{db_name}");
     let source = cfg.db_schema_source(app_version);
 
+    tracing::info!(env, db = db_name, source = %source, url = %db_url, "starting dbd deploy");
+
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -107,16 +109,50 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         let project_dir = resolve_source(&source)
             .await
             .map_err(|e| format!("dbd source resolution failed ({source}): {e}"))?;
+        tracing::info!(project_dir = %project_dir.display(), "dbd source resolved");
+
         let config_path = project_dir.join("design.yaml");
         let design = Design::from_config_with_dir(&config_path, env, Some(&project_dir))
             .map_err(|e| format!("dbd config load failed: {e}"))?;
+        tracing::info!(entities = design.entities().len(), "dbd design loaded");
+
         let adapter = PostgresAdapter::new(&db_url, "sensei")
             .await
             .map_err(|e| format!("dbd database connection failed: {e}"))?;
-        design
-            .deploy(&adapter, false)
-            .await
-            .map_err(|e| format!("dbd deploy failed: {e}"))
+
+        // Call apply + import_data directly (what design.deploy does
+        // under the hood in dbd-core v0.3.x) so we can wire the
+        // on_start/on_done callbacks into tracing. Without these, the
+        // single error string at the end gives no hint about which
+        // entity / migration / staging table actually failed.
+        tracing::info!("dbd phase: apply");
+        design.apply(
+            &adapter,
+            None,
+            false,
+            |desc: &str| tracing::info!(dbd_step = "apply", desc, "starting"),
+            |desc: &str, err: Option<&str>| match err {
+                Some(e) => tracing::warn!(dbd_step = "apply", desc, error = e, "failed"),
+                None    => tracing::debug!(dbd_step = "apply", desc, "done"),
+            },
+            |_summary| tracing::info!("dbd apply complete"),
+        ).await.map_err(|e| format!("dbd apply failed: {e}"))?;
+
+        tracing::info!("dbd phase: import_data");
+        design.import_data(
+            &adapter,
+            None,
+            false,
+            |desc: &str| tracing::info!(dbd_step = "import", desc, "starting"),
+            |desc: &str, err: Option<&str>| match err {
+                Some(e) => tracing::warn!(dbd_step = "import", desc, error = e, "failed"),
+                None    => tracing::debug!(dbd_step = "import", desc, "done"),
+            },
+            |_summary| tracing::info!("dbd import complete"),
+        ).await.map_err(|e| format!("dbd import failed: {e}"))?;
+
+        tracing::info!("dbd deploy complete");
+        Ok(())
     })
 }
 
