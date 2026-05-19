@@ -3,23 +3,6 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <script>
-            // Boot-timing baseline — captured at HTML parse time (earliest the
-            // webview can run JS). Other code reads window.__SENSEI_T0__ and
-            // logs `boot:<phase>` deltas. Remove once boot loader is shipped.
-            window.__SENSEI_T0__ = performance.now();
-            console.log(
-                "[boot:html-parsed]",
-                "+0.0ms",
-                "(timestamp=" + new Date().toISOString() + ")",
-            );
-            window.__senseiMark = function (label) {
-                var dt = (
-                    performance.now() - window.__SENSEI_T0__
-                ).toFixed(1);
-                console.log("[boot:" + label + "]", "+" + dt + "ms");
-            };
-        </script>
         %sveltekit.head%
     </head>
     <body
