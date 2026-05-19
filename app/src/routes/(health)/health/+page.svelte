@@ -4,23 +4,8 @@
     import { healthState } from "$lib/health-state.svelte.js";
     import HealthView from "./HealthView.svelte";
 
-    // Boot-timing — remove with the rest of the marks once boot loader ships.
-    (window as any).__senseiMark?.("health-page-script");
-
-    let firstUpdateLogged = false;
-    $effect(() => {
-        // Touch a reactive field so this $effect re-fires on health updates.
-        const _ = healthState.components.length;
-        if (!firstUpdateLogged && _ > 0) {
-            firstUpdateLogged = true;
-            (window as any).__senseiMark?.("health-first-update");
-        }
-    });
-
     onMount(() => {
-        (window as any).__senseiMark?.("health-page-mount");
         healthState.init();
-        (window as any).__senseiMark?.("health-init-returned");
     });
 
     // Auto-leave the health page once the gate is green. The reroute hook
@@ -45,5 +30,4 @@
     }
 </script>
 
-hello
 <HealthView state={healthState} {onEnter} {onVerify} {onCopyScript} />
