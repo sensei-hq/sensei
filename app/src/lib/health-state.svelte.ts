@@ -17,7 +17,13 @@ const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | nu
 
 function emptyComponent(id: ComponentId): Component {
   const d = COMPONENT_DEFAULTS[id];
-  return { id, label: d.label, note: d.note, status: 'pending', version: null, detail: null, installingVerb: d.installingVerb };
+  // status='checking' (not 'pending') from the start. The Rust probe pipeline
+  // begins the moment init() fires; if components defaulted to 'pending', the
+  // ledger renders at 55% opacity with idle gray dots and the literal text
+  // "pending" — visually indistinguishable from a frozen page — until the
+  // first probe lands ~5s later. 'checking' lights up the busy state
+  // immediately so the page reads as actively working.
+  return { id, label: d.label, note: d.note, status: 'checking', version: null, detail: null, installingVerb: d.installingVerb };
 }
 
 /** Deterministic default — status='checking' so the UI never flashes 'ok' pre-apply. */
@@ -25,7 +31,7 @@ export const emptyPayload: HealthPayload = {
   version: '',
   uptimeSeconds: 0,
   platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: 'which brew', status: 'pending', version: null, detail: null, installingVerb: 'installing' },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: 'which brew', status: 'checking', version: null, detail: null, installingVerb: 'installing' },
   components: COMPONENT_ORDER.map(emptyComponent),
   status: 'checking',
   remedy: null,

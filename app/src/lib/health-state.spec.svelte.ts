@@ -42,7 +42,8 @@ describe('HealthState — construction', () => {
     expect(s.platform).toBe('macos');
     expect(s.components).toHaveLength(5);
     expect(s.components.map((c) => c.id)).toEqual([...COMPONENT_ORDER]);
-    expect(s.components.every((c) => c.status === 'pending')).toBe(true);
+    expect(s.components.every((c) => c.status === 'checking')).toBe(true);
+    expect(s.packageManager.status).toBe('checking');
     expect(s.packageManager.id).toBe('homebrew');
     expect(s.remedy).toBeNull();
     expect(s.latest).toBeNull();
