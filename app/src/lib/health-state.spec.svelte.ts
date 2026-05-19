@@ -257,41 +257,46 @@ describe('HealthState — B1: constructor accepts a transport', () => {
 });
 
 describe('HealthState — B2: init() lifecycle', () => {
-  it('calls transport.check() exactly once and applies result', async () => {
+  it('calls transport.resolve() exactly once and applies the terminal payload', async () => {
     const transport = new MockTransport({ checkPayload: okPayload() });
     const s = new HealthState(emptyPayload, transport);
     await s.init();
-    expect(transport.checkCalls).toHaveLength(1);
+    expect(transport.resolveCalls).toHaveLength(1);
     expect(s.status).toBe('ok');
   });
 
-  it('calls transport.resolve() when check returns non-ok', async () => {
+  it('arrives at needs-action when terminal payload requires it', async () => {
     const transport = new MockTransport({ checkPayload: needsActionPayload() });
     const s = new HealthState(emptyPayload, transport);
     await s.init();
     expect(transport.resolveCalls).toHaveLength(1);
+    expect(s.status).toBe('needs-action');
   });
 
-  it('does NOT call transport.resolve() when check returns ok', async () => {
-    const transport = new MockTransport({ checkPayload: okPayload() });
-    const s = new HealthState(emptyPayload, transport);
-    await s.init();
-    expect(transport.resolveCalls).toHaveLength(0);
-  });
-
-  it('concurrent init() callers share one in-flight promise (check called once)', async () => {
+  it('concurrent init() callers share one in-flight promise (resolve called once)', async () => {
     const transport = new MockTransport({ checkPayload: okPayload() });
     const s = new HealthState(emptyPayload, transport);
     await Promise.all([s.init(), s.init()]);
-    expect(transport.checkCalls).toHaveLength(1);
+    expect(transport.resolveCalls).toHaveLength(1);
   });
 
   it('HealthEvent fed via resolve callback mutates state correctly', async () => {
+    // Terminal payload reflects the patched state — in the streaming flow
+    // the terminal `report` event is the authoritative final state, so a
+    // patched component must also appear in resolveTerminal for the post-
+    // report `apply()` to land it.
+    const recoveredTerminal: HealthPayload = {
+      ...needsActionPayload(),
+      components: needsActionPayload().components.map((c, i) =>
+        i === 0 ? { ...c, status: 'ready', version: '16.0' } : c,
+      ),
+    };
     const transport = new MockTransport({
       checkPayload: needsActionPayload(),
       resolveEvents: [
         { kind: 'component', id: 'postgres', patch: { status: 'ready', version: '16.0' } },
       ],
+      resolveTerminal: recoveredTerminal,
     });
     const s = new HealthState(emptyPayload, transport);
     await s.init();
@@ -326,20 +331,20 @@ describe('HealthState — B3: verify() forces a fresh check', () => {
     vi.unstubAllGlobals();
   });
 
-  it('causes a fresh transport.check() call after a prior init()', async () => {
+  it('causes a fresh transport.resolve() call after a prior init()', async () => {
     const transport = new MockTransport({ checkPayload: okPayload() });
     const s = new HealthState(emptyPayload, transport);
     await s.init();
-    expect(transport.checkCalls).toHaveLength(1);
+    expect(transport.resolveCalls).toHaveLength(1);
     await s.verify();
-    expect(transport.checkCalls).toHaveLength(2);
+    expect(transport.resolveCalls).toHaveLength(2);
   });
 
-  it('concurrent verify() calls trigger only one check pass', async () => {
+  it('concurrent verify() calls trigger only one resolve pass', async () => {
     const transport = new MockTransport({ checkPayload: okPayload() });
     const s = new HealthState(emptyPayload, transport);
     await Promise.all([s.verify(), s.verify()]);
-    expect(transport.checkCalls).toHaveLength(1);
+    expect(transport.resolveCalls).toHaveLength(1);
   });
 
   it('does not throw when sessionStorage is undefined', async () => {

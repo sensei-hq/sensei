@@ -115,6 +115,13 @@ export class MockTransport implements HealthTransport {
   ): Promise<HealthPayload> {
     this.resolveCalls.push({ current });
     for (const ev of this.opts.resolveEvents ?? []) onEvent(ev);
-    return this.opts.resolveTerminal ?? this.opts.checkPayload;
+    const terminal = this.opts.resolveTerminal ?? this.opts.checkPayload;
+    // Mirror RealTransport: the Rust pipeline always emits a terminal
+    // `report` event before returning, which the consumer's onEvent
+    // handler turns into `apply(payload)`. Without this, callers that
+    // drive state purely from streaming events (the post-2026-05-19
+    // streaming `init()` path) would never see the final payload.
+    onEvent({ kind: 'report', payload: terminal });
+    return terminal;
   }
 }
