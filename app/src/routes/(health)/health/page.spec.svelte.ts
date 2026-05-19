@@ -29,9 +29,10 @@ describe('/health/+page.svelte', () => {
   it('clicking the Verify button (via Remedy) calls healthState.verify()', async () => {
     healthState.apply({
       version: '0.2.14', uptimeSeconds: 0, platform: 'macos',
-      packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing' },
+      packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing', installingVerb: 'installing' },
       components: ['postgres', 'ollama', 'sensei', 'database', 'daemon'].map((id) => ({
         id: id as 'postgres', label: id, note: null, status: 'failed' as const, version: null, detail: 'blocked',
+        installingVerb: 'installing',
       })),
       status: 'needs-action',
       remedy: { message: 'Run script', script: 'brew install sensei-hq/tap/sensei', url: null },

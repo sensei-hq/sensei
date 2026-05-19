@@ -55,6 +55,7 @@ pub enum PackageManagerId {
 
 // Component & Remedy
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Component {
     pub id: String,
     pub label: String,
@@ -62,6 +63,10 @@ pub struct Component {
     pub status: ComponentStatus,
     pub version: Option<String>,
     pub detail: Option<String>,
+    /// Verb to display when status is Installing. Derived from
+    /// `DependencySpec::installing_verb` and carried on the wire so the
+    /// frontend doesn't have to duplicate the mapping.
+    pub installing_verb: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +313,7 @@ mod tests {
             status: s,
             version: None,
             detail: None,
+            installing_verb: "installing".into(),
         };
         HealthPayload {
             version: "0.0.0-test".into(),
