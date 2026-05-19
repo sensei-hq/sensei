@@ -24,7 +24,7 @@ impl PlatformProvider for WindowsProvider {
         Box::new(UnsupportedChecker("winget"))
     }
 
-    fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+    fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
         Box::new(UnsupportedChecker(match id {
             ComponentId::Postgres => "postgres",
             ComponentId::Ollama   => "ollama",
@@ -73,7 +73,7 @@ mod tests {
         let p = WindowsProvider;
         for id in [ComponentId::Postgres, ComponentId::Ollama, ComponentId::Sensei,
                    ComponentId::Database, ComponentId::Daemon] {
-            let o = p.checker_for(id).check();
+            let o = p.checker_for(id, false).check();
             assert!(matches!(o.status, ComponentStatus::Failed));
             assert!(o.detail.as_deref().unwrap().contains("Windows support not yet implemented"));
         }
