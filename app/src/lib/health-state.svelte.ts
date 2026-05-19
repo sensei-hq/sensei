@@ -83,10 +83,13 @@ export class HealthState {
 
   async #runCheckThenMaybeResolve(): Promise<void> {
     this.status = 'checking';
-    const payload = await this.#transport.check();
-    this.apply(payload);
-    if (payload.status === 'ok') return;
-    await this.#transport.resolve(payload, (ev) => this.applyEvent(ev));
+    // Use the streaming path for the whole check-and-resolve flow.
+    // `health_check_and_resolve` (Rust side) emits a Component event after
+    // each probe finishes, so the UI updates incrementally instead of
+    // waiting 5-13s for the entire check phase to complete and arrive as
+    // one atomic payload. The Rust pipeline still runs check → report →
+    // resolve internally; we just consume it via the streaming listener.
+    await this.#transport.resolve(emptyPayload, (ev) => this.applyEvent(ev));
   }
 
   apply(p: HealthPayload): void {

@@ -31,8 +31,29 @@ pub trait PlatformProvider: Send + Sync {
     // ── Default Template Methods ─────────────────────────────────────────
 
     /// Run every checker once. Returns a validated HealthPayload.
-    /// Override only if your platform has a fundamentally different probe shape.
+    /// No events are emitted — callers that want per-probe streaming
+    /// should use `check_streaming` instead.
     fn check(&self, app_version: &str) -> HealthPayload {
+        self.check_streaming(app_version, &|_| {})
+    }
+
+    /// Same as `check` but emits a `Component` event after each probe
+    /// returns. The UI consumes these to update component rows
+    /// incrementally rather than waiting for the full check phase to
+    /// complete (5-13 s when remote brew shell-outs are slow).
+    ///
+    /// Probes still run sequentially — parallelising them is a separate
+    /// concern (each probe is `&dyn Checker`, not Send-bound). The win
+    /// here is purely UI-visible: each result lands the moment its
+    /// probe finishes, rather than all-at-once at the end.
+    ///
+    /// Override only if your platform has a fundamentally different
+    /// probe shape (e.g. a single batched daemon call).
+    fn check_streaming(
+        &self,
+        app_version: &str,
+        emit: &dyn Fn(HealthEvent),
+    ) -> HealthPayload {
         let pm = {
             let pm_id = self.package_manager_id();
             let (label, note) = match pm_id {
@@ -40,7 +61,7 @@ pub trait PlatformProvider: Send + Sync {
                 PackageManagerId::Winget   => ("winget",   "winget --version"),
             };
             let outcome = self.package_manager_checker().check();
-            Component {
+            let comp = Component {
                 id:      package_manager_id_str(pm_id).to_string(),
                 label:   label.to_string(),
                 note:    Some(note.to_string()),
@@ -50,11 +71,23 @@ pub trait PlatformProvider: Send + Sync {
                 // Package managers are plain installs (brew, winget) — no
                 // start/setup distinction needed.
                 installing_verb: "installing".to_string(),
-            }
+            };
+            emit(HealthEvent::Component {
+                id: comp.id.clone(),
+                patch: ComponentPatch {
+                    status: Some(comp.status),
+                    version: Some(comp.version.clone()),
+                    detail: Some(comp.detail.clone()),
+                    ..Default::default()
+                },
+            });
+            comp
         };
-        let components: Vec<Component> = dependency_specs().iter().map(|spec| {
+
+        let mut components: Vec<Component> = Vec::with_capacity(5);
+        for spec in dependency_specs().iter() {
             let outcome = self.checker_for(spec.id).check();
-            Component {
+            let comp = Component {
                 id:      component_id_str(spec.id).to_string(),
                 label:   spec.label.to_string(),
                 note:    spec.note.map(str::to_string),
@@ -62,8 +95,18 @@ pub trait PlatformProvider: Send + Sync {
                 version: outcome.version,
                 detail:  outcome.detail,
                 installing_verb: spec.installing_verb.to_string(),
-            }
-        }).collect();
+            };
+            emit(HealthEvent::Component {
+                id: comp.id.clone(),
+                patch: ComponentPatch {
+                    status: Some(comp.status),
+                    version: Some(comp.version.clone()),
+                    detail: Some(comp.detail.clone()),
+                    ..Default::default()
+                },
+            });
+            components.push(comp);
+        }
 
         let status = overall_status(&pm, &components);
         let remedy = if matches!(status, HealthStatus::NeedsAction) {

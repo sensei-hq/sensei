@@ -43,11 +43,15 @@ describe('MockTransport — check()', () => {
 // ── resolve() — default behaviour (no opts) ──────────────────────────────────
 
 describe('MockTransport — resolve() defaults', () => {
-  it('default resolveEvents is empty — onEvent is not called', async () => {
+  it('emits exactly one terminal report event by default', async () => {
+    // MockTransport mirrors RealTransport by emitting a terminal `report`
+    // event before returning, so consumers driving state purely from
+    // streaming events still see the final payload.
     const t = new MockTransport({ checkPayload: okPayload() });
     const events: HealthEvent[] = [];
     await t.resolve(okPayload(), (ev) => events.push(ev));
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ kind: 'report', payload: okPayload() });
   });
 
   it('resolves with checkPayload when resolveTerminal is absent', async () => {
@@ -61,17 +65,19 @@ describe('MockTransport — resolve() defaults', () => {
 // ── resolve() — scripted events ───────────────────────────────────────────────
 
 describe('MockTransport — resolve() scripted events', () => {
-  it('fires onEvent once per scripted event, in order', async () => {
+  it('fires onEvent once per scripted event, in order, then emits terminal report', async () => {
     const events: HealthEvent[] = [
       { kind: 'phase', phase: 'resolving' },
-      { kind: 'report', payload: okPayload() },
+      { kind: 'component', id: 'postgres', patch: { status: 'ready' } },
     ];
     const t = new MockTransport({ checkPayload: okPayload(), resolveEvents: events });
     const received: HealthEvent[] = [];
     await t.resolve(okPayload(), (ev) => received.push(ev));
-    expect(received).toHaveLength(2);
+    // Scripted events first, then the auto-emitted terminal report.
+    expect(received).toHaveLength(3);
     expect(received[0]).toBe(events[0]);
     expect(received[1]).toBe(events[1]);
+    expect(received[2]).toEqual({ kind: 'report', payload: okPayload() });
   });
 
   it('resolves with resolveTerminal when provided', async () => {
@@ -138,7 +144,7 @@ describe('MockTransport — resolve() scripted events', () => {
     expect(received[0]).toEqual(reportEvent);
   });
 
-  it('delivers all four event kinds in a single sequence', async () => {
+  it('delivers all four event kinds in a single sequence (plus auto terminal report)', async () => {
     const resolveEvents: HealthEvent[] = [
       { kind: 'phase', phase: 'resolving' },
       { kind: 'component', id: 'postgres', patch: { status: 'checking' } },
@@ -148,8 +154,9 @@ describe('MockTransport — resolve() scripted events', () => {
     const t = new MockTransport({ checkPayload: okPayload(), resolveEvents });
     const received: HealthEvent[] = [];
     await t.resolve(okPayload(), (ev) => received.push(ev));
-    expect(received).toHaveLength(4);
-    expect(received.map((e) => e.kind)).toEqual(['phase', 'component', 'remedy', 'report']);
+    // Scripted four events, then the auto-emitted terminal report (5 total).
+    expect(received).toHaveLength(5);
+    expect(received.map((e) => e.kind)).toEqual(['phase', 'component', 'remedy', 'report', 'report']);
   });
 });
 
