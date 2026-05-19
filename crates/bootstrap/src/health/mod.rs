@@ -36,7 +36,8 @@ pub(crate) fn resolve(current: &HealthPayload, app_version: &str, emit: &dyn Fn(
     detect_provider().resolve(current, app_version, emit)
 }
 
-/// Full pipeline: emit Phase(Checking) → run `check()` → emit
+/// Full pipeline: emit Phase(Checking) → run `check_streaming()` which
+/// emits a Component event after each probe finishes → emit
 /// Report(initial) → if not Ok, run `resolve()` which emits its own
 /// Phase(Resolving), per-component patches, optional Remedy, and a final
 /// Report(terminal).
@@ -47,7 +48,7 @@ pub(crate) fn resolve(current: &HealthPayload, app_version: &str, emit: &dyn Fn(
 /// closure.
 pub fn check_and_resolve(app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
     emit(HealthEvent::Phase { phase: HealthStatus::Checking });
-    let state = check(app_version);
+    let state = detect_provider().check_streaming(app_version, emit);
     emit(HealthEvent::Report { payload: state.clone() });
     if state.status == HealthStatus::Ok {
         return state;
