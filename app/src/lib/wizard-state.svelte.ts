@@ -3,11 +3,16 @@
  *
  * Hydrated from daemon via layout load. Stages read/write slices.
  * commitStage() persists to daemon on advance.
+ *
+ * Stage metadata + live status + active flag all live on `stages` (one
+ * WizardStage[] array). The rail and the page header consume the same
+ * objects; status persists via commitStage; active flips on route change.
  */
 
 import { senseiApi } from './api.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
+import { STAGES, type WizardStage } from '../routes/(config)/stages.js';
 import type {
   DaemonAssistantFamily, DaemonWatchRoot, DaemonProject,
   DaemonLibEntry, DaemonMcpEntry, PreferencesData,
@@ -42,14 +47,6 @@ export interface LibrariesSlice {
 export interface InstrumentsSlice {
   mcps: DaemonMcpEntry[];
 }
-
-// ── Stage order ─────────────────────────────────────────────
-
-const STAGE_ORDER = [
-  'welcome', 'preferences', 'assistants', 'roots', 'scan',
-  'projects', 'libraries', 'instruments',
-  'inference', 'assignments', 'done',
-] as const;
 
 // ── Commit handlers ─────────────────────────────────────────
 
@@ -87,8 +84,14 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
 
 // ── WizardState ─────────────────────────────────────────────
 
+function cloneStages(): WizardStage[] {
+  return STAGES.map(s => ({ ...s }));
+}
+
 export class WizardState {
-  completion = $state<Record<string, 'pending' | 'done'>>({});
+  // Single source of truth for stage metadata + persisted status + transient active.
+  // The rail iterates this array; the page header indexes it.
+  stages = $state<WizardStage[]>(cloneStages());
 
   preferences = $state<PreferencesData>({
     displayName: '', contributeLearnings: true, reviewBeforeShare: true,
@@ -106,18 +109,21 @@ export class WizardState {
   // ── Derived ──
 
   get firstPendingStage(): string {
-    for (const id of STAGE_ORDER) {
-      if (this.completion[id] !== 'done') return id;
-    }
-    return 'done';
+    const pending = this.stages.find(s => s.status !== 'done');
+    return pending ? pending.id : 'done';
   }
 
   get allDone(): boolean {
-    return STAGE_ORDER.every(id => this.completion[id] === 'done');
+    return this.stages.every(s => s.status === 'done');
   }
 
   isStageComplete(id: string): boolean {
-    return this.completion[id] === 'done';
+    return this.stages.find(s => s.id === id)?.status === 'done';
+  }
+
+  /** Mark a stage active, clearing any previous active stage. */
+  setActive(id: string): void {
+    for (const s of this.stages) s.active = s.id === id;
   }
 
   canAdvance(stageId: string): boolean {
@@ -132,7 +138,12 @@ export class WizardState {
   // ── Lifecycle ──
 
   async hydrate(data: WizardLoadData): Promise<void> {
-    this.completion = { ...data.completion };
+    // Reset stages from the canonical static defs, then layer persisted status.
+    this.stages = cloneStages();
+    for (const s of this.stages) {
+      if (data.completion[s.id] === 'done') s.status = 'done';
+    }
+
     this.preferences = { ...data.preferences };
 
     // Prefill displayName from system username if empty
@@ -174,7 +185,8 @@ export class WizardState {
     try {
       await handler(this, api);
       await api.setConfig({ [`setup.${stageId}`]: 'done' });
-      this.completion[stageId] = 'done';
+      const stage = this.stages.find(s => s.id === stageId);
+      if (stage) stage.status = 'done';
       return true;
     } catch {
       return false;
