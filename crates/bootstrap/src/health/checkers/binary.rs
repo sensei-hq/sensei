@@ -32,7 +32,7 @@ impl Checker for BinaryChecker {
         }
         match self.version_arg {
             None => {
-                tracing::info!(check = "binary", binary = self.bin, result = "ready", "ready (no version probe)");
+                tracing::debug!(check = "binary", binary = self.bin, result = "ready", "ready (no version probe)");
                 CheckOutcome::ready_no_version()
             }
             Some(arg) => {
@@ -43,7 +43,7 @@ impl Checker for BinaryChecker {
                     TimedOutcome::Done(out) if out.status.success() => {
                         let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
                         let v = if raw.is_empty() { "unknown".to_string() } else { raw };
-                        tracing::info!(check = "binary", binary = self.bin, result = "ready", version = %v, "ready");
+                        tracing::debug!(check = "binary", binary = self.bin, result = "ready", version = %v, "ready");
                         CheckOutcome::ready(v)
                     }
                     TimedOutcome::Done(out) => {

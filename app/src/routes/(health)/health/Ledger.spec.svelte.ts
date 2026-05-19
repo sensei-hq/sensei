@@ -8,8 +8,21 @@ import { COMPONENT_ORDER } from '$lib/health-types.js';
 let cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
+// Per-component verb mirroring the Rust DependencySpec so tests can seed
+// the wire value without going through the transport.
+const INSTALLING_VERBS: Record<Component['id'], string> = {
+  postgres: 'starting',
+  ollama:   'starting',
+  sensei:   'installing',
+  database: 'setting up',
+  daemon:   'starting',
+  homebrew: 'installing',
+  winget:   'installing',
+};
+
 const row = (id: Component['id'], status: ComponentStatus, detail: string | null = null): Component => ({
   id, label: String(id), note: null, status, version: null, detail,
+  installingVerb: INSTALLING_VERBS[id],
 });
 
 const allReady = (): Component[] => COMPONENT_ORDER.map((id) => row(id, 'ready'));
@@ -46,9 +59,9 @@ describe('Ledger', () => {
     ['daemon',   'starting'],
     ['database', 'setting up'],
     ['sensei',   'installing'],
-  ])('renders %s installing badge as "%s"', (id, expectedVerb) => {
+  ] as const)('renders %s installing badge as "%s"', (id, expectedVerb) => {
     const cs = allReady();
-    const idx = ['postgres', 'ollama', 'sensei', 'database', 'daemon'].indexOf(id);
+    const idx = COMPONENT_ORDER.indexOf(id);
     cs[idx] = row(id, 'installing');
     const m = mountComponent(Ledger, { components: cs });
     cleanup.push(m.destroy);
@@ -63,6 +76,15 @@ describe('Ledger', () => {
     cleanup.push(m.destroy);
     const detail = m.container.querySelector('[data-row="ollama"] [data-detail]');
     expect(detail?.textContent).toContain('port 11434 in use');
+  });
+
+  it('failure detail row is user-selectable (carries select-text class)', () => {
+    const cs = allReady();
+    cs[1] = row('ollama', 'failed', 'port 11434 in use');
+    const m = mountComponent(Ledger, { components: cs });
+    cleanup.push(m.destroy);
+    const detail = m.container.querySelector('[data-row="ollama"] [data-detail]');
+    expect(detail?.className).toContain('select-text');
   });
 
   it('throws when components.length is not 5', () => {

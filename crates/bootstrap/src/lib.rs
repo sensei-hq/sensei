@@ -16,6 +16,7 @@ pub mod database;
 pub mod health;
 pub mod hardware;
 pub mod models;
+pub mod tracing_init;
 pub mod upgrade;
 
 pub use config::{

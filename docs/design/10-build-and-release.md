@@ -136,7 +136,6 @@ No strict ordering between independent targets. Dependencies within the app buil
 | `test-crates` | `cargo test --workspace` |
 | `test-crates-fast` | `cargo test -p sensei-bootstrap` (pure Rust, no DB) |
 | `test-app-unit` | Vitest unit tests |
-| `test-app-sidecar` | Sidecar integration tests |
 | `test-app-e2e` | Playwright E2E tests (optionally resets DB) |
 | `update` | Update Rust + Node dependencies, run tests |
 | `bump` | Version bump across all manifests, commit, tag, push, sync subtrees |

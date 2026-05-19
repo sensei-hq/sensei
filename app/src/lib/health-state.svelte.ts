@@ -7,17 +7,17 @@ import { RealTransport, type HealthTransport } from './health-transport.js';
 import { setHealthReady, clearHealthCache } from './health-cache.js';
 
 /** Display labels for each ledger component. The Rust crate provides these in Phase 2/3 — here they live as cold-load defaults so the UI matches the mockup before any transport runs. */
-const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | null }> = {
-  postgres: { label: 'PostgreSQL',         note: null },
-  ollama:   { label: 'Ollama',             note: null },
-  sensei:   { label: 'Sensei components',  note: 'cli · mcp · daemon' },
-  database: { label: 'Database & schema',  note: 'pgvector · sensei tables' },
-  daemon:   { label: 'Background daemon',  note: null },
+const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | null; installingVerb: string }> = {
+  postgres: { label: 'PostgreSQL',         note: null,                            installingVerb: 'starting' },
+  ollama:   { label: 'Ollama',             note: null,                            installingVerb: 'starting' },
+  sensei:   { label: 'Sensei components',  note: 'cli · mcp · daemon',            installingVerb: 'installing' },
+  database: { label: 'Database & schema',  note: 'pgvector · sensei tables',      installingVerb: 'setting up' },
+  daemon:   { label: 'Background daemon',  note: null,                            installingVerb: 'starting' },
 };
 
 function emptyComponent(id: ComponentId): Component {
   const d = COMPONENT_DEFAULTS[id];
-  return { id, label: d.label, note: d.note, status: 'pending', version: null, detail: null };
+  return { id, label: d.label, note: d.note, status: 'pending', version: null, detail: null, installingVerb: d.installingVerb };
 }
 
 /** Deterministic default — status='checking' so the UI never flashes 'ok' pre-apply. */
@@ -25,7 +25,7 @@ export const emptyPayload: HealthPayload = {
   version: '',
   uptimeSeconds: 0,
   platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: 'which brew', status: 'pending', version: null, detail: null },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: 'which brew', status: 'pending', version: null, detail: null, installingVerb: 'installing' },
   components: COMPONENT_ORDER.map(emptyComponent),
   status: 'checking',
   remedy: null,

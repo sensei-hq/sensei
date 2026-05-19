@@ -5,25 +5,26 @@
 use sensei_bootstrap::*;
 
 fn mock_payload(status: HealthStatus, with_remedy: bool) -> HealthPayload {
-    let mk = |id: &str, label: &str, note: Option<&str>, s: ComponentStatus| Component {
+    let mk = |id: &str, label: &str, note: Option<&str>, s: ComponentStatus, verb: &str| Component {
         id: id.to_string(),
         label: label.to_string(),
         note: note.map(str::to_string),
         status: s,
         version: None,
         detail: None,
+        installing_verb: verb.to_string(),
     };
     HealthPayload {
         version:        "0.0.0-test".into(),
         uptime_seconds: 42,
         platform:       Platform::Macos,
-        package_manager: mk("homebrew", "Homebrew", Some("which brew"), ComponentStatus::Ready),
+        package_manager: mk("homebrew", "Homebrew", Some("which brew"), ComponentStatus::Ready, "installing"),
         components: vec![
-            mk("postgres", "PostgreSQL", None, ComponentStatus::Ready),
-            mk("ollama",   "Ollama", None, ComponentStatus::Ready),
-            mk("sensei",   "Sensei components", Some("cli · mcp · daemon"), ComponentStatus::Ready),
-            mk("database", "Database & schema", Some("pgvector · sensei tables"), ComponentStatus::Ready),
-            mk("daemon",   "Background daemon", None, ComponentStatus::Ready),
+            mk("postgres", "PostgreSQL", None, ComponentStatus::Ready, "starting"),
+            mk("ollama",   "Ollama", None, ComponentStatus::Ready, "starting"),
+            mk("sensei",   "Sensei components", Some("cli · mcp · daemon"), ComponentStatus::Ready, "installing"),
+            mk("database", "Database & schema", Some("pgvector · sensei tables"), ComponentStatus::Ready, "setting up"),
+            mk("daemon",   "Background daemon", None, ComponentStatus::Ready, "starting"),
         ],
         status,
         remedy: if with_remedy {
@@ -45,7 +46,11 @@ fn ok_payload_serializes_to_expected_json() {
     assert_eq!(json["packageManager"]["status"], "ready");
     assert_eq!(json["components"][0]["id"], "postgres");
     assert_eq!(json["components"][0]["label"], "PostgreSQL");
+    assert_eq!(json["components"][0]["installingVerb"], "starting");
     assert_eq!(json["components"][2]["note"], "cli · mcp · daemon");
+    assert_eq!(json["components"][2]["installingVerb"], "installing");
+    assert_eq!(json["components"][3]["installingVerb"], "setting up");
+    assert_eq!(json["packageManager"]["installingVerb"], "installing");
     assert_eq!(json["version"], "0.0.0-test");
     assert_eq!(json["uptimeSeconds"], 42);
     // CRITICAL: NEVER snake_case at the top level.
