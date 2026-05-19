@@ -15,27 +15,31 @@ One screen at a time. Each screen: read mockup → state class → component →
   detail in the ledger. Added a global `user-select: text` opt-in on `body`
   in `app.css` (drag region + buttons opt back out) so any other content
   page on the same webview is selectable by default.
-- **Setup pages — scan stage had problems last time.** Static review (2026-05-16):
-  - `startScan()` sets `started = true` before `await api.getScanRoots()` —
-    if the call throws, the user is stuck on "Discovering projects..." with
-    no error UI. Wrap in try/catch and render the failure inline.
-  - `startDonePoller` swallows daemon-unreachable errors silently. If the
-    daemon goes down mid-scan the user sees no signal. Surface a transient
-    "daemon unreachable, retrying" line.
-  - Two definitions of "done": `ScanProjectState.done` (every project active
-    or failed) and the poller's queue-idle check. They can disagree. Pick
-    one as canonical (queue idle is more authoritative) and reuse it.
-  - `LEVEL_COLORS.error` maps to `--color-primary-z5` (same as `process`).
-    Pick a distinct error colour — `--color-warning-z5` or a dedicated red.
-  - `await api.scanFolder(root.path)` in a for-loop blocks the poller setup
-    on a slow root. Either run them in parallel via `Promise.all` or move
-    `startDonePoller` before the loop so progress shows even if one root
-    is slow.
-  - Activity feed shows newest-at-top via `slice(-100).reverse()`, but new
-    events shift the older ones DOWN — fine, but worth a comment so the
-    next maintainer doesn't "fix" it.
-  - No re-run button after a failed scan. If a root errors out the user
-    can't retry from this stage; they have to navigate back to roots.
+- ~~**Setup pages — scan stage had problems last time.**~~ Done (2026-05-19, commit 5ca56315) —
+  - ~~`startScan()` set `started = true` before `await api.getScanRoots()`~~ —
+    wrapped in try/catch; failure renders an inline error card with Retry button.
+  - ~~`startDonePoller` swallowed daemon-unreachable errors silently~~ —
+    poller now flips `daemonReachable`; transient warning banner surfaces it.
+  - ~~Two definitions of "done"~~ — `ScanProjectState.done` renamed to
+    `allProjectsResolved` with a comment noting `wizardState.scan.done`
+    (the poller's queue-idle check) is the canonical signal.
+  - ~~`LEVEL_COLORS.error` maps to `--color-primary-z5` (same as `process`)~~ —
+    switched to `--color-danger-z5` (beni crimson), distinct from primary
+    and warning.
+  - ~~`await api.scanFolder(root.path)` in a for-loop blocked the poller~~ —
+    parallelised via `Promise.all(pending.map(...))`.
+  - ~~Activity feed newest-at-top ordering needed a comment~~ — documented
+    on the `recent` getter so the intentional shift isn't "fixed" away.
+  - ~~No re-run button after a failed scan~~ — Retry button next to the
+    error card; `resetScanState()` clears poller, SSE sub, projects,
+    activities, and scan.done before retry.
+
+- ~~**Wizard stage metadata — rail and header had separate sub field doing
+  double duty.**~~ Done (2026-05-19, commit 5ca56315) — unified into one
+  `WizardStage` type with separate `brief` (rail) and `description` (header)
+  fields, plus `status` (persisted) and `active` (transient) on each stage
+  entry. Dropped the parallel `wizardState.completion` map; both the rail
+  and the page header now consume the same `wizardState.stages` array.
 
 ## Audit: bootstrap resolve-flow refactor (commit 481806fb)
 
