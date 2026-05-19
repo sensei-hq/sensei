@@ -10,6 +10,26 @@ One screen at a time. Each screen: read mockup → state class → component →
 
 ## Known bugs (next)
 
+- **E2E `globalSetup` builds and launches its own `senseid` for every
+  test run.** That defeats the "daemon stopped" scenario the boot/health
+  flow most needs to verify — with senseid up, the daemon gate is always
+  green by the time tests start. Either (a) make senseid launch optional
+  via a per-spec fixture, (b) split E2E into "with-daemon" vs
+  "no-daemon" projects in `playwright.config.ts`, or (c) drop the
+  global senseid spawn entirely and have tests start it themselves only
+  when needed. Surfaced 2026-05-19 while trying to verify the streaming
+  health check fix.
+
+- **E2E specs over-rely on `navigateTo` / `goto` and rarely assert what
+  is currently visible.** `boot-flow.spec.ts` navigates between
+  `/health`, `/`, and `/setup/welcome` with little inspection of the
+  Hero/Ledger DOM in between, so visual-state regressions (like the
+  "page looks blank during checking" bug that was actually a Ledger
+  styling issue) wouldn't be caught. Need a spec that mounts `/health`,
+  freezes the IPC mock at `phase=checking` with zero probes returned,
+  and asserts the rendered DOM contains animated busy dots + "checking"
+  badge text. Surfaced 2026-05-19.
+
 - ~~**Health remedy: text not selectable / copyable.**~~ Done (2026-05-16) —
   added `select-text` to the remedy `<pre>` and message, and to the failed-row
   detail in the ledger. Added a global `user-select: text` opt-in on `body`
