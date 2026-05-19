@@ -41,24 +41,29 @@ impl PlatformProvider for MacOSProvider {
         Box::new(BinaryChecker::with_version("brew", "--version"))
     }
 
-    fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+    fn checker_for(&self, id: ComponentId, retry: bool) -> Box<dyn Checker> {
         // Port-checker timeouts are sized for the resolve-phase re-check.
         // `brew services start postgresql@17` takes 1-5s before the port
         // is bound; `senseid start` daemonizes and binds within 1-2s.
-        // A 400ms first-check is plenty for "is it already up" — the
-        // longer deadlines only matter on the second check after a
-        // resolver runs.
+        // The initial check (retry=false) uses a 400ms single-attempt probe
+        // so closed ports report failed in ~ms instead of paying the full
+        // patient deadline (which used to add 13s of wasted wall time).
         const POSTGRES_PORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
         const OLLAMA_PORT_TIMEOUT:   std::time::Duration = std::time::Duration::from_secs(5);
         const DAEMON_PORT_TIMEOUT:   std::time::Duration = std::time::Duration::from_secs(3);
+        fn port(label: &'static str, port: u16, retry: bool, recheck_timeout: std::time::Duration) -> Box<dyn Checker> {
+            if retry {
+                Box::new(PortChecker::with_timeout(label, port, recheck_timeout))
+            } else {
+                Box::new(PortChecker::new(label, port))
+            }
+        }
         match id {
             ComponentId::Postgres => Box::new(AndChecker(vec![
                 Box::new(BinaryChecker::with_version("pg_isready", "--version")),
-                Box::new(PortChecker::with_timeout("postgres", POSTGRES_PORT, POSTGRES_PORT_TIMEOUT)),
+                port("postgres", POSTGRES_PORT, retry, POSTGRES_PORT_TIMEOUT),
             ])),
-            ComponentId::Ollama => Box::new(
-                PortChecker::with_timeout("ollama", OLLAMA_PORT, OLLAMA_PORT_TIMEOUT),
-            ),
+            ComponentId::Ollama => port("ollama", OLLAMA_PORT, retry, OLLAMA_PORT_TIMEOUT),
             ComponentId::Sensei => {
                 let cfg = SenseiConfig::from_env();
                 Box::new(AndChecker(vec![
@@ -70,9 +75,7 @@ impl PlatformProvider for MacOSProvider {
             ComponentId::Database => Box::new(PostgresDatabaseChecker {
                 db_name: SenseiConfig::from_env().db_name,
             }),
-            ComponentId::Daemon => Box::new(PortChecker::with_timeout(
-                "daemon", SenseiConfig::from_env().daemon_port, DAEMON_PORT_TIMEOUT,
-            )),
+            ComponentId::Daemon => port("daemon", SenseiConfig::from_env().daemon_port, retry, DAEMON_PORT_TIMEOUT),
         }
     }
 
@@ -116,11 +119,13 @@ mod tests {
         let p = MacOSProvider;
         // Exhaustive over the 5 ComponentId variants — if a new one is added,
         // checker_for's match arm fails to compile.
-        let _ = p.checker_for(ComponentId::Postgres);
-        let _ = p.checker_for(ComponentId::Ollama);
-        let _ = p.checker_for(ComponentId::Sensei);
-        let _ = p.checker_for(ComponentId::Database);
-        let _ = p.checker_for(ComponentId::Daemon);
+        for retry in [false, true] {
+            let _ = p.checker_for(ComponentId::Postgres, retry);
+            let _ = p.checker_for(ComponentId::Ollama, retry);
+            let _ = p.checker_for(ComponentId::Sensei, retry);
+            let _ = p.checker_for(ComponentId::Database, retry);
+            let _ = p.checker_for(ComponentId::Daemon, retry);
+        }
     }
 
     #[test]
@@ -168,7 +173,7 @@ mod tests {
         use crate::config::SenseiConfig;
         use crate::health::types::ComponentStatus;
         let p = MacOSProvider;
-        let c = p.checker_for(ComponentId::Sensei);
+        let c = p.checker_for(ComponentId::Sensei, false);
         let outcome = c.check();
         if matches!(outcome.status, ComponentStatus::Failed) {
             let detail = outcome.detail.unwrap_or_default();
