@@ -19,6 +19,14 @@ fn install_tracing() {
 }
 
 pub fn run() {
+    // Boot-timing — remove with the rest of the marks once boot loader ships.
+    let t0 = std::time::Instant::now();
+    flog::log("[boot:rust-run] +0ms");
+    let mark = move |label: &str| {
+        let dt = t0.elapsed().as_millis();
+        flog::log(&format!("[boot:{}] +{}ms", label, dt));
+    };
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -48,7 +56,9 @@ pub fn run() {
             commands::update::run_upgrade_steps,
             commands::update::check_for_update,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            mark("setup-start");
+
             // ── Tracing subscriber → flog ────────────────────────────────
             // The sidecar links `sensei-bootstrap`, which emits structured
             // tracing events at every probe / brew shell-out / dbd step.
@@ -69,6 +79,7 @@ pub fn run() {
             // ── Vibrancy ──────────────────────────────────────────────────
             let window = app.get_webview_window("main")
                 .ok_or("window 'main' not found")?;
+            mark("main-window-acquired");
             #[cfg(target_os = "macos")]
             {
                 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
@@ -187,6 +198,7 @@ pub fn run() {
                 }
             });
 
+            mark("setup-end");
             Ok(())
         });
 
