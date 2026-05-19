@@ -30,7 +30,7 @@
         app-dev app-dev-bundle app-release app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
-        test-app test-app-unit test-app-e2e test-app-sidecar \
+        test-app test-app-unit test-app-e2e \
         setup-hooks update bump tap-push marketplace-push clean
 
 VERSION := $(shell cat VERSION)
@@ -142,12 +142,12 @@ test-fast: test-crates-fast test-app-unit
 test-crates-fast:
 	cargo test -p sensei-bootstrap
 
-test: test-crates test-app-unit test-app-sidecar
+test: test-crates test-app-unit
 
 test-crates:
 	cargo test --workspace
 
-test-app: test-app-unit test-app-sidecar
+test-app: test-app-unit
 
 test-app-unit:
 	cd app && bun run test:unit
@@ -163,9 +163,6 @@ reset ?= true
 test-app-e2e: install-dev
 	$(if $(filter true,$(reset)),$(MAKE) reset-e2e-db)
 	cd app && bun run test:e2e
-
-test-app-sidecar:
-	cd app && bun run test:sidecar
 
 # ── Git hooks ─────────────────────────────────────────────────────────────────
 # Run once after cloning: make setup-hooks

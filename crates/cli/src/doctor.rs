@@ -14,50 +14,31 @@
 //!
 //! Exit code: 0 if the terminal payload is Ok, 1 otherwise.
 
-use sensei_bootstrap::{self as bootstrap, HealthEvent, HealthPayload, HealthStatus, ComponentStatus};
-use tracing_subscriber::EnvFilter;
+use owo_colors::{OwoColorize, Stream};
+use sensei_bootstrap::{self as bootstrap, Component, HealthEvent, HealthPayload, HealthStatus, ComponentStatus};
 
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-// ── ANSI helpers ────────────────────────────────────────────────────────────
+// ── Colour helpers ──────────────────────────────────────────────────────────
+// Use owo-colors with `if_supports_color(Stream::Stdout, ...)` so the
+// palette auto-disables on no-TTY (pipes, CI logs) and respects NO_COLOR.
+// Each helper returns a fully-rendered String so callers can compose them
+// without fighting the opaque colour wrappers in match arms.
 
-const RESET:   &str = "\x1b[0m";
-const BOLD:    &str = "\x1b[1m";
-const DIM:     &str = "\x1b[2m";
-const GREEN:   &str = "\x1b[32m";
-const RED:     &str = "\x1b[31m";
-const YELLOW:  &str = "\x1b[33m";
-const BLUE:    &str = "\x1b[34m";
-const CYAN:    &str = "\x1b[36m";
+fn green(s: &str)  -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.green())) }
+fn red(s: &str)    -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.red())) }
+fn yellow(s: &str) -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.yellow())) }
+fn blue(s: &str)   -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.blue())) }
+fn cyan(s: &str)   -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.cyan())) }
+fn dim(s: &str)    -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.dimmed())) }
+fn bold(s: &str)   -> String { format!("{}", s.if_supports_color(Stream::Stdout, |t| t.bold())) }
 
-/// Per-component verb for the `Installing` status. The library uses a
-/// single `ComponentStatus::Installing` value, but the resolver actions
-/// behind it differ:
-///   * service-style deps (postgres, ollama, daemon) — cascade tries
-///     `brew services start` first, so "starting" is accurate in the
-///     common case; only on stage-3 fallback is it actually installing.
-///   * sensei — pure brew install (no service), "installing" fits.
-///   * database — dbd-core schema setup, "setting up" is closer.
-fn installing_verb(id: &str) -> &'static str {
-    match id {
-        "postgres" | "ollama" | "daemon" => "starting",
-        "database"                       => "setting up",
-        _                                => "installing",
-    }
-}
-
-fn green(s: &str)  -> String { format!("{GREEN}{s}{RESET}") }
-fn red(s: &str)    -> String { format!("{RED}{s}{RESET}") }
-fn yellow(s: &str) -> String { format!("{YELLOW}{s}{RESET}") }
-fn blue(s: &str)   -> String { format!("{BLUE}{s}{RESET}") }
-fn cyan(s: &str)   -> String { format!("{CYAN}{s}{RESET}") }
-fn dim(s: &str)    -> String { format!("{DIM}{s}{RESET}") }
-fn bold(s: &str)   -> String { format!("{BOLD}{s}{RESET}") }
+fn verb_for_component(c: &Component) -> &str { &c.installing_verb }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 pub fn run() -> i32 {
-    install_tracing();
+    bootstrap::tracing_init::install_console("sensei_bootstrap=warn");
 
     println!("{}", bold(&format!("sensei doctor  {}", dim(&format!("v{CARGO_PKG_VERSION}")))));
     println!("{}", dim("Diagnoses your bootstrap dependencies. Set RUST_LOG=sensei_bootstrap=info"));
@@ -73,22 +54,6 @@ pub fn run() -> i32 {
     print_terminal(&terminal);
 
     if terminal.status == HealthStatus::Ok { 0 } else { 1 }
-}
-
-// ── Subscriber: quiet by default ────────────────────────────────────────────
-
-fn install_tracing() {
-    // Default: warn-or-worse only, so the structured timeline isn't drowned
-    // out. Users opt into deeper detail with RUST_LOG=sensei_bootstrap=info,
-    // =debug, or =trace.
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("sensei_bootstrap=warn"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_level(true)
-        .compact()
-        .try_init();
 }
 
 // ── Event printer ───────────────────────────────────────────────────────────
@@ -117,7 +82,7 @@ fn print_event(ev: HealthEvent) {
             let id_col = format!("{:<10}", id);
             let status_word = match status {
                 Some(ComponentStatus::Ready)      => green("ready"),
-                Some(ComponentStatus::Installing) => yellow(installing_verb(&id)),
+                Some(ComponentStatus::Installing) => yellow(bootstrap::installing_verb_for(&id)),
                 Some(ComponentStatus::Failed)     => red("failed"),
                 Some(ComponentStatus::Pending)    => dim("pending"),
                 Some(ComponentStatus::Checking)   => cyan("checking"),
@@ -147,7 +112,7 @@ fn print_event(ev: HealthEvent) {
             for c in &payload.components {
                 let (icon, status_word) = match c.status {
                     ComponentStatus::Ready      => (green("✓"), green("ready")),
-                    ComponentStatus::Installing => (yellow("…"), yellow(installing_verb(&c.id))),
+                    ComponentStatus::Installing => (yellow("…"), yellow(verb_for_component(c))),
                     ComponentStatus::Failed     => (red("✗"),    red("failed")),
                     ComponentStatus::Pending    => (dim("·"),    dim("pending")),
                     ComponentStatus::Checking   => (cyan("·"),   cyan("checking")),
@@ -189,7 +154,7 @@ fn print_terminal(t: &HealthPayload) {
     for c in &t.components {
         let (icon, status_word) = match c.status {
             ComponentStatus::Ready      => (green("✓"), green("ready")),
-            ComponentStatus::Installing => (yellow("…"), yellow(installing_verb(&c.id))),
+            ComponentStatus::Installing => (yellow("…"), yellow(verb_for_component(c))),
             ComponentStatus::Failed     => (red("✗"),   red("failed")),
             ComponentStatus::Pending    => (dim("·"),   dim("pending")),
             ComponentStatus::Checking   => (cyan("·"),  cyan("checking")),

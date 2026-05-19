@@ -39,6 +39,18 @@ describe('Remedy', () => {
     expect(onVerify).toHaveBeenCalledTimes(1);
   });
 
+  it('script and message are user-selectable (carry select-text class)', () => {
+    // Webview may default to non-selectable in some contexts. We opt
+    // these specific elements into selection so users can copy partial
+    // text / the message itself.
+    const m = mountComponent(Remedy, { remedy: fixture() });
+    cleanup.push(m.destroy);
+    const pre = m.container.querySelector('pre');
+    expect(pre?.className).toContain('select-text');
+    const message = m.container.querySelector('[data-remedy-message]');
+    expect(message?.className).toContain('select-text');
+  });
+
   it('renders a link only when remedy.url is non-null', () => {
     const m1 = mountComponent(Remedy, { remedy: fixture({ url: null }) });
     cleanup.push(m1.destroy);

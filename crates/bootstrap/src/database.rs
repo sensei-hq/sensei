@@ -109,12 +109,12 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         let project_dir = resolve_source(&source)
             .await
             .map_err(|e| format!("dbd source resolution failed ({source}): {e}"))?;
-        tracing::info!(project_dir = %project_dir.display(), "dbd source resolved");
+        tracing::debug!(project_dir = %project_dir.display(), "dbd source resolved");
 
         let config_path = project_dir.join("design.yaml");
         let design = Design::from_config_with_dir(&config_path, env, Some(&project_dir))
             .map_err(|e| format!("dbd config load failed: {e}"))?;
-        tracing::info!(entities = design.entities().len(), "dbd design loaded");
+        tracing::debug!(entities = design.entities().len(), "dbd design loaded");
 
         let adapter = PostgresAdapter::new(&db_url, "sensei")
             .await
@@ -130,7 +130,7 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
             &adapter,
             None,
             false,
-            |desc: &str| tracing::info!(dbd_step = "apply", desc, "starting"),
+            |desc: &str| tracing::debug!(dbd_step = "apply", desc, "starting"),
             |desc: &str, err: Option<&str>| match err {
                 Some(e) => tracing::warn!(dbd_step = "apply", desc, error = e, "failed"),
                 None    => tracing::debug!(dbd_step = "apply", desc, "done"),
@@ -143,7 +143,7 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
             &adapter,
             None,
             false,
-            |desc: &str| tracing::info!(dbd_step = "import", desc, "starting"),
+            |desc: &str| tracing::debug!(dbd_step = "import", desc, "starting"),
             |desc: &str, err: Option<&str>| match err {
                 Some(e) => tracing::warn!(dbd_step = "import", desc, error = e, "failed"),
                 None    => tracing::debug!(dbd_step = "import", desc, "done"),

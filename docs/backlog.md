@@ -10,50 +10,89 @@ One screen at a time. Each screen: read mockup → state class → component →
 
 ## Known bugs (next)
 
-- **Health remedy: text not selectable / copyable.** The remedy script `<pre>` block and the "what this resolves" detail rows in the health page need to support manual selection + copy (cmd-c). Today only the "Copy script" button works; users can't copy partial text or the message itself. Likely a Tauri webview `user-select: none` somewhere in the global CSS. Audit other human-action UI for the same restriction.
-- **Setup pages — scan stage had problems last time.** When working through setup pages step by step, expect similar resolve/state bugs to surface; main page is assistants, then scan.
+- ~~**Health remedy: text not selectable / copyable.**~~ Done (2026-05-16) —
+  added `select-text` to the remedy `<pre>` and message, and to the failed-row
+  detail in the ledger. Added a global `user-select: text` opt-in on `body`
+  in `app.css` (drag region + buttons opt back out) so any other content
+  page on the same webview is selectable by default.
+- **Setup pages — scan stage had problems last time.** Static review (2026-05-16):
+  - `startScan()` sets `started = true` before `await api.getScanRoots()` —
+    if the call throws, the user is stuck on "Discovering projects..." with
+    no error UI. Wrap in try/catch and render the failure inline.
+  - `startDonePoller` swallows daemon-unreachable errors silently. If the
+    daemon goes down mid-scan the user sees no signal. Surface a transient
+    "daemon unreachable, retrying" line.
+  - Two definitions of "done": `ScanProjectState.done` (every project active
+    or failed) and the poller's queue-idle check. They can disagree. Pick
+    one as canonical (queue idle is more authoritative) and reuse it.
+  - `LEVEL_COLORS.error` maps to `--color-primary-z5` (same as `process`).
+    Pick a distinct error colour — `--color-warning-z5` or a dedicated red.
+  - `await api.scanFolder(root.path)` in a for-loop blocks the poller setup
+    on a slow root. Either run them in parallel via `Promise.all` or move
+    `startDonePoller` before the loop so progress shows even if one root
+    is slow.
+  - Activity feed shows newest-at-top via `slice(-100).reverse()`, but new
+    events shift the older ones DOWN — fine, but worth a comment so the
+    next maintainer doesn't "fix" it.
+  - No re-run button after a failed scan. If a root errors out the user
+    can't retry from this stage; they have to navigate back to roots.
 
 ## Audit: bootstrap resolve-flow refactor (commit 481806fb)
 
 A long session of fixes landed across `crates/bootstrap/src/health/`, the
-Tauri sidecar, CLI, and frontend on 2026-05-16. Walk back through the
-diff and check for places where the cumulative changes added maintenance
-weight beyond what the bug fix needed. Specific things to look at:
+Tauri sidecar, CLI, and frontend on 2026-05-16. Walked back through the
+diff to trim maintenance weight added beyond the bug fix. **Full sweep
+done 2026-05-16**:
 
-- **provider.rs::resolve()** — three distinct remedy-handling code paths
-  now (push during walk, drop-stale before consolidation, retroactive
-  fallback after final check). Could the three collapse into one
-  post-pass that derives remedies from `failed_in_terminal` + the
-  dependency graph? The during-walk Remedy events are still needed for
-  live UI updates, but the bookkeeping for `applied_remedies` may be
-  redundant if we just rebuild it at the end.
-- **ServiceCascadeSpec** has two consumers (postgres, ollama). If we
-  don't add a third within the next few weeks, this abstraction is
-  pulling its weight only marginally — consider inlining.
-- **`installing_verb()` mapping** is duplicated in Rust (CLI doctor) and
-  Svelte (Ledger). When we add another service-style dep, both lists
-  need updating. Either move to a single source (e.g. bootstrap library
-  exposes it) or accept the duplication explicitly.
-- **Test mocks in `provider.rs`** — `ResolveMock`, `MultiResolverMock`,
-  `TransientMock`, `Mock`, `SeqChecker` were added incrementally for
-  each new scenario. Some could be unified.
-- **Hand-rolled ANSI in `crates/cli/src/doctor.rs`** — colour helpers
-  (`green()`, `red()`, etc.) could be replaced with the `owo-colors` or
-  `nu-ansi-term` crate to centralize palette + handle no-TTY contexts.
-- **Tracing instrumentation density** — quick scan to confirm every
-  `tracing::info!`/`debug!` is genuinely useful in `RUST_LOG=info`
-  output, not noise.
-- **Two tracing subscribers** (one in CLI doctor → stdout, one in Tauri
-  sidecar → /tmp/sensei-bootstrap.log). Both pull `tracing-subscriber`.
-  Confirm the daemon (`senseid`) doesn't need its own — if it does,
-  consider a shared init function in bootstrap.
-- **Dead code / unused exports** — after `health::check_and_resolve()`
-  was added, are `health::check` and `health::resolve` still needed as
-  separate public exports? The daemon's `/health` endpoint uses
-  `check()` but no one calls `resolve()` directly anymore.
-- **Stale integration test** — `app/src-tauri/tests/bootstrap_integration.rs`
+- ~~**provider.rs::resolve()** — three distinct remedy-handling code paths.~~
+  Done (2026-05-16) — collapsed into one post-pass (`derive_terminal_remedy`)
+  that derives the consolidated remedy from `failed_in_terminal` + a
+  per-component `walk_remedies` vec + the dependency graph. The walk still
+  emits Remedy events for live UI; the stale-drop and retroactive-fallback
+  blocks are gone. All 9 resolve tests still pass.
+- ~~**ServiceCascadeSpec** has two consumers (postgres, ollama).~~ Decision
+  recorded (2026-05-16) — kept. Two consumers already amortize ~50 lines
+  of cascade logic each (stage 1/2/3 brew dance). Daemon is NOT a
+  service-cascade candidate (it's a sensei binary, not a brew service),
+  so the audit's "3rd consumer" trigger won't fire. Inlining would
+  re-duplicate the staged flow.
+- ~~**`installing_verb()` mapping** duplicated in Rust + Svelte.~~ Done
+  (2026-05-16) — added `installing_verb: &'static str` to `DependencySpec`,
+  carried it on the `Component` wire shape (serde camelCase →
+  `installingVerb`), plus a `bootstrap::installing_verb_for(id: &str)`
+  helper for callers with only the wire id (CLI's HealthEvent::Component
+  patches). CLI doctor + Ledger.svelte both read from the same Rust source
+  of truth now.
+- ~~**Test mocks in `provider.rs`** — some could be unified.~~ Done
+  (2026-05-16) — hoisted a single `SequenceChecker` to the mod-tests common
+  area; both inline duplicates (`SeqChecker` in stale-remedy, `SequenceChecker`
+  in transient-success) now use it. Per-test `Mock`/`TransientMock` provider
+  structs kept as-is — they're scoped to one test each and merging them
+  into `MultiResolverMock` would obscure intent.
+- ~~**Hand-rolled ANSI in `crates/cli/src/doctor.rs`**.~~ Done (2026-05-16)
+  — swapped to `owo-colors 4` with `if_supports_color(Stream::Stdout, ...)`.
+  Palette now auto-disables on no-TTY (pipes, CI logs) and respects
+  NO_COLOR.
+- ~~**Tracing instrumentation density**.~~ Done (2026-05-16) — demoted 6
+  per-check success info!s to debug! (binary.rs ready cases, port.rs open
+  case, postgres_db.rs ready case, database.rs dbd intermediate + per-step
+  starts). All failures, phase transitions, resolver decisions, and major
+  actions stay at info.
+- ~~**Two tracing subscribers**.~~ Done (2026-05-16) — added
+  `bootstrap::tracing_init::install_console(default_filter)` and
+  `install_file(path, default_filter)` as shared init helpers (named
+  `tracing_init` not `tracing` to avoid shadowing the `tracing` crate).
+  CLI doctor and Tauri sidecar are now one-liners. Dropped
+  `tracing-subscriber` from both consumers' Cargo.toml. Daemon left
+  on the generic `tracing_subscriber::fmt::init()` — fine for now.
+- ~~**Dead code / unused exports**.~~ Done (2026-05-16) — `bootstrap::resolve`
+  (the free function in `health/mod.rs`) had zero external callers. Demoted
+  to `pub(crate)`. `check()` stays public (daemon `/health` endpoint).
+- ~~**Stale integration test** — `app/src-tauri/tests/bootstrap_integration.rs`
   hasn't compiled since the `5e40ffd1` refactor and is invoked by
-  `make test-app-sidecar`. Delete or rewrite.
+  `make test-app-sidecar`. Delete or rewrite.~~ Done (2026-05-16) —
+  deleted file (covered by `crates/bootstrap` unit tests + `tests/json_wire_shape.rs`);
+  removed `test-app-sidecar` make target, `test:sidecar` script, and references.
 
 ## 1. Bootstrap (6 gates)
 

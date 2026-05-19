@@ -14,9 +14,10 @@ const okPayload = (): HealthPayload => ({
   version: '0.2.14',
   uptimeSeconds: 12,
   platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null, installingVerb: 'installing' },
   components: COMPONENT_ORDER.map((id) => ({
     id, label: id, note: null, status: 'ready' as const, version: '1.0.0', detail: null,
+    installingVerb: 'installing',
   })),
   status: 'ok',
   remedy: null,
@@ -24,9 +25,10 @@ const okPayload = (): HealthPayload => ({
 
 const needsActionPayload = (): HealthPayload => ({
   ...okPayload(),
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing' },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing', installingVerb: 'installing' },
   components: COMPONENT_ORDER.map((id) => ({
     id, label: id, note: null, status: 'failed' as const, version: null, detail: 'blocked',
+    installingVerb: 'installing',
   })),
   status: 'needs-action',
   remedy: remedyFixture(),
