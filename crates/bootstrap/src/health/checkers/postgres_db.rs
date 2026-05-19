@@ -55,7 +55,7 @@ impl Checker for PostgresDatabaseChecker {
             TimedOutcome::Done(o) if o.status.success() => {
                 let count = String::from_utf8_lossy(&o.stdout).lines().count();
                 if count >= 2 {
-                    tracing::info!(check = "postgres_db", db = %self.db_name, result = "ready", "pgvector + sensei schema present");
+                    tracing::debug!(check = "postgres_db", db = %self.db_name, result = "ready", "pgvector + sensei schema present");
                     CheckOutcome::ready_no_version()
                 } else {
                     tracing::info!(check = "postgres_db", db = %self.db_name, result = "schema_incomplete", rows = count, "missing pgvector or sensei schema");

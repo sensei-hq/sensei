@@ -6,31 +6,16 @@ mod log_collector;
 
 use log_collector::LogCollector;
 use tauri::{Emitter, Manager};
-use tracing_subscriber::EnvFilter;
 
 /// Send `tracing::info!` / `debug!` events from `sensei-bootstrap` to the
 /// same `/tmp/sensei-bootstrap.log` file the `flog::log` helper writes to.
-/// Idempotent — `try_init` skips if a subscriber is already installed.
+/// The shared helper handles open-failure (silent no-op) and `try_init`
+/// idempotency so this is a one-liner.
 fn install_tracing() {
-    use std::fs::OpenOptions;
-    let writer = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/sensei-bootstrap.log")
-        .ok();
-
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("sensei_bootstrap=info"));
-
-    if let Some(file) = writer {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_writer(std::sync::Mutex::new(file))
-            .with_ansi(false)
-            .with_target(false)
-            .compact()
-            .try_init();
-    }
+    sensei_bootstrap::tracing_init::install_file(
+        "/tmp/sensei-bootstrap.log",
+        "sensei_bootstrap=info",
+    );
 }
 
 pub fn run() {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { reroute } from './hooks.ts';
-import { healthState } from '$lib/health-state.svelte.ts';
+import { reroute } from './hooks.js';
+import { healthState } from '$lib/health-state.svelte.js';
 
 /** Reset healthState between tests so each runs against a fresh status.
  *  The module exports a singleton, so we mutate the shared instance.

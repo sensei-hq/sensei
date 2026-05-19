@@ -41,7 +41,7 @@ impl Checker for PortChecker {
         loop {
             match TcpStream::connect_timeout(&addr, DEFAULT_PORT_TIMEOUT) {
                 Ok(_) => {
-                    tracing::info!(check = "port", label = self.label, port = self.port, result = "open", elapsed_ms = start.elapsed().as_millis() as u64, "port reachable");
+                    tracing::debug!(check = "port", label = self.label, port = self.port, result = "open", elapsed_ms = start.elapsed().as_millis() as u64, "port reachable");
                     return CheckOutcome::ready_no_version();
                 }
                 Err(e) => {

@@ -47,6 +47,9 @@ pub trait PlatformProvider: Send + Sync {
                 status:  outcome.status,
                 version: outcome.version,
                 detail:  outcome.detail,
+                // Package managers are plain installs (brew, winget) — no
+                // start/setup distinction needed.
+                installing_verb: "installing".to_string(),
             }
         };
         let components: Vec<Component> = dependency_specs().iter().map(|spec| {
@@ -58,6 +61,7 @@ pub trait PlatformProvider: Send + Sync {
                 status:  outcome.status,
                 version: outcome.version,
                 detail:  outcome.detail,
+                installing_verb: spec.installing_verb.to_string(),
             }
         }).collect();
 
@@ -83,6 +87,16 @@ pub trait PlatformProvider: Send + Sync {
 
     /// Walk the resolvers, find covered failed deps, run each once, re-check.
     /// Emits HealthEvent values; returns terminal payload.
+    ///
+    /// Single-pass design: the walk records per-component "walk remedies"
+    /// (the most context-rich fix the resolver could surface live). After
+    /// the final check, a single post-pass derives the terminal consolidated
+    /// remedy from `failed_in_terminal` + walk-remedy map + dependency graph
+    /// + each resolver's `fallback_remedy()`. No stale-drop or retroactive
+    /// step is needed: components that recovered aren't in
+    /// `failed_in_terminal`, and components without a walk-remedy fall
+    /// through to `fallback_remedy()` in the same loop.
+    ///
     /// Note: uses `&dyn Fn` (not generic F) so the trait remains dyn-compatible.
     fn resolve(&self, current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
         emit(HealthEvent::Phase { phase: HealthStatus::Resolving });
@@ -103,11 +117,13 @@ pub trait PlatformProvider: Send + Sync {
         tracing::info!(failed = ?now_failing, "resolve phase: walking resolvers");
 
         let resolvers = self.resolvers();
-        // Accumulate every per-component remedy that gets surfaced during
-        // the resolve walk. At terminal time these get consolidated into
-        // a single Remedy whose script concatenates each component's fix.
-        // See `consolidate_remedies` below.
-        let mut applied_remedies: Vec<(ComponentId, Remedy)> = Vec::new();
+        // Per-component remedy surfaced during the walk. `NeedsHumanAction`
+        // returns a context-specific remedy; `Resolved`-but-recheck-failed
+        // returns the resolver's `fallback_remedy()`. The post-pass below
+        // consumes this map. We use a Vec (rather than HashMap) to preserve
+        // insertion order so the consolidated script reads top-to-bottom
+        // in the same order as the resolver walk.
+        let mut walk_remedies: Vec<(ComponentId, Remedy)> = Vec::new();
 
         for resolver in &resolvers {
             let targets: Vec<ComponentId> = resolver.resolves().iter().copied()
@@ -155,11 +171,9 @@ pub trait PlatformProvider: Send + Sync {
                     // Re-check each target so we don't trust a "Resolved"
                     // verdict that brew/etc handed back without confirming the
                     // component is actually up. If any target is still
-                    // Failed, treat this as if the resolver had returned
-                    // NeedsHumanAction with its own fallback_remedy — that
-                    // way the UI shows the per-component fix rather than
-                    // the generic `default_remedy()` that `check()` would
-                    // otherwise re-apply in the terminal payload.
+                    // Failed, record the resolver's `fallback_remedy()` as
+                    // its walk remedy — the post-pass will surface it (or
+                    // drop it, if the component recovers by the final check).
                     let mut first_still_failed: Option<ComponentId> = None;
                     for tid in &targets {
                         let outcome = self.checker_for(*tid).check();
@@ -191,7 +205,7 @@ pub trait PlatformProvider: Send + Sync {
                     if let Some(attributed) = first_still_failed {
                         let remedy = resolver.fallback_remedy();
                         tracing::warn!(resolver = resolver.id(), remedy_script = %remedy.script, "post-resolve re-check still failed — surfacing fallback_remedy");
-                        applied_remedies.push((attributed, remedy.clone()));
+                        walk_remedies.push((attributed, remedy.clone()));
                         emit(HealthEvent::Remedy { remedy });
                     } else {
                         tracing::info!(resolver = resolver.id(), "post-resolve re-check ok");
@@ -200,7 +214,7 @@ pub trait PlatformProvider: Send + Sync {
                 ResolveOutcome::NeedsHumanAction(remedy) => {
                     tracing::warn!(resolver = resolver.id(), remedy_script = %remedy.script, "resolver returned NeedsHumanAction");
                     let attributed = targets[0];
-                    applied_remedies.push((attributed, remedy.clone()));
+                    walk_remedies.push((attributed, remedy.clone()));
                     emit(HealthEvent::Remedy { remedy });
                 }
             }
@@ -209,59 +223,7 @@ pub trait PlatformProvider: Send + Sync {
         // Final re-check builds the terminal payload.
         let mut terminal = self.check(app_version);
         if terminal.status == HealthStatus::NeedsAction {
-            let failed_in_terminal: Vec<ComponentId> = terminal.components.iter()
-                .filter(|c| c.status == ComponentStatus::Failed)
-                .filter_map(|c| parse_component_id(&c.id))
-                .collect();
-
-            // Drop stale remedies: a resolver may have pushed a remedy
-            // during the walk (e.g. `NeedsHumanAction` from a partial
-            // failure), but by the final check the component recovered
-            // independently — its remedy is no longer relevant and would
-            // be confusing in the consolidated message. Keep only
-            // remedies for components STILL failing now.
-            applied_remedies.retain(|(id, _)| failed_in_terminal.contains(id));
-
-            // Retroactive fallback: any component still failing in the
-            // terminal that didn't already get a remedy during the walk
-            // — likely a "transient-success" case where the post-resolve
-            // re-check briefly saw the port open but it had closed again
-            // by the final check — gets its resolver's fallback_remedy()
-            // attached now. Without this, the orchestrator would fall
-            // back to the generic `default_remedy()` and the user would
-            // see "install sensei" instead of the per-component fix.
-            //
-            // Respects the dependency graph: if a component's deps are
-            // ALSO failing in the terminal, we skip the retroactive remedy
-            // — the upstream's remedy is the real fix; surfacing a
-            // downstream remedy would be the noise we already explicitly
-            // suppress during the walk via the dependency gate.
-            for tid in &failed_in_terminal {
-                if applied_remedies.iter().any(|(id, _)| id == tid) { continue; }
-                // Skip if a dependency is also failing — upstream is the real fix.
-                if spec_for(*tid).depends_on.iter().any(|dep| failed_in_terminal.contains(dep)) {
-                    tracing::debug!(component = component_id_str(*tid),
-                        "skipping retroactive fallback: upstream dep also failing");
-                    continue;
-                }
-                if let Some(resolver) = resolvers.iter().find(|r| r.resolves().contains(tid)) {
-                    let remedy = resolver.fallback_remedy();
-                    tracing::warn!(
-                        component = component_id_str(*tid),
-                        resolver = resolver.id(),
-                        remedy_script = %remedy.script,
-                        "still failed in terminal but no remedy was captured during the walk — attaching fallback_remedy retroactively (transient success?)"
-                    );
-                    applied_remedies.push((*tid, remedy.clone()));
-                    emit(HealthEvent::Remedy { remedy });
-                }
-            }
-            // Prefer the resolver-supplied remedies over the generic
-            // default. If multiple resolvers surfaced remedies, build a
-            // consolidated script so the user can run a single block.
-            if !applied_remedies.is_empty() {
-                terminal.remedy = Some(consolidate_remedies(&applied_remedies));
-            }
+            terminal.remedy = derive_terminal_remedy(&terminal, &walk_remedies, &resolvers);
         } else {
             terminal.remedy = None;
         }
@@ -269,6 +231,59 @@ pub trait PlatformProvider: Send + Sync {
         emit(HealthEvent::Report { payload: terminal.clone() });
         terminal
     }
+}
+
+/// Post-pass: derive the consolidated terminal remedy from the final
+/// payload, the walk-recorded remedies, and each resolver's fallback.
+///
+/// For every component STILL failing in the terminal:
+///   * If a dependency of it is ALSO failing, skip — upstream's remedy is
+///     the real fix, surfacing a downstream one would be the noise the
+///     walk-time dependency gate already suppresses.
+///   * Else use the walk_remedy for that component (most context-rich), or
+///     fall back to the resolver's `fallback_remedy()`.
+///
+/// Returns `None` when no per-component remedy can be attached (caller
+/// will let the generic `default_remedy()` from `check()` stand).
+fn derive_terminal_remedy(
+    terminal: &HealthPayload,
+    walk_remedies: &[(ComponentId, Remedy)],
+    resolvers: &[Box<dyn Resolver>],
+) -> Option<Remedy> {
+    let failed_in_terminal: Vec<ComponentId> = terminal.components.iter()
+        .filter(|c| c.status == ComponentStatus::Failed)
+        .filter_map(|c| parse_component_id(&c.id))
+        .collect();
+
+    let mut out: Vec<(ComponentId, Remedy)> = Vec::new();
+    for tid in &failed_in_terminal {
+        if spec_for(*tid).depends_on.iter().any(|dep| failed_in_terminal.contains(dep)) {
+            tracing::debug!(component = component_id_str(*tid),
+                "skipping remedy: upstream dep also failing");
+            continue;
+        }
+        let remedy = walk_remedies.iter()
+            .find(|(id, _)| id == tid)
+            .map(|(_, r)| r.clone())
+            .or_else(|| {
+                resolvers.iter()
+                    .find(|r| r.resolves().contains(tid))
+                    .map(|r| {
+                        let fb = r.fallback_remedy();
+                        tracing::warn!(
+                            component = component_id_str(*tid),
+                            resolver = r.id(),
+                            remedy_script = %fb.script,
+                            "no walk remedy captured — attaching fallback_remedy",
+                        );
+                        fb
+                    })
+            });
+        if let Some(r) = remedy {
+            out.push((*tid, r));
+        }
+    }
+    if out.is_empty() { None } else { Some(consolidate_remedies(&out)) }
 }
 
 /// Merge per-component remedies into a single Remedy. For a single entry,
@@ -335,6 +350,24 @@ mod tests {
     struct StubChecker(CheckOutcome);
     impl Checker for StubChecker {
         fn check(&self) -> CheckOutcome { self.0.clone() }
+    }
+
+    /// Checker that returns a different `CheckOutcome` on each call by
+    /// indexing into `seq`. Once the sequence is exhausted, the last value
+    /// repeats forever. Use for tests that simulate state change between
+    /// the initial check, the post-resolve re-check, and the final check.
+    struct SequenceChecker {
+        seq: Vec<CheckOutcome>,
+        n:   Arc<Mutex<usize>>,
+    }
+    impl Checker for SequenceChecker {
+        fn check(&self) -> CheckOutcome {
+            let mut idx = self.n.lock().unwrap();
+            let i = *idx;
+            *idx += 1;
+            self.seq.get(i).cloned()
+                .unwrap_or_else(|| self.seq.last().unwrap().clone())
+        }
     }
 
     struct StubResolver {
@@ -851,22 +884,9 @@ createdb sensei_dev";
     /// for a database that's already green.
     #[test]
     fn stale_remedy_for_recovered_component_is_dropped_before_consolidation() {
-        // A checker that returns Failed initially but Ready later (the
-        // component recovered between resolve walk and final check).
-        struct SeqChecker {
-            seq: Vec<CheckOutcome>,
-            n:   Arc<Mutex<usize>>,
-        }
-        impl Checker for SeqChecker {
-            fn check(&self) -> CheckOutcome {
-                let mut idx = self.n.lock().unwrap();
-                let i = *idx;
-                *idx += 1;
-                self.seq.get(i).cloned()
-                    .unwrap_or_else(|| self.seq.last().unwrap().clone())
-            }
-        }
-
+        // Uses the hoisted `SequenceChecker` — Database: Failed → Ready
+        // (recovers between resolve walk and final check). Daemon stays
+        // Failed throughout.
         struct Mock {
             db_calls:     Arc<Mutex<usize>>,
             daemon_calls: Arc<Mutex<usize>>,
@@ -881,7 +901,7 @@ createdb sensei_dev";
                 match id {
                     // Database: Failed initially, Ready at the final check
                     // (partial dbd deploy was "enough" for the schema probe).
-                    ComponentId::Database => Box::new(SeqChecker {
+                    ComponentId::Database => Box::new(SequenceChecker {
                         seq: vec![
                             CheckOutcome::failed("schema incomplete"),
                             CheckOutcome::ready_no_version(),
@@ -889,7 +909,7 @@ createdb sensei_dev";
                         n: self.db_calls.clone(),
                     }),
                     // Daemon stays failed throughout.
-                    ComponentId::Daemon => Box::new(SeqChecker {
+                    ComponentId::Daemon => Box::new(SequenceChecker {
                         seq: vec![CheckOutcome::failed("port closed")],
                         n: self.daemon_calls.clone(),
                     }),
@@ -952,23 +972,9 @@ createdb sensei_dev";
     /// (running against steady-state services) saw consistent results.
     #[test]
     fn transient_success_falls_back_to_resolver_fallback_remedy_retroactively() {
-        // A checker that returns a different outcome per call. Used to
-        // simulate ollama's port flickering: initial=Failed,
-        // post-resolve-recheck=Ready, final-check=Failed.
-        struct SequenceChecker {
-            seq:   Vec<CheckOutcome>,
-            calls: Arc<Mutex<usize>>,
-        }
-        impl Checker for SequenceChecker {
-            fn check(&self) -> CheckOutcome {
-                let mut n = self.calls.lock().unwrap();
-                let i = *n;
-                *n += 1;
-                self.seq.get(i).cloned()
-                    .unwrap_or_else(|| self.seq.last().unwrap().clone())
-            }
-        }
-
+        // Uses the hoisted `SequenceChecker` — simulates ollama port
+        // flicker: initial=Failed, post-resolve recheck=Ready, final
+        // check=Failed.
         struct TransientMock {
             ollama_calls: Arc<Mutex<usize>>,
         }
@@ -986,7 +992,7 @@ createdb sensei_dev";
                             CheckOutcome::ready_no_version(),              // post-resolve recheck
                             CheckOutcome::failed("port flickered closed"), // final check
                         ],
-                        calls: self.ollama_calls.clone(),
+                        n: self.ollama_calls.clone(),
                     }),
                     _ => Box::new(StubChecker(CheckOutcome::ready("1.0"))),
                 }

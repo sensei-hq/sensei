@@ -12,7 +12,7 @@ pub mod resolvers;
 pub mod process_util;
 
 pub use types::*;
-pub use graph::{DependencySpec, dependency_specs, spec_for};
+pub use graph::{DependencySpec, dependency_specs, spec_for, installing_verb_for};
 pub use checker::{Checker, CheckOutcome};
 pub use resolver::{Resolver, ResolveOutcome};
 pub use provider::{PlatformProvider, detect_provider};
@@ -25,11 +25,14 @@ pub fn check(app_version: &str) -> HealthPayload {
 
 /// Streaming resolve — runs resolvers covering any failed components in
 /// `current`, re-checks affected deps, returns terminal payload. Emits
-/// HealthEvent values throughout. Tauri sidecar uses this AFTER calling
-/// `check()` and broadcasting its initial state.
+/// HealthEvent values throughout.
+///
+/// Internal helper for `check_and_resolve`. Callers outside this module
+/// should use `check_and_resolve` so the initial `Phase(Checking)` and
+/// `Report` events always precede the resolve walk.
 ///
 /// `emit` is `&dyn Fn` (not generic) to keep PlatformProvider dyn-compatible.
-pub fn resolve(current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
+pub(crate) fn resolve(current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
     detect_provider().resolve(current, app_version, emit)
 }
 

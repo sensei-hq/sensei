@@ -42,14 +42,30 @@ body[data-mode="light"] {
     background: oklch(var(--color-surface-z0) / 1);
 }
 
+/* Tauri webview can default to non-selectable text on some platforms,
+ * blocking users from copying remedy scripts, error details, or anything
+ * else they might need to share. Opt the whole page in to text selection
+ * by default; UI chrome (drag region, buttons) opts back out below. */
+html,
+body {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
 /* Tauri drag regions */
 .drag-region {
     -webkit-app-region: drag;
     app-region: drag;
+    -webkit-user-select: none;
+    user-select: none;
 }
 .no-drag {
     -webkit-app-region: no-drag;
     app-region: no-drag;
+}
+button {
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 /* Sidebar vibrancy */
