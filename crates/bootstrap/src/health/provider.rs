@@ -24,7 +24,11 @@ pub trait PlatformProvider: Send + Sync {
     fn platform(&self) -> Platform;
     fn package_manager_id(&self) -> PackageManagerId;
     fn package_manager_checker(&self) -> Box<dyn Checker>;
-    fn checker_for(&self, id: ComponentId) -> Box<dyn Checker>;
+    /// Probe for `id`. `retry=false` is the initial-check path: fast probes,
+    /// closed ports report failed immediately. `retry=true` is the
+    /// post-resolver recheck path: patient probes that loop until the
+    /// service finishes binding (brew services start, senseid start).
+    fn checker_for(&self, id: ComponentId, retry: bool) -> Box<dyn Checker>;
     fn resolvers(&self) -> Vec<Box<dyn Resolver>>;
     fn default_remedy(&self) -> Remedy;
 
@@ -86,7 +90,7 @@ pub trait PlatformProvider: Send + Sync {
 
         let mut components: Vec<Component> = Vec::with_capacity(5);
         for spec in dependency_specs().iter() {
-            let outcome = self.checker_for(spec.id).check();
+            let outcome = self.checker_for(spec.id, false).check();
             let comp = Component {
                 id:      component_id_str(spec.id).to_string(),
                 label:   spec.label.to_string(),
@@ -219,7 +223,7 @@ pub trait PlatformProvider: Send + Sync {
                     // drop it, if the component recovers by the final check).
                     let mut first_still_failed: Option<ComponentId> = None;
                     for tid in &targets {
-                        let outcome = self.checker_for(*tid).check();
+                        let outcome = self.checker_for(*tid, true).check();
                         if outcome.status == ComponentStatus::Failed {
                             if first_still_failed.is_none() { first_still_failed = Some(*tid); }
                         } else {
@@ -450,7 +454,7 @@ mod tests {
         fn package_manager_checker(&self) -> Box<dyn Checker> {
             Box::new(StubChecker(self.pm_outcome.clone()))
         }
-        fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+        fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
             Box::new(StubChecker(self.outcomes.get(&id).cloned()
                 .unwrap_or_else(|| CheckOutcome::failed("no stub for id"))))
         }
@@ -479,7 +483,7 @@ mod tests {
         fn package_manager_checker(&self) -> Box<dyn Checker> {
             Box::new(StubChecker(self.pm_outcome.clone()))
         }
-        fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+        fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
             let m = self.outcomes.lock().unwrap();
             Box::new(StubChecker(m.get(&id).cloned()
                 .unwrap_or_else(|| CheckOutcome::failed("none"))))
@@ -793,7 +797,7 @@ createdb sensei_dev";
             fn package_manager_checker(&self) -> Box<dyn Checker> {
                 Box::new(StubChecker(CheckOutcome::ready("4.0")))
             }
-            fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+            fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
                 let m = self.outcomes.lock().unwrap();
                 Box::new(StubChecker(m.get(&id).cloned()
                     .unwrap_or_else(|| CheckOutcome::failed("none"))))
@@ -864,7 +868,7 @@ createdb sensei_dev";
         fn package_manager_checker(&self) -> Box<dyn Checker> {
             Box::new(StubChecker(CheckOutcome::ready("4.0")))
         }
-        fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+        fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
             let m = self.outcomes.lock().unwrap();
             Box::new(StubChecker(m.get(&id).cloned()
                 .unwrap_or_else(|| CheckOutcome::failed("none"))))
@@ -940,7 +944,7 @@ createdb sensei_dev";
             fn package_manager_checker(&self) -> Box<dyn Checker> {
                 Box::new(StubChecker(CheckOutcome::ready("4.0")))
             }
-            fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+            fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
                 match id {
                     // Database: Failed initially, Ready at the final check
                     // (partial dbd deploy was "enough" for the schema probe).
@@ -1027,7 +1031,7 @@ createdb sensei_dev";
             fn package_manager_checker(&self) -> Box<dyn Checker> {
                 Box::new(StubChecker(CheckOutcome::ready("4.0")))
             }
-            fn checker_for(&self, id: ComponentId) -> Box<dyn Checker> {
+            fn checker_for(&self, id: ComponentId, _retry: bool) -> Box<dyn Checker> {
                 match id {
                     ComponentId::Ollama => Box::new(SequenceChecker {
                         seq: vec![
