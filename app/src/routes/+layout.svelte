@@ -7,6 +7,12 @@
 
     let { children } = $props();
 
+    // Boot-timing — remove with the rest of the marks once boot loader ships.
+    (window as any).__senseiMark?.("root-layout-script");
+    onMount(() => {
+        (window as any).__senseiMark?.("root-layout-mount");
+    });
+
     //   function applyColorScheme() {
     //     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     //     document.body.dataset.mode = dark ? 'dark' : 'light';
