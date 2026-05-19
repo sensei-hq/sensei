@@ -20,6 +20,8 @@
 
     let rootCount = $state(0);
     let started = $state(false);
+    let error = $state<string | null>(null);
+    let daemonReachable = $state(true);
     let unsub: (() => void) | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -29,7 +31,7 @@
         process: "oklch(var(--color-primary-z5) / 1)",
         info: "oklch(var(--color-surface-z7) / 1)",
         success: "oklch(var(--color-success-z5) / 1)",
-        error: "oklch(var(--color-primary-z5) / 1)",
+        error: "oklch(var(--color-danger-z5) / 1)",
     };
 
     /**
@@ -51,6 +53,7 @@
             pollTimer = setInterval(async () => {
                 try {
                     const s = await api.getIndexStatus();
+                    daemonReachable = true;
                     if (s.queue.pending === 0 && s.queue.running === 0) {
                         idlePolls++;
                         // Require 2 consecutive idle polls to debounce a transient empty queue
@@ -62,43 +65,66 @@
                         idlePolls = 0; // reset on any active work
                     }
                 } catch {
-                    /* daemon temporarily unreachable — keep polling */
+                    // Surface daemon-unreachable transiently so the user has
+                    // a signal instead of staring at a stalled progress bar.
+                    daemonReachable = false;
                 }
             }, 1500);
         }, 1500);
     }
 
+    function resetScanState() {
+        error = null;
+        daemonReachable = true;
+        wizardState.scan.done = false;
+        projects.items = [];
+        activities.items = [];
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+        unsub?.();
+        unsub = null;
+    }
+
     async function startScan() {
+        resetScanState();
         started = true;
         const api = senseiApi(appState.port);
 
-        // Get root count from scan roots
-        const roots = await api.getScanRoots();
-        rootCount = roots.length;
+        try {
+            const roots = await api.getScanRoots();
+            rootCount = roots.length;
 
-        // Connect to SSE
-        const events = new EventManager<StateEvent<any>>(
-            `http://127.0.0.1:${appState.port}/api/scan/events`,
-            (data) => JSON.parse(data),
-        );
+            // Connect to SSE
+            const events = new EventManager<StateEvent<any>>(
+                `http://127.0.0.1:${appState.port}/api/scan/events`,
+                (data) => JSON.parse(data),
+            );
 
-        unsub = events.subscribe((event) => {
-            if (event.entity === "project")
-                projects.apply(event as StateEvent<ScanProject>);
-            if (event.entity === "folder")
-                projects.applyFolder(event as StateEvent<ScanFolderEvent>);
-            if (event.entity === "activity")
-                activities.apply(event as StateEvent<ActivityEvent>);
-        });
+            unsub = events.subscribe((event) => {
+                if (event.entity === "project")
+                    projects.apply(event as StateEvent<ScanProject>);
+                if (event.entity === "folder")
+                    projects.applyFolder(
+                        event as StateEvent<ScanFolderEvent>,
+                    );
+                if (event.entity === "activity")
+                    activities.apply(event as StateEvent<ActivityEvent>);
+            });
 
-        // Only trigger scan for roots not yet scanned — already-watched roots
-        // are managed by the daemon's file watcher and don't need re-posting.
-        for (const root of roots.filter((r) => !r.scanned)) {
-            await api.scanFolder(root.path);
+            // Trigger scans in parallel — a sequential await blocks a slow
+            // root from being processed while siblings are still pending.
+            // Already-scanned roots are skipped; the daemon's file watcher
+            // manages them.
+            const pending = roots.filter((r) => !r.scanned);
+            await Promise.all(pending.map((r) => api.scanFolder(r.path)));
+
+            // Begin polling for task queue idle — marks scan done when complete
+            startDonePoller(api);
+        } catch (e) {
+            error = e instanceof Error ? e.message : String(e);
         }
-
-        // Begin polling for task queue idle — marks scan done when complete
-        startDonePoller(api);
     }
 
     onDestroy(() => {
@@ -124,6 +150,30 @@
             <button class="btn-solid" onclick={startScan}>Begin scan →</button>
         </div>
     {:else}
+        {#if error}
+            <div
+                class="mb-6 p-4 rounded-md border border-danger-z5 bg-surface-z2 flex items-start justify-between gap-4"
+            >
+                <div>
+                    <div class="text-sm font-semibold text-danger-z5">
+                        Scan failed
+                    </div>
+                    <div class="text-xs text-surface-z7 mt-1 font-mono">
+                        {error}
+                    </div>
+                </div>
+                <button class="btn-outline shrink-0" onclick={startScan}>
+                    Retry
+                </button>
+            </div>
+        {:else if !daemonReachable}
+            <div
+                class="mb-4 p-2.5 rounded-md bg-surface-z2 text-xs text-warning-z5"
+            >
+                Daemon unreachable — retrying…
+            </div>
+        {/if}
+
         <!-- Stats bar -->
         <div
             class="grid grid-cols-4 gap-4 mb-6 pb-6 border-b border-surface-z2"

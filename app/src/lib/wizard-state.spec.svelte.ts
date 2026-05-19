@@ -10,9 +10,29 @@ describe('WizardState', () => {
   });
 
   describe('hydrate', () => {
-    it('populates completion from load data', () => {
+    it('populates stage status from load data', () => {
       ws.hydrate(mockWizardLoadData());
-      expect(ws.completion.welcome).toBe('pending');
+      const welcome = ws.stages.find(s => s.id === 'welcome');
+      expect(welcome?.status).toBe('pending');
+    });
+
+    it('sets stage.status to done for completed stages', () => {
+      ws.hydrate(mockWizardLoadData({
+        completion: {
+          welcome: 'done', preferences: 'pending', assistants: 'pending',
+          roots: 'pending', scan: 'pending', projects: 'pending',
+          libraries: 'pending', instruments: 'pending',
+          inference: 'pending', assignments: 'pending', done: 'pending',
+        },
+      }));
+      expect(ws.stages.find(s => s.id === 'welcome')?.status).toBe('done');
+      expect(ws.stages.find(s => s.id === 'preferences')?.status).toBe('pending');
+    });
+
+    it('resets active flags on rehydrate', () => {
+      ws.setActive('preferences');
+      ws.hydrate(mockWizardLoadData());
+      expect(ws.stages.every(s => !s.active)).toBe(true);
     });
 
     it('populates preferences slice', () => {
@@ -208,6 +228,43 @@ describe('WizardState', () => {
       }));
       expect(ws.isStageComplete('welcome')).toBe(true);
       expect(ws.isStageComplete('preferences')).toBe(false);
+    });
+  });
+
+  describe('setActive', () => {
+    beforeEach(() => ws.hydrate(mockWizardLoadData()));
+
+    it('marks the named stage active and clears others', () => {
+      ws.setActive('roots');
+      const roots = ws.stages.find(s => s.id === 'roots');
+      expect(roots?.active).toBe(true);
+      expect(ws.stages.filter(s => s.active)).toHaveLength(1);
+    });
+
+    it('moves the active flag when called again', () => {
+      ws.setActive('roots');
+      ws.setActive('scan');
+      expect(ws.stages.find(s => s.id === 'roots')?.active).toBe(false);
+      expect(ws.stages.find(s => s.id === 'scan')?.active).toBe(true);
+    });
+
+    it('clears active when given an unknown id', () => {
+      ws.setActive('roots');
+      ws.setActive('does-not-exist');
+      expect(ws.stages.every(s => !s.active)).toBe(true);
+    });
+  });
+
+  describe('stages array shape', () => {
+    it('exposes brief and description as separate fields', () => {
+      const roots = ws.stages.find(s => s.id === 'roots');
+      expect(roots?.brief).toBe('Where your work lives.');
+      expect(roots?.description).toContain('Sensei recurses');
+    });
+
+    it('initializes status as pending and active as false', () => {
+      expect(ws.stages.every(s => s.status === 'pending')).toBe(true);
+      expect(ws.stages.every(s => s.active === false)).toBe(true);
     });
   });
 });

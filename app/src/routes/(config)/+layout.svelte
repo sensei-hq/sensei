@@ -3,7 +3,6 @@
     import { goto } from "$app/navigation";
     import { onMount } from "svelte";
     import {
-        STAGES,
         stageIndex,
         nextStagePath,
         prevStagePath,
@@ -15,14 +14,21 @@
 
     let { children } = $props();
 
+    const stages = $derived(wizardState.stages);
     const currentIdx = $derived(stageIndex(page.url.pathname));
-    const stage = $derived(STAGES[currentIdx]);
+    const stage = $derived(stages[currentIdx]);
     const isFirst = $derived(currentIdx === 0);
-    const isLast = $derived(currentIdx === STAGES.length - 1);
-    const total = STAGES.length;
+    const isLast = $derived(currentIdx === stages.length - 1);
+    const total = $derived(stages.length);
     const canAdvance = $derived(wizardState.canAdvance(stage?.id ?? ""));
     let committing = $state(false);
     let loaded = $state(false);
+
+    // Drive the transient `active` flag from the current route so both the
+    // rail and the header read the same shape per stage.
+    $effect(() => {
+        if (stage) wizardState.setActive(stage.id);
+    });
 
     onMount(async () => {
         const data = await loadWizardData(appState.port);
@@ -75,14 +81,13 @@
             </div>
 
             <div class="flex flex-col">
-                {#each STAGES as s, i (s.id)}
-                    {@const isCur = i === currentIdx}
-                    {@const isDone = wizardState.isStageComplete(s.id)}
-                    {@const isNavigable = isDone || isCur}
+                {#each stages as s (s.id)}
+                    {@const isDone = s.status === "done"}
+                    {@const isNavigable = isDone || s.active}
                     <button
                         data-rail-item
                         class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-surface-z5 cursor-default transition-all duration-fast text-sm"
-                        class:active={isCur}
+                        class:active={s.active}
                         class:done={isDone}
                         onclick={() => {
                             if (isNavigable) goto(s.path);
@@ -91,19 +96,19 @@
                     >
                         <span
                             class="rail-kanji kanji text-sm text-center text-surface-z5"
-                            class:active={isCur}
+                            class:active={s.active}
                             class:done={isDone}
-                            class:text-primary-z6={isCur}>{s.icon}</span
+                            class:text-primary-z6={s.active}>{s.icon}</span
                         >
                         <div class="overflow-hidden">
-                            <div class:leading-tight={isCur}>
+                            <div class:leading-tight={s.active}>
                                 {s.title}
                             </div>
-                            {#if isCur}
+                            {#if s.active}
                                 <div
                                     class="mono text-xs text-surface-z6 mt-0.5"
                                 >
-                                    {s.sub}
+                                    {s.brief}
                                 </div>
                             {/if}
                         </div>
@@ -148,7 +153,9 @@
                     >
                         {stage.title}
                     </h1>
-                    <p class="text-sm text-surface-z6 m-0">{stage.sub}</p>
+                    <p class="text-sm text-surface-z6 m-0">
+                        {stage.description}
+                    </p>
                 </div>
             {/if}
 

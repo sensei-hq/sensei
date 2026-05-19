@@ -128,7 +128,15 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
     return this.items.some(p => p.status === 'scanning' || p.status === 'indexing');
   }
 
-  get done() {
+  /**
+   * Every project has reached a terminal state (active or failed).
+   *
+   * NOTE: This is NOT the canonical "scan complete" signal — that lives on
+   * `wizardState.scan.done`, set by the task-queue idle poller in the scan
+   * page. Use this getter only for per-project UI ("3 of 5 projects ready"),
+   * never to gate stage advancement.
+   */
+  get allProjectsResolved() {
     return this.items.length > 0 && this.items.every(p => p.status === 'active' || p.status === 'failed');
   }
 }
@@ -137,7 +145,14 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
 
 export class ScanActivityState extends ReactiveStageContext<ActivityEvent> {
 
-  /** Recent events, newest first. */
+  /**
+   * Recent events, newest first.
+   *
+   * Layout is newest-at-top: each new event makes older ones shift DOWN, not
+   * up. This is intentional — the live cursor stays anchored where the user
+   * is reading. Don't "fix" the order to append-bottom without also flipping
+   * the container's scroll anchor.
+   */
   get recent() {
     return this.items.slice(-100).reverse();
   }
