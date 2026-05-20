@@ -1,6 +1,7 @@
-// Cold-start E2E teardown — kills the test app + daemon and best-effort
-// restarts the brew services we stopped, so the dev box returns to a
-// working state.
+// Cold-start E2E globalTeardown — only the playwright-intrinsic
+// app/process cleanup. The Makefile's `_e2e-cold-post` target handles
+// restarting brew services (postgres + ollama) so the dev box returns
+// to a working state even if the test failed.
 
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync, symlinkSync, unlinkSync } from 'fs';
@@ -18,10 +19,6 @@ const SYMLINK         = join(HOME, '.local/bin/senseid');
 function swapSymlink(target: string, link: string): void {
   try { unlinkSync(link); } catch { /* did not exist */ }
   symlinkSync(target, link);
-}
-
-function tryRun(bin: string, args: string[]): void {
-  try { execFileSync(bin, args, { stdio: 'inherit' }); } catch { /* best effort */ }
 }
 
 export default async function globalTeardown(): Promise<void> {
@@ -45,11 +42,4 @@ export default async function globalTeardown(): Promise<void> {
   if (existsSync(SENSEID_RELEASE)) {
     swapSymlink(SENSEID_RELEASE, SYMLINK);
   }
-
-  // 4. Best-effort restart of the services the cold setup stopped, so
-  //    a dev box doesn't get left in a stopped state after the run.
-  //    If the developer had them already stopped, they'll just need to
-  //    re-stop — harmless.
-  tryRun('brew', ['services', 'start', 'postgresql@17']);
-  tryRun('brew', ['services', 'start', 'ollama']);
 }
