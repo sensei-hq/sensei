@@ -30,7 +30,8 @@
         app-dev app-dev-bundle app-release app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
-        test-app test-app-unit test-app-e2e \
+        test-app test-app-unit test-app-e2e test-app-e2e-cold \
+        _e2e-cold-pre _e2e-cold-post \
         setup-hooks update bump tap-push marketplace-push clean
 
 VERSION := $(shell cat VERSION)
@@ -163,6 +164,33 @@ reset ?= true
 test-app-e2e: install-dev
 	$(if $(filter true,$(reset)),$(MAKE) reset-e2e-db)
 	cd app && bun run test:e2e
+
+# ── Cold-start E2E ────────────────────────────────────────────────────────────
+# Verifies the health page drives itself through the full check → resolve →
+# land flow with no test-driven navigation. Setup stops postgres + ollama
+# and drops sensei_dev so the resolvers have real work to do. Teardown
+# always restarts services so the dev box returns to a working state,
+# even if the test fails.
+
+_e2e-cold-pre:
+	@echo "[e2e-cold] Setup: drop sensei_dev, stop services"
+	-brew services start postgresql@17
+	@sleep 2
+	-dropdb --if-exists sensei_dev
+	-brew services stop postgresql@17
+	-brew services stop ollama
+	@sleep 1
+
+_e2e-cold-post:
+	@echo "[e2e-cold] Teardown: restart services"
+	-brew services start postgresql@17
+	-brew services start ollama
+
+test-app-e2e-cold: install-dev
+	$(MAKE) _e2e-cold-pre
+	@cd app && bun run test:e2e:cold; RC=$$?; \
+	  $(MAKE) _e2e-cold-post; \
+	  exit $$RC
 
 # ── Git hooks ─────────────────────────────────────────────────────────────────
 # Run once after cloning: make setup-hooks
