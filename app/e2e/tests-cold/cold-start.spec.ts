@@ -23,7 +23,8 @@ test.describe('Cold start', () => {
   test('mounts to /health with all components in checking', async ({ tauriPage }) => {
     // The page should appear on /health on its own. globalSetup-cold did
     // not pre-navigate, and there's no goto() in the spec.
-    await tauriPage.waitForURL(/\/health$/, { timeout: 30_000 });
+    // tauri-playwright waitForURL is a string glob, not a regex.
+    await tauriPage.waitForURL('/health', { timeout: 30_000 });
 
     // Ledger renders 5 component rows (postgres, ollama, sensei, database, daemon).
     // The package manager (homebrew) lives in the Hero, not the Ledger.
@@ -39,7 +40,7 @@ test.describe('Cold start', () => {
   });
 
   test('component badges transition out of checking as probes return', async ({ tauriPage }) => {
-    await tauriPage.waitForURL(/\/health$/, { timeout: 30_000 });
+    await tauriPage.waitForURL('/health', { timeout: 30_000 });
 
     // Within 10 s, at least one component should have flipped out of
     // 'checking' (postgres → failed, ollama → failed, etc.). Without
@@ -50,7 +51,7 @@ test.describe('Cold start', () => {
   });
 
   test('enters resolve phase without test intervention', async ({ tauriPage }) => {
-    await tauriPage.waitForURL(/\/health$/, { timeout: 30_000 });
+    await tauriPage.waitForURL('/health', { timeout: 30_000 });
 
     // Hero h1 changes copy per status. 'resolving' copy is
     // "Setting up your foundation." — see Header.svelte.
@@ -59,13 +60,13 @@ test.describe('Cold start', () => {
   });
 
   test('auto-advances off /health once all components are green', async ({ tauriPage }) => {
-    await tauriPage.waitForURL(/\/health$/, { timeout: 30_000 });
+    await tauriPage.waitForURL('/health', { timeout: 30_000 });
 
     // Resolvers run brew install/start + dbd deploy + senseid start.
     // Total wall time on a warm dev box: ~30-90 s. Allow generous budget.
     // The $effect in (health)/health/+page.svelte calls goto('/') when
-    // healthState.isOk — the reroute hook then sends us to either
-    // /setup/welcome (setup not complete) or / (observatory).
-    await tauriPage.waitForURL(/\/setup\/welcome$|\/$/, { timeout: 180_000 });
+    // healthState.isOk. The reroute hook then sends us to /setup/welcome
+    // because the cold setup dropped the DB, so setup-complete is false.
+    await tauriPage.waitForURL('/setup/welcome', { timeout: 180_000 });
   });
 });

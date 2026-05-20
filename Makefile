@@ -186,10 +186,14 @@ _e2e-cold-post:
 	-brew services start postgresql@17
 	-brew services start ollama
 
-test-app-e2e-cold: install-dev
-	$(MAKE) _e2e-cold-pre
-	@cd app && bun run test:e2e:cold; RC=$$?; \
-	  $(MAKE) _e2e-cold-post; \
+# Note: uses literal `make` (not $(MAKE)) inside the shell pipeline so
+# `make -n test-app-e2e-cold` is an honest dry-run. With $(MAKE) inside
+# a recipe shell, GNU make force-executes the line under -n.
+test-app-e2e-cold: install-dev _e2e-cold-pre
+	@cd app && bun run test:e2e:cold ; \
+	  RC=$$? ; \
+	  cd .. ; \
+	  make _e2e-cold-post ; \
 	  exit $$RC
 
 # ── Git hooks ─────────────────────────────────────────────────────────────────
