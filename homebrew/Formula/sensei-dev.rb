@@ -54,12 +54,26 @@ class SenseiDev < Formula
     (Pathname.new(Dir.home) / ".sensei-dev").mkpath
   end
 
+  # Mirror the prod `sensei` formula so `brew services start sensei-dev`
+  # works. Log paths are -dev suffixed so the prod and dev daemons don't
+  # collide if both are installed.
+  service do
+    run [opt_bin/"senseid-dev"]
+    keep_alive true
+    log_path var/"log/sensei-dev.log"
+    error_log_path var/"log/sensei-dev.error.log"
+    working_dir Dir.home
+    environment_variables HOME: Dir.home, PATH: "#{HOMEBREW_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin"
+  end
+
   def caveats
     <<~EOS
       Installed sensei dev binaries (port 7745, db sensei_dev, dir ~/.sensei-dev/).
 
       Start the dev daemon:
 
+        brew services start sensei-dev   # managed by launchd, restarts on crash
+        # or, for a foreground process:
         senseid-dev start
 
       The dev binaries coexist with the prod `sensei` formula — both can be
