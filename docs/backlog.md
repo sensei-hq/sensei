@@ -10,25 +10,21 @@ One screen at a time. Each screen: read mockup → state class → component →
 
 ## Known bugs (next)
 
-- **E2E `globalSetup` builds and launches its own `senseid` for every
-  test run.** That defeats the "daemon stopped" scenario the boot/health
-  flow most needs to verify — with senseid up, the daemon gate is always
-  green by the time tests start. Either (a) make senseid launch optional
-  via a per-spec fixture, (b) split E2E into "with-daemon" vs
-  "no-daemon" projects in `playwright.config.ts`, or (c) drop the
-  global senseid spawn entirely and have tests start it themselves only
-  when needed. Surfaced 2026-05-19 while trying to verify the streaming
-  health check fix.
+- ~~**E2E `globalSetup` builds and launches its own `senseid`**~~ Partially
+  addressed 2026-05-20 — added a parallel `playwright.cold.config.ts`
+  + `globalSetup-cold.ts` that drops the dev DB, stops postgres + ollama,
+  and launches Sensei.app *without* pre-starting senseid. Cold-start
+  scenario is now testable via `bun run test:e2e:cold`. The existing
+  `playwright.config.ts` still pre-spawns senseid for the warm-start
+  tests; leave it for now since those tests rely on the daemon being
+  up before they begin.
 
-- **E2E specs over-rely on `navigateTo` / `goto` and rarely assert what
-  is currently visible.** `boot-flow.spec.ts` navigates between
-  `/health`, `/`, and `/setup/welcome` with little inspection of the
-  Hero/Ledger DOM in between, so visual-state regressions (like the
-  "page looks blank during checking" bug that was actually a Ledger
-  styling issue) wouldn't be caught. Need a spec that mounts `/health`,
-  freezes the IPC mock at `phase=checking` with zero probes returned,
-  and asserts the rendered DOM contains animated busy dots + "checking"
-  badge text. Surfaced 2026-05-19.
+- ~~**E2E specs over-rely on `navigateTo` / `goto`**~~ Partially
+  addressed 2026-05-20 by the new `cold-start.spec.ts` which contains
+  zero `goto()` calls and only observes DOM transitions + URL changes.
+  The existing `boot-flow.spec.ts` still navigates aggressively;
+  consider rewriting it in the same observation-only style once the
+  cold-start suite has shaken out.
 
 - ~~**Health remedy: text not selectable / copyable.**~~ Done (2026-05-16) —
   added `select-text` to the remedy `<pre>` and message, and to the failed-row
@@ -381,6 +377,89 @@ Screens confirmed to have no mockup. Design (mockup → spec → plan) must prec
 |---|------|-------|-------|
 | K1 | Daemon — ACP config | JSONC comment loss on rewrite | `upsert_sensei_in_json` / `remove_sensei_from_json` parse with `json5` (preserves all key/value data) but serialize back with `serde_json` (strips comments). All settings values are preserved; only `// comments` and trailing commas are lost. Full fix requires a CST-preserving JSONC editor — no mature Rust crate exists. Options: (a) preserve leading comment block (prefix before `{`), (b) surgical text splice at the key range. |
 | K2 | Database — DDL upgrades | No rollback for partial or failed upgrades | A partial DDL upgrade (e.g. `dbd apply` interrupted mid-run) leaves the schema in an inconsistent state. The current `dbd reset + apply` workflow is acceptable pre-release but will not be safe once stable versions ship to users. A rollback mechanism is needed — likely transactional DDL snapshots or migration checkpoints inside `dbd` itself (not in `senseid` code). Offload to `dbd` team. Consider before first stable release. |
+| K3 | Makefile — `install-dev` | Doesn't register sensei-dev as a brew service | `make install-dev` builds + copies binaries into `~/.local/bin` but never `brew install sensei-hq/tap/sensei-dev --HEAD`. So `brew services start sensei-dev` / `brew services stop sensei-dev` fail — no `homebrew.mxcl.sensei-dev.plist` exists. The DaemonStartResolver works because it spawns `senseid start` directly, but operator-style service management is broken in dev mode. Either teach `install-dev` to do the tap install, or document `brew install sensei-hq/tap/sensei-dev --HEAD` as the canonical dev path. Surfaced 2026-05-20 during cold-start E2E design. |
+
+---
+
+## Future scope — bootstrap as a reusable library (2026-05-20)
+
+**Vision:** Extract the bootstrap health-check / resolve / upgrade pipeline
+into a standalone, reusable Rust library that any Tauri app can adopt with
+minimal wiring. The work done in `crates/bootstrap` over the last few
+sessions (PlatformProvider trait, streaming check_and_resolve,
+resolver/checker traits, retry-aware port checks, single-pass resolve walk)
+has matured this into something genuinely re-usable — but it's currently
+welded to sensei-specific defaults (postgres, ollama, sensei binaries, the
+sensei daemon).
+
+**What "reusable" means here:**
+
+1. **Configurable dependency graph.** Consumers declare their own component
+   IDs and dependency edges instead of inheriting the five hardcoded
+   sensei components. The library provides the trait + the walker; the
+   consumer provides the graph.
+
+2. **Built-in checker + resolver kit.** Ship the existing primitives
+   (`BinaryChecker`, `PortChecker` (with retry mode), `AndChecker`,
+   `PostgresDatabaseChecker`, brew-service install/start resolvers) as
+   reusable building blocks. Most consumers will compose checkers from
+   these; the trait stays open so anyone can plug in custom probes.
+
+3. **Opt-in dependency-aware parallel checks.** Today probes run sequentially
+   in `check_streaming`. Add an opt-in mode that runs checkers in parallel
+   where the dependency graph allows it. The graph already encodes
+   `depends_on` (Database depends on Postgres; Daemon depends on Database
+   etc.); a topological-layer scheduler can probe each layer concurrently
+   via `std::thread::scope` + `mpsc`, emitting Component events as each
+   result lands. Sensei's case sees only marginal gains after the
+   retry-flag fix (most components are independent and already fast), but
+   apps with heavy independent probes (Docker, Redis, custom services)
+   would benefit. Make it a `ProviderConfig` flag, not a default.
+
+4. **Tauri sidecar helper crate.** A thin `bootstrap-tauri` companion
+   crate that handles the IPC glue — the `emit` closure, the in-flight
+   guard, the streaming event channel — so apps just register two
+   commands (`health_check` / `health_check_and_resolve`) and wire one
+   event listener (`health`). Today this code lives in
+   `app/src-tauri/src/commands/bootstrap.rs` as bespoke sensei code; lift
+   it into the library so the next app gets it for free.
+
+5. **Upgrade pipeline.** The `bootstrap::upgrade` module composes
+   `brew upgrade <formula>` + `database::deploy`. Generalise to
+   "run these resolver-like phases in order, emit a typed event stream"
+   so consumers can declare custom upgrade steps (cache warmup,
+   migration jobs, etc.) without forking the orchestration.
+
+6. **Frontend contract.** The `health-types.ts` / `health-state.svelte.ts`
+   shape (HealthPayload + HealthEvent + the streaming consumer) is
+   re-usable too. Ship it as a small TypeScript package (or as a
+   reference implementation) so the consuming app's Hero/Ledger UI
+   doesn't have to re-implement the state machine.
+
+**Why now-ish but not now:** The current design is solid enough that
+extracting it would mostly be a renaming/decoupling exercise rather than
+a rewrite. The sensei desktop app is the live testbed — once a second
+consumer materialises, the seams will be obvious. Defer until then,
+but keep new bootstrap work generalisation-friendly:
+
+- Don't bake sensei-specific defaults into trait method signatures.
+- Keep the `dependency_specs()` list extractable (it's already a
+  free function returning a static slice).
+- Resist adding sensei-only event kinds to `HealthEvent`.
+
+**Concrete first cut, when the time comes:**
+
+- New crate `sensei-bootstrap-core` (rename current `sensei-bootstrap`)
+  hosting the traits + primitives + walker.
+- New crate `sensei-bootstrap-platforms` shipping the macOS/Windows
+  default providers as one composable option.
+- New crate `sensei-bootstrap-tauri` for the sidecar glue.
+- Sensei desktop app moves to `sensei-bootstrap-platforms + custom
+  resolvers` (sensei daemon start, sensei tap install).
+- `health-types` + `health-state` factored into `@sensei/health-ui`
+  or similar.
+
+Track as background scope; do not block current sensei work on it.
 
 ---
 
