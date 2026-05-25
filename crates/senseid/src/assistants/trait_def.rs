@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use super::helpers::check_mcp_configured;
+use super::helpers::check_mcp_in_config;
 use super::AssistantStatus;
 
 /// Result of configuring an Assistant. `plugin` is true when `claude plugin install` succeeded.
@@ -25,8 +25,12 @@ pub(crate) trait Assistant {
     /// Display name for the family (used when grouped).
     fn family_name(&self) -> &str { self.name() }
 
+    /// Default integration check — looks for the sensei MCP entry in the
+    /// assistant's config file. Override for assistants that integrate via
+    /// a different mechanism (Claude Code uses `claude plugin install` and
+    /// records membership in `~/.claude/plugins/installed_plugins.json`).
     fn is_configured(&self) -> bool {
-        check_mcp_configured(&self.config_path(), self.mcp_key())
+        check_mcp_in_config(&self.config_path(), self.mcp_key())
     }
 
     fn status(&self) -> AssistantStatus {
@@ -35,7 +39,7 @@ pub(crate) trait Assistant {
             name: self.name().to_string(),
             family: self.family().to_string(),
             installed: self.detect(),
-            mcp_configured: self.is_configured(),
+            configured: self.is_configured(),
             config_path: self.config_path().to_string_lossy().into_owned(),
         }
     }

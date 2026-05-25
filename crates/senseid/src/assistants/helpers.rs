@@ -3,7 +3,12 @@ use sensei_bootstrap::{SENSEI_MCP_BIN, MCP_REGISTRY_KEY};
 
 pub(crate) fn home() -> PathBuf { crate::paths::home() }
 
-pub(crate) fn check_mcp_configured(config_path: &std::path::Path, mcp_key: &str) -> bool {
+/// Default integration check for assistants that wire sensei as an MCP
+/// server — Cursor, Zed, etc. Looks for the sensei MCP entry in the
+/// assistant's config file. Claude Code overrides this with a plugin-presence
+/// check (`is_configured()` in claude_code.rs) since it integrates via
+/// `claude plugin install`, not via the settings.json MCP block.
+pub(crate) fn check_mcp_in_config(config_path: &std::path::Path, mcp_key: &str) -> bool {
     if !config_path.exists() { return false; }
     std::fs::read_to_string(config_path)
         .ok()
