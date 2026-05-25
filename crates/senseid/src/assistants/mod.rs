@@ -95,7 +95,12 @@ pub struct AssistantStatus {
     pub name: String,
     pub family: String,
     pub installed: bool,
-    pub mcp_configured: bool,
+    /// True when sensei is integrated with this assistant. The integration
+    /// mechanism varies by assistant — Claude Code installs a plugin
+    /// (skills, commands, agents, hooks, MCP all bundled); Cursor/Zed/etc.
+    /// just register sensei as an MCP server in their config file. This
+    /// flag is the unified "sensei is wired into this tool" signal.
+    pub configured: bool,
     pub config_path: String,
 }
 
