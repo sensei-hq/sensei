@@ -36,6 +36,20 @@ impl Assistant for ClaudeCodeAssistant {
             || h.join(".claude").exists()
     }
 
+    /// Claude Code integrates via `claude plugin install sensei`, which records
+    /// installed plugins in `~/.claude/plugins/installed_plugins.json` under
+    /// the key `sensei@sensei-marketplace`. The settings.json MCP block is not
+    /// touched (the plugin bundles MCP, skills, commands, agents, and hooks
+    /// together), so the default `check_mcp_in_config` check would always
+    /// return false. Override here to look at the plugin manifest.
+    fn is_configured(&self) -> bool {
+        let manifest = home().join(".claude/plugins/installed_plugins.json");
+        let Some(content) = std::fs::read_to_string(&manifest).ok() else { return false };
+        let Some(value) = serde_json::from_str::<serde_json::Value>(&content).ok() else { return false };
+        let Some(plugins) = value.get("plugins").and_then(|p| p.as_object()) else { return false };
+        plugins.keys().any(|k| k.starts_with("sensei@"))
+    }
+
     fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
