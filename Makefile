@@ -30,7 +30,7 @@
         app-dev app-dev-bundle app-release app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
-        test-app test-app-unit test-app-e2e test-app-e2e-cold \
+        test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build \
         _e2e-cold-pre _e2e-cold-post \
         setup-hooks update bump tap-push marketplace-push clean
 
@@ -116,6 +116,13 @@ app-dev-bundle: install-dev
 app-release:
 	cd app && bunx tauri build
 
+# Build the debug .app bundle with the e2e-testing feature enabled
+# (exposes the playwright IPC socket at /tmp/tauri-playwright.sock).
+# Used by the Playwright globalSetup — kept here so the build recipe is
+# discoverable and not buried in TypeScript.
+app-e2e-build: install-dev
+	cd app && bunx tauri build --debug --features dev,e2e-testing
+
 # Type-check SvelteKit sources
 app-check:
 	cd app && bun run check
@@ -161,7 +168,7 @@ reset-e2e-db:
 # reset=true  → drop and recreate sensei-dev before running (default)
 # reset=false → skip DB reset (use existing DB)
 reset ?= true
-test-app-e2e: install-dev
+test-app-e2e: app-e2e-build
 	$(if $(filter true,$(reset)),$(MAKE) reset-e2e-db)
 	cd app && bun run test:e2e
 
@@ -189,7 +196,7 @@ _e2e-cold-post:
 # Note: uses literal `make` (not $(MAKE)) inside the shell pipeline so
 # `make -n test-app-e2e-cold` is an honest dry-run. With $(MAKE) inside
 # a recipe shell, GNU make force-executes the line under -n.
-test-app-e2e-cold: install-dev _e2e-cold-pre
+test-app-e2e-cold: app-e2e-build _e2e-cold-pre
 	@cd app && bun run test:e2e:cold ; \
 	  RC=$$? ; \
 	  cd .. ; \
