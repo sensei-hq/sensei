@@ -66,7 +66,11 @@ export interface AssistantStatus {
   name: string;
   family: string;
   installed: boolean;
-  mcp_configured: boolean;
+  /** True when sensei is integrated with this assistant. The integration
+   *  mechanism varies — Claude Code installs a plugin (skills, commands,
+   *  agents, hooks, MCP all bundled); others register sensei as an MCP
+   *  server in their config file. This flag is the unified signal. */
+  configured: boolean;
   config_path: string;
 }
 

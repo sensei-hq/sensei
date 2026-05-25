@@ -44,7 +44,7 @@ function mapFamilies(families: AssistantFamily[]): DaemonAssistantFamily[] {
     id: f.family,
     name: f.name,
     selected: f.installed,
-    variants: f.members.map(m => ({ id: m.id, name: m.name, installed: m.installed })),
+    variants: f.members.map(m => ({ id: m.id, name: m.name, installed: m.installed, configured: m.configured })),
   }));
 }
 
