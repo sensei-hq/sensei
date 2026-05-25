@@ -20,7 +20,7 @@ export function mockWatchRoot(overrides: Partial<DaemonWatchRoot> = {}): DaemonW
 
 export function mockAssistantVariant(overrides: Partial<AssistantVariant> = {}): AssistantVariant {
   return {
-    id: 'claude-code', name: 'Claude Code', installed: true,
+    id: 'claude-code', name: 'Claude Code', installed: true, configured: false,
     ...overrides,
   };
 }

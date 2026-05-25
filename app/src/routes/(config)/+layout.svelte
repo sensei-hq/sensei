@@ -34,6 +34,10 @@
         const data = await loadWizardData(appState.port);
         await wizardState.hydrate(data);
         loaded = true;
+        // Daemon-canonical: if setup is already complete, the user was
+        // dropped here during the cold-start race (appState wasn't loaded
+        // when reroute decided). Send them to the observatory now.
+        if (wizardState.isOk) goto("/");
     });
 
     async function next() {
@@ -210,11 +214,17 @@
                         onclick={next}
                         disabled={!canAdvance || committing}
                     >
-                        {committing
-                            ? "Saving..."
-                            : isLast
-                              ? "Enter observatory →"
-                              : "Continue →"}
+                        {#if committing}
+                            {stage?.id === "assistants"
+                                ? "Configuring…"
+                                : "Saving…"}
+                        {:else if isLast}
+                            Enter observatory →
+                        {:else if stage?.id === "assistants"}
+                            Configure &amp; Continue →
+                        {:else}
+                            Continue →
+                        {/if}
                     </button>
                 </div>
             </div>
