@@ -20,6 +20,8 @@ export interface AssistantVariant {
   id: string;
   name: string;
   installed: boolean;
+  /** True when sensei is integrated with this variant — mirrors AssistantStatus.configured. */
+  configured: boolean;
 }
 
 /** An AI coding assistant product family (e.g. "Claude", "Cursor"). */
