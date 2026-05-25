@@ -86,6 +86,25 @@ describe('WizardState', () => {
       expect(ws.projects.projects).toHaveLength(1);
     });
 
+    it('marks each loaded project as confirmed by default', () => {
+      ws.hydrate(mockWizardLoadData());
+      const project = ws.projects.projects[0];
+      expect(ws.projects.confirmed[project.id]).toBe(true);
+    });
+
+    it('defaults folders to an empty array when the daemon omits them', () => {
+      ws.hydrate(mockWizardLoadData({
+        projects: [{
+          id: 'p-folderless', name: 'Folderless', description: null, client: null, goal: null,
+          stack: { languages: [], frameworks: [], runtimes: [], services: [] },
+          icon: { kind: 'kanji', value: '空' },
+          // @ts-expect-error — exercising loader robustness when folders is missing
+          folders: undefined,
+        }],
+      }));
+      expect(ws.projects.projects[0].folders).toEqual([]);
+    });
+
     it('populates libraries slice', () => {
       ws.hydrate(mockWizardLoadData());
       expect(ws.libraries.libs).toHaveLength(1);

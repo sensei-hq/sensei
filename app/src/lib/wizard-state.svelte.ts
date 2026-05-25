@@ -21,8 +21,21 @@ import type {
 
 // ── Slice interfaces ────────────────────────────────────────
 
+/** Per-family configuration progress during commit. */
+export type AssistantConfigureState = 'idle' | 'configuring' | 'removing' | 'failed' | 'skipped';
+
+/** True when every installed variant of a family is currently configured. */
+export function familyIsConfigured(family: DaemonAssistantFamily): boolean {
+  const installed = family.variants.filter(v => v.installed);
+  return installed.length > 0 && installed.every(v => v.configured);
+}
+
 export interface AssistantsSlice {
   assistants: DaemonAssistantFamily[];
+  /** Configure status per family id — updated live while Continue is in flight. */
+  configureState: Record<string, AssistantConfigureState>;
+  /** Error message per family id when configureState is 'failed'. */
+  configureError: Record<string, string>;
 }
 
 export interface RootsSlice {
@@ -38,6 +51,8 @@ export interface ScanSlice {
 
 export interface ProjectsSlice {
   projects: DaemonProject[];
+  /** Per-project confirmation flag — true when the user has reviewed/approved the project. */
+  confirmed: Record<string, boolean>;
 }
 
 export interface LibrariesSlice {
@@ -61,8 +76,69 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     });
   },
   assistants:  async (ws, api) => {
-    const ids = ws.assistants.assistants.filter(a => a.selected).map(a => a.id);
-    await api.configureAssistants(ids);
+    // Reconcile user intent (switch state) with daemon truth (variant.configured)
+    // family-by-family so the UI can show per-card progress:
+    //   selected=true,  was configured=false → configure  (POST /api/assistants/configure)
+    //   selected=false, was configured=true  → remove     (POST /api/assistants/remove)
+    //   selected==was-configured             → no-op
+    //
+    // Daemon endpoints take *variant* ids (claude-code, claude-desktop), so each
+    // family flows through with the list of its installed variants. On success,
+    // we mutate variant.configured locally to keep the UI in sync without
+    // refetching — daemon is canonical on next hydrate.
+    const failed: string[] = [];
+
+    for (const family of ws.assistants.assistants) {
+      const variantIds = family.variants.filter(v => v.installed).map(v => v.id);
+      if (variantIds.length === 0) {
+        if (family.selected) ws.assistants.configureState[family.id] = 'skipped';
+        continue;
+      }
+      const wasConfigured = familyIsConfigured(family);
+
+      if (family.selected && !wasConfigured) {
+        ws.assistants.configureState[family.id] = 'configuring';
+        delete ws.assistants.configureError[family.id];
+        try {
+          const result = await api.configureAssistants(variantIds);
+          if (result.errors.length > 0) {
+            ws.assistants.configureState[family.id] = 'failed';
+            ws.assistants.configureError[family.id] = result.errors.join('; ');
+            failed.push(family.id);
+          } else {
+            for (const v of family.variants) if (v.installed) v.configured = true;
+            ws.assistants.configureState[family.id] = 'idle';
+          }
+        } catch (e) {
+          ws.assistants.configureState[family.id] = 'failed';
+          ws.assistants.configureError[family.id] = e instanceof Error ? e.message : String(e);
+          failed.push(family.id);
+        }
+      } else if (!family.selected && wasConfigured) {
+        ws.assistants.configureState[family.id] = 'removing';
+        delete ws.assistants.configureError[family.id];
+        try {
+          const result = await api.removeAssistants(variantIds);
+          if (result.errors.length > 0) {
+            ws.assistants.configureState[family.id] = 'failed';
+            ws.assistants.configureError[family.id] = result.errors.join('; ');
+            failed.push(family.id);
+          } else {
+            for (const v of family.variants) v.configured = false;
+            ws.assistants.configureState[family.id] = 'idle';
+          }
+        } catch (e) {
+          ws.assistants.configureState[family.id] = 'failed';
+          ws.assistants.configureError[family.id] = e instanceof Error ? e.message : String(e);
+          failed.push(family.id);
+        }
+      }
+      // else: switch already matches daemon state, nothing to do
+    }
+
+    if (failed.length > 0) {
+      throw new Error(`Failed to update: ${failed.join(', ')}`);
+    }
   },
   roots:       async (ws, api) => {
     // Roots are persisted to the DB when the user clicks "Add" on the roots page.
@@ -73,7 +149,13 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
   },
   scan:        async () => {},
   projects:    async (ws, api) => {
-    for (const p of ws.projects.projects) await api.updateProject(p.id, p);
+    // Send only confirmed projects. Daemon's update_solution reads name,
+    // description, maturity from the body — folder role edits will need a
+    // dedicated endpoint when daemon support lands.
+    for (const p of ws.projects.projects) {
+      if (ws.projects.confirmed[p.id] === false) continue;
+      await api.updateProject(p.id, { name: p.name, description: p.description });
+    }
   },
   libraries:   async () => {},
   instruments: async () => {},
@@ -99,10 +181,10 @@ export class WizardState {
     correctionAggressiveness: 'balanced', digestCadence: 'daily',
     nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
   });
-  assistants  = $state<AssistantsSlice>({ assistants: [] });
+  assistants  = $state<AssistantsSlice>({ assistants: [], configureState: {}, configureError: {} });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });
   scan        = $state<ScanSlice>({ baseline: null, started: false, done: false });
-  projects    = $state<ProjectsSlice>({ projects: [] });
+  projects    = $state<ProjectsSlice>({ projects: [], confirmed: {} });
   libraries   = $state<LibrariesSlice>({ libs: [] });
   instruments = $state<InstrumentsSlice>({ mcps: [] });
 
@@ -115,6 +197,16 @@ export class WizardState {
 
   get allDone(): boolean {
     return this.stages.every(s => s.status === 'done');
+  }
+
+  /**
+   * Mirror of healthState.isOk — true when the user has finished the setup
+   * wizard. Read by hooks.reroute to decide whether the user should be in
+   * the setup flow or the observatory. Daemon's `setup_complete` config key
+   * is the canonical source; appState surfaces it as a sync getter.
+   */
+  get isOk(): boolean {
+    return appState.setupComplete;
   }
 
   isStageComplete(id: string): boolean {
@@ -152,11 +244,17 @@ export class WizardState {
       if (user) this.preferences.displayName = user;
     }
 
+    // Default selection: if the family is already configured on the daemon,
+    // start with it selected (so the switch reflects daemon truth). If it's
+    // installed but not configured, also start selected so the user's first
+    // pass through configures it. Uninstalled families start unselected.
     this.assistants = {
       assistants: data.assistantFamilies.map(a => ({
         ...a,
-        selected: a.selected ?? a.variants.some(v => v.installed),
+        selected: a.selected ?? (a.variants.some(v => v.installed)),
       })),
+      configureState: {},
+      configureError: {},
     };
 
     this.roots = { roots: [...data.roots], newPath: '' };
@@ -173,9 +271,29 @@ export class WizardState {
       done: false,
     };
 
-    this.projects = { projects: [...data.projects] };
+    // Each loaded project starts as confirmed — the user has the option to
+    // unconfirm via the Projects stage, in which case it is excluded from commit.
+    this.projects = {
+      projects: data.projects.map(p => ({ ...p, folders: p.folders ?? [] })),
+      confirmed: Object.fromEntries(data.projects.map(p => [p.id, true])),
+    };
     this.libraries = { libs: [...data.libraries.libs] };
     this.instruments = { mcps: [...data.mcps] };
+  }
+
+  /**
+   * Re-fetch projects from daemon, merging in current confirmation state.
+   * Called by the Projects page on mount because the daemon discovers projects
+   * during scan — the layout's initial hydrate may have run before that.
+   */
+  async refreshProjects(): Promise<void> {
+    const api = senseiApi(appState.port);
+    const fresh = await api.listProjects();
+    const previous = this.projects.confirmed;
+    this.projects = {
+      projects: fresh.map(p => ({ ...(p as unknown as DaemonProject), folders: ((p as unknown as DaemonProject).folders) ?? [] })),
+      confirmed: Object.fromEntries(fresh.map(p => [p.id, previous[p.id] ?? true])),
+    };
   }
 
   async commitStage(stageId: string): Promise<boolean> {
