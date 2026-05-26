@@ -9,7 +9,7 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
 const fixture = (over: Partial<RemedyT> = {}): RemedyT => ({
   message: 'Run the script in your terminal.',
-  script: 'brew bundle --file=https://example/Brewfile',
+  script: 'brew install sensei-hq/tap/sensei',
   url: null, ...over,
 });
 
@@ -31,12 +31,24 @@ describe('Remedy', () => {
     expect(onCopyScript).toHaveBeenCalledTimes(1);
   });
 
-  it('Recheck button calls onRecheck', () => {
-    const onRecheck = vi.fn();
-    const m = mountComponent(Remedy, { remedy: fixture(), onRecheck });
+  it('Verify button calls onVerify', () => {
+    const onVerify = vi.fn();
+    const m = mountComponent(Remedy, { remedy: fixture(), onVerify });
     cleanup.push(m.destroy);
-    (m.container.querySelector('button[data-action="recheck"]') as HTMLButtonElement).click();
-    expect(onRecheck).toHaveBeenCalledTimes(1);
+    (m.container.querySelector('button[data-action="verify"]') as HTMLButtonElement).click();
+    expect(onVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('script and message are user-selectable (carry select-text class)', () => {
+    // Webview may default to non-selectable in some contexts. We opt
+    // these specific elements into selection so users can copy partial
+    // text / the message itself.
+    const m = mountComponent(Remedy, { remedy: fixture() });
+    cleanup.push(m.destroy);
+    const pre = m.container.querySelector('pre');
+    expect(pre?.className).toContain('select-text');
+    const message = m.container.querySelector('[data-remedy-message]');
+    expect(message?.className).toContain('select-text');
   });
 
   it('renders a link only when remedy.url is non-null', () => {

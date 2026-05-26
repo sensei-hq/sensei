@@ -47,10 +47,10 @@
 
 <div class="max-w-[820px] mx-auto px-12 py-12 pb-16">
     {#if loading}
-        <p class="text-ui text-surface-z6">Loading project...</p>
+        <p class="text-sm text-surface-z6">Loading project...</p>
     {:else if !project}
         <div class="flex flex-col items-center text-center py-20 gap-4">
-            <span class="kanji text-6xl text-primary-z5 opacity-30">場</span>
+            <span class="kanji text-4xl text-primary-z5 opacity-30">場</span>
             <p class="display text-xl font-normal m-0">Project not found.</p>
         </div>
     {:else}
@@ -71,7 +71,7 @@
                     {/if}
                 </div>
                 <span
-                    class="px-3 py-1 rounded-full text-2xs bg-surface-z3 text-surface-z6 capitalize"
+                    class="px-3 py-1 rounded-full text-xs bg-surface-z3 text-surface-z6 capitalize"
                     >{project.maturity}</span
                 >
             </div>
@@ -84,7 +84,7 @@
                 <div class="flex gap-1.5 flex-wrap">
                     {#each stackTags as tag}
                         <span
-                            class="px-2.5 py-0.75 rounded-full text-2xs bg-surface-z3 text-surface-z6"
+                            class="px-2.5 py-1 rounded-full text-xs bg-surface-z3 text-surface-z6"
                             >{tag}</span
                         >
                     {/each}
@@ -102,17 +102,17 @@
                         Repositories
                     </h3>
                     {#if repos.length === 0}
-                        <p class="text-ui text-surface-z6">
+                        <p class="text-sm text-surface-z6">
                             No repositories linked to this project.
                         </p>
                     {:else}
                         <div class="flex flex-col gap-0.5">
                             {#each repos as repo (repo.repo_id)}
                                 <div
-                                    class="repo-row flex items-center gap-3 px-3.5 py-2.5 rounded-md transition-colors duration-100"
+                                    class="repo-row flex items-center gap-3 px-3.5 py-2.5 rounded-md transition-colors duration-fast"
                                 >
                                     <span
-                                        class="text-ui font-medium text-surface-z9"
+                                        class="text-sm font-medium text-surface-z9"
                                         >{repo.name}</span
                                     >
                                     <span
@@ -121,7 +121,7 @@
                                     >
                                     {#if repo.role}
                                         <span
-                                            class="text-3xs uppercase tracking-widest text-surface-z5 px-2 py-0.5 rounded-full bg-surface-z3"
+                                            class="text-xs uppercase tracking-wide text-surface-z5 px-2 py-0.5 rounded-full bg-surface-z3"
                                             >{repo.role}</span
                                         >
                                     {/if}
@@ -142,7 +142,7 @@
                             >薦</span
                         >
                         <p
-                            class="text-ui text-surface-z6 leading-relaxed max-w-[420px] m-0"
+                            class="text-sm text-surface-z6 leading-normal max-w-[420px] m-0"
                         >
                             Recommendations will appear once sensei has observed
                             enough sessions in this project.
@@ -154,11 +154,11 @@
             <div
                 class="flex flex-col items-center gap-4 px-5 py-20 bg-surface-z2 border border-surface-z3 rounded-lg text-center"
             >
-                <span class="kanji text-5xl text-primary-z5 opacity-30">紋</span
+                <span class="kanji text-4xl text-primary-z5 opacity-30">紋</span
                 >
                 <p class="display text-lg font-normal m-0">Code graph</p>
                 <p
-                    class="text-ui text-surface-z6 leading-relaxed max-w-[420px] m-0"
+                    class="text-sm text-surface-z6 leading-normal max-w-[420px] m-0"
                 >
                     Interactive code graph with three lenses: Complexity,
                     Rework, Staleness. Nodes sized by fan-in, colored by
@@ -174,7 +174,7 @@
                         >
                             {section.title}
                         </h3>
-                        <p class="text-ui text-surface-z6 leading-relaxed">
+                        <p class="text-sm text-surface-z6 leading-normal">
                             {section.hint}
                         </p>
                     </div>
@@ -187,7 +187,7 @@
                 <span class="kanji text-3xl text-primary-z5 opacity-40">刻</span
                 >
                 <p
-                    class="text-ui text-surface-z6 leading-relaxed max-w-[420px] m-0"
+                    class="text-sm text-surface-z6 leading-normal max-w-[420px] m-0"
                 >
                     Sessions scoped to this project. Same format as the
                     observatory sessions view, filtered to show only sessions in {project.name}.
@@ -201,7 +201,7 @@
                 <div class="grid grid-cols-[120px_1fr] gap-2 gap-x-4">
                     {#each [["Name", project.name], ["Client", project.client ?? "—"], ["Goal", project.goal ?? "—"], ["Preferred ACP", project.preferred_acp ?? "—"], ["Maturity", project.maturity]] as [label, val]}
                         <span class="text-xs text-surface-z6">{label}</span>
-                        <span class="text-ui text-surface-z9">{val}</span>
+                        <span class="text-sm text-surface-z9">{val}</span>
                     {/each}
                 </div>
             </div>

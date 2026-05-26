@@ -4,6 +4,7 @@
     import {
         fmtMs,
         outcomeColor,
+        outcomeStatus,
         anonymize,
         formatTime,
         timeOfDay,
@@ -16,6 +17,7 @@
         buildBody,
     } from "./helpers.js";
     import { LogsPageState } from "./state.svelte.js";
+    import { Eyebrow, Kanji, StatusDot } from "$lib/components";
 
     let { data }: { data: PageData } = $props();
 
@@ -49,12 +51,10 @@
         class="w-[248px] shrink-0 border-r border-surface-z2 bg-surface-z2 flex flex-col overflow-hidden"
     >
         <div
-            class="px-5 pt-5.5 pb-3.5 border-b border-surface-z2 flex items-center gap-2.5 shrink-0"
+            class="px-5 pt-6 pb-3.5 border-b border-surface-z2 flex items-center gap-2.5 shrink-0"
         >
-            <span class="kanji text-lg text-primary-z5">診</span>
-            <span class="text-2xs tracking-tag uppercase text-surface-z6"
-                >diagnostic logs</span
-            >
+            <Kanji char="診" size="lg" />
+            <Eyebrow>diagnostic logs</Eyebrow>
         </div>
 
         <div class="flex-1 overflow-y-auto py-2">
@@ -63,15 +63,15 @@
 
                 <!-- Date header -->
                 <button
-                    class="flex items-center gap-1.5 w-full px-5 pt-1.75 pb-1.25 bg-transparent border-none cursor-pointer text-left"
+                    class="flex items-center gap-1.5 w-full px-5 pt-2 pb-1 bg-transparent border-none cursor-pointer text-left"
                     onclick={() => state.toggleDate(dg.date)}
                 >
                     <span
-                        class="text-nano text-surface-z5 leading-none inline-block transition-transform duration-150"
+                        class="text-xs text-surface-z5 leading-none inline-block transition-transform duration"
                         class:collapsed={!open}>▾</span
                     >
                     <span
-                        class="text-2xs font-semibold tracking-wider uppercase text-surface-z7"
+                        class="text-xs font-semibold tracking-wide uppercase text-surface-z7"
                         >{dg.date}</span
                     >
                 </button>
@@ -81,27 +81,24 @@
                         {@const sel = s.id === state.selectedId}
                         {@const isCurrent = s.id === state.sessions[0]?.id}
                         <button
-                            class="session-row block w-full py-1.75 px-5 pl-9 border-none border-l-2 border-l-transparent cursor-pointer text-left transition-colors duration-120"
+                            class="session-row block w-full py-2 px-5 pl-9 border-none border-l-2 border-l-transparent cursor-pointer text-left transition-colors duration-fast"
                             class:selected={sel}
                             onclick={() => state.selectSession(s.id)}
                         >
                             {#if isCurrent}
                                 <span
-                                    class="block text-nano tracking-cap uppercase text-primary-z5 mb-0.5"
+                                    class="block text-xs tracking-wide uppercase text-primary-z5 mb-0.5"
                                     >current</span
                                 >
                             {/if}
                             <div class="flex items-center gap-1.5 mb-0.5">
+                                <StatusDot status={outcomeStatus(s.outcome)} size="sm" />
                                 <span
-                                    class="w-1.5 h-1.5 rounded-full shrink-0"
-                                    style:background={outcomeColor(s.outcome)}
-                                ></span>
-                                <span
-                                    class="session-time text-ui font-medium text-surface-z7"
+                                    class="session-time text-sm font-medium text-surface-z7"
                                     >{timeOfDay(s.started_at)}</span
                                 >
                             </div>
-                            <div class="ml-3 text-2xs text-surface-z5">
+                            <div class="ml-3 text-xs text-surface-z5">
                                 {moduleLabel(s.module)} · {sessionSummary(s)}
                             </div>
                         </button>
@@ -126,14 +123,10 @@
             {@const fixes = bt.filter((t) => t.fix_attempted).length}
 
             <!-- Session header -->
-            <div class="shrink-0 pt-5.5 px-9 border-b border-surface-z2">
+            <div class="shrink-0 pt-6 px-9 border-b border-surface-z2">
                 <div class="flex items-start justify-between mb-4">
                     <div>
-                        <div
-                            class="text-micro tracking-tag uppercase text-surface-z5 mb-1.5"
-                        >
-                            {moduleLabel(s.module)}
-                        </div>
+                        <div class="mb-1.5"><Eyebrow>{moduleLabel(s.module)}</Eyebrow></div>
                         <h2
                             class="display text-2xl font-normal mb-1.5 tracking-tight"
                         >
@@ -151,7 +144,7 @@
                     </div>
 
                     <button
-                        class="report-btn shrink-0 mt-1 text-ui font-medium border-none px-4 py-2.25 rounded-md cursor-pointer bg-surface-z9 text-surface-z1"
+                        class="report-btn shrink-0 mt-1 text-sm font-medium border-none px-4 py-2 rounded-md cursor-pointer bg-surface-z9 text-surface-z1"
                         onclick={() => state.openModal()}
                     >
                         Report this session ↗
@@ -162,11 +155,7 @@
                 <div class="flex gap-6 pb-4">
                     {#each [{ label: "Total time", value: fmtMs(s.duration_ms) }, { label: "Traces", value: String(bt.length) }, { label: "Auto-fixes", value: String(fixes), color: fixes > 0 ? "oklch(var(--color-warning-z5) / 1)" : undefined }, { label: "Outcome", value: s.outcome, color: outcomeColor(s.outcome) }] as stat (stat.label)}
                         <div class="flex flex-col gap-0.5">
-                            <div
-                                class="text-micro tracking-cap uppercase text-surface-z5"
-                            >
-                                {stat.label}
-                            </div>
+                            <Eyebrow>{stat.label}</Eyebrow>
                             <div
                                 class="text-sm font-medium"
                                 style:color={stat.color ??
@@ -181,7 +170,7 @@
 
             <!-- Column headers -->
             <div
-                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-1.75 border-b border-surface-z2 bg-surface-z2 shrink-0 text-micro tracking-cap uppercase text-surface-z5"
+                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-2 border-b border-surface-z2 bg-surface-z2 shrink-0 text-xs tracking-wide uppercase text-surface-z5"
             >
                 <span>action</span>
                 <span>step</span>
@@ -201,7 +190,7 @@
                         <!-- Main row -->
                         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                         <div
-                            class="trace-row grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 items-center py-2.25 {hasDetail
+                            class="trace-row grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 items-center py-2 {hasDetail
                                 ? 'cursor-pointer'
                                 : 'cursor-default'}"
                             role={hasDetail ? "button" : "presentation"}
@@ -218,7 +207,7 @@
                             }}
                         >
                             <span
-                                class="text-nano font-semibold tracking-cap px-1.5 py-0.5 rounded-sm whitespace-nowrap justify-self-start"
+                                class="text-xs font-semibold tracking-wide px-1.5 py-0.5 rounded-sm whitespace-nowrap justify-self-start"
                                 style:color={am.color}
                                 style:background={am.bg}
                             >
@@ -233,23 +222,23 @@
                                 >{anonymize(t.cmd ?? "")}</span
                             >
                             <span
-                                class="text-2xs text-surface-z5 tabular-nums text-right"
+                                class="text-xs text-surface-z5 tabular-nums text-right"
                                 >{fmtMs(t.ms ?? 0)}</span
                             >
                             <div class="text-center">
                                 {#if t.ok}
                                     <span
-                                        class="text-success-z5 text-ui leading-none"
+                                        class="text-success-z5 text-sm leading-none"
                                         >✓</span
                                     >
                                 {:else if t.fix_ok}
                                     <span
-                                        class="text-nano font-semibold tracking-wider text-warning-z5"
+                                        class="text-xs font-semibold tracking-wide text-warning-z5"
                                         >FIXED</span
                                     >
                                 {:else}
                                     <span
-                                        class="text-primary-z5 text-ui leading-none"
+                                        class="text-primary-z5 text-sm leading-none"
                                         >✗</span
                                     >
                                 {/if}
@@ -263,13 +252,9 @@
                             >
                                 {#if t.out}
                                     <div class="flex flex-col gap-1">
-                                        <div
-                                            class="text-micro tracking-widest uppercase text-surface-z5"
-                                        >
-                                            stdout
-                                        </div>
+                                        <Eyebrow>stdout</Eyebrow>
                                         <pre
-                                            class="m-0 text-xs font-mono text-surface-z7 leading-relaxed whitespace-pre-wrap break-all">{anonymize(
+                                            class="m-0 text-xs font-mono text-surface-z7 leading-normal whitespace-pre-wrap break-all">{anonymize(
                                                 t.out,
                                             )}</pre>
                                     </div>
@@ -277,12 +262,12 @@
                                 {#if t.err}
                                     <div class="flex flex-col gap-1">
                                         <div
-                                            class="detail-block-label err text-micro tracking-widest uppercase"
+                                            class="detail-block-label err text-xs tracking-wide uppercase"
                                         >
                                             stderr
                                         </div>
                                         <pre
-                                            class="err-text m-0 text-xs font-mono leading-relaxed whitespace-pre-wrap break-all">{t.err}</pre>
+                                            class="err-text m-0 text-xs font-mono leading-normal whitespace-pre-wrap break-all">{t.err}</pre>
                                     </div>
                                 {/if}
                                 {#if t.fix_attempted}
@@ -290,17 +275,17 @@
                                         class="flex flex-col gap-1 pt-2.5 border-t border-surface-z2"
                                     >
                                         <div
-                                            class="detail-block-label fix text-micro tracking-widest uppercase"
+                                            class="detail-block-label fix text-xs tracking-wide uppercase"
                                         >
                                             auto-fix attempted
                                         </div>
                                         <pre
-                                            class="m-0 text-xs font-mono leading-relaxed whitespace-pre-wrap break-all"
+                                            class="m-0 text-xs font-mono leading-normal whitespace-pre-wrap break-all"
                                             style:color={t.fix_ok
                                                 ? "oklch(var(--color-success-z5) / 1)"
                                                 : "oklch(var(--color-primary-z5) / 1)"}>$ {t.fix_approach ??
                                                 ""}  <span
-                                                class="text-surface-z5 text-3xs"
+                                                class="text-surface-z5 text-xs"
                                                 >→ {t.fix_ok
                                                     ? "succeeded"
                                                     : "failed"}</span
@@ -315,7 +300,7 @@
             </div>
         {:else}
             <div
-                class="flex-1 flex items-center justify-center text-ui text-surface-z5"
+                class="flex-1 flex items-center justify-center text-sm text-surface-z5"
             >
                 No sessions recorded yet. Run the app to generate logs.
             </div>
@@ -365,18 +350,14 @@
             <div class="flex-1 overflow-auto pt-5 pb-6 px-7 flex gap-5">
                 <!-- Issue preview -->
                 <div class="flex-1 flex flex-col gap-2 min-h-0 overflow-hidden">
+                    <Eyebrow>Issue preview — anonymized</Eyebrow>
                     <div
-                        class="text-3xs tracking-cap uppercase text-surface-z5"
-                    >
-                        Issue preview — anonymized
-                    </div>
-                    <div
-                        class="bg-surface-z2 border border-surface-z2 rounded-md px-3 py-2 text-ui text-surface-z9 font-medium shrink-0"
+                        class="bg-surface-z2 border border-surface-z2 rounded-md px-3 py-2 text-sm text-surface-z9 font-medium shrink-0"
                     >
                         {buildTitle(s)}
                     </div>
                     <pre
-                        class="flex-1 bg-surface-z2 border border-surface-z2 rounded-md px-3.5 py-3 font-mono text-xs text-surface-z7 leading-reading overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
+                        class="flex-1 bg-surface-z2 border border-surface-z2 rounded-md px-3.5 py-3 font-mono text-xs text-surface-z7 leading-loose overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
                             s,
                             state.addCtx,
                         )}</pre>
@@ -387,15 +368,11 @@
                     <div
                         class="bg-surface-z2 border border-surface-z2 rounded-md px-3.5 py-3"
                     >
-                        <div
-                            class="text-micro tracking-cap uppercase text-surface-z5 mb-2"
-                        >
-                            Included in report
-                        </div>
+                        <div class="mb-2"><Eyebrow>Included in report</Eyebrow></div>
                         {#each [["Session", formatTime(s.started_at)], ["OS", anonymize(si.os)], ["Arch", si.arch], ["RAM", `${si.ram_gb} GB`], ["Traces", String(s.traces.length)], ["Fixes", String(s.traces.filter((t) => isBootstrapTrace(t) && t.fix_attempted).length)], ["App", `v${s.app_version}`]] as [k, v]}
-                            <div class="flex justify-between text-xs mb-0.75">
+                            <div class="flex justify-between text-xs mb-1">
                                 <span class="text-surface-z5">{k}</span>
-                                <span class="text-surface-z7 font-mono text-2xs"
+                                <span class="text-surface-z7 font-mono text-xs"
                                     >{v}</span
                                 >
                             </div>
@@ -403,13 +380,9 @@
                     </div>
 
                     <div>
-                        <div
-                            class="text-3xs tracking-cap uppercase text-surface-z5 mb-2"
-                        >
-                            Additional context
-                        </div>
+                        <div class="mb-2"><Eyebrow>Additional context</Eyebrow></div>
                         <textarea
-                            class="ctx-input w-full resize-none font-sans text-ui text-surface-z9 bg-surface-z2 border border-surface-z2 rounded-md px-2.5 py-2 leading-normal"
+                            class="ctx-input w-full resize-none font-sans text-sm text-surface-z9 bg-surface-z2 border border-surface-z2 rounded-md px-2.5 py-2 leading-normal"
                             bind:value={state.addCtx}
                             placeholder="What were you doing? Any other details…"
                             rows={4}
@@ -417,7 +390,7 @@
                     </div>
 
                     <p
-                        class="privacy-note text-2xs text-surface-z5 leading-reading m-0"
+                        class="privacy-note text-xs text-surface-z5 leading-loose m-0"
                     >
                         Paths like <code>/Users/</code> are replaced with
                         <code>~/</code>. No personal data included.
@@ -425,13 +398,13 @@
 
                     <div class="flex flex-col gap-2 mt-auto">
                         <button
-                            class="btn-solid w-full text-ui px-4 py-2.5"
+                            class="btn-solid w-full text-sm px-4 py-2.5"
                             onclick={submitToGitHub}
                         >
                             Submit to GitHub ↗
                         </button>
                         <button
-                            class="outline-btn w-full text-ui px-4 py-2.5 bg-transparent border border-surface-z2 text-surface-z9 rounded-md cursor-pointer font-sans transition-colors duration-200"
+                            class="outline-btn w-full text-sm px-4 py-2.5 bg-transparent border border-surface-z2 text-surface-z9 rounded-md cursor-pointer font-sans transition-colors duration"
                             onclick={copyMarkdown}
                         >
                             {state.copied ? "Copied ✓" : "Copy markdown"}

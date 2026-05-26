@@ -1,8 +1,47 @@
 //! Hardware detection — RAM, CPU, GPU for model tier recommendations.
+//!
+//! These are standalone utilities used by the setup wizard (hardware-tier-based
+//! model recommendations) and the Tauri `detect_hardware` command. They are
+//! orthogonal to the health-check rewrite.
 
+use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
-use crate::types::{HardwareInfo, ModelTier};
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+/// Model tier based on hardware capabilities.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTier {
+    /// 8GB RAM — gemma3:12b only
+    Minimum,
+    /// 16GB RAM — gemma3:27b + qwen3:14b
+    Recommended,
+    /// 32GB+ RAM — full MOE panel
+    Full,
+}
+
+impl ModelTier {
+    pub fn from_ram(ram_gb: u32) -> Self {
+        match ram_gb {
+            0..=15 => ModelTier::Minimum,
+            16..=31 => ModelTier::Recommended,
+            _ => ModelTier::Full,
+        }
+    }
+}
+
+/// Hardware capabilities of the host machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareInfo {
+    pub ram_gb: u32,
+    pub cpu_cores: u32,
+    pub gpu: Option<String>,
+    pub metal_support: bool,
+    pub recommended_tier: ModelTier,
+}
+
+// ── Detection ─────────────────────────────────────────────────────────────────
 
 /// Detect hardware capabilities of the host machine.
 pub fn detect() -> HardwareInfo {
@@ -16,13 +55,35 @@ pub fn detect() -> HardwareInfo {
     HardwareInfo { ram_gb, cpu_cores, gpu, metal_support, recommended_tier }
 }
 
-/// Detect GPU name. Delegates to the current platform's detection logic.
+/// Detect GPU name. Delegates to platform-specific detection.
 fn detect_gpu() -> Option<String> {
-    #[cfg(not(target_os = "windows"))]
-    { crate::platform::macos::detect_gpu() }
-    #[cfg(target_os = "windows")]
-    { crate::platform::windows::detect_gpu() }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+            .ok()?;
+        let brand = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if brand.contains("Apple") {
+            return Some(brand);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let output = std::process::Command::new("lspci").output().ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            if line.contains("VGA") || line.contains("3D") {
+                return Some(line.trim().to_string());
+            }
+        }
+    }
+
+    None
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -43,11 +104,19 @@ mod tests {
     #[test]
     fn detect_sets_model_tier() {
         let hw = detect();
-        // Whatever tier is assigned, it should be valid
         assert!(matches!(
             hw.recommended_tier,
             ModelTier::Minimum | ModelTier::Recommended | ModelTier::Full
         ));
+    }
+
+    #[test]
+    fn model_tier_from_ram_boundaries() {
+        assert_eq!(ModelTier::from_ram(4), ModelTier::Minimum);
+        assert_eq!(ModelTier::from_ram(8), ModelTier::Minimum);
+        assert_eq!(ModelTier::from_ram(16), ModelTier::Recommended);
+        assert_eq!(ModelTier::from_ram(32), ModelTier::Full);
+        assert_eq!(ModelTier::from_ram(64), ModelTier::Full);
     }
 
     #[cfg(target_os = "macos")]

@@ -71,8 +71,8 @@ function WizInference({ state, upd }) {
   const s = useInferenceState();
 
   return (
-    <div style={{ maxWidth: 980, margin: '0 auto' }}>
-      <div style={{ marginBottom: 18 }}>
+    <div style={{ maxWidth: 980 }} className="mx-auto" >
+      <div className="mb-4" >
         <WizHeader n="想" title="Inference"
                    tagline="Providers give sensei models for reasoning — inferring insights, consolidating memory, and making recommendations. Add providers, pull local models, leave assignment for the next step."/>
       </div>
@@ -81,14 +81,17 @@ function WizInference({ state, upd }) {
 
       <InferenceSplit {...s}/>
 
-      <div style={{ paddingTop: 18, marginTop: 18, borderTop: 'var(--hairline)',
-                     display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: 12, color: 'var(--sumi-3)', lineHeight: 1.6 }}>
+      <div style={{
+ borderTop: 'var(--hairline)',
+                     display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+}} className="mt-4 pt-4" >
+        <div style={{ fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.6 }}>
           Role assignments come next — decide which models handle inference, consolidation, embedding, voice, and fallback.
         </div>
-        <button style={{ fontSize: 12, color: 'var(--sumi-2)',
-                         padding: '7px 14px', border: 'var(--hairline)',
-                         borderRadius: 5, background: 'transparent', cursor: 'pointer' }}>
+        <button style={{
+ fontSize: 13, color: 'var(--ink-2)', border: 'var(--hairline)',
+                         borderRadius: 5, background: 'transparent', cursor: 'pointer'
+}} className="py-2 px-3" >
           Defer · configure later
         </button>
       </div>
@@ -102,16 +105,17 @@ function WizInference({ state, upd }) {
 
 function SystemStrip({ sys }) {
   return (
-    <div style={{ marginBottom: 22, padding: '12px 18px',
+    <div style={{
                    background: 'var(--paper-2)', border: 'var(--hairline)',
                    borderRadius: 6,
-                   display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' }}>
-      <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--sumi-4)' }}>this machine</div>
+                   display: 'flex', alignItems: 'center', flexWrap: 'wrap'
+}} className="mb-5 py-3 px-4 gap-5" >
+      <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                     color: 'var(--ink-4)' }}>this machine</div>
       {[sys.chip, sys.ram, sys.cores.split('·')[1]?.trim() || sys.cores, sys.os].map((v, i, arr) => (
         <React.Fragment key={i}>
-          <div style={{ fontSize: 12, color: 'var(--sumi-2)' }}>{v}</div>
-          {i < arr.length - 1 && <span style={{ color: 'var(--sumi-4)' }}>·</span>}
+          <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>{v}</div>
+          {i < arr.length - 1 && <span style={{ color: 'var(--ink-4)' }}>·</span>}
         </React.Fragment>
       ))}
     </div>
@@ -120,23 +124,26 @@ function SystemStrip({ sys }) {
 
 function KeyInput({ envVar, value, onChange, onSave }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', marginBottom: 6 }}>
+    <div className="mb-3" >
+      <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mb-1" >
         Paste your API key (or export <span style={{ fontFamily: 'var(--font-mono)' }}>{envVar}</span> in your shell):
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex' }} className="gap-2" >
         <input type="password" value={value}
                onChange={e => onChange(e.target.value)}
                placeholder={envVar.toLowerCase()}
-               style={{ flex: 1, fontSize: 12, fontFamily: 'var(--font-mono)',
-                        padding: '8px 10px', borderRadius: 4,
+               style={{
+ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)', borderRadius: 4,
                         border: 'var(--hairline)', background: 'var(--paper)',
-                        color: 'var(--sumi)' }}/>
+                        color: 'var(--ink)'
+}} className="py-2 px-2" />
         <button onClick={onSave} disabled={!value}
-                style={{ fontSize: 12, padding: '8px 14px', borderRadius: 4, border: 'none',
-                         background: value ? 'var(--sumi)' : 'var(--paper-edge)',
-                         color: value ? 'var(--paper)' : 'var(--sumi-3)',
-                         cursor: value ? 'pointer' : 'default' }}>
+                style={{
+ fontSize: 13, borderRadius: 4, border: 'none',
+                         background: value ? 'var(--ink)' : 'var(--edge)',
+                         color: value ? 'var(--paper)' : 'var(--ink-3)',
+                         cursor: value ? 'pointer' : 'default'
+}} className="py-2 px-3" >
           Configure
         </button>
       </div>
@@ -154,7 +161,7 @@ function OllamaModelTable({ models, progress, pullQueue, setPullQueue }) {
       {recs.length > 0 && (
         <>
           <SectionLabel>recommended for this machine</SectionLabel>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1 mb-3" >
             {recs.map(m => <OllamaRow key={m.id} m={m} progress={progress}
                                        pullQueue={pullQueue} setPullQueue={setPullQueue}/>)}
           </div>
@@ -163,7 +170,7 @@ function OllamaModelTable({ models, progress, pullQueue, setPullQueue }) {
       {rest.length > 0 && (
         <>
           <SectionLabel>also available</SectionLabel>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             {rest.map(m => <OllamaRow key={m.id} m={m} progress={progress}
                                         pullQueue={pullQueue} setPullQueue={setPullQueue}/>)}
           </div>
@@ -175,8 +182,10 @@ function OllamaModelTable({ models, progress, pullQueue, setPullQueue }) {
 
 function SectionLabel({ children }) {
   return (
-    <div style={{ fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                   color: 'var(--sumi-4)', marginBottom: 8 }}>{children}</div>
+    <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                   color: 'var(--ink-4)'
+}} className="mb-2" >{children}</div>
   );
 }
 
@@ -195,51 +204,57 @@ function OllamaRow({ m, progress, pullQueue, setPullQueue }) {
           style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     width: 22, height: 22, borderRadius: 4,
                     background: 'rgba(122,158,98,.12)',
-                    color: 'var(--matcha)', fontSize: 12 }}>✓</span>
+                    color: 'var(--success)', fontSize: 13 }}>✓</span>
   ) : active ? (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-                    fontSize: 10.5, color: 'var(--sumi-3)',
+    <span style={{
+ display: 'inline-flex', alignItems: 'center',
+                    fontSize: 11, color: 'var(--ink-3)',
                     fontFeatureSettings: '"tnum"',
-                    letterSpacing: '0.04em' }}>
+                    letterSpacing: '0.04em'
+}} className="gap-1" >
       <Spinner/>
       {Math.round(prog)}%
     </span>
   ) : (
     <button onClick={() => setPullQueue(q => ({ ...q, [m.id]: !q[m.id] }))}
-            style={{ fontSize: 11, padding: '4px 12px', borderRadius: 3,
+            style={{
+ fontSize: 11, borderRadius: 3,
                      border: 'none', background: 'transparent',
-                     color: 'var(--sumi-2)',
+                     color: 'var(--ink-2)',
                      letterSpacing: '0.04em',
-                     cursor: 'pointer' }}
-            onMouseEnter={e => e.currentTarget.style.color = 'var(--sumi)'}
-            onMouseLeave={e => e.currentTarget.style.color = 'var(--sumi-2)'}>
+                     cursor: 'pointer'
+}}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--ink)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--ink-2)'} className="py-1 px-3" >
       pull
     </button>
   );
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 14,
-                   alignItems: 'center', padding: '9px 12px',
+    <div style={{
+ display: 'grid', gridTemplateColumns: '1fr auto auto',
+                   alignItems: 'center',
                    background: 'var(--paper-2)',
                    borderRadius: 4,
-                   position: 'relative' }}>
+                   position: 'relative'
+}} className="gap-3 py-2 px-3" >
       {m.recommended && <RecommendedBadge/>}
       <div style={{ paddingLeft: m.recommended ? 10 : 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
           <span style={{ fontSize: 13 }}>{m.name}</span>
         </div>
-        {m.note && <div style={{ fontSize: 10.5, color: 'var(--sumi-4)', marginTop: 2 }}>{m.note}</div>}
+        {m.note && <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >{m.note}</div>}
         {active && (
-          <div style={{ marginTop: 5 }}>
-            <div style={{ height: 2, background: 'var(--paper-edge)',
+          <div className="mt-1" >
+            <div style={{ height: 2, background: 'var(--edge)',
                            borderRadius: 1, overflow: 'hidden', maxWidth: 240 }}>
-              <div style={{ width: `${prog}%`, height: '100%', background: 'var(--matcha)',
+              <div style={{ width: `${prog}%`, height: '100%', background: 'var(--success)',
                              transition: 'width .22s linear' }}/>
             </div>
           </div>
         )}
       </div>
-      <div style={{ fontSize: 10.5, color: 'var(--sumi-4)',
+      <div style={{ fontSize: 11, color: 'var(--ink-4)',
                      whiteSpace: 'nowrap',
                      letterSpacing: '0.06em',
                      fontFeatureSettings: '"tnum"' }}>
@@ -253,8 +268,8 @@ function OllamaRow({ m, progress, pullQueue, setPullQueue }) {
 function Spinner() {
   return (
     <span style={{ display: 'inline-block', width: 10, height: 10,
-                    border: '1.5px solid var(--paper-edge)',
-                    borderTopColor: 'var(--sumi-2)',
+                    border: '1.5px solid var(--edge)',
+                    borderTopColor: 'var(--ink-2)',
                     borderRadius: '50%',
                     animation: 'senseiSpin 0.8s linear infinite' }}/>
   );
@@ -266,7 +281,7 @@ function RecommendedBadge() {
     <span title="Recommended for this machine"
           style={{ position: 'absolute', top: 0, left: 0,
                     width: 0, height: 0,
-                    borderTop: '18px solid var(--shu)',
+                    borderTop: '18px solid var(--accent)',
                     borderRight: '18px solid transparent' }}/>
   );
 }
@@ -275,24 +290,27 @@ function CloudModelTable({ models, isConfigured }) {
   return (
     <>
       <SectionLabel>models</SectionLabel>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
         {models.map(m => (
           <div key={m.id} style={{
-                 display: 'grid', gridTemplateColumns: '1fr auto', gap: 12,
-                 alignItems: 'center', padding: '9px 12px',
+                 display: 'grid', gridTemplateColumns: '1fr auto',
+                 alignItems: 'center',
                  background: 'var(--paper-2)', borderRadius: 4,
-                 opacity: isConfigured ? 1 : 0.5 }}>
+                 opacity: isConfigured ? 1 : 0.5
+}} className="gap-3 py-2 px-3" >
             <div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
                 <span style={{ fontSize: 13 }}>{m.name}</span>
-                {m.context && <span style={{ fontSize: 10, color: 'var(--sumi-4)' }}>{m.context}</span>}
+                {m.context && <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>{m.context}</span>}
               </div>
               {m.cost && (
-                <div style={{ fontSize: 10.5, color: 'var(--sumi-4)',
-                               fontFamily: 'var(--font-mono)', marginTop: 2 }}>{m.cost}</div>
+                <div style={{
+ fontSize: 11, color: 'var(--ink-4)',
+                               fontFamily: 'var(--font-mono)'
+}} className="mt-1" >{m.cost}</div>
               )}
             </div>
-            <span style={{ fontSize: 10.5, color: isConfigured ? 'var(--matcha)' : 'var(--sumi-4)',
+            <span style={{ fontSize: 11, color: isConfigured ? 'var(--success)' : 'var(--ink-4)',
                             letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               {isConfigured ? "available" : "needs key"}
             </span>
@@ -314,19 +332,24 @@ function InferenceSplit(s) {
 
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 14,
-                     minHeight: 380 }}>
+      <div style={{
+ display: 'grid', gridTemplateColumns: '280px 1fr',
+                     minHeight: 380
+}} className="gap-3" >
         {/* Left list */}
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                         marginBottom: 8 }}>
+          <div style={{
+ display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+}} className="mb-2" >
             <SectionLabel>providers</SectionLabel>
             <button onClick={() => setShowAdd(true)}
-                    style={{ fontSize: 10.5, color: 'var(--sumi-2)', padding: '2px 8px',
+                    style={{
+ fontSize: 11, color: 'var(--ink-2)',
                              border: 'var(--hairline)', borderRadius: 3,
-                             background: 'var(--paper)', cursor: 'pointer' }}>+ add</button>
+                             background: 'var(--paper)', cursor: 'pointer'
+}} className="py-1 px-2" >+ add</button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             {D.providers.map(p => {
               const active = p.id === focusId;
               const cfg = configured[p.id];
@@ -335,29 +358,30 @@ function InferenceSplit(s) {
                 : (cfg ? p.models.length : 0);
               return (
                 <button key={p.id} onClick={() => setFocusId(p.id)}
-                        style={{ display: 'grid',
-                                 gridTemplateColumns: '24px 1fr auto', gap: 10,
-                                 alignItems: 'center',
-                                 padding: '10px 12px', borderRadius: 5,
+                        style={{
+ display: 'grid',
+                                 gridTemplateColumns: '24px 1fr auto',
+                                 alignItems: 'center', borderRadius: 5,
                                  border: active ? 'none' : 'var(--hairline)',
-                                 background: active ? 'var(--sumi)' : 'var(--paper)',
-                                 color: active ? 'var(--paper)' : 'var(--sumi)',
-                                 cursor: 'pointer', textAlign: 'left' }}>
-                  <span className="kanji" style={{ fontSize: 16,
-                                                     color: active ? 'var(--paper)' : 'var(--shu)' }}>
+                                 background: active ? 'var(--ink)' : 'var(--paper)',
+                                 color: active ? 'var(--paper)' : 'var(--ink)',
+                                 cursor: 'pointer', textAlign: 'left'
+}} className="gap-2 py-2 px-3" >
+                  <span className="kanji" style={{ fontSize: 15,
+                                                     color: active ? 'var(--paper)' : 'var(--accent)' }}>
                     {p.kanji}
                   </span>
                   <div>
-                    <div style={{ fontSize: 12.5 }}>{p.name}</div>
-                    <div style={{ fontSize: 10, opacity: 0.6, marginTop: 1 }}>
+                    <div style={{ fontSize: 13 }}>{p.name}</div>
+                    <div style={{ fontSize: 11, opacity: 0.6 }} className="mt-1" >
                       {p.kind === "local" ? "local" : "cloud"}
                     </div>
                   </div>
-                  <span style={{ fontSize: 9.5, letterSpacing: '0.08em',
+                  <span style={{ fontSize: 11, letterSpacing: '0.08em',
                                   textTransform: 'uppercase',
                                   color: cfg
-                                    ? (active ? 'var(--paper)' : 'var(--matcha)')
-                                    : (active ? 'var(--paper)' : 'var(--sumi-4)') }}>
+                                    ? (active ? 'var(--paper)' : 'var(--success)')
+                                    : (active ? 'var(--paper)' : 'var(--ink-4)') }}>
                     {cfg ? `${count}` : "—"}
                   </span>
                 </button>
@@ -367,18 +391,21 @@ function InferenceSplit(s) {
         </div>
 
         {/* Right detail */}
-        <div style={{ background: 'var(--paper)', border: 'var(--hairline)',
-                       borderRadius: 6, padding: '16px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10,
-                         marginBottom: 4 }}>
-            <span className="kanji" style={{ fontSize: 24, color: 'var(--shu)' }}>{focus.kanji}</span>
-            <div className="display" style={{ fontSize: 18 }}>{focus.name}</div>
-            <span style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
-                            color: 'var(--sumi-4)' }}>
+        <div style={{
+ background: 'var(--paper)', border: 'var(--hairline)',
+                       borderRadius: 6
+}} className="py-4 px-4" >
+          <div style={{
+ display: 'flex', alignItems: 'baseline'
+}} className="gap-2 mb-1" >
+            <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>{focus.kanji}</span>
+            <div className="display" style={{ fontSize: 17 }}>{focus.name}</div>
+            <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                            color: 'var(--ink-4)' }}>
               {focus.kind === "local" ? "local · ollama" : "cloud"}
             </span>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--sumi-3)', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-3" >
             {focus.note}
           </div>
 
@@ -410,9 +437,10 @@ function InferenceSplit(s) {
 
 function SplitKeyInput(p) {
   return (
-    <div style={{ marginBottom: 14, padding: 12,
+    <div style={{
                    background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 5 }}>
+                   borderRadius: 5
+}} className="mb-3 p-3" >
       <KeyInput {...p}/>
     </div>
   );
@@ -427,32 +455,37 @@ function AddProviderModal({ D, onAdd, onClose }) {
          style={{ position: 'absolute', inset: 0, background: 'rgba(30,27,24,.35)',
                    display: 'grid', placeItems: 'center', zIndex: 20 }}>
       <div onClick={e => e.stopPropagation()}
-           style={{ background: 'var(--paper)', border: 'var(--hairline)',
-                     borderRadius: 8, padding: 22, width: 420,
-                     boxShadow: '0 16px 40px rgba(0,0,0,.18)' }}>
-        <div className="display" style={{ fontSize: 16, marginBottom: 6 }}>Add provider</div>
-        <div style={{ fontSize: 12, color: 'var(--sumi-3)', marginBottom: 16 }}>
+           style={{
+ background: 'var(--paper)', border: 'var(--hairline)',
+                     borderRadius: 8, width: 420,
+                     boxShadow: '0 16px 40px rgba(0,0,0,.18)'
+}} className="p-5" >
+        <div className="display mb-1" style={{ fontSize: 15 }}>Add provider</div>
+        <div style={{ fontSize: 13, color: 'var(--ink-3)' }} className="mb-4" >
           Pick a provider; paste a key on the next step.
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
           {D.addable.map(p => (
             <button key={p.id} onClick={() => onAdd(p.id)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 12,
-                             padding: '10px 12px', borderRadius: 4,
+                    style={{
+ display: 'flex', alignItems: 'center', borderRadius: 4,
                              border: 'var(--hairline)', background: 'var(--paper)',
-                             cursor: 'pointer', textAlign: 'left' }}>
-              <span className="kanji" style={{ fontSize: 18, color: 'var(--shu)' }}>{p.kanji}</span>
+                             cursor: 'pointer', textAlign: 'left'
+}} className="gap-3 py-2 px-3" >
+              <span className="kanji" style={{ fontSize: 17, color: 'var(--accent)' }}>{p.kanji}</span>
               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
-              <span style={{ fontSize: 10, color: 'var(--sumi-4)',
+              <span style={{ fontSize: 11, color: 'var(--ink-4)',
                               letterSpacing: '0.08em', textTransform: 'uppercase' }}>{p.kind}</span>
             </button>
           ))}
         </div>
-        <div style={{ marginTop: 14, textAlign: 'right' }}>
+        <div style={{ textAlign: 'right' }} className="mt-3" >
           <button onClick={onClose}
-                  style={{ fontSize: 12, color: 'var(--sumi-3)',
-                           border: 'none', background: 'transparent', padding: '6px 10px',
-                           cursor: 'pointer' }}>Cancel</button>
+                  style={{
+ fontSize: 13, color: 'var(--ink-3)',
+                           border: 'none', background: 'transparent',
+                           cursor: 'pointer'
+}} className="py-1 px-2" >Cancel</button>
         </div>
       </div>
     </div>

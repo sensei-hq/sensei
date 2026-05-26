@@ -20,6 +20,8 @@ export interface AssistantVariant {
   id: string;
   name: string;
   installed: boolean;
+  /** True when sensei is integrated with this variant — mirrors AssistantStatus.configured. */
+  configured: boolean;
 }
 
 /** An AI coding assistant product family (e.g. "Claude", "Cursor"). */
@@ -50,15 +52,21 @@ export interface DaemonProjectFolder {
   role: string | null;
 }
 
-/** A detected library. */
+/** A detected library — what `GET /api/libs` actually returns now. The
+ *  daemon joins `libraries` ⨝ `referenced_libraries` ⨝ `folders` so every
+ *  entry carries its ecosystem (npm/pypi/cargo/go/docs), latest known
+ *  version, optional description, and the folders that reference it.
+ *  `enabled` is the user's intent for whether sensei should wrap this
+ *  library, persisted as a set in the `setup.libraries` config key. */
 export interface DaemonLibEntry {
-  id: string;
+  id: string;        // = library uuid (stable across refreshes)
   name: string;
-  version: string;
-  lang: string;
-  usage: number;
-  source: string;
-  docs: 'indexed' | 'partial' | 'schema' | 'none';
+  ecosystem: string; // "npm" | "pypi" | "cargo" | "go" | "docs"
+  version: string | null;
+  description: string | null;
+  pageCount: number;
+  repos: string[];
+  repoCount: number;
   enabled: boolean;
 }
 

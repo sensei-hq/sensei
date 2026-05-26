@@ -131,16 +131,16 @@ describe('ScanProjectState', () => {
     expect(state.scanning).toBe(true);
   });
 
-  it('done when all projects are active or failed', () => {
+  it('allProjectsResolved when all projects are active or failed', () => {
     const state = new ScanProjectState();
     state.add(project('p1', 'A', [], { status: 'active' }));
     state.add(project('p2', 'B', [], { status: 'failed' }));
-    expect(state.done).toBe(true);
+    expect(state.allProjectsResolved).toBe(true);
   });
 
-  it('done is false when empty', () => {
+  it('allProjectsResolved is false when empty', () => {
     const state = new ScanProjectState();
-    expect(state.done).toBe(false);
+    expect(state.allProjectsResolved).toBe(false);
   });
 
   it('apply routes add event', () => {
@@ -311,7 +311,7 @@ describe('scan simulation', () => {
 
     activities.apply({ action: 'add', entity: 'activity', data: activity('a10', 'success', 'scan complete · 21s', 1.26) });
 
-    expect(projects.done).toBe(true);
+    expect(projects.allProjectsResolved).toBe(true);
     expect(projects.completedFiles).toBe(1456);
     expect(projects.readyFolders).toBe(2);
     expect(activities.scanComplete).toBe(true);
