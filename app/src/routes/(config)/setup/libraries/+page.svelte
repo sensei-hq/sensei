@@ -72,8 +72,18 @@
         >
           <!-- Name + repos -->
           <div class="min-w-0">
-            <div class="text-sm text-surface-z9 font-medium truncate">{lib.name}</div>
-            {#if lib.repos.length > 0}
+            <div class="flex items-baseline gap-2">
+              <span class="text-sm text-surface-z9 font-medium truncate">{lib.name}</span>
+              {#if lib.version}
+                <span class="mono text-[11px] text-surface-z6 bg-surface-z3 rounded-sm px-1.5 py-0.5">{lib.version}</span>
+              {/if}
+              {#if lib.ecosystem}
+                <span class="mono text-[11px] text-surface-z6 uppercase">{lib.ecosystem}</span>
+              {/if}
+            </div>
+            {#if lib.description}
+              <div class="text-xs text-surface-z6 mt-0.5 truncate">{lib.description}</div>
+            {:else if lib.repos.length > 0}
               <div class="mono text-xs text-surface-z6 mt-0.5 truncate">
                 used by {lib.repos.slice(0, 3).join(', ')}{lib.repos.length > 3 ? ` +${lib.repos.length - 3} more` : ''}
               </div>

@@ -150,6 +150,10 @@ export function senseiApi(port: number) {
 
     deleteProject: (id: string) => del(`/api/projects/${enc(id)}`),
 
+    /** Update a single folder. Currently only `role` is honored daemon-side. */
+    updateFolder: (id: string, patch: { role?: string | null }) =>
+      put(`/api/folders/${enc(id)}`, patch),
+
     addProjectRepo: (projectId: string, repo: { repoId: string; role?: string }) =>
       post(`/api/projects/${enc(projectId)}/repos`, repo, { ok: false }),
 
@@ -409,6 +413,13 @@ export function senseiApi(port: number) {
 
     removeAssistants: (assistants: string[] = []) =>
       post<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }, { assistants_removed: [], errors: [] }),
+
+    // ── Instruments (MCP registry — setup wizard Instruments stage) ───────
+    listInstruments: () =>
+      get<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>(
+        '/api/instruments',
+        { total: 0, mcps: [], stack: [] },
+      ),
 
     // ── Installer ───────────────────────────────────────────────────────
     installAll: (assistants: string[], scope = 'global') =>
