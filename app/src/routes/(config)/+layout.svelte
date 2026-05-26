@@ -3,7 +3,6 @@
     import { goto } from "$app/navigation";
     import { onMount } from "svelte";
     import {
-        STAGES,
         stageIndex,
         nextStagePath,
         prevStagePath,
@@ -11,22 +10,34 @@
     import { wizardState } from "$lib/wizard-state.svelte.js";
     import { loadWizardData } from "$lib/setup/loaders.js";
     import { appState } from "$lib/appstate.svelte.js";
+    import { StatusDot } from "$lib/components";
 
     let { children } = $props();
 
+    const stages = $derived(wizardState.stages);
     const currentIdx = $derived(stageIndex(page.url.pathname));
-    const stage = $derived(STAGES[currentIdx]);
+    const stage = $derived(stages[currentIdx]);
     const isFirst = $derived(currentIdx === 0);
-    const isLast = $derived(currentIdx === STAGES.length - 1);
-    const total = STAGES.length;
+    const isLast = $derived(currentIdx === stages.length - 1);
+    const total = $derived(stages.length);
     const canAdvance = $derived(wizardState.canAdvance(stage?.id ?? ""));
     let committing = $state(false);
     let loaded = $state(false);
+
+    // Drive the transient `active` flag from the current route so both the
+    // rail and the header read the same shape per stage.
+    $effect(() => {
+        if (stage) wizardState.setActive(stage.id);
+    });
 
     onMount(async () => {
         const data = await loadWizardData(appState.port);
         await wizardState.hydrate(data);
         loaded = true;
+        // Daemon-canonical: if setup is already complete, the user was
+        // dropped here during the cold-start race (appState wasn't loaded
+        // when reroute decided). Send them to the observatory now.
+        if (wizardState.isOk) goto("/");
     });
 
     async function next() {
@@ -37,7 +48,7 @@
         if (isLast) {
             await wizardState.commitStage("done");
             committing = false;
-            goto("/observatory");
+            goto("/");
             return;
         }
         const ok = await wizardState.commitStage(stage.id);
@@ -62,26 +73,27 @@
     <div class="flex-1 grid grid-cols-[260px_1fr] min-h-0">
         <!-- Rail -->
         <aside
-            class="flex flex-col px-5.5 py-6.5 border-r border-surface-z2 bg-surface-z2 overflow-hidden"
+            class="flex flex-col px-6 py-6 border-r border-surface-z2 bg-surface-z2 overflow-hidden"
         >
             <div class="flex items-baseline gap-2 mb-7">
                 <span class="kanji text-[22px] text-primary-z6">先生</span>
-                <span class="display text-prose">Sensei</span>
+                <span class="display text-lg">Sensei</span>
             </div>
 
-            <div class="text-3xs tracking-tag text-surface-z6 uppercase mb-3.5">
+            <div class="text-xs tracking-wide text-surface-z6 uppercase mb-3.5">
                 Setup
             </div>
 
-            <div class="flex flex-col">
-                {#each STAGES as s, i (s.id)}
-                    {@const isCur = i === currentIdx}
-                    {@const isDone = wizardState.isStageComplete(s.id)}
-                    {@const isNavigable = isDone || isCur}
+            <div data-testid="rail" class="flex flex-col">
+                {#each stages as s (s.id)}
+                    {@const isDone = s.status === "done"}
+                    {@const isNavigable = isDone || s.active}
                     <button
                         data-rail-item
-                        class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-surface-z5 cursor-default transition-all duration-140 text-ui"
-                        class:active={isCur}
+                        data-stage-id={s.id}
+                        data-active={s.active}
+                        class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-surface-z5 cursor-default transition-all duration-fast text-sm"
+                        class:active={s.active}
                         class:done={isDone}
                         onclick={() => {
                             if (isNavigable) goto(s.path);
@@ -90,24 +102,24 @@
                     >
                         <span
                             class="rail-kanji kanji text-sm text-center text-surface-z5"
-                            class:active={isCur}
+                            class:active={s.active}
                             class:done={isDone}
-                            class:text-primary-z6={isCur}>{s.icon}</span
+                            class:text-primary-z6={s.active}>{s.icon}</span
                         >
                         <div class="overflow-hidden">
-                            <div class:leading-tight={isCur}>
+                            <div class:leading-tight={s.active}>
                                 {s.title}
                             </div>
-                            {#if isCur}
+                            {#if s.active}
                                 <div
-                                    class="mono text-3xs text-surface-z6 mt-0.5"
+                                    class="mono text-xs text-surface-z6 mt-0.5"
                                 >
-                                    {s.sub}
+                                    {s.brief}
                                 </div>
                             {/if}
                         </div>
                         <span
-                            class="text-2xs text-center leading-none text-success-z6 opacity-0 transition-opacity duration-140"
+                            class="text-xs text-center leading-none text-success-z6 opacity-0 transition-opacity duration-fast"
                             class:opacity-100={isDone}>✓</span
                         >
                     </button>
@@ -116,12 +128,10 @@
 
             <div class="mt-auto border-t border-surface-z2 pt-3">
                 <div class="flex items-center gap-2.5">
-                    <span
-                        class="w-1.75 h-1.75 rounded-full bg-success-z6 shrink-0"
-                    ></span>
-                    <div class="text-2xs text-surface-z7 leading-snug">
+                    <StatusDot status="ok" />
+                    <div class="text-xs text-surface-z7 leading-snug">
                         <div
-                            class="tracking-widest uppercase text-3xs text-surface-z6"
+                            class="tracking-wide uppercase text-xs text-surface-z6"
                         >
                             Services
                         </div>
@@ -138,7 +148,7 @@
                     class="shrink-0 px-16 pt-7 pb-6 border-b border-surface-z3 bg-surface-z1 relative z-1"
                 >
                     <div
-                        class="text-2xs text-surface-z6 tracking-cap uppercase mb-2"
+                        class="text-xs text-surface-z6 tracking-wide uppercase mb-2"
                     >
                         <span class="kanji text-primary-z6 mr-1.5 opacity-60"
                             >{stage.icon}</span
@@ -149,7 +159,9 @@
                     >
                         {stage.title}
                     </h1>
-                    <p class="text-sm text-surface-z6 m-0">{stage.sub}</p>
+                    <p class="text-sm text-surface-z6 m-0">
+                        {stage.description}
+                    </p>
                 </div>
             {/if}
 
@@ -161,7 +173,7 @@
             >
                 {#if stage?.watermark}
                     <span
-                        class="watermark kanji absolute right-16 bottom-8 text-wm text-primary-z6 opacity-[0.035] leading-none select-none pointer-events-none z-0"
+                        class="watermark kanji absolute right-16 bottom-8 text-4xl text-primary-z6 opacity-[0.035] leading-none select-none pointer-events-none z-0"
                         >{stage.icon}</span
                     >
                 {/if}
@@ -174,18 +186,18 @@
             >
                 <div class="flex items-baseline gap-3">
                     <span
-                        class="text-2xs tracking-cap text-surface-z6 uppercase"
+                        class="text-xs tracking-wide text-surface-z6 uppercase"
                     >
                         {String(currentIdx + 1).padStart(2, "0")}
                         <span class="text-surface-z5">/ {total}</span>
                     </span>
-                    <span class="text-ui text-surface-z7">{stage.title}</span>
+                    <span class="text-sm text-surface-z7">{stage.title}</span>
                 </div>
 
                 <div class="flex-1 flex gap-1 items-center">
                     {#each Array(total) as _, i}
                         <span
-                            class="flex-1 h-0.5 rounded-sm bg-surface-z3 transition-colors duration-200"
+                            class="flex-1 h-0.5 rounded-sm bg-surface-z3 transition-colors duration"
                             class:bg-surface-z9={i <= currentIdx}
                         ></span>
                     {/each}
@@ -200,15 +212,21 @@
                         ← Back
                     </button>
                     <button
-                        class="btn-primary text-ui leading-3 bg-surface-z9 text-surface-z1 px-5.5 py-2.5 rounded-md border-none tracking-normal cursor-pointer"
+                        class="btn-primary text-sm leading-3 bg-surface-z9 text-surface-z1 px-6 py-2.5 rounded-md border-none tracking-normal cursor-pointer"
                         onclick={next}
                         disabled={!canAdvance || committing}
                     >
-                        {committing
-                            ? "Saving..."
-                            : isLast
-                              ? "Enter observatory →"
-                              : "Continue →"}
+                        {#if committing}
+                            {stage?.id === "assistants"
+                                ? "Configuring…"
+                                : "Saving…"}
+                        {:else if isLast}
+                            Enter observatory →
+                        {:else if stage?.id === "assistants"}
+                            Configure &amp; Continue →
+                        {:else}
+                            Continue →
+                        {/if}
                     </button>
                 </div>
             </div>

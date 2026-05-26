@@ -7,7 +7,7 @@
 </script>
 
 <div class="max-w-[680px] mt-2.5">
-    <div class="text-2xs text-surface-z6 tracking-cap uppercase mb-2">
+    <div class="text-xs text-surface-z6 tracking-wide uppercase mb-2">
         <span class="kanji text-primary-z6 mr-1.5 opacity-80">礼</span>· Welcome
     </div>
     <h1
@@ -17,19 +17,19 @@
         <span class="text-primary-z6">write the code.</span>
     </h1>
 
-    <p class="text-base text-surface-z8 leading-reading max-w-[560px] m-0 mb-7">
+    <p class="text-base text-surface-z8 leading-loose max-w-[560px] m-0 mb-7">
         Sensei watches how you and your AI assistants work together — the
         sessions that completed cleanly, the ones that didn't, and the patterns
         underneath both.
     </p>
 
-    <p class="text-sm text-surface-z6 leading-reading max-w-[560px] m-0 mb-11">
+    <p class="text-sm text-surface-z6 leading-loose max-w-[560px] m-0 mb-11">
         The next few minutes: install the local components, point to your
         folders, confirm what was found. Nothing leaves your machine.
     </p>
 
     <div
-        class="grid grid-cols-3 gap-4.5 py-5.5 border-t border-b border-surface-z2"
+        class="grid grid-cols-3 gap-4 py-6 border-t border-b border-surface-z2"
     >
         {#each pillars as pillar}
             <div>
@@ -37,7 +37,7 @@
                     {pillar.kanji}
                 </div>
                 <div class="display text-xl">{pillar.title}</div>
-                <div class="text-xs text-surface-z6 mt-0.75">{pillar.sub}</div>
+                <div class="text-xs text-surface-z6 mt-1">{pillar.sub}</div>
             </div>
         {/each}
     </div>

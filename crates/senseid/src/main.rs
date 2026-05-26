@@ -7,6 +7,7 @@ mod watcher;
 mod api;
 mod tasks;
 pub mod assistants;
+pub mod instruments;
 pub mod installer;
 pub mod paths;
 pub mod ir;

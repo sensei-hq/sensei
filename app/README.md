@@ -33,15 +33,13 @@ bun run check:watch   # watch mode
 
 ```bash
 # From monorepo root
-make test-app         # unit + sidecar
+make test-app         # unit
 make test-app-unit    # Vitest unit tests only
 make test-app-e2e     # Playwright e2e (requires Tauri build)
-make test-app-sidecar # bootstrap integration tests
 
 # Or from this directory
 bun run test:unit
 bun run test:e2e
-bun run test:sidecar
 ```
 
 ## Routes

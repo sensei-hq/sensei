@@ -179,7 +179,6 @@ impl LogCollector {
         if let Err(e) = std::fs::rename(&tmp_path, &path) {
             eprintln!("log_collector: rename failed: {e}");
             let _ = std::fs::remove_file(&tmp_path);
-            return;
         }
     }
 

@@ -290,7 +290,7 @@ mod tests {
     fn scan_icons_finds_in_assets_dir() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("assets")).unwrap();
-        fs::write(dir.path().join("assets/logo.png"), &[0u8]).unwrap();
+        fs::write(dir.path().join("assets/logo.png"), [0u8]).unwrap();
 
         let result = scan_icons(dir.path());
         assert_eq!(result.path.as_deref(), Some("assets/logo.png"));
@@ -338,8 +338,8 @@ mod tests {
     fn scan_icons_finds_tauri_icon() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("src-tauri/icons")).unwrap();
-        fs::write(dir.path().join("src-tauri/icons/icon.png"), &[0u8]).unwrap();
-        fs::write(dir.path().join("src-tauri/icons/512x512.png"), &[0u8]).unwrap();
+        fs::write(dir.path().join("src-tauri/icons/icon.png"), [0u8]).unwrap();
+        fs::write(dir.path().join("src-tauri/icons/512x512.png"), [0u8]).unwrap();
 
         let result = scan_icons(dir.path());
         assert_eq!(result.path.as_deref(), Some("src-tauri/icons/icon.png"));

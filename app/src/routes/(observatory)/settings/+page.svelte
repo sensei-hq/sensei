@@ -3,6 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import TabBar from "$lib/components/TabBar.svelte";
+    import { PageHeader, StatusDot } from "$lib/components";
 
     type Assistant = {
         family: string;
@@ -50,18 +51,13 @@
     });
 </script>
 
-<div class="max-w-[720px] mx-auto px-12 py-12 pb-16">
-    <div class="mb-6">
-        <p class="text-2xs tracking-loose uppercase text-surface-z6 m-0 mb-2">
-            Settings
-        </p>
-        <h1 class="display text-2xl font-normal m-0">設 Settings</h1>
-    </div>
+<PageHeader kanji="設" eyebrow="Settings" title="Settings" />
+<div class="max-w-[720px] mx-auto px-12 pt-8 pb-16">
 
     <TabBar tabs={sectionTabs} bind:active={section} class="mb-8" />
 
     {#if loading}
-        <p class="text-ui text-surface-z6 leading-relaxed">
+        <p class="text-sm text-surface-z6 leading-normal">
             Loading settings...
         </p>
     {:else if section === "general"}
@@ -74,12 +70,12 @@
                     <div
                         class="setting-row flex justify-between py-2.5 border-b border-surface-z2"
                     >
-                        <span class="text-ui text-surface-z9 mono">{key}</span>
-                        <span class="text-ui text-surface-z7">{value}</span>
+                        <span class="text-sm text-surface-z9 mono">{key}</span>
+                        <span class="text-sm text-surface-z7">{value}</span>
                     </div>
                 {/each}
                 {#if Object.keys(config).length === 0}
-                    <p class="text-ui text-surface-z6 leading-relaxed">
+                    <p class="text-sm text-surface-z6 leading-normal">
                         No configuration values set. Preferences from the setup
                         wizard will appear here.
                     </p>
@@ -91,11 +87,11 @@
             class="px-7 py-7 bg-surface-z2 border border-surface-z3 rounded-lg"
         >
             <h3 class="text-base m-0 mb-1">Assistants</h3>
-            <p class="text-ui text-surface-z6 m-0 mb-6">
+            <p class="text-sm text-surface-z6 m-0 mb-6">
                 AI coding tools detected on this machine.
             </p>
             {#if assistants.length === 0}
-                <p class="text-ui text-surface-z6 leading-relaxed">
+                <p class="text-sm text-surface-z6 leading-normal">
                     No assistants detected. Run the setup wizard to configure
                     assistants.
                 </p>
@@ -106,10 +102,10 @@
                             class="assistant-row flex items-center gap-3 py-3 border-b border-surface-z2"
                         >
                             <div class="flex-1 flex flex-col gap-0.5">
-                                <span class="text-ui text-surface-z9"
+                                <span class="text-sm text-surface-z9"
                                     >{asst.name}</span
                                 >
-                                <span class="text-2xs text-surface-z6"
+                                <span class="text-xs text-surface-z6"
                                     >{asst.family}</span
                                 >
                             </div>
@@ -118,12 +114,8 @@
                                     >{asst.version}</span
                                 >
                             {/if}
-                            <span
-                                class="status-dot w-1.75 h-1.75 rounded-full"
-                                class:configured={asst.configured}
-                                class:unconfigured={!asst.configured}
-                            ></span>
-                            <span class="text-2xs text-surface-z6 w-20"
+                            <StatusDot status={asst.configured ? 'ok' : 'idle'} />
+                            <span class="text-xs text-surface-z6 w-20"
                                 >{asst.configured
                                     ? "configured"
                                     : "detected"}</span
@@ -138,13 +130,13 @@
             class="px-7 py-7 bg-surface-z2 border border-surface-z3 rounded-lg"
         >
             <h3 class="text-base m-0 mb-1">Inference</h3>
-            <p class="text-ui text-surface-z6 m-0 mb-6">
+            <p class="text-sm text-surface-z6 m-0 mb-6">
                 Local and external model configuration.
             </p>
             <div class="flex flex-col items-center gap-3 py-10">
                 <span class="kanji text-3xl text-primary-z5 opacity-40">想</span
                 >
-                <p class="text-ui text-surface-z6 leading-relaxed">
+                <p class="text-sm text-surface-z6 leading-normal">
                     Inference configuration will be available once model
                     assignments are supported.
                 </p>
@@ -155,11 +147,11 @@
             class="px-7 py-7 bg-surface-z2 border border-surface-z3 rounded-lg"
         >
             <h3 class="text-base m-0 mb-1">Extensions</h3>
-            <p class="text-ui text-surface-z6 m-0 mb-6">
+            <p class="text-sm text-surface-z6 m-0 mb-6">
                 Skills, commands, agents, and hooks installed in sensei.
             </p>
             {#if extensions.length === 0}
-                <p class="text-ui text-surface-z6 leading-relaxed">
+                <p class="text-sm text-surface-z6 leading-normal">
                     No extensions installed yet.
                 </p>
             {:else}
@@ -169,14 +161,14 @@
                             class="extension-row flex items-center gap-3 py-2.5 border-b border-surface-z2"
                         >
                             <span
-                                class="text-3xs uppercase tracking-widest text-surface-z5 w-[70px]"
+                                class="text-xs uppercase tracking-wide text-surface-z5 w-[70px]"
                                 >{ext.kind}</span
                             >
-                            <span class="text-ui text-surface-z9 flex-1"
+                            <span class="text-sm text-surface-z9 flex-1"
                                 >{ext.name}</span
                             >
                             <span
-                                class="extension-enabled text-2xs text-surface-z6"
+                                class="extension-enabled text-xs text-surface-z6"
                                 class:on={ext.enabled}
                                 >{ext.enabled ? "on" : "off"}</span
                             >
@@ -197,13 +189,6 @@
     }
     .extension-row:last-child {
         border-bottom: none;
-    }
-
-    .status-dot.configured {
-        background: oklch(var(--color-success-z5) / 1);
-    }
-    .status-dot.unconfigured {
-        background: oklch(var(--color-warning-z5) / 1);
     }
 
     .extension-enabled.on {

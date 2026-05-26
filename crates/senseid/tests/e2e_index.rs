@@ -29,7 +29,7 @@ fn index_httpx_corpus() {
     // For now, just verify the corpus files exist and are parseable
     let py_files: Vec<_> = std::fs::read_dir(&corpus).unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "py"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "py"))
         .collect();
 
     assert!(py_files.len() >= 6, "httpx corpus should have 6 Python files, found {}", py_files.len());
@@ -51,7 +51,7 @@ fn index_httpx_corpus() {
 
         if let Some(tree) = parser.parse(&source, None) {
             let root = tree.root_node();
-            count_python_symbols(&root, source.as_bytes(), &mut total_symbols, &mut total_classes, &mut total_functions, &mut total_methods, false);
+            count_python_symbols(&root, &mut total_symbols, &mut total_classes, &mut total_functions, &mut total_methods, false);
         }
     }
 
@@ -65,7 +65,7 @@ fn index_httpx_corpus() {
     assert!(total_methods >= 60, "expected 60+ methods, got {}", total_methods);
 }
 
-fn count_python_symbols(node: &tree_sitter::Node, src: &[u8], total: &mut u32, classes: &mut u32, functions: &mut u32, methods: &mut u32, in_class: bool) {
+fn count_python_symbols(node: &tree_sitter::Node, total: &mut u32, classes: &mut u32, functions: &mut u32, methods: &mut u32, in_class: bool) {
     for i in 0..node.child_count() {
         let child = node.child(i).unwrap();
         match child.kind() {
@@ -77,7 +77,7 @@ fn count_python_symbols(node: &tree_sitter::Node, src: &[u8], total: &mut u32, c
                 *total += 1;
                 *classes += 1;
                 if let Some(body) = child.child_by_field_name("body") {
-                    count_python_symbols(&body, src, total, classes, functions, methods, true);
+                    count_python_symbols(&body, total, classes, functions, methods, true);
                 }
             }
             _ => {}

@@ -20,8 +20,8 @@ Sensei watches your coding sessions, learns your team's patterns and conventions
 
 ```bash
 brew tap sensei-hq/tap
-brew install sensei        # CLI + daemon
-brew install --cask sensei # Desktop app
+brew install sensei-hq/tap/senseihq        # app + CLI + daemon
+brew install --cask sensei-hq/tap/sensei # Desktop app
 ```
 
 Homebrew formulae live in [sensei-hq/homebrew-tap](https://github.com/sensei-hq/homebrew-tap).

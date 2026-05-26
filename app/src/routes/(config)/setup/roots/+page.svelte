@@ -42,14 +42,14 @@
 </script>
 
 <div class="max-w-[780px]">
-    <p class="text-sm text-surface-z6 leading-relaxed m-0 mb-6">
+    <p class="text-sm text-surface-z6 leading-normal m-0 mb-6">
         Where your work lives. Sensei recurses and finds repositories.
     </p>
 
     <div class="flex gap-2 mb-6">
         <input
             type="text"
-            class="folder-input flex-1 min-w-0 px-3 py-2 text-ui font-mono text-surface-z9 bg-surface-z2 border border-surface-z3 rounded-md outline-none"
+            class="folder-input flex-1 min-w-0 px-3 py-2 text-sm font-mono text-surface-z9 bg-surface-z2 border border-surface-z3 rounded-md outline-none"
             bind:value={wizardState.roots.newPath}
             onkeydown={(e) => {
                 if (e.key === "Enter") addRoot();
@@ -67,7 +67,7 @@
             <div
                 class="flex items-center gap-3 px-5 py-4 bg-surface-z2 rounded-lg"
             >
-                <span class="text-3xs text-surface-z5">&#9656;</span>
+                <span class="text-xs text-surface-z5">&#9656;</span>
                 <div class="flex-1 min-w-0">
                     <div
                         class="text-sm font-mono whitespace-nowrap overflow-hidden text-ellipsis"
@@ -82,12 +82,12 @@
                 </div>
                 {#if r.status === "watching"}
                     <span
-                        class="chip-watching text-2xs text-success-z5 border border-success-z2 bg-success-z1 rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="chip-watching text-xs text-success-z5 border border-success-z2 bg-success-z1 rounded-md px-2 py-0.5 whitespace-nowrap"
                         >watching</span
                     >
                 {:else}
                     <span
-                        class="text-2xs text-surface-z6 border border-surface-z3 rounded-md px-2 py-0.5 whitespace-nowrap"
+                        class="text-xs text-surface-z6 border border-surface-z3 rounded-md px-2 py-0.5 whitespace-nowrap"
                         >recursive</span
                     >
                 {/if}
@@ -99,7 +99,7 @@
         {/each}
     </div>
 
-    <p class="text-ui text-surface-z6">
+    <p class="text-sm text-surface-z6">
         You can manage roots and exclusions later from Settings.
     </p>
 </div>

@@ -4,6 +4,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { openProjectWindow } from "$lib/stores/windows.svelte.js";
+    import { Eyebrow } from "$lib/components";
 
     let { children } = $props();
 
@@ -51,12 +52,12 @@
     <div class="drag-region h-8 shrink-0"></div>
 
     <div
-        class="app-body flex-1 grid grid-cols-[220px_1fr] min-h-0 transition-[grid-template-columns] duration-150"
+        class="app-body flex-1 grid grid-cols-[220px_1fr] min-h-0 transition-[grid-template-columns] duration"
         class:collapsed={sidebarCollapsed}
     >
         <!-- Sidebar -->
         <aside
-            class="border-r border-surface-z2 px-3.5 py-5.5 bg-surface-z2 flex flex-col gap-5 overflow-auto"
+            class="border-r border-surface-z2 px-3.5 py-6 bg-surface-z2 flex flex-col gap-5 overflow-auto"
         >
             <div class="flex items-baseline gap-2 px-1.5">
                 <span class="kanji text-xl text-primary-z5">先</span>
@@ -73,7 +74,7 @@
                 {@const active = isActive(item.href)}
                 <a
                     href={item.href}
-                    class="nav-item flex items-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3"
+                    class="nav-item flex items-center py-2 rounded-md text-sm text-surface-z7 no-underline transition-colors duration-fast hover:bg-surface-z3"
                     class:justify-center={collapsed}
                     class:gap-2.5={!collapsed}
                     class:px-2.5={!collapsed}
@@ -81,7 +82,7 @@
                     title={collapsed ? item.label : undefined}
                 >
                     <span
-                        class="kanji text-ui w-3.5 text-surface-z6"
+                        class="kanji text-sm w-3.5 text-surface-z6"
                         class:nav-kanji-active={active}
                         >{item.kanji}</span
                     >
@@ -95,7 +96,7 @@
                 {@const active = !collapsed && isActive(`/projects/${proj.id}`)}
                 <button
                     type="button"
-                    class="nav-item flex items-center py-1.75 rounded-md text-ui text-surface-z7 no-underline transition-colors duration-120 hover:bg-surface-z3 bg-none border-none cursor-pointer w-full"
+                    class="nav-item flex items-center py-2 rounded-md text-sm text-surface-z7 no-underline transition-colors duration-fast hover:bg-surface-z3 bg-none border-none cursor-pointer w-full"
                     class:justify-center={collapsed}
                     class:gap-2.5={!collapsed}
                     class:px-2.5={!collapsed}
@@ -107,13 +108,13 @@
                     title={collapsed ? `${proj.name} ↗` : `${proj.name} ↗ opens in its own window`}
                 >
                     <span
-                        class="kanji text-ui w-3.5 text-surface-z6"
+                        class="kanji text-sm w-3.5 text-surface-z6"
                         class:nav-kanji-active={active}
                         >{proj.kanji}</span
                     >
                     {#if !collapsed}
                         <span class="nav-label">{proj.name}</span>
-                        <span class="text-3xs opacity-40 ml-auto">↗</span>
+                        <span class="text-xs opacity-40 ml-auto">↗</span>
                     {/if}
                 </button>
             {/snippet}
@@ -142,11 +143,7 @@
                 </div>
             {:else}
                 <div class="flex flex-col gap-0.5">
-                    <p
-                        class="text-micro tracking-label uppercase text-surface-z6 px-2.5 pb-2 m-0"
-                    >
-                        Observatory
-                    </p>
+                    <p class="px-2.5 pb-2 m-0"><Eyebrow>Observatory</Eyebrow></p>
                     <nav class="flex flex-col gap-px">
                         {#each NAV_ITEMS as item (item.href)}
                             {@render navItem(item, false)}
@@ -156,11 +153,7 @@
 
                 {#if projects.length > 0}
                     <div class="flex flex-col gap-0.5">
-                        <p
-                            class="text-micro tracking-label uppercase text-surface-z6 px-2.5 pb-2 m-0"
-                        >
-                            Projects
-                        </p>
+                        <p class="px-2.5 pb-2 m-0"><Eyebrow>Projects</Eyebrow></p>
                         <nav class="flex flex-col gap-px">
                             {#each projects as proj (proj.id)}
                                 {@render projectItem(proj, false)}
@@ -178,7 +171,7 @@
                 </div>
 
                 <div class="pt-2.5 border-t border-surface-z2">
-                    <span class="mono text-3xs text-surface-z6"
+                    <span class="mono text-xs text-surface-z6"
                         >daemon · port {appState.port}</span
                     >
                 </div>

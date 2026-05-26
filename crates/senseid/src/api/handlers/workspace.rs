@@ -81,6 +81,33 @@ pub(crate) async fn delete_project(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+// ── Folders ─────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub(crate) struct UpdateFolderBody {
+    #[serde(default)]
+    role: Option<String>,
+}
+
+/// PUT /api/folders/{id} — update mutable folder fields. Currently only
+/// `role` is supported; the Projects setup stage uses this to persist the
+/// per-folder role dropdown without going through set_folder_project
+/// (which would also touch project membership).
+pub(crate) async fn update_folder(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateFolderBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let folder_id = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    if let Some(role) = body.role.as_deref() {
+        // Accept empty string as "clear the role" — daemon stores it as NULL.
+        let role_arg = if role.is_empty() { None } else { Some(role) };
+        state.pg.update_folder_role(&folder_id, role_arg).await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
 // ── Exclude / Exclusions ────────────────────────────────────────────────────
 
 pub(crate) async fn exclude_project(

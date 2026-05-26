@@ -8,6 +8,112 @@ date: 2026-04-28
 
 One screen at a time. Each screen: read mockup → state class → component → wire API → test.
 
+## Known bugs (next)
+
+- ~~**E2E `globalSetup` builds and launches its own `senseid`**~~ Partially
+  addressed 2026-05-20 — added a parallel `playwright.cold.config.ts`
+  + `globalSetup-cold.ts` that drops the dev DB, stops postgres + ollama,
+  and launches Sensei.app *without* pre-starting senseid. Cold-start
+  scenario is now testable via `bun run test:e2e:cold`. The existing
+  `playwright.config.ts` still pre-spawns senseid for the warm-start
+  tests; leave it for now since those tests rely on the daemon being
+  up before they begin.
+
+- ~~**E2E specs over-rely on `navigateTo` / `goto`**~~ Partially
+  addressed 2026-05-20 by the new `cold-start.spec.ts` which contains
+  zero `goto()` calls and only observes DOM transitions + URL changes.
+  The existing `boot-flow.spec.ts` still navigates aggressively;
+  consider rewriting it in the same observation-only style once the
+  cold-start suite has shaken out.
+
+- ~~**Health remedy: text not selectable / copyable.**~~ Done (2026-05-16) —
+  added `select-text` to the remedy `<pre>` and message, and to the failed-row
+  detail in the ledger. Added a global `user-select: text` opt-in on `body`
+  in `app.css` (drag region + buttons opt back out) so any other content
+  page on the same webview is selectable by default.
+- ~~**Setup pages — scan stage had problems last time.**~~ Done (2026-05-19, commit 5ca56315) —
+  - ~~`startScan()` set `started = true` before `await api.getScanRoots()`~~ —
+    wrapped in try/catch; failure renders an inline error card with Retry button.
+  - ~~`startDonePoller` swallowed daemon-unreachable errors silently~~ —
+    poller now flips `daemonReachable`; transient warning banner surfaces it.
+  - ~~Two definitions of "done"~~ — `ScanProjectState.done` renamed to
+    `allProjectsResolved` with a comment noting `wizardState.scan.done`
+    (the poller's queue-idle check) is the canonical signal.
+  - ~~`LEVEL_COLORS.error` maps to `--color-primary-z5` (same as `process`)~~ —
+    switched to `--color-danger-z5` (beni crimson), distinct from primary
+    and warning.
+  - ~~`await api.scanFolder(root.path)` in a for-loop blocked the poller~~ —
+    parallelised via `Promise.all(pending.map(...))`.
+  - ~~Activity feed newest-at-top ordering needed a comment~~ — documented
+    on the `recent` getter so the intentional shift isn't "fixed" away.
+  - ~~No re-run button after a failed scan~~ — Retry button next to the
+    error card; `resetScanState()` clears poller, SSE sub, projects,
+    activities, and scan.done before retry.
+
+- ~~**Wizard stage metadata — rail and header had separate sub field doing
+  double duty.**~~ Done (2026-05-19, commit 5ca56315) — unified into one
+  `WizardStage` type with separate `brief` (rail) and `description` (header)
+  fields, plus `status` (persisted) and `active` (transient) on each stage
+  entry. Dropped the parallel `wizardState.completion` map; both the rail
+  and the page header now consume the same `wizardState.stages` array.
+
+## Audit: bootstrap resolve-flow refactor (commit 481806fb)
+
+A long session of fixes landed across `crates/bootstrap/src/health/`, the
+Tauri sidecar, CLI, and frontend on 2026-05-16. Walked back through the
+diff to trim maintenance weight added beyond the bug fix. **Full sweep
+done 2026-05-16**:
+
+- ~~**provider.rs::resolve()** — three distinct remedy-handling code paths.~~
+  Done (2026-05-16) — collapsed into one post-pass (`derive_terminal_remedy`)
+  that derives the consolidated remedy from `failed_in_terminal` + a
+  per-component `walk_remedies` vec + the dependency graph. The walk still
+  emits Remedy events for live UI; the stale-drop and retroactive-fallback
+  blocks are gone. All 9 resolve tests still pass.
+- ~~**ServiceCascadeSpec** has two consumers (postgres, ollama).~~ Decision
+  recorded (2026-05-16) — kept. Two consumers already amortize ~50 lines
+  of cascade logic each (stage 1/2/3 brew dance). Daemon is NOT a
+  service-cascade candidate (it's a sensei binary, not a brew service),
+  so the audit's "3rd consumer" trigger won't fire. Inlining would
+  re-duplicate the staged flow.
+- ~~**`installing_verb()` mapping** duplicated in Rust + Svelte.~~ Done
+  (2026-05-16) — added `installing_verb: &'static str` to `DependencySpec`,
+  carried it on the `Component` wire shape (serde camelCase →
+  `installingVerb`), plus a `bootstrap::installing_verb_for(id: &str)`
+  helper for callers with only the wire id (CLI's HealthEvent::Component
+  patches). CLI doctor + Ledger.svelte both read from the same Rust source
+  of truth now.
+- ~~**Test mocks in `provider.rs`** — some could be unified.~~ Done
+  (2026-05-16) — hoisted a single `SequenceChecker` to the mod-tests common
+  area; both inline duplicates (`SeqChecker` in stale-remedy, `SequenceChecker`
+  in transient-success) now use it. Per-test `Mock`/`TransientMock` provider
+  structs kept as-is — they're scoped to one test each and merging them
+  into `MultiResolverMock` would obscure intent.
+- ~~**Hand-rolled ANSI in `crates/cli/src/doctor.rs`**.~~ Done (2026-05-16)
+  — swapped to `owo-colors 4` with `if_supports_color(Stream::Stdout, ...)`.
+  Palette now auto-disables on no-TTY (pipes, CI logs) and respects
+  NO_COLOR.
+- ~~**Tracing instrumentation density**.~~ Done (2026-05-16) — demoted 6
+  per-check success info!s to debug! (binary.rs ready cases, port.rs open
+  case, postgres_db.rs ready case, database.rs dbd intermediate + per-step
+  starts). All failures, phase transitions, resolver decisions, and major
+  actions stay at info.
+- ~~**Two tracing subscribers**.~~ Done (2026-05-16) — added
+  `bootstrap::tracing_init::install_console(default_filter)` and
+  `install_file(path, default_filter)` as shared init helpers (named
+  `tracing_init` not `tracing` to avoid shadowing the `tracing` crate).
+  CLI doctor and Tauri sidecar are now one-liners. Dropped
+  `tracing-subscriber` from both consumers' Cargo.toml. Daemon left
+  on the generic `tracing_subscriber::fmt::init()` — fine for now.
+- ~~**Dead code / unused exports**.~~ Done (2026-05-16) — `bootstrap::resolve`
+  (the free function in `health/mod.rs`) had zero external callers. Demoted
+  to `pub(crate)`. `check()` stays public (daemon `/health` endpoint).
+- ~~**Stale integration test** — `app/src-tauri/tests/bootstrap_integration.rs`
+  hasn't compiled since the `5e40ffd1` refactor and is invoked by
+  `make test-app-sidecar`. Delete or rewrite.~~ Done (2026-05-16) —
+  deleted file (covered by `crates/bootstrap` unit tests + `tests/json_wire_shape.rs`);
+  removed `test-app-sidecar` make target, `test:sidecar` script, and references.
+
 ## 1. Bootstrap (6 gates)
 
 **Mockup:** [mockups/lib/bootstrap.jsx](./mockups/lib/bootstrap.jsx)
@@ -271,6 +377,111 @@ Screens confirmed to have no mockup. Design (mockup → spec → plan) must prec
 |---|------|-------|-------|
 | K1 | Daemon — ACP config | JSONC comment loss on rewrite | `upsert_sensei_in_json` / `remove_sensei_from_json` parse with `json5` (preserves all key/value data) but serialize back with `serde_json` (strips comments). All settings values are preserved; only `// comments` and trailing commas are lost. Full fix requires a CST-preserving JSONC editor — no mature Rust crate exists. Options: (a) preserve leading comment block (prefix before `{`), (b) surgical text splice at the key range. |
 | K2 | Database — DDL upgrades | No rollback for partial or failed upgrades | A partial DDL upgrade (e.g. `dbd apply` interrupted mid-run) leaves the schema in an inconsistent state. The current `dbd reset + apply` workflow is acceptable pre-release but will not be safe once stable versions ship to users. A rollback mechanism is needed — likely transactional DDL snapshots or migration checkpoints inside `dbd` itself (not in `senseid` code). Offload to `dbd` team. Consider before first stable release. |
+| K3 | Homebrew — `sensei-dev.rb` formula | ~~Missing `service do` block~~ Done (2026-05-20) — added `service do` block to `sensei-dev.rb` mirroring the prod formula: runs `opt_bin/"senseid-dev"`, keep_alive, log paths under `var/"log/sensei-dev.{log,error.log}"`. Caveats updated to mention `brew services start sensei-dev` alongside the existing manual `senseid-dev start`. The homebrew subtree still needs to be pushed via `make tap-push` for the upstream tap to pick up the change. |
+
+---
+
+## Future scope — bootstrap as a reusable library (2026-05-20)
+
+**Vision:** Extract the bootstrap health-check / resolve / upgrade pipeline
+into a standalone, reusable Rust library that any Tauri app can adopt with
+minimal wiring. The work done in `crates/bootstrap` over the last few
+sessions (PlatformProvider trait, streaming check_and_resolve,
+resolver/checker traits, retry-aware port checks, single-pass resolve walk)
+has matured this into something genuinely re-usable — but it's currently
+welded to sensei-specific defaults (postgres, ollama, sensei binaries, the
+sensei daemon).
+
+**What "reusable" means here:**
+
+1. **Configurable dependency graph.** Consumers declare their own component
+   IDs and dependency edges instead of inheriting the five hardcoded
+   sensei components. The library provides the trait + the walker; the
+   consumer provides the graph.
+
+2. **Built-in checker + resolver kit.** Ship the existing primitives
+   (`BinaryChecker`, `PortChecker` (with retry mode), `AndChecker`,
+   `PostgresDatabaseChecker`, brew-service install/start resolvers) as
+   reusable building blocks. Most consumers will compose checkers from
+   these; the trait stays open so anyone can plug in custom probes.
+
+3. **Opt-in dependency-aware parallel checks.** Today probes run sequentially
+   in `check_streaming`. Add an opt-in mode that runs checkers in parallel
+   where the dependency graph allows it. The graph already encodes
+   `depends_on` (Database depends on Postgres; Daemon depends on Database
+   etc.); a topological-layer scheduler can probe each layer concurrently
+   via `std::thread::scope` + `mpsc`, emitting Component events as each
+   result lands. Sensei's case sees only marginal gains after the
+   retry-flag fix (most components are independent and already fast), but
+   apps with heavy independent probes (Docker, Redis, custom services)
+   would benefit. Make it a `ProviderConfig` flag, not a default.
+
+4. **Tauri sidecar helper crate.** A thin `bootstrap-tauri` companion
+   crate that handles the IPC glue — the `emit` closure, the in-flight
+   guard, the streaming event channel — so apps just register two
+   commands (`health_check` / `health_check_and_resolve`) and wire one
+   event listener (`health`). Today this code lives in
+   `app/src-tauri/src/commands/bootstrap.rs` as bespoke sensei code; lift
+   it into the library so the next app gets it for free.
+
+5. **Upgrade pipeline.** The `bootstrap::upgrade` module composes
+   `brew upgrade <formula>` + `database::deploy`. Generalise to
+   "run these resolver-like phases in order, emit a typed event stream"
+   so consumers can declare custom upgrade steps (cache warmup,
+   migration jobs, etc.) without forking the orchestration.
+
+6. **Frontend contract.** The `health-types.ts` / `health-state.svelte.ts`
+   shape (HealthPayload + HealthEvent + the streaming consumer) is
+   re-usable too. Ship it as a small TypeScript package (or as a
+   reference implementation) so the consuming app's Hero/Ledger UI
+   doesn't have to re-implement the state machine.
+
+**Why now-ish but not now:** The current design is solid enough that
+extracting it would mostly be a renaming/decoupling exercise rather than
+a rewrite. The sensei desktop app is the live testbed — once a second
+consumer materialises, the seams will be obvious. Defer until then,
+but keep new bootstrap work generalisation-friendly:
+
+- Don't bake sensei-specific defaults into trait method signatures.
+- Keep the `dependency_specs()` list extractable (it's already a
+  free function returning a static slice).
+- Resist adding sensei-only event kinds to `HealthEvent`.
+
+**Concrete first cut, when the time comes:**
+
+- New crate `sensei-bootstrap-core` (rename current `sensei-bootstrap`)
+  hosting the traits + primitives + walker.
+- New crate `sensei-bootstrap-platforms` shipping the macOS/Windows
+  default providers as one composable option.
+- New crate `sensei-bootstrap-tauri` for the sidecar glue.
+- Sensei desktop app moves to `sensei-bootstrap-platforms + custom
+  resolvers` (sensei daemon start, sensei tap install).
+- `health-types` + `health-state` factored into `@sensei/health-ui`
+  or similar.
+
+Track as background scope; do not block current sensei work on it.
+
+---
+
+## App load status review findings (2026-05-14)
+
+Source: rigorous code review of the cold-start gate flow (`hooks.client.ts` reroute, `health-state.svelte.ts`, `+layout.ts` load order, Tauri event listeners). The original symptom — `make app-dev` loaded the observatory with the daemon down — was triggered by a `VITE_BYPASS_HEALTH` env leak (fixed in commit `5ae40b4f`: env var bound to `bun run dev` script in `app/package.json` only, no longer exported globally by the Makefile). The review found other bypass paths that were not exercised this time but ship in production and will surface eventually.
+
+| # | Area | Severity | Issue | Fix |
+|---|------|----------|-------|-----|
+| L1 | `+layout.svelte:77-80` + `src-tauri/src/lib.rs:110-119` | ~~Critical~~ Done (2026-05-15) | `dev-navigate` Tauri event listener wrote `sessionStorage.setItem('sensei:health', 'ready')` unconditionally. Bypass shipped in production. | Extracted `health-cache.ts` as sole owner of the `sensei:health` key and `VITE_BYPASS_HEALTH` env read. `HealthState` and `hooks.client.ts` both route through it. `+layout.svelte` listener now only navigates. Menu items kept in production per product decision; bypass is impossible because no other code can write the cache key. Deleted dead `setup/daemon.ts`. |
+| L2 | `hooks.client.ts:60` | ~~Critical~~ Done (2026-05-15) | Upgrade gate `if (pendingUpgrade && !HEALTH_EXEMPT.has(path) && path !== '/')` excluded the observatory route from the upgrade redirect. | Removed the `&& path !== '/'` clause. HEALTH_EXEMPT already covers /upgrade itself; no loop concern. |
+| L3 | `+layout.ts:14-19` + `appstate.svelte.ts:106-110` | ~~Critical~~ Done (2026-05-15) | Root layout `load()` called `appState.load()` → `fetch('/api/config')` on every navigation, including `/health`. | Stripped root `+layout.ts` to just `ssr/prerender` flags. Added `+layout.ts` to `(observatory)`, `(project)`, `(config)` groups (each calls `appState.load()` when not yet loaded). `(health)` has no layout load, so the health route makes zero daemon calls before the gate is green. Removed redundant `appState.load()` from `(project)/project/[id]/+layout.ts`. |
+| L4 | `hooks.client.ts:76` vs `appstate.svelte.ts.setupComplete` | ~~Critical~~ Done (2026-05-15) | Two sources of truth for setup-complete drift when daemon write silently failed. | Daemon is now canonical; localStorage is a sync cache. Added `tryPut` + `trySetConfig` + `tryGetConfig` to senseiApi. `setSetupComplete()` only writes localStorage on daemon success and throws on failure (wizard UI surfaces the error). `appState.load()` reconciles localStorage from daemon truth on every Tauri-mode load; transient outages leave the cache untouched so the user isn't bounced back through setup. |
+| L5 | `api.ts:20-50` | ~~Important~~ Done (2026-05-15) — layout-level | Adopted audit option (b): `(observatory)/+layout.ts`, `(project)/+layout.ts`, `(config)/+layout.ts` now `throw error(503)` if `appState.load()` returns false. `appState.load()` returns `boolean` indicating Tauri-mode reachability. Per-loader `tryGet` migration of all 20+ existing `+page.ts` callers is deferred — guarded at the group-layout boundary, so non-health pages never mount with empty config. |
+| L6 | `health-transport.ts:26-29` + `src-tauri/commands/bootstrap.rs:14-18` | ~~Important~~ Done (2026-05-15) | Added `bootstrap::health::process_util::output_with_timeout` (std-only spawn + try_wait poll + kill on deadline). Default 5s per checker. `BinaryChecker` and `PostgresDatabaseChecker` wrapped; timeouts surface as `Failed` with explicit "timed out after Ns" detail. Tested with `true` (Done), `sleep 10` clamped to 200ms (TimedOut, returns near deadline, child killed), and missing binary (Failed). |
+| L7 | `appstate.svelte.ts:115-127` (`appState.reset()`) | ~~Important~~ Done (2026-05-15) | Replaced `localStorage.clear() + restore sensei:port` with an explicit PROTECTED list (`sensei:port`, `sensei:app-version`). Reset now snapshots protected values, clears, and restores them. A staged upgrade survives reset. |
+| L8 | `(config)/+layout.svelte:40` | ~~Important~~ Done (2026-05-15) | `goto("/observatory")` referenced a non-existent route. | Changed to `goto('/')`. |
+| L9 | `app/src/lib/bootstrap.ts` | ~~Important~~ Done (2026-05-15) | Six orphaned exports (`checkAndFixBootstrap`, `listenBootstrapEvents`, `listenBootstrapReport`, `detectHardware`, `listModels`, `missingModels`) + five interface types, none with live callers. `checkAndFixBootstrap` invoked a Tauri command that no longer existed. | Reduced `bootstrap.ts` to just `hasTauri()`. |
+| L10 | `hooks.client.ts:55-58` + DB resolver | ~~Minor~~ Done (2026-05-15) — both layers | (a) reroute now compares `localStorage['sensei:app-version']` against build-time `__SENSEI_APP_VERSION__` (from package.json via vite define); stale flags matching the running binary no longer loop users through /upgrade. (b) Restored deleted `bootstrap::database` module from `7a73eb70`'s `_legacy/database.rs` — `pg_is_ready`, `database_exists`, `create`, `ensure_extensions`, `deploy` (dbd-core resolve_source + PostgresAdapter), `setup`. `DatabaseResolver` now calls `database::setup(db_name, env!("CARGO_PKG_VERSION"))` (no more phantom `sensei db:create`). New `bootstrap::upgrade` module composes `brew upgrade <formula>` + `database::deploy` (same deploy fn — DRY across initial install and post-update). `run_upgrade_steps` calls `bootstrap::upgrade::run` with a Tauri emit closure; emits the `prereqs`/`db_deploy` events the existing /upgrade UI already listens for. |
+| L11 | `+layout.svelte:69` + 2 other sites | ~~Minor~~ Done (2026-05-15) | Inline `(window as any).__TAURI__` cast in three production sites. | All three now call `hasTauri()`; the only remaining cast is the canonical one inside `hasTauri()` itself, typed (not `any`). |
+
+**Recommended order:** L1 → L2 → L3 → L4 (the critical four), then L5/L6/L7 (foundational), then minor cleanups. Several of these (L4, L5) need a brief design discussion before implementation.
 
 ---
 
@@ -297,7 +508,51 @@ Each step: mockup → state → component → API → test. No skipping.
 
 ---
 
-## 7. CSS Migration — inline utility classes and semantic design tokens
+## 7. Mockup component migration
+
+**Plan:** [mockups/MIGRATION-PLAN.md](./mockups/MIGRATION-PLAN.md)
+**Audits:** [mockups/MOCKUP-AUDIT.md](./mockups/MOCKUP-AUDIT.md) · [mockups/APP-AUDIT.md](./mockups/APP-AUDIT.md)
+**Companion ledgers:** [mockups/CHART-GAPS.md](./mockups/CHART-GAPS.md) · [mockups/THEME-OVERRIDES.md](./mockups/THEME-OVERRIDES.md)
+
+Extract reusable components one at a time, replace inline usages route-by-route, verify with co-located `*.spec.svelte.ts` + `bun run check/test/build`. Rokkit-first: adopt where Rokkit ships the primitive, wrap thinly for variants, build only what Rokkit doesn't cover.
+
+| # | Component | Status | Notes |
+|---|-----------|--------|------|
+| 0  | Preparation: remove OS-accent override, delete dead components, install `@rokkit/chart`, extract `sparklinePath` | Done (2026-05-15) | `ca97bc09` — `@rokkit/chart@1.0.5` blocked by upstream missing `palette.json` (CHART-GAPS #3); `sparklinePath` kept in `$lib/sparkline.ts` |
+| 0a | Token harmonization: mockup spec → uno.config + rokkit.config; shrink lib/tokens.css | Done (2026-05-15) | `5395a234` — 8-stop type scale, strict 4px spacing, 3-stop letter/4-stop line-height/3-stop motion, radii in Uno, kanji added to Rokkit typography |
+| 1  | `Eyebrow` + `Kanji` primitives | Done (2026-05-15) | `1da27932` — 19 tests; 20+ inline eyebrow + 9 inline kanji swept |
+| 2  | `PageHeader` | Done (2026-05-15) | `7e628a7d` — 15 tests; 13 routes swept (h1/h2/h3 variants, bordered toggle, right Snippet) |
+| 3  | `StatusDot` | Done (2026-05-15) | `05aa1a89` — 13 tests; 8 sites swept; 5+ duplicated CSS rules deleted |
+| 4  | `Card` (variants: default · accent-edge · dashed-empty · selectable; padding sm/md/lg) | Pending | Wrap `@rokkit/ui/Card` or build; ~30 inline cards in observatory, project, setup, health routes |
+| 5  | `ListRow` (3-slot row + hairline + active/selected) | Pending | 22 routes — every list of sessions / libs / tools / repos / patterns / drifts / logs; deletes 10+ duplicated `:last-child` CSS rules |
+| 6  | `Button` (wrap Rokkit) + `Badge`/`Pill` (wrap Rokkit) | Pending | Retires `.btn-solid/.btn-outline/.btn-cta/.btn-primary/.btn-back/.collapse-btn/.report-btn/.outline-btn`; consolidates `.maturity-pill / .stack-tag / .scope-badge / .repo-role` |
+| 7  | Adopt `@rokkit/ui/Tabs`; delete local `TabBar` | Pending | After Tabs lands, split `MemoryList.svelte` into PageHeader + Tabs + ListDetail and delete it |
+| 8  | `ChipRow` / `SegmentedControl` | Pending | Sessions/libraries filter-chip duplicates; preferences segmented controls |
+| 9  | `TextField` + `SearchField` | Pending | Libraries search, setup name/root inputs, instruments param input |
+| 10 | `MiniStat` (sparkline = `@rokkit/chart/Sparkline` once gap #3 clears) | Pending | Observatory home/sessions, project overview/impact 4-up tiles, setup scan; needs `@rokkit/chart` palette.json fix |
+| 10b| Adopt `@rokkit/ui/Switch`; delete local `Switch` | Pending | Trivial: 4 callsites in setup/preferences |
+| 11 | `Sidebar` + `NavItem` (wrap Rokkit `ItemContent`) + `SidebarGroup` | Pending | Unifies 3 sidebars (observatory, config, project), folds in stateful kanji active styling deferred from Step 1 |
+| 12 | `TauriChrome` (`accent`, `kanji`, `title` props) | Pending | Applied across all 4 layouts |
+| 13 | `SplitPane` / `ListDetail` / `SidePanel` | Pending | Master-detail layouts: libraries, instruments, impact, settings |
+| 13b| Adopt `@rokkit/ui/Timeline` + `StatusList` | Pending | Scan SSE feed; health logs trace rows; rebuild Ledger atop StatusList |
+| 14+| Greenfield: `EnsoRing`/`BarStrip` (= `@rokkit/chart`), `HairlineGrid`, `Toast`, `Drawer`, `BottomBar`, `KeyValueRow` | Pending | Build only when a route needs them |
+
+**Pending route-headers blocked on later steps:**
+- Observatory home greeting (hero size — fold when `MiniStat` lands, step 10)
+- `observatory/projects/[id]` (maturity pill + stack chips — step 6)
+- Health `Header.svelte` (platform-aware headline; consider folding into `PageHeader.variant="hero"`)
+- `(config)/+layout.svelte` wizard step header — step 11 covers this when Sidebar/Stepper migrate
+- `(project)/project/[id]/+layout.svelte` titlebar — step 12 `TauriChrome` covers this
+- `(project)/.../overview/+page.svelte`, `(project)/.../impact/+page.svelte` MiniStat 4-up grids — step 10
+
+**Cross-cutting:**
+- Track Rokkit chart-component feature gaps in `CHART-GAPS.md`; propose upstream PRs rather than fork.
+- Track zen-sumi theme overrides in `THEME-OVERRIDES.md`; promote stable ones to `@rokkit/themes/zen-sumi`.
+- Re-enable `@rokkit/chart/Sparkline` adoption after upstream palette.json fix; first user is `MiniStat` (step 10).
+
+---
+
+## 8. CSS Migration — inline utility classes and semantic design tokens (largely superseded)
 
 **Priority:** Medium (quality / maintainability — do screen-by-screen alongside other work)
 **Goal:** Replace `<style>` block CSS with Tailwind/UnoCSS utility classes, eliminate

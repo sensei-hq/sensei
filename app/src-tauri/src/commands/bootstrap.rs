@@ -1,209 +1,129 @@
-//! Bootstrap commands — prerequisite detection, installation, and hardware profiling.
+//! Health commands — thin wrappers over sensei_bootstrap.
 //!
-//! The single `check_and_fix_bootstrap` command replaces the old three-phase
-//! commands (run_bootstrap / install_prerequisites / start_services / setup_database).
-//! It delegates entirely to the BootstrapEngine which:
-//!   1. Checks all components in parallel (Phase A)
-//!   2. Builds a dependency-aware fix plan (Phase B)
-//!   3. Executes fixes sequentially (Phase C)
-//!   4. Returns a BootstrapReport (Phase D)
+//! Two commands and two only:
+//! * `health_check`             — sync. Returns HealthPayload.
+//! * `health_check_and_resolve` — fire-and-forget. Runs check() then
+//!   resolve() on a background thread; events stream on the "health" channel.
 //!
-//! Progress arrives on the "bootstrap" Tauri event channel.
+//! `health_check_and_resolve` is guarded by an in-flight `AtomicBool` so a
+//! second invocation while a run is active is a no-op rather than spawning a
+//! parallel `brew install` thread. The guard is reset via RAII so a panic in
+//! the worker still releases the slot. This matters because:
+//!   * Brew acquires a global update lock — two parallel `brew install`s
+//!     race, the loser fails with stderr that maps to BrewError::Other.
+//!   * Tauri webview reloads (Vite HMR, route remount, etc.) cause the
+//!     frontend to invoke this command repeatedly while a long-running
+//!     resolver is still emitting events to the now-dead listener — the
+//!     "Couldn't find callback id" warning.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use sensei_bootstrap::{self as bootstrap, HealthEvent, HealthPayload};
+use tauri::Emitter;
 
 use crate::flog;
-use crate::log_collector::{LogCollector, LogSession, SystemInfo};
-use sensei_bootstrap::{
-    self as bootstrap,
-    BootstrapReport, HardwareInfo,
-    prereq::{GateStatus, ProgressEvent},
-};
-use tauri::{Emitter, Manager};
 
-// ---------------------------------------------------------------------------
-// Event helpers
-// ---------------------------------------------------------------------------
+static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-fn emit_gate(
-    app: &tauri::AppHandle,
-    id: &str,
-    status: &str,
-    version: Option<&str>,
-    detail: Option<&str>,
-) {
-    let _ = app.emit(
-        "bootstrap",
-        serde_json::json!({
-            "action": "update",
-            "entity": "gate",
-            "id": id,
-            "data": { "status": status, "version": version, "detail": detail }
-        }),
-    );
+/// RAII guard that flips IN_FLIGHT back to false on drop. Using a guard
+/// (instead of a manual `store(false)` at the end of the worker) means a
+/// panic inside the bootstrap layer still releases the slot — otherwise
+/// every subsequent health request would be silently rejected.
+struct InFlightGuard;
+impl Drop for InFlightGuard {
+    fn drop(&mut self) { IN_FLIGHT.store(false, Ordering::Release); }
 }
 
-fn emit_phase_complete(app: &tauri::AppHandle, phase: &str, success: bool) {
-    let _ = app.emit(
-        "bootstrap",
-        serde_json::json!({
-            "action": "set",
-            "entity": "phase",
-            "id": phase,
-            "data": { "complete": true, "success": success }
-        }),
-    );
+/// Attempt to claim the slot. `Some(_)` means we own it and must keep the
+/// guard alive for the whole worker; `None` means another worker has it.
+fn try_acquire() -> Option<InFlightGuard> {
+    IN_FLIGHT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .ok()
+        .map(|_| InFlightGuard)
 }
 
-/// Map a ProgressEvent from the engine to Tauri events on the "bootstrap" channel.
-fn dispatch(app: &tauri::AppHandle, event: ProgressEvent) {
-    match event {
-        ProgressEvent::Gate { id, status } => {
-            let (s, version, detail) = match status {
-                GateStatus::Checking            => ("checking",   None, None),
-                GateStatus::Installing          => ("installing", None, None),
-                GateStatus::Starting            => ("starting",   None, None),
-                GateStatus::Ready { version, detail } => ("ready", version, detail),
-                GateStatus::Failed { error }    => ("blocked",    None, Some(error)),
-            };
-            flog::log(&format!(
-                "gate  [{id}] {s}{}{}",
-                version.as_deref().map(|v| format!(" v={v}")).unwrap_or_default(),
-                detail.as_deref().map(|d| format!(" detail={d}")).unwrap_or_default(),
-            ));
-            emit_gate(app, &id, s, version.as_deref(), detail.as_deref());
-        }
-        ProgressEvent::PhaseComplete { phase, success } => {
-            flog::log(&format!("phase [{phase}] complete success={success}"));
-            emit_phase_complete(app, &phase, success);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Bootstrap command
-// ---------------------------------------------------------------------------
-
-/// Run the full bootstrap check-and-fix pipeline.
-///
-/// Checks all prerequisites in parallel, then fixes anything broken via the
-/// dependency-aware engine. Progress is streamed as Tauri "bootstrap" events.
-/// Returns immediately — the pipeline runs on a background thread.
 #[tauri::command]
-pub fn check_and_fix_bootstrap(app: tauri::AppHandle) -> Result<(), String> {
+pub fn health_check(app: tauri::AppHandle) -> HealthPayload {
     let version = app.package_info().version.to_string();
-    flog::log(&format!("=== check_and_fix_bootstrap called v={version} ==="));
-    std::thread::spawn(move || {
-        let app_for_events = app.clone();
-        let report = bootstrap::check_and_fix(&version, move |e| dispatch(&app_for_events, e));
-        flog::log(&format!(
-            "check_and_fix_bootstrap complete: all_ok={} gates={}",
-            report.all_ok,
-            report.gates.len()
-        ));
-        for gate in &report.gates {
-            flog::log(&format!(
-                "  gate [{}] {:?} fix_attempted={}",
-                gate.id, gate.status, gate.fix_attempted
-            ));
+    bootstrap::check(&version)
+}
+
+#[tauri::command]
+pub fn health_check_and_resolve(app: tauri::AppHandle) -> Result<(), String> {
+    let version = app.package_info().version.to_string();
+
+    let guard = match try_acquire() {
+        Some(g) => g,
+        None => {
+            flog::log("health_check_and_resolve: already in flight, skipping");
+            return Ok(());
         }
-        write_bootstrap_session(&app, &report);
-        // Emit final report so the frontend knows the engine is done
-        let _ = app.emit("bootstrap-report", &report);
+    };
+    flog::log(&format!("=== health_check_and_resolve called v={version} ==="));
+
+    std::thread::spawn(move || {
+        // Move the guard into the worker so Drop runs after the resolve
+        // pipeline, regardless of success / panic.
+        let _guard = guard;
+
+        let emit = {
+            let app = app.clone();
+            move |ev: HealthEvent| { let _ = app.emit("health", &ev); }
+        };
+
+        // The whole check+report+resolve pipeline lives in the library.
+        // This command's only job is the IPC glue: emit closure, threading,
+        // and the in-flight guard.
+        let _final = bootstrap::health::check_and_resolve(&version, &emit);
+        flog::log("health_check_and_resolve complete");
     });
     Ok(())
 }
 
-fn write_bootstrap_session(app: &tauri::AppHandle, report: &BootstrapReport) {
-    let hw = bootstrap::hardware::detect();
-    let system_info = collect_system_info(&hw);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
 
-    let outcome = if report.all_ok {
-        "success"
-    } else if report.blocked_on.is_some() {
-        "blocked"
-    } else {
-        "failed"
-    };
+    /// Tests exercise the shared `IN_FLIGHT` static, so they must run
+    /// serially. Cargo's default test runner parallelises within a binary —
+    /// this mutex serialises just this module without imposing a
+    /// `--test-threads=1` constraint on the whole crate.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    let traces: Vec<serde_json::Value> = report
-        .gates
-        .iter()
-        .filter_map(|g| serde_json::to_value(g).ok())
-        .collect();
+    fn reset() { IN_FLIGHT.store(false, Ordering::Release); }
 
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let session_id = format!(
-        "sess-bs-{}-{:04x}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
-        COUNTER.fetch_add(1, Ordering::Relaxed) & 0xFFFF,
-    );
-
-    let session = LogSession {
-        id:          session_id,
-        module:      "bootstrap".to_string(),
-        started_at:  chrono::Utc::now().to_rfc3339(),
-        app_version: app.package_info().version.to_string(),
-        system_info,
-        outcome:     outcome.to_string(),
-        duration_ms: 0,
-        traces,
-    };
-
-    let collector = app.state::<LogCollector>();
-    collector.write_session(&session);
-}
-
-fn collect_system_info(hw: &HardwareInfo) -> SystemInfo {
-    SystemInfo {
-        os:        sysinfo::System::long_os_version()
-                       .unwrap_or_else(|| "unknown".to_string()),
-        arch:      std::env::consts::ARCH.to_string(),
-        ram_gb:    hw.ram_gb as u64,
-        cpu_cores: hw.cpu_cores as usize,
+    #[test]
+    fn try_acquire_succeeds_when_idle() {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset();
+        let g = try_acquire().expect("idle slot should acquire");
+        drop(g);
+        assert!(!IN_FLIGHT.load(Ordering::Acquire));
     }
-}
 
-// ---------------------------------------------------------------------------
-// Read-only commands (hardware, models, platform, port)
-// ---------------------------------------------------------------------------
+    #[test]
+    fn try_acquire_fails_when_already_held() {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset();
+        let first = try_acquire().expect("first acquire ok");
+        assert!(try_acquire().is_none(), "second acquire while first is alive must fail");
+        drop(first);
+        assert!(try_acquire().is_some(), "after drop, slot is reusable");
+    }
 
-#[tauri::command]
-pub fn detect_hardware() -> HardwareInfo {
-    bootstrap::hardware::detect()
-}
-
-#[tauri::command]
-pub fn list_models() -> Vec<String> {
-    bootstrap::models::list()
-}
-
-#[tauri::command]
-pub fn missing_models() -> Vec<String> {
-    let hw = bootstrap::hardware::detect();
-    bootstrap::models::missing_models(&hw.recommended_tier)
-}
-
-#[tauri::command]
-pub fn get_platform() -> serde_json::Value {
-    let provider = bootstrap::provider();
-    serde_json::json!({
-        "platform": provider.platform(),
-        "package_manager": provider.package_manager_name(),
-        "prereq_remedy": provider.prereq_install_remedy(),
-        "pkgmgr_remedy": provider.package_manager_remedy(),
-    })
-}
-
-/// Return the daemon port for the current runtime mode.
-///
-/// Delegates to [`SenseiConfig::from_env`] so the frontend never hard-codes a port.
-/// The frontend calls this once at startup to initialise `appState.port`.
-#[tauri::command]
-pub fn get_daemon_port() -> u16 {
-    let cfg = sensei_bootstrap::SenseiConfig::from_env();
-    flog::log(&format!(
-        "get_daemon_port: mode={:?} port={} db={}",
-        cfg.mode, cfg.daemon_port, cfg.db_name
-    ));
-    cfg.daemon_port
+    #[test]
+    fn guard_releases_slot_on_panic() {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset();
+        let result = std::panic::catch_unwind(|| {
+            let _guard = try_acquire().expect("acquire");
+            panic!("simulated worker panic");
+        });
+        assert!(result.is_err());
+        assert!(!IN_FLIGHT.load(Ordering::Acquire),
+            "RAII guard must release slot even when the worker panics");
+        // And the slot is reusable.
+        assert!(try_acquire().is_some());
+    }
 }

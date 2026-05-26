@@ -55,15 +55,15 @@ function MergedSidebar({ page, setPage, solutions, activeSolution, setActiveSolu
     }}>
       {/* Logo row + toggle */}
       {collapsed ? (
-        <div className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>先</div>
+        <div className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先</div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <span className="kanji" style={{ fontSize: 22, color: 'var(--shu)' }}>先</span>
+          <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+            <span className="kanji" style={{ fontSize: 22, color: 'var(--accent)' }}>先</span>
             <span className="display" style={{ fontSize: 17, fontWeight: 400 }}>Sensei</span>
           </div>
           <button onClick={() => setCollapsed(true)} title="Collapse sidebar"
-                  style={{ width: 24, height: 24, borderRadius: 4, color: 'var(--sumi-3)',
+                  style={{ width: 24, height: 24, borderRadius: 4, color: 'var(--ink-3)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M10 3 L5 8 L10 13"/>
@@ -74,7 +74,7 @@ function MergedSidebar({ page, setPage, solutions, activeSolution, setActiveSolu
 
       {/* Solutions */}
       {collapsed ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }} className="gap-2" >
           {solutions.map(s => {
             const isActive = activeSolution === s.id;
             return (
@@ -82,75 +82,77 @@ function MergedSidebar({ page, setPage, solutions, activeSolution, setActiveSolu
                       onClick={() => setActiveSolution(s.id)}
                       style={{
                         width: 40, height: 40, borderRadius: '50%',
-                        background: isActive ? 'var(--sumi)' : 'var(--paper)',
-                        color: isActive ? 'var(--paper)' : 'var(--sumi)',
+                        background: isActive ? 'var(--ink)' : 'var(--paper)',
+                        color: isActive ? 'var(--paper)' : 'var(--ink)',
                         border: isActive ? 'none' : 'var(--hairline)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         transition: 'all .14s'
                       }}>
-                <span className="kanji" style={{ fontSize: 18 }}>{s.kanji}</span>
+                <span className="kanji" style={{ fontSize: 17 }}>{s.kanji}</span>
               </button>
             );
           })}
         </div>
       ) : (
         <div>
-          <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                        textTransform: 'uppercase', marginBottom: 10 }}>Solutions</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                        textTransform: 'uppercase'
+}} className="mb-2" >Solutions</div>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             {solutions.map(s => (
               <button key={s.id}
                       onClick={() => setActiveSolution(s.id)}
                       style={{
-                        display: 'flex', alignItems: 'center', gap: 10,
-                        padding: '8px 10px', borderRadius: 6, textAlign: 'left',
+                        display: 'flex', alignItems: 'center', borderRadius: 6, textAlign: 'left',
                         background: activeSolution === s.id ? 'var(--paper-3)' : 'transparent',
-                        color: activeSolution === s.id ? 'var(--sumi)' : 'var(--sumi-2)',
+                        color: activeSolution === s.id ? 'var(--ink)' : 'var(--ink-2)',
                         fontSize: 13, transition: 'background .12s'
-                      }}>
-                <span className="kanji" style={{ fontSize: 14, width: 16,
-                              color: activeSolution === s.id ? 'var(--shu)' : 'var(--sumi-3)' }}>{s.kanji}</span>
+}} className="gap-2 py-2 px-2" >
+                <span className="kanji" style={{ fontSize: 13, width: 16,
+                              color: activeSolution === s.id ? 'var(--accent)' : 'var(--ink-3)' }}>{s.kanji}</span>
                 <span style={{ flex: 1 }}>{s.name}</span>
-                <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)' }}>{pct(s.ftr)}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{pct(s.ftr)}</span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {collapsed && <hr className="hairline" style={{ width: 28, margin: '4px 0', border: 'none', background: 'var(--paper-edge)', height: 1 }}/>}
+      {collapsed && <hr className="hairline my-1 mx-0" style={{ width: 28, border: 'none', background: 'var(--edge)', height: 1 }}/>}
 
       {/* Views */}
       {collapsed ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }} className="gap-1" >
           {PAGES.map(p => (
             <button key={p.id} title={p.label} onClick={() => setPage(p.id)}
                     style={{
                       width: 36, height: 36, borderRadius: 6,
-                      background: page === p.id ? 'var(--shu-soft)' : 'transparent',
-                      color: page === p.id ? 'var(--shu)' : 'var(--sumi-3)',
+                      background: page === p.id ? 'var(--accent-soft)' : 'transparent',
+                      color: page === p.id ? 'var(--accent)' : 'var(--ink-3)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       transition: 'all .12s'
                     }}>
-              <span className="kanji" style={{ fontSize: 14 }}>{p.kanji}</span>
+              <span className="kanji" style={{ fontSize: 13 }}>{p.kanji}</span>
             </button>
           ))}
         </div>
       ) : (
         <div>
-          <div style={{ fontSize: 10, letterSpacing: '0.14em', color: 'var(--sumi-3)',
-                        textTransform: 'uppercase', marginBottom: 10 }}>View</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.14em', color: 'var(--ink-3)',
+                        textTransform: 'uppercase'
+}} className="mb-2" >View</div>
+          <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
             {PAGES.map(p => (
               <button key={p.id} onClick={() => setPage(p.id)}
                       style={{
-                        display: 'flex', alignItems: 'center', gap: 10,
-                        padding: '7px 10px', borderRadius: 6, textAlign: 'left',
-                        background: page === p.id ? 'var(--sumi)' : 'transparent',
-                        color: page === p.id ? 'var(--paper)' : 'var(--sumi-2)',
+                        display: 'flex', alignItems: 'center', borderRadius: 6, textAlign: 'left',
+                        background: page === p.id ? 'var(--ink)' : 'transparent',
+                        color: page === p.id ? 'var(--paper)' : 'var(--ink-2)',
                         fontSize: 13, transition: 'background .12s'
-                      }}>
-                <span className="kanji" style={{ fontSize: 12, width: 14, opacity: 0.7 }}>{p.kanji}</span>
+}} className="gap-2 py-2 px-2" >
+                <span className="kanji" style={{ fontSize: 13, width: 14, opacity: 0.7 }}>{p.kanji}</span>
                 <span>{p.label}</span>
               </button>
             ))}
@@ -163,7 +165,7 @@ function MergedSidebar({ page, setPage, solutions, activeSolution, setActiveSolu
       {collapsed ? (
         <>
           <button onClick={() => setCollapsed(false)} title="Expand sidebar"
-                  style={{ width: 28, height: 28, borderRadius: 6, color: 'var(--sumi-3)',
+                  style={{ width: 28, height: 28, borderRadius: 6, color: 'var(--ink-3)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M6 3 L11 8 L6 13"/>
@@ -172,13 +174,13 @@ function MergedSidebar({ page, setPage, solutions, activeSolution, setActiveSolu
           <Avatar name="Aiko" size={28}/>
         </>
       ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--sumi-3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', fontSize: 13, color: 'var(--ink-3)' }} className="gap-2" >
           <Avatar name="Aiko" size={22}/>
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <div style={{ color: 'var(--sumi-2)', fontSize: 12 }}>Aiko</div>
-            <div style={{ fontSize: 10 }}>daemon · 9823</div>
+            <div style={{ color: 'var(--ink-2)', fontSize: 13 }}>Aiko</div>
+            <div style={{ fontSize: 11 }}>daemon · 9823</div>
           </div>
-          <span className="ink-dot" style={{ background: 'var(--jade)' }}/>
+          <span className="ink-dot" style={{ background: 'var(--success)' }}/>
         </div>
       )}
     </aside>
@@ -194,57 +196,64 @@ function MergedObservatory({ data, sol, setPage, setFocusedSession, applied, set
   const trendUp = delta >= 0;
 
   return (
-    <div style={{ padding: '40px 56px', display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 56, position: 'relative' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', position: 'relative' }} className="py-6 px-7 gap-7" >
       {/* Kanji watermark */}
       <div className="kanji" style={{
-        position: 'absolute', top: 20, right: 40, fontSize: 260,
-        color: 'var(--shu)', opacity: 0.05, lineHeight: 1, userSelect: 'none',
+        position: 'absolute', top: 20, right: 40, fontSize: 56,
+        color: 'var(--accent)', opacity: 0.05, lineHeight: 1, userSelect: 'none',
         pointerEvents: 'none', zIndex: 0
       }}>{sol.kanji}</div>
 
       {/* LEFT */}
       <div style={{ position: 'relative', zIndex: 1 }}>
-        <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                      textTransform: 'uppercase', marginBottom: 4 }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
+                      textTransform: 'uppercase'
+}} className="mb-1" >
           Observatory · {sol.name}
         </div>
-        <h1 className="display" style={{ fontSize: 28, fontWeight: 400, margin: '0 0 36px' }}>
+        <h1 className="display mt-0 mb-6" style={{ fontSize: 28, fontWeight: 400 }}>
           {sol.description}
         </h1>
 
         {/* Hero FTR — Ma style */}
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 24, marginBottom: 8 }}>
-          <div className="display" style={{ fontSize: 148, fontWeight: 300, lineHeight: 0.9,
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-5 mb-2" >
+          <div className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 0.9,
                         letterSpacing: '-0.04em', fontFeatureSettings: '"ss01"' }}>
             {Math.round(sol.ftr * 100)}
-            <span style={{ fontSize: 48, color: 'var(--sumi-3)', fontWeight: 300, marginLeft: 4 }}>%</span>
+            <span style={{ fontSize: 56, color: 'var(--ink-3)', fontWeight: 300 }} className="ml-1" >%</span>
           </div>
-          <div style={{ paddingBottom: 18 }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                          color: 'var(--sumi-3)', marginBottom: 6 }}>一 First try right</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="pb-4" >
+            <div style={{
+ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
+                          color: 'var(--ink-3)'
+}} className="mb-1" >一 First try right</div>
+            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
               <span className="mono" style={{ fontSize: 13,
-                        color: trendUp ? 'var(--jade)' : 'var(--shu)' }}>
+                        color: trendUp ? 'var(--success)' : 'var(--accent)' }}>
                 {trendUp ? "↗" : "↘"} {delta >= 0 ? "+" : ""}{delta}%
               </span>
-              <span style={{ fontSize: 12, color: 'var(--sumi-3)' }}>vs. last week</span>
+              <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>vs. last week</span>
             </div>
           </div>
         </div>
 
         {/* Trendline — Ma's sparkline, wide */}
-        <div style={{ marginTop: 18, color: trendUp ? 'var(--jade)' : 'var(--shu)' }}>
-          <Sparkline data={history} width={560} height={72} fill={trendUp ? 'var(--jade-soft)' : 'var(--shu-soft)'} showDots/>
-          <div className="mono" style={{ display: 'flex', justifyContent: 'space-between',
-                        fontSize: 10, color: 'var(--sumi-3)', marginTop: 6 }}>
+        <div style={{ color: trendUp ? 'var(--success)' : 'var(--accent)' }} className="mt-4" >
+          <Sparkline data={history} width={560} height={72} fill={trendUp ? 'var(--success-soft)' : 'var(--accent-soft)'} showDots/>
+          <div className="mono mt-1" style={{
+ display: 'flex', justifyContent: 'space-between',
+                        fontSize: 11, color: 'var(--ink-3)'
+}}>
             <span>14d ago</span><span>7d ago</span><span>today</span>
           </div>
         </div>
 
         {/* Stats row */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 32,
-                      padding: '16px 20px', border: 'var(--hairline)', borderRadius: 10,
-                      background: 'var(--paper-2)' }}>
+        <div style={{
+ display: 'flex', justifyContent: 'space-between', border: 'var(--hairline)', borderRadius: 10,
+                      background: 'var(--paper-2)'
+}} className="mt-6 py-4 px-4" >
           <MStat label="Sessions"  value={sol.sessions7d}     suffix="· 7d"/>
           <MDivider/>
           <MStat label="Tokens"    value={sol.tokens7d + "M"} suffix="· 7d"/>
@@ -255,29 +264,30 @@ function MergedObservatory({ data, sol, setPage, setFocusedSession, applied, set
         </div>
 
         {/* Recent sessions */}
-        <div style={{ marginTop: 36 }}>
-          <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                        textTransform: 'uppercase', marginBottom: 12 }}>Recent sessions</div>
+        <div className="mt-6" >
+          <div style={{
+ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
+                        textTransform: 'uppercase'
+}} className="mb-3" >Recent sessions</div>
           <div>
             {solSessions.slice(0, 4).map((s, i) => (
               <button key={s.id}
                       onClick={() => { setFocusedSession(s.id); setPage("sessions"); }}
                       style={{
-                        display: 'grid', gridTemplateColumns: '10px 1fr auto auto',
-                        gap: 12, padding: '12px 0', alignItems: 'center', textAlign: 'left',
+                        display: 'grid', gridTemplateColumns: '10px 1fr auto auto', alignItems: 'center', textAlign: 'left',
                         borderBottom: i < 3 ? 'var(--hairline)' : 'none', width: '100%', background: 'transparent'
-                      }}>
-                <span className="ink-dot" style={{ background: s.ftr ? 'var(--jade)' : 'var(--shu)' }}/>
+}} className="gap-3 py-3 px-0" >
+                <span className="ink-dot" style={{ background: s.ftr ? 'var(--success)' : 'var(--accent)' }}/>
                 <div>
-                  <div style={{ fontSize: 13, color: 'var(--sumi)' }}>{s.title}</div>
-                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 2 }}>
+                  <div style={{ fontSize: 13, color: 'var(--ink)' }}>{s.title}</div>
+                  <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                     {s.project} · {s.module}
                   </div>
                 </div>
-                <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-3)' }}>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                   {s.turns}t · {s.duration}
                 </span>
-                <span style={{ fontSize: 14, color: 'var(--sumi-3)' }}>→</span>
+                <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>→</span>
               </button>
             ))}
           </div>
@@ -285,50 +295,60 @@ function MergedObservatory({ data, sol, setPage, setFocusedSession, applied, set
       </div>
 
       {/* RIGHT — coaching + signals */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 28, position: 'relative', zIndex: 1 }}>
-        <div style={{ background: 'var(--paper-2)', borderRadius: 14, padding: '28px 26px',
-                      border: 'var(--hairline)' }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                        color: 'var(--shu)', marginBottom: 16 }}>師 · sensei says</div>
-          <p className="display" style={{ fontSize: 26, fontWeight: 300, lineHeight: 1.25,
-                        margin: 0, textWrap: 'balance' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }} className="gap-5" >
+        <div style={{
+ background: 'var(--paper-2)', borderRadius: 14,
+                      border: 'var(--hairline)'
+}} className="py-5 px-5" >
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
+                        color: 'var(--accent)'
+}} className="mb-4" >師 · sensei says</div>
+          <p className="display m-0" style={{
+ fontSize: 28, fontWeight: 300, lineHeight: 1.25, textWrap: 'balance'
+}}>
             {topCoach.koan}
           </p>
-          <p style={{ fontSize: 13, color: 'var(--sumi-2)', lineHeight: 1.6, marginTop: 16, marginBottom: 22 }}>
+          <p style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }} className="mt-4 mb-5" >
             {topCoach.body}
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
             <button onClick={() => setApplied({...applied, [topCoach.id]: true})}
                     style={{
-                      padding: '9px 16px',
-                      background: applied[topCoach.id] ? 'var(--jade-soft)' : 'var(--shu)',
-                      color: applied[topCoach.id] ? 'var(--jade)' : 'var(--paper)',
-                      borderRadius: 8, fontSize: 12.5, fontWeight: 500
-                    }}>
+                      background: applied[topCoach.id] ? 'var(--success-soft)' : 'var(--accent)',
+                      color: applied[topCoach.id] ? 'var(--success)' : 'var(--paper)',
+                      borderRadius: 8, fontSize: 13, fontWeight: 500
+}} className="py-2 px-4" >
               {applied[topCoach.id] ? "✓  Applied" : topCoach.action + " →"}
             </button>
-            <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               {topCoach.impact}
             </span>
           </div>
         </div>
 
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
-                        color: 'var(--sumi-3)', marginBottom: 14 }}>Quality signals</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
+                        color: 'var(--ink-3)'
+}} className="mb-3" >Quality signals</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }} className="gap-2" >
             {[
               { k: "Pattern compliance", v: "94%",     d: "+3",         good: true },
               { k: "Test coverage Δ",    v: "+2.1%",   d: "this week",  good: true },
               { k: "Doc drift",          v: "3 files", d: "brand-kit",  good: false },
               { k: "Tokens / session",   v: "14.2k",   d: "−1.8k",      good: true }
             ].map(s => (
-              <div key={s.k} style={{ padding: 14, border: 'var(--hairline)', borderRadius: 8,
-                            background: 'var(--paper)' }}>
-                <div style={{ fontSize: 10.5, color: 'var(--sumi-3)' }}>{s.k}</div>
-                <div className="display" style={{ fontSize: 22, fontWeight: 400, marginTop: 4 }}>{s.v}</div>
-                <div className="mono" style={{ fontSize: 10,
-                              color: s.good ? 'var(--jade)' : 'var(--shu)', marginTop: 2 }}>{s.d}</div>
+              <div key={s.k} style={{
+ border: 'var(--hairline)', borderRadius: 8,
+                            background: 'var(--paper)'
+}} className="p-3" >
+                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.k}</div>
+                <div className="display mt-1" style={{ fontSize: 22, fontWeight: 400 }}>{s.v}</div>
+                <div className="mono mt-1" style={{
+ fontSize: 11,
+                              color: s.good ? 'var(--success)' : 'var(--accent)'
+}}>{s.d}</div>
               </div>
             ))}
           </div>
@@ -336,13 +356,15 @@ function MergedObservatory({ data, sol, setPage, setFocusedSession, applied, set
 
         {/* Second coaching — below */}
         {data.coaching[1] && (
-          <div style={{ padding: 16, border: 'var(--hairline)', borderRadius: 10, background: 'var(--paper)' }}>
-            <div style={{ fontSize: 10, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                          textTransform: 'uppercase', marginBottom: 6 }}>Also observed</div>
-            <div style={{ fontSize: 13, color: 'var(--sumi-2)', lineHeight: 1.45, fontStyle: 'italic' }}>
+          <div style={{ border: 'var(--hairline)', borderRadius: 10, background: 'var(--paper)' }} className="p-4" >
+            <div style={{
+ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
+                          textTransform: 'uppercase'
+}} className="mb-1" >Also observed</div>
+            <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.45, fontStyle: 'italic' }}>
               "{data.coaching[1].koan}"
             </div>
-            <div className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 6 }}>
+            <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
               {data.coaching[1].actionDetail}
             </div>
           </div>
@@ -355,61 +377,69 @@ function MergedObservatory({ data, sol, setPage, setFocusedSession, applied, set
 function MStat({ label, value, suffix }) {
   return (
     <div>
-      <div style={{ fontSize: 10, color: 'var(--sumi-3)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</div>
-      <div className="display" style={{ fontSize: 20, fontWeight: 400, marginTop: 2 }}>{value}</div>
-      <div className="mono" style={{ fontSize: 9.5, color: 'var(--sumi-3)', marginTop: 1 }}>{suffix}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</div>
+      <div className="display mt-1" style={{ fontSize: 22, fontWeight: 400 }}>{value}</div>
+      <div className="mono mt-1" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{suffix}</div>
     </div>
   );
 }
-function MDivider() { return <div style={{ width: 1, background: 'var(--paper-edge)' }}/>; }
+function MDivider() { return <div style={{ width: 1, background: 'var(--edge)' }}/>; }
 
 // Overview — reuse the solution cards from Enso but with trendlines instead of rings
 function MergedOverview({ data, setPage, setActiveSolution }) {
   return (
-    <div style={{ padding: '40px 56px', maxWidth: 1120 }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-3)', letterSpacing: '0.12em',
-                    textTransform: 'uppercase', marginBottom: 4 }}>全 · Overview</div>
-      <h1 className="display" style={{ fontSize: 30, fontWeight: 300, margin: '0 0 8px' }}>
+    <div style={{ maxWidth: 1120 }} className="py-6 px-7" >
+      <div style={{
+ fontSize: 11, color: 'var(--ink-3)', letterSpacing: '0.12em',
+                    textTransform: 'uppercase'
+}} className="mb-1" >全 · Overview</div>
+      <h1 className="display mt-0 mb-2" style={{ fontSize: 28, fontWeight: 300 }}>
         All solutions
       </h1>
-      <div style={{ color: 'var(--sumi-3)', fontSize: 13, marginBottom: 32 }}>
-        Global FTR <span className="mono" style={{ color: 'var(--sumi)' }}>78%</span> · week to date.
+      <div style={{ color: 'var(--ink-3)', fontSize: 13 }} className="mb-6" >
+        Global FTR <span className="mono" style={{ color: 'var(--ink)' }}>78%</span> · week to date.
       </div>
 
-      <div style={{ marginBottom: 40, color: 'var(--shu)' }}>
-        <Sparkline data={data.ftrHistory} width={900} height={70} fill="var(--shu-soft)" showDots/>
-        <div className="mono" style={{ display: 'flex', justifyContent: 'space-between',
-                      fontSize: 10, color: 'var(--sumi-3)', marginTop: 6 }}>
+      <div style={{ color: 'var(--accent)' }} className="mb-6" >
+        <Sparkline data={data.ftrHistory} width={900} height={70} fill="var(--accent-soft)" showDots/>
+        <div className="mono mt-1" style={{
+ display: 'flex', justifyContent: 'space-between',
+                      fontSize: 11, color: 'var(--ink-3)'
+}}>
           <span>Apr 9</span><span>Apr 16</span><span>Apr 22</span>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }} className="gap-4" >
         {data.solutions.map(s => {
           const up = s.ftr >= s.ftrPrev;
           return (
             <button key={s.id} onClick={() => { setActiveSolution(s.id); setPage("observatory"); }}
-                    style={{ padding: 22, borderRadius: 12, border: 'var(--hairline)',
+                    style={{
+ borderRadius: 12, border: 'var(--hairline)',
                               background: 'var(--paper)', textAlign: 'left',
-                              transition: 'all .15s', position: 'relative', overflow: 'hidden' }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--sumi-3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.transform = ''; }}>
+                              transition: 'all .15s', position: 'relative', overflow: 'hidden'
+}}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--ink-3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.transform = ''; }} className="p-5" >
               <span className="kanji" style={{
-                position: 'absolute', top: -24, right: -18, fontSize: 160,
-                color: 'var(--shu)', opacity: 0.06, lineHeight: 1
+                position: 'absolute', top: -24, right: -18, fontSize: 56,
+                color: 'var(--accent)', opacity: 0.06, lineHeight: 1
               }}>{s.kanji}</span>
-              <div className="display" style={{ fontSize: 18, fontWeight: 500 }}>{s.name}</div>
-              <div style={{ fontSize: 11, color: 'var(--sumi-3)', marginBottom: 20 }}>{s.description}</div>
-              <div className="display" style={{ fontSize: 48, fontWeight: 300, lineHeight: 1, letterSpacing: '-0.03em' }}>
-                {Math.round(s.ftr*100)}<span style={{ fontSize: 18, color: 'var(--sumi-3)' }}>%</span>
+              <div className="display" style={{ fontSize: 17, fontWeight: 500 }}>{s.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mb-4" >{s.description}</div>
+              <div className="display" style={{ fontSize: 56, fontWeight: 300, lineHeight: 1, letterSpacing: '-0.03em' }}>
+                {Math.round(s.ftr*100)}<span style={{ fontSize: 17, color: 'var(--ink-3)' }}>%</span>
               </div>
-              <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 4,
-                            letterSpacing: '0.08em', textTransform: 'uppercase' }}>First try right</div>
-              <div style={{ marginTop: 14, color: up ? 'var(--jade)' : 'var(--shu)' }}>
-                <Sparkline data={data.ftrBySolution[s.id]} width={220} height={32} fill={up ? 'var(--jade-soft)' : 'var(--shu-soft)'}/>
+              <div className="mono mt-1" style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                            letterSpacing: '0.08em', textTransform: 'uppercase'
+}}>First try right</div>
+              <div style={{ color: up ? 'var(--success)' : 'var(--accent)' }} className="mt-3" >
+                <Sparkline data={data.ftrBySolution[s.id]} width={220} height={32} fill={up ? 'var(--success-soft)' : 'var(--accent-soft)'}/>
               </div>
-              <hr className="hairline" style={{ margin: '16px 0 12px', border: 'none', background: 'var(--paper-edge)', height: 1 }}/>
-              <div className="mono" style={{ fontSize: 10, color: 'var(--sumi-3)',
+              <hr className="hairline mt-4 mb-3" style={{ border: 'none', background: 'var(--edge)', height: 1 }}/>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)',
                             display: 'flex', justifyContent: 'space-between' }}>
                 <span>{s.repos.length} repos</span>
                 <span>{s.sessions7d} sessions</span>

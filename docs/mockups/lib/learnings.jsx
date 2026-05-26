@@ -61,8 +61,10 @@ function LearningsPage({ initialTab = "all" }) {
       {/* ─── Hero ─── */}
       <LearnHero counts={L.counts} tab={tab}/>
 
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0, padding: '14px 40px 40px',
-                     display: 'flex', flexDirection: 'column', gap: 18, position: 'relative' }}>
+      <div style={{
+ flex: 1, overflow: 'auto', minHeight: 0,
+                     display: 'flex', flexDirection: 'column', position: 'relative'
+}} className="gap-4 pt-3 pb-6 px-6" >
         {/* Recommendations inbox */}
         {recs.length > 0 && tab !== "archive" && (
           <RecsInbox recs={recs} onDismiss={(id) =>
@@ -117,26 +119,35 @@ function LearningsPage({ initialTab = "all" }) {
 // ═══════════════════════════════════════════════════════════════════════
 function LearnHero({ counts }) {
   return (
-    <div style={{ padding: '22px 40px 16px', borderBottom: 'var(--hairline)',
-                   display: 'flex', alignItems: 'center', gap: 22, background: 'var(--paper)' }}>
-      <div className="kanji" style={{ fontSize: 46, color: 'var(--shu)', lineHeight: 1 }}>学</div>
+    <div style={{
+ borderBottom: 'var(--hairline)',
+                   display: 'flex', alignItems: 'center', background: 'var(--paper)'
+}} className="gap-5 pt-5 pb-4 px-6" >
+      <div className="kanji" style={{ fontSize: 40, color: 'var(--accent)', lineHeight: 1 }}>学</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginBottom: 5 }}>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.18em', color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-1" >
           Observatory · Learnings
         </div>
-        <h1 className="display" style={{ fontSize: 22, fontWeight: 400, margin: 0,
-                                          color: 'var(--sumi)' }}>
+        <h1 className="display m-0" style={{
+ fontSize: 22, fontWeight: 400,
+                                          color: 'var(--ink)'
+}}>
           What sensei knows — and what to do about it.
         </h1>
-        <p style={{ fontSize: 12.5, color: 'var(--sumi-2)', margin: '4px 0 0',
-                     maxWidth: 720, lineHeight: 1.55 }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     maxWidth: 720, lineHeight: 1.55
+}} className="mt-1 mb-0" >
           Patterns become memory. Memory shapes how assistants think.
           Every entry below can be promoted, enriched, or retired.
         </p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, auto)', gap: 22,
-                     paddingLeft: 24, borderLeft: 'var(--hairline)' }}>
+      <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(4, auto)', borderLeft: 'var(--hairline)'
+}} className="gap-5 pl-5" >
         <Stat n={counts.memories} label="memories"/>
         <Stat n={counts.patterns} label="patterns"/>
         <Stat n={counts.recs}     label="to act on" accent={true}/>
@@ -150,12 +161,14 @@ function Stat({ n, label, accent, mono }) {
     <div style={{ textAlign: 'center' }}>
       <div className={mono ? "mono" : ""}
            style={{ fontSize: 22, fontWeight: 300, lineHeight: 1,
-                     color: accent ? 'var(--shu)' : 'var(--sumi)',
+                     color: accent ? 'var(--accent)' : 'var(--ink)',
                      fontFeatureSettings: '"tnum"' }}>
         {n}
       </div>
-      <div style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
-                     color: 'var(--sumi-4)', marginTop: 4 }}>{label}</div>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                     color: 'var(--ink-4)'
+}} className="mt-1" >{label}</div>
     </div>
   );
 }
@@ -166,24 +179,26 @@ function Stat({ n, label, accent, mono }) {
 function RecsInbox({ recs, onDismiss }) {
   return (
     <section>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-                     marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <span className="kanji" style={{ fontSize: 14, color: 'var(--shu)' }}>薦</span>
-          <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--sumi-3)',
+      <div style={{
+ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between'
+}} className="mb-2" >
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+          <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>薦</span>
+          <span style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
                           textTransform: 'uppercase' }}>
             Recommended actions
           </span>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--sumi-4)' }}>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
             {recs.length}
           </span>
         </div>
-        <span style={{ fontSize: 11, color: 'var(--sumi-4)' }}>
+        <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
           inferred from patterns · violations · correction history
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-                     gap: 10 }}>
+      <div style={{
+ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))'
+}} className="gap-2" >
         {recs.slice(0, 6).map(r => (
           <RecCard key={r.id} rec={r} onDismiss={() => onDismiss(r.id)}/>
         ))}
@@ -194,51 +209,57 @@ function RecsInbox({ recs, onDismiss }) {
 
 function RecCard({ rec, onDismiss }) {
   const kindMap = {
-    "promote-pattern": { glyph: "昇", label: "promote", color: "var(--shu)"    },
-    "create-agent":    { glyph: "作", label: "agent",   color: "var(--matcha)" },
-    "write-skill":     { glyph: "技", label: "skill",   color: "var(--matcha)" },
-    "archive-memory":  { glyph: "納", label: "archive", color: "var(--sumi-3)" },
-    "enrich-memory":   { glyph: "育", label: "enrich",  color: "var(--ai)"     },
-    "cross-project":   { glyph: "渡", label: "transfer",color: "var(--ai)"     }
+    "promote-pattern": { glyph: "昇", label: "promote", color: "var(--accent)"    },
+    "create-agent":    { glyph: "作", label: "agent",   color: "var(--success)" },
+    "write-skill":     { glyph: "技", label: "skill",   color: "var(--success)" },
+    "archive-memory":  { glyph: "納", label: "archive", color: "var(--ink-3)" },
+    "enrich-memory":   { glyph: "育", label: "enrich",  color: "var(--ink-2)"     },
+    "cross-project":   { glyph: "渡", label: "transfer",color: "var(--ink-2)"     }
   };
-  const k = kindMap[rec.kind] || { glyph: "?", label: "action", color: "var(--sumi)" };
-  const impactDot = rec.impact === "high" ? "var(--shu)" : rec.impact === "medium" ? "var(--amber)" : "var(--sumi-4)";
+  const k = kindMap[rec.kind] || { glyph: "?", label: "action", color: "var(--ink)" };
+  const impactDot = rec.impact === "high" ? "var(--accent)" : rec.impact === "medium" ? "var(--warning)" : "var(--ink-4)";
   return (
-    <div style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                   borderRadius: 7, borderLeft: `2px solid ${k.color}`,
-                   padding: '12px 14px', display: 'flex', flexDirection: 'column',
-                   gap: 8, minHeight: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                   borderRadius: 7, borderLeft: `2px solid ${k.color}`, display: 'flex', flexDirection: 'column', minHeight: 0
+}} className="py-3 px-3 gap-2" >
+      <div style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
         <span className="kanji" style={{ fontSize: 13, color: k.color }}>{k.glyph}</span>
-        <span style={{ fontSize: 9.5, letterSpacing: '0.14em', textTransform: 'uppercase',
+        <span style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
                         color: k.color }}>{k.label}</span>
-        <span style={{ width: 5, height: 5, borderRadius: '50%',
-                        background: impactDot, marginLeft: 2 }}/>
-        <span style={{ fontSize: 10, color: 'var(--sumi-4)' }}>{rec.impact}</span>
+        <span style={{
+ width: 5, height: 5, borderRadius: '50%',
+                        background: impactDot
+}} className="ml-1" />
+        <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>{rec.impact}</span>
         <span style={{ flex: 1 }}/>
         <button onClick={onDismiss}
-                style={{ fontSize: 12, color: 'var(--sumi-4)', lineHeight: 1,
-                          padding: 0, background: 'transparent', border: 'none',
-                          cursor: 'pointer' }} title="dismiss">×</button>
+                style={{
+ fontSize: 13, color: 'var(--ink-4)', lineHeight: 1, background: 'transparent', border: 'none',
+                          cursor: 'pointer'
+}} title="dismiss" className="p-0" >×</button>
       </div>
 
-      <div style={{ fontSize: 13, lineHeight: 1.45, color: 'var(--sumi)',
+      <div style={{ fontSize: 13, lineHeight: 1.45, color: 'var(--ink)',
                      fontWeight: 500 }}>
         {rec.title}
       </div>
-      <div style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--sumi-2)' }}>
+      <div style={{ fontSize: 11, lineHeight: 1.55, color: 'var(--ink-2)' }}>
         {rec.reasoning}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto',
-                     paddingTop: 8, borderTop: '1px dashed var(--paper-edge)' }}>
-        <button style={{ padding: '5px 11px', fontSize: 11,
-                          background: 'var(--sumi)', color: 'var(--paper)',
-                          border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+      <div style={{
+ display: 'flex', alignItems: 'center', marginTop: 'auto', borderTop: '1px dashed var(--edge)'
+}} className="gap-2 pt-2" >
+        <button style={{
+ fontSize: 11,
+                          background: 'var(--ink)', color: 'var(--paper)',
+                          border: 'none', borderRadius: 4, cursor: 'pointer'
+}} className="py-1 px-3" >
           {rec.action} →
         </button>
         <span style={{ flex: 1 }}/>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
           {rec.targetKind} · {rec.targetName}
         </span>
       </div>
@@ -259,22 +280,26 @@ function LearnTabs({ tab, setTab, counts }) {
     { id: "archive",     label: "Archive",     count: counts.archive }
   ];
   return (
-    <div style={{ display: 'flex', gap: 0, borderBottom: 'var(--hairline)',
-                   margin: '0 0 -4px' }}>
+    <div style={{
+ display: 'flex', borderBottom: 'var(--hairline)',
+                   margin: '0 0 -4px'
+}} className="gap-0" >
       {items.map(it => {
         const active = tab === it.id;
         return (
           <button key={it.id} onClick={() => setTab(it.id)}
-                  style={{ padding: '8px 16px 10px', fontSize: 12,
+                  style={{
+ fontSize: 13,
                             background: 'transparent', border: 'none', cursor: 'pointer',
-                            color: active ? 'var(--sumi)' : 'var(--sumi-3)',
-                            borderBottom: active ? '2px solid var(--shu)' : '2px solid transparent',
+                            color: active ? 'var(--ink)' : 'var(--ink-3)',
+                            borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
                             marginBottom: -1,
-                            display: 'inline-flex', alignItems: 'center', gap: 7,
-                            letterSpacing: '0.02em' }}>
+                            display: 'inline-flex', alignItems: 'center',
+                            letterSpacing: '0.02em'
+}} className="gap-2 py-2 px-4" >
             {it.label}
             {it.count != null && (
-              <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)',
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)',
                             fontFeatureSettings: '"tnum"' }}>
                 {it.count}
               </span>
@@ -293,8 +318,9 @@ function FilterRow({ scope, setScope, projectFilter, setPrj, sort, setSort }) {
   const scopes = ["all", "global", "project", "task", "module", "stack"];
   const projs  = ["all", ...Object.keys(window.LEARNINGS.projects)];
   return (
-    <div style={{ display: 'flex', gap: 14, alignItems: 'center',
-                   padding: '2px 0 4px', flexWrap: 'wrap' }}>
+    <div style={{
+ display: 'flex', alignItems: 'center', flexWrap: 'wrap'
+}} className="gap-3 py-1" >
       {scope != null && (
         <ChipRow label="scope">
           {scopes.map(s => (
@@ -309,11 +335,12 @@ function FilterRow({ scope, setScope, projectFilter, setPrj, sort, setSort }) {
       {sort != null && (
         <>
           <span style={{ flex: 1 }}/>
-          <span style={{ fontSize: 10, color: 'var(--sumi-4)', letterSpacing: '0.14em',
+          <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
                           textTransform: 'uppercase' }}>sort</span>
           <select value={sort} onChange={e => setSort(e.target.value)}
-                  style={{ fontSize: 11, border: 'var(--hairline)', background: 'var(--paper)',
-                            padding: '3px 7px', borderRadius: 4, color: 'var(--sumi-2)' }}>
+                  style={{
+ fontSize: 11, border: 'var(--hairline)', background: 'var(--paper)', borderRadius: 4, color: 'var(--ink-2)'
+}} className="py-1 px-2" >
             <option value="priority">priority</option>
             <option value="strength">strength</option>
             <option value="recency">recency</option>
@@ -325,9 +352,11 @@ function FilterRow({ scope, setScope, projectFilter, setPrj, sort, setSort }) {
 }
 function ChipRow({ label, children }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 10, color: 'var(--sumi-4)', letterSpacing: '0.14em',
-                      textTransform: 'uppercase', marginRight: 4 }}>{label}</span>
+    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1" >
+      <span style={{
+ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
+                      textTransform: 'uppercase'
+}} className="mr-1" >{label}</span>
       {children}
     </div>
   );
@@ -335,12 +364,14 @@ function ChipRow({ label, children }) {
 function Chip({ active, onClick, children }) {
   return (
     <button onClick={onClick}
-            style={{ padding: '3px 10px', fontSize: 11,
-                      background: active ? 'var(--sumi)' : 'transparent',
-                      color: active ? 'var(--paper)' : 'var(--sumi-2)',
-                      border: active ? '1px solid var(--sumi)' : '1px solid var(--paper-edge)',
+            style={{
+ fontSize: 11,
+                      background: active ? 'var(--ink)' : 'transparent',
+                      color: active ? 'var(--paper)' : 'var(--ink-2)',
+                      border: active ? '1px solid var(--ink)' : '1px solid var(--edge)',
                       borderRadius: 20, cursor: 'pointer',
-                      fontFamily: 'inherit', textTransform: 'lowercase' }}>
+                      fontFamily: 'inherit', textTransform: 'lowercase'
+}} className="py-1 px-2" >
       {children}
     </button>
   );
@@ -359,7 +390,7 @@ function FeedMemories({ memories, onOpen, archive }) {
         <SectionHeader kanji="覚" title="Memories"
                        sub="knowledge with a reason. the why behind every rule."/>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
         {memories.map(m => <MemoryCard key={m.id} memory={m} onClick={() => onOpen(m.id)}/>)}
       </div>
     </section>
@@ -372,7 +403,7 @@ function FeedPatterns({ patterns, onOpen }) {
     <section>
       <SectionHeader kanji="紋" title="Patterns"
                      sub="code signals sensei has detected. some are adopted · some are candidates · some are anti."/>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
         {patterns.map(p => <PatternCard key={p.id} pattern={p} onOpen={onOpen}/>)}
       </div>
     </section>
@@ -385,7 +416,7 @@ function FeedCorrections({ corrections, onOpen }) {
     <section>
       <SectionHeader kanji="直" title="Recurring corrections"
                      sub="things you keep fixing. each one either reinforces a memory or asks for a new one."/>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-2" >
         {corrections.map(c => <CorrectionRow key={c.id} correction={c} onOpen={onOpen}/>)}
       </div>
     </section>
@@ -399,7 +430,7 @@ function FeedLifecycle({ events, onOpen }) {
                      sub="memories learned · reinforced · challenged · superseded · archived."/>
       <div style={{ position: 'relative' }}>
         <div style={{ position: 'absolute', left: 92, top: 4, bottom: 4,
-                       width: 1, background: 'var(--paper-edge)' }}/>
+                       width: 1, background: 'var(--edge)' }}/>
         {events.map(ev => <LifecycleRow key={ev.id} ev={ev} onOpen={onOpen}/>)}
       </div>
     </section>
@@ -408,17 +439,19 @@ function FeedLifecycle({ events, onOpen }) {
 
 function SectionHeader({ kanji, title, sub }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
-      <span className="kanji" style={{ fontSize: 16, color: 'var(--shu)' }}>{kanji}</span>
-      <h3 style={{ fontSize: 13, fontWeight: 500, margin: 0, color: 'var(--sumi)',
-                    letterSpacing: '0.02em' }}>{title}</h3>
-      {sub && <span style={{ fontSize: 11, color: 'var(--sumi-3)' }}>· {sub}</span>}
+    <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2 mb-2" >
+      <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>{kanji}</span>
+      <h3 style={{
+ fontSize: 13, fontWeight: 500, color: 'var(--ink)',
+                    letterSpacing: '0.02em'
+}} className="m-0" >{title}</h3>
+      {sub && <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>· {sub}</span>}
     </div>
   );
 }
 function EmptyState({ text }) {
   return (
-    <div style={{ padding: 40, textAlign: 'center', fontSize: 12, color: 'var(--sumi-4)' }}>
+    <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--ink-4)' }} className="p-6" >
       {text}
     </div>
   );
@@ -430,12 +463,12 @@ function EmptyState({ text }) {
 function MemoryCard({ memory, onClick }) {
   const L = window.LEARNINGS;
   const stateColor = {
-    "battle-tested": "var(--matcha)",
-    "reinforced":    "var(--matcha)",
-    "active":        "var(--ai)",
-    "challenged":    "var(--amber)",
-    "archived":      "var(--sumi-4)"
-  }[memory.state] || 'var(--sumi-3)';
+    "battle-tested": "var(--success)",
+    "reinforced":    "var(--success)",
+    "active":        "var(--ink-2)",
+    "challenged":    "var(--warning)",
+    "archived":      "var(--ink-4)"
+  }[memory.state] || 'var(--ink-3)';
 
   const categoryGlyph = {
     "correctness": "正",
@@ -447,34 +480,40 @@ function MemoryCard({ memory, onClick }) {
 
   return (
     <article onClick={onClick}
-             style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
+             style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
                        borderLeft: `2px solid ${stateColor}`,
-                       borderRadius: 6, padding: '12px 16px',
+                       borderRadius: 6,
                        cursor: 'pointer', transition: 'background 0.12s',
                        display: 'grid',
                        gridTemplateColumns: '26px 1fr auto',
-                       gap: '0 14px', alignItems: 'start' }}
+                       gap: '0 12px', alignItems: 'start'
+}}
              onMouseEnter={e => e.currentTarget.style.background = 'var(--paper-3)'}
-             onMouseLeave={e => e.currentTarget.style.background = 'var(--paper-2)'}>
-      <span className="kanji" style={{ fontSize: 15, color: 'var(--shu)',
-                    marginTop: 1 }}>{categoryGlyph}</span>
+             onMouseLeave={e => e.currentTarget.style.background = 'var(--paper-2)'} className="py-3 px-4" >
+      <span className="kanji mt-1" style={{
+ fontSize: 15, color: 'var(--accent)'
+}}>{categoryGlyph}</span>
 
       <div style={{ minWidth: 0 }}>
         {/* What */}
-        <div style={{ fontSize: 13.5, color: 'var(--sumi)', lineHeight: 1.4,
+        <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4,
                        fontWeight: 500 }}>
           {memory.what}
         </div>
 
         {/* Because */}
-        <div style={{ fontSize: 11.5, color: 'var(--sumi-2)', lineHeight: 1.55,
-                       marginTop: 5, fontStyle: 'italic' }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55, fontStyle: 'italic'
+}} className="mt-1" >
           because <span style={{ fontStyle: 'normal' }}>{memory.because}</span>
         </div>
 
         {/* Scope + references row */}
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap',
-                       gap: '6px 14px', marginTop: 8 }}>
+        <div style={{
+ display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+                       gap: '4px 12px'
+}} className="mt-2" >
           <ScopeBadges scope={memory.scope}/>
           {memory.references.good_example && (
             <RefLink kind="good" path={memory.references.good_example}/>
@@ -483,12 +522,12 @@ function MemoryCard({ memory, onClick }) {
             <RefLink kind="bad" path={memory.references.bad_example}/>
           )}
           {memory.references.pattern && (
-            <span className="mono" style={{ fontSize: 10, color: 'var(--ai)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
               紋 {memory.references.pattern}
             </span>
           )}
           {memory.references.evidence && (
-            <span className="mono" style={{ fontSize: 10, color: 'var(--sumi-4)' }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)' }}>
               {memory.references.evidence.length} session{memory.references.evidence.length === 1 ? "" : "s"}
             </span>
           )}
@@ -496,14 +535,15 @@ function MemoryCard({ memory, onClick }) {
       </div>
 
       {/* Right rail: strength + state */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-                     gap: 6, minWidth: 120 }}>
+      <div style={{
+ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 120
+}} className="gap-1" >
         <StrengthMeter value={memory.strength} violations={memory.violated}/>
-        <span style={{ fontSize: 9.5, color: stateColor, letterSpacing: '0.12em',
+        <span style={{ fontSize: 11, color: stateColor, letterSpacing: '0.12em',
                         textTransform: 'uppercase' }}>
           {memory.state}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--sumi-4)' }}>
+        <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
           seen {memory.lastRelevant}
         </span>
       </div>
@@ -523,14 +563,16 @@ function ScopeBadges({ scope }) {
   if (scope.taskTypes) scope.taskTypes.forEach(t => chips.push({ k: "task", text: t }));
   if (scope.stack) scope.stack.forEach(s => chips.push({ k: "stack", text: s }));
   return (
-    <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+    <div style={{ display: 'inline-flex', flexWrap: 'wrap' }} className="gap-1" >
       {chips.map((c, i) => (
-        <span key={i} className={c.k === "module" ? "mono" : ""}
-              style={{ fontSize: 10, padding: '1px 7px',
+        <span key={i} className={(c.k === "module" ? "mono" : "") + ' py-1 px-2'}
+              style={{
+ fontSize: 11,
                         background: 'var(--paper)', border: 'var(--hairline)',
-                        borderRadius: 10, color: 'var(--sumi-3)',
+                        borderRadius: 10, color: 'var(--ink-3)',
                         textTransform: c.k === "level" ? 'uppercase' : 'none',
-                        letterSpacing: c.k === "level" ? '0.12em' : 0 }}>
+                        letterSpacing: c.k === "level" ? '0.12em' : 0
+}}>
           {c.text}
         </span>
       ))}
@@ -541,10 +583,12 @@ function ScopeBadges({ scope }) {
 function RefLink({ kind, path }) {
   const isGood = kind === "good";
   return (
-    <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
-                   fontSize: 10, color: isGood ? 'var(--matcha)' : 'var(--shu)' }}>
+    <span className="mono gap-1" style={{
+ display: 'inline-flex', alignItems: 'center',
+                   fontSize: 11, color: isGood ? 'var(--success)' : 'var(--accent)'
+}}>
       <span>{isGood ? "✓" : "✗"}</span>
-      <span style={{ color: 'var(--sumi-3)' }}>{path}</span>
+      <span style={{ color: 'var(--ink-3)' }}>{path}</span>
     </span>
   );
 }
@@ -553,16 +597,16 @@ function StrengthMeter({ value, violations }) {
   // 5 dots, filled to `value`
   const dots = [0, 1, 2, 3, 4].map(i => i < value);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+    <div style={{ display: 'flex', alignItems: 'center' }} className="gap-1" >
       {violations > 0 && (
-        <span className="mono" style={{ fontSize: 10, color: 'var(--amber)' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--warning)' }}>
           {violations}×broken
         </span>
       )}
-      <div style={{ display: 'flex', gap: 3 }}>
+      <div style={{ display: 'flex' }} className="gap-1" >
         {dots.map((on, i) => (
           <span key={i} style={{ width: 6, height: 6, borderRadius: '50%',
-                                  background: on ? 'var(--sumi)' : 'var(--paper-edge)' }}/>
+                                  background: on ? 'var(--ink)' : 'var(--edge)' }}/>
         ))}
       </div>
     </div>
@@ -574,64 +618,76 @@ function StrengthMeter({ value, violations }) {
 // ═══════════════════════════════════════════════════════════════════════
 function PatternCard({ pattern, onOpen }) {
   const kindMap = {
-    "adopted":  { glyph: "✓", label: "adopted",    color: "var(--matcha)" },
-    "emerging": { glyph: "⟡", label: "emerging",   color: "var(--ai)"     },
-    "anti":     { glyph: "✗", label: "anti-pattern",color: "var(--shu)"   }
+    "adopted":  { glyph: "✓", label: "adopted",    color: "var(--success)" },
+    "emerging": { glyph: "⟡", label: "emerging",   color: "var(--ink-2)"     },
+    "anti":     { glyph: "✗", label: "anti-pattern",color: "var(--accent)"   }
   };
   const k = kindMap[pattern.kind];
   const L = window.LEARNINGS;
   return (
-    <article style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
+    <article style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
                        borderLeft: `2px solid ${k.color}`,
-                       borderRadius: 6, padding: '12px 16px',
+                       borderRadius: 6,
                        display: 'grid',
                        gridTemplateColumns: '26px 1fr auto',
-                       gap: '0 14px', alignItems: 'start' }}>
-      <span className="kanji" style={{ fontSize: 15, color: 'var(--shu)',
-                    marginTop: 1 }}>紋</span>
+                       gap: '0 12px', alignItems: 'start'
+}} className="py-3 px-4" >
+      <span className="kanji mt-1" style={{
+ fontSize: 15, color: 'var(--accent)'
+}}>紋</span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <span className="mono" style={{ fontSize: 13, color: 'var(--sumi)', fontWeight: 500 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap' }} className="gap-2" >
+          <span className="mono" style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>
             {pattern.name}
           </span>
-          <span style={{ fontSize: 10, color: k.color, letterSpacing: '0.12em',
+          <span style={{ fontSize: 11, color: k.color, letterSpacing: '0.12em',
                           textTransform: 'uppercase' }}>
             {k.glyph} {k.label}
           </span>
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--sumi-2)', lineHeight: 1.55,
-                       marginTop: 5 }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-2)', lineHeight: 1.55
+}} className="mt-1" >
           {pattern.desc}
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 8,
-                       fontSize: 10 }}>
-          <span className="mono" style={{ color: 'var(--sumi-3)' }}>
+        <div style={{
+ display: 'flex', flexWrap: 'wrap', gap: '4px 12px',
+                       fontSize: 11
+}} className="mt-2" >
+          <span className="mono" style={{ color: 'var(--ink-3)' }}>
             {pattern.sample}
           </span>
-          <span style={{ color: 'var(--sumi-4)' }}>
+          <span style={{ color: 'var(--ink-4)' }}>
             {pattern.projects.map(p => L.projects[p]?.name || p).join(" · ")}
           </span>
           {pattern.memoryId && (
             <button onClick={() => onOpen(pattern.memoryId)}
-                    style={{ fontSize: 10, color: 'var(--ai)', background: 'transparent',
-                              border: 'none', cursor: 'pointer', padding: 0 }}>
+                    style={{
+ fontSize: 11, color: 'var(--ink-2)', background: 'transparent',
+                              border: 'none', cursor: 'pointer'
+}} className="p-0" >
               → linked memory
             </button>
           )}
         </div>
       </div>
       <div style={{ textAlign: 'right', minWidth: 110 }}>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--sumi)',
+        <div className="mono" style={{ fontSize: 11, color: 'var(--ink)',
                       fontFeatureSettings: '"tnum"' }}>
           {pattern.occurrences} places
         </div>
-        <div className="mono" style={{ fontSize: 10, marginTop: 3,
-                      color: pattern.ftrDelta > 0 ? 'var(--matcha)' : 'var(--shu)',
-                      fontFeatureSettings: '"tnum"' }}>
+        <div className="mono mt-1" style={{
+ fontSize: 11,
+                      color: pattern.ftrDelta > 0 ? 'var(--success)' : 'var(--accent)',
+                      fontFeatureSettings: '"tnum"'
+}}>
           FTR {pattern.ftrDelta > 0 ? "+" : ""}{Math.round(pattern.ftrDelta*100)}%
         </div>
-        <div style={{ fontSize: 9.5, color: 'var(--sumi-4)', marginTop: 3,
-                       letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-4)',
+                       letterSpacing: '0.12em', textTransform: 'uppercase'
+}} className="mt-1" >
           confidence {Math.round(pattern.confidence*100)}
         </div>
       </div>
@@ -644,35 +700,41 @@ function PatternCard({ pattern, onOpen }) {
 // ═══════════════════════════════════════════════════════════════════════
 function CorrectionRow({ correction, onOpen }) {
   return (
-    <article style={{ background: 'var(--paper-2)', border: 'var(--hairline)',
-                       borderRadius: 6, padding: '10px 16px',
+    <article style={{
+ background: 'var(--paper-2)', border: 'var(--hairline)',
+                       borderRadius: 6,
                        display: 'grid',
                        gridTemplateColumns: '26px 1fr auto auto',
-                       gap: '0 14px', alignItems: 'center' }}>
-      <span className="kanji" style={{ fontSize: 15, color: 'var(--shu)' }}>直</span>
+                       gap: '0 12px', alignItems: 'center'
+}} className="py-2 px-4" >
+      <span className="kanji" style={{ fontSize: 15, color: 'var(--accent)' }}>直</span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, color: 'var(--sumi)', lineHeight: 1.4 }}>
+        <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>
           {correction.text}
         </div>
-        <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 3,
-                       lineHeight: 1.5 }}>
+        <div style={{
+ fontSize: 11, color: 'var(--ink-3)',
+                       lineHeight: 1.5
+}} className="mt-1" >
           {correction.suggestion}
         </div>
       </div>
       <div style={{ textAlign: 'right' }}>
-        <div className="mono" style={{ fontSize: 13, color: 'var(--sumi)',
+        <div className="mono" style={{ fontSize: 13, color: 'var(--ink)',
                       fontFeatureSettings: '"tnum"' }}>
           {correction.count}×
         </div>
-        <div style={{ fontSize: 10, color: 'var(--sumi-4)', marginTop: 2 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-4)' }} className="mt-1" >
           last {correction.lastSeen}
         </div>
       </div>
       {correction.memoryId && (
         <button onClick={() => onOpen(correction.memoryId)}
-                style={{ padding: '5px 10px', fontSize: 11, background: 'transparent',
-                          border: '1px solid var(--paper-edge)', borderRadius: 4,
-                          color: 'var(--sumi-2)', cursor: 'pointer' }}>
+                style={{
+ fontSize: 11, background: 'transparent',
+                          border: '1px solid var(--edge)', borderRadius: 4,
+                          color: 'var(--ink-2)', cursor: 'pointer'
+}} className="py-1 px-2" >
           open memory →
         </button>
       )}
@@ -686,19 +748,20 @@ function CorrectionRow({ correction, onOpen }) {
 function LifecycleRow({ ev, onOpen }) {
   const L = window.LEARNINGS;
   const kindMap = {
-    learned:    { glyph: "生", label: "learned",    color: "var(--matcha)" },
-    reinforced: { glyph: "重", label: "reinforced", color: "var(--matcha)" },
-    violated:   { glyph: "破", label: "violated",   color: "var(--shu)"    },
-    challenged: { glyph: "疑", label: "challenged", color: "var(--amber)"  },
-    superseded: { glyph: "替", label: "superseded", color: "var(--ai)"     },
-    archived:   { glyph: "納", label: "archived",   color: "var(--sumi-3)" }
+    learned:    { glyph: "生", label: "learned",    color: "var(--success)" },
+    reinforced: { glyph: "重", label: "reinforced", color: "var(--success)" },
+    violated:   { glyph: "破", label: "violated",   color: "var(--accent)"    },
+    challenged: { glyph: "疑", label: "challenged", color: "var(--warning)"  },
+    superseded: { glyph: "替", label: "superseded", color: "var(--ink-2)"     },
+    archived:   { glyph: "納", label: "archived",   color: "var(--ink-3)" }
   };
   const k = kindMap[ev.kind];
   const mem = L.memories.find(m => m.id === ev.memoryId);
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '80px 24px 1fr',
-                   gap: 10, alignItems: 'center', padding: '8px 0' }}>
-      <div style={{ fontSize: 11, color: 'var(--sumi-4)', textAlign: 'right' }}>
+    <div style={{
+ display: 'grid', gridTemplateColumns: '80px 24px 1fr', alignItems: 'center'
+}} className="gap-2 py-2 px-0" >
+      <div style={{ fontSize: 11, color: 'var(--ink-4)', textAlign: 'right' }}>
         {ev.when}
       </div>
       <span className="kanji" style={{ fontSize: 13, color: k.color,
@@ -707,16 +770,18 @@ function LifecycleRow({ ev, onOpen }) {
                     borderRadius: '50%', border: 'var(--hairline)',
                     position: 'relative', zIndex: 1 }}>{k.glyph}</span>
       <div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: k.color, letterSpacing: '0.14em',
+        <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap' }} className="gap-2" >
+          <span style={{ fontSize: 11, color: k.color, letterSpacing: '0.14em',
                           textTransform: 'uppercase' }}>{k.label}</span>
           <button onClick={() => onOpen(ev.memoryId)}
-                  style={{ fontSize: 12, color: 'var(--sumi)', background: 'transparent',
-                            border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}>
+                  style={{
+ fontSize: 13, color: 'var(--ink)', background: 'transparent',
+                            border: 'none', cursor: 'pointer', textAlign: 'left'
+}} className="p-0" >
             {mem?.what || ev.memoryId}
           </button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--sumi-3)', marginTop: 2 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
           {ev.note}
         </div>
       </div>
@@ -741,30 +806,40 @@ function MemoryDrawer({ memory, onClose }) {
                        zIndex: 11, display: 'flex', flexDirection: 'column',
                        overflow: 'hidden' }}>
         {/* Header */}
-        <div style={{ padding: '18px 24px 14px', borderBottom: 'var(--hairline)',
-                       display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{
+ borderBottom: 'var(--hairline)',
+                       display: 'flex', alignItems: 'flex-start'
+}} className="gap-3 pt-4 pb-3 px-5" >
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.16em', color: 'var(--sumi-3)',
-                           textTransform: 'uppercase', marginBottom: 4 }}>
+            <div style={{
+ fontSize: 11, letterSpacing: '0.16em', color: 'var(--ink-3)',
+                           textTransform: 'uppercase'
+}} className="mb-1" >
               Memory · {memory.category.replace("_", "-")}
             </div>
-            <h2 style={{ fontSize: 16, fontWeight: 500, margin: 0, color: 'var(--sumi)',
-                          lineHeight: 1.4 }}>
+            <h2 style={{
+ fontSize: 15, fontWeight: 500, color: 'var(--ink)',
+                          lineHeight: 1.4
+}} className="m-0" >
               {memory.what}
             </h2>
           </div>
           <button onClick={onClose}
-                  style={{ fontSize: 18, color: 'var(--sumi-3)', background: 'transparent',
-                            border: 'none', cursor: 'pointer', padding: 0,
-                            lineHeight: 1 }}>×</button>
+                  style={{
+ fontSize: 17, color: 'var(--ink-3)', background: 'transparent',
+                            border: 'none', cursor: 'pointer',
+                            lineHeight: 1
+}} className="p-0" >×</button>
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px 24px',
-                       display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div style={{
+ flex: 1, overflow: 'auto',
+                       display: 'flex', flexDirection: 'column'
+}} className="gap-4 pt-4 pb-5 px-5" >
           {/* Because */}
           <DrawerBlock title="Because">
-            <div style={{ fontSize: 12.5, color: 'var(--sumi)', lineHeight: 1.6 }}>
+            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6 }}>
               {memory.because}
             </div>
           </DrawerBlock>
@@ -776,29 +851,29 @@ function MemoryDrawer({ memory, onClose }) {
 
           {/* Strength */}
           <DrawerBlock title="Strength">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center' }} className="gap-3" >
               <StrengthMeter value={memory.strength} violations={0}/>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--sumi-2)' }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>
                 {memory.strength} / 5
               </span>
               <span style={{ flex: 1 }}/>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--matcha)' }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--success)' }}>
                 +{memory.reinforced} reinforced
               </span>
               {memory.violated > 0 && (
-                <span className="mono" style={{ fontSize: 10, color: 'var(--shu)' }}>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--accent)' }}>
                   −{memory.violated} violated
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--sumi-3)', marginTop: 6 }}>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >
               Learned {memory.learned} · last relevant {memory.lastRelevant} · source: {memory.source}.
             </div>
           </DrawerBlock>
 
           {/* References */}
           <DrawerBlock title="References">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-1" >
               {refs.good_example && (
                 <DrawerRef kind="good" text={refs.good_example}
                            label="canonical implementation — follow this"/>
@@ -832,7 +907,7 @@ function MemoryDrawer({ memory, onClose }) {
 
           {/* Actions */}
           <DrawerBlock title="Actions">
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }} className="gap-1" >
               <ActionBtn glyph="昇" label="Promote to rule"/>
               <ActionBtn glyph="育" label="Enrich scope"/>
               <ActionBtn glyph="渡" label="Cross-project"/>
@@ -850,8 +925,10 @@ function MemoryDrawer({ memory, onClose }) {
 function DrawerBlock({ title, children }) {
   return (
     <section>
-      <div style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
-                     color: 'var(--sumi-3)', marginBottom: 8 }}>
+      <div style={{
+ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
+                     color: 'var(--ink-3)'
+}} className="mb-2" >
         {title}
       </div>
       {children}
@@ -861,26 +938,28 @@ function DrawerBlock({ title, children }) {
 
 function DrawerRef({ kind, text, label }) {
   const map = {
-    good:     { glyph: "✓",  color: "var(--matcha)" },
-    bad:      { glyph: "✗",  color: "var(--shu)"    },
-    pattern:  { glyph: "紋", color: "var(--ai)"     },
-    doc:      { glyph: "文", color: "var(--sumi-2)" },
-    evidence: { glyph: "証", color: "var(--sumi-3)" },
-    related:  { glyph: "縁", color: "var(--ai)"     }
+    good:     { glyph: "✓",  color: "var(--success)" },
+    bad:      { glyph: "✗",  color: "var(--accent)"    },
+    pattern:  { glyph: "紋", color: "var(--ink-2)"     },
+    doc:      { glyph: "文", color: "var(--ink-2)" },
+    evidence: { glyph: "証", color: "var(--ink-3)" },
+    related:  { glyph: "縁", color: "var(--ink-2)"     }
   };
   const k = map[kind];
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '22px 1fr', gap: 8,
-                   alignItems: 'baseline', padding: '6px 10px',
-                   background: 'var(--paper-2)', borderRadius: 5 }}>
+    <div style={{
+ display: 'grid', gridTemplateColumns: '22px 1fr',
+                   alignItems: 'baseline',
+                   background: 'var(--paper-2)', borderRadius: 5
+}} className="gap-2 py-1 px-2" >
       <span className={kind === "good" || kind === "bad" ? "mono" : "kanji"}
-            style={{ fontSize: 12, color: k.color, textAlign: 'center' }}>
+            style={{ fontSize: 13, color: k.color, textAlign: 'center' }}>
         {k.glyph}
       </span>
       <div>
-        <div className="mono" style={{ fontSize: 11.5, color: 'var(--sumi)',
+        <div className="mono" style={{ fontSize: 11, color: 'var(--ink)',
                       lineHeight: 1.5 }}>{text}</div>
-        <div style={{ fontSize: 10, color: 'var(--sumi-3)', marginTop: 2 }}>{label}</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)' }} className="mt-1" >{label}</div>
       </div>
     </div>
   );
@@ -888,13 +967,15 @@ function DrawerRef({ kind, text, label }) {
 
 function ActionBtn({ glyph, label, subtle }) {
   return (
-    <button style={{ padding: '8px 12px', fontSize: 11.5,
+    <button style={{
+ fontSize: 11,
                       background: 'var(--paper-2)', border: 'var(--hairline)',
-                      borderRadius: 5, color: subtle ? 'var(--sumi-3)' : 'var(--sumi)',
+                      borderRadius: 5, color: subtle ? 'var(--ink-3)' : 'var(--ink)',
                       cursor: 'pointer', textAlign: 'left',
-                      display: 'flex', alignItems: 'center', gap: 8 }}>
+                      display: 'flex', alignItems: 'center'
+}} className="py-2 px-3 gap-2" >
       <span className="kanji" style={{ fontSize: 13,
-                    color: subtle ? 'var(--sumi-3)' : 'var(--shu)' }}>{glyph}</span>
+                    color: subtle ? 'var(--ink-3)' : 'var(--accent)' }}>{glyph}</span>
       {label}
     </button>
   );

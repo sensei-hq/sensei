@@ -22,6 +22,10 @@ export interface Component {
   status: ComponentStatus;
   version: string | null;
   detail: string | null;
+  /** Verb shown when status is 'installing'. Source of truth is the Rust
+   *  `DependencySpec::installing_verb` — carried on the wire so this file
+   *  doesn't duplicate the mapping. */
+  installingVerb: string;
 }
 
 // ── Remedy — opaque strings produced by the Rust crate ───────────────────

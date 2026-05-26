@@ -3,8 +3,8 @@ import { appState } from '$lib/appstate.svelte.js';
 import { senseiApi } from '$lib/api.js';
 import type { LayoutLoad } from './$types.js';
 
+// (project)/+layout.ts has already ensured appState is loaded.
 export const load: LayoutLoad = async ({ params }) => {
-  await appState.load();
   const api = senseiApi(appState.port);
   const [projects, ftrMetrics] = await Promise.all([
     api.listProjects(),

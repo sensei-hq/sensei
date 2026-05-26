@@ -1,36 +1,37 @@
 <script lang="ts">
   import type { Remedy } from '$lib/health-types.js';
+  import { Kanji } from '$lib/components';
 
   interface Props {
     remedy: Remedy;
     onCopyScript?: () => void;
-    onRecheck?: () => void;
+    onVerify?: () => void;
   }
-  let { remedy, onCopyScript, onRecheck }: Props = $props();
+  let { remedy, onCopyScript, onVerify }: Props = $props();
 </script>
 
-<section class="mt-4.5 border border-primary-z5/30 rounded-xl bg-surface-z1 overflow-hidden">
-  <header class="flex items-center gap-2.5 px-4.5 py-3.5 border-b border-surface-z2">
-    <span class="kanji text-base text-primary-z5">手</span>
+<section class="mt-4 border border-primary-z5/30 rounded-xl bg-surface-z1 overflow-hidden">
+  <header class="flex items-center gap-2.5 px-4 py-3.5 border-b border-surface-z2">
+    <Kanji char="手" />
     <div class="flex-1">
       <div class="text-sm text-surface-z9">Run this in your terminal</div>
-      <div class="text-2xs text-surface-z7 mt-0.5">{remedy.message}</div>
+      <div data-remedy-message class="text-xs text-surface-z7 mt-0.5 select-text">{remedy.message}</div>
     </div>
     {#if remedy.url}
       <a data-role="remedy-url" href={remedy.url} target="_blank" rel="noopener noreferrer"
-         class="text-2xs text-surface-z7 underline">Learn more</a>
+         class="text-xs text-surface-z7 underline">Learn more</a>
     {/if}
   </header>
 
-  <pre class="m-0 px-4.5 py-4 mono text-xs text-surface-z9 bg-surface-z3 leading-relaxed whitespace-pre-wrap break-words max-h-56 overflow-auto">{remedy.script}</pre>
+  <pre class="m-0 px-4 py-4 mono text-xs text-surface-z9 bg-surface-z3 leading-normal whitespace-pre-wrap break-words max-h-56 overflow-auto select-text cursor-text">{remedy.script}</pre>
 
-  <footer class="flex items-center justify-between gap-2.5 px-4.5 py-3 border-t border-surface-z2">
+  <footer class="flex items-center justify-between gap-2.5 px-4 py-3 border-t border-surface-z2">
     <button data-action="copy" class="btn-solid btn-sm" onclick={onCopyScript}>Copy script</button>
-    <button data-action="recheck"
+    <button data-action="verify"
             class="btn-outline btn-sm"
             style="color: oklch(var(--color-primary-z5) / 1); border-color: oklch(var(--color-primary-z5) / 0.4);"
-            onclick={onRecheck}>
-      I've run it · re-check
+            onclick={onVerify}>
+      I've run it · verify
     </button>
   </footer>
 </section>

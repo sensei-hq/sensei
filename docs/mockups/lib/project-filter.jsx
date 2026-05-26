@@ -65,13 +65,13 @@ function ProjectFilter({
   const showPopover = focused && ql.length > 0;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }} className="gap-2" >
       {label && (
-        <span style={{ fontSize: 10, color: 'var(--sumi-4)', letterSpacing: '0.14em',
+        <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.14em',
                         textTransform: 'uppercase' }}>{label}</span>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }} className="gap-1" >
         <PfChip active={value === "all"} onClick={() => onChange("all")}>all</PfChip>
         {inlineKeys.map(k => (
           <PfChip key={k} active={value === k} onClick={() => onChange(k)}>
@@ -84,11 +84,12 @@ function ProjectFilter({
 
       {/* Search input — to the right */}
       <div style={{ position: 'relative' }} ref={popRef}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6,
-                       padding: '4px 10px',
+        <div style={{
+ display: 'flex', alignItems: 'center',
                        background: 'var(--paper-2)',
                        border: 'var(--hairline)', borderRadius: 16,
-                       minWidth: 170 }}>
+                       minWidth: 170
+}} className="gap-1 py-1 px-2" >
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
                style={{ flexShrink: 0, opacity: 0.55 }}>
             <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.3"/>
@@ -99,16 +100,19 @@ function ProjectFilter({
                  onChange={e => setQuery(e.target.value)}
                  onFocus={() => setFocused(true)}
                  placeholder="search projects…"
-                 style={{ flex: 1, padding: 0, fontSize: 11.5,
+                 style={{
+ flex: 1, fontSize: 11,
                            background: 'transparent', border: 'none',
-                           color: 'var(--sumi)', fontFamily: 'inherit',
-                           outline: 'none', minWidth: 0 }}/>
+                           color: 'var(--ink)', fontFamily: 'inherit',
+                           outline: 'none', minWidth: 0
+}} className="p-0" />
           {query && (
             <button onClick={() => setQuery("")}
-                    style={{ background: 'transparent', border: 'none',
-                              color: 'var(--sumi-4)', cursor: 'pointer',
-                              padding: 0, fontSize: 12, lineHeight: 1,
-                              fontFamily: 'inherit' }}>×</button>
+                    style={{
+ background: 'transparent', border: 'none',
+                              color: 'var(--ink-4)', cursor: 'pointer', fontSize: 13, lineHeight: 1,
+                              fontFamily: 'inherit'
+}} className="p-0" >×</button>
           )}
         </div>
 
@@ -118,12 +122,13 @@ function ProjectFilter({
             [align === 'right' ? 'right' : 'left']: 0,
             width: 240, background: 'var(--paper)',
             border: 'var(--hairline)', borderRadius: 6,
-            boxShadow: '0 6px 18px rgba(0,0,0,0.06)',
-            padding: 4, zIndex: 30, maxHeight: 240, overflow: 'auto'
-          }}>
+            boxShadow: '0 6px 18px rgba(0,0,0,0.06)', zIndex: 30, maxHeight: 240, overflow: 'auto'
+}} className="p-1" >
             {matches.length === 0 && (
-              <div style={{ padding: '10px 8px', fontSize: 11,
-                              color: 'var(--sumi-4)', textAlign: 'center' }}>
+              <div style={{
+ fontSize: 11,
+                              color: 'var(--ink-4)', textAlign: 'center'
+}} className="py-2 px-2" >
                 no matches
               </div>
             )}
@@ -134,21 +139,22 @@ function ProjectFilter({
                         onClick={() => {
                           onChange(k); setQuery(""); setFocused(false);
                         }}
-                        style={{ width: '100%', textAlign: 'left',
-                                  padding: '6px 9px', fontSize: 11.5,
+                        style={{
+ width: '100%', textAlign: 'left', fontSize: 11,
                                   background: active ? 'var(--paper-2)' : 'transparent',
                                   border: 'none', borderRadius: 4,
-                                  color: active ? 'var(--sumi)' : 'var(--sumi-2)',
+                                  color: active ? 'var(--ink)' : 'var(--ink-2)',
                                   cursor: 'pointer',
-                                  display: 'flex', alignItems: 'center', gap: 7 }}>
+                                  display: 'flex', alignItems: 'center'
+}} className="py-1 px-2 gap-2" >
                   {all[k]?.kanji && (
-                    <span className="kanji" style={{ fontSize: 12, color: 'var(--shu)' }}>
+                    <span className="kanji" style={{ fontSize: 13, color: 'var(--accent)' }}>
                       {all[k].kanji}
                     </span>
                   )}
                   <span style={{ flex: 1 }}>{fullName(k)}</span>
                   {all[k]?.client && (
-                    <span style={{ fontSize: 9.5, color: 'var(--sumi-4)',
+                    <span style={{ fontSize: 11, color: 'var(--ink-4)',
                                      letterSpacing: '0.1em',
                                      textTransform: 'uppercase' }}>
                       {all[k].client}
@@ -167,14 +173,16 @@ function ProjectFilter({
 function PfChip({ active, onClick, children }) {
   return (
     <button onClick={onClick}
-            style={{ padding: '3px 10px', fontSize: 11,
-                      background: active ? 'var(--sumi)' : 'transparent',
-                      color: active ? 'var(--paper)' : 'var(--sumi-2)',
+            style={{
+ fontSize: 11,
+                      background: active ? 'var(--ink)' : 'transparent',
+                      color: active ? 'var(--paper)' : 'var(--ink-2)',
                       border: active
-                        ? '1px solid var(--sumi)'
-                        : '1px solid var(--paper-edge)',
+                        ? '1px solid var(--ink)'
+                        : '1px solid var(--edge)',
                       borderRadius: 20, cursor: 'pointer',
-                      fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+                      fontFamily: 'inherit', whiteSpace: 'nowrap'
+}} className="py-1 px-2" >
       {children}
     </button>
   );

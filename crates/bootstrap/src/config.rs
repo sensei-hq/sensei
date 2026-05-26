@@ -21,9 +21,38 @@ pub const GITHUB_REPO: &str = "sensei";
 /// Homebrew tap slug used in install/reinstall messages.
 pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
 
-/// Raw GitHub URL for the homebrew tap Brewfile (authoritative install source).
-pub const HOMEBREW_BREWFILE_URL: &str =
-    "https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile";
+// ── Compile-time binary names (single source of truth) ────────────────────────
+//
+// These exist as `const &str` so they can be used at attribute / macro time —
+// e.g. clap's `#[command(name = SENSEI_BIN, ...)]`. Runtime callers should use
+// the equivalent `SenseiConfig::sensei_binary()` etc. accessors.
+
+/// Compile-time `sensei` CLI binary name for the current build mode.
+#[cfg(feature = "dev")]
+pub const SENSEI_BIN: &str = "sensei-dev";
+#[cfg(not(feature = "dev"))]
+pub const SENSEI_BIN: &str = "sensei";
+
+/// Compile-time `senseid` daemon binary name for the current build mode.
+#[cfg(feature = "dev")]
+pub const SENSEID_BIN: &str = "senseid-dev";
+#[cfg(not(feature = "dev"))]
+pub const SENSEID_BIN: &str = "senseid";
+
+/// Compile-time `sensei-mcp` server binary name for the current build mode.
+#[cfg(feature = "dev")]
+pub const SENSEI_MCP_BIN: &str = "sensei-mcp-dev";
+#[cfg(not(feature = "dev"))]
+pub const SENSEI_MCP_BIN: &str = "sensei-mcp";
+
+/// MCP server registry key for the current build mode. Used by sensei CLI and
+/// senseid daemon when registering / removing the MCP entry in ACP configs
+/// (Claude Code, Cursor, etc.) — dev runs register as a distinct key so dev
+/// and prod can coexist in the same ACP without colliding.
+#[cfg(feature = "dev")]
+pub const MCP_REGISTRY_KEY: &str = "sensei-dev";
+#[cfg(not(feature = "dev"))]
+pub const MCP_REGISTRY_KEY: &str = "sensei";
 
 /// Homebrew tap repository slug (for reference/logging).
 pub const HOMEBREW_TAP_REPO: &str = "sensei-hq/homebrew-tap";
@@ -117,8 +146,9 @@ pub struct SenseiConfig {
 }
 
 impl SenseiConfig {
-    /// Build configuration. All values derived from the compile-time `dev` Cargo feature.
-    /// No runtime env var overrides — what you compiled is what you get.
+    /// Build configuration. All values derived from the compile-time `dev`
+    /// Cargo feature. No runtime env var overrides — what you compiled is
+    /// what you get.
     pub fn from_env() -> Self {
         let mode = SenseiMode::from_env();
         let daemon_port = DAEMON_PORT;
@@ -165,37 +195,70 @@ impl SenseiConfig {
     }
 
     /// Returns the sensei CLI binary name for the current mode.
-    pub fn sensei_binary(&self) -> &'static str {
-        if self.is_dev() { "sensei-dev" } else { "sensei" }
-    }
+    pub fn sensei_binary(&self) -> &'static str { SENSEI_BIN }
 
     /// Returns the senseid daemon binary name for the current mode.
-    pub fn senseid_binary(&self) -> &'static str {
-        if self.is_dev() { "senseid-dev" } else { "senseid" }
+    pub fn senseid_binary(&self) -> &'static str { SENSEID_BIN }
+
+    /// Returns the sensei homebrew tap formula slug for the current mode —
+    /// `sensei-hq/tap/sensei` in prod, `sensei-hq/tap/sensei-dev` in dev.
+    /// Single source of truth — callers that need to install or reference the
+    /// formula must use this method.
+    pub fn sensei_tap_formula(&self) -> &'static str {
+        if self.is_dev() {
+            "sensei-hq/tap/sensei-dev"
+        } else {
+            "sensei-hq/tap/sensei"
+        }
+    }
+
+    /// Returns the formula slug and the brew install args for the current mode.
+    /// Dev mode needs `--HEAD` because the dev formula is HEAD-only; prod uses
+    /// the published bottle with no args. Suitable for direct use with
+    /// `brew_install(formula, args)`.
+    pub fn sensei_tap_install_args(&self) -> (&'static str, &'static [&'static str]) {
+        if self.is_dev() {
+            (self.sensei_tap_formula(), &["--HEAD"])
+        } else {
+            (self.sensei_tap_formula(), &[])
+        }
+    }
+
+    /// Returns the full `brew install [--HEAD] <formula>` script for the
+    /// current mode. Suitable for direct copy/paste in a shell or for display
+    /// in a [`Remedy`].
+    pub fn brew_install_script(&self) -> String {
+        if self.is_dev() {
+            format!("brew install --HEAD {}", self.sensei_tap_formula())
+        } else {
+            format!("brew install {}", self.sensei_tap_formula())
+        }
     }
 
     /// Returns the sensei-mcp binary name for the current mode.
-    pub fn sensei_mcp_binary(&self) -> &'static str {
-        if self.is_dev() { "sensei-mcp-dev" } else { "sensei-mcp" }
-    }
+    pub fn sensei_mcp_binary(&self) -> &'static str { SENSEI_MCP_BIN }
 
-    /// Resolve the database schema source for dbd-core's `resolve_source()`.
+    /// Returns the MCP registry key for the current mode — `"sensei"` in prod,
+    /// `"sensei-dev"` in dev. Used so dev and prod can coexist in the same
+    /// ACP config without overwriting each other.
+    pub fn mcp_registry_key(&self) -> &'static str { MCP_REGISTRY_KEY }
+
+    /// Resolve the database schema source string for dbd-core's
+    /// `resolve_source()`.
     ///
-    /// Priority:
-    /// Schema source for database deployment.
-    /// Dev builds: local `database/` directory via `SENSEI_DB_SCHEMA_PATH` if set.
-    /// Prod builds: GitHub download at matching release tag.
-    pub fn db_schema_source(version: &str) -> String {
-        // Dev builds always look for a local schema path first.
-        // The Tauri sidecar sets SENSEI_DB_SCHEMA_PATH; standalone daemon does not.
+    /// - Prod build → the GitHub-tagged release matching `version`.
+    /// - Dev build  → the local `database/` directory in this workspace,
+    ///   resolved at compile time from this crate's `CARGO_MANIFEST_DIR`.
+    ///
+    /// Pure compile-time decision driven by the `dev` Cargo feature.
+    /// No env vars; the dev path is baked into the binary at build time.
+    pub fn db_schema_source(&self, version: &str) -> String {
         if COMPILE_DEV {
-            if let Ok(path) = std::env::var("SENSEI_DB_SCHEMA_PATH") {
-                if !path.is_empty() {
-                    return path;
-                }
-            }
+            // crates/bootstrap → ../../database in the workspace.
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../database").to_string()
+        } else {
+            format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
         }
-        format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
     }
 }
 
@@ -302,13 +365,6 @@ mod tests {
     }
 
     #[test]
-    fn homebrew_brewfile_url_is_github_raw() {
-        assert!(HOMEBREW_BREWFILE_URL.starts_with("https://raw.githubusercontent.com/"));
-        assert!(HOMEBREW_BREWFILE_URL.contains("homebrew-tap"));
-        assert!(HOMEBREW_BREWFILE_URL.ends_with("Brewfile"));
-    }
-
-    #[test]
     fn binary_names_match_mode() {
         let cfg = SenseiConfig::from_env();
         if COMPILE_DEV {
@@ -320,5 +376,58 @@ mod tests {
             assert_eq!(cfg.senseid_binary(), "senseid");
             assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp");
         }
+    }
+
+    #[test]
+    fn compile_time_binary_consts_match_runtime_accessors() {
+        let cfg = SenseiConfig::from_env();
+        assert_eq!(SENSEI_BIN, cfg.sensei_binary());
+        assert_eq!(SENSEID_BIN, cfg.senseid_binary());
+        assert_eq!(SENSEI_MCP_BIN, cfg.sensei_mcp_binary());
+    }
+
+    #[test]
+    fn sensei_tap_formula_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        let formula = cfg.sensei_tap_formula();
+        if cfg.is_dev() {
+            assert_eq!(formula, "sensei-hq/tap/sensei-dev");
+        } else {
+            assert_eq!(formula, "sensei-hq/tap/sensei");
+        }
+    }
+
+    #[test]
+    fn sensei_tap_install_args_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        let (formula, args) = cfg.sensei_tap_install_args();
+        assert_eq!(formula, cfg.sensei_tap_formula());
+        if cfg.is_dev() {
+            assert_eq!(args, &["--HEAD"]);
+        } else {
+            assert_eq!(args, &[] as &[&str]);
+        }
+    }
+
+    #[test]
+    fn brew_install_script_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        let script = cfg.brew_install_script();
+        if cfg.is_dev() {
+            assert_eq!(script, "brew install --HEAD sensei-hq/tap/sensei-dev");
+        } else {
+            assert_eq!(script, "brew install sensei-hq/tap/sensei");
+        }
+    }
+
+    #[test]
+    fn mcp_registry_key_matches_mode() {
+        let cfg = SenseiConfig::from_env();
+        if COMPILE_DEV {
+            assert_eq!(MCP_REGISTRY_KEY, "sensei-dev");
+        } else {
+            assert_eq!(MCP_REGISTRY_KEY, "sensei");
+        }
+        assert_eq!(MCP_REGISTRY_KEY, cfg.mcp_registry_key());
     }
 }
