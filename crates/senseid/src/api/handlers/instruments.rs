@@ -38,7 +38,13 @@ pub(crate) async fn list_instruments(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let stack = detected_stack(&state).await;
-    let mcps = crate::instruments::list_for_stack(&stack);
+    // Probing config files is cheap (~handful of small JSON reads) but it's
+    // pure synchronous IO — move it off the runtime so a slow disk doesn't
+    // stall axum's executor.
+    let installed = tokio::task::spawn_blocking(crate::assistants::installed_mcp_keys)
+        .await
+        .unwrap_or_default();
+    let mcps = crate::instruments::list_for_stack(&stack, &installed);
     Ok(Json(serde_json::json!({
         "total": mcps.len(),
         "mcps": mcps,
