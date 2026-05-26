@@ -157,8 +157,26 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       await api.updateProject(p.id, { name: p.name, description: p.description });
     }
   },
-  libraries:   async () => {},
-  instruments: async () => {},
+  libraries:   async (ws, api) => {
+    // Persist the wrapped/disabled split to `setup.libraries`. The daemon
+    // reads this when deciding which libs to index/wrap. Both lists are
+    // stored explicitly so that adding a new lib after this commit defaults
+    // to enabled (it's neither on `wrapped` nor `disabled` yet — see the
+    // loader's mapLibraries).
+    const wrapped: string[] = [];
+    const disabled: string[] = [];
+    for (const lib of ws.libraries.libs) {
+      (lib.enabled ? wrapped : disabled).push(lib.name);
+    }
+    await api.setConfig({ 'setup.libraries': JSON.stringify({ wrapped, disabled }) });
+  },
+  instruments: async (ws, api) => {
+    // Persist the user's MCP selection to `setup.instruments`. Once a daemon
+    // registry endpoint lands, the same key can drive install/uninstall.
+    const selected = ws.instruments.mcps.filter(m => m.selected).map(m => m.id);
+    const deselected = ws.instruments.mcps.filter(m => !m.selected).map(m => m.id);
+    await api.setConfig({ 'setup.instruments': JSON.stringify({ selected, deselected }) });
+  },
   inference:   async () => {},
   assignments: async () => {},
   done:        async () => { await appState.setSetupComplete(); },
@@ -279,6 +297,26 @@ export class WizardState {
     };
     this.libraries = { libs: [...data.libraries.libs] };
     this.instruments = { mcps: [...data.mcps] };
+  }
+
+  /**
+   * Re-fetch libraries from daemon, preserving the user's local enable/disable
+   * intent for libs that survive the refresh. Daemon discovers libs during
+   * scan, so the initial wizard hydrate may run before any libs exist.
+   */
+  async refreshLibraries(): Promise<void> {
+    const api = senseiApi(appState.port);
+    const fresh = await api.getLibs();
+    const previous = new Map(this.libraries.libs.map(l => [l.name, l.enabled]));
+    this.libraries = {
+      libs: fresh.libs.map(l => ({
+        id: l.id || l.name,
+        name: l.name,
+        repos: l.repos ?? [],
+        repoCount: l.repoCount ?? (l.repos?.length ?? 0),
+        enabled: previous.get(l.name) ?? true,
+      })),
+    };
   }
 
   /**

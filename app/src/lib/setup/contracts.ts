@@ -52,15 +52,16 @@ export interface DaemonProjectFolder {
   role: string | null;
 }
 
-/** A detected library. */
+/** A detected library — what `GET /api/libs` actually returns. The daemon
+ *  groups package-manager mentions across all scanned repos by lib name, so
+ *  there is no separate id; the name is the identity. `enabled` is the user's
+ *  intent for whether sensei should wrap this library, persisted as a set in
+ *  the `setup.libraries` config key. */
 export interface DaemonLibEntry {
-  id: string;
+  id: string;        // = name
   name: string;
-  version: string;
-  lang: string;
-  usage: number;
-  source: string;
-  docs: 'indexed' | 'partial' | 'schema' | 'none';
+  repos: string[];   // repos that declared this lib
+  repoCount: number;
   enabled: boolean;
 }
 

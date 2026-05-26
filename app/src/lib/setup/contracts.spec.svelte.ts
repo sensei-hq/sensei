@@ -28,9 +28,11 @@ describe('contract mock factories', () => {
     expect(p.folders[0].kind).toBeTypeOf('string');
   });
 
-  it('mockLibEntry has docs status', () => {
+  it('mockLibEntry has name, repos, and enabled', () => {
     const l = mockLibEntry();
-    expect(['indexed', 'partial', 'schema', 'none']).toContain(l.docs);
+    expect(l.name).toBeTypeOf('string');
+    expect(Array.isArray(l.repos)).toBe(true);
+    expect(l.repoCount).toBeTypeOf('number');
     expect(l.enabled).toBeTypeOf('boolean');
   });
 
