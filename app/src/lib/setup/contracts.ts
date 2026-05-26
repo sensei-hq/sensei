@@ -52,15 +52,20 @@ export interface DaemonProjectFolder {
   role: string | null;
 }
 
-/** A detected library — what `GET /api/libs` actually returns. The daemon
- *  groups package-manager mentions across all scanned repos by lib name, so
- *  there is no separate id; the name is the identity. `enabled` is the user's
- *  intent for whether sensei should wrap this library, persisted as a set in
- *  the `setup.libraries` config key. */
+/** A detected library — what `GET /api/libs` actually returns now. The
+ *  daemon joins `libraries` ⨝ `referenced_libraries` ⨝ `folders` so every
+ *  entry carries its ecosystem (npm/pypi/cargo/go/docs), latest known
+ *  version, optional description, and the folders that reference it.
+ *  `enabled` is the user's intent for whether sensei should wrap this
+ *  library, persisted as a set in the `setup.libraries` config key. */
 export interface DaemonLibEntry {
-  id: string;        // = name
+  id: string;        // = library uuid (stable across refreshes)
   name: string;
-  repos: string[];   // repos that declared this lib
+  ecosystem: string; // "npm" | "pypi" | "cargo" | "go" | "docs"
+  version: string | null;
+  description: string | null;
+  pageCount: number;
+  repos: string[];
   repoCount: number;
   enabled: boolean;
 }

@@ -73,6 +73,10 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
   return libs.map(l => ({
     id: l.id || l.name,
     name: l.name,
+    ecosystem: l.ecosystem ?? '',
+    version: l.version ?? null,
+    description: l.description ?? null,
+    pageCount: l.pageCount ?? 0,
     repos: l.repos ?? [],
     repoCount: l.repoCount ?? (l.repos?.length ?? 0),
     // Enabled when on the wrapped list, OR a new lib that hasn't been
@@ -85,12 +89,13 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
-  const [config, families, roots, projects, libs] = await Promise.all([
+  const [config, families, roots, projects, libs, instruments] = await Promise.all([
     api.getConfig(),
     api.detectAssistantFamilies(),
     api.getScanRoots(),
     api.listProjects(),
     api.getLibs(),
+    api.listInstruments(),
   ]);
 
   return {
@@ -100,6 +105,6 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     roots: roots as any[],
     projects: projects as any[],
     libraries: { total: libs.total, libs: mapLibraries(libs.libs, config) },
-    mcps: [],
+    mcps: instruments.mcps,
   };
 }
