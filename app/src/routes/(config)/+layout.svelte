@@ -84,12 +84,14 @@
                 Setup
             </div>
 
-            <div class="flex flex-col">
+            <div data-testid="rail" class="flex flex-col">
                 {#each stages as s (s.id)}
                     {@const isDone = s.status === "done"}
                     {@const isNavigable = isDone || s.active}
                     <button
                         data-rail-item
+                        data-stage-id={s.id}
+                        data-active={s.active}
                         class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-surface-z5 cursor-default transition-all duration-fast text-sm"
                         class:active={s.active}
                         class:done={isDone}

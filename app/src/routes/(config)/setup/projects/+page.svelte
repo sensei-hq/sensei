@@ -84,6 +84,8 @@
           ...(project.stack.runtimes ?? []),
         ]}
         <div
+          data-testid={`project-card-${project.id}`}
+          data-confirmed={isConfirmed}
           class="rounded-lg p-4 border transition-opacity duration-fast"
           class:bg-surface-z2={isConfirmed}
           class:border-surface-z3={isConfirmed}
