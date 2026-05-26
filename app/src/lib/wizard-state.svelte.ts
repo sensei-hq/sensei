@@ -149,12 +149,16 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
   },
   scan:        async () => {},
   projects:    async (ws, api) => {
-    // Send only confirmed projects. Daemon's update_solution reads name,
-    // description, maturity from the body — folder role edits will need a
-    // dedicated endpoint when daemon support lands.
+    // Send only confirmed projects. The daemon's update_solution endpoint
+    // persists name/description; per-folder role mutations go through the
+    // dedicated /api/folders/{id} endpoint so a role change doesn't have
+    // to round-trip through project metadata.
     for (const p of ws.projects.projects) {
       if (ws.projects.confirmed[p.id] === false) continue;
       await api.updateProject(p.id, { name: p.name, description: p.description });
+      for (const folder of p.folders) {
+        await api.updateFolder(folder.id, { role: folder.role });
+      }
     }
   },
   libraries:   async (ws, api) => {
@@ -300,6 +304,24 @@ export class WizardState {
   }
 
   /**
+   * Re-fetch instruments (MCPs) from daemon, preserving the user's local
+   * selection for entries that survive the refresh. The daemon recomputes
+   * `recommended` per request based on the detected stack, so we re-honour
+   * its truth except where the user explicitly toggled.
+   */
+  async refreshInstruments(): Promise<void> {
+    const api = senseiApi(appState.port);
+    const fresh = await api.listInstruments();
+    const previous = new Map(this.instruments.mcps.map(m => [m.id, m.selected]));
+    this.instruments = {
+      mcps: fresh.mcps.map(m => ({
+        ...m,
+        selected: previous.get(m.id) ?? m.selected,
+      })),
+    };
+  }
+
+  /**
    * Re-fetch libraries from daemon, preserving the user's local enable/disable
    * intent for libs that survive the refresh. Daemon discovers libs during
    * scan, so the initial wizard hydrate may run before any libs exist.
@@ -312,6 +334,10 @@ export class WizardState {
       libs: fresh.libs.map(l => ({
         id: l.id || l.name,
         name: l.name,
+        ecosystem: l.ecosystem ?? '',
+        version: l.version ?? null,
+        description: l.description ?? null,
+        pageCount: l.pageCount ?? 0,
         repos: l.repos ?? [],
         repoCount: l.repoCount ?? (l.repos?.length ?? 0),
         enabled: previous.get(l.name) ?? true,

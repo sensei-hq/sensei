@@ -379,7 +379,8 @@ export interface LibEntry {
   id: string;
   name: string;
   ecosystem?: string;
-  version?: string;
+  version?: string | null;
+  description?: string | null;
   pageCount?: number;
   repos: string[];
   repoCount: number;
