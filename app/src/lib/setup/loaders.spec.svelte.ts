@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { extractCompletion, extractPreferences } from './loaders.js';
+import { extractCompletion, extractPreferences, mapLibraries } from './loaders.js';
+import type { LibEntry } from '$lib/types.js';
 
 describe('extractCompletion', () => {
   it('returns pending for missing keys', () => {
@@ -72,5 +73,55 @@ describe('extractPreferences', () => {
   it('ignores non-object values', () => {
     const result = extractPreferences({ 'setup.preferences': 'not-an-object' });
     expect(result.displayName).toBe('');
+  });
+});
+
+describe('mapLibraries', () => {
+  const fixture: LibEntry[] = [
+    { id: 'lodash', name: 'lodash', repos: ['app'], repoCount: 1 },
+    { id: 'svelte', name: 'svelte', repos: ['app', 'admin'], repoCount: 2 },
+  ];
+
+  it('defaults all libs to enabled when no stored config', () => {
+    const result = mapLibraries(fixture, {});
+    expect(result).toHaveLength(2);
+    expect(result.every(l => l.enabled)).toBe(true);
+  });
+
+  it('uses name as id when daemon omits it', () => {
+    const result = mapLibraries(
+      [{ id: '', name: 'lodash', repos: [], repoCount: 0 } as LibEntry],
+      {},
+    );
+    expect(result[0].id).toBe('lodash');
+  });
+
+  it('honors stored wrapped/disabled lists from a JSON-string config value', () => {
+    const result = mapLibraries(fixture, {
+      'setup.libraries': JSON.stringify({ wrapped: ['lodash'], disabled: ['svelte'] }),
+    });
+    expect(result.find(l => l.name === 'lodash')?.enabled).toBe(true);
+    expect(result.find(l => l.name === 'svelte')?.enabled).toBe(false);
+  });
+
+  it('honors stored wrapped/disabled when config arrives as an object', () => {
+    const result = mapLibraries(fixture, {
+      'setup.libraries': { wrapped: [], disabled: ['lodash'] },
+    });
+    expect(result.find(l => l.name === 'lodash')?.enabled).toBe(false);
+    expect(result.find(l => l.name === 'svelte')?.enabled).toBe(true);
+  });
+
+  it('keeps a new lib enabled when it appears on neither stored list', () => {
+    const result = mapLibraries(fixture, {
+      'setup.libraries': JSON.stringify({ wrapped: ['lodash'], disabled: [] }),
+    });
+    // svelte is brand-new to the config — defaults to enabled.
+    expect(result.find(l => l.name === 'svelte')?.enabled).toBe(true);
+  });
+
+  it('treats malformed JSON config as empty', () => {
+    const result = mapLibraries(fixture, { 'setup.libraries': 'not-json{' });
+    expect(result.every(l => l.enabled)).toBe(true);
   });
 });
