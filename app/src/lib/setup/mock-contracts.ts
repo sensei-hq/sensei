@@ -52,7 +52,9 @@ export function mockProject(overrides: Partial<DaemonProject> = {}): DaemonProje
 
 export function mockLibEntry(overrides: Partial<DaemonLibEntry> = {}): DaemonLibEntry {
   return {
-    id: 'svelte', name: 'svelte', repos: ['app'], repoCount: 1, enabled: true,
+    id: 'svelte', name: 'svelte', ecosystem: 'npm', version: '5.0.0',
+    description: 'Cybernetically enhanced web apps', pageCount: 0,
+    repos: ['app'], repoCount: 1, enabled: true,
     ...overrides,
   };
 }

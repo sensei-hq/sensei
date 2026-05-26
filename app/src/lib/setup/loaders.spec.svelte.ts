@@ -78,14 +78,21 @@ describe('extractPreferences', () => {
 
 describe('mapLibraries', () => {
   const fixture: LibEntry[] = [
-    { id: 'lodash', name: 'lodash', repos: ['app'], repoCount: 1 },
-    { id: 'svelte', name: 'svelte', repos: ['app', 'admin'], repoCount: 2 },
+    { id: 'lodash', name: 'lodash', ecosystem: 'npm', version: '4.17.21', repos: ['app'], repoCount: 1 },
+    { id: 'svelte', name: 'svelte', ecosystem: 'npm', version: '5.0.0', repos: ['app', 'admin'], repoCount: 2 },
   ];
 
   it('defaults all libs to enabled when no stored config', () => {
     const result = mapLibraries(fixture, {});
     expect(result).toHaveLength(2);
     expect(result.every(l => l.enabled)).toBe(true);
+  });
+
+  it('passes ecosystem, version, and description through to the slice', () => {
+    const result = mapLibraries(fixture, {});
+    const svelte = result.find(l => l.name === 'svelte')!;
+    expect(svelte.ecosystem).toBe('npm');
+    expect(svelte.version).toBe('5.0.0');
   });
 
   it('uses name as id when daemon omits it', () => {

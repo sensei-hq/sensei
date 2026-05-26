@@ -1,11 +1,25 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { wizardState } from '$lib/wizard-state.svelte.js';
   import Switch from '$lib/components/Switch.svelte';
+
+  let loading = $state(true);
+  let error = $state<string | null>(null);
 
   const mcps = $derived(wizardState.instruments.mcps);
   const recommended = $derived(mcps.filter(m => m.recommended));
   const others = $derived(mcps.filter(m => !m.recommended));
   const installCount = $derived(mcps.filter(m => m.selected).length);
+
+  onMount(async () => {
+    try {
+      await wizardState.refreshInstruments();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading = false;
+    }
+  });
 
   // Derive the detected stack from the projects slice — every confirmed
   // project contributes its languages/frameworks/runtimes/services. The
