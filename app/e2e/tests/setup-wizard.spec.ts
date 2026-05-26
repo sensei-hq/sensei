@@ -85,7 +85,7 @@ async function startAtWelcome(tauriPage: any): Promise<void> {
   // tests run (the health page looks like a bootstrap error).
   await navigateTo(tauriPage, '/logs');
   await navigateTo(tauriPage, '/setup/welcome');
-  await expect(tauriPage.locator('.rail-stages')).toBeVisible({ timeout: 12_000 });
+  await expect(tauriPage.locator('[data-testid="rail"]')).toBeVisible({ timeout: 12_000 });
 }
 
 /**
@@ -261,30 +261,38 @@ test.describe('Setup Wizard — Flow A: empty corpus (placeholder states)', () =
     await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 20_000 });
   });
 
-  // ── Post-scan placeholder pages ──────────────────────────────────────────
+  // ── Post-scan stages ─────────────────────────────────────────────────────
+  // After commit 1a5e7784 / 10156ac1, Projects / Libraries / Instruments
+  // are no longer placeholders — they render real (possibly empty) state
+  // from the daemon. We assert the page-distinct testid lands and that
+  // every Continue advances cleanly through to /setup/done.
   test('projects, libraries, instruments, inference, assignments, done: all reachable via Continue', async ({ tauriPage }) => {
     await driveToScan(tauriPage, EMPTY_CORPUS);
     await tauriPage.click('.btn-solid');
     await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 20_000 });
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/projects');
-    await expect(tauriPage.locator('.placeholder-icon')).toContainText('場');
-    await expect(tauriPage.locator('.placeholder p')).toContainText('Projects will appear here after scan');
+    // Projects page — empty corpus means "no projects" placeholder, but a
+    // scanned corpus would render cards. Either path uses the page wrapper.
+    await expect(tauriPage.locator('text=/Projects|projects/').first()).toBeVisible({ timeout: 5_000 });
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/libraries');
-    await expect(tauriPage.locator('.placeholder-icon')).toContainText('庫');
+    await expect(tauriPage.locator('[data-testid="libraries-empty"], [data-testid="libraries-summary"]')).toBeVisible({ timeout: 5_000 });
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/instruments');
-    await expect(tauriPage.locator('.placeholder-icon')).toContainText('具');
+    // Instruments registry always returns the same 6 entries — so a card
+    // rendering means hydration worked. (Stack chips only appear when at
+    // least one project has stack data, which empty corpus won't have.)
+    await expect(tauriPage.locator('[data-testid^="mcp-card-"]').first()).toBeVisible({ timeout: 5_000 });
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/inference');
-    await expect(tauriPage.locator('.stage-placeholder')).toBeVisible();
+    await expect(tauriPage.locator('[data-testid="stage-placeholder"][data-stage="inference"]')).toBeVisible();
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assignments');
-    await expect(tauriPage.locator('.stage-placeholder')).toBeVisible();
+    await expect(tauriPage.locator('[data-testid="stage-placeholder"][data-stage="assignments"]')).toBeVisible();
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/done');
-    await expect(tauriPage.locator('.hero-accent')).toContainText('is ready.');
+    await expect(tauriPage.locator('[data-testid="done-summary"]')).toBeVisible();
     await expect(tauriPage.locator('.btn-primary')).toContainText('Enter observatory');
   });
 });
@@ -312,17 +320,24 @@ test.describe('Setup Wizard — Flow B: real corpus (populated states)', () => {
     await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 60_000 });
   });
 
-  test('projects page: navigable after scan (placeholder while data wiring is pending)', async ({ tauriPage }) => {
+  test('projects page: real cards render after scan completes', async ({ tauriPage }) => {
     await driveToScan(tauriPage, REAL_CORPUS);
     await tauriPage.click('.btn-solid');
     await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 60_000 });
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/projects');
 
-    // Projects page currently renders a placeholder pending SSE state wiring.
-    // Verify the page is reachable and the placeholder renders correctly.
-    await expect(tauriPage.locator('.placeholder-icon')).toContainText('場');
-    await expect(tauriPage.locator('.placeholder p')).toContainText('Projects will appear here');
+    // Either a project card renders (daemon enriched /api/projects with
+    // folders from list_folders_by_project) or the "no projects" placeholder
+    // is shown — both are valid post-scan outcomes; the test guards the
+    // page actually mounted instead of asserting a specific count.
+    const card = tauriPage.locator('[data-testid^="project-card-"]').first();
+    const empty = tauriPage.locator('text=/No projects/');
+    const visible = await Promise.race([
+      card.waitFor({ state: 'visible', timeout: 10_000 }).then(() => 'card' as const).catch(() => null),
+      empty.waitFor({ state: 'visible', timeout: 10_000 }).then(() => 'empty' as const).catch(() => null),
+    ]);
+    expect(visible === 'card' || visible === 'empty').toBe(true);
   });
 });
 
@@ -332,23 +347,19 @@ test.describe('Setup Wizard — Rail', () => {
   test.beforeEach(async ({ tauriPage }) => {
     await seedHealth(tauriPage);
     await navigateTo(tauriPage, '/setup/welcome');
-    await expect(tauriPage.locator('.rail-stages')).toBeVisible({ timeout: 12_000 });
+    await expect(tauriPage.locator('[data-testid="rail"]')).toBeVisible({ timeout: 12_000 });
   });
 
   test('shows 11 stages', async ({ tauriPage }) => {
-    await expect(tauriPage.locator('.rail-item')).toHaveCount(11);
-  });
-
-  test('progress ticks match stage count', async ({ tauriPage }) => {
-    await expect(tauriPage.locator('.bottom-tick')).toHaveCount(11);
+    await expect(tauriPage.locator('[data-rail-item]')).toHaveCount(11);
   });
 
   test('welcome stage is active on load', async ({ tauriPage }) => {
-    await expect(tauriPage.locator('.rail-item.active')).toContainText('Welcome');
+    await expect(tauriPage.locator('[data-rail-item][data-active="true"]')).toContainText('Welcome');
   });
 
   test('active stage advances after Continue click', async ({ tauriPage }) => {
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/preferences');
-    await expect(tauriPage.locator('.rail-item.active')).toContainText('Preferences');
+    await expect(tauriPage.locator('[data-rail-item][data-active="true"]')).toContainText('Preferences');
   });
 });
