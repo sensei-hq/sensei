@@ -5,6 +5,32 @@
   <title>Sensei — observatory, three directions</title>
   <meta name="viewport" content="width=1600"/>
   <link rel="stylesheet" href="lib/tokens.css"/>
+  <script>
+    // Swallow the benign ResizeObserver "loop completed" warning emitted by
+    // the design canvas's pan-zoom logic. Two layers: wrap the RO callback in
+    // rAF, and intercept the global error event the browser fires.
+    (function() {
+      window.addEventListener('error', function(e) {
+        if (e && e.message && String(e.message).includes('ResizeObserver loop')) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      });
+      if (typeof window.ResizeObserver === 'undefined') return;
+      const NativeRO = window.ResizeObserver;
+      window.ResizeObserver = class extends NativeRO {
+        constructor(cb) {
+          super((entries, observer) => {
+            window.requestAnimationFrame(() => {
+              try { cb(entries, observer); } catch (e) {
+                if (!String(e && e.message).includes('ResizeObserver loop')) throw e;
+              }
+            });
+          });
+        }
+      };
+    })();
+  </script>
   <style>
     html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: 'Inter', system-ui, sans-serif; }
     #root { height: 100vh; }
@@ -32,17 +58,48 @@
   <script type="text/babel" src="lib/direction-enso.jsx"></script>
   <script type="text/babel" src="lib/direction-shoji.jsx"></script>
   <script type="text/babel" src="lib/direction-merged.jsx"></script>
+  <script type="text/babel" src="lib/wiz-inference.jsx"></script>
+  <script type="text/babel" src="lib/wiz-assignments.jsx"></script>
   <script type="text/babel" src="lib/setup-wizard.jsx"></script>
   <script type="text/babel" src="lib/observatory.jsx"></script>
   <script type="text/babel" src="lib/project-shared.jsx"></script>
+  <script type="text/babel" src="lib/perspective-split.jsx"></script>
+  <script type="text/babel" src="lib/project-logs.jsx"></script>
   <script type="text/babel" src="lib/project-pages.jsx"></script>
+  <script type="text/babel" src="lib/project-lite-panes.jsx"></script>
+  <script src="lib/mcp-signals-data.js"></script>
+  <script src="lib/instruments-data.js"></script>
+  <script src="lib/learnings-data.js"></script>
   <script type="text/babel" src="lib/libraries.jsx"></script>
+  <script type="text/babel" src="lib/instruments.jsx"></script>
+  <script type="text/babel" src="lib/instruments-simple.jsx"></script>
+  <script type="text/babel" src="lib/project-filter.jsx"></script>
+  <script type="text/babel" src="lib/learnings.jsx"></script>
+  <script type="text/babel" src="lib/learnings-v2.jsx"></script>
+  <script type="text/babel" src="lib/learnings-anatomy-v2.jsx"></script>
+  <script type="text/babel" src="lib/sessions.jsx"></script>
+  <script type="text/babel" src="lib/sessions-zen.jsx"></script>
+  <script src="lib/upgrades-data.js"></script>
+  <script type="text/babel" src="lib/upgrades.jsx"></script>
+  <script src="lib/extensions-data.js"></script>
+  <script type="text/babel" src="lib/extensions-browser.jsx"></script>
+  <script type="text/babel" src="lib/skill-editor.jsx"></script>
+  <script type="text/babel" src="lib/agent-persona-editors.jsx"></script>
+  <script type="text/babel" src="lib/inference-settings.jsx"></script>
+  <script type="text/babel" src="lib/benchmark.jsx"></script>
+  <script type="text/babel" src="lib/sharing-review.jsx"></script>
+  <script type="text/babel" src="lib/traceability.jsx"></script>
+  <script type="text/babel" src="lib/impact.jsx"></script>
+  <script type="text/babel" src="lib/consolidation.jsx"></script>
+  <script type="text/babel" src="lib/collective-settings.jsx"></script>
   <script type="text/babel" src="lib/navigation.jsx"></script>
+  <script type="text/babel" src="lib/bootstrap.jsx"></script>
+  <script type="text/babel" src="lib/bootstrap-simple.jsx"></script>
 
   <script type="text/babel" data-presets="env,react">
     // Tweaks — dark/light mode
     const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-      "theme": "light"
+      "theme": "dark"
     }/*EDITMODE-END*/;
 
     const App = () => {
@@ -75,83 +132,345 @@
       return (
         <>
           <DesignCanvas initialZoom={0.5}>
-            <DCSection id="project"
-                       title="Project page"
-                       subtitle="Settings · graph lens (3 modes) · patterns · sessions · recommendations with quick-send + prompt palette">
-              <DCArtboard id="proj-tabs"   label="Top tabs"       width={1280} height={860}>
-                <div className="artboard-shell"><ProjectPageTopTabs/></div>
+            {/* ═════════════════════════════════════════════════════════════
+                ★ TOP-LEVEL FLOWS · the four user journeys
+               ═════════════════════════════════════════════════════════════ */}
+
+            {/* ═════════ FLOW 1 · BOOTSTRAP ═════════ */}
+            <DCSection id="bootstrap"
+                       title="① Bootstrap"
+                       subtitle="Runs on every startup. The platform package manager (Homebrew on Mac/Linux, winget on Windows) is the single visible gate — everything else (Postgres · Ollama · sensei components · DB · daemon) is resolved by running a single Brewfile / winget manifest from sensei-hq/homebrew-tap. When the auto-fix can't complete, the screen hands the user a copy-pasteable script and a re-check.">
+              <DCArtboard id="boot-fixing"
+                          label="★ Auto-fixing · Mac · Homebrew Brewfile (cycles scenarios)"
+                          width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimpleDemo/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-green"
+                          label="All green — ready to enter"
+                          width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimple scenario="all-green-mac" onReady={()=>{}}/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-manual-mac"
+                          label="Manual fallback · Homebrew missing (script)"
+                          width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimple scenario="manual-mac-no-brew" onReady={()=>{}}/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-manual-win"
+                          label="Windows · winget manifest"
+                          width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimple scenario="manual-windows" onReady={()=>{}}/></div>
               </DCArtboard>
             </DCSection>
 
-            <DCSection id="proj-settings"
-                       title="Project settings"
-                       subtitle="A · card grid (dense) · B · document layout with summary rail. Both drop the 'paid tier' line, compact identity, add stack, rename links.">
-              <DCArtboard id="pset-a" label="A · card grid" width={1280} height={860}>
-                <div className="artboard-shell"><ProjectSettingsV1Page/></div>
+            {/* ═════════ FLOW 2 · WIZARD ═════════ */}
+            <DCSection id="setup"
+                       title="② Wizard"
+                       subtitle="Day 1 only. Empty observatory invites setup · 9-stage wizard walks folders · projects · libraries · instruments · inference · assignments. Scan materializes projects as they're discovered.">
+              <DCArtboard id="empty"  label="★ Empty observatory → begin setup" width={1280} height={820}>
+                <div className="artboard-shell"><EmptyToWizardApp/></div>
               </DCArtboard>
-              <DCArtboard id="pset-b" label="★ B · document + summary rail" width={1280} height={860}>
-                <div className="artboard-shell"><ProjectSettingsV2Page/></div>
-              </DCArtboard>
-            </DCSection>
-
-            <DCSection id="libraries"
-                       title="Libraries"
-                       subtitle="A library is a library — regardless of how it arrived. Searchable, filterable by kind and language.">
-              <DCArtboard id="lib-a" label="Unified list + detail" width={1280} height={860}>
-                <div className="artboard-shell"><LibrariesVariantA/></div>
+              <DCArtboard id="wizard" label="Setup wizard · 9 stages (click through)" width={1280} height={820}>
+                <div className="artboard-shell"><SetupWizard onExit={()=>{}} onDone={()=>{}}/></div>
               </DCArtboard>
             </DCSection>
 
-            <DCSection id="mcp"
-                       title="MCP Playground"
-                       subtitle="Every library is a tool. Pick one, see what sensei exposes, try it.">
-              <DCArtboard id="mcp-pg" label="MCP Playground" width={1280} height={860}>
-                <div className="artboard-shell"><MCPPlayground/></div>
+            {/* ═════════ FLOW 3 · OBSERVATORY · COLLECTIVE ═════════ */}
+            <DCSection id="observatory-collective"
+                       title="③ Observatory · Collective"
+                       subtitle="The collective window. Today + Projects + Sessions + Logs + Insights + Memories + Upgrades + Impact + Libraries + Instruments + Collective intel + Configure. Click any project in Active projects (or in the Projects index) to open the Project window.">
+              <DCArtboard id="coll-main"  label="★ Mature state · click any project in the sidebar to open it" width={1280} height={860}>
+                <div className="artboard-shell"><ObservatoryDailyApp/></div>
+              </DCArtboard>
+              <DCArtboard id="coll-entry" label="First entry from setup · welcome toast" width={1280} height={860}>
+                <div className="artboard-shell"><ObservatoryEntryApp/></div>
+              </DCArtboard>
+              <DCArtboard id="coll-early" label="Early state · still listening" width={1280} height={860}>
+                <div className="artboard-shell"><ObservatoryEarlyApp/></div>
               </DCArtboard>
             </DCSection>
 
+            {/* ═════════ FLOW 4 · OBSERVATORY · PROJECT ═════════ */}
+            <DCSection id="observatory-project"
+                       title="④ Observatory · Project"
+                       subtitle="The project window opens as its own perspective when a project is clicked from the Collective. Project-scoped sidebar · Overview · Sessions · Memories · Traceability · Libraries · Instruments · Patterns · Impact · Settings.">
+              <DCArtboard id="proj-sidebar" label="★ Project window · sidebar + Overview" width={1280} height={860}>
+                <div className="artboard-shell"><ProjectPageSidebar/></div>
+              </DCArtboard>
+              <DCArtboard id="psplit-a" label="A · After launch · two windows side by side" width={1480} height={780}>
+                <div className="artboard-shell"><PerspectiveSplitA/></div>
+              </DCArtboard>
+              <DCArtboard id="psplit-b" label="B · Project window standalone" width={1280} height={780}>
+                <div className="artboard-shell"><PerspectiveSplitB/></div>
+              </DCArtboard>
+              <DCArtboard id="psplit-c" label="C · The launch moment · cascaded over collective" width={1480} height={860}>
+                <div className="artboard-shell"><PerspectiveSplitC/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ═════════════════════════════════════════════════════════════
+                SUPPORTING CARDBOARDS · per-screen explorations
+                Each section below is one screen reachable from a top flow,
+                shown in isolation so reviewers can compare layouts and
+                interaction options without the full shell around it.
+               ═════════════════════════════════════════════════════════════ */}
+
+            {/* ─── Projects index (reached from Collective sidebar) ───── */}
             <DCSection id="nav"
-                       title="Navigation"
-                       subtitle="How you find projects. Grid with search + status filter; denser cards; dormant and archived still show up.">
+                       title="Supporting · Projects index"
+                       subtitle="Reached from the Collective sidebar's Projects entry. Cards grid with search + status filter; denser cards; dormant and archived still show up.">
               <DCArtboard id="nav-a" label="Cards grid + search"     width={1280} height={860}>
                 <div className="artboard-shell"><ProjectsIndexA/></div>
               </DCArtboard>
             </DCSection>
 
-            <DCSection id="setup"
-                       title="Setup + empty state"
-                       subtitle="Day 1 · seven-stage wizard · empty observatory invites setup · scan materializes projects as they're discovered">
-              <DCArtboard id="empty"  label="Empty observatory → begin setup" width={1280} height={820}>
-                <div className="artboard-shell"><EmptyToWizardApp/></div>
-              </DCArtboard>
-              <DCArtboard id="wizard" label="Setup wizard · 7 stages (click through)" width={1280} height={820}>
-                <div className="artboard-shell"><SetupWizard onExit={()=>{}} onDone={()=>{}}/></div>
+            {/* ─── Libraries ─────────────────────────────────────────── */}
+            <DCSection id="libraries"
+                       title="Supporting · Libraries"
+                       subtitle="Reached from the Collective sidebar. A library is a library — regardless of how it arrived. Sensei wraps these into its own instruments.">
+              <DCArtboard id="lib-a" label="Unified list + detail" width={1280} height={860}>
+                <div className="artboard-shell"><LibrariesVariantA/></div>
               </DCArtboard>
             </DCSection>
 
-            <DCSection id="observatory"
-                       title="Observatory · daily view"
-                       subtitle="What you see every morning and when stepping in from setup. One focal teaching + signals the system has acted on.">
-              <DCArtboard id="obs-mature"  label="★ Mature state (default)"        width={1280} height={860}>
-                <div className="artboard-shell"><ObservatoryDailyApp/></div>
+            {/* ─── Instruments ───────────────────────────────────────── */}
+            <DCSection id="instruments"
+                       title="Supporting · Instruments · MCP tools"
+                       subtitle="Three distinct destinations reached from the Collective sidebar — Playground (try tools) · Replay (session tool-call log) · Health (usage + effectiveness).">
+              <DCArtboard id="inst-playground" label="★ Playground · tree-grouped tools" width={1280} height={860}>
+                <div className="artboard-shell"><InstrumentsPlaygroundSimple/></div>
               </DCArtboard>
-              <DCArtboard id="obs-entry"   label="First entry from configure"       width={1280} height={860}>
-                <div className="artboard-shell"><ObservatoryEntryApp/></div>
+              <DCArtboard id="inst-replay" label="Replay · per-session tool-call timeline" width={1280} height={860}>
+                <div className="artboard-shell"><InstrumentsReplaySimple/></div>
               </DCArtboard>
-              <DCArtboard id="obs-early"   label="Early state · still listening"   width={1280} height={860}>
-                <div className="artboard-shell"><ObservatoryEarlyApp/></div>
+              <DCArtboard id="inst-health" label="Health · usage + effectiveness" width={1280} height={860}>
+                <div className="artboard-shell"><InstrumentsHealthSimple/></div>
               </DCArtboard>
             </DCSection>
-            <DCSection id="refined"
-                       title="Refined direction"
-                       subtitle="Ma's trendline + wider sidebar · Enso's layout + icon-only collapsed state">
-              <DCArtboard id="merged" label="★ Merged · collapsible sidebar + trendline" width={1280} height={820}>
+
+            {/* ─── Learnings (memory & pattern explorations) ─────────── */}
+            <DCSection id="learnings"
+                       title="Supporting · Insights / Memories · explorations"
+                       subtitle="Patterns · memories · corrections across every project. Recommendations inbox proposes what to do — promote a pattern, write a skill, reinforce a memory, transfer one to another project. Click any memory to see the full anatomy.">
+              <DCArtboard id="learn-triage" label="★ Triage — by immediacy (Now / Soon / Settled)" width={1280} height={900}>
+                <div className="artboard-shell"><LearningsTriage/></div>
+              </DCArtboard>
+              <DCArtboard id="learn-anatomy-v2" label="★ Anatomy v2 — quieter rail + 3 blocks" width={1280} height={900}>
+                <div className="artboard-shell"><LearningsAnatomyV2/></div>
+              </DCArtboard>
+              <DCArtboard id="learn-anatomy" label="Anatomy v1 — original 4-block layout" width={1280} height={900}>
+                <div className="artboard-shell"><LearningsAnatomy/></div>
+              </DCArtboard>
+              <DCArtboard id="learn-brief" label="Brief — chart + two grouped lists" width={1280} height={900}>
+                <div className="artboard-shell"><LearningsBrief/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Sessions ──────────────────────────────────────────── */}
+            <DCSection id="sessions"
+                       title="Supporting · Sessions · cross-project"
+                       subtitle="Every session sensei has witnessed across every project. Tagged by project · language · stack. Retrospective cards summarize what's going well, what isn't, and cross-project insights.">
+              <DCArtboard id="sess-zen-trend" label="★ A · Digest + Trend — graph above, retrospective below (graph collapses on scroll)" width={1280} height={900}>
+                <div className="artboard-shell"><SessionsDigestZenTrend/></div>
+              </DCArtboard>
+              <DCArtboard id="sess-zen-mini-header" label="★ A′ · Mini header preview — what the chart looks like collapsed" width={1280} height={1100}>
+                <div className="artboard-shell"><SessionsDigestZenMiniHeaderPreview/></div>
+              </DCArtboard>
+              <DCArtboard id="sess-zen-stream" label="B · Digest + Stream — stacked area over 7 days" width={1280} height={1050}>
+                <div className="artboard-shell"><SessionsDigestZenStream/></div>
+              </DCArtboard>
+              <DCArtboard id="sess-zen-constellation" label="C · Digest + Constellation — duration vs day" width={1280} height={1050}>
+                <div className="artboard-shell"><SessionsDigestZenConstellation/></div>
+              </DCArtboard>
+              <DCArtboard id="sess-zen-bands" label="D · Digest + Bands — stacked bar per day" width={1280} height={1050}>
+                <div className="artboard-shell"><SessionsDigestZenBands/></div>
+              </DCArtboard>
+              <DCArtboard id="sess-zen-pulse" label="E · Digest + Pulse — one tick per session" width={1280} height={1050}>
+                <div className="artboard-shell"><SessionsDigestZenPulse/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Logs (now collective-scoped) ──────────────────────── */}
+            <DCSection id="collective-logs"
+                       title="Supporting · Logs · diagnostic session explorer"
+                       subtitle="Reached from the Collective sidebar. Every session sensei has run, across every project. Sessions grouped by date · module (bootstrap / session / scan), each one a sequence of CHECK · RESOLVE · INSTRUCT traces with stdout/stderr and auto-fix attempts inline. Report-this-session opens an anonymized GitHub issue preview.">
+              <DCArtboard id="logs-main" label="★ Logs · session list + trace stream" width={1280} height={900}>
+                <div className="artboard-shell"><ProjectLogsPage/></div>
+              </DCArtboard>
+              <DCArtboard id="logs-report" label="Report this session · anonymized issue preview" width={1280} height={900}>
+                <div className="artboard-shell"><ProjectLogsReportPage/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Upgrades ──────────────────────────────────────────── */}
+            <DCSection id="upgrades"
+                       title="Supporting · Upgrades · gifts from the collective"
+                       subtitle="Agents · skills · commands · lints packaged from the network's shared insights, matched to your stack and current memories. Two-pane: list + full anatomy. Install · defer · dismiss.">
+              <DCArtboard id="upgrades-inbox" label="★ Upgrades inbox · all kinds" width={1280} height={900}>
+                <div className="artboard-shell"><ObsUpgrades/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Extensions browser ────────────────────────────────── */}
+            <DCSection id="extensions"
+                       title="Supporting · Extensions · skills · commands · agents · personas · hooks · plugins"
+                       subtitle="The full extension catalogue. Some live globally; others are pinnable per-project. From the project window you see only what's active here — globals as inherited rows, project-pinned ones as their own group.">
+              <DCArtboard id="ext-collective" label="★ Collective view · entire catalogue + scope envelope" width={1280} height={900}>
+                <div className="artboard-shell"><ExtensionsCollective/></div>
+              </DCArtboard>
+              <DCArtboard id="ext-project" label="★ Project view · only inherited + pinned to this project" width={1280} height={900}>
+                <div className="artboard-shell"><ExtensionsProject/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Skill editor (two layouts) ────────────────────────── */}
+            <DCSection id="skill-editor"
+                       title="Supporting · Skill editor · two takes"
+                       subtitle="Same anatomy — name · triggers · tools · examples · evidence · body — exposed two ways. The form view is structured fields with a live assembled-context preview; the document view is a single markdown file with frontmatter, plus an inspector rail.">
+              <DCArtboard id="skill-form" label="★ A · Form layout — anatomy fields + live assembled context" width={1280} height={1100}>
+                <div className="artboard-shell"><SkillEditorFormStyle/></div>
+              </DCArtboard>
+              <DCArtboard id="skill-code" label="B · Document layout — markdown + frontmatter + inspector" width={1280} height={1100}>
+                <div className="artboard-shell"><SkillEditorCodeStyle/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Agent + persona editors ───────────────────────────── */}
+            <DCSection id="agent-persona-editors"
+                       title="Supporting · Agent · persona editors"
+                       subtitle="Agent editor centres on the autonomy ladder and a replay-test panel that reruns the agent against past sessions. Persona editor is rules + the evidence trail from sensei's memory — every rule cites the sessions that justify it.">
+              <DCArtboard id="agent-editor" label="★ Agent editor · 4-level autonomy + replay test" width={1280} height={1000}>
+                <div className="artboard-shell"><AgentEditor/></div>
+              </DCArtboard>
+              <DCArtboard id="persona-editor" label="★ Persona editor · rules + evidence trail from memory" width={1280} height={1000}>
+                <div className="artboard-shell"><PersonaEditor/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Inference settings ────────────────────────────────── */}
+            <DCSection id="inference"
+                       title="Supporting · Inference · models · routing · MOE deliberation"
+                       subtitle="Where sensei thinks. Local Ollama models + cloud providers. A fallback chain handles routine calls; the deliberation panel (MOE) reserves multi-model cross-critique for high-stakes decisions.">
+              <DCArtboard id="inference-models" label="★ Inference settings · models / routing / MOE (tabbed)" width={1280} height={950}>
+                <div className="artboard-shell"><InferenceSettings/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Benchmark runner (two layouts) ────────────────────── */}
+            <DCSection id="benchmark"
+                       title="Supporting · Benchmark · sensei vs no-sensei on the same tasks"
+                       subtitle="A corpus is a repo with a /tasks folder. Sensei runs each task twice — bare assistant, then with full sensei tools — and reports the diff. Two presentations: a dashboard for browsing runs, and a long-scroll lab notebook for one run in depth.">
+              <DCArtboard id="bench-dashboard" label="★ A · Dashboard — corpora + runs table + run detail card" width={1280} height={1050}>
+                <div className="artboard-shell"><BenchmarkRunnerDashboard/></div>
+              </DCArtboard>
+              <DCArtboard id="bench-notebook" label="B · Lab notebook — single run as long-scroll report" width={1280} height={1400}>
+                <div className="artboard-shell"><BenchmarkRunnerNotebook/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Memory · share + consolidate ──────────────────────── */}
+            <DCSection id="memory-collective"
+                       title="Supporting · Memory · share & consolidate"
+                       subtitle="The two memory-side screens that surface what's leaving and what's overlapping. Review-before-sharing previews the next batch; consolidation review proposes merges that compress the memory set.">
+              <DCArtboard id="share-review" label="★ Review before sharing · next batch preview" width={1280} height={900}>
+                <div className="artboard-shell"><ObsSharingReview/></div>
+              </DCArtboard>
+              <DCArtboard id="consolidation" label="Consolidation · merge overlapping memories" width={1280} height={900}>
+                <div className="artboard-shell"><ObsConsolidation/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Document traceability ─────────────────────────────── */}
+            <DCSection id="traceability"
+                       title="Supporting · Document traceability · doc ↔ code drift"
+                       subtitle="Per-project doc health, surfaced in the project window. Every doc-to-symbol link, checked nightly. Drift becomes visible before it causes a session correction. Drifted/broken refs ship a fix-drift prompt to the assistant.">
+              <DCArtboard id="trace-rollup" label="★ Project rollup + per-doc reference detail" width={1280} height={900}>
+                <div className="artboard-shell"><ObsTraceability/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Change impact ─────────────────────────────────────── */}
+            <DCSection id="impact"
+                       title="Supporting · Change impact · did sensei's advice work?"
+                       subtitle="Closes the loop on every accepted recommendation. Before/after FTR + corrections + tool usage; the MOE panel writes a verdict and reasoning. The negative-impact alert is the dedicated regression safety screen.">
+              <DCArtboard id="impact-list" label="★ Impact reports · positive / neutral / negative" width={1280} height={900}>
+                <div className="artboard-shell"><ObsImpact/></div>
+              </DCArtboard>
+              <DCArtboard id="impact-negative" label="Negative impact alert · regression safety net" width={1280} height={900}>
+                <div className="artboard-shell"><ObsNegativeAlert/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ─── Collective intelligence settings ──────────────────── */}
+            <DCSection id="collective-settings"
+                       title="Supporting · Collective intelligence settings"
+                       subtitle="The wizard promised this; this is where the user controls it after setup. Sharing mode + cadence + per-category filter + sharing history + lifetime contribution + privacy controls.">
+              <DCArtboard id="ci-settings" label="★ Sharing mode · categories · history · contribution" width={1280} height={1000}>
+                <div className="artboard-shell"><ObsCollectiveSettings/></div>
+              </DCArtboard>
+            </DCSection>
+
+            {/* ═════════════════════════════════════════════════════════════
+                DISCARDED · earlier directions kept for reference
+               ═════════════════════════════════════════════════════════════ */}
+
+            <DCSection id="discarded-bootstrap"
+                       title="Discarded · old 6-gate Bootstrap"
+                       subtitle="Original sequential health-check: Homebrew → Postgres → Ollama → sensei components → DB → daemon, each gate showing its own remedy panel. Replaced by the simpler one-door layout in Flow ① that resolves everything through a single Brewfile / winget manifest from sensei-hq/homebrew-tap.">
+              <DCArtboard id="boot-old-prereq" label="6-gate · missing prerequisites (default)" width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapDemo/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-old-green"  label="6-gate · all green" width={1280} height={860}>
+                <div className="artboard-shell"><Bootstrap scenario="all-green" onReady={()=>{}}/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-old-brew"   label="6-gate · Homebrew missing" width={1280} height={860}>
+                <div className="artboard-shell"><Bootstrap scenario="missing-homebrew" onReady={()=>{}}/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-old-db"     label="6-gate · DB couldn't be created" width={1280} height={860}>
+                <div className="artboard-shell"><Bootstrap scenario="missing-db" onReady={()=>{}}/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="discarded-project"
+                       title="Discarded · old Project page (top-tabs layout)"
+                       subtitle="Replaced by the Project window with sidebar (Flow ④). Kept here for reference.">
+              <DCArtboard id="proj-tabs-old" label="Project page · top-tabs (old)" width={1280} height={860}>
+                <div className="artboard-shell"><ProjectPageTopTabs/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="discarded-learnings"
+                       title="Discarded · old Learnings layouts"
+                       subtitle="Earlier explorations kept for reference. Insights / Memories now lives in the supporting cardboards above.">
+              <DCArtboard id="learn-all" label="Original · inbox + tabs + memory feed" width={1280} height={900}>
+                <div className="artboard-shell"><LearningsPage/></div>
+              </DCArtboard>
+              <DCArtboard id="learn-drawer" label="Original · memory drawer open" width={1280} height={900}>
+                <div className="artboard-shell"><LearningsPageWithDrawer/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="discarded-sessions"
+                       title="Discarded · old Sessions layouts"
+                       subtitle="Original two takes — replaced by the Zen series in the Sessions supporting cardboard.">
+              <DCArtboard id="sess-digest-original" label="Digest v1 · retro + full session list" width={1280} height={900}>
+                <div className="artboard-shell"><SessionsDigest/></div>
+              </DCArtboard>
+              <DCArtboard id="sess-timeline" label="Timeline · heatmap + grouped feed" width={1280} height={900}>
+                <div className="artboard-shell"><SessionsTimeline/></div>
+              </DCArtboard>
+            </DCSection>
+
+            <DCSection id="discarded-refined"
+                       title="Discarded · earlier shell direction"
+                       subtitle="Refined direction · Ma's trendline + wider sidebar · Enso's layout + icon-only collapsed state. Superseded by the current Observatory shell.">
+              <DCArtboard id="merged" label="Merged · collapsible sidebar + trendline" width={1280} height={820}>
                 <div className="artboard-shell"><MergedApp/></div>
               </DCArtboard>
             </DCSection>
-            <DCSection id="sensei"
-                       title="Original three directions (for reference)"
-                       subtitle="Ma · Enso · Shoji — side by side">
+
+            <DCSection id="discarded-sensei"
+                       title="Discarded · original three directions"
+                       subtitle="Ma · Enso · Shoji — the three brand explorations that informed the final design.">
               <DCArtboard id="ma"    label="01 · 間 Ma — negative space"  width={1280} height={820}>
                 <div className="artboard-shell"><MaApp/></div>
               </DCArtboard>
@@ -167,27 +486,27 @@
           {editMode && (
             <div style={{
               position: 'fixed', right: 20, bottom: 20, zIndex: 999,
-              background: 'var(--paper)', border: '1px solid var(--paper-edge)',
-              borderRadius: 10, padding: 16, width: 240,
-              boxShadow: '0 8px 24px rgba(0,0,0,.15)',
-              fontFamily: 'Inter, sans-serif'
+              background: 'var(--paper)', border: '1px solid var(--edge)',
+              borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)', width: 240,
+              boxShadow: 'var(--shadow)',
+              fontFamily: 'var(--font-ui)'
             }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
-                            color: 'var(--sumi-3)', marginBottom: 12, fontWeight: 500 }}>Tweaks</div>
-              <div style={{ fontSize: 12, color: 'var(--sumi-2)', marginBottom: 6 }}>Theme</div>
+              <div style={{ fontSize: 'var(--text-xs)', letterSpacing: 'var(--tracking-wide)', textTransform: 'uppercase',
+                            color: 'var(--ink-3)', marginBottom: 'var(--space-3)', fontWeight: 500 }}>Tweaks</div>
+              <div style={{ fontSize: 'var(--text-sm)', color: 'var(--ink-2)', marginBottom: 'var(--space-1)' }}>Theme</div>
               <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--paper-3)',
-                            borderRadius: 6 }}>
+                            borderRadius: 'var(--radius)' }}>
                 {['light','dark'].map(t => (
                   <button key={t} onClick={() => setTweak('theme', t)}
-                          style={{ flex: 1, padding: '6px 10px', fontSize: 12, border: 'none',
-                                    borderRadius: 4, background: tweaks.theme === t ? 'var(--paper)' : 'transparent',
-                                    color: tweaks.theme === t ? 'var(--sumi)' : 'var(--sumi-3)',
+                          style={{ flex: 1, padding: '6px 10px', fontSize: 'var(--text-sm)', border: 'none',
+                                    borderRadius: 'var(--radius-sm)', background: tweaks.theme === t ? 'var(--paper)' : 'transparent',
+                                    color: tweaks.theme === t ? 'var(--ink)' : 'var(--ink-3)',
                                     cursor: 'pointer' }}>
                     {t === 'light' ? '日 light' : '夜 dark'}
                   </button>
                 ))}
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--sumi-3)', marginTop: 12, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--ink-3)', marginTop: 'var(--space-3)', lineHeight: 1.5 }}>
                 All three directions share the token system. Switching recolours washi paper + sumi ink together.
               </div>
             </div>

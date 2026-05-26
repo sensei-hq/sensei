@@ -12,7 +12,7 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test:unit": "vitest run",
     "test:e2e": "playwright test --config e2e/playwright.config.ts --project=tauri",
-    "test:sidecar": "cd src-tauri && cargo test --test bootstrap_integration"
+    "test:e2e:cold": "playwright test --config e2e/playwright.cold.config.ts --project=cold-start"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",
@@ -21,6 +21,7 @@
     "@iconify-json/solar": "^1.2.5",
     "@rokkit/actions": "^1.0.5",
     "@rokkit/app": "^1.0.5",
+    "@rokkit/chart": "^1.0.5",
     "@rokkit/core": "^1.0.5",
     "@rokkit/icons": "^1.0.5",
     "@rokkit/states": "^1.0.5",

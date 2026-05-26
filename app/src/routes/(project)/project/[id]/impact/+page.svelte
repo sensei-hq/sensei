@@ -19,7 +19,7 @@
   </div>
 
   {#if data.verdicts.length === 0}
-    <p class="text-ui text-surface-z6 opacity-50">No accepted recommendations yet.</p>
+    <p class="text-sm text-surface-z6 opacity-50">No accepted recommendations yet.</p>
   {:else}
     <div class="grid grid-cols-[280px_1fr] gap-6 min-h-0">
       <!-- Verdict list -->
@@ -35,7 +35,7 @@
               <span class="text-xs font-mono" class:text-success={v.verdict === 'positive'} class:text-error={v.verdict === 'negative'} class:opacity-50={v.verdict === 'pending' || v.verdict === 'neutral'}>
                 {v.verdict === 'positive' ? '好' : v.verdict === 'negative' ? '悪' : v.verdict === 'neutral' ? '並' : '?'}
               </span>
-              <span class="text-2xs uppercase tracking-loose"
+              <span class="text-xs uppercase tracking-wide"
                 class:text-success={v.verdict === 'positive'}
                 class:text-error={v.verdict === 'negative'}
               >{v.verdict}</span>
@@ -48,7 +48,7 @@
             </div>
             <p class="text-sm m-0 leading-snug">{v.title}</p>
             {#if v.measured_at}
-              <span class="text-2xs text-surface-z6 mono mt-1 block">
+              <span class="text-xs text-surface-z6 mono mt-1 block">
                 measured {new Date(v.measured_at).toLocaleDateString()}
               </span>
             {/if}
@@ -60,34 +60,34 @@
       {#if selected}
         <div class="p-6 bg-surface-z2 border border-surface-z3 rounded-lg">
           <div class="flex items-center gap-3 mb-4">
-            <span class="text-2xs mono opacity-50">{selected.urgency}</span>
+            <span class="text-xs mono opacity-50">{selected.urgency}</span>
             {#if selected.acted_at}
-              <span class="text-2xs opacity-50">acted {new Date(selected.acted_at).toLocaleDateString()}</span>
+              <span class="text-xs opacity-50">acted {new Date(selected.acted_at).toLocaleDateString()}</span>
             {/if}
             {#if selected.measured_at}
-              <span class="text-2xs opacity-50">measured {new Date(selected.measured_at).toLocaleDateString()}</span>
+              <span class="text-xs opacity-50">measured {new Date(selected.measured_at).toLocaleDateString()}</span>
             {/if}
           </div>
 
           <h3 class="text-lg font-normal m-0 mb-3">{selected.title}</h3>
-          <p class="text-sm text-surface-z7 leading-relaxed m-0 mb-5">{selected.why}</p>
+          <p class="text-sm text-surface-z7 leading-normal m-0 mb-5">{selected.why}</p>
 
           {#if selected.baseline_ftr != null || selected.current_ftr != null}
             <div class="grid grid-cols-4 gap-px bg-surface-z3 rounded-md overflow-hidden mb-5">
               <div class="bg-surface-z1 p-3 text-center">
-                <span class="block text-2xs text-surface-z6 mb-1">FTR Before</span>
+                <span class="block text-xs text-surface-z6 mb-1">FTR Before</span>
                 <span class="block text-lg font-bold">
                   {selected.baseline_ftr != null ? Math.round(selected.baseline_ftr * 100) + '%' : '—'}
                 </span>
               </div>
               <div class="bg-surface-z1 p-3 text-center">
-                <span class="block text-2xs text-surface-z6 mb-1">FTR After</span>
+                <span class="block text-xs text-surface-z6 mb-1">FTR After</span>
                 <span class="block text-lg font-bold">
                   {selected.current_ftr != null ? Math.round(selected.current_ftr * 100) + '%' : '—'}
                 </span>
               </div>
               <div class="bg-surface-z1 p-3 text-center">
-                <span class="block text-2xs text-surface-z6 mb-1">Delta</span>
+                <span class="block text-xs text-surface-z6 mb-1">Delta</span>
                 {#if selected.baseline_ftr != null && selected.current_ftr != null}
                   {@const d = Math.round((selected.current_ftr - selected.baseline_ftr) * 100)}
                   <span class="block text-lg font-bold" class:text-success={d > 0} class:text-error={d < 0}>
@@ -98,7 +98,7 @@
                 {/if}
               </div>
               <div class="bg-surface-z1 p-3 text-center">
-                <span class="block text-2xs text-surface-z6 mb-1">Verdict</span>
+                <span class="block text-xs text-surface-z6 mb-1">Verdict</span>
                 <span class="block text-lg font-bold"
                   class:text-success={selected.verdict === 'positive'}
                   class:text-error={selected.verdict === 'negative'}

@@ -1,105 +1,583 @@
-/* Sensei — zen/sumi design tokens. Shared across 3 directions. */
+/* ═══════════════════════════════════════════════════════════════════
+   ZEN-SUMI DESIGN SYSTEM · tokens + utilities + components
+   Aesthetic: washi paper, sumi ink, vermillion accent.
+   Restraint over ornament. Hairlines over shadows. Air over density.
+
+   Scope class: .sensei  (aliases: .zs, .artboard-shell)
+   Type scale  : 8 sizes (xs 11 / sm 13 / base 15 / lg 17 / xl 22 / 2xl 28 / 3xl 40 / 4xl 56)
+   Space scale : 9 stops on 4px base (0 / 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 / 96)
+   ═══════════════════════════════════════════════════════════════════ */
+
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  /* Washi paper light mode */
-  --paper: oklch(0.975 0.008 85);       /* warm off-white, the page */
-  --paper-2: oklch(0.955 0.010 85);     /* slightly deeper — cards */
-  --paper-3: oklch(0.92 0.012 85);      /* inset / muted areas */
-  --paper-edge: oklch(0.88 0.015 85);   /* hairlines */
+  --washi-50:  oklch(0.985 0.006 85);
+  --washi-100: oklch(0.975 0.008 85);
+  --washi-200: oklch(0.955 0.010 85);
+  --washi-300: oklch(0.920 0.012 85);
+  --washi-400: oklch(0.880 0.015 85);
 
-  --sumi: oklch(0.22 0.012 50);         /* ink, primary text */
-  --sumi-2: oklch(0.38 0.012 50);       /* secondary */
-  --sumi-3: oklch(0.58 0.010 50);       /* tertiary / metadata */
-  --sumi-4: oklch(0.75 0.008 50);       /* faint */
+  --sumi-900: oklch(0.220 0.012 50);
+  --sumi-700: oklch(0.380 0.012 50);
+  --sumi-500: oklch(0.580 0.010 50);
+  --sumi-300: oklch(0.750 0.008 50);
 
-  --shu: oklch(0.58 0.15 35);           /* 朱 vermillion — the one accent */
-  --shu-soft: oklch(0.58 0.15 35 / 0.12);
-  --jade: oklch(0.62 0.08 160);         /* positive */
-  --jade-soft: oklch(0.62 0.08 160 / 0.14);
-  --amber: oklch(0.72 0.12 75);         /* warning */
-  --amber-soft: oklch(0.72 0.12 75 / 0.15);
+  --shu-500:   oklch(0.580 0.150 35);
+  --jade-500:  oklch(0.620 0.080 160);
+  --amber-500: oklch(0.720 0.120 75);
+
+  --paper:    var(--washi-100);
+  --paper-2:  var(--washi-200);
+  --paper-3:  var(--washi-300);
+  --edge:     var(--washi-400);
+
+  --ink:      var(--sumi-900);
+  --ink-2:    var(--sumi-700);
+  --ink-3:    var(--sumi-500);
+  --ink-4:    var(--sumi-300);
+
+  --primary:    var(--ink);
+  --on-primary: var(--paper);
+
+  --accent:       var(--shu-500);
+  --accent-soft:  oklch(0.580 0.150 35 / 0.12);
+  --success:      var(--jade-500);
+  --success-soft: oklch(0.620 0.080 160 / 0.14);
+  --warning:      var(--amber-500);
+  --warning-soft: oklch(0.720 0.120 75 / 0.15);
+  --danger:       oklch(0.55 0.18 28);
+  --focus-ring:   var(--shu-500);
+
+  /* Legacy aliases — keep older JSX functional */
+  --sumi:        var(--ink);
+  --sumi-2:      var(--ink-2);
+  --sumi-3:      var(--ink-3);
+  --sumi-4:      var(--ink-4);
+  --shu:         var(--accent);
+  --shu-soft:    var(--accent-soft);
+  --jade:        var(--success);
+  --jade-soft:   var(--success-soft);
+  --amber:       var(--warning);
+  --amber-soft:  var(--warning-soft);
+  --paper-edge:  var(--edge);
+  --matcha:      var(--success);
+  --ai:          var(--ink-2);
 
   --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
-  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  --font-ui:      'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
+  --font-mono:    'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  --font-kanji:   'Yu Mincho', 'Hiragino Mincho ProN', 'Songti SC', serif;
 
-  --radius: 6px;
-  --radius-lg: 10px;
-  --hairline: 1px solid var(--paper-edge);
+  /* Type scale (8 stops) */
+  --text-xs:   11px;
+  --text-sm:   13px;
+  --text-base: 15px;
+  --text-lg:   17px;
+  --text-xl:   22px;
+  --text-2xl:  28px;
+  --text-3xl:  40px;
+  --text-4xl:  56px;
+
+  --leading-tight:  1.2;
+  --leading-snug:   1.4;
+  --leading-normal: 1.6;
+  --leading-loose:  1.75;
+
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide:   0.18em;
+
+  /* Spacing (4px base, 9 stops) */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+
+  /* Radius */
+  --radius-sm:   4px;
+  --radius:      6px;
+  --radius-lg:   10px;
+  --radius-full: 9999px;
+
+  /* Hairlines + shadows */
+  --hairline: 1px solid var(--edge);
   --ink-line: 1px solid oklch(0.22 0.012 50 / 0.12);
+
+  --shadow-sm: 0 1px 2px oklch(0.22 0.012 50 / 0.04);
+  --shadow:    0 1px 3px oklch(0.22 0.012 50 / 0.06),
+               0 8px 24px oklch(0.22 0.012 50 / 0.06);
+  --shadow-lg: 0 24px 60px oklch(0.22 0.012 50 / 0.18);
+
+  /* Motion */
+  --ease:      cubic-bezier(0.2, 0.6, 0.2, 1);
+  --dur-fast:  120ms;
+  --dur:       180ms;
+  --dur-slow:  280ms;
 }
 
+/* Dark theme */
 [data-theme="dark"] {
-  --paper: oklch(0.17 0.010 50);
-  --paper-2: oklch(0.21 0.012 50);
-  --paper-3: oklch(0.25 0.012 50);
-  --paper-edge: oklch(0.32 0.012 50);
+  --paper:    oklch(0.170 0.010 50);
+  --paper-2:  oklch(0.210 0.012 50);
+  --paper-3:  oklch(0.250 0.012 50);
+  --edge:     oklch(0.320 0.012 50);
 
-  --sumi: oklch(0.94 0.008 85);
-  --sumi-2: oklch(0.78 0.008 85);
-  --sumi-3: oklch(0.60 0.010 85);
-  --sumi-4: oklch(0.42 0.012 85);
+  --ink:      oklch(0.940 0.008 85);
+  --ink-2:    oklch(0.780 0.008 85);
+  --ink-3:    oklch(0.600 0.010 85);
+  --ink-4:    oklch(0.420 0.012 85);
 
-  --shu: oklch(0.70 0.15 35);
-  --shu-soft: oklch(0.70 0.15 35 / 0.18);
-  --jade: oklch(0.72 0.09 160);
-  --jade-soft: oklch(0.72 0.09 160 / 0.18);
-  --amber: oklch(0.78 0.12 75);
-  --amber-soft: oklch(0.78 0.12 75 / 0.20);
+  --accent:       oklch(0.700 0.150 35);
+  --accent-soft:  oklch(0.700 0.150 35 / 0.18);
+  --success:      oklch(0.720 0.090 160);
+  --success-soft: oklch(0.720 0.090 160 / 0.18);
+  --warning:      oklch(0.780 0.120 75);
+  --warning-soft: oklch(0.780 0.120 75 / 0.20);
 
+  --hairline: 1px solid var(--edge);
   --ink-line: 1px solid oklch(0.94 0.008 85 / 0.12);
 }
 
-/* Reset — scoped enough for our prototype */
-.sensei *, .sensei *::before, .sensei *::after { box-sizing: border-box; }
-.sensei { font-family: var(--font-ui); color: var(--sumi); background: var(--paper); }
-.sensei button { font-family: inherit; color: inherit; background: none; border: none; cursor: pointer; padding: 0; }
-.sensei input, .sensei textarea { font-family: inherit; color: inherit; }
+/* ═══════════════════════════════════════════════════════════════════
+   BASE — three equivalent scope classes
+     .sensei         — the canonical class on app roots
+     .zs             — short alias (used in some docs)
+     .artboard-shell — every artboard in the design canvas (auto)
+   ═══════════════════════════════════════════════════════════════════ */
+.sensei, .zs, .artboard-shell,
+.sensei *, .zs *, .artboard-shell *,
+.sensei *::before, .zs *::before, .artboard-shell *::before,
+.sensei *::after,  .zs *::after,  .artboard-shell *::after { box-sizing: border-box; }
 
-.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
-.display { font-family: var(--font-display); font-feature-settings: "ss01"; letter-spacing: -0.02em; }
-.kanji { font-family: "Yu Mincho", "Hiragino Mincho ProN", "Songti SC", serif; }
+.sensei, .zs, .artboard-shell {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.sensei button, .zs button, .artboard-shell button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; padding: 0; }
+.sensei input, .zs input, .artboard-shell input,
+.sensei textarea, .zs textarea, .artboard-shell textarea,
+.sensei select, .zs select, .artboard-shell select { font: inherit; color: inherit; }
+.sensei a, .zs a, .artboard-shell a { color: inherit; text-decoration: none; }
+.sensei h1, .sensei h2, .sensei h3, .sensei h4, .sensei p,
+.zs h1, .zs h2, .zs h3, .zs h4, .zs p,
+.artboard-shell h1, .artboard-shell h2, .artboard-shell h3, .artboard-shell h4, .artboard-shell p { margin: 0; }
 
-/* Tauri window chrome */
-.tauri-chrome {
-  height: 38px;
-  display: flex;
-  align-items: center;
-  padding: 0 14px;
-  border-bottom: var(--hairline);
+/* ═══════════════════════════════════════════════════════════════════
+   SEMANTIC TYPOGRAPHY
+   ═══════════════════════════════════════════════════════════════════ */
+.mono, .zs-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.display, .zs-display {
+  font-family: var(--font-display);
+  font-feature-settings: "ss01";
+  letter-spacing: var(--tracking-tight);
+}
+.kanji, .zs-kanji {
+  font-family: var(--font-kanji);
+  font-weight: 400;
+}
+
+.zs-h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); color: var(--ink); }
+.zs-h2 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl);  line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); color: var(--ink); }
+.zs-h3 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-lg);  line-height: var(--leading-snug);  color: var(--ink); }
+.zs-hero    { font-family: var(--font-display); font-weight: 300; font-size: var(--text-4xl); line-height: 1.05; letter-spacing: var(--tracking-tight); }
+.zs-display-lg { font-family: var(--font-display); font-weight: 300; font-size: var(--text-3xl); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); }
+.zs-body    { font-size: var(--text-base); line-height: var(--leading-normal); color: var(--ink-2); }
+.zs-body-sm { font-size: var(--text-sm);   line-height: var(--leading-normal); color: var(--ink-2); }
+.zs-meta    { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.zs-eyebrow { font-size: var(--text-xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   UTILITIES — apply under any of .sensei / .zs / .artboard-shell
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Display */
+.sensei .flex, .zs .flex, .artboard-shell .flex { display: flex; }
+.sensei .inline-flex, .zs .inline-flex, .artboard-shell .inline-flex { display: inline-flex; }
+.sensei .grid, .zs .grid, .artboard-shell .grid { display: grid; }
+.sensei .block, .zs .block, .artboard-shell .block { display: block; }
+.sensei .inline-block, .zs .inline-block, .artboard-shell .inline-block { display: inline-block; }
+.sensei .hidden, .zs .hidden, .artboard-shell .hidden { display: none; }
+
+.sensei .flex-1, .zs .flex-1, .artboard-shell .flex-1 { flex: 1; }
+.sensei .flex-col, .zs .flex-col, .artboard-shell .flex-col { flex-direction: column; }
+.sensei .flex-wrap, .zs .flex-wrap, .artboard-shell .flex-wrap { flex-wrap: wrap; }
+.sensei .items-start, .zs .items-start, .artboard-shell .items-start { align-items: flex-start; }
+.sensei .items-center, .zs .items-center, .artboard-shell .items-center { align-items: center; }
+.sensei .items-end, .zs .items-end, .artboard-shell .items-end { align-items: flex-end; }
+.sensei .items-baseline, .zs .items-baseline, .artboard-shell .items-baseline { align-items: baseline; }
+.sensei .justify-start, .zs .justify-start, .artboard-shell .justify-start { justify-content: flex-start; }
+.sensei .justify-center, .zs .justify-center, .artboard-shell .justify-center { justify-content: center; }
+.sensei .justify-end, .zs .justify-end, .artboard-shell .justify-end { justify-content: flex-end; }
+.sensei .justify-between, .zs .justify-between, .artboard-shell .justify-between { justify-content: space-between; }
+
+.sensei .grid-cols-2, .zs .grid-cols-2, .artboard-shell .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sensei .grid-cols-3, .zs .grid-cols-3, .artboard-shell .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sensei .grid-cols-4, .zs .grid-cols-4, .artboard-shell .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sensei .grid-cols-6, .zs .grid-cols-6, .artboard-shell .grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+
+/* Gaps */
+.sensei .gap-0, .zs .gap-0, .artboard-shell .gap-0 { gap: 0; }
+.sensei .gap-1, .zs .gap-1, .artboard-shell .gap-1 { gap: var(--space-1); }
+.sensei .gap-2, .zs .gap-2, .artboard-shell .gap-2 { gap: var(--space-2); }
+.sensei .gap-3, .zs .gap-3, .artboard-shell .gap-3 { gap: var(--space-3); }
+.sensei .gap-4, .zs .gap-4, .artboard-shell .gap-4 { gap: var(--space-4); }
+.sensei .gap-5, .zs .gap-5, .artboard-shell .gap-5 { gap: var(--space-5); }
+.sensei .gap-6, .zs .gap-6, .artboard-shell .gap-6 { gap: var(--space-6); }
+.sensei .gap-7, .zs .gap-7, .artboard-shell .gap-7 { gap: var(--space-7); }
+.sensei .gap-8, .zs .gap-8, .artboard-shell .gap-8 { gap: var(--space-8); }
+
+/* Padding — all sides */
+.sensei .p-0, .zs .p-0, .artboard-shell .p-0 { padding: 0; }
+.sensei .p-1, .zs .p-1, .artboard-shell .p-1 { padding: var(--space-1); }
+.sensei .p-2, .zs .p-2, .artboard-shell .p-2 { padding: var(--space-2); }
+.sensei .p-3, .zs .p-3, .artboard-shell .p-3 { padding: var(--space-3); }
+.sensei .p-4, .zs .p-4, .artboard-shell .p-4 { padding: var(--space-4); }
+.sensei .p-5, .zs .p-5, .artboard-shell .p-5 { padding: var(--space-5); }
+.sensei .p-6, .zs .p-6, .artboard-shell .p-6 { padding: var(--space-6); }
+.sensei .p-7, .zs .p-7, .artboard-shell .p-7 { padding: var(--space-7); }
+.sensei .p-8, .zs .p-8, .artboard-shell .p-8 { padding: var(--space-8); }
+.sensei .p-9, .zs .p-9, .artboard-shell .p-9 { padding: var(--space-9); }
+
+.sensei .px-0, .zs .px-0, .artboard-shell .px-0 { padding-left: 0; padding-right: 0; }
+.sensei .px-1, .zs .px-1, .artboard-shell .px-1 { padding-left: var(--space-1); padding-right: var(--space-1); }
+.sensei .px-2, .zs .px-2, .artboard-shell .px-2 { padding-left: var(--space-2); padding-right: var(--space-2); }
+.sensei .px-3, .zs .px-3, .artboard-shell .px-3 { padding-left: var(--space-3); padding-right: var(--space-3); }
+.sensei .px-4, .zs .px-4, .artboard-shell .px-4 { padding-left: var(--space-4); padding-right: var(--space-4); }
+.sensei .px-5, .zs .px-5, .artboard-shell .px-5 { padding-left: var(--space-5); padding-right: var(--space-5); }
+.sensei .px-6, .zs .px-6, .artboard-shell .px-6 { padding-left: var(--space-6); padding-right: var(--space-6); }
+.sensei .px-7, .zs .px-7, .artboard-shell .px-7 { padding-left: var(--space-7); padding-right: var(--space-7); }
+.sensei .px-8, .zs .px-8, .artboard-shell .px-8 { padding-left: var(--space-8); padding-right: var(--space-8); }
+.sensei .px-9, .zs .px-9, .artboard-shell .px-9 { padding-left: var(--space-9); padding-right: var(--space-9); }
+
+.sensei .py-0, .zs .py-0, .artboard-shell .py-0 { padding-top: 0; padding-bottom: 0; }
+.sensei .py-1, .zs .py-1, .artboard-shell .py-1 { padding-top: var(--space-1); padding-bottom: var(--space-1); }
+.sensei .py-2, .zs .py-2, .artboard-shell .py-2 { padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.sensei .py-3, .zs .py-3, .artboard-shell .py-3 { padding-top: var(--space-3); padding-bottom: var(--space-3); }
+.sensei .py-4, .zs .py-4, .artboard-shell .py-4 { padding-top: var(--space-4); padding-bottom: var(--space-4); }
+.sensei .py-5, .zs .py-5, .artboard-shell .py-5 { padding-top: var(--space-5); padding-bottom: var(--space-5); }
+.sensei .py-6, .zs .py-6, .artboard-shell .py-6 { padding-top: var(--space-6); padding-bottom: var(--space-6); }
+.sensei .py-7, .zs .py-7, .artboard-shell .py-7 { padding-top: var(--space-7); padding-bottom: var(--space-7); }
+.sensei .py-8, .zs .py-8, .artboard-shell .py-8 { padding-top: var(--space-8); padding-bottom: var(--space-8); }
+.sensei .py-9, .zs .py-9, .artboard-shell .py-9 { padding-top: var(--space-9); padding-bottom: var(--space-9); }
+
+.sensei .pt-0, .zs .pt-0, .artboard-shell .pt-0 { padding-top: 0; }
+.sensei .pt-1, .zs .pt-1, .artboard-shell .pt-1 { padding-top: var(--space-1); }
+.sensei .pt-2, .zs .pt-2, .artboard-shell .pt-2 { padding-top: var(--space-2); }
+.sensei .pt-3, .zs .pt-3, .artboard-shell .pt-3 { padding-top: var(--space-3); }
+.sensei .pt-4, .zs .pt-4, .artboard-shell .pt-4 { padding-top: var(--space-4); }
+.sensei .pt-5, .zs .pt-5, .artboard-shell .pt-5 { padding-top: var(--space-5); }
+.sensei .pt-6, .zs .pt-6, .artboard-shell .pt-6 { padding-top: var(--space-6); }
+.sensei .pt-7, .zs .pt-7, .artboard-shell .pt-7 { padding-top: var(--space-7); }
+.sensei .pt-8, .zs .pt-8, .artboard-shell .pt-8 { padding-top: var(--space-8); }
+.sensei .pt-9, .zs .pt-9, .artboard-shell .pt-9 { padding-top: var(--space-9); }
+
+.sensei .pb-0, .zs .pb-0, .artboard-shell .pb-0 { padding-bottom: 0; }
+.sensei .pb-1, .zs .pb-1, .artboard-shell .pb-1 { padding-bottom: var(--space-1); }
+.sensei .pb-2, .zs .pb-2, .artboard-shell .pb-2 { padding-bottom: var(--space-2); }
+.sensei .pb-3, .zs .pb-3, .artboard-shell .pb-3 { padding-bottom: var(--space-3); }
+.sensei .pb-4, .zs .pb-4, .artboard-shell .pb-4 { padding-bottom: var(--space-4); }
+.sensei .pb-5, .zs .pb-5, .artboard-shell .pb-5 { padding-bottom: var(--space-5); }
+.sensei .pb-6, .zs .pb-6, .artboard-shell .pb-6 { padding-bottom: var(--space-6); }
+.sensei .pb-7, .zs .pb-7, .artboard-shell .pb-7 { padding-bottom: var(--space-7); }
+.sensei .pb-8, .zs .pb-8, .artboard-shell .pb-8 { padding-bottom: var(--space-8); }
+.sensei .pb-9, .zs .pb-9, .artboard-shell .pb-9 { padding-bottom: var(--space-9); }
+
+.sensei .pl-0, .zs .pl-0, .artboard-shell .pl-0 { padding-left: 0; }
+.sensei .pl-1, .zs .pl-1, .artboard-shell .pl-1 { padding-left: var(--space-1); }
+.sensei .pl-2, .zs .pl-2, .artboard-shell .pl-2 { padding-left: var(--space-2); }
+.sensei .pl-3, .zs .pl-3, .artboard-shell .pl-3 { padding-left: var(--space-3); }
+.sensei .pl-4, .zs .pl-4, .artboard-shell .pl-4 { padding-left: var(--space-4); }
+.sensei .pl-5, .zs .pl-5, .artboard-shell .pl-5 { padding-left: var(--space-5); }
+.sensei .pl-6, .zs .pl-6, .artboard-shell .pl-6 { padding-left: var(--space-6); }
+.sensei .pl-7, .zs .pl-7, .artboard-shell .pl-7 { padding-left: var(--space-7); }
+.sensei .pl-8, .zs .pl-8, .artboard-shell .pl-8 { padding-left: var(--space-8); }
+.sensei .pl-9, .zs .pl-9, .artboard-shell .pl-9 { padding-left: var(--space-9); }
+
+.sensei .pr-0, .zs .pr-0, .artboard-shell .pr-0 { padding-right: 0; }
+.sensei .pr-1, .zs .pr-1, .artboard-shell .pr-1 { padding-right: var(--space-1); }
+.sensei .pr-2, .zs .pr-2, .artboard-shell .pr-2 { padding-right: var(--space-2); }
+.sensei .pr-3, .zs .pr-3, .artboard-shell .pr-3 { padding-right: var(--space-3); }
+.sensei .pr-4, .zs .pr-4, .artboard-shell .pr-4 { padding-right: var(--space-4); }
+.sensei .pr-5, .zs .pr-5, .artboard-shell .pr-5 { padding-right: var(--space-5); }
+.sensei .pr-6, .zs .pr-6, .artboard-shell .pr-6 { padding-right: var(--space-6); }
+.sensei .pr-7, .zs .pr-7, .artboard-shell .pr-7 { padding-right: var(--space-7); }
+.sensei .pr-8, .zs .pr-8, .artboard-shell .pr-8 { padding-right: var(--space-8); }
+.sensei .pr-9, .zs .pr-9, .artboard-shell .pr-9 { padding-right: var(--space-9); }
+
+/* Margin */
+.sensei .m-0, .zs .m-0, .artboard-shell .m-0 { margin: 0; }
+.sensei .m-1, .zs .m-1, .artboard-shell .m-1 { margin: var(--space-1); }
+.sensei .m-2, .zs .m-2, .artboard-shell .m-2 { margin: var(--space-2); }
+.sensei .m-3, .zs .m-3, .artboard-shell .m-3 { margin: var(--space-3); }
+.sensei .m-4, .zs .m-4, .artboard-shell .m-4 { margin: var(--space-4); }
+.sensei .m-5, .zs .m-5, .artboard-shell .m-5 { margin: var(--space-5); }
+.sensei .m-6, .zs .m-6, .artboard-shell .m-6 { margin: var(--space-6); }
+.sensei .m-7, .zs .m-7, .artboard-shell .m-7 { margin: var(--space-7); }
+.sensei .m-8, .zs .m-8, .artboard-shell .m-8 { margin: var(--space-8); }
+.sensei .m-auto, .zs .m-auto, .artboard-shell .m-auto { margin: auto; }
+.sensei .mx-auto, .zs .mx-auto, .artboard-shell .mx-auto { margin-left: auto; margin-right: auto; }
+
+.sensei .mx-0, .zs .mx-0, .artboard-shell .mx-0 { margin-left: 0; margin-right: 0; }
+.sensei .mx-1, .zs .mx-1, .artboard-shell .mx-1 { margin-left: var(--space-1); margin-right: var(--space-1); }
+.sensei .mx-2, .zs .mx-2, .artboard-shell .mx-2 { margin-left: var(--space-2); margin-right: var(--space-2); }
+.sensei .mx-3, .zs .mx-3, .artboard-shell .mx-3 { margin-left: var(--space-3); margin-right: var(--space-3); }
+.sensei .mx-4, .zs .mx-4, .artboard-shell .mx-4 { margin-left: var(--space-4); margin-right: var(--space-4); }
+.sensei .mx-5, .zs .mx-5, .artboard-shell .mx-5 { margin-left: var(--space-5); margin-right: var(--space-5); }
+.sensei .mx-6, .zs .mx-6, .artboard-shell .mx-6 { margin-left: var(--space-6); margin-right: var(--space-6); }
+.sensei .mx-7, .zs .mx-7, .artboard-shell .mx-7 { margin-left: var(--space-7); margin-right: var(--space-7); }
+.sensei .mx-8, .zs .mx-8, .artboard-shell .mx-8 { margin-left: var(--space-8); margin-right: var(--space-8); }
+
+.sensei .my-0, .zs .my-0, .artboard-shell .my-0 { margin-top: 0; margin-bottom: 0; }
+.sensei .my-1, .zs .my-1, .artboard-shell .my-1 { margin-top: var(--space-1); margin-bottom: var(--space-1); }
+.sensei .my-2, .zs .my-2, .artboard-shell .my-2 { margin-top: var(--space-2); margin-bottom: var(--space-2); }
+.sensei .my-3, .zs .my-3, .artboard-shell .my-3 { margin-top: var(--space-3); margin-bottom: var(--space-3); }
+.sensei .my-4, .zs .my-4, .artboard-shell .my-4 { margin-top: var(--space-4); margin-bottom: var(--space-4); }
+.sensei .my-5, .zs .my-5, .artboard-shell .my-5 { margin-top: var(--space-5); margin-bottom: var(--space-5); }
+.sensei .my-6, .zs .my-6, .artboard-shell .my-6 { margin-top: var(--space-6); margin-bottom: var(--space-6); }
+.sensei .my-7, .zs .my-7, .artboard-shell .my-7 { margin-top: var(--space-7); margin-bottom: var(--space-7); }
+
+.sensei .mt-0, .zs .mt-0, .artboard-shell .mt-0 { margin-top: 0; }
+.sensei .mt-1, .zs .mt-1, .artboard-shell .mt-1 { margin-top: var(--space-1); }
+.sensei .mt-2, .zs .mt-2, .artboard-shell .mt-2 { margin-top: var(--space-2); }
+.sensei .mt-3, .zs .mt-3, .artboard-shell .mt-3 { margin-top: var(--space-3); }
+.sensei .mt-4, .zs .mt-4, .artboard-shell .mt-4 { margin-top: var(--space-4); }
+.sensei .mt-5, .zs .mt-5, .artboard-shell .mt-5 { margin-top: var(--space-5); }
+.sensei .mt-6, .zs .mt-6, .artboard-shell .mt-6 { margin-top: var(--space-6); }
+.sensei .mt-7, .zs .mt-7, .artboard-shell .mt-7 { margin-top: var(--space-7); }
+.sensei .mt-8, .zs .mt-8, .artboard-shell .mt-8 { margin-top: var(--space-8); }
+
+.sensei .mb-0, .zs .mb-0, .artboard-shell .mb-0 { margin-bottom: 0; }
+.sensei .mb-1, .zs .mb-1, .artboard-shell .mb-1 { margin-bottom: var(--space-1); }
+.sensei .mb-2, .zs .mb-2, .artboard-shell .mb-2 { margin-bottom: var(--space-2); }
+.sensei .mb-3, .zs .mb-3, .artboard-shell .mb-3 { margin-bottom: var(--space-3); }
+.sensei .mb-4, .zs .mb-4, .artboard-shell .mb-4 { margin-bottom: var(--space-4); }
+.sensei .mb-5, .zs .mb-5, .artboard-shell .mb-5 { margin-bottom: var(--space-5); }
+.sensei .mb-6, .zs .mb-6, .artboard-shell .mb-6 { margin-bottom: var(--space-6); }
+.sensei .mb-7, .zs .mb-7, .artboard-shell .mb-7 { margin-bottom: var(--space-7); }
+.sensei .mb-8, .zs .mb-8, .artboard-shell .mb-8 { margin-bottom: var(--space-8); }
+
+.sensei .ml-0, .zs .ml-0, .artboard-shell .ml-0 { margin-left: 0; }
+.sensei .ml-1, .zs .ml-1, .artboard-shell .ml-1 { margin-left: var(--space-1); }
+.sensei .ml-2, .zs .ml-2, .artboard-shell .ml-2 { margin-left: var(--space-2); }
+.sensei .ml-3, .zs .ml-3, .artboard-shell .ml-3 { margin-left: var(--space-3); }
+.sensei .ml-4, .zs .ml-4, .artboard-shell .ml-4 { margin-left: var(--space-4); }
+.sensei .ml-5, .zs .ml-5, .artboard-shell .ml-5 { margin-left: var(--space-5); }
+.sensei .ml-6, .zs .ml-6, .artboard-shell .ml-6 { margin-left: var(--space-6); }
+.sensei .ml-7, .zs .ml-7, .artboard-shell .ml-7 { margin-left: var(--space-7); }
+.sensei .ml-8, .zs .ml-8, .artboard-shell .ml-8 { margin-left: var(--space-8); }
+.sensei .ml-auto, .zs .ml-auto, .artboard-shell .ml-auto { margin-left: auto; }
+
+.sensei .mr-0, .zs .mr-0, .artboard-shell .mr-0 { margin-right: 0; }
+.sensei .mr-1, .zs .mr-1, .artboard-shell .mr-1 { margin-right: var(--space-1); }
+.sensei .mr-2, .zs .mr-2, .artboard-shell .mr-2 { margin-right: var(--space-2); }
+.sensei .mr-3, .zs .mr-3, .artboard-shell .mr-3 { margin-right: var(--space-3); }
+.sensei .mr-4, .zs .mr-4, .artboard-shell .mr-4 { margin-right: var(--space-4); }
+.sensei .mr-5, .zs .mr-5, .artboard-shell .mr-5 { margin-right: var(--space-5); }
+.sensei .mr-6, .zs .mr-6, .artboard-shell .mr-6 { margin-right: var(--space-6); }
+.sensei .mr-7, .zs .mr-7, .artboard-shell .mr-7 { margin-right: var(--space-7); }
+.sensei .mr-8, .zs .mr-8, .artboard-shell .mr-8 { margin-right: var(--space-8); }
+.sensei .mr-auto, .zs .mr-auto, .artboard-shell .mr-auto { margin-right: auto; }
+
+/* Background */
+.sensei .bg-paper, .zs .bg-paper, .artboard-shell .bg-paper { background: var(--paper); }
+.sensei .bg-paper-2, .zs .bg-paper-2, .artboard-shell .bg-paper-2 { background: var(--paper-2); }
+.sensei .bg-paper-3, .zs .bg-paper-3, .artboard-shell .bg-paper-3 { background: var(--paper-3); }
+.sensei .bg-ink, .zs .bg-ink, .artboard-shell .bg-ink { background: var(--ink); color: var(--on-primary); }
+.sensei .bg-accent, .zs .bg-accent, .artboard-shell .bg-accent { background: var(--accent); color: var(--paper); }
+.sensei .bg-accent-soft, .zs .bg-accent-soft, .artboard-shell .bg-accent-soft { background: var(--accent-soft); }
+.sensei .bg-success-soft, .zs .bg-success-soft, .artboard-shell .bg-success-soft { background: var(--success-soft); }
+.sensei .bg-warning-soft, .zs .bg-warning-soft, .artboard-shell .bg-warning-soft { background: var(--warning-soft); }
+
+/* Text color */
+.sensei .text-ink, .zs .text-ink, .artboard-shell .text-ink { color: var(--ink); }
+.sensei .text-ink-2, .zs .text-ink-2, .artboard-shell .text-ink-2 { color: var(--ink-2); }
+.sensei .text-ink-3, .zs .text-ink-3, .artboard-shell .text-ink-3 { color: var(--ink-3); }
+.sensei .text-ink-4, .zs .text-ink-4, .artboard-shell .text-ink-4 { color: var(--ink-4); }
+.sensei .text-accent, .zs .text-accent, .artboard-shell .text-accent { color: var(--accent); }
+.sensei .text-success, .zs .text-success, .artboard-shell .text-success { color: var(--success); }
+.sensei .text-warning, .zs .text-warning, .artboard-shell .text-warning { color: var(--warning); }
+.sensei .text-paper, .zs .text-paper, .artboard-shell .text-paper { color: var(--paper); }
+
+/* Text size */
+.sensei .text-xs, .zs .text-xs, .artboard-shell .text-xs { font-size: var(--text-xs); }
+.sensei .text-sm, .zs .text-sm, .artboard-shell .text-sm { font-size: var(--text-sm); }
+.sensei .text-base, .zs .text-base, .artboard-shell .text-base { font-size: var(--text-base); }
+.sensei .text-lg, .zs .text-lg, .artboard-shell .text-lg { font-size: var(--text-lg); }
+.sensei .text-xl, .zs .text-xl, .artboard-shell .text-xl { font-size: var(--text-xl); }
+.sensei .text-2xl, .zs .text-2xl, .artboard-shell .text-2xl { font-size: var(--text-2xl); }
+.sensei .text-3xl, .zs .text-3xl, .artboard-shell .text-3xl { font-size: var(--text-3xl); }
+.sensei .text-4xl, .zs .text-4xl, .artboard-shell .text-4xl { font-size: var(--text-4xl); }
+
+/* Font weight */
+.sensei .font-light, .zs .font-light, .artboard-shell .font-light       { font-weight: 300; }
+.sensei .font-normal, .zs .font-normal, .artboard-shell .font-normal     { font-weight: 400; }
+.sensei .font-medium, .zs .font-medium, .artboard-shell .font-medium     { font-weight: 500; }
+.sensei .font-semibold, .zs .font-semibold, .artboard-shell .font-semibold { font-weight: 600; }
+
+/* Text alignment */
+.sensei .text-left, .zs .text-left, .artboard-shell .text-left     { text-align: left; }
+.sensei .text-center, .zs .text-center, .artboard-shell .text-center { text-align: center; }
+.sensei .text-right, .zs .text-right, .artboard-shell .text-right   { text-align: right; }
+.sensei .uppercase, .zs .uppercase, .artboard-shell .uppercase     { text-transform: uppercase; }
+.sensei .tracking-wide, .zs .tracking-wide, .artboard-shell .tracking-wide { letter-spacing: var(--tracking-wide); }
+.sensei .tracking-tight, .zs .tracking-tight, .artboard-shell .tracking-tight { letter-spacing: var(--tracking-tight); }
+
+/* Border */
+.sensei .border, .zs .border, .artboard-shell .border       { border: var(--hairline); }
+.sensei .border-t, .zs .border-t, .artboard-shell .border-t   { border-top: var(--hairline); }
+.sensei .border-b, .zs .border-b, .artboard-shell .border-b   { border-bottom: var(--hairline); }
+.sensei .border-l, .zs .border-l, .artboard-shell .border-l   { border-left: var(--hairline); }
+.sensei .border-r, .zs .border-r, .artboard-shell .border-r   { border-right: var(--hairline); }
+.sensei .border-ink, .zs .border-ink, .artboard-shell .border-ink       { border: 1px solid var(--ink); }
+.sensei .border-accent, .zs .border-accent, .artboard-shell .border-accent { border: 1px solid var(--accent); }
+.sensei .border-none, .zs .border-none, .artboard-shell .border-none     { border: none; }
+
+/* Radius */
+.sensei .rounded-sm, .zs .rounded-sm, .artboard-shell .rounded-sm     { border-radius: var(--radius-sm); }
+.sensei .rounded, .zs .rounded, .artboard-shell .rounded             { border-radius: var(--radius); }
+.sensei .rounded-lg, .zs .rounded-lg, .artboard-shell .rounded-lg     { border-radius: var(--radius-lg); }
+.sensei .rounded-full, .zs .rounded-full, .artboard-shell .rounded-full { border-radius: var(--radius-full); }
+
+/* Shadow */
+.sensei .shadow-sm, .zs .shadow-sm, .artboard-shell .shadow-sm { box-shadow: var(--shadow-sm); }
+.sensei .shadow, .zs .shadow, .artboard-shell .shadow         { box-shadow: var(--shadow); }
+.sensei .shadow-lg, .zs .shadow-lg, .artboard-shell .shadow-lg { box-shadow: var(--shadow-lg); }
+
+/* Sizing */
+.sensei .w-full, .zs .w-full, .artboard-shell .w-full           { width: 100%; }
+.sensei .h-full, .zs .h-full, .artboard-shell .h-full           { height: 100%; }
+.sensei .min-h-screen, .zs .min-h-screen, .artboard-shell .min-h-screen { min-height: 100vh; }
+
+/* Divide utilities (parent owns the rule) */
+.sensei .divide-y > * + *, .zs .divide-y > * + *, .artboard-shell .divide-y > * + * { border-top: var(--hairline); }
+.sensei .divide-y-ink > * + *, .zs .divide-y-ink > * + *, .artboard-shell .divide-y-ink > * + * { border-top: var(--ink-line); }
+.sensei .divide-x > * + *, .zs .divide-x > * + *, .artboard-shell .divide-x > * + * { border-left: var(--hairline); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   COMPONENT CLASSES
+   ═══════════════════════════════════════════════════════════════════ */
+.sensei .zs-btn, .zs .zs-btn, .artboard-shell .zs-btn {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 9px 16px; font-size: var(--text-sm); font-weight: 500;
+  border-radius: var(--radius); border: 1px solid transparent;
+  background: transparent; color: var(--ink); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.sensei .zs-btn:active, .zs .zs-btn:active, .artboard-shell .zs-btn:active { transform: translateY(0.5px); }
+.sensei .zs-btn:focus-visible, .zs .zs-btn:focus-visible, .artboard-shell .zs-btn:focus-visible { outline: 1.5px solid var(--focus-ring); outline-offset: 2px; }
+
+.sensei .zs-btn-primary, .zs .zs-btn-primary, .artboard-shell .zs-btn-primary { background: var(--ink); color: var(--on-primary); }
+.sensei .zs-btn-primary:hover, .zs .zs-btn-primary:hover, .artboard-shell .zs-btn-primary:hover { background: oklch(0.30 0.012 50); }
+
+.sensei .zs-btn-secondary, .zs .zs-btn-secondary, .artboard-shell .zs-btn-secondary { border-color: var(--ink); color: var(--ink); }
+.sensei .zs-btn-secondary:hover, .zs .zs-btn-secondary:hover, .artboard-shell .zs-btn-secondary:hover { background: var(--paper-3); }
+
+.sensei .zs-btn-ghost, .zs .zs-btn-ghost, .artboard-shell .zs-btn-ghost { color: var(--ink-2); }
+.sensei .zs-btn-ghost:hover, .zs .zs-btn-ghost:hover, .artboard-shell .zs-btn-ghost:hover { background: var(--paper-3); color: var(--ink); }
+
+.sensei .zs-btn-sm, .zs .zs-btn-sm, .artboard-shell .zs-btn-sm { padding: 6px 12px; font-size: var(--text-xs); }
+.sensei .zs-btn-lg, .zs .zs-btn-lg, .artboard-shell .zs-btn-lg { padding: 11px 18px; font-size: var(--text-sm); }
+
+/* Badge */
+.sensei .zs-badge, .zs .zs-badge, .artboard-shell .zs-badge {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: 2px 8px; font-family: var(--font-mono); font-size: var(--text-xs);
+  border-radius: var(--radius-sm); color: var(--ink-2); background: var(--paper-3);
+  border: 1px solid oklch(0.22 0.012 50 / 0.06);
+}
+.sensei .zs-badge-success, .zs .zs-badge-success, .artboard-shell .zs-badge-success { color: var(--success); background: var(--success-soft); border-color: oklch(0.62 0.08 160 / 0.25); }
+.sensei .zs-badge-warning, .zs .zs-badge-warning, .artboard-shell .zs-badge-warning { color: oklch(0.55 0.13 60); background: var(--warning-soft); border-color: oklch(0.72 0.12 75 / 0.30); }
+.sensei .zs-badge-accent, .zs .zs-badge-accent, .artboard-shell .zs-badge-accent   { color: var(--accent);  background: var(--accent-soft);  border-color: oklch(0.58 0.15 35 / 0.28); }
+
+/* Card */
+.zs-card {
+  background: var(--paper-2); border: var(--hairline);
+  border-radius: var(--radius-lg); padding: var(--space-5);
+}
+.zs-card-flush { background: var(--paper-2); border: var(--hairline); border-radius: var(--radius-lg); }
+
+/* Hairline rule */
+.zs-rule, .hairline { height: 1px; background: var(--edge); border: none; margin: 0; }
+
+/* Input */
+.sensei .zs-input, .zs .zs-input, .artboard-shell .zs-input {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 8px 12px; background: var(--paper-2); border: var(--hairline);
+  border-radius: var(--radius); font-size: var(--text-sm); color: var(--ink);
+  width: 100%;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.sensei .zs-input:focus-within, .zs .zs-input:focus-within, .artboard-shell .zs-input:focus-within { border-color: var(--ink); }
+.sensei .zs-input input, .zs .zs-input input, .artboard-shell .zs-input input {
+  flex: 1; background: transparent; border: none; outline: none; font-size: inherit; color: inherit;
+}
+.sensei .zs-input input::placeholder, .zs .zs-input input::placeholder, .artboard-shell .zs-input input::placeholder { color: var(--ink-4); }
+
+/* Dots */
+.zs-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--ink-3); flex-shrink: 0; }
+.zs-dot-accent  { background: var(--accent); }
+.zs-dot-success { background: var(--success); }
+.zs-dot-warning { background: var(--warning); }
+.zs-ink-dot, .ink-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* Tauri chrome */
+.tauri-chrome, .zs-chrome {
+  height: 38px; display: flex; align-items: center;
+  padding: 0 14px; border-bottom: var(--hairline);
   background: var(--paper);
   -webkit-app-region: drag;
-  gap: 8px;
-  flex-shrink: 0;
+  gap: var(--space-2); flex-shrink: 0;
 }
-.tauri-traffic { display: flex; gap: 7px; }
-.tauri-traffic > span {
+.tauri-traffic, .zs-traffic { display: flex; gap: 7px; }
+.tauri-traffic > span, .zs-traffic > span {
   width: 12px; height: 12px; border-radius: 50%;
-  display: block;
-  background: var(--paper-edge);
+  display: block; background: var(--edge);
 }
-.tauri-traffic > span:nth-child(1) { background: oklch(0.72 0.14 28); }
-.tauri-traffic > span:nth-child(2) { background: oklch(0.82 0.13 85); }
-.tauri-traffic > span:nth-child(3) { background: oklch(0.72 0.11 145); }
-.tauri-title {
+.tauri-traffic > span:nth-child(1), .zs-traffic > span:nth-child(1) { background: oklch(0.72 0.14 28); }
+.tauri-traffic > span:nth-child(2), .zs-traffic > span:nth-child(2) { background: oklch(0.82 0.13 85); }
+.tauri-traffic > span:nth-child(3), .zs-traffic > span:nth-child(3) { background: oklch(0.72 0.11 145); }
+.tauri-title, .zs-chrome-title {
   flex: 1; text-align: center;
-  font-size: 12px; color: var(--sumi-3);
+  font-size: var(--text-xs); color: var(--ink-3);
   font-family: var(--font-ui); letter-spacing: 0.02em;
 }
 
-/* Shared tiny bits */
-.hairline { background: var(--paper-edge); height: 1px; border: none; }
-.ink-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--shu); }
+/* Sparkline */
+.sparkline-path, .zs-sparkline {
+  fill: none; stroke: currentColor;
+  stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round;
+}
 
-.sparkline-path { fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+/* Scrollbars */
+.sensei ::-webkit-scrollbar, .zs ::-webkit-scrollbar, .artboard-shell ::-webkit-scrollbar { width: 6px; height: 6px; }
+.sensei ::-webkit-scrollbar-thumb, .zs ::-webkit-scrollbar-thumb, .artboard-shell ::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.sensei:hover ::-webkit-scrollbar-thumb, .zs:hover ::-webkit-scrollbar-thumb, .artboard-shell:hover ::-webkit-scrollbar-thumb { background: oklch(0.5 0.01 50 / 0.2); }
 
-/* Scrollbars — invisible unless hovered */
-.sensei ::-webkit-scrollbar { width: 6px; height: 6px; }
-.sensei ::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.sensei:hover ::-webkit-scrollbar-thumb { background: oklch(0.5 0.01 50 / 0.2); }
-
-/* Disable focus ring except where useful */
-.sensei button:focus-visible { outline: 1.5px solid var(--shu); outline-offset: 2px; border-radius: 3px; }
+/* Focus ring */
+.sensei button:focus-visible, .zs button:focus-visible, .artboard-shell button:focus-visible,
+.sensei a:focus-visible, .zs a:focus-visible, .artboard-shell a:focus-visible {
+  outline: 1.5px solid var(--focus-ring); outline-offset: 2px; border-radius: 3px;
+}
 
 @keyframes senseiSpin { to { transform: rotate(360deg); } }
+@keyframes zsSpin     { to { transform: rotate(360deg); } }
+.zs-spin { animation: zsSpin 1.2s linear infinite; }

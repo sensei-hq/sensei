@@ -28,6 +28,7 @@ sensei-bootstrap = { path = "../../crates/bootstrap" }
 tauri-plugin-playwright = { version = "0.2", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 sysinfo = "0.34"
+tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,41 +1,94 @@
-@import '@unocss/reset/tailwind.css';
-@import '@rokkit/themes/base.css';
-@import '@rokkit/themes/frosted.css';
-@import '$lib/tokens.css';
+@import "@unocss/reset/tailwind.css";
+@import "@rokkit/themes/base.css";
+@import "@rokkit/themes/zen-sumi.css";
+@import "$lib/tokens.css";
 
 /* Follow OS dark/light */
 :root {
-  color-scheme: light dark;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+    color-scheme: light dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-html, body {
-  height: 100%;
-  overflow: hidden;
-  font-family: var(--font-sans);
-  color: oklch(var(--color-surface-z9) / 1);
-  background: oklch(var(--color-surface-z0) / 1);
+/*
+ * Hardcoded background fallback for the Tauri webview.
+ *
+ * `tauri.conf.json` has `transparent: true` (+ window_vibrancy on macOS),
+ * so the window paints nothing on its own. The body MUST always have an
+ * opaque background or the desktop wallpaper shows through and the page
+ * appears blank.
+ *
+ * Rokkit's `--color-surface-z*` vars only resolve when `<body>` has a
+ * `data-mode` attribute set (light/dark). The js code that sets it
+ * runs onMount, which is AFTER first paint — so a Rokkit-only
+ * background leaves a flash of transparency on every cold start. The
+ * hardcoded `oklch(...)` below matches kami-50 (light mode page bg)
+ * and is overridden by Rokkit for `[data-mode="dark"]`.
+ */
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    color: oklch(0.220 0.012 50 / 1);          /* sumi-900 — primary ink */
+    background: oklch(0.985 0.005 85 / 1);     /* kami-50 — page bg */
+}
+body[data-mode="dark"] {
+    color: oklch(var(--color-surface-z9) / 1);
+    background: oklch(var(--color-surface-z0) / 1);
+}
+body[data-mode="light"] {
+    color: oklch(var(--color-surface-z9) / 1);
+    background: oklch(var(--color-surface-z0) / 1);
+}
+
+/* Tauri webview can default to non-selectable text on some platforms,
+ * blocking users from copying remedy scripts, error details, or anything
+ * else they might need to share. Opt the whole page in to text selection
+ * by default; UI chrome (drag region, buttons) opts back out below. */
+html,
+body {
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 /* Tauri drag regions */
-.drag-region { -webkit-app-region: drag; app-region: drag; }
-.no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
+.drag-region {
+    -webkit-app-region: drag;
+    app-region: drag;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+}
+button {
+    -webkit-user-select: none;
+    user-select: none;
+}
 
 /* Sidebar vibrancy */
 .sidebar-vibrancy {
-  background: color-mix(in oklch, oklch(var(--color-surface-z1) / 1) 85%, transparent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: color-mix(
+        in oklch,
+        oklch(var(--color-surface-z1) / 1) 85%,
+        transparent
+    );
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
 /* Ink dot — small decorative accent dot */
 .ink-dot {
-  display: inline-block;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: oklch(var(--color-primary-z5) / 1);
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: oklch(var(--color-primary-z5) / 1);
 }
 
 /* Selection */
-::selection { background: oklch(var(--color-primary-z5) / 0.12); }
+::selection {
+    background: oklch(var(--color-primary-z5) / 0.12);
+}

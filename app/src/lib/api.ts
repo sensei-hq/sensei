@@ -45,6 +45,20 @@ export function senseiApi(port: number) {
     } catch { /* non-fatal */ }
   }
 
+  async function tryPut(path: string, body: unknown): Promise<ApiResult<void>> {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return { ok: true, data: undefined };
+      return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
   async function del(path: string) {
     try { await fetch(`${base}${path}`, { method: 'DELETE' }); } catch { /* non-fatal */ }
   }
@@ -135,6 +149,10 @@ export function senseiApi(port: number) {
       put(`/api/projects/${enc(id)}`, patch),
 
     deleteProject: (id: string) => del(`/api/projects/${enc(id)}`),
+
+    /** Update a single folder. Currently only `role` is honored daemon-side. */
+    updateFolder: (id: string, patch: { role?: string | null }) =>
+      put(`/api/folders/${enc(id)}`, patch),
 
     addProjectRepo: (projectId: string, repo: { repoId: string; role?: string }) =>
       post(`/api/projects/${enc(projectId)}/repos`, repo, { ok: false }),
@@ -373,6 +391,16 @@ export function senseiApi(port: number) {
     setConfig: (config: Record<string, string>) =>
       put('/api/config', config),
 
+    /** Error-propagating variant of setConfig — required where drift between
+     *  daemon and localStorage caches would corrupt downstream state. */
+    trySetConfig: (config: Record<string, string>) =>
+      tryPut('/api/config', config),
+
+    /** Error-propagating variant of getConfig — used by appState.load() to
+     *  distinguish "daemon unreachable" (don't touch cache) from "daemon says
+     *  empty config" (clear cache). */
+    tryGetConfig: () => tryGet<Record<string, string>>('/api/config'),
+
     deleteConfig: (key: string) => del(`/api/config/${enc(key)}`),
 
     // ── Assistants ────────────────────────────────────────────────────────
@@ -385,6 +413,13 @@ export function senseiApi(port: number) {
 
     removeAssistants: (assistants: string[] = []) =>
       post<import('./types').AssistantRemoveResult>('/api/assistants/remove', { acps: assistants }, { assistants_removed: [], errors: [] }),
+
+    // ── Instruments (MCP registry — setup wizard Instruments stage) ───────
+    listInstruments: () =>
+      get<{ total: number; mcps: import('./setup/contracts').DaemonMcpEntry[]; stack: string[] }>(
+        '/api/instruments',
+        { total: 0, mcps: [], stack: [] },
+      ),
 
     // ── Installer ───────────────────────────────────────────────────────
     installAll: (assistants: string[], scope = 'global') =>

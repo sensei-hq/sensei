@@ -59,11 +59,23 @@ function webkitNodeReexportFix(): Plugin {
 // Injected at build time so the frontend default is always correct.
 const daemonPort = process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production' ? 7745 : 7744;
 
+// Health-bypass is decided at RUNTIME via `window.__TAURI__` (set by
+// Tauri's pre-injected bootstrap script before any user JS runs). No
+// build-time constant, no env var. See `health-cache.ts::isHealthBypass`.
+
+// App version: read from package.json so reroute can compare against the
+// `sensei:app-version` localStorage flag (set by the updater pre-restart).
+// Avoids triggering the upgrade flow when the stored version matches the
+// running binary — i.e. upgrade has already been completed.
+import { readFileSync } from 'node:fs';
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as { version: string };
+
 export default defineConfig({
   plugins: [webkitNodeReexportFix(), UnoCSS(), sveltekit()],
 
   define: {
     __SENSEI_DEFAULT_PORT__: JSON.stringify(daemonPort),
+    __SENSEI_APP_VERSION__: JSON.stringify(pkg.version),
   },
 
   // Tauri: don't open browser, use Tauri window

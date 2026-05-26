@@ -45,11 +45,49 @@ window.SENSEI_SETUP = {
     }
   ],
 
+  // Grouped by vendor "family". A family can have multiple products
+  // (Claude Code + Claude Desktop both live under "Claude"). Card shows
+  // the family once and lists found products as small chips.
   acps: [
-    { id: "claude-code", name: "Claude Code", version: "1.8.2", found: true,  path: "/Users/aiko/.claude/code" },
-    { id: "cursor",      name: "Cursor",      version: "0.42",  found: true,  path: "/Applications/Cursor.app" },
-    { id: "zed",         name: "Zed",         version: "0.148", found: false, path: null },
-    { id: "continue",    name: "Continue",    version: null,    found: false, path: null }
+    {
+      id: "claude", name: "Claude", kanji: "C", found: true,
+      products: [
+        { id: "claude-code",    label: "Code",    version: "1.8.2", path: "~/.claude/code",    found: true },
+        { id: "claude-desktop", label: "Desktop", version: "0.9.4", path: "~/Library/Application Support/Claude", found: true }
+      ]
+    },
+    {
+      id: "openai", name: "OpenAI", kanji: "O", found: true,
+      products: [
+        { id: "codex",   label: "Codex CLI",   version: "0.6.1", path: "~/.codex",        found: true },
+        { id: "chatgpt", label: "ChatGPT app", version: "1.2025.114", path: "/Applications/ChatGPT.app", found: true }
+      ]
+    },
+    {
+      id: "cursor", name: "Cursor", kanji: "C", found: true,
+      products: [
+        { id: "cursor", label: "Editor", version: "0.42", path: "/Applications/Cursor.app", found: true }
+      ]
+    },
+    {
+      id: "zed", name: "Zed", kanji: "Z", found: false,
+      products: [
+        { id: "zed", label: "Editor", version: null, path: null, found: false }
+      ]
+    },
+    {
+      id: "jetbrains", name: "JetBrains", kanji: "J", found: false,
+      products: [
+        { id: "jb-junie",      label: "Junie",      version: null, path: null, found: false },
+        { id: "jb-aiassistant", label: "AI Assistant", version: null, path: null, found: false }
+      ]
+    },
+    {
+      id: "continue", name: "Continue", kanji: "→", found: false,
+      products: [
+        { id: "continue", label: "Extension", version: null, path: null, found: false }
+      ]
+    }
   ],
 
   folders: [

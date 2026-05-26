@@ -27,43 +27,15 @@ pub(crate) async fn list_libs(
     State(state): State<AppState>,
     Query(q): Query<LibsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let all_repos = state.pg.list_repositories().await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let scope_project = q.solution_id.as_deref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let min_repos: i64 = if q.shared.unwrap_or(false) { 2 } else { 1 };
 
-    // Scope: repoId > solutionId > all
-    let repos: Vec<&serde_json::Value> = if let Some(rid) = &q.repo_id {
-        all_repos.iter().filter(|p| p["name"].as_str() == Some(rid.as_str())).collect()
-    } else if let Some(pid) = &q.solution_id {
-        all_repos.iter().filter(|r| r["project_id"].as_str() == Some(pid.as_str())).collect()
-    } else {
-        all_repos.iter().collect()
-    };
-
-    // lib_name -> [repo_ids]
-    let mut lib_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for p in &repos {
-        if let Some(libs_arr) = p["libs"].as_array() {
-            let repo_name = p["name"].as_str().unwrap_or("").to_string();
-            for lib in libs_arr {
-                if let Some(lib_str) = lib.as_str() {
-                    lib_map.entry(lib_str.to_string()).or_default().push(repo_name.clone());
-                }
-            }
-        }
-    }
-
-    // Filter shared if requested
-    let min_repos = if q.shared.unwrap_or(false) { 2 } else { 1 };
-
-    let mut libs: Vec<serde_json::Value> = lib_map.into_iter()
-        .filter(|(_, repos)| repos.len() >= min_repos)
-        .map(|(name, repos)| serde_json::json!({
-            "name": name,
-            "repos": repos,
-            "repoCount": repos.len(),
-        }))
-        .collect();
-    libs.sort_by(|a, b| b["repoCount"].as_u64().cmp(&a["repoCount"].as_u64()));
+    let libs = state.pg.list_libraries_with_usage(
+        q.repo_id.as_deref(),
+        scope_project.as_ref(),
+        min_repos,
+    ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({
         "total": libs.len(),

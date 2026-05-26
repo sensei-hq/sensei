@@ -1,8 +1,14 @@
 //! Ollama model detection and management.
+//!
+//! These are standalone utilities used by the setup wizard (hardware-tier-based
+//! model recommendations) and the Tauri `list_models` / `missing_models` commands.
+//! They are orthogonal to the health-check rewrite.
 
 use std::process::Command;
 
-use crate::types::ModelTier;
+use crate::hardware::ModelTier;
+
+// ── Model lists ───────────────────────────────────────────────────────────────
 
 /// Required models per tier.
 pub fn required_models(tier: &ModelTier) -> Vec<&'static str> {
@@ -13,6 +19,8 @@ pub fn required_models(tier: &ModelTier) -> Vec<&'static str> {
         ModelTier::Full        => vec!["gemma3:27b", "qwen3:14b"],
     }
 }
+
+// ── Ollama queries ────────────────────────────────────────────────────────────
 
 /// List models currently available in Ollama.
 pub fn list() -> Vec<String> {
@@ -35,7 +43,7 @@ pub fn list() -> Vec<String> {
     }
 }
 
-/// Check which required models are missing.
+/// Check which required models are missing for the given tier.
 pub fn missing_models(tier: &ModelTier) -> Vec<String> {
     let installed = list();
     let required = required_models(tier);
@@ -60,6 +68,8 @@ pub fn pull(model: &str) -> Result<std::process::Child, String> {
         .spawn()
         .map_err(|e| format!("failed to start ollama pull: {e}"))
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -91,7 +101,7 @@ mod tests {
 
     #[test]
     fn model_name_matching() {
-        let installed = vec!["gemma3:27b".to_string(), "llama3:8b".to_string()];
+        let installed = ["gemma3:27b".to_string(), "llama3:8b".to_string()];
         let model = "gemma3:27b";
         let found = installed.iter().any(|name| name.starts_with(model));
         assert!(found);
@@ -99,7 +109,7 @@ mod tests {
 
     #[test]
     fn model_name_matching_not_found() {
-        let installed = vec!["llama3:8b".to_string()];
+        let installed = ["llama3:8b".to_string()];
         let model = "gemma3:27b";
         let found = installed.iter().any(|name| name.starts_with(model));
         assert!(!found);

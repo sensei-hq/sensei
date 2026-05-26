@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn parses_interface() {
         let pf = parse("public interface Bar { void doIt(); }");
-        assert!(pf.symbols.len() >= 1);
+        assert!(!pf.symbols.is_empty());
         assert_eq!(pf.symbols[0].kind, SymbolKind::Interface);
     }
 
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn ir_imports() {
         let pf = parse_ir("import java.util.List;\npublic class X {}");
-        assert!(pf.modules[0].imports.len() >= 1);
+        assert!(!pf.modules[0].imports.is_empty());
         assert_eq!(pf.modules[0].imports[0].source, "java.util.List");
     }
 }
