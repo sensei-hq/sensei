@@ -4,6 +4,7 @@ mod claude_code;
 mod mcp_file;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use trait_def::Assistant;
 use claude_code::ClaudeCodeAssistant;
 use mcp_file::{McpFileAssistant, McpEntryFormat};
@@ -216,6 +217,37 @@ pub fn remove_selected(ids: &[String]) -> Vec<String> {
             if asst.remove() { Some(asst.id().to_string()) } else { None }
         })
         .collect()
+}
+
+/// Every MCP entry key present in any installed assistant's MCP config file,
+/// lowercased for case-insensitive matching. Used by the instruments
+/// registry to decide whether a known MCP is already wired in somewhere —
+/// "installed" from the user's point of view means "some AI tool can call
+/// it", not just "exists on disk".
+///
+/// Only inspects files that already exist (no creation, no parsing of stub
+/// JSONC schemas); silently skips unreadable / malformed configs.
+pub fn installed_mcp_keys() -> HashSet<String> {
+    let mut keys = HashSet::new();
+    for asst in all_assistants() {
+        let path = asst.config_path();
+        if !path.exists() { continue; }
+        let Some(content) = std::fs::read_to_string(&path).ok() else { continue };
+        // Configs are JSONC for some assistants — fall back to json5 if strict JSON fails.
+        let value: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => match json5::from_str(&content) {
+                Ok(v) => v,
+                Err(_) => continue,
+            },
+        };
+        if let Some(servers) = value.get(asst.mcp_key()).and_then(|v| v.as_object()) {
+            for k in servers.keys() {
+                keys.insert(k.to_lowercase());
+            }
+        }
+    }
+    keys
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
