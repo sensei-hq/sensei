@@ -18,6 +18,7 @@ use crate::api::handlers::logs;
 use crate::api::handlers::gateway;
 use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
+use crate::api::handlers::instruments;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -91,12 +92,16 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/analyze", post(observatory::analyze_solution))
         .route("/api/projects/{id}/graph", get(observatory::solution_graph))
         .route("/api/projects/{id}/roles", get(observatory::solution_roles))
+        // Folder mutations (setup wizard — Projects stage)
+        .route("/api/folders/{id}", put(workspace::update_folder))
         // Libraries
         .route("/api/libs", get(libraries::list_libs))
         .route("/api/libs/index", post(libraries::index_lib))
         .route("/api/libs/docs", get(libraries::search_lib_docs))
         .route("/api/libs/{name}/docs", get(libraries::get_lib_docs))
         .route("/api/libs/versions", get(libraries::get_dep_versions))
+        // Instruments (MCP registry — setup wizard Instruments stage)
+        .route("/api/instruments", get(instruments::list_instruments))
         // Unified query (desktop/MCP)
         .route("/api/query", post(query::unified_query))
         // MCP tool proxy

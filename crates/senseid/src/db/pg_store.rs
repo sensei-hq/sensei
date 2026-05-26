@@ -331,6 +331,34 @@ impl PgStore {
         Ok(())
     }
 
+    /// Update only the `role` column on a folder. Used by the Projects
+    /// setup stage when the user picks a role from the dropdown — distinct
+    /// from set_folder_project (which also reassigns project membership).
+    pub async fn update_folder_role(&self, folder_id: &uuid::Uuid, role: Option<&str>) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET role = $2::sensei.folder_role, modified_at = now() WHERE id = $1"
+        ).bind(folder_id).bind(role).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// All folders belonging to a project, ordered by path. Used to enrich
+    /// /api/projects responses with folder membership so the Projects setup
+    /// page can render per-folder details.
+    pub async fn list_folders_by_project(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT id, kind::text, name, path, abs_path, role::text
+             FROM sensei.folders
+             WHERE project_id = $1
+             ORDER BY path"
+        ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, kind, name, path, abs, role)| {
+            serde_json::json!({
+                "id": id, "kind": kind, "name": name,
+                "path": path, "abs_path": abs, "role": role,
+            })
+        }).collect())
+    }
+
     /// Mark a folder as indexed with detected libs.
     pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
         let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
@@ -1095,6 +1123,49 @@ impl PgStore {
 
         Ok(rows.into_iter().map(|(id, name, eco, ver, pages)| {
             serde_json::json!({ "id": id, "name": name, "ecosystem": eco, "version": ver, "page_count": pages })
+        }).collect())
+    }
+
+    /// List libraries joined with their folder usage. Returns one row per
+    /// library with `repos` (folder names that reference it) and `repoCount`.
+    /// Drives `GET /api/libs` for the setup wizard so the Libraries page can
+    /// render ecosystem + version + usage without a second round-trip.
+    pub async fn list_libraries_with_usage(
+        &self,
+        scope_folder_name: Option<&str>,
+        scope_project_id: Option<&uuid::Uuid>,
+        min_repos: i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        // Aggregate by library, joining via referenced_libraries to count and
+        // list distinct folder names. The optional scopes filter the *folders*
+        // counted (not the library), so a lib appears only if some in-scope
+        // folder references it.
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<String>, i32, i64, Vec<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT l.id, l.name, l.ecosystem::text, l.version, l.description, l.page_count,
+                        COUNT(DISTINCT rl.folder_id)::bigint AS repo_count,
+                        COALESCE(array_agg(DISTINCT f.name ORDER BY f.name), ARRAY[]::text[]) AS repos
+                   FROM sensei.libraries l
+                   JOIN sensei.referenced_libraries rl ON rl.library_id = l.id
+                   JOIN sensei.folders f ON f.id = rl.folder_id
+                  WHERE l.kind = 'detected'::sensei.library_kind
+                    AND ($1::text     IS NULL OR f.name = $1)
+                    AND ($2::uuid     IS NULL OR f.project_id = $2)
+                  GROUP BY l.id, l.name, l.ecosystem, l.version, l.description, l.page_count
+                 HAVING COUNT(DISTINCT rl.folder_id) >= $3
+                  ORDER BY repo_count DESC, l.name"
+            )
+            .bind(scope_folder_name)
+            .bind(scope_project_id)
+            .bind(min_repos)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|(id, name, eco, ver, desc, pages, repo_count, repos)| {
+            serde_json::json!({
+                "id": id, "name": name, "ecosystem": eco, "version": ver,
+                "description": desc, "pageCount": pages,
+                "repoCount": repo_count, "repos": repos,
+            })
         }).collect())
     }
 
