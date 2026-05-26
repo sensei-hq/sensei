@@ -126,14 +126,14 @@ pub struct BootstrapResult {
 
 ### Parallel checks and phase execution
 
-All six gates are checked in parallel by `bootstrap::run_with_traces()`. The result is returned synchronously to the frontend. If prerequisites are missing, the app groups them and offers "Install All" via `brew bundle`. Services are started in parallel after install.
+All five gates (postgres, ollama, sensei, database, daemon) are checked in parallel by the health provider's `check_all()` method. The result is returned synchronously to the frontend. If prerequisites are missing, the per-component install resolvers (`PostgresInstallResolver`, `OllamaInstallResolver`, `SenseiInstallResolver`) attempt `brew install` for each one independently — a failure in any single prerequisite stays isolated and doesn't block the others. Services are started in parallel after install.
 
 ### API (Tauri commands)
 
 | Command | Function | Purpose |
 |---------|----------|---------|
 | `run_bootstrap` | `bootstrap::run_with_traces()` | Parallel gate checks, returns all statuses |
-| `install_prerequisites` | `factory::install_prerequisites()` | `brew bundle` with Brewfile via stdin |
+| `install_prerequisites` | `factory::install_prerequisites()` | per-component resolvers via `PlatformProvider::resolvers()` |
 | `start_services` | `factory::start_services()` | Start postgres, ollama, daemon |
 | `setup_database` | `factory::setup_database()` | Create DB + extensions + `dbd deploy` |
 | `get_platform` | `provider()` | Package manager info + remedies |
@@ -386,11 +386,16 @@ Terse, koan-like. Coaching text uses short imperative phrases: "The AI does not 
 
 The app uses SvelteKit route groups to separate the two major phases:
 
-### `(config)/setup/` -- Bootstrap and wizard
+### `(health)/health` -- Bootstrap gate
 
 | Route | Screen |
 |-------|--------|
-| `/setup/health` | Bootstrap gate checks |
+| `/health` | Bootstrap gate checks (lives in the `(health)` group; always reachable, exempt from the setup gate) |
+
+### `(config)/setup/` -- Wizard
+
+| Route | Screen |
+|-------|--------|
 | `/setup/welcome` | Wizard step 1 |
 | `/setup/preferences` | Wizard step 2 |
 | `/setup/assistants` | Wizard step 3 |
@@ -421,4 +426,12 @@ The app uses SvelteKit route groups to separate the two major phases:
 | `/projects/[id]/settings` | Project configuration |
 | `/settings` | App settings, ACP config, extensions |
 
-The root layout checks `appState.setupComplete` on mount. If false, it redirects to `/setup/health`. If true, it renders the observatory shell with sidebar navigation.
+Routing gates live in `src/hooks.client.ts` (synchronous, runs before any page mounts):
+
+| Tier | Source | Redirects to |
+|------|--------|--------------|
+| Upgrade | `localStorage['sensei:app-version']` ≠ running app version | `/upgrade` |
+| Health | `sessionStorage['sensei:health']` ≠ `'ready'` | `/health` |
+| Setup | `localStorage['sensei:setup-complete']` ≠ `'1'` | `/setup/welcome` |
+
+`HealthState` owns the health-cache key (writes `'ready'` on `apply(ok)`, clears otherwise). `(observatory)/+layout.ts`, `(project)/+layout.ts`, and `(config)/+layout.ts` call `appState.load()` which reconciles the setup-complete localStorage flag from the daemon's `config['setup_complete']` so it cannot drift past a daemon write that did not land.

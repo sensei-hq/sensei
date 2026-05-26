@@ -1,11 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HealthState, emptyPayload } from './health-state.svelte.js';
+import { MockTransport } from './health-transport.js';
 import { COMPONENT_ORDER } from './health-types.js';
 import type { HealthPayload, Remedy } from './health-types.js';
 
 const remedyFixture = (): Remedy => ({
   message: 'Run the script in your terminal.',
-  script: 'brew bundle --file=https://example/Brewfile',
+  script: 'brew install sensei-hq/tap/sensei',
   url: null,
 });
 
@@ -13,9 +14,10 @@ const okPayload = (): HealthPayload => ({
   version: '0.2.14',
   uptimeSeconds: 12,
   platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null, installingVerb: 'installing' },
   components: COMPONENT_ORDER.map((id) => ({
     id, label: id, note: null, status: 'ready' as const, version: '1.0.0', detail: null,
+    installingVerb: 'installing',
   })),
   status: 'ok',
   remedy: null,
@@ -23,9 +25,10 @@ const okPayload = (): HealthPayload => ({
 
 const needsActionPayload = (): HealthPayload => ({
   ...okPayload(),
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing' },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing', installingVerb: 'installing' },
   components: COMPONENT_ORDER.map((id) => ({
     id, label: id, note: null, status: 'failed' as const, version: null, detail: 'blocked',
+    installingVerb: 'installing',
   })),
   status: 'needs-action',
   remedy: remedyFixture(),
@@ -39,7 +42,8 @@ describe('HealthState — construction', () => {
     expect(s.platform).toBe('macos');
     expect(s.components).toHaveLength(5);
     expect(s.components.map((c) => c.id)).toEqual([...COMPONENT_ORDER]);
-    expect(s.components.every((c) => c.status === 'pending')).toBe(true);
+    expect(s.components.every((c) => c.status === 'checking')).toBe(true);
+    expect(s.packageManager.status).toBe('checking');
     expect(s.packageManager.id).toBe('homebrew');
     expect(s.remedy).toBeNull();
     expect(s.latest).toBeNull();
@@ -70,7 +74,7 @@ describe('HealthState — apply() happy paths', () => {
     const s = new HealthState();
     s.apply(needsActionPayload());
     expect(s.status).toBe('needs-action');
-    expect(s.remedy?.script).toContain('brew bundle');
+    expect(s.remedy?.script).toContain('brew install');
   });
 
   it('applies a resolving payload (remedy cleared)', () => {
@@ -242,6 +246,161 @@ describe('HealthState — latest', () => {
     expect(s.latest).toBeNull();
     s.latest = '0.3.0';
     expect(s.latest).toBe('0.3.0');
+  });
+});
+
+describe('HealthState — B1: constructor accepts a transport', () => {
+  it('accepts a MockTransport without throwing', () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    expect(() => new HealthState(emptyPayload, transport)).not.toThrow();
+  });
+});
+
+describe('HealthState — B2: init() lifecycle', () => {
+  it('calls transport.resolve() exactly once and applies the terminal payload', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.resolveCalls).toHaveLength(1);
+    expect(s.status).toBe('ok');
+  });
+
+  it('arrives at needs-action when terminal payload requires it', async () => {
+    const transport = new MockTransport({ checkPayload: needsActionPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.resolveCalls).toHaveLength(1);
+    expect(s.status).toBe('needs-action');
+  });
+
+  it('concurrent init() callers share one in-flight promise (resolve called once)', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await Promise.all([s.init(), s.init()]);
+    expect(transport.resolveCalls).toHaveLength(1);
+  });
+
+  it('HealthEvent fed via resolve callback mutates state correctly', async () => {
+    // Terminal payload reflects the patched state — in the streaming flow
+    // the terminal `report` event is the authoritative final state, so a
+    // patched component must also appear in resolveTerminal for the post-
+    // report `apply()` to land it.
+    const recoveredTerminal: HealthPayload = {
+      ...needsActionPayload(),
+      components: needsActionPayload().components.map((c, i) =>
+        i === 0 ? { ...c, status: 'ready', version: '16.0' } : c,
+      ),
+    };
+    const transport = new MockTransport({
+      checkPayload: needsActionPayload(),
+      resolveEvents: [
+        { kind: 'component', id: 'postgres', patch: { status: 'ready', version: '16.0' } },
+      ],
+      resolveTerminal: recoveredTerminal,
+    });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(s.components[0].status).toBe('ready');
+    expect(s.components[0].version).toBe('16.0');
+  });
+
+  it('resolves with undefined after check + resolve complete', async () => {
+    const transport = new MockTransport({ checkPayload: needsActionPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    const result = await s.init();
+    expect(result).toBeUndefined();
+  });
+});
+
+describe('HealthState — B3: verify() forces a fresh check', () => {
+  it('calls sessionStorage.removeItem for sensei:health during verify', async () => {
+    const sessionStore = new Map<string, string>();
+    const removedKeys: string[] = [];
+    vi.stubGlobal('sessionStorage', {
+      getItem:    (k: string) => sessionStore.get(k) ?? null,
+      setItem:    (k: string, v: string) => sessionStore.set(k, v),
+      removeItem: (k: string) => { removedKeys.push(k); sessionStore.delete(k); },
+    });
+    sessionStore.set('sensei:health', 'ready');
+
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.verify();
+    expect(removedKeys).toContain('sensei:health');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('causes a fresh transport.resolve() call after a prior init()', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await s.init();
+    expect(transport.resolveCalls).toHaveLength(1);
+    await s.verify();
+    expect(transport.resolveCalls).toHaveLength(2);
+  });
+
+  it('concurrent verify() calls trigger only one resolve pass', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await Promise.all([s.verify(), s.verify()]);
+    expect(transport.resolveCalls).toHaveLength(1);
+  });
+
+  it('does not throw when sessionStorage is undefined', async () => {
+    const transport = new MockTransport({ checkPayload: okPayload() });
+    const s = new HealthState(emptyPayload, transport);
+    await expect(s.verify()).resolves.toBeUndefined();
+  });
+});
+
+describe('HealthState — B4: apply() writes sessionStorage cache', () => {
+  let sessionStore: Map<string, string>;
+
+  beforeEach(() => {
+    sessionStore = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem:    (k: string) => sessionStore.get(k) ?? null,
+      setItem:    (k: string, v: string) => sessionStore.set(k, v),
+      removeItem: (k: string) => sessionStore.delete(k),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('applying an ok payload writes ready to sensei:health', () => {
+    const s = new HealthState(emptyPayload);
+    s.apply(okPayload());
+    expect(sessionStore.get('sensei:health')).toBe('ready');
+  });
+
+  it('applying a needs-action payload removes sensei:health', () => {
+    sessionStore.set('sensei:health', 'ready');
+    const s = new HealthState(emptyPayload);
+    s.apply(needsActionPayload());
+    expect(sessionStore.has('sensei:health')).toBe(false);
+  });
+
+  it('applying a checking payload removes sensei:health', () => {
+    sessionStore.set('sensei:health', 'ready');
+    const s = new HealthState(emptyPayload);
+    s.apply({ ...okPayload(), status: 'checking', remedy: null });
+    expect(sessionStore.has('sensei:health')).toBe(false);
+  });
+
+  it('applying a resolving payload removes sensei:health', () => {
+    sessionStore.set('sensei:health', 'ready');
+    const s = new HealthState(emptyPayload);
+    s.apply({ ...okPayload(), status: 'resolving', remedy: null });
+    expect(sessionStore.has('sensei:health')).toBe(false);
+  });
+
+  it('does not throw when sessionStorage is undefined', () => {
+    vi.unstubAllGlobals();
+    const s = new HealthState(emptyPayload);
+    expect(() => s.apply(okPayload())).not.toThrow();
   });
 });
 

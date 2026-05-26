@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(pf.classes[0].base.name, "Dog");
         assert_eq!(pf.classes[0].extends, Some("Animal".into()));
         assert_eq!(pf.classes[0].base.docstring, Some("A dog.".into()));
-        assert!(pf.classes[0].methods.len() >= 1);
+        assert!(!pf.classes[0].methods.is_empty());
         assert_eq!(pf.classes[0].methods[0].base.name, "bark");
     }
 

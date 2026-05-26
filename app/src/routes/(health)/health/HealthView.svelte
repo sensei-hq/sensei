@@ -8,10 +8,10 @@
   interface Props {
     state: HealthState;
     onEnter?: () => void;
-    onRecheck?: () => void;
+    onVerify?: () => void;
     onCopyScript?: () => void;
   }
-  let { state, onEnter, onRecheck, onCopyScript }: Props = $props();
+  let { state, onEnter, onVerify, onCopyScript }: Props = $props();
 </script>
 
 <div class="flex-1 min-h-0 overflow-y-auto px-10 py-12">
@@ -24,11 +24,11 @@
       {onEnter}
     />
     {#if state.needsAction && state.remedy}
-      <Remedy remedy={state.remedy} {onCopyScript} {onRecheck} />
+      <Remedy remedy={state.remedy} {onCopyScript} {onVerify} />
     {/if}
     <Ledger components={state.components} />
-    <footer class="flex justify-between items-center gap-4 mt-8 pt-5.5 border-t border-surface-z2">
-      <span class="text-2xs text-surface-z6">Bootstrap runs once. The next launch will be quick.</span>
+    <footer class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-surface-z2">
+      <span class="text-xs text-surface-z6">Bootstrap runs once. The next launch will be quick.</span>
       {#if state.isOk}
         <button data-action="continue" class="btn-solid" onclick={onEnter}>Continue →</button>
       {/if}

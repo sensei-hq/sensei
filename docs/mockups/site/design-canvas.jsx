@@ -317,9 +317,8 @@ function DCViewport({ children, minScale = 0.1, maxScale = 8, style = {} }) {
           willChange: 'transform',
           width: 'max-content', minWidth: '100%',
           minHeight: '100%',
-          padding: '60px 0 80px',
-        }}
-      >
+}}
+      className="py-8" >
         <div style={{ position: 'absolute', inset: -6000, backgroundImage: gridSvg, backgroundSize: '120px 120px', pointerEvents: 'none', zIndex: -1 }} />
         {children}
       </div>
@@ -347,14 +346,14 @@ function DCSection({ id, title, subtitle, children, gap = 48 }) {
   const byId = Object.fromEntries(artboards.map((a) => [a.props.id ?? a.props.label, a]));
 
   return (
-    <div data-dc-section={sid} style={{ marginBottom: 80, position: 'relative' }}>
-      <div style={{ padding: '0 60px 56px' }}>
+    <div data-dc-section={sid} style={{ position: 'relative' }} className="mb-8" >
+      <div className="pt-0 pb-7 px-8" >
         <DCEditable tag="div" value={sec.title ?? title}
           onChange={(v) => ctx && sid && ctx.patchSection(sid, { title: v })}
-          style={{ fontSize: 28, fontWeight: 600, color: DC.title, letterSpacing: -0.4, marginBottom: 6, display: 'inline-block' }} />
-        {subtitle && <div style={{ fontSize: 16, color: DC.subtitle }}>{subtitle}</div>}
+          style={{ fontSize: 28, fontWeight: 600, color: DC.title, letterSpacing: -0.4, display: 'inline-block' }} className="mb-1" />
+        {subtitle && <div style={{ fontSize: 15, color: DC.subtitle }}>{subtitle}</div>}
       </div>
-      <div style={{ display: 'flex', gap, padding: '0 60px', alignItems: 'flex-start', width: 'max-content' }}>
+      <div style={{ display: 'flex', gap, alignItems: 'flex-start', width: 'max-content' }} className="px-8" >
         {order.map((k) => (
           <DCArtboardFrame key={k} sectionId={sid} artboard={byId[k]} order={order}
             label={(sec.labels || {})[k] ?? byId[k].props.label}
@@ -440,7 +439,7 @@ function DCArtboardFrame({ sectionId, artboard, label, order, onRename, onReorde
 
   return (
     <div ref={ref} data-dc-slot={id} style={{ position: 'relative', flexShrink: 0 }}>
-      <div className="dc-labelrow" style={{ position: 'absolute', bottom: '100%', left: -4, marginBottom: 4, color: DC.label }}>
+      <div className="dc-labelrow mb-1" style={{ position: 'absolute', bottom: '100%', left: -4, color: DC.label }}>
         <div className="dc-grip" onPointerDown={onGripDown} title="Drag to reorder">
           <svg width="9" height="13" viewBox="0 0 9 13" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="7" cy="2" r="1.1"/><circle cx="2" cy="6.5" r="1.1"/><circle cx="7" cy="6.5" r="1.1"/><circle cx="2" cy="11" r="1.1"/><circle cx="7" cy="11" r="1.1"/></svg>
         </div>
@@ -525,7 +524,7 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
     <button onClick={(e) => { e.stopPropagation(); onClick(); }}
       style={{ position: 'absolute', top: '50%', [dir]: 28, transform: 'translateY(-50%)',
         border: 'none', background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.9)',
-        width: 44, height: 44, borderRadius: 22, fontSize: 18, cursor: 'pointer',
+        width: 44, height: 44, borderRadius: 22, fontSize: 17, cursor: 'pointer',
         display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}
       onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.18)')}
       onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.08)')}>
@@ -543,25 +542,30 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
 
       {/* top bar: section dropdown (left) · close (right) */}
       <div onClick={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 72, display: 'flex', alignItems: 'flex-start', padding: '16px 20px 0', gap: 16 }}>
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 72, display: 'flex', alignItems: 'flex-start' }} className="gap-4 pt-4 pb-0 px-4" >
         <div style={{ position: 'relative' }}>
           <button onClick={() => setDd((o) => !o)}
-            style={{ border: 'none', background: 'transparent', color: '#fff', cursor: 'pointer', padding: '6px 8px',
-              borderRadius: 6, textAlign: 'left', fontFamily: 'inherit' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 18, fontWeight: 600, letterSpacing: -0.3 }}>{meta.title}</span>
+            style={{
+ border: 'none', background: 'transparent', color: '#fff', cursor: 'pointer',
+              borderRadius: 6, textAlign: 'left', fontFamily: 'inherit'
+}} className="py-1 px-2" >
+            <span style={{ display: 'flex', alignItems: 'center' }} className="gap-2" >
+              <span style={{ fontSize: 17, fontWeight: 600, letterSpacing: -0.3 }}>{meta.title}</span>
               <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" style={{ opacity: .7 }}><path d="M2 4l3.5 3.5L9 4"/></svg>
             </span>
-            {meta.subtitle && <span style={{ display: 'block', fontSize: 13, opacity: .6, fontWeight: 400, marginTop: 2 }}>{meta.subtitle}</span>}
+            {meta.subtitle && <span style={{ display: 'block', fontSize: 13, opacity: .6, fontWeight: 400 }} className="mt-1" >{meta.subtitle}</span>}
           </button>
           {ddOpen && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: '#2a251f', borderRadius: 8,
-              boxShadow: '0 8px 32px rgba(0,0,0,.4)', padding: 4, minWidth: 200, zIndex: 10 }}>
+            <div style={{
+ position: 'absolute', top: '100%', left: 0, background: '#2a251f', borderRadius: 8,
+              boxShadow: '0 8px 32px rgba(0,0,0,.4)', minWidth: 200, zIndex: 10
+}} className="mt-1 p-1" >
               {sectionOrder.map((sid) => (
                 <button key={sid} onClick={() => { setDd(false); const f = sectionMeta[sid].slotIds[0]; if (f) ctx.setFocus(`${sid}/${f}`); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
-                    background: sid === sectionId ? 'rgba(255,255,255,.1)' : 'transparent', color: '#fff',
-                    padding: '8px 12px', borderRadius: 5, fontSize: 14, fontWeight: sid === sectionId ? 600 : 400, fontFamily: 'inherit' }}>
+                  style={{
+ display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                    background: sid === sectionId ? 'rgba(255,255,255,.1)' : 'transparent', color: '#fff', borderRadius: 5, fontSize: 13, fontWeight: sid === sectionId ? 600 : 400, fontFamily: 'inherit'
+}} className="py-2 px-3" >
                   {sectionMeta[sid].title}
                 </button>
               ))}
@@ -573,7 +577,7 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
           onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,.12)')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,.7)', width: 32, height: 32,
-            borderRadius: 16, fontSize: 20, cursor: 'pointer', lineHeight: 1, transition: 'background .12s' }}>×</button>
+            borderRadius: 16, fontSize: 22, cursor: 'pointer', lineHeight: 1, transition: 'background .12s' }}>×</button>
       </div>
 
       {/* card centered, label + index below — only the card itself stops
@@ -583,24 +587,25 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
           to the top so users can read top-down. */}
       <div
         onClick={(e) => { if (e.target === e.currentTarget) ctx.setFocus(null); }}
-        style={{ position: 'absolute', top: 64, bottom: 56, left: 100, right: 100,
+        style={{
+ position: 'absolute', top: 64, bottom: 56, left: 100, right: 100,
                   display: 'flex', flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: isTall ? 'flex-start' : 'center',
-                  gap: 16,
                   overflowY: isTall ? 'auto' : 'visible',
                   overflowX: 'hidden',
                   paddingTop: isTall ? 12 : 0,
-                  paddingBottom: isTall ? 12 : 0 }}>
+                  paddingBottom: isTall ? 12 : 0
+}} className="gap-4" >
         <div onClick={(e) => e.stopPropagation()} style={{ width: width * scale, height: height * scale, position: 'relative', flexShrink: 0 }}>
           <div style={{ width, height, transform: `scale(${scale})`, transformOrigin: 'top left', background: '#fff', borderRadius: 2, overflow: 'hidden',
             boxShadow: '0 20px 80px rgba(0,0,0,.4)' }}>
             {children || <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb' }}>{aid}</div>}
           </div>
         </div>
-        <div onClick={(e) => e.stopPropagation()} style={{ fontSize: 14, fontWeight: 500, opacity: .85, textAlign: 'center', flexShrink: 0 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ fontSize: 13, fontWeight: 500, opacity: .85, textAlign: 'center', flexShrink: 0 }}>
           {(sec.labels || {})[aid] ?? artboard.props.label}
-          <span style={{ opacity: .5, marginLeft: 10, fontVariantNumeric: 'tabular-nums' }}>{idx + 1} / {peers.length}</span>
+          <span style={{ opacity: .5, fontVariantNumeric: 'tabular-nums' }} className="ml-2" >{idx + 1} / {peers.length}</span>
         </div>
       </div>
 
@@ -609,11 +614,13 @@ function DCFocusOverlay({ entry, sectionMeta, sectionOrder }) {
 
       {/* dots */}
       <div onClick={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8 }}>
+        style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex' }} className="gap-2" >
         {peers.map((p, i) => (
           <button key={p} onClick={() => ctx.setFocus(`${sectionId}/${p}`)}
-            style={{ border: 'none', padding: 0, cursor: 'pointer', width: 6, height: 6, borderRadius: 3,
-              background: i === idx ? '#fff' : 'rgba(255,255,255,.3)' }} />
+            style={{
+ border: 'none', cursor: 'pointer', width: 6, height: 6, borderRadius: 3,
+              background: i === idx ? '#fff' : 'rgba(255,255,255,.3)'
+}} className="p-0" />
         ))}
       </div>
     </div>,
@@ -628,13 +635,13 @@ function DCPostIt({ children, top, left, right, bottom, rotate = -2, width = 180
   return (
     <div style={{
       position: 'absolute', top, left, right, bottom, width,
-      background: DC.postitBg, padding: '14px 16px',
+      background: DC.postitBg,
       fontFamily: '"Comic Sans MS", "Marker Felt", "Segoe Print", cursive',
-      fontSize: 14, lineHeight: 1.4, color: DC.postitText,
+      fontSize: 13, lineHeight: 1.4, color: DC.postitText,
       boxShadow: '0 2px 8px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
       transform: `rotate(${rotate}deg)`,
       zIndex: 5,
-    }}>{children}</div>
+}} className="py-3 px-4" >{children}</div>
   );
 }
 

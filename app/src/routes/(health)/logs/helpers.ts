@@ -42,6 +42,11 @@ export function outcomeColor(o: string): string {
     return o === 'success' ? 'oklch(var(--color-success-z5) / 1)' : o === 'partial' ? 'oklch(var(--color-warning-z5) / 1)' : 'oklch(var(--color-primary-z5) / 1)';
 }
 
+export type DotStatus = 'ok' | 'warn' | 'fail';
+export function outcomeStatus(o: string): DotStatus {
+    return o === 'success' ? 'ok' : o === 'partial' ? 'warn' : 'fail';
+}
+
 export const anonymize = (s: string): string => s.replace(/\/Users\/[^/]+\//g, '~/');
 
 export function formatTime(ts: string): string {

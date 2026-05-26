@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
+
+// Pretend Tauri is present so HealthState doesn't take the bypass path —
+// these tests drive .apply() / .applyEvent() and inspect rendered UI.
+(window as { __TAURI__?: unknown }).__TAURI__ = {};
+
 import { mountComponent } from '$lib/test-mount.js';
 import HealthView from './HealthView.svelte';
 import { HealthState } from '$lib/health-state.svelte.js';
@@ -14,15 +19,15 @@ const remedy = (): Remedy => ({ message: 'msg', script: 'cmd', url: null });
 
 const ok = (): HealthPayload => ({
   version: '0.2.14', uptimeSeconds: 0, platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null },
-  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'ready' as const, version: '1.0', detail: null })),
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null, installingVerb: 'installing' },
+  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'ready' as const, version: '1.0', detail: null, installingVerb: 'installing' })),
   status: 'ok', remedy: null,
 });
 
 const needsAction = (): HealthPayload => ({
   ...ok(),
   packageManager: { ...ok().packageManager, status: 'failed' },
-  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'failed' as const, version: null, detail: 'blocked' })),
+  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'failed' as const, version: null, detail: 'blocked', installingVerb: 'installing' })),
   status: 'needs-action', remedy: remedy(),
 });
 

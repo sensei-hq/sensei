@@ -19,7 +19,7 @@ const { useState: aS, useEffect: aE } = React;
 function VariantA() {
   return (
     <div className="sensei variant-a" style={{
-      background: 'var(--paper)', color: 'var(--sumi)',
+      background: 'var(--paper)', color: 'var(--ink)',
       minHeight: '100%', fontFamily: 'var(--font-ui)'
     }}>
       <NavA/>
@@ -41,19 +41,18 @@ function VariantA() {
 function NavA() {
   return (
     <nav style={{
-      maxWidth: 1100, margin: '0 auto',
-      padding: '28px 48px',
+      maxWidth: 1100,
       display: 'flex', alignItems: 'center',
       justifyContent: 'space-between'
-    }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span className="kanji" style={{ fontSize: 20,
-                       color: 'var(--shu)', letterSpacing: '-0.04em' }}>先生</span>
+}} className="py-5 px-7 mx-auto" >
+      <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
+        <span className="kanji" style={{ fontSize: 22,
+                       color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
         <span className="display" style={{ fontSize: 17,
                        letterSpacing: '-0.01em',
-                       color: 'var(--sumi)' }}>Sensei</span>
+                       color: 'var(--ink)' }}>Sensei</span>
       </div>
-      <div style={{ display: 'flex', gap: 28, fontSize: 12 }}>
+      <div style={{ display: 'flex', fontSize: 13 }} className="gap-5" >
         {[
           ['#how', 'How it works'],
           ['#gallery', 'Screens'],
@@ -62,11 +61,11 @@ function NavA() {
           ['#faq', 'FAQ']
         ].map(([href, label]) => (
           <a key={href} href={href}
-             style={{ color: 'var(--sumi-2)',
+             style={{ color: 'var(--ink-2)',
                        textDecoration: 'none',
                        transition: 'color .15s' }}
-             onMouseEnter={(e) => e.currentTarget.style.color = 'var(--sumi)'}
-             onMouseLeave={(e) => e.currentTarget.style.color = 'var(--sumi-2)'}>
+             onMouseEnter={(e) => e.currentTarget.style.color = 'var(--ink)'}
+             onMouseLeave={(e) => e.currentTarget.style.color = 'var(--ink-2)'}>
             {label}
           </a>
         ))}
@@ -78,51 +77,59 @@ function NavA() {
 // ─── Hero ───────────────────────────────────────────────────────
 function HeroA() {
   return (
-    <section style={{ maxWidth: 1100, margin: '0 auto',
-                       padding: '40px 48px 80px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr',
-                     gap: 28, alignItems: 'start' }}>
+    <section style={{
+ maxWidth: 1100
+}} className="mx-auto pt-6 pb-8 px-7" >
+      <div style={{
+ display: 'grid', gridTemplateColumns: '1fr', alignItems: 'start'
+}} className="gap-5" >
         <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12,
-                         marginBottom: 24 }}>
+          <div style={{
+ display: 'flex', alignItems: 'baseline'
+}} className="gap-3 mb-5" >
             <span className="kanji" style={{ fontSize: 56,
-                           color: 'var(--shu)', lineHeight: 1 }}>観</span>
-            <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                           color: 'var(--sumi-3)',
+                           color: 'var(--accent)', lineHeight: 1 }}>観</span>
+            <div style={{ fontSize: 11, letterSpacing: '0.22em',
+                           color: 'var(--ink-3)',
                            textTransform: 'uppercase' }}>
               Kan · to observe
             </div>
           </div>
-          <h1 className="display" style={{
+          <h1 className="display m-0" style={{
             fontSize: 56, fontWeight: 300, lineHeight: 1.1,
-            letterSpacing: '-0.025em',
-            margin: 0, maxWidth: 820
-          }}>
+            letterSpacing: '-0.025em', maxWidth: 820
+}}>
             A quiet companion for AI-assisted work.
           </h1>
-          <p style={{ fontSize: 16, color: 'var(--sumi-2)',
-                       lineHeight: 1.6, marginTop: 24, maxWidth: 560 }}>
+          <p style={{
+ fontSize: 15, color: 'var(--ink-2)',
+                       lineHeight: 1.6, maxWidth: 560
+}} className="mt-5" >
             Sensei watches your sessions with AI assistants —
             then surfaces the patterns you're too close to see. Not a
             chatbot. Not a copilot. A patient observer.
           </p>
-          <div style={{ display: 'flex', gap: 14, alignItems: 'center',
-                         marginTop: 36 }}>
+          <div style={{
+ display: 'flex', alignItems: 'center'
+}} className="gap-3 mt-6" >
             <DownloadCTA/>
             <a href="#how" style={{ fontSize: 13,
-                           color: 'var(--sumi-2)' }}>
+                           color: 'var(--ink-2)' }}>
               See how it works ↓
             </a>
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--sumi-3)',
-                         marginTop: 14 }}>
+          <div style={{
+ fontSize: 11, color: 'var(--ink-3)'
+}} className="mt-3" >
             Free · Local-first · No account
           </div>
         </div>
 
         {/* Hero screen — centered, generous margin */}
-        <div style={{ marginTop: 24, display: 'flex',
-                       justifyContent: 'center' }}>
+        <div style={{
+ display: 'flex',
+                       justifyContent: 'center'
+}} className="mt-5" >
           <MockToday width={900} height={560}/>
         </div>
       </div>
@@ -144,17 +151,17 @@ function DownloadCTA({ size = "lg" }) {
   return (
     <a href={`#download-${os.toLowerCase()}`}
        style={{
-        display: 'inline-flex', alignItems: 'center', gap: 10,
+        display: 'inline-flex', alignItems: 'center',
         padding: px,
-        background: 'var(--sumi)',
+        background: 'var(--ink)',
         color: 'var(--paper)',
         borderRadius: 6,
         fontSize: fs,
         fontWeight: 500,
         textDecoration: 'none'
-      }}>
+}} className="gap-2" >
       <span className="kanji" style={{ fontSize: fs + 2,
-                     color: 'var(--shu)' }}>下</span>
+                     color: 'var(--accent)' }}>下</span>
       Download for {os}
     </a>
   );
@@ -163,27 +170,32 @@ function DownloadCTA({ size = "lg" }) {
 // ─── What it is ─────────────────────────────────────────────────
 function WhatItIsA() {
   return (
-    <section style={{ borderTop: 'var(--hairline)',
-                       padding: '80px 48px' }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto',
+    <section style={{
+ borderTop: 'var(--hairline)'
+}} className="py-8 px-7" >
+      <div style={{
+ maxWidth: 1100,
                      display: 'grid',
-                     gridTemplateColumns: '1fr 1.4fr',
-                     gap: 48, alignItems: 'start' }}>
+                     gridTemplateColumns: '1fr 1.4fr', alignItems: 'start'
+}} className="gap-7 mx-auto" >
         <div>
-          <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                         color: 'var(--sumi-3)',
-                         textTransform: 'uppercase', marginBottom: 12 }}>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                         color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mb-3" >
             What it is
           </div>
-          <h2 className="display" style={{ fontSize: 28, fontWeight: 400,
-                         margin: 0, letterSpacing: '-0.015em',
-                         lineHeight: 1.25 }}>
+          <h2 className="display m-0" style={{
+ fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em',
+                         lineHeight: 1.25
+}}>
             One desktop app. One quiet promise.
           </h2>
         </div>
         <div style={{ fontSize: 15, lineHeight: 1.7,
-                       color: 'var(--sumi-2)' }}>
-          <p style={{ marginTop: 0 }}>
+                       color: 'var(--ink-2)' }}>
+          <p className="mt-0" >
             Sensei runs on your machine and observes your sessions with AI
             assistants. It logs nothing remotely; it speaks rarely; it remembers
             what you've actually done.
@@ -215,40 +227,48 @@ function HowItWorksA() {
       sub: "Adopt, refine, or dismiss. Always your call." }
   ];
   return (
-    <section id="how" style={{ borderTop: 'var(--hairline)',
-                                padding: '80px 48px' }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                       color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginBottom: 12 }}>
+    <section id="how" style={{
+ borderTop: 'var(--hairline)'
+}} className="py-8 px-7" >
+      <div style={{ maxWidth: 1100 }} className="mx-auto" >
+        <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                       color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-3" >
           How it works
         </div>
-        <h2 className="display" style={{ fontSize: 36, fontWeight: 300,
-                       margin: '0 0 56px', letterSpacing: '-0.02em' }}>
+        <h2 className="display mt-0 mb-7" style={{
+ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em'
+}}>
           観 · 察 · 覚 — watch, notice, adopt.
         </h2>
-        <div style={{ display: 'grid',
-                       gridTemplateColumns: 'repeat(3, 1fr)',
-                       gap: 56 }}>
+        <div style={{
+ display: 'grid',
+                       gridTemplateColumns: 'repeat(3, 1fr)'
+}} className="gap-7" >
           {steps.map((s, i) => (
             <div key={i}>
-              <div style={{ display: 'flex', alignItems: 'baseline',
-                             gap: 12, marginBottom: 18 }}>
-                <span className="kanji" style={{ fontSize: 38,
-                               color: 'var(--shu)', lineHeight: 1 }}>
+              <div style={{
+ display: 'flex', alignItems: 'baseline'
+}} className="gap-3 mb-4" >
+                <span className="kanji" style={{ fontSize: 40,
+                               color: 'var(--accent)', lineHeight: 1 }}>
                   {s.kanji}
                 </span>
-                <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                               color: 'var(--sumi-3)',
+                <div style={{ fontSize: 11, letterSpacing: '0.22em',
+                               color: 'var(--ink-3)',
                                textTransform: 'uppercase' }}>
                   {s.phase}
                 </div>
               </div>
-              <div style={{ fontSize: 14, color: 'var(--sumi)',
-                             lineHeight: 1.65, marginBottom: 14 }}>
+              <div style={{
+ fontSize: 13, color: 'var(--ink)',
+                             lineHeight: 1.65
+}} className="mb-3" >
                 {s.text}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--sumi-3)',
+              <div style={{ fontSize: 11, color: 'var(--ink-3)',
                              fontStyle: 'italic' }}>
                 {s.sub}
               </div>
@@ -280,37 +300,45 @@ function GalleryA() {
       el: <MockInstruments width={780} height={490}/> }
   ];
   return (
-    <section id="gallery" style={{ borderTop: 'var(--hairline)',
-                                    padding: '80px 0 40px',
-                                    background: 'var(--paper-2)' }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 48px' }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                       color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginBottom: 12 }}>
+    <section id="gallery" style={{
+ borderTop: 'var(--hairline)',
+                                    background: 'var(--paper-2)'
+}} className="pt-8 pb-6" >
+      <div style={{ maxWidth: 1100 }} className="mx-auto px-7" >
+        <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                       color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-3" >
           The screens
         </div>
-        <h2 className="display" style={{ fontSize: 36, fontWeight: 300,
-                       margin: '0 0 12px', letterSpacing: '-0.02em' }}>
+        <h2 className="display mt-0 mb-3" style={{
+ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em'
+}}>
           Five surfaces, one rhythm.
         </h2>
-        <p style={{ fontSize: 14, color: 'var(--sumi-2)',
-                     maxWidth: 560, lineHeight: 1.6, margin: '0 0 56px' }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     maxWidth: 560, lineHeight: 1.6
+}} className="mt-0 mb-7" >
           Every screen answers one question and stays quiet otherwise.
         </p>
       </div>
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 48px',
-                     display: 'flex', flexDirection: 'column', gap: 80 }}>
+      <div style={{
+ maxWidth: 1100,
+                     display: 'flex', flexDirection: 'column'
+}} className="gap-8 mx-auto px-7" >
         {screens.map((s, i) => (
           <div key={i} style={{
             display: 'grid',
-            gridTemplateColumns: i % 2 === 0 ? '1fr 320px' : '320px 1fr',
-            gap: 56, alignItems: 'center'
-          }}>
+            gridTemplateColumns: i % 2 === 0 ? '1fr 320px' : '320px 1fr', alignItems: 'center'
+}} className="gap-7" >
             <div style={{ order: i % 2 === 0 ? 0 : 1 }}>{s.el}</div>
             <div style={{ order: i % 2 === 0 ? 1 : 0 }}>
-              <div className="display" style={{ fontSize: 22, fontWeight: 400,
-                             marginBottom: 10 }}>{s.caption}</div>
-              <div style={{ fontSize: 13, color: 'var(--sumi-2)',
+              <div className="display mb-2" style={{
+ fontSize: 22, fontWeight: 400
+}}>{s.caption}</div>
+              <div style={{ fontSize: 13, color: 'var(--ink-2)',
                              lineHeight: 1.65 }}>{s.sub}</div>
             </div>
           </div>
@@ -323,30 +351,38 @@ function GalleryA() {
 // ─── Philosophy ─────────────────────────────────────────────────
 function PhilosophyA() {
   return (
-    <section id="philosophy" style={{ borderTop: 'var(--hairline)',
-                                       padding: '120px 48px' }}>
-      <div style={{ maxWidth: 760, margin: '0 auto', textAlign: 'center' }}>
-        <span className="kanji" style={{ fontSize: 80,
-                       color: 'var(--shu)', lineHeight: 1 }}>静</span>
-        <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                       color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginTop: 14 }}>
+    <section id="philosophy" style={{
+ borderTop: 'var(--hairline)'
+}} className="py-9 px-7" >
+      <div style={{ maxWidth: 760, textAlign: 'center' }} className="mx-auto" >
+        <span className="kanji" style={{ fontSize: 56,
+                       color: 'var(--accent)', lineHeight: 1 }}>静</span>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                       color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mt-3" >
           Sei · stillness
         </div>
-        <h2 className="display" style={{ fontSize: 30, fontWeight: 300,
-                       margin: '40px 0 28px', letterSpacing: '-0.02em',
-                       lineHeight: 1.3 }}>
+        <h2 className="display mt-6 mb-5" style={{
+ fontSize: 28, fontWeight: 300, letterSpacing: '-0.02em',
+                       lineHeight: 1.3
+}}>
           The master observes for a long time before teaching.
         </h2>
-        <p style={{ fontSize: 14, color: 'var(--sumi-2)',
-                     lineHeight: 1.75, margin: 0 }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     lineHeight: 1.75
+}} className="m-0" >
           AI tools are getting louder. More suggestions, more autocompletes,
           more interrupting. Sensei moves the other way. It speaks rarely,
           and only when it has something specific to say. Most days it is
           completely silent — and that is the feature.
         </p>
-        <p style={{ fontSize: 14, color: 'var(--sumi-2)',
-                     lineHeight: 1.75, marginTop: 18 }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     lineHeight: 1.75
+}} className="mt-4" >
           The kanji throughout the app are not decoration. Each one names
           a phase of practice — observation, recognition, adoption,
           refinement. They are what we ask of the user, and what we ask
@@ -362,29 +398,31 @@ function PrivacyA() {
   return (
     <section id="privacy" style={{
       borderTop: 'var(--hairline)',
-      background: 'var(--paper)',
-      padding: '80px 48px'
-    }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto',
+      background: 'var(--paper)'
+}} className="py-8 px-7" >
+      <div style={{
+ maxWidth: 1100,
                      display: 'grid',
-                     gridTemplateColumns: '1fr 1.4fr',
-                     gap: 48, alignItems: 'start' }}>
+                     gridTemplateColumns: '1fr 1.4fr', alignItems: 'start'
+}} className="gap-7 mx-auto" >
         <div>
-          <span className="kanji" style={{ fontSize: 36,
-                         color: 'var(--shu)' }}>蔵</span>
-          <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                         color: 'var(--sumi-3)',
-                         textTransform: 'uppercase',
-                         marginTop: 12, marginBottom: 12 }}>
+          <span className="kanji" style={{ fontSize: 40,
+                         color: 'var(--accent)' }}>蔵</span>
+          <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                         color: 'var(--ink-3)',
+                         textTransform: 'uppercase'
+}} className="mt-3 mb-3" >
             Privacy & local-first
           </div>
-          <h2 className="display" style={{ fontSize: 28, fontWeight: 400,
-                         margin: 0, letterSpacing: '-0.015em',
-                         lineHeight: 1.25 }}>
+          <h2 className="display m-0" style={{
+ fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em',
+                         lineHeight: 1.25
+}}>
             Your sessions stay on your machine.
           </h2>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }} className="gap-5" >
           {[
             { k: "蔵", title: "Local storage only",
               text: "Transcripts, patterns, memories — all stored in a SQLite file under your home directory. Sensei never makes outbound network requests." },
@@ -393,16 +431,18 @@ function PrivacyA() {
             { k: "破", title: "Easy to delete",
               text: "One folder. Delete it and sensei forgets everything. Export to JSON anytime." }
           ].map((it, i) => (
-            <div key={i} style={{ display: 'grid',
-                       gridTemplateColumns: 'auto 1fr', gap: 16,
-                       paddingBottom: 22,
-                       borderBottom: i < 2 ? 'var(--hairline)' : 'none' }}>
+            <div key={i} style={{
+ display: 'grid',
+                       gridTemplateColumns: 'auto 1fr',
+                       borderBottom: i < 2 ? 'var(--hairline)' : 'none'
+}} className="gap-4 pb-5" >
               <span className="kanji" style={{ fontSize: 22,
-                             color: 'var(--sumi-2)' }}>{it.k}</span>
+                             color: 'var(--ink-2)' }}>{it.k}</span>
               <div>
-                <div className="display" style={{ fontSize: 16,
-                               marginBottom: 6 }}>{it.title}</div>
-                <div style={{ fontSize: 13, color: 'var(--sumi-2)',
+                <div className="display mb-1" style={{
+ fontSize: 15
+}}>{it.title}</div>
+                <div style={{ fontSize: 13, color: 'var(--ink-2)',
                                lineHeight: 1.6 }}>{it.text}</div>
               </div>
             </div>
@@ -416,26 +456,32 @@ function PrivacyA() {
 // ─── Pricing ────────────────────────────────────────────────────
 function PricingA() {
   return (
-    <section style={{ borderTop: 'var(--hairline)',
-                       padding: '80px 48px',
-                       textAlign: 'center' }}>
-      <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                       color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginBottom: 14 }}>
+    <section style={{
+ borderTop: 'var(--hairline)',
+                       textAlign: 'center'
+}} className="py-8 px-7" >
+      <div style={{ maxWidth: 720 }} className="mx-auto" >
+        <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                       color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-3" >
           Pricing
         </div>
-        <h2 className="display" style={{ fontSize: 36, fontWeight: 300,
-                       margin: '0 0 16px', letterSpacing: '-0.02em' }}>
+        <h2 className="display mt-0 mb-4" style={{
+ fontSize: 40, fontWeight: 300, letterSpacing: '-0.02em'
+}}>
           Free. Pay what feels right.
         </h2>
-        <p style={{ fontSize: 14, color: 'var(--sumi-2)',
-                     lineHeight: 1.7, margin: 0 }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     lineHeight: 1.7
+}} className="m-0" >
           Sensei is free to download and use forever. If it earns a place
           in your daily practice, you can support development below — but
           there's no nag, no trial, no upgrade prompt. Ever.
         </p>
-        <div style={{ marginTop: 36 }}>
+        <div className="mt-6" >
           <DownloadCTA/>
         </div>
       </div>
@@ -458,36 +504,41 @@ function FaqA() {
       a: "Sensei stays local-first and free. We may add an optional paid tier later for cross-machine sync, but the core promise — quiet, local, observant — never changes." }
   ];
   return (
-    <section id="faq" style={{ borderTop: 'var(--hairline)',
-                                padding: '80px 48px' }}>
-      <div style={{ maxWidth: 880, margin: '0 auto' }}>
-        <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                       color: 'var(--sumi-3)',
-                       textTransform: 'uppercase', marginBottom: 12 }}>
+    <section id="faq" style={{
+ borderTop: 'var(--hairline)'
+}} className="py-8 px-7" >
+      <div style={{ maxWidth: 880 }} className="mx-auto" >
+        <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                       color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mb-3" >
           Frequently asked
         </div>
-        <h2 className="display" style={{ fontSize: 28, fontWeight: 400,
-                       margin: '0 0 40px', letterSpacing: '-0.015em' }}>
+        <h2 className="display mt-0 mb-6" style={{
+ fontSize: 28, fontWeight: 400, letterSpacing: '-0.015em'
+}}>
           Common questions, plain answers.
         </h2>
         <div>
           {qs.map((it, i) => (
             <details key={i} style={{
               borderTop: 'var(--hairline)',
-              padding: '20px 0',
               ...(i === qs.length - 1 ? { borderBottom: 'var(--hairline)' } : {})
-            }}>
+}} className="py-4 px-0" >
               <summary style={{
                 cursor: 'pointer',
                 listStyle: 'none',
                 display: 'flex', justifyContent: 'space-between',
-                fontSize: 14, color: 'var(--sumi)'
+                fontSize: 13, color: 'var(--ink)'
               }}>
                 <span>{it.q}</span>
-                <span className="kanji" style={{ color: 'var(--sumi-3)' }}>+</span>
+                <span className="kanji" style={{ color: 'var(--ink-3)' }}>+</span>
               </summary>
-              <div style={{ fontSize: 13, color: 'var(--sumi-2)',
-                             lineHeight: 1.7, marginTop: 14, maxWidth: 640 }}>
+              <div style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                             lineHeight: 1.7, maxWidth: 640
+}} className="mt-3" >
                 {it.a}
               </div>
             </details>
@@ -501,37 +552,41 @@ function FaqA() {
 // ─── Support development ────────────────────────────────────────
 function SupportA() {
   return (
-    <section style={{ borderTop: 'var(--hairline)',
+    <section style={{
+ borderTop: 'var(--hairline)',
                        background: 'var(--paper-2)',
-                       padding: '80px 48px',
-                       textAlign: 'center' }}>
-      <div style={{ maxWidth: 640, margin: '0 auto' }}>
-        <span className="kanji" style={{ fontSize: 32,
-                       color: 'var(--shu)' }}>志</span>
-        <div style={{ fontSize: 10, letterSpacing: '0.22em',
-                       color: 'var(--sumi-3)',
-                       textTransform: 'uppercase',
-                       marginTop: 10, marginBottom: 12 }}>
+                       textAlign: 'center'
+}} className="py-8 px-7" >
+      <div style={{ maxWidth: 640 }} className="mx-auto" >
+        <span className="kanji" style={{ fontSize: 28,
+                       color: 'var(--accent)' }}>志</span>
+        <div style={{
+ fontSize: 11, letterSpacing: '0.22em',
+                       color: 'var(--ink-3)',
+                       textTransform: 'uppercase'
+}} className="mt-2 mb-3" >
           Support development
         </div>
-        <h2 className="display" style={{ fontSize: 24, fontWeight: 400,
-                       margin: '0 0 18px', letterSpacing: '-0.015em',
-                       lineHeight: 1.3 }}>
+        <h2 className="display mt-0 mb-4" style={{
+ fontSize: 22, fontWeight: 400, letterSpacing: '-0.015em',
+                       lineHeight: 1.3
+}}>
           If sensei has earned a place in your practice, you can help keep it growing.
         </h2>
-        <p style={{ fontSize: 13, color: 'var(--sumi-2)',
-                     lineHeight: 1.7, margin: '0 0 28px' }}>
+        <p style={{
+ fontSize: 13, color: 'var(--ink-2)',
+                     lineHeight: 1.7
+}} className="mt-0 mb-5" >
           Sensei is built by a small team. Every coffee buys an hour of focused work.
         </p>
         <a href="#sponsor" style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '12px 22px',
-          border: '1px solid var(--sumi)',
+          display: 'inline-flex', alignItems: 'center',
+          border: '1px solid var(--ink)',
           borderRadius: 6,
           fontSize: 13,
-          color: 'var(--sumi)',
+          color: 'var(--ink)',
           textDecoration: 'none'
-        }}>
+}} className="gap-2 py-3 px-5" >
           ♥ Buy me a coffee
         </a>
       </div>
@@ -542,21 +597,25 @@ function SupportA() {
 // ─── Footer ─────────────────────────────────────────────────────
 function FooterA() {
   return (
-    <footer style={{ borderTop: 'var(--hairline)',
-                      padding: '40px 48px',
-                      fontSize: 11, color: 'var(--sumi-3)' }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto',
+    <footer style={{
+ borderTop: 'var(--hairline)',
+                      fontSize: 11, color: 'var(--ink-3)'
+}} className="py-6 px-7" >
+      <div style={{
+ maxWidth: 1100,
                      display: 'flex', alignItems: 'center',
-                     justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                     justifyContent: 'space-between'
+}} className="mx-auto" >
+        <div style={{ display: 'flex', alignItems: 'baseline' }} className="gap-2" >
           <span className="kanji" style={{ fontSize: 13,
-                         color: 'var(--shu)', letterSpacing: '-0.04em' }}>先生</span>
+                         color: 'var(--accent)', letterSpacing: '-0.04em' }}>先生</span>
           <span className="display" style={{ fontSize: 13,
-                         color: 'var(--sumi-2)' }}>Sensei</span>
-          <span className="mono" style={{ fontSize: 10,
-                         marginLeft: 12 }}>v0.4.2</span>
+                         color: 'var(--ink-2)' }}>Sensei</span>
+          <span className="mono ml-3" style={{
+ fontSize: 11
+}}>v0.4.2</span>
         </div>
-        <div style={{ display: 'flex', gap: 22 }}>
+        <div style={{ display: 'flex' }} className="gap-5" >
           <a href="#privacy">Privacy</a>
           <a href="#faq">FAQ</a>
           <a href="#github">GitHub</a>

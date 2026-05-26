@@ -15,8 +15,22 @@ pub(crate) async fn list_solutions(State(state): State<AppState>) -> Result<Json
     let projects = state.pg.list_projects().await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // TODO: enrich projects with repo membership. Add a list_folders_by_project() method when needed.
-    Ok(Json(serde_json::json!(projects)))
+    // Enrich each project with its folder membership so the Projects setup
+    // page (and any future project detail view) can render folder names,
+    // paths, and roles without an extra round trip per project.
+    let mut enriched = Vec::with_capacity(projects.len());
+    for mut project in projects {
+        let project_id = project["id"].as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        if let Some(pid) = project_id {
+            let folders = state.pg.list_folders_by_project(&pid).await.unwrap_or_default();
+            project["folders"] = serde_json::Value::Array(folders);
+        } else {
+            project["folders"] = serde_json::Value::Array(vec![]);
+        }
+        enriched.push(project);
+    }
+    Ok(Json(serde_json::json!(enriched)))
 }
 
 #[derive(Deserialize)]

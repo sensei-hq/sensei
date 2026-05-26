@@ -14,7 +14,6 @@ homebrew/
     sensei.rb         Formula — installs senseid, sensei CLI, sensei-mcp
   Casks/
     senseihq.rb       Cask — installs Sensei.app (depends on the formula)
-  Brewfile            One-command install: CLI + app + prerequisites
   README.md           Tap documentation
 ```
 
@@ -36,15 +35,42 @@ Platform-aware: selects the correct tarball for macOS arm64, macOS x86_64, Linux
 
 Installs the universal macOS `.dmg` bundle (`Sensei.app`). Depends on the formula — installing the cask also installs the CLI tools. The `zap` stanza lists all application support directories for clean removal.
 
-### Brewfile
+### Cold-install onramp
 
-Installs everything in one command:
+Single command, no file to fetch. Branches by build mode:
 
-```sh
-brew bundle --file=Brewfile
+```bash
+# Stable / production
+brew install sensei-hq/tap/sensei
+
+# Dev / contributor (built from develop branch HEAD)
+brew install --HEAD sensei-hq/tap/sensei-dev
 ```
 
-Contents: PostgreSQL 17, Ollama, sensei formula, sensei cask. Already-installed items are skipped.
+Prerequisites (postgresql@17, ollama) are *not* installed here. They are
+installed lazily on first daemon boot by the per-component install
+resolvers in `sensei-bootstrap`'s health module — failure in any single
+prerequisite no longer cascades to block the others.
+
+### Install flow
+
+```mermaid
+flowchart TD
+    user["User: brew install [--HEAD] sensei-hq/tap/sensei[-dev]"] --> brew["Homebrew installs sensei binaries<br/>(/opt/homebrew/Cellar/...)"]
+    brew --> first["First daemon boot"]
+    first --> health["sensei-bootstrap runs health check"]
+    health --> chk_pg["Postgres checker"]
+    health --> chk_oll["Ollama checker"]
+    chk_pg -- failed --> res_pg["PostgresInstallResolver<br/>brew install postgresql@17"]
+    chk_oll -- failed --> res_oll["OllamaInstallResolver<br/>brew install ollama"]
+    chk_pg -- passed --> ok_pg["postgres ready"]
+    chk_oll -- passed --> ok_oll["ollama ready"]
+    res_pg --> ok_pg
+    res_oll --> ok_oll
+```
+
+The split-resolver design replaces the previous omnibus `brew bundle`
+workflow — see [`2026-05-14-brew-resolver-split-design.md`](../superpowers/specs/2026-05-14-brew-resolver-split-design.md).
 
 ---
 

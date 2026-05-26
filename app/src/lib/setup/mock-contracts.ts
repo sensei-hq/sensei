@@ -20,7 +20,7 @@ export function mockWatchRoot(overrides: Partial<DaemonWatchRoot> = {}): DaemonW
 
 export function mockAssistantVariant(overrides: Partial<AssistantVariant> = {}): AssistantVariant {
   return {
-    id: 'claude-code', name: 'Claude Code', installed: true,
+    id: 'claude-code', name: 'Claude Code', installed: true, configured: false,
     ...overrides,
   };
 }
@@ -52,8 +52,9 @@ export function mockProject(overrides: Partial<DaemonProject> = {}): DaemonProje
 
 export function mockLibEntry(overrides: Partial<DaemonLibEntry> = {}): DaemonLibEntry {
   return {
-    id: 'svelte', name: 'svelte', version: '5.0.0', lang: 'TypeScript',
-    usage: 42, source: 'package.json', docs: 'indexed', enabled: true,
+    id: 'svelte', name: 'svelte', ecosystem: 'npm', version: '5.0.0',
+    description: 'Cybernetically enhanced web apps', pageCount: 0,
+    repos: ['app'], repoCount: 1, enabled: true,
     ...overrides,
   };
 }

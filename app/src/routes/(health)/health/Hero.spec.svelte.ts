@@ -10,11 +10,13 @@ afterEach(() => { cleanup.forEach((fn) => fn()); cleanup = []; });
 
 const pm = (overrides: Partial<Component> = {}): Component => ({
   id: 'homebrew', label: 'Homebrew', note: null,
-  status: 'ready' as ComponentStatus, version: '4.2.0', detail: null, ...overrides,
+  status: 'ready' as ComponentStatus, version: '4.2.0', detail: null,
+  installingVerb: 'installing', ...overrides,
 });
 
 const allReady = (): Component[] => COMPONENT_ORDER.map((id) => ({
   id, label: id, note: null, status: 'ready' as const, version: '1.0', detail: null,
+  installingVerb: 'installing',
 }));
 
 const oneInstalling = (idx: number): Component[] => {
