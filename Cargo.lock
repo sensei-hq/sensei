@@ -2545,6 +2545,7 @@ name = "senseid"
 version = "0.2.14"
 dependencies = [
  "axum",
+ "base64",
  "cc",
  "chrono",
  "clap",
@@ -2572,6 +2573,7 @@ dependencies = [
  "sqlx-core",
  "sqlx-postgres",
  "tempfile",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tokio-test",

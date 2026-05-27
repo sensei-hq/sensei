@@ -423,3 +423,44 @@ setup completion.
   spec.
 - Router-keys page in `/settings` (outside the wizard) once the
   Inference stage exists.
+
+## Verified
+
+End-to-end live test against a real OpenAI account on 2026-05-27:
+
+1. `POST /api/gateway/routers/openai/key` stored the key in macOS
+   Keychain at `com.sensei.gateway.router.openai`. `GET /api/gateway/routers`
+   returned `configured: true`.
+2. Daemon restart preserved the key (Keychain-backed, not in-process).
+3. `POST /api/gateway/image/generate` with `{model: "openai/gpt-image-1",
+   prompt: "a tiny smiling onigiri ... chibi style ...", size: "1024x1024",
+   quality: "high", output_path: "/tmp/sensei-chibi.png"}` returned
+   `{ok: true, paths: ["/tmp/sensei-chibi.png"], model: "gpt-image-1",
+   router: "openai"}` and wrote a valid 2 MB PNG (1024×1024 RGB) to disk.
+
+Gaps discovered and resolved during verification:
+
+- `init_gateway()` started with an empty `GatewayConfig::default()`, so
+  even with adapters and Keychain keys present, all requests failed
+  with `NotConfigured`. Replaced with `baseline_production_config()`
+  containing the openai/anthropic/ollama routers, `dall-e-3` /
+  `gpt-image-1` / `gpt-4o-mini` / `claude-sonnet` models, and
+  `image_generate` / `text_chat` chains. This is the one-place edit
+  when adding new shipped routers/models.
+- External-provider adapters (OpenAI, Anthropic, Grok) were only
+  registered when their `*_API_KEY` env var was set at daemon startup.
+  With Keychain support, this gated valid configurations behind an
+  irrelevant env-var check. Adapters now register unconditionally;
+  `resolve_api_key` (Task 2) picks the literal Keychain-derived key
+  before falling back to the env var. Missing keys still fail clearly
+  at request time, not registration time.
+- Router URLs in the baseline config were initially `…/v1`, but every
+  OpenAI/Anthropic adapter call appends `/v1/...` itself. Fixed to
+  bare hostnames (`https://api.openai.com`,
+  `https://api.anthropic.com`).
+- `GatewayError::AllAttemptsFailed` previously surfaced only an
+  attempt count. Extended to include a joined `errors` string built
+  from each failed `Attempt.error`, so handlers and clients can see
+  the underlying provider response (e.g., "Invalid value: 'standard'.
+  Supported values are: 'low', 'medium', 'high', 'auto'." for the
+  `gpt-image-1` quality enum).
