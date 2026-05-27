@@ -8,6 +8,19 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+pub struct InsertMemory {
+    pub project_id:    Option<uuid::Uuid>,
+    pub scope:         String,
+    pub scope_filter:  Option<String>,
+    pub mtype:         String,    // memory_type enum value
+    pub title:         String,
+    pub content:       String,
+    pub impact:        Option<String>,
+    pub tags:          Vec<String>,
+    pub triage_signal: Option<String>,
+    pub status:        String,    // memory_status enum value
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -1671,6 +1684,79 @@ impl PgStore {
         Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
     }
 
+    pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
+        let id = uuid::Uuid::new_v4();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.projects (id, name)
+             VALUES ($1, $2)
+             ON CONFLICT (id) DO NOTHING"
+        ).bind(id).bind(name)
+         .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    pub async fn insert_memory(&self, m: &InsertMemory) -> Result<uuid::Uuid, String> {
+        let id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memories
+                (project_id, scope, scope_filter, type, title, content, impact,
+                 tags, triage_signal, status)
+             VALUES ($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7,
+                     $8, $9, $10::sensei.memory_status)
+             RETURNING id"
+        )
+            .bind(m.project_id)
+            .bind(&m.scope).bind(&m.scope_filter)
+            .bind(&m.mtype).bind(&m.title).bind(&m.content).bind(&m.impact)
+            .bind(&m.tags).bind(&m.triage_signal).bind(&m.status)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id.0)
+    }
+
+    pub async fn list_memories(
+        &self,
+        project_id: Option<uuid::Uuid>,
+        status:     Option<&str>,
+        scope:      Option<&str>,
+        limit:      i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
+                       Option<String>, f64, String, i32, i32,
+                       Option<chrono::DateTime<chrono::Utc>>, Vec<String>, Option<String>,
+                       chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+                        impact, strength::float8, status::text, reinforced_count, violated_count,
+                        last_relevant_at, tags, triage_signal, modified_at
+                   FROM sensei.memories
+                  WHERE ($1::uuid IS NULL OR project_id = $1)
+                    AND ($2::text IS NULL OR status::text = $2)
+                    AND ($3::text IS NULL OR scope::text = $3)
+                  ORDER BY strength DESC, last_relevant_at DESC NULLS LAST, modified_at DESC
+                  LIMIT $4"
+            )
+            .bind(project_id).bind(status).bind(scope).bind(limit)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|r| serde_json::json!({
+            "id":               r.0,
+            "project_id":       r.1,
+            "scope":            r.2,
+            "scope_filter":     r.3,
+            "type":             r.4,
+            "title":            r.5,
+            "content":          r.6,
+            "impact":           r.7,
+            "strength":         r.8,
+            "status":           r.9,
+            "applied_count":    r.10,
+            "violated_count":   r.11,
+            "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
+            "tags":             r.13,
+            "triage_signal":    r.14,
+            "modified_at":      r.15.to_rfc3339(),
+        })).collect())
+    }
+
     pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
@@ -2757,5 +2843,36 @@ mod tests {
             .await
             .unwrap();
         assert!(row.0, "sensei.memories table must exist — run `dbd apply` first");
+    }
+}
+
+#[cfg(test)]
+mod knowledge_tests {
+    use super::*;
+
+    fn ddl_test_skip() -> bool {
+        // Tests require a running sensei_dev DB. Skip if env var not set.
+        std::env::var("SENSEI_TEST_DB_URL").is_err()
+    }
+
+    #[tokio::test]
+    async fn list_memories_filters_by_status() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let project_id = pg.ensure_test_project("list-status").await.unwrap();
+        let m1 = pg.insert_memory(&InsertMemory {
+            project_id: Some(project_id), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t1".into(), content: "c1".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "proposed".into(),
+        }).await.unwrap();
+        let _m2 = pg.insert_memory(&InsertMemory {
+            project_id: Some(project_id), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t2".into(), content: "c2".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+
+        let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
+        assert_eq!(proposed.len(), 1);
+        assert_eq!(proposed[0]["id"].as_str().unwrap(), m1.to_string());
     }
 }
