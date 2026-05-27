@@ -195,6 +195,62 @@ fn handle_list_tools() -> Value {
                 ("data", "string", "JSON string with event-specific data"),
                 ("session_id", "string", "Session ID if known"),
             ]),
+            // ── Knowledge plane ───────────────────────────────────────
+            tool("propose_memory",
+                "Capture an AI-detected learning into the triage queue. Use when a heuristic fires \
+                 (revert / correction / 'actually...' / repeat_pattern / override / test_failure). \
+                 User reviews these in the Learnings UI before they enter active memory.",
+                &[
+                    ("scope",         "string", "global | project | stack"),
+                    ("type",          "string", "memory_type enum value (e.g. convention, pattern, decision)"),
+                    ("title",         "string", "Short heading"),
+                    ("content",       "string", "Rule body — what the agent should know"),
+                    ("triage_signal", "string", "Which capture heuristic fired"),
+                ],
+                &[
+                    ("project_id",   "string", "Project UUID (required when scope=project)"),
+                    ("scope_filter", "string", "Required when scope=stack (e.g. 'rust')"),
+                    ("impact",       "string", "What breaks if ignored"),
+                    ("tags",         "string", "Comma-separated tag list (e.g. 'security,performance')"),
+                ]),
+            tool("save_memory",
+                "Explicit memory save — used when the user runs /save. Goes straight into active state. \
+                 Never call this on heuristic detection — use propose_memory for that.",
+                &[
+                    ("scope",   "string", "global | project | stack"),
+                    ("type",    "string", "memory_type enum value"),
+                    ("title",   "string", "Short heading"),
+                    ("content", "string", "Rule body"),
+                ],
+                &[
+                    ("project_id",   "string", "Project UUID"),
+                    ("scope_filter", "string", "Required when scope=stack"),
+                    ("impact",       "string", "What breaks if ignored"),
+                    ("tags",         "string", "Comma-separated tags"),
+                ]),
+            tool("accept_proposal",
+                "Accept a proposed memory — moves it from triage to active.",
+                &[("id", "string", "Proposal memory id (UUID)")],
+                &[]),
+            tool("reject_proposal",
+                "Reject a proposed memory — moves it to rejected state.",
+                &[("id", "string", "Proposal memory id (UUID)")],
+                &[("reason", "string", "Why it was rejected (logged)")]),
+            tool("record_outcome",
+                "Record one or more memory outcomes (applied / consulted / violated / ignored). \
+                 Batched — call once per turn with all outcomes the session generated.",
+                &[("outcomes", "string", "JSON array string of {memory_id, outcome[, session_id, context]}")],
+                &[]),
+            tool("get_layered_context",
+                "Fetch the blended memory context for the current project — global + project + \
+                 stack-matched memories, ordered by strength. Call at session start and on /recall.",
+                &[],
+                &[
+                    ("project",    "string", "Project name. Defaults to current project."),
+                    ("project_id", "string", "Project UUID — overrides project name lookup."),
+                    ("limit",      "string", "Max memories to return (default 200, cap 500)"),
+                    ("tags",       "string", "Comma-separated tag filter"),
+                ]),
         ]
     })
 }
@@ -458,6 +514,101 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
         let result = client.post(format!("{}/api/events", daemon_url()))
             .json(&body)
             .send();
+        return daemon_result(result);
+    }
+
+    // ── Knowledge plane ─────────────────────────────────────────────────
+
+    if tool_name == "propose_memory" || tool_name == "save_memory" {
+        let scope = args["scope"].as_str().unwrap_or("");
+        let mtype = args["type"].as_str().unwrap_or("");
+        let title = args["title"].as_str().unwrap_or("");
+        let content = args["content"].as_str().unwrap_or("");
+        let scope_filter = args["scope_filter"].as_str();
+        let impact = args["impact"].as_str();
+        let triage_signal = args["triage_signal"].as_str();
+        let tags_csv = args["tags"].as_str().unwrap_or("");
+        let tags: Vec<String> = tags_csv.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let project_id_param = args["project_id"].as_str();
+
+        let mut body = serde_json::json!({
+            "scope": scope, "type": mtype, "title": title, "content": content,
+            "tags": tags,
+        });
+        if let Some(s) = scope_filter.filter(|s| !s.is_empty()) {
+            body["scope_filter"] = serde_json::json!(s);
+        }
+        if let Some(s) = impact.filter(|s| !s.is_empty()) {
+            body["impact"] = serde_json::json!(s);
+        }
+        if let Some(s) = triage_signal.filter(|s| !s.is_empty()) {
+            body["triage_signal"] = serde_json::json!(s);
+        }
+        // project_id: explicit param wins, else resolve from project hint / cwd.
+        if let Some(pid) = project_id_param.filter(|s| !s.is_empty()) {
+            body["project_id"] = serde_json::json!(pid);
+        } else if scope == "project" && !repo_id.is_empty() {
+            body["project_id"] = serde_json::json!(repo_id);
+        }
+
+        let path = if tool_name == "propose_memory" {
+            "/api/knowledge/proposals"
+        } else {
+            "/api/knowledge/memories"
+        };
+        let result = client.post(format!("{}{}", daemon_url(), path))
+            .json(&body).send();
+        return daemon_result(result);
+    }
+
+    if tool_name == "accept_proposal" {
+        let id = args["id"].as_str().unwrap_or("");
+        let result = client.post(format!("{}/api/knowledge/proposals/{}/accept", daemon_url(), id))
+            .json(&serde_json::json!({})).send();
+        return daemon_result(result);
+    }
+
+    if tool_name == "reject_proposal" {
+        let id = args["id"].as_str().unwrap_or("");
+        let reason = args["reason"].as_str();
+        let body = if let Some(r) = reason.filter(|s| !s.is_empty()) {
+            serde_json::json!({ "reason": r })
+        } else {
+            serde_json::json!({})
+        };
+        let result = client.post(format!("{}/api/knowledge/proposals/{}/reject", daemon_url(), id))
+            .json(&body).send();
+        return daemon_result(result);
+    }
+
+    if tool_name == "record_outcome" {
+        let outcomes_str = args["outcomes"].as_str().unwrap_or("[]");
+        let outcomes: serde_json::Value = serde_json::from_str(outcomes_str)
+            .unwrap_or(serde_json::json!([]));
+        let body = serde_json::json!({ "outcomes": outcomes });
+        let result = client.post(format!("{}/api/knowledge/outcomes", daemon_url()))
+            .json(&body).send();
+        return daemon_result(result);
+    }
+
+    if tool_name == "get_layered_context" {
+        let explicit_pid = args["project_id"].as_str().unwrap_or("");
+        let pid = if !explicit_pid.is_empty() { explicit_pid.to_string() } else { repo_id.clone() };
+        if pid.is_empty() {
+            return json!({"content":[{"type":"text","text":"No project resolved. Pass project_id or run from a project directory."}], "isError": true});
+        }
+        let mut req = client.get(format!("{}/api/knowledge/context", daemon_url()))
+            .query(&[("project_id", pid.as_str())]);
+        if let Some(l) = args["limit"].as_str().filter(|s| !s.is_empty()) {
+            req = req.query(&[("limit", l)]);
+        }
+        if let Some(t) = args["tags"].as_str().filter(|s| !s.is_empty()) {
+            req = req.query(&[("tags", t)]);
+        }
+        let result = req.send();
         return daemon_result(result);
     }
 
