@@ -12,6 +12,7 @@ pub mod installer;
 pub mod paths;
 pub mod ir;
 pub mod gateway_keys;
+pub mod gateway_routers;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
