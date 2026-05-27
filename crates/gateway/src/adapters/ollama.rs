@@ -516,6 +516,7 @@ mod tests {
         let config = RouterConfig {
             url: "http://localhost:11434".to_string(),
             api_key_env: None,
+            api_key: None,
             enabled: true,
             timeout_ms: Some(60000),
             headers: std::collections::HashMap::new(),
