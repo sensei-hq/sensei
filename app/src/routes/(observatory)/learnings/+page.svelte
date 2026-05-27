@@ -5,6 +5,7 @@
     import TriageList  from './TriageList.svelte';
     import ActiveList  from './ActiveList.svelte';
     import ArchiveList from './ArchiveList.svelte';
+    import MemoryDetail from './MemoryDetail.svelte';
 
     type Tab = 'triage' | 'active' | 'archive';
     let tab = $state<Tab>('triage');
@@ -52,6 +53,10 @@
             {:else if tab === 'active'}<ActiveList />
             {:else}<ArchiveList />{/if}
         </section>
+
+        <aside class="detail" data-testid="detail-pane">
+            <MemoryDetail />
+        </aside>
     </div>
 </div>
 
@@ -61,6 +66,7 @@
     .tab { padding: 0.5rem 1rem; border: none; background: transparent; cursor: pointer; }
     .tab.active { border-bottom: 2px solid var(--accent); font-weight: 600; }
     .count { margin-left: 0.5rem; opacity: 0.6; }
-    .layout { display: grid; grid-template-columns: 1fr; flex: 1; min-height: 0; }
-    .list { overflow-y: auto; padding: 1rem; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
+    .list { overflow-y: auto; padding: 1rem; border-right: 1px solid var(--surface-z3); }
+    .detail { overflow-y: auto; padding: 1rem; }
 </style>
