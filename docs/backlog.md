@@ -10,6 +10,28 @@ One screen at a time. Each screen: read mockup → state class → component →
 
 ## Known bugs (next)
 
+### Setup wizard regressions found in live smoke test (2026-05-27)
+
+Observed in `make app-dev-bundle` against dev daemon after the knowledge-plane Phase 0 merge. Daemon health is fine and the setup wizard renders; these are UI/state-flow bugs in the wizard stages themselves, not in the knowledge plane.
+
+- **Assistants stage** — no enable/disable switch on assistant cards; the "selected" affordance is unclear. User can't tell which assistant is on/off without clicking through. Cards need a Switch (per the existing component) with clear bound state.
+
+- **Scan stage** — updates are not landing; the page is static. State shown: `1 root · 0 discovered · 4 queued · 0 processed`, individual repo progress bars stuck at 0% (e.g. `sensei:homebrew · 0 / 73 · INDEXING`), and the SSE event feed shows the four initial `+0.00s queue` events but never receives subsequent `progress` / `complete` / `error` events. Investigate: (a) is the daemon actually progressing past queue or stuck itself, (b) is the SSE connection terminating early, (c) is `ScanProjectState.apply` not handling the post-queue event types.
+
+- **Projects stage** — empty list. Likely a downstream effect of Scan never completing — Projects reads `/api/projects` and there's nothing because nothing got indexed. Re-verify after fixing Scan.
+
+- **Libraries stage** — shows a big list (130 libraries reported in the Done stats) even though projects weren't scanned in this session. Probably stale data from prior dev sessions. Confirm whether the displayed libs are from this run or from the persistent DB; if the latter, the wizard needs an "ignore stale" or "fresh scan only" filter.
+
+- **Instruments stage — navigation bug.** Clicking the Instruments item in the rail doesn't actually select it — the page content stays on the previous stage (Libraries). User has to click Continue to advance past Instruments, then click Instruments in the rail again, to see what looks like the *previous* stage's content. The "current item" indicator in the rail also shows the next stage (Inference) while the body shows Libraries. Two distinct issues: (a) the rail click handler isn't updating the route, (b) the route → content binding has a one-step lag. Trace `wizardState.activeStage` and how the rail's click wires to navigation.
+
+- **Assignments stage** — empty. Probably a real bug — Assignments should show the configured AI → project bindings; investigate whether the read query returns nothing or the page doesn't subscribe to it. Verify against `/api/assignments` (or equivalent).
+
+- **Done stage — Continue routes to Welcome.** Final Continue button on the Done stage takes the user back to `/setup/welcome` instead of `/observatory`. The setup-complete state isn't being persisted before the navigation (or the routing gate in `hooks.ts` is overriding it). Check the Done commit handler and the `wizardState.isOk` getter that drives the gate.
+
+- **Stale data in Done summary** — Final stats show `1 root · no folders scanned yet · 130 libraries · 1 instrument`. The "1 root no folders scanned yet" combined with "130 libraries" is contradictory — confirms the libraries count is stale (from prior DB state) rather than reflecting this session.
+
+### Earlier known bugs
+
 - ~~**E2E `globalSetup` builds and launches its own `senseid`**~~ Partially
   addressed 2026-05-20 — added a parallel `playwright.cold.config.ts`
   + `globalSetup-cold.ts` that drops the dev DB, stops postgres + ollama,
