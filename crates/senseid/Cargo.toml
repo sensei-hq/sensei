@@ -53,6 +53,7 @@ clap = { version = "4", features = ["derive"] }
 # Utilities
 sha2 = "0.10"
 hex = "0.4"
+base64 = "0.22"
 globset = "0.4"
 walkdir = "2"
 ignore = "0.4"
