@@ -19,6 +19,7 @@ use crate::api::handlers::gateway;
 use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
 use crate::api::handlers::instruments;
+use crate::api::handlers::gateway_routers;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -33,6 +34,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/infer", post(gateway::infer))
         .route("/api/gateway/embed", post(gateway::embed))
         .route("/api/gateway/consensus", post(gateway::consensus))
+        .route("/api/gateway/routers",                       get(gateway_routers::list_routers))
+        .route("/api/gateway/routers/{id}/providers",        get(gateway_routers::router_providers))
+        .route("/api/gateway/routers/{id}/models",           get(gateway_routers::router_models))
+        .route("/api/gateway/routers/{id}/key",              post(gateway_routers::set_router_key).delete(gateway_routers::clear_router_key))
+        .route("/api/gateway/models",                        get(gateway_routers::list_all_models))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
         .route("/api/repos/{repo_id}", put(workspace::update_project).delete(workspace::delete_project))
