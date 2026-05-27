@@ -21,6 +21,13 @@ pub struct InsertMemory {
     pub status:        String,    // memory_status enum value
 }
 
+pub struct OutcomeRow {
+    pub memory_id:  uuid::Uuid,
+    pub session_id: Option<uuid::Uuid>,
+    pub outcome:    String,
+    pub context:    Option<String>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -1757,6 +1764,132 @@ impl PgStore {
         })).collect())
     }
 
+    /// Transition a memory's status, only when its current status is in `from_states`.
+    /// Returns the new status if the transition happened, None if no row matched.
+    pub async fn set_memory_status(
+        &self,
+        memory_id: uuid::Uuid,
+        to_status: &str,
+        from_states: &[&str],
+    ) -> Result<Option<String>, String> {
+        let from_owned: Vec<String> = from_states.iter().map(|s| s.to_string()).collect();
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.memories
+                SET status      = $1::sensei.memory_status
+                  , modified_at = now()
+              WHERE id = $2
+                AND status::text = ANY($3)
+              RETURNING status::text"
+        )
+            .bind(to_status).bind(memory_id).bind(&from_owned)
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Full memory detail bundle: row + evidence + examples + recent outcomes.
+    pub async fn get_memory_detail(&self, id: uuid::Uuid) -> Result<serde_json::Value, String> {
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
+                         Option<String>, f64, String, i32, i32,
+                         Option<chrono::DateTime<chrono::Utc>>, Vec<String>, Option<String>,
+                         chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+                        impact, strength::float8, status::text, reinforced_count, violated_count,
+                        last_relevant_at, tags, triage_signal, modified_at
+                   FROM sensei.memories WHERE id = $1"
+            ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let r = row.ok_or_else(|| format!("memory {id} not found"))?;
+        let memory = serde_json::json!({
+            "id":               r.0,
+            "project_id":       r.1,
+            "scope":            r.2,
+            "scope_filter":     r.3,
+            "type":             r.4,
+            "title":            r.5,
+            "content":          r.6,
+            "impact":           r.7,
+            "strength":         r.8,
+            "status":           r.9,
+            "applied_count":    r.10,
+            "violated_count":   r.11,
+            "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
+            "tags":             r.13,
+            "triage_signal":    r.14,
+            "modified_at":      r.15.to_rfc3339(),
+        });
+
+        // Evidence — table has: session_id, note, modified_at (no url column).
+        let evidence: Vec<(Option<uuid::Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT session_id, note, modified_at
+                   FROM sensei.memory_evidence
+                  WHERE memory_id = $1
+                  ORDER BY modified_at DESC"
+            ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // Examples — table has: node_id, is_good (non-nullable), note. No is_bad column.
+        let examples: Vec<(Option<String>, bool, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT node_id, is_good, note
+                   FROM sensei.memory_examples
+                  WHERE memory_id = $1"
+            ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // Last 20 outcomes
+        let outcomes: Vec<(String, Option<uuid::Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT outcome::text, session_id, context, recorded_at
+                   FROM sensei.memory_outcomes
+                  WHERE memory_id = $1
+                  ORDER BY recorded_at DESC
+                  LIMIT 20"
+            ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "memory":   memory,
+            "evidence": evidence.into_iter().map(|(session_id, note, ts)|
+                serde_json::json!({ "session_id": session_id, "note": note, "recorded_at": ts.to_rfc3339() })
+            ).collect::<Vec<_>>(),
+            "examples": examples.into_iter().map(|(node, is_good, note)|
+                serde_json::json!({ "node_id": node, "is_good": is_good, "note": note })
+            ).collect::<Vec<_>>(),
+            "outcomes": outcomes.into_iter().map(|(outcome, sess, ctx, ts)|
+                serde_json::json!({ "outcome": outcome, "session_id": sess, "context": ctx, "recorded_at": ts.to_rfc3339() })
+            ).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Insert a batch of outcomes. Skips rows whose target memory is archived or rejected.
+    pub async fn record_outcomes_batch(
+        &self,
+        rows: &[OutcomeRow],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let mut skipped: Vec<serde_json::Value> = Vec::new();
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        for r in rows {
+            // Check current status first.
+            let status: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT status::text FROM sensei.memories WHERE id = $1"
+            ).bind(r.memory_id).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+            let Some((s,)) = status else {
+                skipped.push(serde_json::json!({"memory_id": r.memory_id, "reason": "not_found"}));
+                continue;
+            };
+            if s == "archived" || s == "rejected" {
+                skipped.push(serde_json::json!({"memory_id": r.memory_id, "reason": format!("status_{s}")}));
+                continue;
+            }
+            sqlx_core::query::query(
+                "INSERT INTO sensei.memory_outcomes (memory_id, session_id, outcome, context)
+                 VALUES ($1, $2, $3::sensei.memory_outcome, $4)"
+            )
+                .bind(r.memory_id).bind(r.session_id).bind(&r.outcome).bind(&r.context)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(skipped)
+    }
+
     pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
@@ -2874,5 +3007,45 @@ mod knowledge_tests {
         let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
         assert_eq!(proposed.len(), 1);
         assert_eq!(proposed[0]["id"].as_str().unwrap(), m1.to_string());
+    }
+
+    #[tokio::test]
+    async fn set_memory_status_accept_proposal() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("accept-prop").await.unwrap();
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t".into(), content: "c".into(),
+            impact: None, tags: vec![], triage_signal: Some("revert".into()),
+            status: "proposed".into(),
+        }).await.unwrap();
+
+        let new_status = pg.set_memory_status(mid, "active", &["proposed"]).await.unwrap();
+        assert_eq!(new_status.as_deref(), Some("active"));
+
+        // Trying to accept a now-active memory fails.
+        let err = pg.set_memory_status(mid, "active", &["proposed"]).await;
+        assert!(err.is_err() || err.unwrap().is_none(), "second accept should not match WHERE clause");
+    }
+
+    #[tokio::test]
+    async fn get_memory_detail_includes_outcomes() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("detail").await.unwrap();
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t".into(), content: "c".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+        let skipped = pg.record_outcomes_batch(&[
+            OutcomeRow { memory_id: mid, session_id: None, outcome: "applied".into(), context: None }
+        ]).await.unwrap();
+        assert_eq!(skipped.len(), 0);
+
+        let detail = pg.get_memory_detail(mid).await.unwrap();
+        assert!(detail["memory"]["id"].as_str().unwrap() == mid.to_string());
+        assert_eq!(detail["outcomes"].as_array().unwrap().len(), 1);
     }
 }
