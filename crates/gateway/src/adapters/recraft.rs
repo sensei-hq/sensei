@@ -281,6 +281,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://external.api.recraft.ai/v1".to_string(),
             api_key_env: Some("__NONEXISTENT_RECRAFT_KEY_FOR_TEST__".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: None,
             headers: std::collections::HashMap::new(),

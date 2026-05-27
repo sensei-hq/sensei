@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WizardState } from './wizard-state.svelte.js';
-import { mockWizardLoadData, mockWatchRoot } from './setup/mock-contracts.js';
+import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
 
 describe('WizardState', () => {
   let ws: WizardState;
@@ -284,6 +284,31 @@ describe('WizardState', () => {
     it('initializes status as pending and active as false', () => {
       expect(ws.stages.every(s => s.status === 'pending')).toBe(true);
       expect(ws.stages.every(s => s.active === false)).toBe(true);
+    });
+  });
+
+  describe('inference slice', () => {
+    it('hydrates routers from load data', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({
+        routers: [
+          mockRouter({ id: 'openai',   configured: true }),
+          mockRouter({ id: 'ollama',   needs_key: false, configured: true }),
+        ],
+      }));
+      expect(ws.inference.routers).toHaveLength(2);
+      expect(ws.inference.routers[0].id).toBe('openai');
+      expect(ws.inference.routers[0].configured).toBe(true);
+      expect(ws.inference.routers[1].needsKey).toBe(false);
+    });
+
+    it('initialises draftKey/saveState empty on hydrate', () => {
+      const ws = new WizardState();
+      ws.hydrate(mockWizardLoadData({ routers: [mockRouter()] }));
+      const r = ws.inference.routers[0];
+      expect(r.draftKey).toBe('');
+      expect(r.saveState).toBe('idle');
+      expect(r.saveError).toBe('');
     });
   });
 });

@@ -89,13 +89,14 @@ export function mapLibraries(libs: LibEntry[], config: Record<string, unknown>):
 /** Fetch all wizard data from daemon in parallel. */
 export async function loadWizardData(port: number): Promise<WizardLoadData> {
   const api = senseiApi(port);
-  const [config, families, roots, projects, libs, instruments] = await Promise.all([
+  const [config, families, roots, projects, libs, instruments, routers] = await Promise.all([
     api.getConfig(),
     api.detectAssistantFamilies(),
     api.getScanRoots(),
     api.listProjects(),
     api.getLibs(),
     api.listInstruments(),
+    api.listGatewayRouters(),
   ]);
 
   return {
@@ -106,5 +107,6 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     projects: projects as any[],
     libraries: { total: libs.total, libs: mapLibraries(libs.libs, config) },
     mcps: instruments.mcps,
+    routers: routers.routers,
   };
 }
