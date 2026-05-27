@@ -623,6 +623,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://api.anthropic.com".to_string(),
             api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: Some(30000),
             headers: std::collections::HashMap::new(),

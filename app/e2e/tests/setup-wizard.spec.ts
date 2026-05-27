@@ -286,7 +286,9 @@ test.describe('Setup Wizard — Flow A: empty corpus (placeholder states)', () =
     await expect(tauriPage.locator('[data-testid^="mcp-card-"]').first()).toBeVisible({ timeout: 5_000 });
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/inference');
-    await expect(tauriPage.locator('[data-testid="stage-placeholder"][data-stage="inference"]')).toBeVisible();
+    // Inference stage no longer a placeholder — Task 12 replaced it with the router-keys page.
+    // The page hydrates routers from the daemon; assert the first router card mounts.
+    await expect(tauriPage.locator('[data-testid^="router-card-"]').first()).toBeVisible({ timeout: 5_000 });
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assignments');
     await expect(tauriPage.locator('[data-testid="stage-placeholder"][data-stage="assignments"]')).toBeVisible();

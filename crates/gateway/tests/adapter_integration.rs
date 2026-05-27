@@ -27,6 +27,7 @@ fn router_config(url: &str) -> RouterConfig {
     RouterConfig {
         url: url.to_string(),
         api_key_env: None,
+        api_key: None,
         enabled: true,
         timeout_ms: Some(5000),
         headers: HashMap::new(),
@@ -37,6 +38,7 @@ fn router_config_with_key(url: &str, env_var: &str) -> RouterConfig {
     RouterConfig {
         url: url.to_string(),
         api_key_env: Some(env_var.to_string()),
+        api_key: None,
         enabled: true,
         timeout_ms: Some(5000),
         headers: HashMap::new(),
@@ -379,6 +381,7 @@ async fn ollama_embed_integration() {
     let config = RouterConfig {
         url: "http://localhost:11434".to_string(),
         api_key_env: None,
+        api_key: None,
         enabled: true,
         timeout_ms: Some(30000),
         headers: HashMap::new(),
@@ -411,6 +414,7 @@ async fn ollama_chat_streaming_integration() {
     let config = RouterConfig {
         url: "http://localhost:11434".to_string(),
         api_key_env: None,
+        api_key: None,
         enabled: true,
         timeout_ms: Some(60000),
         headers: HashMap::new(),

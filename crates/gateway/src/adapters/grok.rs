@@ -710,6 +710,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://api.x.ai".to_string(),
             api_key_env: Some("__NONEXISTENT_XAI_KEY_FOR_TEST__".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: None,
             headers: std::collections::HashMap::new(),
@@ -750,6 +751,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://api.x.ai".to_string(),
             api_key_env: Some("XAI_API_KEY".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: Some(30000),
             headers: std::collections::HashMap::new(),

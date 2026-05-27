@@ -63,6 +63,16 @@ export function senseiApi(port: number) {
     try { await fetch(`${base}${path}`, { method: 'DELETE' }); } catch { /* non-fatal */ }
   }
 
+  async function tryDelete(path: string): Promise<ApiResult<void>> {
+    try {
+      const res = await fetch(`${base}${path}`, { method: 'DELETE' });
+      if (res.ok) return { ok: true, data: undefined };
+      return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
   async function tryGet<T>(path: string): Promise<ApiResult<T>> {
     try {
       const res = await fetch(`${base}${path}`);
@@ -450,6 +460,38 @@ export function senseiApi(port: number) {
         skills_removed: 0, agents_removed: 0, hooks_removed: false,
         cache_cleared: false, projects_cleaned: [], errors: [],
       }),
+
+    // ── Gateway routers ──────────────────────────────────────────────────
+    listGatewayRouters: () =>
+      get<{ routers: import('./setup/contracts').DaemonRouter[] }>(
+        '/api/gateway/routers',
+        { routers: [] },
+      ),
+
+    setGatewayRouterKey: (id: string, key: string) =>
+      tryPost<{ ok: boolean; configured: boolean }>(
+        `/api/gateway/routers/${enc(id)}/key`,
+        { key },
+      ),
+
+    clearGatewayRouterKey: (id: string) =>
+      tryDelete(`/api/gateway/routers/${enc(id)}/key`),
+
+    generateImage: (body: {
+      prompt: string;
+      output_path?: string;
+      model?: string;
+      router?: string;
+      size?: string;
+      quality?: string;
+      style?: string;
+      n?: number;
+    }) =>
+      post<{ ok: boolean; paths: string[]; model?: string; router?: string }>(
+        '/api/gateway/image/generate',
+        body,
+        { ok: false, paths: [] },
+      ),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),
