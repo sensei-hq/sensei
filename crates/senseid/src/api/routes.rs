@@ -20,6 +20,7 @@ use crate::api::handlers::scan_events;
 use crate::api::handlers::project_detail;
 use crate::api::handlers::instruments;
 use crate::api::handlers::gateway_routers;
+use crate::api::handlers::gateway_image;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -39,6 +40,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/gateway/routers/{id}/models",           get(gateway_routers::router_models))
         .route("/api/gateway/routers/{id}/key",              post(gateway_routers::set_router_key).delete(gateway_routers::clear_router_key))
         .route("/api/gateway/models",                        get(gateway_routers::list_all_models))
+        .route("/api/gateway/image/generate",                post(gateway_image::image_generate))
         // Repos (individual git repos)
         .route("/api/repos", get(workspace::list_projects).post(workspace::create_project))
         .route("/api/repos/{repo_id}", put(workspace::update_project).delete(workspace::delete_project))
