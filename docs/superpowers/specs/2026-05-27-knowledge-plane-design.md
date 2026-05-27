@@ -8,23 +8,23 @@
 
 ## Background
 
-The Ethico AI-Native Engineering Operating Model spec (`/Users/Jerry/Work/Ethico/Ethico_AI_Operating_Model_Spec.md`) describes an org-wide layered knowledge plane: constitution → org → client → project → repo → local memories, with MCP tools, promotion ladders, RBAC, audit, and risk classes. Sensei already has most of the *data model* for this (multi-scope `memories`, evidence/examples/links, lifecycle status, an `insights` table designed for cross-machine sync) but lacks the *interaction surface*: write APIs, the assemble-context read path, the outcome feedback loop, and a UI for human review.
+Sensei already has most of the *data model* for an org-wide layered knowledge plane (multi-scope `memories`, evidence/examples/links, lifecycle status, an `insights` table designed for cross-machine sync), but lacks the *interaction surface*: write APIs, the assemble-context read path, the outcome feedback loop, and a UI for human review.
 
-Phase 0 closes the interaction-surface gap inside the existing daemon. A future Phase 1 will extract a remote `sensei-knowledge` service for team mode; this design names that boundary so Phase 0 doesn't paint us into a corner.
+Phase 0 closes the interaction-surface gap inside the existing daemon. A future Phase 1 will extract a remote `sensei-knowledge` service for team mode (constitution → global → project → stack, with promotion ladders, RBAC, audit, and risk classes); this design names that boundary so Phase 0 doesn't paint us into a corner.
 
 ## Vocabulary
 
-We keep sensei's existing vocabulary; Ethico's terms are mapped to it.
+Sensei's existing vocabulary is the source of truth. Concepts deferred to Phase 1 are listed for context.
 
-| Ethico term | Sensei term | Notes |
+| Concept | Sensei term | Notes |
 |---|---|---|
 | Learning / Rule | **Memory** | The `memories` table is the source of truth |
-| Promotion (local→org) | (deferred) | Phase 1 — single-developer mode has no promotion ladder |
-| `record_outcome` | **Memory outcome** | Per-memory event log (new `memory_outcomes` table — see Schema) |
-| Constitution | (deferred) | Phase 1 — single-developer mode has no inviolable tier |
-| Risk class | (deferred) | Phase 1 |
-| `get_layered_context` | Same name | Returns blended `global + project + stack-matched` memories |
-| `propose_promotion` | (deferred) | Phase 1 |
+| Per-memory event (applied / consulted / violated / ignored) | **Memory outcome** | New `memory_outcomes` table (see Schema) |
+| Session-start context fetch | **`get_layered_context`** | Returns blended `global + project + stack-matched` memories |
+| Promotion (local → org-equivalent) | (deferred) | Phase 1 — single-developer mode has no promotion ladder |
+| Constitution / inviolable top tier | (deferred) | Phase 1 |
+| Risk class (auto / review / approve) | (deferred) | Phase 1 |
+| Propose promotion | (deferred) | Phase 1 |
 
 ## Architecture
 
@@ -190,7 +190,7 @@ POST /api/knowledge/outcomes
     }
 ```
 
-Single endpoint, always batch (even for one outcome) — matches Ethico §5.3.8 and reduces chatter from AI sessions.
+Single endpoint, always batch (even for one outcome) — reduces chatter from AI sessions which typically emit several outcomes per turn.
 
 ### Read — context assembly (the session-start call)
 
@@ -338,7 +338,7 @@ Memory outcomes drive the reinforcement loop. Wiring:
 The design names these so accept events stay forward-compatible:
 
 - **Remote `sensei-knowledge` service.** Daemon registers with it the same way it registers a gateway router (URL + key in Keychain, configured in the setup wizard). `insights` rows shipped as anonymized sync payloads. `accept_proposal` and successful `record_outcome` writes emit `insights` rows from day one of Phase 1 — Phase 0 leaves the emit point as a no-op function called from the same code path.
-- **RBAC + governance roles + audit log** per Ethico §9.
+- **RBAC + governance roles + audit log** — per-write authentication (JWT + PAT), role bindings per scope (developer / repo-maintainer / project-lead / steward / governance-board / auditor), and a 2-year-retention audit log.
 - **`risk_class`** column on memories (`auto` / `review` / `approve`) for HITL gating.
 - **Promotion ladder** (sensei-equivalent of `local→repo→project→org`) — requires a multi-machine concept that doesn't exist in Phase 0.
 - **Constitution scope** as a non-overridable top tier above `global`.
@@ -383,6 +383,50 @@ Following sensei's TDD-first rule.
 - `learnings-edit.spec.ts` — Edit & Accept saves changes
 - `learnings-detail.spec.ts` — Detail pane shows evidence + outcomes
 - `learnings-stack-filter.spec.ts` — Context call returns stack-matched memories for a Rust project but not for a Python one
+
+## Features considered
+
+This design drew on a separate brainstorming exercise that surveyed an org-wide layered knowledge plane (constitution, multi-tenant org, client overlays, project, repo, local memories, MCP-mediated, with formal promotion + governance). Most of that surface is large-org-scale; sensei's Phase 0 deliberately picks the slice that is useful for a single developer today and forward-compatible with team mode later.
+
+### Adopted (in Phase 0)
+
+| Feature | Where it landed |
+|---|---|
+| Multi-scope memory layers with precedence | Reuses existing `memory_scope` enum (`global / project / stack / task_type / module`); v1 blends `global + project + stack` |
+| Vendor-neutral instruction schema | Sensei's `memories` table already covers it (title / content / impact / scope / type / strength) |
+| `get_layered_context` as the session-start read | New endpoint + MCP tool, exact name kept |
+| Per-memory outcome events with applied / consulted / violated | New `memory_outcomes` table + trigger; AI batches outcomes per turn |
+| Triage queue for AI-proposed memories | `memories.status` extended with `proposed` and `rejected` — same table |
+| Tags on memories (security, performance, compliance, …) | New `tags text[]` column with GIN index |
+| Capture-trigger heuristics (revert / "actually" / repeat / override) | Documented in the sensei plugin's `CLAUDE.md` — guidance, not enforced server-side |
+| Bundled bootstrap files in registered repos | Sensei already writes assistant config per project; will extend with a `CLAUDE.md` pointer to `get_layered_context` |
+| Capture provenance (which heuristic fired) | New `triage_signal text` column on memories |
+| KPI feed (applied / violated counters per memory) | Trigger updates `memories.reinforced_count` / `violated_count` / `strength` on outcome insert |
+
+### Deferred to Phase 1+ (named, contract preserved)
+
+| Feature | Why deferred |
+|---|---|
+| Remote `sensei-knowledge` service (multi-tenant) | YAGNI for single-developer; `insights` table is the future emit point |
+| RBAC, governance roles, identity-provider integration | No second tenant to authorize yet |
+| Audit log with 2-year retention | Comes with multi-tenant; `past_memories` already audits memory rows locally |
+| Promotion ladder (`local → repo → project → org`) | Promotion is meaningful only when memories cross machine boundaries |
+| Constitution as a non-overridable top tier | No org-wide ruleset to enforce in single-developer mode |
+| `risk_class` (auto / review / approve) + HITL gating | Adds friction without an org to enforce risk; revisit in Phase 1 |
+| Secret + PII scanning on writes | Phase 1, alongside remote sync where it actually matters |
+| Conflict-resolution between layers | Single tenant rarely produces real conflicts; precedence rule (`project > stack > global`) is enough for v1 |
+| Pattern catalog as a separate first-class entity | `detected_patterns` table already exists; integrating it with memories is a follow-up after Phase 0 ships |
+| Spec-first mandate + `generate-spec` / `run-spec` skills | Superpowers `brainstorming → writing-plans → subagent-driven-development` already covers this less prescriptively |
+| Git-backed knowledge repo as source of truth | DB stays authoritative; Git mirror is an optional export, Phase 1+ |
+
+### Dropped (explicitly not building, even later)
+
+| Feature | Reason |
+|---|---|
+| Memory IDs in the form `<layer>.<area>.<slug>` | Sensei uses UUIDs everywhere; layer + scope_filter columns carry the same information |
+| Catalog index file (`catalog/index.json`) generated by CI | Postgres indexes serve search directly — no separate catalog build |
+| Separate scaffolding CLIs for project + repo creation | Sensei's setup wizard already handles project registration |
+| Pattern-citation comment syntax in source files | Tracking citations belongs in `memory_outcomes`, not in source code |
 
 ## Open questions (resolved during writing)
 
