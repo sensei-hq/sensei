@@ -1957,6 +1957,36 @@ impl PgStore {
         Ok(skipped)
     }
 
+    /// Return the list of stack identifiers for a project.
+    /// The `sensei.projects.stack` column is JSONB and may be an array of strings,
+    /// an object with a recognisable array key, or absent — all cases return `[]`.
+    pub async fn get_project_stack_ids(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT stack FROM sensei.projects WHERE id = $1"
+        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let Some((stack_json,)) = row else { return Ok(vec![]); };
+
+        // The stack jsonb may be an array of strings, an object with a "languages" key,
+        // or empty. Be permissive: accept array-of-strings OR object-with-arrays, return [].
+        match &stack_json {
+            serde_json::Value::Array(arr) => {
+                Ok(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            }
+            serde_json::Value::Object(obj) => {
+                // Try common keys: languages, ids, items.
+                for key in &["languages", "ids", "items"] {
+                    if let Some(serde_json::Value::Array(arr)) = obj.get(*key) {
+                        return Ok(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+                    }
+                }
+                // No recognizable shape — return empty (no stack blending).
+                Ok(vec![])
+            }
+            _ => Ok(vec![]),
+        }
+    }
+
     pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
