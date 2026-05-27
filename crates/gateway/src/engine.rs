@@ -162,8 +162,14 @@ impl Gateway {
         }
 
         // 7. All candidates exhausted
+        let errors = attempts
+            .iter()
+            .filter_map(|a| a.error.as_ref().map(|e| format!("[{}:{}] {}", a.adapter, a.model, e)))
+            .collect::<Vec<_>>()
+            .join("; ");
         Err(GatewayError::AllAttemptsFailed {
             attempts: attempts.len(),
+            errors,
         })
     }
 
@@ -733,7 +739,7 @@ mod tests {
         // Should be AllAttemptsFailed because auth error is not a fallback trigger
         assert!(result.is_err());
         match result.unwrap_err() {
-            GatewayError::AllAttemptsFailed { attempts } => {
+            GatewayError::AllAttemptsFailed { attempts, .. } => {
                 assert_eq!(attempts, 1);
             }
             other => panic!("Expected AllAttemptsFailed, got: {other}"),
@@ -811,7 +817,7 @@ mod tests {
         let result = gw.execute(&chat_request()).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            GatewayError::AllAttemptsFailed { attempts } => {
+            GatewayError::AllAttemptsFailed { attempts, .. } => {
                 assert_eq!(attempts, 1);
             }
             other => panic!("Expected AllAttemptsFailed, got: {other}"),

@@ -138,11 +138,11 @@ pub trait PlatformProvider: Send + Sync {
     /// Single-pass design: the walk records per-component "walk remedies"
     /// (the most context-rich fix the resolver could surface live). After
     /// the final check, a single post-pass derives the terminal consolidated
-    /// remedy from `failed_in_terminal` + walk-remedy map + dependency graph
-    /// + each resolver's `fallback_remedy()`. No stale-drop or retroactive
-    /// step is needed: components that recovered aren't in
-    /// `failed_in_terminal`, and components without a walk-remedy fall
-    /// through to `fallback_remedy()` in the same loop.
+    /// remedy from `failed_in_terminal` plus the walk-remedy map, the
+    /// dependency graph, and each resolver's `fallback_remedy()`. No
+    /// stale-drop or retroactive step is needed: components that recovered
+    /// aren't in `failed_in_terminal`, and components without a walk-remedy
+    /// fall through to `fallback_remedy()` in the same loop.
     ///
     /// Note: uses `&dyn Fn` (not generic F) so the trait remains dyn-compatible.
     fn resolve(&self, current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
