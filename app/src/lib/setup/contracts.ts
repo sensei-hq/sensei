@@ -85,6 +85,16 @@ export interface DaemonMcpEntry {
   project_count: number;
 }
 
+/** A gateway router — endpoint that may front multiple providers. */
+export interface DaemonRouter {
+  id: string;
+  name: string;
+  providers: string[];
+  capabilities: string[];
+  needs_key: boolean;
+  configured: boolean;
+}
+
 /** Scan baseline — derived from loaded data at hydration time. */
 export interface ScanBaseline {
   rootCount: number;
@@ -116,4 +126,5 @@ export interface WizardLoadData {
   projects: DaemonProject[];
   libraries: { total: number; libs: DaemonLibEntry[] };
   mcps: DaemonMcpEntry[];
+  routers: DaemonRouter[];
 }

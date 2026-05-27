@@ -162,8 +162,14 @@ impl Gateway {
         }
 
         // 7. All candidates exhausted
+        let errors = attempts
+            .iter()
+            .filter_map(|a| a.error.as_ref().map(|e| format!("[{}:{}] {}", a.adapter, a.model, e)))
+            .collect::<Vec<_>>()
+            .join("; ");
         Err(GatewayError::AllAttemptsFailed {
             attempts: attempts.len(),
+            errors,
         })
     }
 
@@ -178,12 +184,79 @@ impl Gateway {
         self.adapters.list().await
     }
 
+    /// Flat list of all configured models, each entry router-qualified.
+    pub async fn list_models(&self) -> Result<Vec<serde_json::Value>, GatewayError> {
+        let config = self.config.read().await;
+        let mut out = Vec::with_capacity(config.models.len());
+        for (id, m) in config.models.iter() {
+            out.push(serde_json::json!({
+                "id":               id,
+                "api_model_id":     m.api_model_id,
+                "provider":         m.provider,
+                "capabilities":     m.capabilities,
+                "context_window":   m.context_window,
+                "max_output_tokens": m.max_output_tokens,
+            }));
+        }
+        Ok(out)
+    }
+
+    /// Models reachable through a specific router. Walks fallback chains
+    /// for any entry whose `router` matches, plus any model whose default
+    /// provider matches the router id (single-provider routers).
+    pub async fn list_models_for_router(
+        &self,
+        router_id: &str,
+    ) -> Result<Vec<serde_json::Value>, GatewayError> {
+        let config = self.config.read().await;
+        let mut model_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Single-provider routers: model.provider == router id.
+        for (id, m) in config.models.iter() {
+            if m.provider == router_id {
+                model_ids.insert(id.clone());
+            }
+        }
+        // Explicit chain router pins.
+        for chain in config.chains.values() {
+            for entry in &chain.models {
+                if entry.router.as_deref() == Some(router_id) {
+                    model_ids.insert(entry.model.clone());
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(model_ids.len());
+        for id in model_ids {
+            if let Some(m) = config.models.get(&id) {
+                out.push(serde_json::json!({
+                    "id":               id,
+                    "api_model_id":     m.api_model_id,
+                    "provider":         m.provider,
+                    "capabilities":     m.capabilities,
+                }));
+            }
+        }
+        Ok(out)
+    }
+
     /// Whether the gateway has any configuration (routers, models, chains).
     /// Returns false if the config is empty — callers should not attempt
     /// execute() until config has been set via update_config().
     pub async fn is_configured(&self) -> bool {
         let config = self.config.read().await;
         !config.routers.is_empty() || !config.models.is_empty() || !config.chains.is_empty()
+    }
+
+    /// Re-resolve `api_key` for every router from a caller-supplied
+    /// resolver function. Used after a key is set/cleared so the next
+    /// request picks up the change without a daemon restart.
+    pub async fn refresh_router_keys<F>(&self, resolver: F)
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let mut config = self.config.write().await;
+        for (id, router) in config.routers.iter_mut() {
+            router.api_key = resolver(id);
+        }
     }
 }
 
@@ -235,6 +308,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -519,6 +593,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -529,6 +604,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -663,7 +739,7 @@ mod tests {
         // Should be AllAttemptsFailed because auth error is not a fallback trigger
         assert!(result.is_err());
         match result.unwrap_err() {
-            GatewayError::AllAttemptsFailed { attempts } => {
+            GatewayError::AllAttemptsFailed { attempts, .. } => {
                 assert_eq!(attempts, 1);
             }
             other => panic!("Expected AllAttemptsFailed, got: {other}"),
@@ -679,6 +755,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -740,7 +817,7 @@ mod tests {
         let result = gw.execute(&chat_request()).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            GatewayError::AllAttemptsFailed { attempts } => {
+            GatewayError::AllAttemptsFailed { attempts, .. } => {
                 assert_eq!(attempts, 1);
             }
             other => panic!("Expected AllAttemptsFailed, got: {other}"),
@@ -756,6 +833,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -766,6 +844,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),

@@ -177,6 +177,17 @@ fn handle_list_tools() -> Value {
                 ("challenger_model", "string", "Model for the challenger (default: balanced)"),
                 ("synthesizer_model", "string", "Model for the synthesizer (default: best available)"),
             ]),
+            tool("generate_image", "Generate an image from a text prompt using the configured image provider (OpenAI by default). Saves to the given output_path (relative paths are resolved against CWD) or to a sensei-managed cache when omitted. Returns the absolute file path. Use this when the user asks for visual assets — logos, illustrations, diagrams, character art, mockup imagery — that belong in the project.", &[
+                ("prompt", "string", "Description of the image to generate"),
+            ], &[
+                ("output_path", "string", "Where to save the image. Relative to the current working directory, or absolute. If omitted, saves to ~/.sensei/generated/<hash>.png"),
+                ("model", "string", "Model id, bare or router-qualified (e.g. 'dall-e-3', 'openai/dall-e-3')"),
+                ("router", "string", "Which router to use (openai, stability, fal, replicate). Defaults to gateway selection."),
+                ("size", "string", "Image size — provider-specific (e.g. 1024x1024 for OpenAI)"),
+                ("quality", "string", "Image quality — provider-specific (standard|hd for OpenAI)"),
+                ("style", "string", "Image style — provider-specific (vivid|natural for OpenAI)"),
+                ("n", "string", "Number of images to generate (default 1)"),
+            ]),
             // Event logging
             tool("log_event", "Log a workflow event. Call this to record phase transitions, locate steps, issue lifecycle, review findings. MANDATORY in commands — do not skip.", &[
                 ("type", "string", "Event type: phase_transition, command_invoked, locate, issue_started, issue_completed, review_finding, rework, checkpoint, context_loaded, files_modified"),
@@ -332,6 +343,64 @@ fn handle_call_tool(params: &Value, client: &reqwest::blocking::Client, cwd: &st
             Ok(resp) => json!({"content": [{"type": "text", "text": format!("Daemon error: HTTP {}", resp.status())}], "isError": true}),
             Err(e) => json!({"content": [{"type": "text", "text": format!("Cannot reach senseid daemon: {}", e)}], "isError": true}),
         };
+    }
+
+    if tool_name == "generate_image" {
+        let prompt = match args["prompt"].as_str() {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => return json!({"content": [{"type": "text", "text": "prompt is required"}], "isError": true}),
+        };
+
+        // Resolve relative output_path against CWD so the daemon only sees absolute paths.
+        let output_path = match args.get("output_path").and_then(|v| v.as_str()) {
+            Some(p) => {
+                let path = std::path::PathBuf::from(p);
+                if path.is_absolute() {
+                    Some(p.to_string())
+                } else if cwd.is_empty() {
+                    return json!({
+                        "content": [{
+                            "type": "text",
+                            "text": "cannot resolve relative output_path: CWD is unavailable"
+                        }],
+                        "isError": true,
+                    });
+                } else {
+                    Some(std::path::PathBuf::from(cwd).join(p).display().to_string())
+                }
+            }
+            None => None,
+        };
+
+        let mut body = json!({ "prompt": prompt });
+        if let Some(p) = output_path { body["output_path"] = json!(p); }
+        for (key, name) in [
+            (args.get("model"),   "model"),
+            (args.get("router"),  "router"),
+            (args.get("size"),    "size"),
+            (args.get("quality"), "quality"),
+            (args.get("style"),   "style"),
+        ] {
+            if let Some(v) = key.and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+                body[name] = json!(v);
+            }
+        }
+        if let Some(n_str) = args["n"].as_str()
+            && let Ok(n) = n_str.parse::<u8>()
+        {
+            body["n"] = json!(n);
+        }
+
+        // Use longer timeout for image generation (can take 15-30+ seconds with DALL-E 3 / high-res)
+        let image_client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| client.clone());
+
+        let result = image_client.post(format!("{}/api/gateway/image/generate", daemon_url()))
+            .json(&body)
+            .send();
+        return daemon_result(result);
     }
 
     // ── Workflow state tools (direct endpoints, not mcp proxy) ─────────
