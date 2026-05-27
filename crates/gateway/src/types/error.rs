@@ -38,8 +38,8 @@ pub enum GatewayError {
     #[error("gateway not configured — no routers, models, or chains have been set")]
     NotConfigured,
 
-    #[error("all {attempts} attempts failed")]
-    AllAttemptsFailed { attempts: usize },
+    #[error("all {attempts} attempts failed: {errors}")]
+    AllAttemptsFailed { attempts: usize, errors: String },
 
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
@@ -121,8 +121,8 @@ mod tests {
             "budget exceeded: estimated 1.5000, remaining 0.5000"
         );
 
-        let err = GatewayError::AllAttemptsFailed { attempts: 3 };
-        assert_eq!(err.to_string(), "all 3 attempts failed");
+        let err = GatewayError::AllAttemptsFailed { attempts: 3, errors: "x".into() };
+        assert_eq!(err.to_string(), "all 3 attempts failed: x");
     }
 
     #[test]
@@ -166,7 +166,7 @@ mod tests {
         }
         .is_retryable());
 
-        assert!(!GatewayError::AllAttemptsFailed { attempts: 3 }.is_retryable());
+        assert!(!GatewayError::AllAttemptsFailed { attempts: 3, errors: String::new() }.is_retryable());
     }
 
     #[test]
@@ -229,7 +229,7 @@ mod tests {
         }
         .should_trigger_fallback(&all_triggers));
 
-        assert!(!GatewayError::AllAttemptsFailed { attempts: 5 }
+        assert!(!GatewayError::AllAttemptsFailed { attempts: 5, errors: String::new() }
             .should_trigger_fallback(&all_triggers));
     }
 

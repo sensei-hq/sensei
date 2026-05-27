@@ -13,6 +13,11 @@ pub struct RouterConfig {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
+    /// Literal API key — populated by the caller (e.g. the daemon resolves
+    /// from Keychain and inserts it here before passing the config to an
+    /// adapter). Takes precedence over `api_key_env` when both are set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,6 +94,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://api.openai.com/v1".to_string(),
             api_key_env: Some("OPENAI_API_KEY".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: Some(30000),
             headers: HashMap::from([("X-Custom".to_string(), "value".to_string())]),
@@ -112,6 +118,7 @@ mod tests {
         assert_eq!(config.url, "https://api.example.com");
         assert!(config.enabled);
         assert!(config.api_key_env.is_none());
+        assert!(config.api_key.is_none());
         assert!(config.timeout_ms.is_none());
         assert!(config.headers.is_empty());
     }
@@ -189,5 +196,38 @@ mod tests {
         assert!(config.routers.is_empty());
         assert!(config.models.is_empty());
         assert!(config.chains.is_empty());
+    }
+
+    #[test]
+    fn router_config_api_key_field_serializes() {
+        let config = RouterConfig {
+            url: "https://api.example.com".to_string(),
+            api_key_env: None,
+            api_key: Some("sk-literal".to_string()),
+            enabled: true,
+            timeout_ms: None,
+            headers: HashMap::new(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"api_key\":\"sk-literal\""));
+
+        let parsed: RouterConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.api_key.as_deref(), Some("sk-literal"));
+    }
+
+    #[test]
+    fn router_config_omits_api_key_when_none() {
+        let config = RouterConfig {
+            url: "https://api.example.com".to_string(),
+            api_key_env: Some("X_KEY".to_string()),
+            api_key: None,
+            enabled: true,
+            timeout_ms: None,
+            headers: HashMap::new(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        // "api_key_env" would contain "api_key" as a substring, so check the
+        // exact JSON key form instead.
+        assert!(!json.contains("\"api_key\":"));
     }
 }

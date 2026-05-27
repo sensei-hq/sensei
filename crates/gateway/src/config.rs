@@ -122,6 +122,7 @@ mod tests {
         RouterConfig {
             url: "http://localhost:11434".to_string(),
             api_key_env: None,
+            api_key: None,
             enabled: true,
             timeout_ms: None,
             headers: HashMap::new(),
