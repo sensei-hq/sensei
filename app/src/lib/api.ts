@@ -8,6 +8,10 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
 } from './types.js';
+import type {
+  MemoryListResponse, MemoryDetail, ContextResponse,
+  ProposalCreateBody, MemoryCreateBody, OutcomeBody, OutcomesBatchResponse,
+} from './setup/contracts.js';
 
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
 
@@ -492,6 +496,39 @@ export function senseiApi(port: number) {
         body,
         { ok: false, paths: [] },
       ),
+
+    // ── Knowledge plane ──────────────────────────────────────────────────
+    listMemories: (q: { status?: string; scope?: string; project_id?: string; limit?: number } = {}) => {
+      const p = new URLSearchParams();
+      for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
+      return get<MemoryListResponse>(`/api/knowledge/memories?${p.toString()}`, { memories: [] });
+    },
+
+    getMemoryDetail: (id: string) =>
+      tryGet<MemoryDetail>(`/api/knowledge/memories/${encodeURIComponent(id)}`),
+
+    getLayeredContext: (project_id: string, opts: { limit?: number; tags?: string[] } = {}) => {
+      const p = new URLSearchParams({ project_id });
+      if (opts.limit !== undefined) p.set('limit', String(opts.limit));
+      if (opts.tags?.length) p.set('tags', opts.tags.join(','));
+      return get<ContextResponse>(`/api/knowledge/context?${p.toString()}`,
+                                   { version: '', memories: [], cache_until: '' });
+    },
+
+    proposeMemory: (body: ProposalCreateBody) =>
+      tryPost<{ id: string; status: 'proposed' }>('/api/knowledge/proposals', body),
+
+    saveMemory: (body: MemoryCreateBody) =>
+      tryPost<{ id: string; status: 'active' }>('/api/knowledge/memories', body),
+
+    acceptProposal: (id: string) =>
+      tryPost<{ id: string; status: string }>(`/api/knowledge/proposals/${encodeURIComponent(id)}/accept`, {}),
+
+    rejectProposal: (id: string, reason?: string) =>
+      tryPost<{ id: string; status: string }>(`/api/knowledge/proposals/${encodeURIComponent(id)}/reject`, { reason }),
+
+    recordOutcomes: (outcomes: OutcomeBody[]) =>
+      tryPost<OutcomesBatchResponse>('/api/knowledge/outcomes', { outcomes }),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),

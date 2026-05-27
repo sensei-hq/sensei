@@ -128,3 +128,101 @@ export interface WizardLoadData {
   mcps: DaemonMcpEntry[];
   routers: DaemonRouter[];
 }
+
+// ── Knowledge plane (Phase 0) ─────────────────────────────────────────
+
+export type MemoryStatus =
+    | 'proposed' | 'active' | 'reinforced' | 'challenged'
+    | 'battle_tested' | 'archived' | 'rejected';
+
+export type MemoryScope = 'global' | 'project' | 'stack' | 'task_type' | 'module';
+
+export type OutcomeKind = 'applied' | 'consulted' | 'violated' | 'ignored';
+
+export interface Memory {
+    id:               string;
+    project_id:       string | null;
+    scope:            MemoryScope;
+    scope_filter:     string | null;
+    type:             string;
+    title:            string;
+    content:          string;
+    impact:           string | null;
+    strength:         number;
+    status:           MemoryStatus;
+    applied_count:    number;
+    violated_count:   number;
+    last_relevant_at: string | null;
+    tags:             string[];
+    triage_signal:    string | null;
+    modified_at:      string;
+}
+
+export interface MemoryEvidence {
+    session_id:  string | null;
+    note:        string | null;
+    recorded_at: string;
+}
+
+export interface MemoryExample {
+    node_id:  string | null;
+    is_good:  boolean;
+    note:     string | null;
+}
+
+export interface MemoryOutcomeRecord {
+    outcome:     OutcomeKind;
+    session_id:  string | null;
+    context:     string | null;
+    recorded_at: string;
+}
+
+export interface MemoryDetail {
+    memory:    Memory;
+    evidence:  MemoryEvidence[];
+    examples:  MemoryExample[];
+    outcomes:  MemoryOutcomeRecord[];
+}
+
+export interface MemoryListResponse { memories: Memory[]; }
+
+export interface ContextResponse {
+    version:     string;
+    memories:    Memory[];
+    cache_until: string;
+}
+
+export interface ProposalCreateBody {
+    project_id?:   string;
+    scope:         MemoryScope;
+    scope_filter?: string;
+    type:          string;
+    title:         string;
+    content:       string;
+    impact?:       string;
+    tags?:         string[];
+    triage_signal: string;
+}
+
+export interface MemoryCreateBody {
+    project_id?:   string;
+    scope:         MemoryScope;
+    scope_filter?: string;
+    type:          string;
+    title:         string;
+    content:       string;
+    impact?:       string;
+    tags?:         string[];
+}
+
+export interface OutcomeBody {
+    memory_id:   string;
+    outcome:     OutcomeKind;
+    session_id?: string;
+    context?:    string;
+}
+
+export interface OutcomesBatchResponse {
+    recorded: number;
+    skipped:  { memory_id: string; reason: string }[];
+}
