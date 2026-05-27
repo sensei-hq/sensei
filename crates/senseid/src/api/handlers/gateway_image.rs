@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(detect_extension(&[0xFF, 0xD8, 0xFF, 0xE0]), "jpg");
         assert_eq!(detect_extension(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]), "png");
         assert_eq!(detect_extension(&[b'R', b'I', b'F', b'F', 0, 0, 0, 0, b'W', b'E', b'B', b'P']), "webp");
-        assert_eq!(detect_extension(&[b'G', b'I', b'F', b'8', b'9', b'a']), "gif");
+        assert_eq!(detect_extension(b"GIF89a"), "gif");
         assert_eq!(detect_extension(&[0x00, 0x01, 0x02]), "png"); // unknown → default
     }
 }
