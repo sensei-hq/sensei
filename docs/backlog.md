@@ -10,6 +10,12 @@ One screen at a time. Each screen: read mockup → state class → component →
 
 ## Known bugs (next)
 
+### Knowledge plane Phase 0 — follow-ups found in live smoke test (2026-05-27)
+
+- **Test fixture projects pollute the dev DB.** `ensure_test_project` in `crates/senseid/src/db/pg_store.rs` (added in Task P5) creates real rows in `sensei.projects` with names like `accept-prop`, `blend`, `detail`, `list-status` and never cleans them up — they accumulate every test run and end up cluttering the Projects screen in the running app. Fix options: (a) wrap test inserts in a transaction that rolls back; (b) add an `#[after]` teardown that deletes rows by name pattern; (c) prefix all test project names with `__test__` and add a one-shot cleanup CLI. Option (b) with `DELETE FROM sensei.projects WHERE name IN (...)` per-test is the lowest-friction.
+
+- **Observatory sidebar — Learnings vs Insights overlap.** The Observatory sidebar previously had only one "Insights" entry (kanji 學) and `/learnings` had no link. Added a "Learnings" entry (kanji 憶) in the live-smoke fix, but `/insights` still exists as a stub rendering the same shared `MemoryList` component. Decide: rename `/insights` to its real purpose (recommendations / FTR trends per the `recommendations` table?), repurpose, or remove. The two routes should have clearly distinct semantics — Learnings = the Phase 0 memory triage/active/archive UI, Insights = ???
+
 ### Setup wizard regressions found in live smoke test (2026-05-27)
 
 Observed in `make app-dev-bundle` against dev daemon after the knowledge-plane Phase 0 merge. Daemon health is fine and the setup wizard renders; these are UI/state-flow bugs in the wizard stages themselves, not in the knowledge plane.
