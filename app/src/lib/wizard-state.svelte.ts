@@ -63,6 +63,24 @@ export interface InstrumentsSlice {
   mcps: DaemonMcpEntry[];
 }
 
+export type RouterSaveState = 'idle' | 'saving' | 'done' | 'failed';
+
+export interface RouterEntry {
+  id: string;
+  name: string;
+  providers: string[];
+  capabilities: string[];
+  needsKey: boolean;
+  configured: boolean;
+  draftKey: string;          // never sent until commit
+  saveState: RouterSaveState;
+  saveError: string;
+}
+
+export interface InferenceSlice {
+  routers: RouterEntry[];
+}
+
 // ── Commit handlers ─────────────────────────────────────────
 
 type CommitFn = (ws: WizardState, api: ReturnType<typeof senseiApi>) => Promise<void>;
@@ -181,7 +199,25 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     const deselected = ws.instruments.mcps.filter(m => !m.selected).map(m => m.id);
     await api.setConfig({ 'setup.instruments': JSON.stringify({ selected, deselected }) });
   },
-  inference:   async () => {},
+  inference: async (ws, api) => {
+    // Persist any non-empty drafted keys. Per-card status updates so
+    // the UI shows progress. Failures are non-fatal — user can retry
+    // later from settings — but we surface them via saveError.
+    for (const router of ws.inference.routers) {
+      if (!router.needsKey || router.draftKey.trim().length === 0) continue;
+      router.saveState = 'saving';
+      router.saveError = '';
+      const result = await api.setGatewayRouterKey(router.id, router.draftKey.trim());
+      if (result.ok) {
+        router.configured = result.data.configured;
+        router.draftKey = '';
+        router.saveState = 'done';
+      } else {
+        router.saveState = 'failed';
+        router.saveError = result.error.message;
+      }
+    }
+  },
   assignments: async () => {},
   done:        async () => { await appState.setSetupComplete(); },
 };
@@ -209,6 +245,7 @@ export class WizardState {
   projects    = $state<ProjectsSlice>({ projects: [], confirmed: {} });
   libraries   = $state<LibrariesSlice>({ libs: [] });
   instruments = $state<InstrumentsSlice>({ mcps: [] });
+  inference   = $state<InferenceSlice>({ routers: [] });
 
   // ── Derived ──
 
@@ -301,6 +338,19 @@ export class WizardState {
     };
     this.libraries = { libs: [...data.libraries.libs] };
     this.instruments = { mcps: [...data.mcps] };
+    this.inference = {
+      routers: data.routers.map(r => ({
+        id: r.id,
+        name: r.name,
+        providers: r.providers,
+        capabilities: r.capabilities,
+        needsKey: r.needs_key,
+        configured: r.configured,
+        draftKey: '',
+        saveState: 'idle' as RouterSaveState,
+        saveError: '',
+      })),
+    };
   }
 
   /**
@@ -343,6 +393,41 @@ export class WizardState {
         enabled: previous.get(l.name) ?? true,
       })),
     };
+  }
+
+  /**
+   * Re-fetch gateway routers from daemon, preserving per-card draft state
+   * (draftKey, saveState, saveError) for entries that survive the refresh.
+   */
+  async refreshInferenceRouters(): Promise<void> {
+    const api = senseiApi(appState.port);
+    const fresh = await api.listGatewayRouters();
+    const previous = new Map(this.inference.routers.map(r => [r.id, r]));
+    this.inference = {
+      routers: fresh.routers.map(r => {
+        const prev = previous.get(r.id);
+        return {
+          id: r.id,
+          name: r.name,
+          providers: r.providers,
+          capabilities: r.capabilities,
+          needsKey: r.needs_key,
+          configured: r.configured,
+          draftKey: prev?.draftKey ?? '',
+          saveState: prev?.saveState ?? 'idle',
+          saveError: prev?.saveError ?? '',
+        };
+      }),
+    };
+  }
+
+  /**
+   * Clear the stored API key for a gateway router and refresh the list.
+   */
+  async clearInferenceRouterKey(id: string): Promise<void> {
+    const api = senseiApi(appState.port);
+    await api.clearGatewayRouterKey(id);
+    await this.refreshInferenceRouters();
   }
 
   /**
