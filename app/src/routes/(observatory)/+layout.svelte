@@ -12,6 +12,7 @@
         { href: "/", kanji: "家", label: "Today" },
         { href: "/projects", kanji: "場", label: "Projects" },
         { href: "/sessions", kanji: "刻", label: "Sessions" },
+        { href: "/learnings", kanji: "憶", label: "Learnings" },
         { href: "/insights", kanji: "學", label: "Insights" },
         { href: "/libraries", kanji: "書", label: "Libraries" },
         { href: "/instruments", kanji: "具", label: "Instruments" },
