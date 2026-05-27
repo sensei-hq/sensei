@@ -1859,6 +1859,73 @@ impl PgStore {
         }))
     }
 
+    /// Assemble a blended context blob: project-scoped + stack-scoped + global memories.
+    /// Only active/reinforced/battle_tested/challenged memories are included.
+    pub async fn assemble_context(
+        &self,
+        project_id: uuid::Uuid,
+        stack_ids:  &[String],
+        tags:       Option<&[String]>,
+        limit:      i64,
+    ) -> Result<serde_json::Value, String> {
+        let allowed = ["active", "reinforced", "battle_tested", "challenged"];
+        let allowed_owned: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
+        let stack_owned: Vec<String> = stack_ids.to_vec();
+        let tags_owned: Option<Vec<String>> = tags.map(|t| t.to_vec());
+
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
+                       Option<String>, f64, String, i32, i32,
+                       Option<chrono::DateTime<chrono::Utc>>, Vec<String>, Option<String>,
+                       chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+                        impact, strength::float8, status::text, reinforced_count, violated_count,
+                        last_relevant_at, tags, triage_signal, modified_at
+                   FROM sensei.memories
+                  WHERE status::text = ANY($1)
+                    AND (
+                           project_id = $2
+                        OR (scope = 'stack'  AND scope_filter = ANY($3))
+                        OR  scope = 'global'
+                    )
+                    AND ($4::text[] IS NULL OR tags && $4)
+                  ORDER BY strength DESC, last_relevant_at DESC NULLS LAST, modified_at DESC
+                  LIMIT $5"
+            )
+            .bind(&allowed_owned).bind(project_id).bind(&stack_owned)
+            .bind(&tags_owned).bind(limit)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let memories: Vec<serde_json::Value> = rows.into_iter().map(|r| serde_json::json!({
+            "id":               r.0,
+            "scope":            r.2,
+            "scope_filter":     r.3,
+            "type":             r.4,
+            "title":            r.5,
+            "content":          r.6,
+            "impact":           r.7,
+            "strength":         r.8,
+            "applied_count":    r.10,
+            "violated_count":   r.11,
+            "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
+            "tags":             r.13,
+            "updated_at":       r.15.to_rfc3339(),
+        })).collect();
+
+        // Version = max modified_at across the set (stable identifier for cache validation).
+        let version = memories.iter()
+            .filter_map(|m| m["updated_at"].as_str().map(|s| s.to_string()))
+            .max()
+            .unwrap_or_default();
+        let cache_until = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+
+        Ok(serde_json::json!({
+            "version":     version,
+            "memories":    memories,
+            "cache_until": cache_until,
+        }))
+    }
+
     /// Insert a batch of outcomes. Skips rows whose target memory is archived or rejected.
     pub async fn record_outcomes_batch(
         &self,
@@ -3047,5 +3114,48 @@ mod knowledge_tests {
         let detail = pg.get_memory_detail(mid).await.unwrap();
         assert!(detail["memory"]["id"].as_str().unwrap() == mid.to_string());
         assert_eq!(detail["outcomes"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn assemble_context_blends_three_scopes() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("blend").await.unwrap();
+
+        pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "P".into(), content: "p".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+        pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "stack".into(), scope_filter: Some("rust".into()),
+            mtype: "convention".into(), title: "S".into(), content: "s".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+        pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None,
+            mtype: "convention".into(), title: "G".into(), content: "g".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+
+        let blob = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
+        let titles: Vec<String> = blob["memories"].as_array().unwrap().iter()
+            .map(|m| m["title"].as_str().unwrap().to_string()).collect();
+        assert!(titles.contains(&"P".to_string()));
+        assert!(titles.contains(&"S".to_string()));
+        assert!(titles.contains(&"G".to_string()));
+
+        // Proposed memories must not appear.
+        let m_prop = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "PROP".into(), content: "x".into(),
+            impact: None, tags: vec![], triage_signal: Some("revert".into()),
+            status: "proposed".into(),
+        }).await.unwrap();
+        let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
+        let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()
+            .map(|m| m["title"].as_str().unwrap().to_string()).collect();
+        assert!(!titles2.contains(&"PROP".to_string()));
+        let _ = m_prop;
     }
 }
