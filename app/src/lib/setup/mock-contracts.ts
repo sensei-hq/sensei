@@ -7,6 +7,7 @@
 import type {
   DaemonWatchRoot, DaemonAssistantFamily, AssistantVariant, DaemonProject,
   DaemonLibEntry, DaemonMcpEntry, DaemonRouter, PreferencesData, WizardLoadData,
+  Memory, MemoryDetail,
 } from './contracts.js';
 
 export function mockWatchRoot(overrides: Partial<DaemonWatchRoot> = {}): DaemonWatchRoot {
@@ -111,6 +112,28 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
     libraries: { total: 1, libs: [mockLibEntry()] },
     mcps: [mockMcpEntry()],
     routers: [mockRouter()],
+    ...overrides,
+  };
+}
+
+export function mockMemory(overrides: Partial<Memory> = {}): Memory {
+  return {
+    id: 'mem-1', project_id: 'proj-1', scope: 'project', scope_filter: null,
+    type: 'convention', title: 'Test memory', content: 'body',
+    impact: null, strength: 1.0, status: 'proposed',
+    applied_count: 0, violated_count: 0, last_relevant_at: null,
+    tags: [], triage_signal: 'revert',
+    modified_at: '2026-05-27T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function mockMemoryDetail(overrides: Partial<MemoryDetail> = {}): MemoryDetail {
+  return {
+    memory: mockMemory(),
+    evidence: [],
+    examples: [],
+    outcomes: [],
     ...overrides,
   };
 }
