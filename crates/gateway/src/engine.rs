@@ -239,6 +239,19 @@ impl Gateway {
         let config = self.config.read().await;
         !config.routers.is_empty() || !config.models.is_empty() || !config.chains.is_empty()
     }
+
+    /// Re-resolve `api_key` for every router from a caller-supplied
+    /// resolver function. Used after a key is set/cleared so the next
+    /// request picks up the change without a daemon restart.
+    pub async fn refresh_router_keys<F>(&self, resolver: F)
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let mut config = self.config.write().await;
+        for (id, router) in config.routers.iter_mut() {
+            router.api_key = resolver(id);
+        }
+    }
 }
 
 /// Estimate input token count from the request payload.

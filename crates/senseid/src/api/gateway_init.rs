@@ -6,6 +6,23 @@ use gateway::circuit_breaker::{CircuitBreakerConfig, CircuitBreakerManager};
 use gateway::types::config::GatewayConfig;
 use gateway::Gateway;
 
+use crate::gateway_keys;
+
+/// Resolve the literal api_key for a router from the Keychain.
+/// Returns None for routers that don't need a key or whose key isn't set.
+///
+/// # Blocking
+///
+/// Shells out to `/usr/bin/security` via `gateway_keys::get_key` (~50ms
+/// per call). Callers in an async context MUST wrap invocations in
+/// `tokio::task::spawn_blocking`. The `init_gateway` startup call site
+/// is safe today only because the empty default config makes the
+/// resolver a no-op; once the DB-load path populates routers, this
+/// constraint becomes load-bearing.
+pub fn keychain_api_key(router_id: &str) -> Option<String> {
+    gateway_keys::get_key(router_id).ok()
+}
+
 /// Initialize the gateway with detected adapters but NO config.
 ///
 /// The gateway starts unconfigured — it will return `NotConfigured` for any
@@ -89,6 +106,12 @@ pub async fn init_gateway() -> Arc<Gateway> {
 
     let gw = Gateway::new(config, adapters, cb);
 
+    // Pre-populate any RouterConfig api_key fields from the Keychain.
+    // Config starts empty here (set later via update_config from DB), so this
+    // is a no-op at startup. The call site establishes the pattern used by
+    // the DB config-loading path and by set/clear key handlers at runtime.
+    gw.refresh_router_keys(keychain_api_key).await;
+
     let adapter_list = gw.list_adapters().await;
     tracing::info!(
         "Gateway initialized (unconfigured) with adapters: {:?}",
@@ -132,7 +155,7 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
         RouterConfig {
             url: "http://noop".into(),
             api_key_env: None,
-            api_key: None,
+            api_key: keychain_api_key("noop"),
             enabled: true,
             timeout_ms: None,
             headers: HashMap::new(),
