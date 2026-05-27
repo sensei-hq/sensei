@@ -21,6 +21,7 @@ use crate::api::handlers::project_detail;
 use crate::api::handlers::instruments;
 use crate::api::handlers::gateway_routers;
 use crate::api::handlers::gateway_image;
+use crate::api::handlers::knowledge;
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -159,6 +160,14 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/scan/suggestions", get(workspace::scan_suggestions))
         .route("/api/scan/roots", get(workspace::scan_roots).post(workspace::add_watch_root))
         .route("/api/scan/roots/{id}", delete(workspace::delete_watch_root))
+        // Knowledge plane
+        .route("/api/knowledge/memories",                get(knowledge::list_memories).post(knowledge::save_memory))
+        .route("/api/knowledge/memories/{id}",           get(knowledge::get_memory))
+        .route("/api/knowledge/proposals",               post(knowledge::propose_memory))
+        .route("/api/knowledge/proposals/{id}/accept",   post(knowledge::accept_proposal))
+        .route("/api/knowledge/proposals/{id}/reject",   post(knowledge::reject_proposal))
+        .route("/api/knowledge/outcomes",                post(knowledge::record_outcomes))
+        .route("/api/knowledge/context",                 get(knowledge::get_context))
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)

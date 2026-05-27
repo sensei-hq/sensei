@@ -8,6 +8,26 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+pub struct InsertMemory {
+    pub project_id:    Option<uuid::Uuid>,
+    pub scope:         String,
+    pub scope_filter:  Option<String>,
+    pub mtype:         String,    // memory_type enum value
+    pub title:         String,
+    pub content:       String,
+    pub impact:        Option<String>,
+    pub tags:          Vec<String>,
+    pub triage_signal: Option<String>,
+    pub status:        String,    // memory_status enum value
+}
+
+pub struct OutcomeRow {
+    pub memory_id:  uuid::Uuid,
+    pub session_id: Option<uuid::Uuid>,
+    pub outcome:    String,
+    pub context:    Option<String>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
 // are inherently verbose and adding an extra layer of type aliases would
@@ -1671,6 +1691,302 @@ impl PgStore {
         Ok(serde_json::json!({ "active": active, "total": total, "pendingShare": pending_share }))
     }
 
+    pub async fn ensure_test_project(&self, name: &str) -> Result<uuid::Uuid, String> {
+        let id = uuid::Uuid::new_v4();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.projects (id, name)
+             VALUES ($1, $2)
+             ON CONFLICT (id) DO NOTHING"
+        ).bind(id).bind(name)
+         .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    pub async fn insert_memory(&self, m: &InsertMemory) -> Result<uuid::Uuid, String> {
+        let id: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.memories
+                (project_id, scope, scope_filter, type, title, content, impact,
+                 tags, triage_signal, status)
+             VALUES ($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7,
+                     $8, $9, $10::sensei.memory_status)
+             RETURNING id"
+        )
+            .bind(m.project_id)
+            .bind(&m.scope).bind(&m.scope_filter)
+            .bind(&m.mtype).bind(&m.title).bind(&m.content).bind(&m.impact)
+            .bind(&m.tags).bind(&m.triage_signal).bind(&m.status)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(id.0)
+    }
+
+    pub async fn list_memories(
+        &self,
+        project_id: Option<uuid::Uuid>,
+        status:     Option<&str>,
+        scope:      Option<&str>,
+        limit:      i64,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
+                       Option<String>, f64, String, i32, i32,
+                       Option<chrono::DateTime<chrono::Utc>>, Vec<String>, Option<String>,
+                       chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+                        impact, strength::float8, status::text, reinforced_count, violated_count,
+                        last_relevant_at, tags, triage_signal, modified_at
+                   FROM sensei.memories
+                  WHERE ($1::uuid IS NULL OR project_id = $1)
+                    AND ($2::text IS NULL OR status::text = $2)
+                    AND ($3::text IS NULL OR scope::text = $3)
+                  ORDER BY strength DESC, last_relevant_at DESC NULLS LAST, modified_at DESC
+                  LIMIT $4"
+            )
+            .bind(project_id).bind(status).bind(scope).bind(limit)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(rows.into_iter().map(|r| serde_json::json!({
+            "id":               r.0,
+            "project_id":       r.1,
+            "scope":            r.2,
+            "scope_filter":     r.3,
+            "type":             r.4,
+            "title":            r.5,
+            "content":          r.6,
+            "impact":           r.7,
+            "strength":         r.8,
+            "status":           r.9,
+            "applied_count":    r.10,
+            "violated_count":   r.11,
+            "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
+            "tags":             r.13,
+            "triage_signal":    r.14,
+            "modified_at":      r.15.to_rfc3339(),
+        })).collect())
+    }
+
+    /// Transition a memory's status, only when its current status is in `from_states`.
+    /// Returns the new status if the transition happened, None if no row matched.
+    pub async fn set_memory_status(
+        &self,
+        memory_id: uuid::Uuid,
+        to_status: &str,
+        from_states: &[&str],
+    ) -> Result<Option<String>, String> {
+        let from_owned: Vec<String> = from_states.iter().map(|s| s.to_string()).collect();
+        let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            "UPDATE sensei.memories
+                SET status      = $1::sensei.memory_status
+                  , modified_at = now()
+              WHERE id = $2
+                AND status::text = ANY($3)
+              RETURNING status::text"
+        )
+            .bind(to_status).bind(memory_id).bind(&from_owned)
+            .fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Full memory detail bundle: row + evidence + examples + recent outcomes.
+    pub async fn get_memory_detail(&self, id: uuid::Uuid) -> Result<serde_json::Value, String> {
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
+                         Option<String>, f64, String, i32, i32,
+                         Option<chrono::DateTime<chrono::Utc>>, Vec<String>, Option<String>,
+                         chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+                        impact, strength::float8, status::text, reinforced_count, violated_count,
+                        last_relevant_at, tags, triage_signal, modified_at
+                   FROM sensei.memories WHERE id = $1"
+            ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+        let r = row.ok_or_else(|| format!("memory {id} not found"))?;
+        let memory = serde_json::json!({
+            "id":               r.0,
+            "project_id":       r.1,
+            "scope":            r.2,
+            "scope_filter":     r.3,
+            "type":             r.4,
+            "title":            r.5,
+            "content":          r.6,
+            "impact":           r.7,
+            "strength":         r.8,
+            "status":           r.9,
+            "applied_count":    r.10,
+            "violated_count":   r.11,
+            "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
+            "tags":             r.13,
+            "triage_signal":    r.14,
+            "modified_at":      r.15.to_rfc3339(),
+        });
+
+        // Evidence — table has: session_id, note, modified_at (no url column).
+        let evidence: Vec<(Option<uuid::Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT session_id, note, modified_at
+                   FROM sensei.memory_evidence
+                  WHERE memory_id = $1
+                  ORDER BY modified_at DESC"
+            ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // Examples — table has: node_id, is_good (non-nullable), note. No is_bad column.
+        let examples: Vec<(Option<String>, bool, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT node_id, is_good, note
+                   FROM sensei.memory_examples
+                  WHERE memory_id = $1"
+            ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // Last 20 outcomes
+        let outcomes: Vec<(String, Option<uuid::Uuid>, Option<String>, chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT outcome::text, session_id, context, recorded_at
+                   FROM sensei.memory_outcomes
+                  WHERE memory_id = $1
+                  ORDER BY recorded_at DESC
+                  LIMIT 20"
+            ).bind(id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "memory":   memory,
+            "evidence": evidence.into_iter().map(|(session_id, note, ts)|
+                serde_json::json!({ "session_id": session_id, "note": note, "recorded_at": ts.to_rfc3339() })
+            ).collect::<Vec<_>>(),
+            "examples": examples.into_iter().map(|(node, is_good, note)|
+                serde_json::json!({ "node_id": node, "is_good": is_good, "note": note })
+            ).collect::<Vec<_>>(),
+            "outcomes": outcomes.into_iter().map(|(outcome, sess, ctx, ts)|
+                serde_json::json!({ "outcome": outcome, "session_id": sess, "context": ctx, "recorded_at": ts.to_rfc3339() })
+            ).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Assemble a blended context blob: project-scoped + stack-scoped + global memories.
+    /// Only active/reinforced/battle_tested/challenged memories are included.
+    pub async fn assemble_context(
+        &self,
+        project_id: uuid::Uuid,
+        stack_ids:  &[String],
+        tags:       Option<&[String]>,
+        limit:      i64,
+    ) -> Result<serde_json::Value, String> {
+        let allowed = ["active", "reinforced", "battle_tested", "challenged"];
+        let allowed_owned: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
+        let stack_owned: Vec<String> = stack_ids.to_vec();
+        let tags_owned: Option<Vec<String>> = tags.map(|t| t.to_vec());
+
+        let rows: Vec<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String,
+                       Option<String>, f64, String, i32, i32,
+                       Option<chrono::DateTime<chrono::Utc>>, Vec<String>, Option<String>,
+                       chrono::DateTime<chrono::Utc>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content,
+                        impact, strength::float8, status::text, reinforced_count, violated_count,
+                        last_relevant_at, tags, triage_signal, modified_at
+                   FROM sensei.memories
+                  WHERE status::text = ANY($1)
+                    AND (
+                           project_id = $2
+                        OR (scope = 'stack'  AND scope_filter = ANY($3))
+                        OR  scope = 'global'
+                    )
+                    AND ($4::text[] IS NULL OR tags && $4)
+                  ORDER BY strength DESC, last_relevant_at DESC NULLS LAST, modified_at DESC
+                  LIMIT $5"
+            )
+            .bind(&allowed_owned).bind(project_id).bind(&stack_owned)
+            .bind(&tags_owned).bind(limit)
+            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let memories: Vec<serde_json::Value> = rows.into_iter().map(|r| serde_json::json!({
+            "id":               r.0,
+            "scope":            r.2,
+            "scope_filter":     r.3,
+            "type":             r.4,
+            "title":            r.5,
+            "content":          r.6,
+            "impact":           r.7,
+            "strength":         r.8,
+            "applied_count":    r.10,
+            "violated_count":   r.11,
+            "last_relevant_at": r.12.map(|t| t.to_rfc3339()),
+            "tags":             r.13,
+            "updated_at":       r.15.to_rfc3339(),
+        })).collect();
+
+        // Version = max modified_at across the set (stable identifier for cache validation).
+        let version = memories.iter()
+            .filter_map(|m| m["updated_at"].as_str().map(|s| s.to_string()))
+            .max()
+            .unwrap_or_default();
+        let cache_until = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+
+        Ok(serde_json::json!({
+            "version":     version,
+            "memories":    memories,
+            "cache_until": cache_until,
+        }))
+    }
+
+    /// Insert a batch of outcomes. Skips rows whose target memory is archived or rejected.
+    pub async fn record_outcomes_batch(
+        &self,
+        rows: &[OutcomeRow],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let mut skipped: Vec<serde_json::Value> = Vec::new();
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        for r in rows {
+            // Check current status first.
+            let status: Option<(String,)> = sqlx_core::query_as::query_as(
+                "SELECT status::text FROM sensei.memories WHERE id = $1"
+            ).bind(r.memory_id).fetch_optional(&mut *tx).await.map_err(|e| e.to_string())?;
+            let Some((s,)) = status else {
+                skipped.push(serde_json::json!({"memory_id": r.memory_id, "reason": "not_found"}));
+                continue;
+            };
+            if s == "archived" || s == "rejected" {
+                skipped.push(serde_json::json!({"memory_id": r.memory_id, "reason": format!("status_{s}")}));
+                continue;
+            }
+            sqlx_core::query::query(
+                "INSERT INTO sensei.memory_outcomes (memory_id, session_id, outcome, context)
+                 VALUES ($1, $2, $3::sensei.memory_outcome, $4)"
+            )
+                .bind(r.memory_id).bind(r.session_id).bind(&r.outcome).bind(&r.context)
+                .execute(&mut *tx).await.map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(skipped)
+    }
+
+    /// Return the list of stack identifiers for a project.
+    /// The `sensei.projects.stack` column is JSONB and may be an array of strings,
+    /// an object with a recognisable array key, or absent — all cases return `[]`.
+    pub async fn get_project_stack_ids(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
+            "SELECT stack FROM sensei.projects WHERE id = $1"
+        ).bind(project_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
+
+        let Some((stack_json,)) = row else { return Ok(vec![]); };
+
+        // The stack jsonb may be an array of strings, an object with a "languages" key,
+        // or empty. Be permissive: accept array-of-strings OR object-with-arrays, return [].
+        match &stack_json {
+            serde_json::Value::Array(arr) => {
+                Ok(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            }
+            serde_json::Value::Object(obj) => {
+                // Try common keys: languages, ids, items.
+                for key in &["languages", "ids", "items"] {
+                    if let Some(serde_json::Value::Array(arr)) = obj.get(*key) {
+                        return Ok(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+                    }
+                }
+                // No recognizable shape — return empty (no stack blending).
+                Ok(vec![])
+            }
+            _ => Ok(vec![]),
+        }
+    }
+
     pub async fn get_project_repos(&self, project_id: &uuid::Uuid) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
@@ -2757,5 +3073,119 @@ mod tests {
             .await
             .unwrap();
         assert!(row.0, "sensei.memories table must exist — run `dbd apply` first");
+    }
+}
+
+#[cfg(test)]
+mod knowledge_tests {
+    use super::*;
+
+    fn ddl_test_skip() -> bool {
+        // Tests require a running sensei_dev DB. Skip if env var not set.
+        std::env::var("SENSEI_TEST_DB_URL").is_err()
+    }
+
+    #[tokio::test]
+    async fn list_memories_filters_by_status() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let project_id = pg.ensure_test_project("list-status").await.unwrap();
+        let m1 = pg.insert_memory(&InsertMemory {
+            project_id: Some(project_id), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t1".into(), content: "c1".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "proposed".into(),
+        }).await.unwrap();
+        let _m2 = pg.insert_memory(&InsertMemory {
+            project_id: Some(project_id), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t2".into(), content: "c2".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+
+        let proposed = pg.list_memories(Some(project_id), Some("proposed"), None, 50).await.unwrap();
+        assert_eq!(proposed.len(), 1);
+        assert_eq!(proposed[0]["id"].as_str().unwrap(), m1.to_string());
+    }
+
+    #[tokio::test]
+    async fn set_memory_status_accept_proposal() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("accept-prop").await.unwrap();
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t".into(), content: "c".into(),
+            impact: None, tags: vec![], triage_signal: Some("revert".into()),
+            status: "proposed".into(),
+        }).await.unwrap();
+
+        let new_status = pg.set_memory_status(mid, "active", &["proposed"]).await.unwrap();
+        assert_eq!(new_status.as_deref(), Some("active"));
+
+        // Trying to accept a now-active memory fails.
+        let err = pg.set_memory_status(mid, "active", &["proposed"]).await;
+        assert!(err.is_err() || err.unwrap().is_none(), "second accept should not match WHERE clause");
+    }
+
+    #[tokio::test]
+    async fn get_memory_detail_includes_outcomes() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("detail").await.unwrap();
+        let mid = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "t".into(), content: "c".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+        let skipped = pg.record_outcomes_batch(&[
+            OutcomeRow { memory_id: mid, session_id: None, outcome: "applied".into(), context: None }
+        ]).await.unwrap();
+        assert_eq!(skipped.len(), 0);
+
+        let detail = pg.get_memory_detail(mid).await.unwrap();
+        assert!(detail["memory"]["id"].as_str().unwrap() == mid.to_string());
+        assert_eq!(detail["outcomes"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn assemble_context_blends_three_scopes() {
+        if ddl_test_skip() { return; }
+        let pg = PgStore::connect(&std::env::var("SENSEI_TEST_DB_URL").unwrap()).await.unwrap();
+        let pid = pg.ensure_test_project("blend").await.unwrap();
+
+        pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "P".into(), content: "p".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+        pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "stack".into(), scope_filter: Some("rust".into()),
+            mtype: "convention".into(), title: "S".into(), content: "s".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+        pg.insert_memory(&InsertMemory {
+            project_id: None, scope: "global".into(), scope_filter: None,
+            mtype: "convention".into(), title: "G".into(), content: "g".into(),
+            impact: None, tags: vec![], triage_signal: None, status: "active".into(),
+        }).await.unwrap();
+
+        let blob = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
+        let titles: Vec<String> = blob["memories"].as_array().unwrap().iter()
+            .map(|m| m["title"].as_str().unwrap().to_string()).collect();
+        assert!(titles.contains(&"P".to_string()));
+        assert!(titles.contains(&"S".to_string()));
+        assert!(titles.contains(&"G".to_string()));
+
+        // Proposed memories must not appear.
+        let m_prop = pg.insert_memory(&InsertMemory {
+            project_id: Some(pid), scope: "project".into(), scope_filter: None,
+            mtype: "convention".into(), title: "PROP".into(), content: "x".into(),
+            impact: None, tags: vec![], triage_signal: Some("revert".into()),
+            status: "proposed".into(),
+        }).await.unwrap();
+        let blob2 = pg.assemble_context(pid, &["rust".into()], None, 50).await.unwrap();
+        let titles2: Vec<String> = blob2["memories"].as_array().unwrap().iter()
+            .map(|m| m["title"].as_str().unwrap().to_string()).collect();
+        assert!(!titles2.contains(&"PROP".to_string()));
+        let _ = m_prop;
     }
 }
