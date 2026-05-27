@@ -4,8 +4,16 @@
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
     import { hasTauri } from "$lib/bootstrap.js";
+    import { appState } from "$lib/appstate.svelte.js";
 
     let { children } = $props();
+
+    // Expose appState on window for E2E test helpers (dev builds only).
+    // Tests call `window.__sensei_state__.appState.config = {...}` to inject
+    // daemon config without a full page reload.
+    if (import.meta.env.DEV && typeof window !== "undefined") {
+        (window as { __sensei_state__?: unknown }).__sensei_state__ = { appState };
+    }
 
     //   function applyColorScheme() {
     //     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
