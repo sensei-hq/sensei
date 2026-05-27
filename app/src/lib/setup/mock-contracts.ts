@@ -6,7 +6,7 @@
 
 import type {
   DaemonWatchRoot, DaemonAssistantFamily, AssistantVariant, DaemonProject,
-  DaemonLibEntry, DaemonMcpEntry, PreferencesData, WizardLoadData,
+  DaemonLibEntry, DaemonMcpEntry, DaemonRouter, PreferencesData, WizardLoadData,
 } from './contracts.js';
 
 export function mockWatchRoot(overrides: Partial<DaemonWatchRoot> = {}): DaemonWatchRoot {
@@ -68,6 +68,18 @@ export function mockMcpEntry(overrides: Partial<DaemonMcpEntry> = {}): DaemonMcp
   };
 }
 
+export function mockRouter(overrides: Partial<DaemonRouter> = {}): DaemonRouter {
+  return {
+    id: 'openai',
+    name: 'OpenAI',
+    providers: ['openai'],
+    capabilities: ['text_chat', 'text_embed', 'image_generate'],
+    needs_key: true,
+    configured: false,
+    ...overrides,
+  };
+}
+
 export function mockPreferences(overrides: Partial<PreferencesData> = {}): PreferencesData {
   return {
     displayName: 'Jerry', contributeLearnings: true, reviewBeforeShare: true,
@@ -98,6 +110,7 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
     projects: [mockProject()],
     libraries: { total: 1, libs: [mockLibEntry()] },
     mcps: [mockMcpEntry()],
+    routers: [mockRouter()],
     ...overrides,
   };
 }

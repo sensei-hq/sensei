@@ -106,5 +106,6 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
     projects: projects as any[],
     libraries: { total: libs.total, libs: mapLibraries(libs.libs, config) },
     mcps: instruments.mcps,
+    routers: [],
   };
 }
