@@ -878,6 +878,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://api.openai.com".to_string(),
             api_key_env: Some("__NONEXISTENT_OPENAI_KEY_FOR_TEST__".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: None,
             headers: std::collections::HashMap::new(),
@@ -980,6 +981,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://api.openai.com".to_string(),
             api_key_env: Some("OPENAI_API_KEY".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: Some(30000),
             headers: std::collections::HashMap::new(),

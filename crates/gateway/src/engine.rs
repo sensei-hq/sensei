@@ -235,6 +235,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -519,6 +520,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -529,6 +531,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -679,6 +682,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -756,6 +760,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
@@ -766,6 +771,7 @@ mod tests {
             RouterConfig {
                 url: "http://localhost".to_string(),
                 api_key_env: None,
+                api_key: None,
                 enabled: true,
                 timeout_ms: None,
                 headers: HashMap::new(),
