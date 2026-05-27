@@ -132,6 +132,7 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
         RouterConfig {
             url: "http://noop".into(),
             api_key_env: None,
+            api_key: None,
             enabled: true,
             timeout_ms: None,
             headers: HashMap::new(),

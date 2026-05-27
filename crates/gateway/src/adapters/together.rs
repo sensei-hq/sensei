@@ -580,6 +580,7 @@ mod tests {
         let config = RouterConfig {
             url: "https://api.together.xyz/v1".to_string(),
             api_key_env: Some("__NONEXISTENT_TOGETHER_KEY_FOR_TEST__".to_string()),
+            api_key: None,
             enabled: true,
             timeout_ms: None,
             headers: std::collections::HashMap::new(),
