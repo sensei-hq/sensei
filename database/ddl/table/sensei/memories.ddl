@@ -15,6 +15,8 @@ create table if not exists memories (
 , violated_count           integer       not null default 0
 , last_relevant_at         timestamptz
 , session_id               uuid
+, tags                     text[]        not null default '{}'
+, triage_signal            text
 , modified_at              timestamptz   not null default now()
 );
 
@@ -28,6 +30,9 @@ create index if not exists memories_scope_idx
 create index if not exists memories_strength_idx
     on memories(strength desc)
  where status = 'active';
+
+create index if not exists memories_tags_idx
+    on memories using gin (tags);
 
 comment on table memories is
 'Multi-level, reasoned, evolving knowledge system.
@@ -70,3 +75,7 @@ comment on column memories.session_id
      is 'Session that created this memory. Null for imported or collective memories.';
 comment on column memories.modified_at
      is 'Timestamp of the last modification to this row.';
+comment on column memories.tags
+     is 'Free-form tags (e.g. security, performance, compliance). GIN-indexed for &&/@> filters.';
+comment on column memories.triage_signal
+     is 'Which capture heuristic surfaced this memory (revert/correction/actually/repeat_pattern/override/test_failure). Null for explicit /save.';
