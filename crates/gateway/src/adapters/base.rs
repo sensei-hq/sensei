@@ -18,8 +18,17 @@ pub fn build_client(config: &RouterConfig) -> Result<Client, GatewayError> {
     })
 }
 
-/// Resolve an API key from environment variable.
+/// Resolve an API key for an adapter request.
+///
+/// Precedence:
+///   1. `config.api_key` (literal — the daemon populates this after
+///      reading the Keychain).
+///   2. `config.api_key_env` (env var name — original behaviour).
+///   3. None.
 pub fn resolve_api_key(config: &RouterConfig) -> Option<String> {
+    if let Some(literal) = config.api_key.as_ref() {
+        return Some(literal.clone());
+    }
     config
         .api_key_env
         .as_ref()
@@ -105,6 +114,47 @@ fn extract_error_message(body: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::config::RouterConfig;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn fixture(api_key: Option<String>, env: Option<String>) -> RouterConfig {
+        RouterConfig {
+            url: "https://x".into(),
+            api_key,
+            api_key_env: env,
+            enabled: true,
+            timeout_ms: None,
+            headers: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn literal_api_key_takes_precedence() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("RESOLVE_TEST_KEY", "from-env") };
+        let cfg = fixture(Some("from-literal".into()), Some("RESOLVE_TEST_KEY".into()));
+        assert_eq!(resolve_api_key(&cfg).as_deref(), Some("from-literal"));
+        unsafe { std::env::remove_var("RESOLVE_TEST_KEY") };
+    }
+
+    #[test]
+    fn falls_back_to_env_var_when_literal_absent() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("RESOLVE_TEST_FALLBACK", "from-env") };
+        let cfg = fixture(None, Some("RESOLVE_TEST_FALLBACK".into()));
+        assert_eq!(resolve_api_key(&cfg).as_deref(), Some("from-env"));
+        unsafe { std::env::remove_var("RESOLVE_TEST_FALLBACK") };
+    }
+
+    #[test]
+    fn returns_none_when_neither_source_has_a_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cfg = fixture(None, Some("RESOLVE_TEST_MISSING".into()));
+        assert_eq!(resolve_api_key(&cfg), None);
+    }
 
     #[test]
     fn extract_error_message_openai_format() {
