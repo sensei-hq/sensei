@@ -177,6 +177,21 @@ describe('ScanProjectState', () => {
     expect(state.items).toHaveLength(1);
     expect(state.items[0].id).toBe('p2');
   });
+
+  it('update merges status-only patches without overwriting name or folders', () => {
+    const projects = new ScanProjectState();
+    projects.add({
+      id: 'p1', name: 'Lumen', status: 'indexing', autoDetected: true, confidence: 'high',
+      folders: [
+        { id: 'f1', name: 'app', path: '/code/lumen/app', stack: ['rust'], filesTotal: 100, filesCompleted: 100, status: 'indexed' },
+      ],
+    });
+    // Simulate daemon emitting a status-flip update with empty name + folders.
+    projects.update({ id: 'p1', name: '', status: 'active', folders: [] } as any);
+    expect(projects.items[0].name).toBe('Lumen');
+    expect(projects.items[0].status).toBe('active');
+    expect(projects.items[0].folders).toHaveLength(1);
+  });
 });
 
 // ── ScanActivityState ────────────────────────────────────────────────────────
