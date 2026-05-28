@@ -266,7 +266,7 @@ test.describe('Setup Wizard — Flow A: empty corpus (placeholder states)', () =
   // are no longer placeholders — they render real (possibly empty) state
   // from the daemon. We assert the page-distinct testid lands and that
   // every Continue advances cleanly through to /setup/done.
-  test('projects, libraries, instruments, inference, assignments, done: all reachable via Continue', async ({ tauriPage }) => {
+  test('projects, libraries, instruments, inference, done: all reachable via Continue', async ({ tauriPage }) => {
     await driveToScan(tauriPage, EMPTY_CORPUS);
     await tauriPage.click('.btn-solid');
     await expect(tauriPage.locator('.btn-primary')).toBeEnabled({ timeout: 20_000 });
@@ -289,9 +289,6 @@ test.describe('Setup Wizard — Flow A: empty corpus (placeholder states)', () =
     // Inference stage no longer a placeholder — Task 12 replaced it with the router-keys page.
     // The page hydrates routers from the daemon; assert the first router card mounts.
     await expect(tauriPage.locator('[data-testid^="router-card-"]').first()).toBeVisible({ timeout: 5_000 });
-
-    await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assignments');
-    await expect(tauriPage.locator('[data-testid="stage-placeholder"][data-stage="assignments"]')).toBeVisible();
 
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/done');
     await expect(tauriPage.locator('[data-testid="done-summary"]')).toBeVisible();
@@ -352,8 +349,8 @@ test.describe('Setup Wizard — Rail', () => {
     await expect(tauriPage.locator('[data-testid="rail"]')).toBeVisible({ timeout: 12_000 });
   });
 
-  test('shows 11 stages', async ({ tauriPage }) => {
-    await expect(tauriPage.locator('[data-rail-item]')).toHaveCount(11);
+  test('shows 10 stages', async ({ tauriPage }) => {
+    await expect(tauriPage.locator('[data-rail-item]')).toHaveCount(10);
   });
 
   test('welcome stage is active on load', async ({ tauriPage }) => {

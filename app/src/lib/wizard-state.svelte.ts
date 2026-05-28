@@ -218,7 +218,6 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       }
     }
   },
-  assignments: async () => {},
   done:        async () => { await appState.setSetupComplete(); },
 };
 

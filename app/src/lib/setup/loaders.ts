@@ -10,7 +10,7 @@ import type { DaemonAssistantFamily, DaemonLibEntry, PreferencesData, WizardLoad
 
 const STAGES = [
   'welcome', 'preferences', 'assistants', 'roots', 'scan',
-  'projects', 'libraries', 'instruments', 'inference', 'assignments', 'done',
+  'projects', 'libraries', 'instruments', 'inference', 'done',
 ];
 
 const PREF_DEFAULTS: PreferencesData = {
