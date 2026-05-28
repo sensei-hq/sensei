@@ -10,6 +10,10 @@ One screen at a time. Each screen: read mockup → state class → component →
 
 ## Known bugs (next)
 
+### Wizard rehab follow-ups (2026-05-28)
+
+- **Setup wizard happy-path E2E deferred — WKWebView client-router quirk.** Attempted in task W13 of the wizard rehab. The Tauri WKWebView appears to ignore Svelte 5 re-renders triggered by SvelteKit's `goto()`-driven URL changes: the URL updates and the layout's $derived stage object updates, but the page-body `{@render children()}` slot does not re-mount the new route's `+page.svelte`. Visiting `/logs` (a different layout group) before navigating to `/setup/<stage>` partially works — the (config) layout remounts — but the test still couldn't reliably observe `data-testid="done-summary"` becoming visible. Coverage gap is partially filled by W9's daemon integration test (scan pipeline events) and W11's unit test (commitStage failure path). Likely upstream issue: sveltejs/kit#15287 (Svelte 5 + WKWebView). Revisit once that lands or once we have a workaround that doesn't require cross-layout transitions for every navigation.
+
 ### Knowledge plane Phase 0 — follow-ups found in live smoke test (2026-05-27)
 
 - **Test fixture projects pollute the dev DB.** `ensure_test_project` in `crates/senseid/src/db/pg_store.rs` (added in Task P5) creates real rows in `sensei.projects` with names like `accept-prop`, `blend`, `detail`, `list-status` and never cleans them up — they accumulate every test run and end up cluttering the Projects screen in the running app. Fix options: (a) wrap test inserts in a transaction that rolls back; (b) add an `#[after]` teardown that deletes rows by name pattern; (c) prefix all test project names with `__test__` and add a one-shot cleanup CLI. Option (b) with `DELETE FROM sensei.projects WHERE name IN (...)` per-test is the lowest-friction.
