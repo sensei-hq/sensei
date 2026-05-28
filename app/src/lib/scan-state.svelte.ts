@@ -45,7 +45,16 @@ export class ScanProjectState extends ReactiveStageContext<ScanProject> {
       if (idx < 0) continue;
 
       const existing = this.items[idx];
-      const merged = { ...existing, ...patch };
+      // Filter out empty-string / undefined / empty-array fields from patch so the
+      // daemon can emit partial updates (e.g., status flips only) without nulling
+      // out the existing name, folders, etc.
+      const cleaned: Partial<ScanProject> = {};
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === '' || v === undefined) continue;
+        if (Array.isArray(v) && v.length === 0) continue;
+        (cleaned as any)[k] = v;
+      }
+      const merged = { ...existing, ...cleaned };
 
       // Merge folders by id if patch contains folders
       if (patch.folders && existing.folders) {

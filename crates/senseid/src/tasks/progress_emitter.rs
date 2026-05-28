@@ -96,9 +96,29 @@ async fn run(
             }
             TaskEvent::Completed { kind, folder_path, .. } if kind == "build_connections" => {
                 if let Some(t) = trackers.remove(&folder_path) {
+                    let project_id_str = t.project_id.clone();
                     let _ = state_events.send(StateEvent::folder_update(
                         scan_folder_from(&t, FolderStatus::Indexed),
                     ));
+
+                    // Was this the last folder for the project? If so, flip the project to active.
+                    let all_indexed = uuid::Uuid::parse_str(&project_id_str)
+                        .ok()
+                        .map(|uid| pg.count_unindexed_folders(uid))
+                        .map(|fut| async { fut.await == Ok(0) });
+                    if let Some(check) = all_indexed
+                        && check.await {
+                        let _ = state_events.send(StateEvent::project_update(
+                            crate::api::events::ScanProject {
+                                id: project_id_str.clone(),
+                                name: String::new(),
+                                status: crate::api::events::ProjectStatus::Active,
+                                folders: vec![],
+                                auto_detected: true,
+                                confidence: crate::api::events::Confidence::High,
+                            },
+                        ));
+                    }
                 }
             }
             _ => {}

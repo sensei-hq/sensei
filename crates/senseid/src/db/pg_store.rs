@@ -696,6 +696,17 @@ impl PgStore {
         Ok(())
     }
 
+    /// Count folders belonging to a project that have not yet reached a terminal
+    /// index state. Returns 0 when all folders are `indexed` or `failed`.
+    pub async fn count_unindexed_folders(&self, project_id: uuid::Uuid) -> Result<i64, String> {
+        let row: (i64,) = sqlx_core::query_as::query_as(
+            "SELECT COUNT(*) FROM sensei.folders
+              WHERE project_id = $1
+                AND status NOT IN ('indexed'::sensei.folder_status, 'failed'::sensei.folder_status)"
+        ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     // ── Benchmark Reports ────────────────────────────────────────────
 
     pub async fn create_benchmark_report(
