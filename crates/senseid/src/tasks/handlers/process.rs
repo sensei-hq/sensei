@@ -57,7 +57,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     };
 
     // ── 4. Emit: folder add with stack + file count ──────────────────
-    let folder_uuid_str = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten()
+    // Use get_repo_by_path (abs_path) to get the exact row for this scan run,
+    // avoiding name collisions with identically-named repos from prior runs.
+    let folder_by_path = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
+    let folder_uuid_str = folder_by_path.as_ref()
         .and_then(|f| f["id"].as_str().map(|s| s.to_string()))
         .unwrap_or_else(|| format!("f-{}", folder_name));
 
@@ -80,13 +83,22 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         0.0,
     )));
 
-    // ── Existing logic: look up folder, clear stale data ─────────────
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+    // ── Existing logic: look up folder by path, clear stale data ─────
+    // Use the path-based row (same as folder_by_path above) to avoid
+    // name collisions with identically-named repos from prior runs.
+    let folder = folder_by_path;
     let folder_uuid = folder.as_ref()
         .and_then(|f| crate::api::util::json_uuid(&f["id"]));
 
+    // ── Persist project_id on the folder record ──────────────────────
+    // upsert_repo does not set project_id; do it now so that
+    // progress_emitter::build_tracker can read it via get_repo_by_path.
+    if let (Some(fid), Ok(pid)) = (&folder_uuid, uuid::Uuid::parse_str(&project_id)) {
+        ctx.pg().set_folder_project(fid, &pid, "primary", None).await.ok();
+    }
+
     // ── 6. Attach deferred siblings to this project ──────────────────
-    if let Some(project_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["project_id"])) {
+    if let Ok(project_id) = uuid::Uuid::parse_str(&project_id) {
         let parent = std::path::Path::new(&task.folder_path)
             .parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         if !parent.is_empty() {
@@ -211,7 +223,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
 
     // Detect subtrees → register as separate repos
     {
-        let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+        let folder = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
         if folder.is_some() {
             // Detect git subtrees
             let subtrees = crate::indexer::cross_repo::detect_git_subtrees_pub(repo_path);
@@ -248,7 +260,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         let summary = metadata::extract_summary(repo_path);
 
         // Persist metadata on the folder record via PgStore
-        let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+        let folder = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
         if let Some(folder) = folder
             && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
                 let meta = serde_json::json!({
