@@ -383,7 +383,10 @@ impl PgStore {
     /// Mark a folder as indexed with detected libs.
     pub async fn mark_folder_indexed(&self, folder_id: &uuid::Uuid, libs: &[String]) -> Result<(), String> {
         let props = serde_json::json!({"indexed_at": chrono::Utc::now().to_rfc3339(), "libs": libs});
-        self.set_folder_props(folder_id, &props).await
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET status = 'indexed'::sensei.folder_status, props = props || $2, modified_at = now() WHERE id = $1"
+        ).bind(folder_id).bind(&props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// Delete a folder (cascade deletes nodes, edges, scan_state, etc.).
