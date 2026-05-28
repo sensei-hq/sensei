@@ -9,6 +9,7 @@ pub mod queue;
 pub mod executor;
 pub mod handlers;
 pub mod progress;
+pub mod progress_emitter;
 pub mod processors;
 
 use serde::{Serialize, Deserialize};
