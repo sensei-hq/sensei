@@ -427,6 +427,51 @@ Screens confirmed to have no mockup. Design (mockup → spec → plan) must prec
 
 ---
 
+## Future scope — gateway-embedded crate (2026-05-28)
+
+**Vision:** A sibling crate `crates/gateway-embedded/` that exposes in-process inference adapters as alternatives to the existing HTTP adapters. Each engine sits behind a cargo feature so binary size is opt-in; embedded adapters implement the existing `gateway::InferenceAdapter` trait, so no new abstraction in the core gateway.
+
+**Motivation:** The `rust-embedding-bench` work (https://github.com/jerrythomas/rust-embedding-bench) measured calling llama.cpp in-process via `llama-cpp-2` at **5–9x faster than going through the local Ollama HTTP daemon** for short embedding queries (1.3 ms vs 11 ms p50 on Apple M4 Max, same model, same engine). The HTTP layer is the cost; the actual inference is fast. The same finding applies to ORT-based embedding paths — running them in-process beats any HTTP wrapper.
+
+**Adapters to ship (in order):**
+
+1. `LlamaCppAdapter` (feature `llama-cpp`) — GGUF, matches Ollama's model ecosystem, covers chat + embedding.
+2. `FastembedAdapter` (feature `fastembed`) — opinionated ORT wrapper for batched MiniLM-class embedding workloads. The embedding index hot path.
+3. `OrtAdapter` (feature `ort`) — raw ONNX, opt-in. Use only when a workflow needs ORT-specific control.
+
+Default feature set: `llama-cpp + fastembed`. `ort` is opt-in.
+
+**Why keep the existing HTTP Ollama adapter:** Still useful for remote daemons (shared GPU box), models the user already has loaded there, and as a fallback when an embedded adapter crashes or hits a model not yet GGUF-compatible. The gateway becomes a router across multiple backend kinds; workflow config picks the adapter ID.
+
+**Bundling strategy — cargo features, not dynamic loading:**
+
+Each engine is a feature gate on `gateway-embedded`. Static linking. No `libloading` / `abi_stable` / cdylib plugin system — the desktop app already ships a webview, so a 80–150 MB binary with `llama-cpp-2 + fastembed` is unremarkable. Dynamic plugins are worth their complexity only when (a) binary size becomes a real product constraint or (b) third parties need to ship custom engine adapters. Defer.
+
+**Model registry (new):**
+
+A registry (`crates/gateway-models/` or co-located within `gateway-embedded`) resolves a model id to an mmap-able path. Three sources, looked up in order:
+
+1. `Managed { path }` — `~/.sensei/models/...`. Sensei owns it (download + GC).
+2. `Ollama { manifest, blob_digest }` — read-only piggyback on `~/.ollama/models/{manifests,blobs/sha256-*}`. Never write into Ollama's store (would race with its GC, and the layout changes between Ollama versions).
+3. `External { path }` — user-pointed arbitrary GGUF/ONNX/safetensors. Linked in place by default; never moved without explicit user action.
+
+**Move-to-library UX:** External models can be promoted into the managed library via an explicit "Move to library" action. **Move, not copy or hard-link** — clean single canonical copy. Cross-volume case handled internally with copy-then-delete and rollback if the delete fails. User is choosing "I want sensei to own this."
+
+**OS page cache note:** mmapping the same model bytes from two paths does NOT double RAM — the OS shares physical pages across processes that mmap identical bytes. The duplication concern with Ollama-managed models is purely disk, not memory. This makes the read-through Ollama path low-cost: zero RAM penalty even when both Ollama and sensei have the same model "loaded."
+
+**Concrete first cut, when the time comes:**
+
+- Add `crates/gateway-embedded/` to the workspace.
+- `LlamaCppAdapter` first — largest single win; covers Ollama territory for GGUF chat + embeddings.
+- `gateway-models` resolver with the three-source lookup. Lift the read-through Ollama logic from `minilm-bench/reference/download_gguf.py` (proven pattern).
+- Wire one embedded adapter into the existing `Gateway` builder behind a feature flag; smoke-test via the embedding index workflow.
+- `FastembedAdapter` second, for the embedding index hot path.
+- `OrtAdapter` later, only if a workflow needs ONNX-specific control.
+
+**Why now-ish but not now:** This is an optimisation, not a feature gap. The HTTP Ollama adapter works. Defer until the in-process gain matters for a user-visible workflow (embedding many strings at index time, or a per-query chat path that's HTTP-bound on slow links).
+
+---
+
 ## Future scope — bootstrap as a reusable library (2026-05-20)
 
 **Vision:** Extract the bootstrap health-check / resolve / upgrade pipeline
