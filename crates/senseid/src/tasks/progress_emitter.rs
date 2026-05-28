@@ -17,8 +17,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
-const THROTTLE_DURATION: Duration = Duration::from_millis(300);
-const THROTTLE_FILE_DELTA: u32 = 25;
+// TEMP (2026-05-28): throttle effectively disabled to diagnose "stuck at 0/N"
+// reports in the live app. Restore 300ms / 25 files once we understand whether
+// the issue is throttling, missing trackers, or upstream task execution.
+const THROTTLE_DURATION: Duration = Duration::from_millis(0);
+const THROTTLE_FILE_DELTA: u32 = 1;
 
 #[derive(Clone)]
 struct FolderTracker {
