@@ -271,9 +271,12 @@ export class WizardState {
     return this.stages.find(s => s.id === id)?.status === 'done';
   }
 
-  /** Mark a stage active, clearing any previous active stage. */
+  /** Mark a stage active, clearing any previous active stage.
+   *  Rebuilds the array so Svelte 5 derived signals re-evaluate —
+   *  in-place mutation of plain-object items is not guaranteed to
+   *  propagate through $derived chains. */
   setActive(id: string): void {
-    for (const s of this.stages) s.active = s.id === id;
+    this.stages = this.stages.map(s => ({ ...s, active: s.id === id }));
   }
 
   canAdvance(stageId: string): boolean {
