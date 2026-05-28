@@ -74,8 +74,10 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
 /// Build doc↔code traceability edges and mark as indexed.
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let folder_name = task.folder_name();
-    let _folder_path = &task.folder_path;
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+    let folder_path = &task.folder_path;
+    // Use path-based lookup so we mark the correct folder even when multiple
+    // folders share the same basename (e.g., test runs, cloned repos).
+    let folder = ctx.pg().get_repo_by_path(folder_path).await.ok().flatten();
     let folder_id = match folder.as_ref()
         .and_then(|f| crate::api::util::json_uuid(&f["id"])) {
         Some(id) => id,
