@@ -17,13 +17,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
-#[allow(dead_code)]
 const THROTTLE_DURATION: Duration = Duration::from_millis(300);
-#[allow(dead_code)]
 const THROTTLE_FILE_DELTA: u32 = 25;
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct FolderTracker {
     folder_id:       String,
     project_id:      String,
@@ -38,14 +35,12 @@ struct FolderTracker {
 }
 
 impl FolderTracker {
-    #[allow(dead_code)]
     fn should_emit(&self, now: Instant) -> bool {
         now.duration_since(self.last_emit_at) >= THROTTLE_DURATION
             || (self.files_completed.saturating_sub(self.last_emit_count)) >= THROTTLE_FILE_DELTA
     }
 }
 
-#[allow(dead_code)]
 fn scan_folder_from(t: &FolderTracker, status: FolderStatus) -> ScanFolder {
     ScanFolder {
         id: t.folder_id.clone(),
@@ -64,7 +59,6 @@ fn scan_folder_from(t: &FolderTracker, status: FolderStatus) -> ScanFolder {
 /// daemon's lifetime. Subscribes to the task queue's TaskEvent stream and
 /// publishes throttled StateEvent::folder_update events to the API broadcast
 /// channel.
-#[allow(dead_code)]
 pub fn spawn(
     task_events: broadcast::Receiver<TaskEvent>,
     state_events: broadcast::Sender<StateEvent>,
@@ -73,7 +67,6 @@ pub fn spawn(
     tokio::spawn(run(task_events, state_events, pg));
 }
 
-#[allow(dead_code)]
 async fn run(
     mut task_events: broadcast::Receiver<TaskEvent>,
     state_events: broadcast::Sender<StateEvent>,
@@ -113,7 +106,6 @@ async fn run(
     }
 }
 
-#[allow(dead_code)]
 fn kind_from_str(s: &str) -> FolderKind {
     match s {
         "workspace_member" => FolderKind::WorkspaceMember,
@@ -124,7 +116,6 @@ fn kind_from_str(s: &str) -> FolderKind {
     }
 }
 
-#[allow(dead_code)]
 async fn build_tracker(
     pg: &crate::db::pg_store::PgStore,
     folder_path: &str,

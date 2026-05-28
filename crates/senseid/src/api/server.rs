@@ -59,6 +59,14 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     });
     spawn_workers(task_ctx, DEFAULT_WORKERS);
 
+    // Spawn the scan progress emitter — translates per-file TaskEvent::Completed
+    // into throttled StateEvent::folder_update SSE events for the wizard scan stage.
+    crate::tasks::progress_emitter::spawn(
+        task_queue.sender().subscribe(),
+        state.event_tx.clone(),
+        Arc::new(state.pg.clone()),
+    );
+
     // Start root watchers for persisted scanned roots
     spawn_root_watchers(&state, task_queue.clone()).await;
 

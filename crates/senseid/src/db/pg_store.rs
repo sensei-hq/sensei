@@ -4,6 +4,7 @@ use sensei_bootstrap::{DB_POOL_MAX_CONNECTIONS, DB_POOL_ACQUIRE_TIMEOUT_SECS, DB
 
 /// PostgreSQL store.
 /// Schema is managed by `dbd apply`, not by this code.
+#[derive(Clone)]
 pub struct PgStore {
     pool: PgPool,
 }
