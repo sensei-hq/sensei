@@ -377,23 +377,36 @@ export class WizardState {
    * Re-fetch libraries from daemon, preserving the user's local enable/disable
    * intent for libs that survive the refresh. Daemon discovers libs during
    * scan, so the initial wizard hydrate may run before any libs exist.
+   *
+   * Filter libs to those touching at least one repo scanned in this wizard run
+   * to avoid showing stale libs from the persistent DB.
    */
   async refreshLibraries(): Promise<void> {
     const api = senseiApi(appState.port);
     const fresh = await api.getLibs();
+
+    // Set of repo (folder) names scanned in this wizard run. Filter libs to those
+    // touching at least one of these so we don't show the entire persistent DB.
+    const scannedRepoNames = new Set<string>();
+    for (const p of this.projects.projects) {
+      for (const f of p.folders) scannedRepoNames.add(f.name);
+    }
+
     const previous = new Map(this.libraries.libs.map(l => [l.name, l.enabled]));
     this.libraries = {
-      libs: fresh.libs.map(l => ({
-        id: l.id || l.name,
-        name: l.name,
-        ecosystem: l.ecosystem ?? '',
-        version: l.version ?? null,
-        description: l.description ?? null,
-        pageCount: l.pageCount ?? 0,
-        repos: l.repos ?? [],
-        repoCount: l.repoCount ?? (l.repos?.length ?? 0),
-        enabled: previous.get(l.name) ?? true,
-      })),
+      libs: fresh.libs
+        .filter(l => (l.repos ?? []).some((r: string) => scannedRepoNames.has(r)))
+        .map(l => ({
+          id: l.id || l.name,
+          name: l.name,
+          ecosystem: l.ecosystem ?? '',
+          version: l.version ?? null,
+          description: l.description ?? null,
+          pageCount: l.pageCount ?? 0,
+          repos: l.repos ?? [],
+          repoCount: l.repoCount ?? (l.repos?.length ?? 0),
+          enabled: previous.get(l.name) ?? true,
+        })),
     };
   }
 
