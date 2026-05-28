@@ -111,6 +111,24 @@ describe('ScanProjectState', () => {
     expect(state.readyFolders).toBe(2);
   });
 
+  it('readyFolders counts folders with status indexed across projects', () => {
+    const projects = new ScanProjectState();
+    projects.add({
+      id: 'p1', name: 'Lumen', status: 'indexing', autoDetected: true, confidence: 'high',
+      folders: [
+        { id: 'f1', name: 'app',    path: '/code/lumen/app',    stack: ['rust'], filesTotal: 100, filesCompleted: 100, status: 'indexed' },
+        { id: 'f2', name: 'canvas', path: '/code/lumen/canvas', stack: ['ts'],   filesTotal: 50,  filesCompleted: 25,  status: 'indexing' },
+      ],
+    });
+    projects.add({
+      id: 'p2', name: 'Other', status: 'indexing', autoDetected: true, confidence: 'high',
+      folders: [
+        { id: 'f3', name: 'core', path: '/code/other/core', stack: ['rust'], filesTotal: 10, filesCompleted: 10, status: 'indexed' },
+      ],
+    });
+    expect(projects.readyFolders).toBe(2);
+  });
+
   it('completedFiles sums across projects and folders', () => {
     const state = new ScanProjectState();
     state.add(project('p1', 'Lumen', [
