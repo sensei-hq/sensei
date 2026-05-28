@@ -66,10 +66,7 @@ describe('reroute', () => {
   describe('setup tier (once health is ok)', () => {
     beforeEach(() => setHealth('ok'));
 
-    // TEMP: setup gate disabled in hooks.ts while debugging Phase 0 in the
-    // live app. Restore both this test and the gate together once the setup
-    // wizard regressions in docs/backlog.md are resolved.
-    it.skip('redirects to /setup/welcome when setup is incomplete', () => {
+    it('redirects to /setup/welcome when setup is incomplete', () => {
       setSetupComplete(false);
       expect(reroute({ url: new URL('http://localhost/') })).toBe('/setup/welcome');
       expect(reroute({ url: new URL('http://localhost/projects') })).toBe('/setup/welcome');
