@@ -470,7 +470,11 @@ export class WizardState {
       const stage = this.stages.find(s => s.id === stageId);
       if (stage) stage.status = 'done';
       return true;
-    } catch {
+    } catch (e) {
+      // The done stage flips setup_complete on the daemon — its failure
+      // must propagate, not silently return false. Otherwise the layout
+      // navigates to / regardless of success.
+      if (stageId === 'done') throw e;
       return false;
     }
   }
