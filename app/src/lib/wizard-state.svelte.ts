@@ -276,6 +276,12 @@ export class WizardState {
    *  in-place mutation of plain-object items is not guaranteed to
    *  propagate through $derived chains. */
   setActive(id: string): void {
+    // Idempotency guard — without this, the layout's $effect re-fires every
+    // tick because the array rebuild creates new object references that the
+    // $derived `stage = stages[currentIdx]` sees as changed, re-triggering
+    // the effect that called us. Svelte then aborts with effect_depth_exceeded.
+    const current = this.stages.find(s => s.active);
+    if (current?.id === id) return;
     this.stages = this.stages.map(s => ({ ...s, active: s.id === id }));
   }
 
