@@ -220,12 +220,12 @@ describe('ScanActivityState', () => {
     expect(state.totalElapsed).toBe(1.5);
   });
 
-  it('discovered counts discover + found', () => {
+  it('discovered counts every discover-level event', () => {
     const state = new ScanActivityState();
-    state.add(activity('a1', 'discover', '~/code/lumen · found root', 0.1));
-    state.add(activity('a2', 'discover', '~/code/lumen/app · found git repo', 0.2));
-    state.add(activity('a3', 'discover', '~/code/lumen/canvas · found git repo', 0.3));
-    state.add(activity('a4', 'queue', 'app · 842 files queued', 0.4));
+    state.add(activity('a1', 'discover', '/code/lumen · git folder', 0.1));
+    state.add(activity('a2', 'discover', '/code/lumen/app · git folder', 0.18));
+    state.add(activity('a3', 'discover', '/code/canvas · standalone folder', 0.22));
+    state.add(activity('a4', 'info', '3 git · 0 sibling · 1 standalone folders discovered', 0.30));
     expect(state.discovered).toBe(3);
   });
 
@@ -237,12 +237,9 @@ describe('ScanActivityState', () => {
     expect(state.queued).toBe(2);
   });
 
-  it('processed counts process + graph extracted', () => {
+  it('does not expose a processed counter — see ScanProjectState folder statuses', () => {
     const state = new ScanActivityState();
-    state.add(activity('a1', 'process', 'app · 400/842 processed', 0.5));
-    state.add(activity('a2', 'process', 'app · 842/842 processed · graph extracted', 0.8));
-    state.add(activity('a3', 'process', 'canvas · 614/614 processed · graph extracted', 0.9));
-    expect(state.processed).toBe(2);
+    expect((state as any).processed).toBeUndefined();
   });
 
   it('scanComplete true when success event exists', () => {
