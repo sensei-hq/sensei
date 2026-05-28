@@ -97,7 +97,7 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
       welcome: 'pending', preferences: 'pending', assistants: 'pending',
       roots: 'pending', scan: 'pending', projects: 'pending',
       libraries: 'pending', instruments: 'pending',
-      inference: 'pending', assignments: 'pending', done: 'pending',
+      inference: 'pending', done: 'pending',
     },
     preferences: mockPreferences(),
     assistantFamilies: [
