@@ -65,7 +65,7 @@ describe('contract mock factories', () => {
         welcome: 'done', preferences: 'done', assistants: 'done',
         roots: 'done', scan: 'done', projects: 'pending',
         libraries: 'pending', instruments: 'pending',
-        inference: 'pending', assignments: 'pending', done: 'pending',
+        inference: 'pending', done: 'pending',
       },
     });
     expect(data.completion.welcome).toBe('done');
