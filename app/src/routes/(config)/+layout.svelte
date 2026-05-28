@@ -23,6 +23,7 @@
     const canAdvance = $derived(wizardState.canAdvance(stage?.id ?? ""));
     let committing = $state(false);
     let loaded = $state(false);
+    let commitError = $state<string | null>(null);
 
     // Drive the transient `active` flag from the current route so both the
     // rail and the header read the same shape per stage.
@@ -45,17 +46,26 @@
         if (!canAdvance) return;
 
         committing = true;
-        if (isLast) {
-            await wizardState.commitStage("done");
+        commitError = null;
+        try {
+            if (isLast) {
+                await wizardState.commitStage("done");
+                // Reload appState so reroute sees setup_complete=1 before goto fires.
+                // The optimistic update in setSetupComplete handles the in-memory
+                // case, but the load() guards against any race on cold paths.
+                await appState.load();
+                goto("/");
+                return;
+            }
+            const ok = await wizardState.commitStage(stage.id);
+            if (ok) {
+                const path = nextStagePath(page.url.pathname);
+                if (path) goto(path);
+            }
+        } catch (e) {
+            commitError = e instanceof Error ? e.message : String(e);
+        } finally {
             committing = false;
-            goto("/");
-            return;
-        }
-        const ok = await wizardState.commitStage(stage.id);
-        committing = false;
-        if (ok) {
-            const path = nextStagePath(page.url.pathname);
-            if (path) goto(path);
         }
     }
 
@@ -175,6 +185,12 @@
                 {/if}
                 {@render children()}
             </div>
+
+            {#if commitError}
+                <div class="mx-16 mb-2 p-3 rounded-md border border-danger-z5 bg-surface-z2 text-xs text-danger-z5">
+                    Could not finish: {commitError} — fix and try Continue again.
+                </div>
+            {/if}
 
             <!-- Bottom nav -->
             <div

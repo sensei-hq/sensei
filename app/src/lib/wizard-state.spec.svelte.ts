@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { WizardState } from './wizard-state.svelte.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
 
@@ -284,6 +284,18 @@ describe('WizardState', () => {
     it('initializes status as pending and active as false', () => {
       expect(ws.stages.every(s => s.status === 'pending')).toBe(true);
       expect(ws.stages.every(s => s.active === false)).toBe(true);
+    });
+  });
+
+  describe('commitStage failure paths', () => {
+    it('commitStage("done") propagates errors instead of returning false', async () => {
+      const ws = new WizardState();
+      const { appState } = await import('$lib/appstate.svelte.js');
+      vi.spyOn(appState, 'setSetupComplete').mockRejectedValue(new Error('boom'));
+
+      await expect(ws.commitStage('done')).rejects.toThrow();
+
+      vi.restoreAllMocks();
     });
   });
 
