@@ -171,17 +171,13 @@ export class ScanActivityState extends ReactiveStageContext<ActivityEvent> {
     return this.items.length > 0 ? this.items[this.items.length - 1].elapsed : 0;
   }
 
-  /** Stats bar counts derived from activity levels + messages. */
+  /** Stats bar counts derived from activity levels. */
   get discovered() {
-    return this.items.filter(e => e.level === 'discover' && e.message.includes('found')).length;
+    return this.items.filter(e => e.level === 'discover').length;
   }
 
   get queued() {
     return this.items.filter(e => e.level === 'queue').length;
-  }
-
-  get processed() {
-    return this.items.filter(e => e.level === 'process' && e.message.includes('graph extracted')).length;
   }
 
   get scanComplete() {
