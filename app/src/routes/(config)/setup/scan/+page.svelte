@@ -178,8 +178,7 @@
         <div
             class="grid grid-cols-4 gap-4 mb-6 pb-6 border-b border-surface-z2"
         >
-            {#each [{ value: rootCount, label: "ROOTS" }, { value: activities.discovered, label: "DISCOVERED" }, { value: activities.queued, label: "QUEUED" }, { value: (activities as any).processed, label: "PROCESSED" }] as stat}
-            <!-- W8: replace with projects.processedFolders -->
+            {#each [{ value: rootCount, label: "ROOTS" }, { value: activities.discovered, label: "DISCOVERED" }, { value: activities.queued, label: "QUEUED" }, { value: projects.readyFolders, label: "PROCESSED" }] as stat}
                 <div class="text-center">
                     <div class="display text-3xl leading-tight">
                         {stat.value}
