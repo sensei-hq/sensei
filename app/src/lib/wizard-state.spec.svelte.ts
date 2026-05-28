@@ -22,7 +22,7 @@ describe('WizardState', () => {
           welcome: 'done', preferences: 'pending', assistants: 'pending',
           roots: 'pending', scan: 'pending', projects: 'pending',
           libraries: 'pending', instruments: 'pending',
-          inference: 'pending', assignments: 'pending', done: 'pending',
+          inference: 'pending', done: 'pending',
         },
       }));
       expect(ws.stages.find(s => s.id === 'welcome')?.status).toBe('done');
@@ -128,7 +128,7 @@ describe('WizardState', () => {
           welcome: 'done', preferences: 'done', assistants: 'done',
           roots: 'pending', scan: 'pending', projects: 'pending',
           libraries: 'pending', instruments: 'pending',
-          inference: 'pending', assignments: 'pending', done: 'pending',
+          inference: 'pending', done: 'pending',
         },
       }));
       expect(ws.firstPendingStage).toBe('roots');
@@ -139,7 +139,7 @@ describe('WizardState', () => {
         welcome: 'done', preferences: 'done', assistants: 'done',
         roots: 'done', scan: 'done', projects: 'done',
         libraries: 'done', instruments: 'done',
-        inference: 'done', assignments: 'done', done: 'done',
+        inference: 'done', done: 'done',
       };
       ws.hydrate(mockWizardLoadData({ completion: allDone }));
       expect(ws.allDone).toBe(true);
@@ -242,7 +242,7 @@ describe('WizardState', () => {
           welcome: 'done', preferences: 'pending', assistants: 'pending',
           roots: 'pending', scan: 'pending', projects: 'pending',
           libraries: 'pending', instruments: 'pending',
-          inference: 'pending', assignments: 'pending', done: 'pending',
+          inference: 'pending', done: 'pending',
         },
       }));
       expect(ws.isStageComplete('welcome')).toBe(true);

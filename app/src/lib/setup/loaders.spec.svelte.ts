@@ -22,7 +22,7 @@ describe('extractCompletion', () => {
     expect(result.welcome).toBe('pending');
   });
 
-  it('covers all 11 stages', () => {
+  it('covers all 10 stages', () => {
     const result = extractCompletion({});
     const keys = Object.keys(result);
     expect(keys).toContain('welcome');
@@ -34,9 +34,8 @@ describe('extractCompletion', () => {
     expect(keys).toContain('libraries');
     expect(keys).toContain('instruments');
     expect(keys).toContain('inference');
-    expect(keys).toContain('assignments');
     expect(keys).toContain('done');
-    expect(keys).toHaveLength(11);
+    expect(keys).toHaveLength(10);
   });
 });
 
