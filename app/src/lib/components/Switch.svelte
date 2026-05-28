@@ -31,7 +31,7 @@
         flex-shrink: 0;
     }
     .switch.on {
-        background: oklch(var(--color-primary-600) / 1);
+        background: oklch(var(--color-primary-z5) / 1);
     }
     .switch-thumb {
         position: absolute;

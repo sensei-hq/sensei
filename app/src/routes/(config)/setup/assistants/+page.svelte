@@ -82,7 +82,7 @@
 
 <style>
   .card-selected {
-    border: 1.5px solid oklch(var(--color-surface-z6) / 1);
+    border: 2px solid oklch(var(--color-primary-z5) / 1);
     background: oklch(var(--color-surface-z2) / 1);
   }
   .card-selected .chip {
