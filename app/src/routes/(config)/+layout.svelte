@@ -87,18 +87,14 @@
             <div data-testid="rail" class="flex flex-col">
                 {#each stages as s (s.id)}
                     {@const isDone = s.status === "done"}
-                    {@const isNavigable = isDone || s.active}
                     <button
                         data-rail-item
                         data-stage-id={s.id}
                         data-active={s.active}
-                        class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-surface-z5 cursor-default transition-all duration-fast text-sm"
+                        class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-surface-z5 cursor-pointer transition-all duration-fast text-sm"
                         class:active={s.active}
                         class:done={isDone}
-                        onclick={() => {
-                            if (isNavigable) goto(s.path);
-                        }}
-                        disabled={!isNavigable}
+                        onclick={() => goto(s.path)}
                     >
                         <span
                             class="rail-kanji kanji text-sm text-center text-surface-z5"
@@ -239,9 +235,6 @@
     /*.rail-item {
         padding: 7px 10px;
     }*/
-    [data-rail-item]:not(:disabled) {
-        cursor: pointer;
-    }
     [data-rail-item].active {
         background: oklch(var(--color-surface-z1) / 1);
         border-color: oklch(var(--color-surface-z3) / 1);
