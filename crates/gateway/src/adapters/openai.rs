@@ -209,19 +209,46 @@ fn require_api_key(config: &RouterConfig) -> Result<String, GatewayError> {
 /// `POST /v1/chat/completions` and `POST /v1/embeddings`.
 pub struct OpenAIAdapter {
     client: Client,
+    /// Adapter id surfaced through [`InferenceAdapter::id`]. Defaults to
+    /// `"openai"` via [`Self::new`] / [`Self::from_config`]; the
+    /// [`Self::with_id`] / [`Self::from_config_with_id`] constructors let
+    /// a single OpenAI-compatible implementation register under a
+    /// different name (`"openrouter"`, `"vercel"`, `"nvidia"`, …) so the
+    /// gateway engine — which looks adapters up by router id — can route
+    /// to a per-router `RouterConfig` (custom URL, API key) while reusing
+    /// the same wire format.
+    id: String,
 }
 
 impl OpenAIAdapter {
     pub fn new() -> Result<Self, GatewayError> {
+        Self::with_id("openai")
+    }
+
+    /// Build an OpenAI-compatible adapter registered under a custom id.
+    /// The id should match the corresponding [`RouterConfig`]'s key in
+    /// [`GatewayConfig::routers`], since the gateway engine dispatches by
+    /// router id.
+    pub fn with_id(id: impl Into<String>) -> Result<Self, GatewayError> {
         Ok(Self {
             client: Client::new(),
+            id: id.into(),
         })
     }
 
     /// Create an adapter from a pre-built client (e.g. with timeout from config).
     pub fn from_config(config: &RouterConfig) -> Result<Self, GatewayError> {
+        Self::from_config_with_id("openai", config)
+    }
+
+    /// Same as [`Self::from_config`] but with a caller-supplied adapter id.
+    pub fn from_config_with_id(
+        id: impl Into<String>,
+        config: &RouterConfig,
+    ) -> Result<Self, GatewayError> {
         Ok(Self {
             client: build_client(config)?,
+            id: id.into(),
         })
     }
 }
@@ -229,7 +256,7 @@ impl OpenAIAdapter {
 #[async_trait]
 impl InferenceAdapter for OpenAIAdapter {
     fn id(&self) -> &str {
-        "openai"
+        &self.id
     }
 
     fn supports(&self, capability: &Capability) -> bool {
@@ -729,6 +756,46 @@ mod tests {
         let adapter = OpenAIAdapter::new().unwrap();
         assert!(adapter.supports(&Capability::AudioTranscribe));
         assert!(adapter.supports(&Capability::AudioGenerate));
+    }
+
+    #[test]
+    fn with_id_overrides_default_id() {
+        let openrouter = OpenAIAdapter::with_id("openrouter").unwrap();
+        assert_eq!(openrouter.id(), "openrouter");
+
+        let vercel = OpenAIAdapter::with_id("vercel").unwrap();
+        assert_eq!(vercel.id(), "vercel");
+
+        // Capability set is identical to the default-id adapter — the
+        // wire format isn't changing, only which RouterConfig the
+        // engine pairs it with.
+        assert!(openrouter.supports(&Capability::TextChat));
+        assert!(openrouter.supports(&Capability::TextEmbed));
+        assert!(!openrouter.supports(&Capability::VideoGenerate));
+    }
+
+    #[test]
+    fn new_and_from_config_default_to_openai_id() {
+        let by_new = OpenAIAdapter::new().unwrap();
+        assert_eq!(by_new.id(), "openai");
+
+        let mut cfg_headers: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        cfg_headers.insert("X-Test".into(), "true".into());
+        let cfg = crate::types::config::RouterConfig {
+            url: "https://example.com".into(),
+            api_key_env: None,
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(1000),
+            headers: cfg_headers,
+        };
+        let from_cfg = OpenAIAdapter::from_config(&cfg).unwrap();
+        assert_eq!(from_cfg.id(), "openai");
+
+        let from_cfg_renamed =
+            OpenAIAdapter::from_config_with_id("vercel", &cfg).unwrap();
+        assert_eq!(from_cfg_renamed.id(), "vercel");
     }
 
     #[test]
