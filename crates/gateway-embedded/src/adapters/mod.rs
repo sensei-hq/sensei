@@ -10,3 +10,9 @@ pub mod llama_cpp;
 
 #[cfg(feature = "llama-cpp")]
 pub use llama_cpp::LlamaCppAdapter;
+
+#[cfg(feature = "fastembed")]
+pub mod fastembed;
+
+#[cfg(feature = "fastembed")]
+pub use fastembed::FastembedAdapter;
