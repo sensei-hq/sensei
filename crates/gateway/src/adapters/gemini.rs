@@ -516,6 +516,7 @@ fn parse_stream_line(line: &str) -> Option<Result<StreamChunk, GatewayError>> {
         content,
         finish_reason,
         usage,
+    tool_calls: Vec::new(),
     }))
 }
 

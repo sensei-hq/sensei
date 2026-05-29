@@ -540,6 +540,7 @@ impl InferenceAdapter for AnthropicAdapter {
                                             content,
                                             finish_reason: None,
                                             usage: None,
+                                            tool_calls: Vec::new(),
                                         });
                                     }
                                 }
@@ -550,6 +551,7 @@ impl InferenceAdapter for AnthropicAdapter {
                                     content: String::new(),
                                     finish_reason: Some("end_turn".to_string()),
                                     usage,
+                                    tool_calls: Vec::new(),
                                 });
                             }
                             "message_stop" => {
@@ -557,6 +559,7 @@ impl InferenceAdapter for AnthropicAdapter {
                                     content: String::new(),
                                     finish_reason: Some("stop".to_string()),
                                     usage: None,
+                                    tool_calls: Vec::new(),
                                 });
                             }
                             _ => {} // skip ping, message_start, content_block_start, etc.

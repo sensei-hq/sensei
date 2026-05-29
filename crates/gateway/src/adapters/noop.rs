@@ -85,6 +85,7 @@ impl InferenceAdapter for NoopAdapter {
             content: Self::unavailable_message(&request.capability),
             finish_reason: Some("no_provider".to_string()),
             usage: None,
+            tool_calls: Vec::new(),
         };
         Ok(Box::pin(stream::once(async move { Ok(chunk) })))
     }
