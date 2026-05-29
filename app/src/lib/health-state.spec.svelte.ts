@@ -10,14 +10,18 @@ const remedyFixture = (): Remedy => ({
   url: null,
 });
 
+// Fixtures stand in for wire payloads. `description` is required by the
+// Component type, but the value is irrelevant here — HealthState.apply()
+// always overwrites it from the frontend DESCRIPTIONS map before exposing
+// the Component to the UI. We pass empty strings to satisfy the type.
 const okPayload = (): HealthPayload => ({
   version: '0.2.14',
   uptimeSeconds: 12,
   platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null, installingVerb: 'installing' },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null, installingVerb: 'installing', description: '' },
   components: COMPONENT_ORDER.map((id) => ({
     id, label: id, note: null, status: 'ready' as const, version: '1.0.0', detail: null,
-    installingVerb: 'installing',
+    installingVerb: 'installing', description: '',
   })),
   status: 'ok',
   remedy: null,
@@ -25,10 +29,10 @@ const okPayload = (): HealthPayload => ({
 
 const needsActionPayload = (): HealthPayload => ({
   ...okPayload(),
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing', installingVerb: 'installing' },
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'failed', version: null, detail: 'brew missing', installingVerb: 'installing', description: '' },
   components: COMPONENT_ORDER.map((id) => ({
     id, label: id, note: null, status: 'failed' as const, version: null, detail: 'blocked',
-    installingVerb: 'installing',
+    installingVerb: 'installing', description: '',
   })),
   status: 'needs-action',
   remedy: remedyFixture(),
@@ -237,6 +241,50 @@ describe('HealthState — derived getters', () => {
     expect(s.isOk).toBe(expected.isOk);
     expect(s.isBusy).toBe(expected.isBusy);
     expect(s.needsAction).toBe(expected.needsAction);
+  });
+});
+
+describe('HealthState — description hydration', () => {
+  // Descriptions are a frontend concern (poetic copy per gate) hydrated by the
+  // state. The wire payload never has to carry them — apply() and #patch()
+  // overwrite from the frontend map. This guarantees Ledger and Hero can
+  // render `c.description` without falsy checks.
+
+  it('emptyComponent hydrates every component with a non-empty description', () => {
+    const s = new HealthState();
+    for (const c of s.components) {
+      expect(c.description.length).toBeGreaterThan(0);
+    }
+    expect(s.packageManager.description.length).toBeGreaterThan(0);
+  });
+
+  it('every gate gets the canonical description from the frontend map', () => {
+    const s = new HealthState();
+    const byId = new Map(s.components.map((c) => [c.id, c.description]));
+    expect(byId.get('postgres')).toBe('A still pond where memories settle.');
+    expect(byId.get('ollama')).toBe('A mind that thinks without leaving the room.');
+    expect(byId.get('sensei')).toBe('Three hands of the practice — speak, listen, attend.');
+    expect(byId.get('database')).toBe('Shelves shaped to the form of each memory.');
+    expect(byId.get('daemon')).toBe('The quiet breath that keeps watch.');
+    expect(s.packageManager.description).toBe('The gardener who tends the tools.');
+  });
+
+  it('apply() overwrites description from frontend map even if the wire omits it', () => {
+    const payload = okPayload();
+    payload.components.forEach((c) => { delete (c as Partial<typeof c>).description; });
+    delete (payload.packageManager as Partial<typeof payload.packageManager>).description;
+
+    const s = new HealthState();
+    s.apply(payload);
+    expect(s.components.every((c) => c.description.length > 0)).toBe(true);
+    expect(s.packageManager.description.length).toBeGreaterThan(0);
+  });
+
+  it('#patch() preserves description on a component event', () => {
+    const s = new HealthState(okPayload());
+    const before = s.components[0].description;
+    s.applyEvent({ kind: 'component', id: 'postgres', patch: { status: 'installing' } });
+    expect(s.components[0].description).toBe(before);
   });
 });
 

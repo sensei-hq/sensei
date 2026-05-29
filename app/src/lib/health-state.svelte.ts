@@ -15,6 +15,20 @@ const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | nu
   daemon:   { label: 'Background daemon',  note: null,                            installingVerb: 'starting' },
 };
 
+/** Poetic one-liner per gate, shown beneath the label in the ledger. Frontend
+ *  owns this copy — it never travels on the wire. apply() and #patch() rewrite
+ *  the field on every state mutation so wire payloads that carry a stale or
+ *  missing value can't pollute the UI. */
+const DESCRIPTIONS: Record<ComponentId | PackageManagerId, string> = {
+  homebrew: 'The gardener who tends the tools.',
+  winget:   'The gardener who tends the tools.',
+  postgres: 'A still pond where memories settle.',
+  ollama:   'A mind that thinks without leaving the room.',
+  sensei:   'Three hands of the practice — speak, listen, attend.',
+  database: 'Shelves shaped to the form of each memory.',
+  daemon:   'The quiet breath that keeps watch.',
+};
+
 function emptyComponent(id: ComponentId): Component {
   const d = COMPONENT_DEFAULTS[id];
   // status='checking' (not 'pending') from the start. The Rust probe pipeline
@@ -23,7 +37,10 @@ function emptyComponent(id: ComponentId): Component {
   // "pending" — visually indistinguishable from a frozen page — until the
   // first probe lands ~5s later. 'checking' lights up the busy state
   // immediately so the page reads as actively working.
-  return { id, label: d.label, note: d.note, status: 'checking', version: null, detail: null, installingVerb: d.installingVerb };
+  return {
+    id, label: d.label, note: d.note, status: 'checking', version: null, detail: null,
+    installingVerb: d.installingVerb, description: DESCRIPTIONS[id],
+  };
 }
 
 /** Deterministic default — status='checking' so the UI never flashes 'ok' pre-apply. */
@@ -31,7 +48,11 @@ export const emptyPayload: HealthPayload = {
   version: '',
   uptimeSeconds: 0,
   platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: 'which brew', status: 'checking', version: null, detail: null, installingVerb: 'installing' },
+  packageManager: {
+    id: 'homebrew', label: 'Homebrew', note: 'which brew', status: 'checking',
+    version: null, detail: null, installingVerb: 'installing',
+    description: DESCRIPTIONS.homebrew,
+  },
   components: COMPONENT_ORDER.map(emptyComponent),
   status: 'checking',
   remedy: null,
@@ -113,10 +134,14 @@ export class HealthState {
     if (p.packageManager.id !== expectedPm)
       throw new Error(`HealthState: platform=${p.platform} expects packageManager.id="${expectedPm}", got "${p.packageManager.id}"`);
 
+    // Hydrate the frontend-owned description on every gate before assigning.
+    // The wire may omit it (current daemon) or ship a stale value — neither
+    // should leak to the UI. After this rewrite, every Component on the
+    // state has a non-empty, canonical description.
     this.version        = p.version;
     this.platform       = p.platform;
-    this.packageManager = p.packageManager;
-    this.components     = p.components;
+    this.packageManager = { ...p.packageManager, description: DESCRIPTIONS[p.packageManager.id] };
+    this.components     = p.components.map((c) => ({ ...c, description: DESCRIPTIONS[c.id] }));
     this.remedy         = p.remedy;
     this.status         = p.status;
 
