@@ -559,14 +559,11 @@ mod llama_cpp_init {
                 router: Some("llama-cpp-chat".into()),
                 chain: None,
                 payload: Payload::Chat {
-                    messages: vec![Message {
-                        role: MessageRole::User,
-                        content: "Reply with the single word: pong.".into(),
-                        tool_call_id: None,
-                    }],
+                    messages: vec![Message::text(MessageRole::User, "Reply with the single word: pong.")],
                     system: None,
                     max_tokens: Some(16),
                     temperature: Some(0.0),
+                    tools: Vec::new(),
                 },
                 budget: None,
             };
