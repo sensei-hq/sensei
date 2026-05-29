@@ -118,6 +118,13 @@ pub async fn init_gateway() -> Arc<Gateway> {
         }
         Err(e) => tracing::warn!("Gateway: Grok adapter failed: {}", e),
     }
+    match gateway::adapters::gemini::GeminiAdapter::new() {
+        Ok(adapter) => {
+            tracing::info!("Gateway: Gemini adapter registered");
+            adapters.register(Arc::new(adapter) as Arc<dyn InferenceAdapter>).await;
+        }
+        Err(e) => tracing::warn!("Gateway: Gemini adapter failed: {}", e),
+    }
 
     // Baseline production config — ships the known router/model entries
     // that the setup wizard's Inference stage exposes. Without these,
@@ -206,6 +213,16 @@ fn baseline_production_config() -> GatewayConfig {
         timeout_ms: Some(120_000),
         headers: HashMap::new(),
     });
+    // Google Gemini uses its own (non-OpenAI) wire format — see
+    // adapters::gemini for the format and auth header details.
+    routers.insert("gemini".into(), RouterConfig {
+        url: "https://generativelanguage.googleapis.com/v1beta".into(),
+        api_key_env: Some("GEMINI_API_KEY".into()),
+        api_key: None,
+        enabled: true,
+        timeout_ms: Some(120_000),
+        headers: HashMap::new(),
+    });
 
     let mut models: HashMap<String, ModelConfig> = HashMap::new();
     models.insert("dall-e-3".into(), ModelConfig {
@@ -273,6 +290,26 @@ fn baseline_production_config() -> GatewayConfig {
         capabilities: vec![Capability::TextChat],
         context_window: 128_000,
         max_output_tokens: 4_096,
+        pricing: None,
+    });
+    // Gemini — one chat model + one embedding model so both
+    // capabilities the adapter supports have a dispatch target.
+    models.insert("gemini-2.0-flash".into(), ModelConfig {
+        id: "gemini-2.0-flash".into(),
+        api_model_id: Some("gemini-2.0-flash".into()),
+        provider: "gemini".into(),
+        capabilities: vec![Capability::TextChat],
+        context_window: 1_048_576,
+        max_output_tokens: 8_192,
+        pricing: None,
+    });
+    models.insert("gemini-text-embedding-004".into(), ModelConfig {
+        id: "gemini-text-embedding-004".into(),
+        api_model_id: Some("text-embedding-004".into()),
+        provider: "gemini".into(),
+        capabilities: vec![Capability::TextEmbed],
+        context_window: 2_048,
+        max_output_tokens: 0,
         pricing: None,
     });
 
@@ -434,13 +471,13 @@ mod tests {
     }
 
     /// The baseline production config must ship router entries for every
-    /// OpenAI-compatible aggregator we register at startup; otherwise the
+    /// non-OpenAI provider we register at startup; otherwise the
     /// adapter registration succeeds but `Gateway::execute` returns
     /// `NoCandidates` / `NotConfigured` because the router lookup misses.
     #[test]
-    fn baseline_config_includes_new_openai_compatible_routers_and_models() {
+    fn baseline_config_includes_routers_and_models_for_every_new_provider() {
         let cfg = baseline_production_config();
-        for id in ["openrouter", "vercel", "nvidia"] {
+        for id in ["openrouter", "vercel", "nvidia", "gemini"] {
             assert!(
                 cfg.routers.contains_key(id),
                 "baseline routers should include '{id}', got {:?}",
@@ -454,14 +491,14 @@ mod tests {
             );
         }
 
-        // Each aggregator ships at least one representative model so
-        // the routers have something to dispatch to out of the box.
+        // Each provider ships at least one representative model so the
+        // routers have something to dispatch to out of the box.
         let providers_with_models: std::collections::HashSet<&str> = cfg
             .models
             .values()
             .map(|m| m.provider.as_str())
             .collect();
-        for id in ["openrouter", "vercel", "nvidia"] {
+        for id in ["openrouter", "vercel", "nvidia", "gemini"] {
             assert!(
                 providers_with_models.contains(id),
                 "expected at least one model with provider='{id}'"
