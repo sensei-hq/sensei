@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;
 
 use async_trait::async_trait;
@@ -14,7 +15,7 @@ use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
     InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole, Payload,
-    StreamChunk, ToolCall, ToolDefinition,
+    StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -121,6 +122,14 @@ struct AnthropicUsage {
 struct StreamEvent {
     #[serde(rename = "type")]
     event_type: String,
+    /// Per-block index — present on content_block_start /
+    /// content_block_delta / content_block_stop.
+    #[serde(default)]
+    index: Option<u32>,
+    /// Body of a content_block_start event. Carries the block's
+    /// type-specific shape (text / tool_use / …).
+    #[serde(default)]
+    content_block: Option<StreamContentBlockStart>,
     #[serde(default)]
     delta: Option<StreamDelta>,
     #[serde(default)]
@@ -128,9 +137,33 @@ struct StreamEvent {
 }
 
 #[derive(Debug, Deserialize)]
+struct StreamContentBlockStart {
+    #[serde(rename = "type")]
+    block_type: String,
+    /// `tool_use` block fields.
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct StreamDelta {
+    /// Discriminator for the kind of delta this is —
+    /// `"text_delta"`, `"input_json_delta"`, etc. Absent on
+    /// `message_delta` events.
+    #[serde(default, rename = "type")]
+    delta_type: Option<String>,
+    /// `text_delta` payload.
     #[serde(default)]
     text: Option<String>,
+    /// `input_json_delta` payload — incremental JSON fragment for an
+    /// in-progress tool_use block's `input`.
+    #[serde(default)]
+    partial_json: Option<String>,
+    /// `message_delta` payload — terminal stop reason.
+    #[serde(default)]
+    stop_reason: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -515,71 +548,173 @@ impl InferenceAdapter for AnthropicAdapter {
             });
         }
 
-        let byte_stream = response.bytes_stream();
+        let byte_stream: Pin<Box<dyn Stream<Item = _> + Send>> = Box::pin(response.bytes_stream());
+        let initial = AnthropicStreamState {
+            byte_stream,
+            line_buf: String::new(),
+            tool_calls: BTreeMap::new(),
+            pending: VecDeque::new(),
+            eof: false,
+        };
 
-        let stream = byte_stream
-            .map(|result| -> Result<Vec<StreamChunk>, GatewayError> {
-                let bytes = result?;
-                let text = String::from_utf8_lossy(&bytes);
-                let mut chunks = Vec::new();
-
-                for line in text.lines() {
-                    let line = line.trim();
-                    if line.is_empty() || line.starts_with("event:") {
-                        continue;
-                    }
-                    let json_str = line.strip_prefix("data: ").unwrap_or(line);
-                    if let Ok(event) = serde_json::from_str::<StreamEvent>(json_str) {
-                        match event.event_type.as_str() {
-                            "content_block_delta" => {
-                                if let Some(delta) = &event.delta {
-                                    let content =
-                                        delta.text.clone().unwrap_or_default();
-                                    if !content.is_empty() {
-                                        chunks.push(StreamChunk {
-                                            content,
-                                            finish_reason: None,
-                                            usage: None,
-                                            tool_calls: Vec::new(),
-                                        });
-                                    }
-                                }
-                            }
-                            "message_delta" => {
-                                let usage = event.usage.as_ref().map(usage_from_anthropic);
-                                chunks.push(StreamChunk {
-                                    content: String::new(),
-                                    finish_reason: Some("end_turn".to_string()),
-                                    usage,
-                                    tool_calls: Vec::new(),
-                                });
-                            }
-                            "message_stop" => {
-                                chunks.push(StreamChunk {
-                                    content: String::new(),
-                                    finish_reason: Some("stop".to_string()),
-                                    usage: None,
-                                    tool_calls: Vec::new(),
-                                });
-                            }
-                            _ => {} // skip ping, message_start, content_block_start, etc.
-                        }
-                    }
+        let stream = futures::stream::unfold(initial, |mut state| async move {
+            loop {
+                if let Some(item) = state.pending.pop_front() {
+                    return Some((item, state));
                 }
-
-                Ok(chunks)
-            })
-            .map(|result| -> futures::stream::Iter<std::vec::IntoIter<Result<StreamChunk, GatewayError>>> {
-                match result {
-                    Ok(chunks) => {
-                        futures::stream::iter(chunks.into_iter().map(Ok).collect::<Vec<_>>())
-                    }
-                    Err(e) => futures::stream::iter(vec![Err(e)]),
+                if state.eof {
+                    return None;
                 }
-            })
-            .flatten();
+                match state.byte_stream.next().await {
+                    Some(Ok(bytes)) => process_stream_bytes(&mut state, &bytes),
+                    Some(Err(e)) => {
+                        state.pending.push_back(Err(GatewayError::ProviderError {
+                            adapter: "anthropic".into(),
+                            message: format!("anthropic stream error: {e}"),
+                            status: None,
+                        }));
+                        state.eof = true;
+                    }
+                    None => state.eof = true,
+                }
+            }
+        });
 
         Ok(Box::pin(stream))
+    }
+}
+
+/// Persistent state for the Anthropic SSE stream pipeline. Lives
+/// across HTTP byte chunks so that:
+///
+/// - SSE lines that get split across HTTP chunks reassemble correctly
+///   (`line_buf` holds a partial trailing line).
+/// - `tool_use` blocks track their accumulated `input_json_delta`
+///   fragments per `index` until `content_block_stop` finalises them
+///   and `message_stop` flushes them onto the terminal chunk.
+struct AnthropicStreamState {
+    byte_stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
+    line_buf: String,
+    tool_calls: BTreeMap<u32, StreamingToolCall>,
+    pending: VecDeque<Result<StreamChunk, GatewayError>>,
+    eof: bool,
+}
+
+fn process_stream_bytes(state: &mut AnthropicStreamState, bytes: &[u8]) {
+    state.line_buf.push_str(&String::from_utf8_lossy(bytes));
+    while let Some(newline_pos) = state.line_buf.find('\n') {
+        let mut line = state.line_buf.drain(..=newline_pos).collect::<String>();
+        line.truncate(line.trim_end().len());
+        process_sse_line(state, line.trim());
+    }
+}
+
+/// Process a single SSE line. Anthropic uses both `event:` lines
+/// (which we ignore — the type discriminator is duplicated inside
+/// the `data:` payload) and `data:` lines that carry the JSON event
+/// body.
+fn process_sse_line(state: &mut AnthropicStreamState, line: &str) {
+    if line.is_empty() || line.starts_with("event:") {
+        return;
+    }
+    let payload = line.strip_prefix("data: ").unwrap_or(line);
+    let event = match serde_json::from_str::<StreamEvent>(payload) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    match event.event_type.as_str() {
+        // Opening a content block. The `tool_use` shape gives us the
+        // id + name; subsequent input_json_delta events append to the
+        // accumulator for this index.
+        "content_block_start" => {
+            let (Some(index), Some(block)) = (event.index, event.content_block.as_ref()) else {
+                return;
+            };
+            if block.block_type == "tool_use"
+                && let (Some(id), Some(name)) = (block.id.as_ref(), block.name.as_ref())
+            {
+                state
+                    .tool_calls
+                    .insert(index, StreamingToolCall::new(id, name));
+            }
+        }
+        // Two flavours of delta share this event:
+        // - text_delta → user-facing text content
+        // - input_json_delta → argument fragment for the tool_use
+        //   block at this index
+        "content_block_delta" => {
+            let Some(delta) = event.delta.as_ref() else {
+                return;
+            };
+            match delta.delta_type.as_deref() {
+                Some("text_delta") => {
+                    let content = delta.text.clone().unwrap_or_default();
+                    if !content.is_empty() {
+                        state.pending.push_back(Ok(StreamChunk {
+                            content,
+                            finish_reason: None,
+                            usage: None,
+                            tool_calls: Vec::new(),
+                        }));
+                    }
+                }
+                Some("input_json_delta") => {
+                    if let (Some(idx), Some(frag)) = (event.index, delta.partial_json.as_ref())
+                        && let Some(acc) = state.tool_calls.get_mut(&idx)
+                    {
+                        acc.push_arguments(frag);
+                    }
+                }
+                _ => {}
+            }
+        }
+        // content_block_stop is purely framing — we keep the
+        // accumulator alive until message_stop so all calls
+        // finalise together onto the terminal chunk.
+        "content_block_stop" => {}
+        // message_delta carries the terminal stop_reason and (on
+        // some traffic) per-turn usage deltas. We emit a chunk that
+        // surfaces stop_reason and any accumulated tool_calls.
+        "message_delta" => {
+            let stop_reason = event
+                .delta
+                .as_ref()
+                .and_then(|d| d.stop_reason.clone())
+                .or_else(|| Some("end_turn".to_string()));
+            let usage = event.usage.as_ref().map(usage_from_anthropic);
+            let tool_calls: Vec<ToolCall> = std::mem::take(&mut state.tool_calls)
+                .into_values()
+                .filter_map(StreamingToolCall::finalize)
+                .collect();
+            state.pending.push_back(Ok(StreamChunk {
+                content: String::new(),
+                finish_reason: stop_reason,
+                usage,
+                tool_calls,
+            }));
+        }
+        // message_stop closes the stream. Drain any accumulators that
+        // are still pending (defensive — message_delta normally fires
+        // first and clears them).
+        "message_stop" => {
+            let tool_calls: Vec<ToolCall> = std::mem::take(&mut state.tool_calls)
+                .into_values()
+                .filter_map(StreamingToolCall::finalize)
+                .collect();
+            // Only emit if we still have something to surface — by
+            // default message_delta has already carried the
+            // finish_reason and tool calls.
+            if !tool_calls.is_empty() {
+                state.pending.push_back(Ok(StreamChunk {
+                    content: String::new(),
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                    tool_calls,
+                }));
+            }
+        }
+        // ping / message_start / others — framing only.
+        _ => {}
     }
 }
 
@@ -774,6 +909,134 @@ mod tests {
         let usage = event.usage.unwrap();
         assert_eq!(usage.output_tokens, 15);
         assert_eq!(usage.input_tokens, 0); // default
+    }
+
+    fn empty_anthropic_stream_state() -> AnthropicStreamState {
+        AnthropicStreamState {
+            byte_stream: Box::pin(futures::stream::empty()),
+            line_buf: String::new(),
+            tool_calls: BTreeMap::new(),
+            pending: VecDeque::new(),
+            eof: false,
+        }
+    }
+
+    #[test]
+    fn process_sse_line_emits_text_delta_chunks() {
+        let mut state = empty_anthropic_stream_state();
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#,
+        );
+        assert_eq!(state.pending.len(), 1);
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        assert_eq!(chunk.content, "Hi");
+        assert!(chunk.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn process_sse_line_accumulates_tool_use_blocks_across_input_json_deltas() {
+        let mut state = empty_anthropic_stream_state();
+        // 1) tool_use block opens.
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{}}}"#,
+        );
+        // 2) Input arrives in two fragments.
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"ci"}}"#,
+        );
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ty\":\"Berlin\"}"}}"#,
+        );
+        // No chunks emitted yet — accumulator is open.
+        assert!(state.pending.is_empty());
+
+        // 3) Block stop (framing, no emission).
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_stop","index":1}"#,
+        );
+        assert!(state.pending.is_empty());
+
+        // 4) message_delta carries the stop reason and drains the
+        //    accumulator into the terminal chunk's tool_calls.
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}"#,
+        );
+        assert_eq!(state.pending.len(), 1);
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        assert_eq!(chunk.finish_reason.as_deref(), Some("tool_use"));
+        assert_eq!(chunk.tool_calls.len(), 1);
+        let call = &chunk.tool_calls[0];
+        assert_eq!(call.id, "toolu_01");
+        assert_eq!(call.name, "get_weather");
+        assert_eq!(call.arguments, r#"{"city":"Berlin"}"#);
+        assert!(chunk.usage.is_some());
+    }
+
+    #[test]
+    fn process_sse_line_handles_multiple_parallel_tool_calls() {
+        let mut state = empty_anthropic_stream_state();
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_a","name":"f1"}}"#,
+        );
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_b","name":"f2"}}"#,
+        );
+        // Empty args for both (default to "{}" on finalise).
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}"#,
+        );
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        // BTreeMap sorts by index, so toolu_a (index 0) first.
+        assert_eq!(chunk.tool_calls[0].id, "toolu_a");
+        assert_eq!(chunk.tool_calls[1].id, "toolu_b");
+    }
+
+    #[test]
+    fn process_sse_line_drops_text_block_start_without_emission() {
+        let mut state = empty_anthropic_stream_state();
+        process_sse_line(
+            &mut state,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        );
+        // Text block start is framing — no chunk, no accumulator.
+        assert!(state.pending.is_empty());
+        assert!(state.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn process_sse_line_skips_event_marker_and_pings() {
+        let mut state = empty_anthropic_stream_state();
+        process_sse_line(&mut state, "event: ping");
+        process_sse_line(&mut state, r#"data: {"type":"ping"}"#);
+        process_sse_line(&mut state, r#"data: {"type":"message_start"}"#);
+        assert!(state.pending.is_empty());
+    }
+
+    #[test]
+    fn process_stream_bytes_reassembles_lines_split_across_byte_chunks() {
+        let mut state = empty_anthropic_stream_state();
+        process_stream_bytes(
+            &mut state,
+            br#"data: {"type":"content_block_de"#,
+        );
+        assert!(state.pending.is_empty());
+        process_stream_bytes(
+            &mut state,
+            br#"lta","index":0,"delta":{"type":"text_delta","text":"X"}}"#,
+        );
+        process_stream_bytes(&mut state, b"\n");
+        assert_eq!(state.pending.len(), 1);
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        assert_eq!(chunk.content, "X");
     }
 
     #[test]
