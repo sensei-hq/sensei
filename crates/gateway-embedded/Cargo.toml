@@ -10,7 +10,8 @@ default = []
 # In-process inference engine adapters. Each pulls in heavyweight native deps
 # (C++ for llama-cpp, C++ for ort, both for fastembed) so they're opt-in.
 llama-cpp = ["dep:llama-cpp-2"]
-# fastembed, ort engines land in subsequent commits and gate their deps here.
+fastembed = ["dep:fastembed"]
+# ort engine adapter lands in a subsequent commit and gates its deps here.
 
 [dependencies]
 gateway = { path = "../gateway" }
@@ -23,6 +24,7 @@ tokio = { version = "1", features = ["fs", "sync"] }
 tracing = "0.1"
 
 llama-cpp-2 = { version = "0.1.146", default-features = false, optional = true }
+fastembed = { version = "5", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
