@@ -229,6 +229,7 @@ impl InferenceAdapter for LumaAdapter {
                 duration_secs: duration_secs.map(|d| d as f32),
             }]),
             model: Some(model),
+            tool_calls: Vec::new(),
             usage: None,
             estimated_cost: None,
             actual_cost: None,

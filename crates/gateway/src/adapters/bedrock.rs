@@ -107,6 +107,7 @@ impl InferenceAdapter for BedrockAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(Self::err(
@@ -159,6 +160,7 @@ impl InferenceAdapter for BedrockAdapter {
             videos: None,
             model: Some(model_id),
             usage,
+            tool_calls: Vec::new(),
             estimated_cost: None,
             actual_cost: None,
             attempts: vec![],
@@ -203,7 +205,7 @@ fn role_to_bedrock(role: &MessageRole) -> Option<ConversationRole> {
 fn build_messages(messages: &[GwMessage]) -> Result<Vec<Message>, GatewayError> {
     messages
         .iter()
-        .filter_map(|m| role_to_bedrock(&m.role).map(|r| (r, m.content.clone())))
+        .filter_map(|m| role_to_bedrock(&m.role).map(|r| (r, m.as_text().to_string())))
         .map(|(role, content)| {
             Message::builder()
                 .role(role)
@@ -226,7 +228,7 @@ fn build_system(messages: &[GwMessage], system: &Option<String>) -> Vec<SystemCo
     messages
         .iter()
         .filter(|m| m.role == MessageRole::System)
-        .map(|m| SystemContentBlock::Text(m.content.clone()))
+        .map(|m| SystemContentBlock::Text(m.as_text().to_string()))
         .collect()
 }
 
@@ -302,27 +304,15 @@ mod tests {
     use super::*;
 
     fn user(content: &str) -> GwMessage {
-        GwMessage {
-            role: MessageRole::User,
-            content: content.into(),
-            tool_call_id: None,
-        }
+        GwMessage::text(MessageRole::User, content)
     }
 
     fn assistant(content: &str) -> GwMessage {
-        GwMessage {
-            role: MessageRole::Assistant,
-            content: content.into(),
-            tool_call_id: None,
-        }
+        GwMessage::text(MessageRole::Assistant, content)
     }
 
     fn system_msg(content: &str) -> GwMessage {
-        GwMessage {
-            role: MessageRole::System,
-            content: content.into(),
-            tool_call_id: None,
-        }
+        GwMessage::text(MessageRole::System, content)
     }
 
     fn empty_request(model: Option<&str>) -> InferenceRequest {
@@ -336,6 +326,7 @@ mod tests {
                 system: None,
                 max_tokens: None,
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         }
