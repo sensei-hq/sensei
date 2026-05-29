@@ -85,11 +85,50 @@ install-dev: crates-dev
 	@echo "Run dev daemon: make daemon-dev"
 
 install-release: crates-release
-	@mkdir -p ~/.local/bin
-	cp target/release/senseid    ~/.local/bin/senseid
-	cp target/release/sensei     ~/.local/bin/sensei
-	cp target/release/sensei-mcp ~/.local/bin/sensei-mcp
-	@echo "Installed release binaries to ~/.local/bin"
+	@# Cold install: ensure the sensei formula is present. Try the release
+	@# tarball first; fall back to --HEAD (build from main) when no release
+	@# is tagged for `version` in the formula. The HEAD branch was added to
+	@# homebrew/Formula/sensei.rb so dev and prod install flows differ only
+	@# in branch + version + -dev suffix — same brew + codesign + overlay
+	@# pattern as install-dev.
+	@if ! brew list --formula sensei >/dev/null 2>&1; then \
+	  echo "Cold install: brew install sensei-hq/tap/sensei (one-time)..."; \
+	  brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap >/dev/null 2>&1 || true; \
+	  brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei; \
+	fi
+	@# Stop any running prod daemon before overlay.
+	@if pgrep -x senseid > /dev/null; then \
+	  echo "Stopping senseid (pid $$(pgrep -x senseid))..."; \
+	  pkill -x senseid; \
+	  sleep 1; \
+	fi
+	@# Clean up the legacy `~/.local/bin/` install location. Pre-brew versions
+	@# of this target dropped binaries there; if they survive, PATH ordering
+	@# can resolve to the stale copy instead of the brew prefix one we're
+	@# about to install. Removing them keeps a single source of truth.
+	@for b in senseid sensei sensei-mcp; do \
+	  if [ -f "$$HOME/.local/bin/$$b" ]; then \
+	    echo "Removing legacy $$HOME/.local/bin/$$b (now lives in brew prefix)..."; \
+	    rm -f "$$HOME/.local/bin/$$b"; \
+	  fi; \
+	done
+	@# Fast iteration overlay: replace the brew-installed binaries with the
+	@# freshly-built ones from target/release/. Mirrors install-dev exactly.
+	@# `bin.install` in the brew Formula sets the destination mode to 0555
+	@# (read+exec, no write), so cp-overwrite fails with EACCES. `rm -f`
+	@# unlinks the read-only file (needs write on parent dir, not on file).
+	@# Re-sign with hardened runtime so the Tauri sidecar can spawn them
+	@# (macOS Sequoia Code Signing Monitor level 2 requires this).
+	@DEST=$$(brew --prefix sensei)/bin && \
+	rm -f "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
+	cp target/release/senseid    "$$DEST/senseid" && \
+	cp target/release/sensei     "$$DEST/sensei" && \
+	cp target/release/sensei-mcp "$$DEST/sensei-mcp" && \
+	codesign --sign - --options runtime --force "$$DEST/senseid" && \
+	codesign --sign - --options runtime --force "$$DEST/sensei" && \
+	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
+	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
+	@echo "Run prod daemon: sensei start"
 
 build-dev: crates-dev
 	@echo "Dev build complete — binaries in target/debug/"
