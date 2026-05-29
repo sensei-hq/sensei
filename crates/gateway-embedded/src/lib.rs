@@ -7,4 +7,6 @@
 //!
 //! See `docs/backlog.md` (Future scope — gateway-embedded) for design rationale.
 
+pub mod adapters;
+pub mod math;
 pub mod registry;
