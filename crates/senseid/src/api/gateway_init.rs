@@ -44,12 +44,12 @@ pub async fn init_gateway() -> Arc<Gateway> {
         .register(Arc::new(NoopAdapter) as Arc<dyn InferenceAdapter>)
         .await;
 
-    // Optional in-process embedding adapter. Only active when the binary
-    // is built with `--features embedded-fastembed` AND the operator
-    // points `SENSEI_FASTEMBED_DIR` at a fastembed-compatible ONNX
-    // directory. Lets the daemon serve embeddings without going through
-    // the local Ollama HTTP layer — see docs/backlog.md (Future scope —
-    // gateway-embedded) for the design rationale.
+    // Optional in-process embedding adapters. Each is only active when
+    // the daemon binary is built with the matching `embedded-*` cargo
+    // feature AND the operator points the corresponding env var at a
+    // local model directory. The daemon serves embeddings in-process
+    // without going through Ollama's HTTP layer — see
+    // docs/backlog.md (Future scope — gateway-embedded) for rationale.
     #[cfg(feature = "embedded-fastembed")]
     if let Ok(dir) = std::env::var("SENSEI_FASTEMBED_DIR") {
         let model_id = std::env::var("SENSEI_FASTEMBED_MODEL_ID")
@@ -61,6 +61,21 @@ pub async fn init_gateway() -> Arc<Gateway> {
             ),
             Err(e) => tracing::warn!(
                 "Gateway: FastembedAdapter from SENSEI_FASTEMBED_DIR={} failed: {}",
+                dir, e
+            ),
+        }
+    }
+    #[cfg(feature = "embedded-ort")]
+    if let Ok(dir) = std::env::var("SENSEI_ORT_DIR") {
+        let model_id = std::env::var("SENSEI_ORT_MODEL_ID")
+            .unwrap_or_else(|_| "ort-default".to_string());
+        match crate::api::gateway_embedded::register_ort(&adapters, &dir, &model_id).await {
+            Ok(id) => tracing::info!(
+                "Gateway: OrtAdapter registered as '{}' for model '{}' from {}",
+                id, model_id, dir
+            ),
+            Err(e) => tracing::warn!(
+                "Gateway: OrtAdapter from SENSEI_ORT_DIR={} failed: {}",
                 dir, e
             ),
         }
