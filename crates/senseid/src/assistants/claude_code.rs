@@ -1,8 +1,27 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use tracing::{info, warn};
 use super::trait_def::{Assistant, AssistantConfigureOk};
 use super::helpers::{home, find_claude_binary};
 
 use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
+
+/// Pure helper: read `installed_plugins.json` and confirm that a plugin
+/// `{plugin_name}@*` is recorded. Returns false on any read/parse failure
+/// or when the entry is absent. Extracted so configure() can re-use it as
+/// the post-install verification gate (don't trust `claude plugin install`'s
+/// exit code alone — confirm the manifest actually has the plugin).
+fn verify_plugin_installed(manifest_path: &Path, plugin_name: &str) -> bool {
+    let Some(content) = std::fs::read_to_string(manifest_path).ok() else { return false };
+    let Some(value) = serde_json::from_str::<serde_json::Value>(&content).ok() else { return false };
+    let Some(plugins) = value.get("plugins").and_then(|p| p.as_object()) else { return false };
+    let prefix = format!("{}@", plugin_name);
+    plugins.keys().any(|k| k.starts_with(&prefix))
+}
+
+/// Path to Claude Code's `installed_plugins.json` (under the user's home).
+fn installed_plugins_manifest() -> PathBuf {
+    home().join(".claude/plugins/installed_plugins.json")
+}
 
 /// All Claude Code hook event types sensei listens to.
 const HOOK_EVENTS: &[&str] = &[
@@ -43,80 +62,165 @@ impl Assistant for ClaudeCodeAssistant {
     /// together), so the default `check_mcp_in_config` check would always
     /// return false. Override here to look at the plugin manifest.
     fn is_configured(&self) -> bool {
-        let manifest = home().join(".claude/plugins/installed_plugins.json");
-        let Some(content) = std::fs::read_to_string(&manifest).ok() else { return false };
-        let Some(value) = serde_json::from_str::<serde_json::Value>(&content).ok() else { return false };
-        let Some(plugins) = value.get("plugins").and_then(|p| p.as_object()) else { return false };
-        plugins.keys().any(|k| k.starts_with("sensei@"))
+        verify_plugin_installed(&installed_plugins_manifest(), "sensei")
     }
 
     fn configure(&self, _mcp_cmd: &str) -> Result<AssistantConfigureOk, String> {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
-        // 1. Register marketplace
-        let add_out = std::process::Command::new(&claude_bin)
-            .args(["plugin", "marketplace", "add", SENSEI_MARKETPLACE_REPO, "--scope", "user"])
-            .output()
-            .map_err(|e| format!("marketplace add: {}", e))?;
-
-        if !add_out.status.success() {
-            let err = String::from_utf8_lossy(&add_out.stderr).trim().to_string();
-            if !err.contains("already") {
-                return Err(format!("marketplace add: {}", err));
+        // 1. Register marketplace. `claude plugin marketplace add` returns
+        //    non-zero if the marketplace is already registered — that's not an
+        //    error for us. Probe with `marketplace list` first instead of
+        //    sniffing stderr for the word "already", which is fragile across
+        //    Claude Code releases.
+        if !marketplace_registered(&claude_bin, "sensei-marketplace") {
+            let add_out = std::process::Command::new(&claude_bin)
+                .args(["plugin", "marketplace", "add", SENSEI_MARKETPLACE_REPO, "--scope", "user"])
+                .output()
+                .map_err(|e| format!("marketplace add: spawn failed: {}", e))?;
+            log_subprocess("claude plugin marketplace add", &add_out);
+            if !add_out.status.success() {
+                return Err(format!("marketplace add: {}", combined_output(&add_out)));
             }
         }
 
-        // 2. Install plugin (skills, commands, agents, marketplace hooks, MCP)
+        // 2. Install plugin (skills, commands, agents, marketplace hooks, MCP).
         let install_out = std::process::Command::new(&claude_bin)
             .args(["plugin", "install", "sensei", "--scope", "user"])
             .output()
-            .map_err(|e| format!("plugin install: {}", e))?;
-
+            .map_err(|e| format!("plugin install: spawn failed: {}", e))?;
+        log_subprocess("claude plugin install sensei", &install_out);
         if !install_out.status.success() {
-            let err = String::from_utf8_lossy(&install_out.stderr).trim().to_string();
-            return Err(format!("plugin install: {}", err));
+            return Err(format!("plugin install: {}", combined_output(&install_out)));
+        }
+
+        // 2b. Post-condition gate. `claude plugin install` has been observed to
+        //     return success without actually writing the plugin into the
+        //     manifest (network blip, race with another install, silent skip).
+        //     Verify by reading installed_plugins.json — if the entry isn't
+        //     there, fail loudly with the captured command output so the
+        //     operator sees *something* instead of getting a half-installed
+        //     state that pretends to be healthy.
+        let manifest = installed_plugins_manifest();
+        if !verify_plugin_installed(&manifest, "sensei") {
+            return Err(format!(
+                "plugin install: returned success but {} does not record sensei. \
+                 Command output:\n{}",
+                manifest.display(),
+                combined_output(&install_out),
+            ));
         }
 
         // 3. Dev daemon additionally registers sensei-hook-dev.ts so the dev
-        //    daemon also receives hook events (alongside the release hooks from step 2).
+        //    daemon also receives hook events (alongside the release hooks from
+        //    step 2). Dev-hook failure is non-fatal — plugin install already
+        //    succeeded — but surface it as a warning so the operator knows.
+        let mut warnings = Vec::new();
         if crate::paths::mode().is_dev()
-            && let Err(e) = write_dev_hook_entries() {
-                // Non-fatal: plugin install succeeded; dev hooks are best-effort.
-                return Ok(AssistantConfigureOk {
-                    plugin: true,
-                    warnings: vec![format!("dev hooks: {}", e)],
-                });
-            }
+            && let Err(e) = write_dev_hook_entries()
+        {
+            warnings.push(format!("dev hooks: {}", e));
+        }
 
-        Ok(AssistantConfigureOk { plugin: true, warnings: vec![] })
+        Ok(AssistantConfigureOk { plugin: true, warnings })
     }
 
     fn remove(&self) -> bool {
         let claude_bin = match find_claude_binary() {
             Some(b) => b,
-            None => return false,
+            None => {
+                warn!("remove: claude binary not on PATH; cannot uninstall sensei plugin");
+                return false;
+            }
         };
 
-        // Uninstall marketplace plugin (skills, commands, agents, marketplace hooks, MCP)
-        let plugin_removed = std::process::Command::new(&claude_bin)
+        // Uninstall marketplace plugin (skills, commands, agents, marketplace hooks, MCP).
+        let uninstall = std::process::Command::new(&claude_bin)
             .args(["plugin", "uninstall", "sensei"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        // Also remove the marketplace registration
-        let _ = std::process::Command::new(&claude_bin)
-            .args(["plugin", "marketplace", "remove", "sensei-marketplace"])
             .output();
+        let plugin_removed = match &uninstall {
+            Ok(out) => {
+                log_subprocess("claude plugin uninstall sensei", out);
+                out.status.success()
+            }
+            Err(e) => {
+                warn!(error = %e, "remove: failed to spawn claude plugin uninstall");
+                false
+            }
+        };
+
+        // Also remove the marketplace registration. Log the result instead of
+        // letting `let _ = ...` swallow it silently — if this fails, the
+        // marketplace will still appear in `claude plugin marketplace list`
+        // even though the plugin is gone, which is confusing on the next
+        // install attempt.
+        match std::process::Command::new(&claude_bin)
+            .args(["plugin", "marketplace", "remove", "sensei-marketplace"])
+            .output()
+        {
+            Ok(out) => log_subprocess("claude plugin marketplace remove sensei-marketplace", &out),
+            Err(e) => warn!(error = %e, "remove: failed to spawn claude plugin marketplace remove"),
+        }
 
         // Dev daemon additionally removes its own hook entries (sensei-hook-dev.ts).
         // This never touches the release plugin entries — only removes the dev entries.
         if crate::paths::mode().is_dev() {
-            remove_dev_hook_entries();
+            match remove_dev_hook_entries() {
+                Ok(_)  => {}
+                Err(e) => warn!(error = %e, "remove: failed to clean dev hook entries from settings.json"),
+            }
         }
 
         plugin_removed
+    }
+}
+
+/// True if `claude plugin marketplace list` has an entry whose name matches
+/// `marketplace_name`. Probes the registry before issuing `marketplace add`
+/// so a re-run of `configure()` is idempotent without sniffing stderr.
+fn marketplace_registered(claude_bin: &Path, marketplace_name: &str) -> bool {
+    let Ok(out) = std::process::Command::new(claude_bin)
+        .args(["plugin", "marketplace", "list"])
+        .output()
+    else { return false };
+    if !out.status.success() { return false }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.lines().any(|l| l.contains(marketplace_name))
+}
+
+/// Format both streams of a finished subprocess in a copy-pasteable shape.
+/// Includes the exit code so an empty-output failure ("exit code 1, no output")
+/// is still actionable rather than blank.
+fn combined_output(out: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = stdout.trim();
+    let stderr = stderr.trim();
+    let code = out.status.code()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "?".into());
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true,  true)  => format!("exit={} (no output)", code),
+        (true,  false) => format!("exit={} stderr: {}", code, stderr),
+        (false, true)  => format!("exit={} stdout: {}", code, stdout),
+        (false, false) => format!("exit={} stdout: {} | stderr: {}", code, stdout, stderr),
+    }
+}
+
+/// Emit tracing events for a subprocess invocation so failed installs leave
+/// a breadcrumb in the daemon log. info on success, warn on non-zero exit.
+fn log_subprocess(label: &str, out: &std::process::Output) {
+    if out.status.success() {
+        info!(label = %label, exit = out.status.code().unwrap_or(0), "subprocess ok");
+    } else {
+        warn!(
+            label = %label,
+            exit = out.status.code().unwrap_or(-1),
+            stdout = %String::from_utf8_lossy(&out.stdout).trim(),
+            stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+            "subprocess failed",
+        );
     }
 }
 
@@ -173,25 +277,25 @@ fn write_dev_hook_entries() -> Result<(), String> {
 /// Remove `sensei-hook-dev.ts` entries from `~/.claude/settings.json`.
 /// Only removes entries whose command matches the dev hook script path.
 /// Never removes entries belonging to the release plugin or other tools.
-fn remove_dev_hook_entries() -> bool {
+///
+/// Returns Ok(()) on success — including the no-op cases of "settings file
+/// doesn't exist" or "no hooks section". Returns Err with the underlying
+/// reason if reading/parsing/writing fails so the caller can log it instead
+/// of seeing a stale bool.
+fn remove_dev_hook_entries() -> Result<(), String> {
     let settings = home().join(".claude/settings.json");
-    if !settings.exists() { return true; }
+    if !settings.exists() { return Ok(()); }
 
     let hook_script = home().join(".claude/hooks/sensei-hook-dev.ts")
         .display().to_string();
 
-    let s = match std::fs::read_to_string(&settings) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let mut config: serde_json::Value = match json5::from_str(&s) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
+    let s = std::fs::read_to_string(&settings)
+        .map_err(|e| format!("read settings.json: {}", e))?;
+    let mut config: serde_json::Value = json5::from_str(&s)
+        .map_err(|e| format!("parse settings.json: {}", e))?;
 
-    let hooks_obj = match config.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-        Some(h) => h,
-        None => return true, // no hooks section — nothing to remove
+    let Some(hooks_obj) = config.get_mut("hooks").and_then(|h| h.as_object_mut()) else {
+        return Ok(()); // no hooks section — nothing to remove
     };
 
     let mut modified = false;
@@ -203,9 +307,12 @@ fn remove_dev_hook_entries() -> bool {
         }
     }
 
-    if !modified { return true; }
+    if !modified { return Ok(()); }
 
-    std::fs::write(&settings, serde_json::to_string_pretty(&config).unwrap()).is_ok()
+    let serialized = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("serialise settings.json: {}", e))?;
+    std::fs::write(&settings, serialized)
+        .map_err(|e| format!("write settings.json: {}", e))
 }
 
 #[cfg(test)]
@@ -222,6 +329,83 @@ mod tests {
         assert!(!HOOK_EVENTS.is_empty());
         assert!(HOOK_EVENTS.contains(&"SessionStart"));
         assert!(HOOK_EVENTS.contains(&"PostToolUse"));
+    }
+
+    // ── verify_plugin_installed: the post-condition gate ─────────────────────
+    //
+    // `claude plugin install` can exit 0 without actually installing the plugin
+    // (network hiccup, race with another invocation, silent skip). Our previous
+    // configure() trusted the exit code blindly and wrote dev-hook entries
+    // assuming success — that's how Jerry's machine ended up with hooks in
+    // settings.json but no sensei plugin registered. The fix is to read
+    // installed_plugins.json after the install and confirm the plugin is
+    // actually there before declaring success.
+
+    #[test]
+    fn verify_plugin_installed_true_when_sensei_recorded() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("installed_plugins.json");
+        std::fs::write(&manifest, r#"{
+            "version": 2,
+            "plugins": {
+                "feature-dev@claude-plugins-official": [],
+                "sensei@sensei-marketplace": [
+                    { "scope": "user", "installPath": "/foo", "version": "0.2.13" }
+                ]
+            }
+        }"#).unwrap();
+        assert!(verify_plugin_installed(&manifest, "sensei"));
+    }
+
+    #[test]
+    fn verify_plugin_installed_false_when_manifest_missing() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("nope.json");
+        assert!(!verify_plugin_installed(&manifest, "sensei"));
+    }
+
+    #[test]
+    fn verify_plugin_installed_false_when_no_plugins_key() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("installed_plugins.json");
+        std::fs::write(&manifest, r#"{ "version": 2 }"#).unwrap();
+        assert!(!verify_plugin_installed(&manifest, "sensei"));
+    }
+
+    #[test]
+    fn verify_plugin_installed_false_when_sensei_absent() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("installed_plugins.json");
+        std::fs::write(&manifest, r#"{
+            "version": 2,
+            "plugins": {
+                "feature-dev@claude-plugins-official": [],
+                "playwright@claude-plugins-official": []
+            }
+        }"#).unwrap();
+        assert!(!verify_plugin_installed(&manifest, "sensei"));
+    }
+
+    #[test]
+    fn verify_plugin_installed_false_when_json_malformed() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("installed_plugins.json");
+        std::fs::write(&manifest, "{ not really json").unwrap();
+        assert!(!verify_plugin_installed(&manifest, "sensei"));
+    }
+
+    #[test]
+    fn verify_plugin_installed_matches_on_at_prefix_not_substring() {
+        // A plugin called "not-sensei@..." must not be confused with sensei.
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("installed_plugins.json");
+        std::fs::write(&manifest, r#"{
+            "version": 2,
+            "plugins": {
+                "not-sensei@some-marketplace": []
+            }
+        }"#).unwrap();
+        assert!(!verify_plugin_installed(&manifest, "sensei"));
     }
 
     #[test]

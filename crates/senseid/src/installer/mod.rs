@@ -58,7 +58,13 @@ pub struct InstallResult {
     pub stale_commands_removed: u32,
     pub stale_skills_removed: u32,
     pub acps_configured: Vec<String>,
+    /// Hard failures — a step did not complete.
     pub errors: Vec<String>,
+    /// Soft failures — the install completed, but a side-effect (e.g. dev hook
+    /// entries) didn't. Surfaced separately so UI/CLI can decide whether to
+    /// surface loudly or just log.
+    #[serde(default)]
+    pub warnings: Vec<String>,
     pub marketplace_version: String,
 }
 
