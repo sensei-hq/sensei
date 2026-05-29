@@ -13,14 +13,17 @@
 //! - Embeddings use a separate endpoint with `embedding.values`
 //!
 //! Streaming uses `:streamGenerateContent?alt=sse` and Server-Sent
-//! Events. The non-streaming chat + embed paths land in this commit;
-//! streaming returns an error for now and is scoped as a follow-up.
+//! Events. Each SSE `data:` payload is the same JSON shape as a non-
+//! streaming response — a list of candidates whose `parts[].text` is
+//! an incremental delta — so the chunk parser reuses
+//! [`GeminiChatResponse`] plus a per-candidate `finishReason` field.
+//! The final chunk carries `usageMetadata` and `finishReason: "STOP"`.
 
 use std::collections::HashMap;
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +91,11 @@ struct GeminiChatResponse {
 struct GeminiCandidate {
     #[serde(default)]
     content: Option<GeminiResponseContent>,
+    /// Streaming responses set this on the final chunk (`"STOP"`,
+    /// `"MAX_TOKENS"`, `"SAFETY"`, …). Non-streaming responses also
+    /// emit it on the single candidate.
+    #[serde(rename = "finishReason", default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -276,6 +284,50 @@ async fn gemini_post<Req: Serialize, Resp: serde::de::DeserializeOwned>(
     })
 }
 
+/// Parse a single SSE `data: …` line emitted by
+/// `:streamGenerateContent?alt=sse` into a [`StreamChunk`].
+///
+/// Returns `None` for empty / non-`data:` lines (keep-alive comments,
+/// blank separators). Returns `Some(Err(…))` if the line looks like a
+/// `data:` payload but the JSON does not parse — the caller surfaces
+/// this as a provider error so a malformed stream is not silently
+/// dropped.
+///
+/// Gemini sends the same payload shape as a non-streaming response, so
+/// the parser reuses [`GeminiChatResponse`]. The chunk's `content` is
+/// the concatenation of text parts across all candidates (matching
+/// [`extract_text`] semantics); `finish_reason` is taken from the
+/// first candidate that carries one. `usage` is sourced from
+/// `usageMetadata`, which Gemini only sets on the terminal chunk.
+fn parse_stream_line(line: &str) -> Option<Result<StreamChunk, GatewayError>> {
+    let line = line.trim();
+    let payload = line.strip_prefix("data:")?.trim();
+    if payload.is_empty() {
+        return None;
+    }
+    let parsed: GeminiChatResponse = match serde_json::from_str(payload) {
+        Ok(v) => v,
+        Err(e) => {
+            return Some(Err(GatewayError::ProviderError {
+                adapter: ADAPTER_ID.into(),
+                message: format!("failed to parse SSE chunk: {e}"),
+                status: None,
+            }));
+        }
+    };
+    let content = extract_text(&parsed);
+    let finish_reason = parsed
+        .candidates
+        .iter()
+        .find_map(|c| c.finish_reason.clone());
+    let usage = usage_from_gemini(&parsed.usage_metadata);
+    Some(Ok(StreamChunk {
+        content,
+        finish_reason,
+        usage,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // Adapter
 // ---------------------------------------------------------------------------
@@ -441,19 +493,90 @@ impl InferenceAdapter for GeminiAdapter {
 
     async fn stream(
         &self,
-        _config: &RouterConfig,
-        _request: &InferenceRequest,
+        config: &RouterConfig,
+        request: &InferenceRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk, GatewayError>> + Send>>, GatewayError>
     {
-        // Streaming endpoint is `:streamGenerateContent?alt=sse`. Wire it
-        // up in a follow-up — the SSE chunk shape is non-trivial (parts
-        // arrive incrementally inside `candidates[0].content.parts[]`)
-        // and deserves its own commit + tests.
-        Err(GatewayError::ProviderError {
-            adapter: ADAPTER_ID.into(),
-            message: "Gemini streaming is not yet implemented".into(),
-            status: None,
-        })
+        let Payload::Chat {
+            messages,
+            system,
+            max_tokens,
+            temperature,
+        } = &request.payload
+        else {
+            return Err(GatewayError::ProviderError {
+                adapter: ADAPTER_ID.into(),
+                message: "Gemini streaming is only supported for Payload::Chat".into(),
+                status: None,
+            });
+        };
+
+        let api_key = resolve_api_key(config).ok_or_else(Self::missing_key_err)?;
+        let model = resolve_chat_model(request);
+        let url = format!(
+            "{}/models/{}:streamGenerateContent?alt=sse",
+            config.url.trim_end_matches('/'),
+            model
+        );
+
+        let generation_config = (max_tokens.is_some() || temperature.is_some()).then(|| {
+            GeminiGenerationConfig {
+                max_output_tokens: Some(max_tokens.unwrap_or(DEFAULT_MAX_TOKENS)),
+                temperature: *temperature,
+            }
+        });
+
+        let body = GeminiChatRequest {
+            contents: build_contents(messages),
+            system_instruction: extract_system_instruction(messages, system),
+            generation_config,
+        };
+
+        let mut req = self
+            .client
+            .post(&url)
+            .header("x-goog-api-key", &api_key)
+            .header("content-type", "application/json")
+            .json(&body);
+        for (k, v) in &config.headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+
+        let response = req.send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(match status.as_u16() {
+                401 | 403 => GatewayError::Authentication {
+                    adapter: ADAPTER_ID.into(),
+                    message: body_text,
+                },
+                429 => GatewayError::RateLimit {
+                    adapter: ADAPTER_ID.into(),
+                    retry_after_ms: None,
+                },
+                _ => GatewayError::ProviderError {
+                    adapter: ADAPTER_ID.into(),
+                    message: body_text,
+                    status: Some(status.as_u16()),
+                },
+            });
+        }
+
+        let byte_stream = response.bytes_stream();
+        let stream = byte_stream
+            .map(|result| -> Result<Vec<Result<StreamChunk, GatewayError>>, GatewayError> {
+                let bytes = result?;
+                let text = String::from_utf8_lossy(&bytes);
+                Ok(text.lines().filter_map(parse_stream_line).collect())
+            })
+            .map(|result| match result {
+                Ok(chunks) => futures::stream::iter(chunks),
+                Err(e) => futures::stream::iter(vec![Err(e)]),
+            })
+            .flatten();
+
+        Ok(Box::pin(stream))
     }
 }
 
@@ -593,6 +716,7 @@ mod tests {
                         },
                     ],
                 }),
+                finish_reason: None,
             }],
             usage_metadata: None,
         };
@@ -627,6 +751,56 @@ mod tests {
     fn missing_api_key_surfaces_authentication_error() {
         let err = GeminiAdapter::missing_key_err();
         assert!(matches!(err, GatewayError::Authentication { .. }));
+    }
+
+    #[test]
+    fn parse_stream_line_returns_none_for_empty_or_non_data_lines() {
+        assert!(parse_stream_line("").is_none());
+        assert!(parse_stream_line("   ").is_none());
+        assert!(parse_stream_line(": keep-alive comment").is_none());
+        // `data:` with empty payload (Gemini sometimes emits these
+        // between events) should be skipped, not parsed.
+        assert!(parse_stream_line("data:").is_none());
+        assert!(parse_stream_line("data:   ").is_none());
+    }
+
+    #[test]
+    fn parse_stream_line_extracts_incremental_text_from_candidate_parts() {
+        let line = r#"data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"},"index":0}]}"#;
+        let chunk = parse_stream_line(line).expect("Some").expect("Ok");
+        assert_eq!(chunk.content, "Hello");
+        assert!(chunk.finish_reason.is_none());
+        assert!(chunk.usage.is_none());
+    }
+
+    #[test]
+    fn parse_stream_line_carries_finish_reason_on_terminal_chunk() {
+        let line = r#"data: {"candidates":[{"content":{"parts":[{"text":"."}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":6,"totalTokenCount":10}}"#;
+        let chunk = parse_stream_line(line).expect("Some").expect("Ok");
+        assert_eq!(chunk.content, ".");
+        assert_eq!(chunk.finish_reason.as_deref(), Some("STOP"));
+        let usage = chunk.usage.expect("usage present on terminal chunk");
+        assert_eq!(usage.input_tokens, 4);
+        assert_eq!(usage.output_tokens, 6);
+        assert_eq!(usage.total_tokens, 10);
+    }
+
+    #[test]
+    fn parse_stream_line_yields_provider_error_on_bad_json() {
+        let line = "data: {not json";
+        let err = parse_stream_line(line)
+            .expect("Some")
+            .expect_err("Err on bad json");
+        assert!(matches!(err, GatewayError::ProviderError { .. }));
+    }
+
+    #[test]
+    fn parse_stream_line_handles_data_payload_without_space_after_colon() {
+        // SSE allows `data:payload` (no leading space) in addition to
+        // the more common `data: payload`.
+        let line = r#"data:{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}]}"#;
+        let chunk = parse_stream_line(line).expect("Some").expect("Ok");
+        assert_eq!(chunk.content, "hi");
     }
 
     #[test]
