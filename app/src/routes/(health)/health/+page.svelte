@@ -24,10 +24,9 @@
     function onVerify() {
         healthState.verify();
     }
-    function onCopyScript() {
-        if (healthState.remedy)
-            navigator.clipboard?.writeText(healthState.remedy.script);
-    }
+    // Clipboard copy is owned by Remedy.svelte now — it tracks success/failure
+    // state internally and shows feedback in the button label. The parent
+    // no longer needs to drive it.
 </script>
 
-<HealthView state={healthState} {onEnter} {onVerify} {onCopyScript} />
+<HealthView state={healthState} {onEnter} {onVerify} />
