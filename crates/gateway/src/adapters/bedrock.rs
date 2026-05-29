@@ -27,9 +27,10 @@ use aws_sdk_bedrockruntime::{
     Client,
     operation::converse::ConverseOutput as ConverseResponse,
     types::{
-        ContentBlock, ConversationRole, ConverseOutput as ConverseOutputUnion,
-        InferenceConfiguration, Message, SystemContentBlock, Tool, ToolConfiguration,
-        ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolSpecification, ToolUseBlock,
+        ContentBlock, ContentBlockDelta, ConversationRole, ConverseOutput as ConverseOutputUnion,
+        ConverseStreamOutput, InferenceConfiguration, Message, SystemContentBlock, Tool,
+        ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock,
+        ToolSpecification, ToolUseBlock,
     },
 };
 use aws_smithy_types::{Blob, Document, Number};
@@ -122,13 +123,51 @@ impl InferenceAdapter for BedrockAdapter {
     async fn stream(
         &self,
         _config: &RouterConfig,
-        _request: &InferenceRequest,
+        request: &InferenceRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk, GatewayError>> + Send>>, GatewayError>
     {
-        // Bedrock supports `converse_stream` with event-stream framing.
-        // The chunk shape is non-trivial (ContentBlockDelta /
-        // MessageStop / etc.) and deserves its own commit + tests.
-        Err(Self::err("Bedrock streaming is not yet implemented", None))
+        let Payload::Chat {
+            messages,
+            system,
+            max_tokens,
+            temperature,
+            tools: _,
+        } = &request.payload
+        else {
+            return Err(Self::err(
+                "Bedrock streaming is only supported for Payload::Chat",
+                None,
+            ));
+        };
+
+        let model_id = resolve_model(request);
+        let bedrock_messages = build_messages(messages)?;
+        let system_blocks = build_system(messages, system);
+
+        let inference_cfg = InferenceConfiguration::builder()
+            .max_tokens(max_tokens.map(|n| n as i32).unwrap_or(DEFAULT_MAX_TOKENS))
+            .set_temperature(*temperature)
+            .build();
+
+        let mut builder = self
+            .client
+            .converse_stream()
+            .model_id(model_id)
+            .inference_config(inference_cfg);
+        for m in bedrock_messages {
+            builder = builder.messages(m);
+        }
+        for s in system_blocks {
+            builder = builder.system(s);
+        }
+        // Tool calling on streaming is deferred — Bedrock streams
+        // tool_use arguments via `ToolUseBlockDelta::input` JSON
+        // fragments that need accumulation in the stream layer. The
+        // streaming path explicitly omits the toolConfig for now.
+
+        let output = builder.send().await.map_err(map_sdk_error)?;
+
+        Ok(Box::pin(into_stream_chunks(output)))
     }
 }
 
@@ -318,6 +357,98 @@ impl BedrockAdapter {
         // Cohere doesn't return per-request token counts on the embed
         // endpoint — usage is reported at the account level.
         Ok((parsed.embeddings, None))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Streaming bridge
+// ---------------------------------------------------------------------------
+
+/// Wrap a Converse-stream output as a `Stream<Item = Result<StreamChunk, _>>`.
+///
+/// The Converse stream is a sequence of typed events (MessageStart /
+/// ContentBlockStart / ContentBlockDelta / ContentBlockStop /
+/// MessageStop / Metadata). Most of these don't map to a gateway
+/// chunk by themselves — we only emit when we have something useful
+/// to surface:
+///
+/// - `ContentBlockDelta::Text(s)` → chunk with `content = s`
+/// - `MessageStop` → empty-content chunk with `finish_reason`
+/// - `Metadata` → empty-content chunk with `usage`
+///
+/// `ToolUse` / `ToolResult` deltas are skipped for v1; argument
+/// fragments would need accumulation in this layer before we can
+/// surface a complete `ToolCall`, which is its own follow-up.
+///
+/// The `EventReceiver` type that backs `output.stream` lives in a
+/// `pub(crate)` module of the SDK and isn't directly nameable from
+/// outside the crate. We work around that by keeping the output
+/// value as captured state inside `unfold` — its type only appears
+/// through inference, never in a signature.
+fn into_stream_chunks(
+    output: aws_sdk_bedrockruntime::operation::converse_stream::ConverseStreamOutput,
+) -> impl Stream<Item = Result<StreamChunk, GatewayError>> + Send {
+    futures::stream::unfold((output, false), |(mut output, done)| async move {
+        if done {
+            return None;
+        }
+        loop {
+            match output.stream.recv().await {
+                Ok(Some(event)) => {
+                    if let Some(chunk) = chunk_from_event(&event) {
+                        return Some((Ok(chunk), (output, false)));
+                    }
+                    // Silent framing event (ContentBlockStart/Stop,
+                    // MessageStart, …) — keep reading.
+                }
+                Ok(None) => return None,
+                Err(e) => {
+                    let err = GatewayError::ProviderError {
+                        adapter: ADAPTER_ID.into(),
+                        message: format!("bedrock stream error: {e}"),
+                        status: None,
+                    };
+                    return Some((Err(err), (output, true)));
+                }
+            }
+        }
+    })
+}
+
+/// Map a single Converse stream event to a [`StreamChunk`] when it
+/// carries data the caller cares about, or `None` to skip.
+fn chunk_from_event(event: &ConverseStreamOutput) -> Option<StreamChunk> {
+    match event {
+        ConverseStreamOutput::ContentBlockDelta(ev) => {
+            let delta = ev.delta()?;
+            match delta {
+                ContentBlockDelta::Text(text) => Some(StreamChunk {
+                    content: text.clone(),
+                    finish_reason: None,
+                    usage: None,
+                }),
+                // ToolUse / ToolResult / Image / Reasoning / Citation
+                // deltas are not surfaced in v1.
+                _ => None,
+            }
+        }
+        ConverseStreamOutput::MessageStop(ev) => Some(StreamChunk {
+            content: String::new(),
+            finish_reason: Some(ev.stop_reason().as_str().to_string()),
+            usage: None,
+        }),
+        ConverseStreamOutput::Metadata(ev) => ev.usage().map(|u| StreamChunk {
+            content: String::new(),
+            finish_reason: None,
+            usage: Some(TokenUsage {
+                input_tokens: u.input_tokens.max(0) as u32,
+                output_tokens: u.output_tokens.max(0) as u32,
+                total_tokens: u.total_tokens.max(0) as u32,
+            }),
+        }),
+        // MessageStart / ContentBlockStart / ContentBlockStop and any
+        // Unknown variant are routine framing events — nothing to do.
+        _ => None,
     }
 }
 
@@ -1126,6 +1257,117 @@ mod tests {
         // Reuse `embed_family` validation as a sanity check that the
         // adapter would now route an embed call past the dispatch.
         assert!(embed_family("amazon.titan-embed-text-v2:0").is_some());
+    }
+
+    // -----------------------------------------------------------------
+    // Streaming (chunk_from_event mapping)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn chunk_from_text_delta_event_emits_content_only_chunk() {
+        let ev = ConverseStreamOutput::ContentBlockDelta(
+            aws_sdk_bedrockruntime::types::ContentBlockDeltaEvent::builder()
+                .delta(ContentBlockDelta::Text("Hello".into()))
+                .content_block_index(0)
+                .build()
+                .unwrap(),
+        );
+        let chunk = chunk_from_event(&ev).expect("text delta should produce a chunk");
+        assert_eq!(chunk.content, "Hello");
+        assert!(chunk.finish_reason.is_none());
+        assert!(chunk.usage.is_none());
+    }
+
+    #[test]
+    fn chunk_from_message_stop_event_carries_finish_reason() {
+        let ev = ConverseStreamOutput::MessageStop(
+            aws_sdk_bedrockruntime::types::MessageStopEvent::builder()
+                .stop_reason(aws_sdk_bedrockruntime::types::StopReason::EndTurn)
+                .build()
+                .unwrap(),
+        );
+        let chunk = chunk_from_event(&ev).expect("MessageStop should produce a chunk");
+        assert_eq!(chunk.content, "");
+        // StopReason::EndTurn renders as "end_turn" via the SDK's as_str().
+        assert_eq!(chunk.finish_reason.as_deref(), Some("end_turn"));
+        assert!(chunk.usage.is_none());
+    }
+
+    #[test]
+    fn chunk_from_metadata_event_carries_token_usage() {
+        let ev = ConverseStreamOutput::Metadata(
+            aws_sdk_bedrockruntime::types::ConverseStreamMetadataEvent::builder()
+                .usage(
+                    aws_sdk_bedrockruntime::types::TokenUsage::builder()
+                        .input_tokens(7)
+                        .output_tokens(3)
+                        .total_tokens(10)
+                        .build()
+                        .unwrap(),
+                )
+                .metrics(
+                    aws_sdk_bedrockruntime::types::ConverseStreamMetrics::builder()
+                        .latency_ms(0)
+                        .build()
+                        .unwrap(),
+                )
+                .build(),
+        );
+        let chunk = chunk_from_event(&ev).expect("Metadata should produce a chunk");
+        assert_eq!(chunk.content, "");
+        assert!(chunk.finish_reason.is_none());
+        let usage = chunk.usage.expect("usage present on metadata chunk");
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 3);
+        assert_eq!(usage.total_tokens, 10);
+    }
+
+    #[test]
+    fn chunk_from_silent_events_returns_none() {
+        // MessageStart / ContentBlockStart / ContentBlockStop carry no
+        // user-visible content — they're framing only.
+        let start = ConverseStreamOutput::MessageStart(
+            aws_sdk_bedrockruntime::types::MessageStartEvent::builder()
+                .role(ConversationRole::Assistant)
+                .build()
+                .unwrap(),
+        );
+        assert!(chunk_from_event(&start).is_none());
+
+        let block_start = ConverseStreamOutput::ContentBlockStart(
+            aws_sdk_bedrockruntime::types::ContentBlockStartEvent::builder()
+                .content_block_index(0)
+                .build()
+                .unwrap(),
+        );
+        assert!(chunk_from_event(&block_start).is_none());
+
+        let block_stop = ConverseStreamOutput::ContentBlockStop(
+            aws_sdk_bedrockruntime::types::ContentBlockStopEvent::builder()
+                .content_block_index(0)
+                .build()
+                .unwrap(),
+        );
+        assert!(chunk_from_event(&block_stop).is_none());
+    }
+
+    #[test]
+    fn chunk_from_non_text_delta_returns_none_in_v1() {
+        // Tool-use argument deltas don't surface yet — they'll need
+        // accumulation in the stream layer when tool-streaming lands.
+        let ev = ConverseStreamOutput::ContentBlockDelta(
+            aws_sdk_bedrockruntime::types::ContentBlockDeltaEvent::builder()
+                .delta(ContentBlockDelta::ToolUse(
+                    aws_sdk_bedrockruntime::types::ToolUseBlockDelta::builder()
+                        .input("{\"city\":\"Be")
+                        .build()
+                        .unwrap(),
+                ))
+                .content_block_index(0)
+                .build()
+                .unwrap(),
+        );
+        assert!(chunk_from_event(&ev).is_none());
     }
 
     #[test]
