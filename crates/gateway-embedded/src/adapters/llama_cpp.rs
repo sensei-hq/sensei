@@ -528,7 +528,7 @@ fn build_chat_messages(
             MessageRole::Tool => "tool",
         };
         chat.push(
-            LlamaChatMessage::new(role.to_string(), msg.content.clone())
+            LlamaChatMessage::new(role.to_string(), msg.as_text().to_string())
                 .map_err(|e| chat_msg_err(&format!("{role}: {e}")))?,
         );
     }
@@ -554,6 +554,7 @@ fn response_with_embeddings(model_id: &str, embeddings: Vec<Vec<f32>>) -> Infere
         videos: None,
         model: Some(model_id.to_string()),
         usage: None,
+        tool_calls: Vec::new(),
         estimated_cost: None,
         actual_cost: None,
         attempts: vec![],
@@ -571,6 +572,7 @@ fn response_with_content(model_id: &str, content: String) -> InferenceResponse {
         videos: None,
         model: Some(model_id.to_string()),
         usage: None,
+        tool_calls: Vec::new(),
         estimated_cost: None,
         actual_cost: None,
         attempts: vec![],
@@ -616,6 +618,7 @@ impl InferenceAdapter for LlamaCppAdapter {
                 system,
                 max_tokens,
                 temperature,
+                tools: _,
             } => {
                 let content = self.generate(
                     messages,
@@ -654,6 +657,7 @@ impl InferenceAdapter for LlamaCppAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(self.err(
@@ -954,16 +958,8 @@ mod tests {
     #[test]
     fn build_chat_messages_translates_roles_and_prepends_system() {
         let msgs = vec![
-            Message {
-                role: MessageRole::User,
-                content: "hi".into(),
-                tool_call_id: None,
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "hello".into(),
-                tool_call_id: None,
-            },
+            Message::text(MessageRole::User, "hi"),
+            Message::text(MessageRole::Assistant, "hello"),
         ];
         let chat = build_chat_messages(&msgs, Some("you are a test bot")).unwrap();
         assert_eq!(chat.len(), 3, "system + user + assistant");
@@ -973,11 +969,7 @@ mod tests {
 
     #[test]
     fn build_chat_messages_rejects_content_with_null_bytes() {
-        let msgs = vec![Message {
-            role: MessageRole::User,
-            content: "has\0null".into(),
-            tool_call_id: None,
-        }];
+        let msgs = vec![Message::text(MessageRole::User, "has\0null")];
         let err = build_chat_messages(&msgs, None).unwrap_err();
         match err {
             GatewayError::ProviderError { message, .. } => {
@@ -1044,11 +1036,7 @@ mod tests {
         }
         let adapter = LlamaCppAdapter::load(backend, &entry, cfg).expect("load model");
 
-        let messages = vec![Message {
-            role: MessageRole::User,
-            content: "Reply with the single word: pong.".to_string(),
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::text(MessageRole::User, "Reply with the single word: pong.".to_string())];
         let text = adapter
             .generate(&messages, None, Some(16), Some(0.0))
             .expect("generate");
@@ -1090,14 +1078,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Reply with the single word: pong.".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Reply with the single word: pong.".to_string())],
                 system: None,
                 max_tokens: Some(16),
                 temperature: Some(0.0),
+                tools: Vec::new(),
             },
             budget: None,
         };
