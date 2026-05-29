@@ -187,12 +187,24 @@ pub fn shared_backend() -> Result<Arc<LlamaBackend>, GatewayError> {
     })
 }
 
-pub struct LlamaCppAdapter {
-    config: LlamaCppConfig,
-    // Drop order: context first, then model, then backend.
+/// Shared engine state for [`LlamaCppAdapter`]. Held behind an
+/// [`Arc`] so streaming generation can clone it cheaply and hand the
+/// clone to a `spawn_blocking` worker that produces tokens
+/// incrementally. The non-streaming embed / generate paths still
+/// access it via `self.inner` like before.
+///
+/// Field order is the load-bearing invariant for the LlamaContext
+/// `'static` transmute trick — `context` must drop before `model`
+/// and `_backend`. Don't reorder.
+struct Inner {
     context: Mutex<SyncContext>,
     model: LlamaModel,
     _backend: Arc<LlamaBackend>,
+}
+
+pub struct LlamaCppAdapter {
+    config: LlamaCppConfig,
+    inner: Arc<Inner>,
 }
 
 impl LlamaCppAdapter {
@@ -238,9 +250,11 @@ impl LlamaCppAdapter {
 
         let adapter = Self {
             config,
-            context: Mutex::new(SyncContext(context)),
-            model,
-            _backend: backend,
+            inner: Arc::new(Inner {
+                context: Mutex::new(SyncContext(context)),
+                model,
+                _backend: backend,
+            }),
         };
 
         Ok(adapter)
@@ -299,6 +313,7 @@ impl LlamaCppAdapter {
         }
 
         let mut guard = self
+            .inner
             .context
             .lock()
             .map_err(|_| self.err("context mutex poisoned"))?;
@@ -308,6 +323,7 @@ impl LlamaCppAdapter {
         let mut total_tokens: usize = 0;
         for text in texts {
             let tokens = self
+                .inner
                 .model
                 .str_to_token(text, AddBos::Always)
                 .map_err(|e| self.err(format!("tokenize: {e}")))?;
@@ -388,15 +404,18 @@ impl LlamaCppAdapter {
         // Build prompt via the model's bundled chat template.
         let chat = build_chat_messages(messages, system)?;
         let template = self
+            .inner
             .model
             .chat_template(None)
             .map_err(|e| self.err(format!("chat template lookup: {e}")))?;
         let prompt = self
+            .inner
             .model
             .apply_chat_template(&template, &chat, true)
             .map_err(|e| self.err(format!("apply chat template: {e}")))?;
 
         let prompt_tokens = self
+            .inner
             .model
             .str_to_token(&prompt, AddBos::Always)
             .map_err(|e| self.err(format!("tokenize prompt: {e}")))?;
@@ -412,6 +431,7 @@ impl LlamaCppAdapter {
         }
 
         let mut guard = self
+            .inner
             .context
             .lock()
             .map_err(|_| self.err("context mutex poisoned"))?;
@@ -447,11 +467,12 @@ impl LlamaCppAdapter {
             let token = sampler.sample(ctx, batch.n_tokens() - 1);
             sampler.accept(token);
 
-            if self.model.is_eog_token(token) {
+            if self.inner.model.is_eog_token(token) {
                 break;
             }
 
             let bytes = self
+                .inner
                 .model
                 .token_to_piece_bytes(token, 32, false, None)
                 .map_err(|e| self.err(format!("token_to_piece_bytes: {e}")))?;
@@ -598,13 +619,243 @@ impl InferenceAdapter for LlamaCppAdapter {
     async fn stream(
         &self,
         _config: &RouterConfig,
-        _request: &InferenceRequest,
+        request: &InferenceRequest,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<StreamChunk, GatewayError>> + Send>>,
         GatewayError,
     > {
-        Err(self.err("LlamaCppAdapter does not support streaming"))
+        if let Some(requested) = &request.model
+            && requested != &self.config.model_id
+        {
+            return Err(GatewayError::ModelUnavailable {
+                adapter: self.config.adapter_id.clone(),
+                model: requested.clone(),
+            });
+        }
+
+        let Payload::Chat {
+            messages,
+            system,
+            max_tokens,
+            temperature,
+        } = &request.payload
+        else {
+            return Err(self.err(
+                "LlamaCppAdapter streaming only supports Payload::Chat",
+            ));
+        };
+
+        // Resolve generation settings (mode-checked).
+        let (default_max, default_temp, seed) = match self.config.mode {
+            LlamaCppMode::Generation {
+                default_max_tokens,
+                default_temperature,
+                seed,
+            } => (default_max_tokens, default_temperature, seed),
+            _ => {
+                return Err(
+                    self.err("adapter not configured for streaming (mode != Generation)")
+                );
+            }
+        };
+        let max_new = max_tokens.unwrap_or(default_max).max(1);
+        let temperature = temperature.unwrap_or(default_temp);
+
+        // Build the prompt synchronously on the calling task — cheap.
+        // The heavy autoregressive loop runs inside spawn_blocking.
+        let chat = build_chat_messages(messages, system.as_deref())?;
+        let template = self
+            .inner
+            .model
+            .chat_template(None)
+            .map_err(|e| self.err(format!("chat template lookup: {e}")))?;
+        let prompt = self
+            .inner
+            .model
+            .apply_chat_template(&template, &chat, true)
+            .map_err(|e| self.err(format!("apply chat template: {e}")))?;
+        let prompt_tokens = self
+            .inner
+            .model
+            .str_to_token(&prompt, AddBos::Always)
+            .map_err(|e| self.err(format!("tokenize prompt: {e}")))?;
+        if (prompt_tokens.len() as u32).saturating_add(max_new) > self.config.n_ctx {
+            return Err(self.err(format!(
+                "prompt ({} tokens) + max_new ({}) exceeds n_ctx ({})",
+                prompt_tokens.len(),
+                max_new,
+                self.config.n_ctx
+            )));
+        }
+
+        // Channel sized so a fast producer can stay ahead of a slow
+        // consumer (e.g. SSE serialisation). 32 chunks ≈ 32 token-aligned
+        // text increments — small enough to keep memory bounded.
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamChunk, GatewayError>>(32);
+        let inner = Arc::clone(&self.inner);
+        let adapter_id = self.config.adapter_id.clone();
+
+        tokio::task::spawn_blocking(move || {
+            run_streaming_generation(
+                inner,
+                adapter_id,
+                prompt_tokens,
+                max_new,
+                temperature,
+                seed,
+                tx,
+            );
+        });
+
+        Ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
+}
+
+/// Streaming generation body — runs in a `spawn_blocking` worker.
+/// Sends a [`StreamChunk`] for every UTF-8-valid prefix increment of
+/// the accumulated bytes, plus a final empty-content chunk with
+/// `finish_reason` set to `"stop"` (EOS) or `"length"` (hit max_new).
+///
+/// Why UTF-8-prefix-based chunking and not "one chunk per token":
+/// tokenizers can split multi-byte codepoints across tokens (common in
+/// CJK / emoji / non-Latin scripts). Naively decoding each token in
+/// isolation produces invalid UTF-8 fragments and either errors out or
+/// emits U+FFFD replacement characters. Accumulating bytes and only
+/// emitting the longest valid UTF-8 prefix per step preserves the
+/// original text exactly.
+fn run_streaming_generation(
+    inner: Arc<Inner>,
+    adapter_id: String,
+    prompt_tokens: Vec<LlamaToken>,
+    max_new: u32,
+    temperature: f32,
+    seed: u32,
+    tx: tokio::sync::mpsc::Sender<Result<StreamChunk, GatewayError>>,
+) {
+    let err = |message: String| GatewayError::ProviderError {
+        adapter: adapter_id.clone(),
+        message,
+        status: None,
+    };
+
+    // Lock the context for the duration of this generation. Other
+    // concurrent calls on the same adapter will queue; this matches
+    // the non-streaming generate() path.
+    let mut guard = match inner.context.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            let _ = tx.blocking_send(Err(err("context mutex poisoned".into())));
+            return;
+        }
+    };
+    let ctx = &mut guard.0;
+    ctx.clear_kv_cache();
+
+    let mut batch = LlamaBatch::new(prompt_tokens.len().max(1), 1);
+    let last_prompt = prompt_tokens.len().saturating_sub(1);
+    for (pos, &token) in prompt_tokens.iter().enumerate() {
+        if let Err(e) = batch.add(token, pos as i32, &[0], pos == last_prompt) {
+            let _ = tx.blocking_send(Err(err(format!("batch.add (prompt): {e}"))));
+            return;
+        }
+    }
+    if let Err(e) = ctx.decode(&mut batch) {
+        let _ = tx.blocking_send(Err(err(format!("decode (prompt): {e}"))));
+        return;
+    }
+
+    let mut sampler = if temperature <= 0.0 {
+        LlamaSampler::greedy()
+    } else {
+        LlamaSampler::chain_simple([LlamaSampler::temp(temperature), LlamaSampler::dist(seed)])
+    };
+
+    // UTF-8-safe streaming buffer. `emitted` tracks how many bytes
+    // have already been shipped as chunks; we only ship bytes that
+    // form a valid UTF-8 prefix.
+    let mut buf: Vec<u8> = Vec::new();
+    let mut emitted: usize = 0;
+    let start_pos = prompt_tokens.len() as i32;
+    let mut finish_reason = "length";
+
+    for (offset, _) in (0..max_new).enumerate() {
+        let next_pos = start_pos + offset as i32;
+        let token = sampler.sample(ctx, batch.n_tokens() - 1);
+        sampler.accept(token);
+
+        if inner.model.is_eog_token(token) {
+            finish_reason = "stop";
+            break;
+        }
+
+        let bytes = match inner.model.token_to_piece_bytes(token, 32, false, None) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(err(format!("token_to_piece_bytes: {e}"))));
+                return;
+            }
+        };
+        buf.extend_from_slice(&bytes);
+
+        // Find the longest valid UTF-8 prefix beyond `emitted`.
+        let valid_end = match std::str::from_utf8(&buf) {
+            Ok(_) => buf.len(),
+            Err(e) => e.valid_up_to(),
+        };
+        if valid_end > emitted {
+            // Safety: we just confirmed [0..valid_end] is valid UTF-8.
+            let new_text = std::str::from_utf8(&buf[emitted..valid_end])
+                .expect("valid prefix")
+                .to_string();
+            emitted = valid_end;
+            if tx
+                .blocking_send(Ok(StreamChunk {
+                    content: new_text,
+                    finish_reason: None,
+                    usage: None,
+                }))
+                .is_err()
+            {
+                // Receiver dropped — caller cancelled the stream. Stop early.
+                return;
+            }
+        }
+
+        batch.clear();
+        if let Err(e) = batch.add(token, next_pos, &[0], true) {
+            let _ = tx.blocking_send(Err(err(format!("batch.add (step): {e}"))));
+            return;
+        }
+        if let Err(e) = ctx.decode(&mut batch) {
+            let _ = tx.blocking_send(Err(err(format!("decode (step): {e}"))));
+            return;
+        }
+    }
+
+    // Flush any trailing valid bytes the loop didn't emit (rare —
+    // would only happen if the final iteration appended bytes that
+    // sat past `emitted` but were valid prefix).
+    let valid_end = match std::str::from_utf8(&buf) {
+        Ok(_) => buf.len(),
+        Err(e) => e.valid_up_to(),
+    };
+    if valid_end > emitted
+        && let Ok(s) = std::str::from_utf8(&buf[emitted..valid_end])
+    {
+        let _ = tx.blocking_send(Ok(StreamChunk {
+            content: s.to_string(),
+            finish_reason: None,
+            usage: None,
+        }));
+    }
+
+    // Final chunk carries finish_reason. Empty content keeps the
+    // contract that all real text was already streamed.
+    let _ = tx.blocking_send(Ok(StreamChunk {
+        content: String::new(),
+        finish_reason: Some(finish_reason.into()),
+        usage: None,
+    }));
 }
 
 #[cfg(test)]
@@ -788,5 +1039,97 @@ mod tests {
 
         assert!(!text.is_empty(), "expected non-empty generation");
         assert!(text.len() < 256, "expected short response under max_tokens cap, got {text:?}");
+    }
+
+    /// End-to-end streaming chat against a real generative GGUF.
+    /// Walks the returned `Stream<Item = Result<StreamChunk, _>>` and
+    /// asserts that (a) at least one non-empty content chunk is
+    /// emitted, (b) the final chunk carries a `finish_reason`, and
+    /// (c) the concatenated content is non-empty and bounded by the
+    /// max_tokens cap. Ignored by default — same env var as the
+    /// non-streaming chat test.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires LLAMA_TEST_CHAT_GGUF env var pointing at a generative GGUF with a chat template"]
+    async fn stream_against_real_model_emits_chunks_with_finish_reason() {
+        use futures::StreamExt;
+        use gateway::types::config::RouterConfig;
+
+        let path = std::env::var("LLAMA_TEST_CHAT_GGUF")
+            .expect("LLAMA_TEST_CHAT_GGUF must point at a generative GGUF");
+        let entry = external_entry(path);
+
+        let backend = shared_backend();
+        let mut cfg = LlamaCppConfig::chat("test-chat-model");
+        if let LlamaCppMode::Generation {
+            default_max_tokens, ..
+        } = &mut cfg.mode
+        {
+            *default_max_tokens = 16;
+        }
+        let adapter = LlamaCppAdapter::load(backend, &entry, cfg).expect("load model");
+
+        let request = InferenceRequest {
+            capability: Capability::TextChat,
+            model: Some("test-chat-model".into()),
+            router: None,
+            chain: None,
+            payload: Payload::Chat {
+                messages: vec![Message {
+                    role: MessageRole::User,
+                    content: "Reply with the single word: pong.".to_string(),
+                    tool_call_id: None,
+                }],
+                system: None,
+                max_tokens: Some(16),
+                temperature: Some(0.0),
+            },
+            budget: None,
+        };
+
+        let router_cfg = RouterConfig {
+            url: "embedded://llama-cpp".into(),
+            api_key_env: None,
+            api_key: None,
+            enabled: true,
+            timeout_ms: None,
+            headers: std::collections::HashMap::new(),
+        };
+
+        let mut stream = adapter
+            .stream(&router_cfg, &request)
+            .await
+            .expect("stream");
+
+        let mut accumulated = String::new();
+        let mut content_chunks = 0usize;
+        let mut finish_reason: Option<String> = None;
+        while let Some(item) = stream.next().await {
+            let chunk = item.expect("chunk result");
+            if !chunk.content.is_empty() {
+                content_chunks += 1;
+                accumulated.push_str(&chunk.content);
+            }
+            if chunk.finish_reason.is_some() {
+                finish_reason = chunk.finish_reason;
+            }
+        }
+
+        assert!(
+            content_chunks > 0,
+            "expected at least one non-empty content chunk"
+        );
+        assert!(
+            finish_reason.is_some(),
+            "expected the final chunk to carry a finish_reason"
+        );
+        let reason = finish_reason.unwrap();
+        assert!(
+            reason == "stop" || reason == "length",
+            "unexpected finish_reason: {reason}"
+        );
+        assert!(
+            !accumulated.is_empty() && accumulated.len() < 256,
+            "expected short non-empty accumulated content, got {accumulated:?}"
+        );
     }
 }
