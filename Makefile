@@ -154,6 +154,23 @@ app-dev-bundle: install-dev
 
 app-release:
 	cd app && bunx tauri build
+	@# Install the bundled .app to /Applications/ on macOS so the user
+	@# doesn't have to drag the artefact out of the build tree. Stop any
+	@# running instance first — `cp -R` over a running .app would mix old
+	@# code and new resources, and the next launch would crash with a
+	@# code-signature mismatch.
+	@if [ -d app/src-tauri/target/release/bundle/macos/Sensei.app ]; then \
+	  if pgrep -x sensei-desktop > /dev/null; then \
+	    echo "Stopping running Sensei.app (pid $$(pgrep -x sensei-desktop))..."; \
+	    osascript -e 'tell application "Sensei" to quit' 2>/dev/null || pkill -x sensei-desktop || true; \
+	    sleep 1; \
+	  fi; \
+	  rm -rf /Applications/Sensei.app; \
+	  cp -R app/src-tauri/target/release/bundle/macos/Sensei.app /Applications/; \
+	  echo "Installed Sensei.app to /Applications/"; \
+	else \
+	  echo "Warning: app/src-tauri/target/release/bundle/macos/Sensei.app not found — skipping /Applications copy"; \
+	fi
 
 # Build the debug .app bundle with the e2e-testing feature enabled
 # (exposes the playwright IPC socket at /tmp/tauri-playwright.sock).

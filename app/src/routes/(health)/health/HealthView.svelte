@@ -10,9 +10,8 @@
     state: HealthState;
     onEnter?: () => void;
     onVerify?: () => void;
-    onCopyScript?: () => void;
   }
-  let { state, onEnter, onVerify, onCopyScript }: Props = $props();
+  let { state, onEnter, onVerify }: Props = $props();
 
   // Ledger and Hero both consume the same 6-row array (PM + 5 components).
   // Building it once here keeps the two children visually in sync.
@@ -26,7 +25,7 @@
       <Header status={state.status} />
 
       {#if state.needsAction && state.remedy}
-        <Remedy remedy={state.remedy} {onCopyScript} {onVerify} />
+        <Remedy remedy={state.remedy} {onVerify} />
       {/if}
 
       <div class="mt-auto pt-8">

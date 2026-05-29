@@ -148,6 +148,30 @@ pub trait PlatformProvider: Send + Sync {
     fn resolve(&self, current: &HealthPayload, app_version: &str, emit: &dyn Fn(HealthEvent)) -> HealthPayload {
         emit(HealthEvent::Phase { phase: HealthStatus::Resolving });
 
+        // Package-manager short-circuit. The dep graph's `depends_on` only
+        // talks about ComponentId, which doesn't include the PackageManager
+        // (homebrew/winget). If brew is missing, every component-level
+        // resolver would attempt `brew install …`, fail with BrewNotFound,
+        // and surface a postgres-flavoured "brew install postgresql@17"
+        // remedy attributed to the postgres component — exactly the
+        // postgres-before-homebrew confusion we hit on the first prod
+        // install. Skip the resolver walk entirely and surface a single,
+        // unambiguous brew-install remedy. On the next /resolve (after the
+        // user installs brew) the check phase reports PM ready and we fall
+        // back into the normal path.
+        if current.package_manager.status == ComponentStatus::Failed {
+            let remedy = crate::health::resolvers::brew_helpers::homebrew_install_remedy();
+            tracing::warn!(
+                "package manager (brew) missing — short-circuiting resolver walk and surfacing homebrew-install remedy"
+            );
+            emit(HealthEvent::Remedy { remedy: remedy.clone() });
+            let mut terminal = self.check(app_version);
+            terminal.remedy = Some(remedy);
+            terminal.validate().expect("PlatformProvider::resolve produced an invalid terminal payload");
+            emit(HealthEvent::Report { payload: terminal.clone() });
+            return terminal;
+        }
+
         // `now_failing` is the live set of components whose state we have not
         // yet seen recover during this pass. We start it from the initial
         // check's failed list, then remove components as resolvers verify
@@ -779,6 +803,63 @@ createdb sensei_dev";
         assert!(merged.message.contains("• postgres: PostgreSQL needs relinking."));
         assert!(merged.message.contains("• ollama: Ollama needs restart."));
         assert!(merged.message.contains("• database: Database doesn't exist."));
+    }
+
+    /// When brew is missing, resolve() must short-circuit the resolver
+    /// walk and surface a single, unambiguous homebrew-install remedy.
+    /// Regression test for the first-prod-install bug: every component-
+    /// level resolver would otherwise produce a "brew install postgresql@17"
+    /// remedy attributed to postgres, leaving the user staring at a
+    /// postgres-flavored fix when the actual upstream is brew itself.
+    #[test]
+    fn resolve_short_circuits_when_package_manager_failed() {
+        struct PmFailedMock;
+        impl PlatformProvider for PmFailedMock {
+            fn platform(&self) -> Platform { Platform::Macos }
+            fn package_manager_id(&self) -> PackageManagerId { PackageManagerId::Homebrew }
+            fn package_manager_checker(&self) -> Box<dyn Checker> {
+                Box::new(StubChecker(CheckOutcome::failed("brew not found on PATH")))
+            }
+            fn checker_for(&self, _id: ComponentId, _retry: bool) -> Box<dyn Checker> {
+                // Every downstream check fails too (brew is the upstream).
+                Box::new(StubChecker(CheckOutcome::failed("upstream brew missing")))
+            }
+            fn resolvers(&self) -> Vec<Box<dyn Resolver>> {
+                // If the short-circuit didn't fire, this resolver would
+                // run, return NeedsHumanAction, and pollute the terminal
+                // remedy. The assertion below catches that regression.
+                vec![Box::new(StubResolver {
+                    id: "postgres_install",
+                    targets: &[ComponentId::Postgres],
+                    outcome: ResolveOutcome::NeedsHumanAction(r(
+                        "PostgreSQL install failed.",
+                        "brew install postgresql@17",
+                    )),
+                    fallback: test_fallback(),
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                })]
+            }
+            fn default_remedy(&self) -> Remedy { r("default", "noop") }
+        }
+
+        let p = PmFailedMock;
+        let current = p.check("0.0.0-test");
+        assert_eq!(current.package_manager.status, ComponentStatus::Failed,
+            "precondition: this test exists to cover the brew-missing branch");
+
+        let terminal = p.resolve(&current, "0.0.0-test", &|_| {});
+        assert_eq!(terminal.status, HealthStatus::NeedsAction);
+        let remedy = terminal.remedy.as_ref()
+            .expect("short-circuit must attach the homebrew install remedy");
+
+        // The remedy is the standalone homebrew installer — not a postgres-
+        // attributed bullet from the resolver walk.
+        assert!(remedy.script.contains("brew.sh") || remedy.script.contains("Homebrew/install"),
+            "expected the canonical homebrew install URL, got: {}", remedy.script);
+        assert!(!remedy.script.contains("postgresql@17"),
+            "must NOT include the postgres-specific remedy that the regressed path would surface");
+        assert!(!remedy.message.starts_with("2 components") && !remedy.message.starts_with("5 components"),
+            "must NOT be a multi-component bullet list (single root cause: brew)");
     }
 
     /// End-to-end via resolve(): two failing components, both with
