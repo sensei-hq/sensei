@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;
 
 use async_trait::async_trait;
@@ -14,7 +15,7 @@ use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
     ImageResult, InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole,
-    Payload, StreamChunk, ToolCall, ToolDefinition,
+    Payload, StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -192,6 +193,33 @@ struct StreamChoice {
 #[derive(Debug, Deserialize)]
 struct StreamDelta {
     content: Option<String>,
+    /// Tool-call deltas. OpenAI emits one of these objects per
+    /// in-progress call, keyed by `index`. The `id` and `function.name`
+    /// arrive on the first delta for a given index; subsequent deltas
+    /// only carry argument fragments (`function.arguments`).
+    #[serde(default)]
+    tool_calls: Option<Vec<StreamToolCallDelta>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCallDelta {
+    /// Per-call index — same call across deltas share the same index.
+    index: u32,
+    #[serde(default)]
+    id: Option<String>,
+    #[allow(dead_code)]
+    #[serde(default, rename = "type")]
+    tool_type: Option<String>,
+    #[serde(default)]
+    function: Option<StreamToolCallFunctionDelta>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCallFunctionDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -773,7 +801,7 @@ impl InferenceAdapter for OpenAIAdapter {
             system,
             max_tokens,
             temperature,
-            tools: _,
+            tools,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -792,10 +820,7 @@ impl InferenceAdapter for OpenAIAdapter {
             max_tokens: *max_tokens,
             temperature: *temperature,
             stream: true,
-            // Tools-on-streaming is deferred to a follow-up — argument
-            // deltas arrive as JSON fragments and need accumulation in
-            // the stream layer. For now we drop `tools` on streaming.
-            tools: Vec::new(),
+            tools: build_tools(tools),
         };
 
         let url = format!(
@@ -830,48 +855,138 @@ impl InferenceAdapter for OpenAIAdapter {
             });
         }
 
-        let byte_stream = response.bytes_stream();
+        let byte_stream: Pin<Box<dyn Stream<Item = _> + Send>> = Box::pin(response.bytes_stream());
+        let initial = OpenAiStreamState {
+            byte_stream,
+            line_buf: String::new(),
+            tool_calls: BTreeMap::new(),
+            pending: VecDeque::new(),
+            eof: false,
+        };
 
-        let stream = byte_stream
-            .map(|result| -> Result<Vec<StreamChunk>, GatewayError> {
-                let bytes = result?;
-                let text = String::from_utf8_lossy(&bytes);
-                let mut chunks = Vec::new();
-
-                for line in text.lines() {
-                    let line = line.trim();
-                    if line.is_empty() || line == "data: [DONE]" {
-                        continue;
-                    }
-                    let json_str = line.strip_prefix("data: ").unwrap_or(line);
-                    if let Ok(parsed) = serde_json::from_str::<StreamChatResponse>(json_str)
-                        && let Some(choice) = parsed.choices.first()
-                    {
-                        let content = choice.delta.content.clone().unwrap_or_default();
-                        let usage = usage_from_response(&parsed.usage);
-                        chunks.push(StreamChunk {
-                            content,
-                            finish_reason: choice.finish_reason.clone(),
-                            usage,
-                            tool_calls: Vec::new(),
-                        });
-                    }
+        let stream = futures::stream::unfold(initial, |mut state| async move {
+            loop {
+                if let Some(item) = state.pending.pop_front() {
+                    return Some((item, state));
                 }
-
-                Ok(chunks)
-            })
-            .map(|result| -> futures::stream::Iter<std::vec::IntoIter<Result<StreamChunk, GatewayError>>> {
-                match result {
-                    Ok(chunks) => {
-                        futures::stream::iter(chunks.into_iter().map(Ok).collect::<Vec<_>>())
-                    }
-                    Err(e) => futures::stream::iter(vec![Err(e)]),
+                if state.eof {
+                    return None;
                 }
-            })
-            .flatten();
+                match state.byte_stream.next().await {
+                    Some(Ok(bytes)) => process_stream_bytes(&mut state, &bytes),
+                    Some(Err(e)) => {
+                        state.pending.push_back(Err(GatewayError::ProviderError {
+                            adapter: "openai".into(),
+                            message: format!("openai stream error: {e}"),
+                            status: None,
+                        }));
+                        state.eof = true;
+                    }
+                    None => state.eof = true,
+                }
+            }
+        });
 
         Ok(Box::pin(stream))
     }
+}
+
+/// Persistent state for the OpenAI SSE stream pipeline. Lives across
+/// HTTP byte chunks so that:
+///
+/// - SSE lines split across two HTTP chunks reassemble correctly
+///   (`line_buf` accumulates a partial trailing line).
+/// - Tool-call argument fragments accumulate per `index` until the
+///   chunk carrying `finish_reason` arrives, where we drain the
+///   accumulators into a final `StreamChunk.tool_calls`.
+/// - Errors and emissions are queued in `pending`, so a single byte
+///   chunk can produce zero or more gateway chunks.
+struct OpenAiStreamState {
+    byte_stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
+    line_buf: String,
+    tool_calls: BTreeMap<u32, StreamingToolCall>,
+    pending: VecDeque<Result<StreamChunk, GatewayError>>,
+    eof: bool,
+}
+
+/// Drive one byte chunk through the SSE line splitter. Each complete
+/// line is handed to [`process_sse_line`]; an incomplete trailing
+/// line stays in `line_buf` for the next call.
+fn process_stream_bytes(state: &mut OpenAiStreamState, bytes: &[u8]) {
+    state.line_buf.push_str(&String::from_utf8_lossy(bytes));
+    while let Some(newline_pos) = state.line_buf.find('\n') {
+        let mut line = state.line_buf.drain(..=newline_pos).collect::<String>();
+        line.truncate(line.trim_end().len());
+        process_sse_line(state, line.trim());
+    }
+}
+
+/// Handle a single SSE `data:` line. Drops empty lines, the
+/// `[DONE]` sentinel, and any line that fails to parse — emitting
+/// chunks into `state.pending` when a parsed event carries data the
+/// caller cares about.
+fn process_sse_line(state: &mut OpenAiStreamState, line: &str) {
+    if line.is_empty() || line == "data: [DONE]" {
+        return;
+    }
+    let payload = line.strip_prefix("data: ").unwrap_or(line);
+    let parsed = match serde_json::from_str::<StreamChatResponse>(payload) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let usage = usage_from_response(&parsed.usage);
+    let Some(choice) = parsed.choices.first() else {
+        return;
+    };
+
+    // Absorb any tool-call deltas into the per-index accumulator. id +
+    // function.name arrive on the first delta for an index; subsequent
+    // deltas only carry argument fragments.
+    if let Some(deltas) = choice.delta.tool_calls.as_ref() {
+        for d in deltas {
+            let acc = state.tool_calls.entry(d.index).or_default();
+            if let Some(id) = &d.id {
+                acc.id = Some(id.clone());
+            }
+            if let Some(func) = &d.function {
+                if let Some(name) = &func.name {
+                    acc.name = Some(name.clone());
+                }
+                if let Some(args) = &func.arguments {
+                    acc.push_arguments(args);
+                }
+            }
+        }
+    }
+
+    let content = choice.delta.content.clone().unwrap_or_default();
+
+    // If finish_reason arrives, materialise any accumulated calls onto
+    // this chunk so the caller sees them alongside the terminal
+    // finish_reason. Otherwise we'd lose them — OpenAI doesn't repeat
+    // tool_calls on the close.
+    let finish_reason = choice.finish_reason.clone();
+    let tool_calls = if finish_reason.is_some() {
+        std::mem::take(&mut state.tool_calls)
+            .into_values()
+            .filter_map(StreamingToolCall::finalize)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Empty content + no finish + no usage + no tool_calls is a pure
+    // framing event; don't surface it.
+    if content.is_empty() && finish_reason.is_none() && usage.is_none() && tool_calls.is_empty() {
+        return;
+    }
+
+    state.pending.push_back(Ok(StreamChunk {
+        content,
+        finish_reason,
+        usage,
+        tool_calls,
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,6 +1327,117 @@ mod tests {
         assert_eq!(resp.choices.len(), 1);
         assert_eq!(resp.choices[0].delta.content.as_deref(), Some("Hi"));
         assert!(resp.choices[0].finish_reason.is_none());
+    }
+
+    fn empty_stream_state() -> OpenAiStreamState {
+        OpenAiStreamState {
+            byte_stream: Box::pin(futures::stream::empty()),
+            line_buf: String::new(),
+            tool_calls: BTreeMap::new(),
+            pending: VecDeque::new(),
+            eof: false,
+        }
+    }
+
+    #[test]
+    fn process_sse_line_buffers_text_content_into_chunks() {
+        let mut state = empty_stream_state();
+        process_sse_line(
+            &mut state,
+            r#"data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}"#,
+        );
+        assert_eq!(state.pending.len(), 1);
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        assert_eq!(chunk.content, "Hello");
+        assert!(chunk.finish_reason.is_none());
+        assert!(chunk.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn process_sse_line_skips_empty_and_done_sentinels() {
+        let mut state = empty_stream_state();
+        process_sse_line(&mut state, "");
+        process_sse_line(&mut state, "data: [DONE]");
+        // Pure-framing chunks (no content, no finish, no usage, no tool_calls)
+        // are also dropped.
+        process_sse_line(
+            &mut state,
+            r#"data: {"choices":[{"delta":{},"finish_reason":null}]}"#,
+        );
+        assert!(state.pending.is_empty());
+    }
+
+    #[test]
+    fn process_sse_line_accumulates_tool_call_fragments_across_deltas() {
+        let mut state = empty_stream_state();
+        // First delta: id + name arrive, args start.
+        process_sse_line(
+            &mut state,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"ci"}}]},"finish_reason":null}]}"#,
+        );
+        // Argument fragment continues.
+        process_sse_line(
+            &mut state,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ty\":\"Berlin\"}"}}]},"finish_reason":null}]}"#,
+        );
+        // No chunks emitted yet — finish_reason hasn't arrived.
+        assert!(state.pending.is_empty());
+
+        // Final delta with finish_reason="tool_calls" triggers
+        // assembly + emission.
+        process_sse_line(
+            &mut state,
+            r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        );
+        assert_eq!(state.pending.len(), 1);
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        assert_eq!(chunk.finish_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(chunk.tool_calls.len(), 1);
+        let call = &chunk.tool_calls[0];
+        assert_eq!(call.id, "call_1");
+        assert_eq!(call.name, "get_weather");
+        // Fragments concatenated into a single valid JSON args string.
+        assert_eq!(call.arguments, r#"{"city":"Berlin"}"#);
+    }
+
+    #[test]
+    fn process_sse_line_handles_multiple_parallel_tool_calls_by_index() {
+        let mut state = empty_stream_state();
+        process_sse_line(
+            &mut state,
+            r#"data: {"choices":[{"delta":{"tool_calls":[
+                {"index":0,"id":"call_a","function":{"name":"f1","arguments":"{}"}},
+                {"index":1,"id":"call_b","function":{"name":"f2","arguments":"{}"}}
+            ]},"finish_reason":null}]}"#,
+        );
+        process_sse_line(
+            &mut state,
+            r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+        );
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        assert_eq!(chunk.tool_calls.len(), 2);
+        // Sorted by index (BTreeMap) — call_a first, call_b second.
+        assert_eq!(chunk.tool_calls[0].id, "call_a");
+        assert_eq!(chunk.tool_calls[1].id, "call_b");
+    }
+
+    #[test]
+    fn process_stream_bytes_reassembles_lines_split_across_chunks() {
+        let mut state = empty_stream_state();
+        // First HTTP byte chunk: half of a data line, no newline.
+        process_stream_bytes(
+            &mut state,
+            br#"data: {"choices":[{"delta":{"conten"#,
+        );
+        assert!(state.pending.is_empty(), "no complete line yet");
+        // Second HTTP byte chunk: rest of the line + newline.
+        process_stream_bytes(
+            &mut state,
+            b"t\":\"Hi\"},\"finish_reason\":null}]}\n",
+        );
+        assert_eq!(state.pending.len(), 1);
+        let chunk = state.pending.pop_front().unwrap().unwrap();
+        assert_eq!(chunk.content, "Hi");
     }
 
     #[tokio::test]
