@@ -13,7 +13,8 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Message, MessageRole, Payload, StreamChunk,
+    InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole, Payload,
+    StreamChunk, ToolCall, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,13 +31,54 @@ struct AnthropicRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
+    /// Tool definitions the model may call. Anthropic uses the same
+    /// JSON Schema shape as OpenAI but at the top level — no
+    /// `{type: "function"}` envelope.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<AnthropicTool>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicTool {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    input_schema: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
 struct AnthropicMessage {
     role: String,
-    content: String,
-    }
+    /// Anthropic accepts either a string or an array of content blocks
+    /// for `content`. We always emit the array form so tool_use and
+    /// tool_result blocks can coexist with text without special-cases.
+    content: Vec<OutContentBlock>,
+}
+
+/// Outbound content block. Anthropic distinguishes blocks by a top-level
+/// `type` field; `serde(tag = "type")` reproduces that shape with no
+/// runtime cost.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OutContentBlock {
+    Text {
+        text: String,
+    },
+    /// Mirrored back when continuing a multi-turn tool-calling
+    /// conversation. `input` is a JSON object — we deserialize the
+    /// gateway-side `ToolCall::arguments` string into it.
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    /// Caller's response to a prior tool call. `tool_use_id` links it
+    /// back to the originating `tool_use` block.
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
+}
 
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
@@ -46,12 +88,23 @@ struct AnthropicResponse {
     usage: AnthropicUsage,
 }
 
+/// Inbound content block. We parse blocks loosely (single struct with
+/// optional fields) rather than as a tagged enum so unknown block types
+/// don't error the whole response — the model may emit blocks we don't
+/// yet model (image, document, …) and we want to skip those gracefully.
 #[derive(Debug, Deserialize)]
 struct ContentBlock {
     #[serde(rename = "type")]
     block_type: String,
     #[serde(default)]
     text: Option<String>,
+    /// Tool-use block fields.
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    input: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,22 +161,123 @@ fn extract_system(messages: &[Message], system: &Option<String>) -> Option<Strin
         .map(|m| m.as_text().to_string())
 }
 
-/// Build Anthropic message array: filter out System messages, map Tool → user.
+/// Build Anthropic message array.
+///
+/// System-role gateway messages are filtered out (hoisted into the
+/// top-level `system` field by the caller). Everything else maps onto
+/// Anthropic's `{role: "user" | "assistant", content: [blocks]}`
+/// shape.
+///
+/// The block layout is:
+///
+/// - [`MessageContent::Text`] becomes a single `{type: "text"}` block.
+///   Empty text is dropped so assistant turns that only emit tool
+///   calls don't ship an empty block (Anthropic accepts that, but it
+///   reads as noise).
+/// - [`MessageContent::ToolResult`] becomes a single
+///   `{type: "tool_result", tool_use_id, content}` block. Anthropic
+///   uses `tool_use_id` (singular) rather than OpenAI's
+///   `tool_call_id`.
+/// - Any `tool_calls` on the gateway message become extra
+///   `{type: "tool_use", id, name, input}` blocks. `input` is a JSON
+///   object — we parse the gateway's JSON-string arguments back into
+///   one, falling back to a string node on malformed input.
 fn build_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
     messages
         .iter()
         .filter(|m| m.role != MessageRole::System)
         .map(|m| {
+            // Anthropic only knows "user" / "assistant"; gateway's
+            // Tool role maps to "user" because that's where tool
+            // result blocks live in the conversation.
             let role = match m.role {
-                MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "user",
+                MessageRole::User | MessageRole::Tool => "user",
                 MessageRole::System => unreachable!(), // filtered above
             };
             AnthropicMessage {
                 role: role.to_string(),
-                content: m.as_text().to_string(),
+                content: build_content_blocks(m),
             }
+        })
+        .collect()
+}
+
+/// Compose the `Vec<OutContentBlock>` for a single gateway message.
+fn build_content_blocks(m: &Message) -> Vec<OutContentBlock> {
+    let mut blocks: Vec<OutContentBlock> = Vec::new();
+    match &m.content {
+        MessageContent::Text { text } => {
+            if !text.is_empty() {
+                blocks.push(OutContentBlock::Text { text: text.clone() });
+            }
+        }
+        MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } => {
+            blocks.push(OutContentBlock::ToolResult {
+                tool_use_id: tool_call_id.clone(),
+                content: content.clone(),
+            });
+        }
+    }
+    for tc in &m.tool_calls {
+        blocks.push(OutContentBlock::ToolUse {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            input: parse_tool_input(&tc.arguments),
+        });
+    }
+    blocks
+}
+
+/// Parse a JSON-string `arguments` payload back into a JSON value for
+/// Anthropic's `tool_use.input` field. Malformed input degrades to a
+/// JSON string node — the provider will reject it, but we surface a
+/// readable error instead of a serialize panic.
+fn parse_tool_input(args: &str) -> serde_json::Value {
+    if args.is_empty() {
+        return serde_json::json!({});
+    }
+    serde_json::from_str(args).unwrap_or_else(|_| serde_json::Value::String(args.to_string()))
+}
+
+/// Convert gateway [`ToolDefinition`]s into Anthropic's top-level
+/// `tools` array. Anthropic uses the same `input_schema` field as the
+/// gateway type, so this is a near-identity mapping.
+fn build_tools(tools: &[ToolDefinition]) -> Vec<AnthropicTool> {
+    tools
+        .iter()
+        .map(|t| AnthropicTool {
+            name: t.name.clone(),
+            description: t.description.clone(),
+            input_schema: t.input_schema.clone(),
+        })
+        .collect()
+}
+
+/// Pull `tool_use` blocks out of the response and convert them into
+/// gateway [`ToolCall`]s. `input` (JSON object) is re-serialized into
+/// the gateway's JSON-string `arguments` shape for round-trip parity
+/// with OpenAI.
+fn extract_tool_calls(content: &[ContentBlock]) -> Vec<ToolCall> {
+    content
+        .iter()
+        .filter(|b| b.block_type == "tool_use")
+        .filter_map(|b| {
+            let id = b.id.clone()?;
+            let name = b.name.clone()?;
+            let arguments = b
+                .input
+                .as_ref()
+                .map(|v| serde_json::to_string(v).unwrap_or_default())
+                .unwrap_or_default();
+            Some(ToolCall {
+                id,
+                name,
+                arguments,
+            })
         })
         .collect()
 }
@@ -193,7 +347,7 @@ impl InferenceAdapter for AnthropicAdapter {
             system,
             max_tokens,
             temperature,
-            tools: _,
+            tools,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -218,6 +372,7 @@ impl InferenceAdapter for AnthropicAdapter {
             system: extracted_system,
             temperature: *temperature,
             stream: false,
+            tools: build_tools(tools),
         };
 
         let url = format!("{}/v1/messages", config.url.trim_end_matches('/'));
@@ -261,6 +416,7 @@ impl InferenceAdapter for AnthropicAdapter {
         })?;
 
         let content = extract_text(&anthropic_resp.content);
+        let tool_calls = extract_tool_calls(&anthropic_resp.content);
         let usage = usage_from_anthropic(&anthropic_resp.usage);
 
         Ok(InferenceResponse {
@@ -276,7 +432,7 @@ impl InferenceAdapter for AnthropicAdapter {
             images: None,
             videos: None,
             model: Some(model),
-            tool_calls: Vec::new(),
+            tool_calls,
             usage: Some(usage),
             estimated_cost: None,
             actual_cost: None,
@@ -320,6 +476,11 @@ impl InferenceAdapter for AnthropicAdapter {
             system: extracted_system,
             temperature: *temperature,
             stream: true,
+            // Streaming + tool calling is deferred — Anthropic emits
+            // `input_json_delta` events for tool arguments that need
+            // accumulation in the stream layer. v1 ships tools through
+            // execute() only.
+            tools: Vec::new(),
         };
 
         let url = format!("{}/v1/messages", config.url.trim_end_matches('/'));
@@ -453,6 +614,7 @@ mod tests {
             system: None,
             temperature: Some(0.7),
             stream: false,
+            tools: Vec::new(),
         };
 
         let json = serde_json::to_value(&body).unwrap();
@@ -461,11 +623,16 @@ mod tests {
         assert_eq!(json["max_tokens"], 1024);
         assert_eq!(json["stream"], false);
         assert!(json.get("system").is_none()); // skipped when None
+        assert!(json.get("tools").is_none()); // skipped when empty
 
         let msgs = json["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0]["role"], "user");
-        assert_eq!(msgs[0]["content"], "Hello");
+        // Content is now an array of blocks rather than a flat string.
+        let blocks = msgs[0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "Hello");
     }
 
     #[test]
@@ -483,6 +650,7 @@ mod tests {
             system: extracted,
             temperature: None,
             stream: false,
+            tools: Vec::new(),
         };
 
         let json = serde_json::to_value(&body).unwrap();
@@ -514,12 +682,23 @@ mod tests {
         // System message is removed, 3 remaining
         assert_eq!(anthropic_messages.len(), 3);
         assert_eq!(anthropic_messages[0].role, "user");
-        assert_eq!(anthropic_messages[0].content, "Hello");
+        assert!(matches!(
+            anthropic_messages[0].content.as_slice(),
+            [OutContentBlock::Text { text }] if text == "Hello",
+        ));
         assert_eq!(anthropic_messages[1].role, "assistant");
-        assert_eq!(anthropic_messages[1].content, "Hi!");
-        // Tool role mapped to user
+        assert!(matches!(
+            anthropic_messages[1].content.as_slice(),
+            [OutContentBlock::Text { text }] if text == "Hi!",
+        ));
+        // Tool result message: role mapped to "user", body becomes a
+        // single `tool_result` block carrying the tool_use_id.
         assert_eq!(anthropic_messages[2].role, "user");
-        assert_eq!(anthropic_messages[2].content, "result: 42");
+        assert!(matches!(
+            anthropic_messages[2].content.as_slice(),
+            [OutContentBlock::ToolResult { tool_use_id, content }]
+                if tool_use_id == "tc_1" && content == "result: 42",
+        ));
     }
 
     #[test]
@@ -592,6 +771,174 @@ mod tests {
         let usage = event.usage.unwrap();
         assert_eq!(usage.output_tokens, 15);
         assert_eq!(usage.input_tokens, 0); // default
+    }
+
+    #[test]
+    fn build_tools_passes_json_schema_through_unchanged() {
+        let defs = vec![
+            ToolDefinition {
+                name: "get_weather".into(),
+                description: Some("Look up the weather for a city.".into()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                }),
+            },
+            ToolDefinition {
+                name: "ping".into(),
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+        ];
+        let json = serde_json::to_value(build_tools(&defs)).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], "get_weather");
+        assert_eq!(arr[0]["description"], "Look up the weather for a city.");
+        assert_eq!(arr[0]["input_schema"]["type"], "object");
+        // Anthropic puts the schema at the top level (no `function:` wrapper).
+        assert!(arr[0].get("function").is_none());
+        // description omitted when None
+        assert!(arr[1].get("description").is_none());
+    }
+
+    #[test]
+    fn build_messages_emits_tool_result_block_for_tool_role() {
+        let msgs = vec![Message::tool_result("tu_01", "{\"temp\":72}")];
+        let json = serde_json::to_value(build_messages(&msgs)).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["role"], "user");
+        let blocks = arr[0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "tool_result");
+        // Anthropic uses tool_use_id (singular), unlike OpenAI's tool_call_id.
+        assert_eq!(blocks[0]["tool_use_id"], "tu_01");
+        assert_eq!(blocks[0]["content"], "{\"temp\":72}");
+    }
+
+    #[test]
+    fn build_messages_emits_tool_use_block_for_assistant_tool_calls() {
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text {
+                text: "Let me check.".into(),
+            },
+            tool_calls: vec![ToolCall {
+                id: "tu_01".into(),
+                name: "get_weather".into(),
+                arguments: "{\"city\":\"Berlin\"}".into(),
+            }],
+        };
+        let json = serde_json::to_value(build_messages(&[msg])).unwrap();
+        let blocks = json[0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2, "text block + tool_use block");
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "Let me check.");
+        assert_eq!(blocks[1]["type"], "tool_use");
+        assert_eq!(blocks[1]["id"], "tu_01");
+        assert_eq!(blocks[1]["name"], "get_weather");
+        // Arguments were a JSON string in the gateway type; Anthropic
+        // wants the input as an object, so we parse on the way out.
+        assert_eq!(blocks[1]["input"]["city"], "Berlin");
+    }
+
+    #[test]
+    fn build_messages_drops_empty_text_block_when_only_tool_calls_present() {
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text {
+                text: String::new(),
+            },
+            tool_calls: vec![ToolCall {
+                id: "tu_01".into(),
+                name: "noop".into(),
+                arguments: "{}".into(),
+            }],
+        };
+        let json = serde_json::to_value(build_messages(&[msg])).unwrap();
+        let blocks = json[0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1, "empty text block should be elided");
+        assert_eq!(blocks[0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn parse_tool_input_handles_empty_and_malformed_inputs() {
+        // Empty string → empty object.
+        assert_eq!(parse_tool_input(""), serde_json::json!({}));
+        // Valid JSON → parsed object.
+        assert_eq!(
+            parse_tool_input("{\"city\":\"Berlin\"}"),
+            serde_json::json!({"city": "Berlin"})
+        );
+        // Malformed JSON → string node (provider will reject, but no panic).
+        assert_eq!(
+            parse_tool_input("not json"),
+            serde_json::Value::String("not json".into())
+        );
+    }
+
+    #[test]
+    fn extract_tool_calls_pulls_tool_use_blocks_from_response() {
+        let blocks = vec![
+            ContentBlock {
+                block_type: "text".into(),
+                text: Some("I'll check the weather.".into()),
+                id: None,
+                name: None,
+                input: None,
+            },
+            ContentBlock {
+                block_type: "tool_use".into(),
+                text: None,
+                id: Some("tu_01".into()),
+                name: Some("get_weather".into()),
+                input: Some(serde_json::json!({"city": "Berlin"})),
+            },
+        ];
+        let calls = extract_tool_calls(&blocks);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "tu_01");
+        assert_eq!(calls[0].name, "get_weather");
+        // The JSON object input round-trips into the gateway's string
+        // arguments form for parity with OpenAI.
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(parsed, serde_json::json!({"city": "Berlin"}));
+        // extract_text on the same blocks still returns just the text.
+        assert_eq!(extract_text(&blocks), "I'll check the weather.");
+    }
+
+    #[test]
+    fn extract_tool_calls_drops_tool_use_blocks_missing_id_or_name() {
+        // Malformed `tool_use` block lacking the id field — skip rather
+        // than panic so a partial response still yields the rest.
+        let blocks = vec![ContentBlock {
+            block_type: "tool_use".into(),
+            text: None,
+            id: None,
+            name: Some("get_weather".into()),
+            input: Some(serde_json::json!({})),
+        }];
+        assert!(extract_tool_calls(&blocks).is_empty());
+    }
+
+    #[test]
+    fn anthropic_response_deserializes_mixed_text_and_tool_use_blocks() {
+        let raw = r#"{
+            "content": [
+                {"type": "text", "text": "Looking that up."},
+                {"type": "tool_use", "id": "tu_01", "name": "get_weather",
+                 "input": {"city": "Berlin"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 12, "output_tokens": 4}
+        }"#;
+        let resp: AnthropicResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(resp.content.len(), 2);
+        let calls = extract_tool_calls(&resp.content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather");
     }
 
     #[tokio::test]
