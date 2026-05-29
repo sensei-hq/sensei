@@ -64,22 +64,19 @@ pub(crate) async fn infer(
 
     // Build messages
     let messages = if let Some(msgs) = body.messages {
-        msgs.iter().map(|m| Message {
-            role: match m.role.as_str() {
-                "system"    => MessageRole::System,
-                "assistant" => MessageRole::Assistant,
-                "tool"      => MessageRole::Tool,
-                _           => MessageRole::User,
-            },
-            content: m.content.clone(),
-            tool_call_id: None,
-        }).collect()
+        msgs.iter()
+            .map(|m| {
+                let role = match m.role.as_str() {
+                    "system" => MessageRole::System,
+                    "assistant" => MessageRole::Assistant,
+                    "tool" => MessageRole::Tool,
+                    _ => MessageRole::User,
+                };
+                Message::text(role, m.content.clone())
+            })
+            .collect()
     } else if let Some(prompt) = &body.prompt {
-        vec![Message {
-            role: MessageRole::User,
-            content: prompt.clone(),
-            tool_call_id: None,
-        }]
+        vec![Message::text(MessageRole::User, prompt.clone())]
     } else {
         vec![]
     };
@@ -97,6 +94,7 @@ pub(crate) async fn infer(
             system: body.system,
             max_tokens: body.max_tokens,
             temperature: None,
+            tools: Vec::new(),
         },
     };
 
