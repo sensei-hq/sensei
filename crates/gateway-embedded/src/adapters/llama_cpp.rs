@@ -833,6 +833,7 @@ fn run_streaming_generation(
                     content: new_text,
                     finish_reason: None,
                     usage: None,
+                    tool_calls: Vec::new(),
                 }))
                 .is_err()
             {
@@ -866,6 +867,7 @@ fn run_streaming_generation(
             content: s.to_string(),
             finish_reason: None,
             usage: None,
+            tool_calls: Vec::new(),
         }));
     }
 
@@ -875,6 +877,7 @@ fn run_streaming_generation(
         content: String::new(),
         finish_reason: Some(finish_reason.into()),
         usage: None,
+        tool_calls: Vec::new(),
     }));
 }
 
