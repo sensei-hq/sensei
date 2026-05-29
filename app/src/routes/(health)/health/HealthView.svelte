@@ -4,6 +4,7 @@
   import Hero   from './Hero.svelte';
   import Remedy from './Remedy.svelte';
   import Ledger from './Ledger.svelte';
+  import Footer from './Footer.svelte';
 
   interface Props {
     state: HealthState;
@@ -12,26 +13,40 @@
     onCopyScript?: () => void;
   }
   let { state, onEnter, onVerify, onCopyScript }: Props = $props();
+
+  // Ledger and Hero both consume the same 6-row array (PM + 5 components).
+  // Building it once here keeps the two children visually in sync.
+  const gates = $derived([state.packageManager, ...state.components]);
 </script>
 
-<div class="flex-1 min-h-0 overflow-y-auto px-10 py-12">
-  <div class="max-w-[640px] w-full mx-auto">
-    <Header platform={state.platform} status={state.status} />
-    <Hero
-      packageManager={state.packageManager}
-      status={state.status}
-      components={state.components}
-      {onEnter}
-    />
-    {#if state.needsAction && state.remedy}
-      <Remedy remedy={state.remedy} {onCopyScript} {onVerify} />
-    {/if}
-    <Ledger components={state.components} />
-    <footer class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-surface-z2">
-      <span class="text-xs text-surface-z6">Bootstrap runs once. The next launch will be quick.</span>
-      {#if state.isOk}
-        <button data-action="continue" class="btn-solid" onclick={onEnter}>Continue →</button>
+<div class="flex-1 min-h-0 overflow-y-auto px-8 py-10">
+  <div class="max-w-[960px] w-full mx-auto grid grid-cols-1 lg:grid-cols-2 gap-x-12 gap-y-8 min-h-full">
+    <!-- Left column · identity, headline, remedy, footer -->
+    <div class="flex flex-col min-w-0">
+      <Header status={state.status} />
+
+      {#if state.needsAction && state.remedy}
+        <Remedy remedy={state.remedy} {onCopyScript} {onVerify} />
       {/if}
-    </footer>
+
+      <div class="mt-auto pt-8">
+        <Footer version={state.version} platform={state.platform} />
+      </div>
+    </div>
+
+    <!-- Right column · hero status, ledger, continue -->
+    <div class="flex flex-col gap-5 min-w-0">
+      <Hero status={state.status} components={gates} />
+
+      <div class="flex-1 min-h-0">
+        <Ledger components={gates} />
+      </div>
+
+      {#if state.isOk}
+        <div class="flex justify-end pt-2">
+          <button data-action="continue" class="btn-solid" onclick={onEnter}>Continue →</button>
+        </div>
+      {/if}
+    </div>
   </div>
 </div>
