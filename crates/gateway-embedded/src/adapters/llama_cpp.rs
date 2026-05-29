@@ -7,12 +7,18 @@
 //! latency. This adapter is the same idea behind the `InferenceAdapter`
 //! trait that the rest of the gateway already speaks.
 //!
-//! First-cut design — one adapter holds one model.
-//! - The adapter is loaded with a specific [`ModelEntry`]; requests whose
-//!   `model` field disagrees return [`GatewayError::ModelUnavailable`].
-//! - Streaming is unsupported (embeddings don't stream).
-//! - Only [`Capability::TextEmbed`] is implemented for now. Chat/complete
-//!   land in a subsequent commit on top of this scaffolding.
+//! Design — one adapter holds one model and is configured at load time
+//! into one of two modes:
+//! - [`LlamaCppMode::Embedding`] supports [`Capability::TextEmbed`]
+//!   via a single-shot encode + per-sequence pooled vector read.
+//! - [`LlamaCppMode::Generation`] supports [`Capability::TextChat`] /
+//!   [`Capability::TextComplete`] via an autoregressive decode loop with
+//!   token sampling. Uses the model's bundled chat template to format
+//!   messages.
+//!
+//! The adapter is loaded with a specific [`ModelEntry`]; requests whose
+//! `model` field disagrees return [`GatewayError::ModelUnavailable`].
+//! Streaming is not yet implemented — `stream()` returns an error.
 //!
 //! Concurrency model:
 //! - The [`llama_cpp_2`] [`LlamaModel`] is read-only and shared.
@@ -39,7 +45,7 @@ use gateway::types::capability::Capability;
 use gateway::types::config::RouterConfig;
 use gateway::types::error::GatewayError;
 use gateway::types::request::{
-    InferenceRequest, InferenceResponse, Payload, StreamChunk,
+    InferenceRequest, InferenceResponse, Message, MessageRole, Payload, StreamChunk,
 };
 use llama_cpp_2::{
     context::{
@@ -48,12 +54,37 @@ use llama_cpp_2::{
     },
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{params::LlamaModelParams, AddBos, LlamaModel},
+    model::{params::LlamaModelParams, AddBos, LlamaChatMessage, LlamaModel},
+    sampling::LlamaSampler,
     token::LlamaToken,
 };
 use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+
+/// Discriminates between the two very different ways a llama.cpp context is
+/// used. The choice is made at adapter load time because the context params
+/// (`with_embeddings`, `with_pooling_type`) differ, and we cannot
+/// re-purpose an embedding context for generation or vice versa.
+#[derive(Debug, Clone)]
+pub enum LlamaCppMode {
+    /// Encode-only path used for BERT-class embedding models. Reads
+    /// per-sequence pooled vectors after a single `encode()` call.
+    Embedding { pooling: LlamaPoolingType },
+    /// Autoregressive `decode()` loop with token sampling. Produces a
+    /// text completion via the model's chat template.
+    Generation {
+        /// Cap on the number of new tokens per request when the caller
+        /// doesn't specify `max_tokens`.
+        default_max_tokens: u32,
+        /// Temperature used when the caller doesn't specify one. `0.0`
+        /// means greedy (always pick the highest-probability token).
+        default_temperature: f32,
+        /// Seed for the distribution sampler. The harness wants the same
+        /// adapter to be reproducible across runs by default.
+        seed: u32,
+    },
+}
 
 /// Construction-time configuration for [`LlamaCppAdapter`].
 #[derive(Debug, Clone)]
@@ -63,14 +94,15 @@ pub struct LlamaCppConfig {
     /// Stable model id this adapter serves. Requests must specify this id
     /// (or send `model = None`).
     pub model_id: String,
+    /// Embedding vs generation mode.
+    pub mode: LlamaCppMode,
     /// Max sequence length the context will accept.
     pub n_ctx: u32,
     /// Threads used for both prompt processing and decode/encode.
     pub n_threads: i32,
-    /// Pooling strategy for embedding-style models. `Mean` is the
-    /// sentence-transformers default.
-    pub pooling: LlamaPoolingType,
-    /// Maximum number of distinct sequences in a single batch.
+    /// Maximum number of distinct sequences in a single batch. Embedding
+    /// mode benefits from a generous value (concurrent batched embeds);
+    /// generation typically uses 1.
     pub n_seq_max: u32,
 }
 
@@ -81,10 +113,29 @@ impl LlamaCppConfig {
         Self {
             adapter_id: "llama-cpp".into(),
             model_id: model_id.into(),
+            mode: LlamaCppMode::Embedding {
+                pooling: LlamaPoolingType::Mean,
+            },
             n_ctx: 512,
             n_threads: 1,
-            pooling: LlamaPoolingType::Mean,
             n_seq_max: 64,
+        }
+    }
+
+    /// Convenience builder for the chat/generation case — 4k context,
+    /// greedy decoding by default, single-sequence (no batched chat).
+    pub fn chat(model_id: impl Into<String>) -> Self {
+        Self {
+            adapter_id: "llama-cpp".into(),
+            model_id: model_id.into(),
+            mode: LlamaCppMode::Generation {
+                default_max_tokens: 512,
+                default_temperature: 0.0,
+                seed: 42,
+            },
+            n_ctx: 4096,
+            n_threads: 1,
+            n_seq_max: 1,
         }
     }
 }
@@ -129,10 +180,13 @@ impl LlamaCppAdapter {
         let model = LlamaModel::load_from_file(backend.as_ref(), path, &model_params)
             .map_err(|e| Self::provider_err(&config, format!("model load: {e}")))?;
 
-        // n_batch sizes the per-batch token budget. Use n_ctx so a single
-        // sequence of up to n_ctx tokens fits; the bench harness used the
-        // same shape and producing reliable embeddings.
+        // n_batch sizes the per-batch token budget. n_ctx works for both
+        // single-sequence chat and small-batch embedding.
         let n_batch = config.n_ctx;
+        let (with_embeddings, pooling) = match config.mode {
+            LlamaCppMode::Embedding { pooling } => (true, pooling),
+            LlamaCppMode::Generation { .. } => (false, LlamaPoolingType::Unspecified),
+        };
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(config.n_ctx))
             .with_n_batch(n_batch)
@@ -140,8 +194,8 @@ impl LlamaCppAdapter {
             .with_n_seq_max(config.n_seq_max)
             .with_n_threads(config.n_threads)
             .with_n_threads_batch(config.n_threads)
-            .with_embeddings(true)
-            .with_pooling_type(config.pooling);
+            .with_embeddings(with_embeddings)
+            .with_pooling_type(pooling);
 
         let context = model
             .new_context(backend.as_ref(), ctx_params)
@@ -203,6 +257,9 @@ impl LlamaCppAdapter {
     /// or from sensei-internal callers that already have a borrow on the
     /// adapter and don't need the full [`InferenceRequest`] envelope.
     pub fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, GatewayError> {
+        if !matches!(self.config.mode, LlamaCppMode::Embedding { .. }) {
+            return Err(self.err("adapter not configured for embedding (mode != Embedding)"));
+        }
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -274,6 +331,186 @@ impl LlamaCppAdapter {
         }
         Ok(results)
     }
+
+    /// Public, trait-free chat-generation entry point. Takes the same
+    /// fields the gateway's [`Payload::Chat`] carries — messages, an
+    /// optional system prompt, optional `max_tokens` / `temperature`
+    /// overrides — and returns the generated text.
+    pub fn generate(
+        &self,
+        messages: &[Message],
+        system: Option<&str>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+    ) -> Result<String, GatewayError> {
+        let (default_max, default_temp, seed) = match self.config.mode {
+            LlamaCppMode::Generation {
+                default_max_tokens,
+                default_temperature,
+                seed,
+            } => (default_max_tokens, default_temperature, seed),
+            _ => {
+                return Err(
+                    self.err("adapter not configured for generation (mode != Generation)")
+                );
+            }
+        };
+        let max_new = max_tokens.unwrap_or(default_max).max(1);
+        let temperature = temperature.unwrap_or(default_temp);
+
+        // Build prompt via the model's bundled chat template.
+        let chat = build_chat_messages(messages, system)?;
+        let template = self
+            .model
+            .chat_template(None)
+            .map_err(|e| self.err(format!("chat template lookup: {e}")))?;
+        let prompt = self
+            .model
+            .apply_chat_template(&template, &chat, true)
+            .map_err(|e| self.err(format!("apply chat template: {e}")))?;
+
+        let prompt_tokens = self
+            .model
+            .str_to_token(&prompt, AddBos::Always)
+            .map_err(|e| self.err(format!("tokenize prompt: {e}")))?;
+
+        // Reject prompts that don't leave room for the requested completion.
+        if (prompt_tokens.len() as u32).saturating_add(max_new) > self.config.n_ctx {
+            return Err(self.err(format!(
+                "prompt ({} tokens) + max_new ({}) exceeds n_ctx ({})",
+                prompt_tokens.len(),
+                max_new,
+                self.config.n_ctx
+            )));
+        }
+
+        let mut guard = self
+            .context
+            .lock()
+            .map_err(|_| self.err("context mutex poisoned"))?;
+        let ctx = &mut guard.0;
+        ctx.clear_kv_cache();
+
+        // Feed the prompt: mark only the last token for logits since we
+        // only need to sample from there.
+        let mut batch = LlamaBatch::new(prompt_tokens.len().max(1), 1);
+        let last_prompt = prompt_tokens.len().saturating_sub(1);
+        for (pos, &token) in prompt_tokens.iter().enumerate() {
+            batch
+                .add(token, pos as i32, &[0], pos == last_prompt)
+                .map_err(|e| self.err(format!("batch.add (prompt): {e}")))?;
+        }
+        ctx.decode(&mut batch)
+            .map_err(|e| self.err(format!("decode (prompt): {e}")))?;
+
+        let mut sampler = if temperature <= 0.0 {
+            LlamaSampler::greedy()
+        } else {
+            LlamaSampler::chain_simple([LlamaSampler::temp(temperature), LlamaSampler::dist(seed)])
+        };
+
+        // We accumulate raw bytes and UTF-8-decode at the end so multibyte
+        // codepoints that span two tokens (common in non-Latin scripts and
+        // emoji) don't get split into invalid UTF-8 fragments.
+        let mut generated_bytes: Vec<u8> = Vec::new();
+        let start_pos = prompt_tokens.len() as i32;
+        for (offset, _) in (0..max_new).enumerate() {
+            let next_pos = start_pos + offset as i32;
+            // Sample from the logits at the last batch position.
+            let token = sampler.sample(ctx, batch.n_tokens() - 1);
+            sampler.accept(token);
+
+            if self.model.is_eog_token(token) {
+                break;
+            }
+
+            let bytes = self
+                .model
+                .token_to_piece_bytes(token, 32, false, None)
+                .map_err(|e| self.err(format!("token_to_piece_bytes: {e}")))?;
+            generated_bytes.extend_from_slice(&bytes);
+
+            // Feed the sampled token back in for the next step.
+            batch.clear();
+            batch
+                .add(token, next_pos, &[0], true)
+                .map_err(|e| self.err(format!("batch.add (step): {e}")))?;
+            ctx.decode(&mut batch)
+                .map_err(|e| self.err(format!("decode (step): {e}")))?;
+        }
+
+        Ok(String::from_utf8_lossy(&generated_bytes).into_owned())
+    }
+}
+
+/// Convert gateway's `Message` list (plus optional system prompt) into the
+/// `LlamaChatMessage` shape that llama-cpp-2's chat template applier wants.
+fn build_chat_messages(
+    messages: &[Message],
+    system: Option<&str>,
+) -> Result<Vec<LlamaChatMessage>, GatewayError> {
+    let mut chat = Vec::with_capacity(messages.len() + 1);
+    if let Some(sys) = system {
+        chat.push(
+            LlamaChatMessage::new("system".to_string(), sys.to_string())
+                .map_err(|e| chat_msg_err(&format!("system: {e}")))?,
+        );
+    }
+    for msg in messages {
+        let role = match msg.role {
+            MessageRole::System => "system",
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::Tool => "tool",
+        };
+        chat.push(
+            LlamaChatMessage::new(role.to_string(), msg.content.clone())
+                .map_err(|e| chat_msg_err(&format!("{role}: {e}")))?,
+        );
+    }
+    Ok(chat)
+}
+
+fn chat_msg_err(detail: &str) -> GatewayError {
+    GatewayError::ProviderError {
+        adapter: "llama-cpp".into(),
+        message: format!("chat message: {detail}"),
+        status: None,
+    }
+}
+
+fn response_with_embeddings(model_id: &str, embeddings: Vec<Vec<f32>>) -> InferenceResponse {
+    InferenceResponse {
+        success: true,
+        content: None,
+        embeddings: Some(embeddings),
+        transcription: None,
+        audio: None,
+        images: None,
+        videos: None,
+        model: Some(model_id.to_string()),
+        usage: None,
+        estimated_cost: None,
+        actual_cost: None,
+        attempts: vec![],
+    }
+}
+
+fn response_with_content(model_id: &str, content: String) -> InferenceResponse {
+    InferenceResponse {
+        success: true,
+        content: Some(content),
+        embeddings: None,
+        transcription: None,
+        audio: None,
+        images: None,
+        videos: None,
+        model: Some(model_id.to_string()),
+        usage: None,
+        estimated_cost: None,
+        actual_cost: None,
+        attempts: vec![],
+    }
 }
 
 #[async_trait]
@@ -283,7 +520,12 @@ impl InferenceAdapter for LlamaCppAdapter {
     }
 
     fn supports(&self, capability: &Capability) -> bool {
-        matches!(capability, Capability::TextEmbed)
+        matches!(
+            (&self.config.mode, capability),
+            (LlamaCppMode::Embedding { .. }, Capability::TextEmbed)
+                | (LlamaCppMode::Generation { .. }, Capability::TextChat)
+                | (LlamaCppMode::Generation { .. }, Capability::TextComplete)
+        )
     }
 
     async fn execute(
@@ -303,23 +545,25 @@ impl InferenceAdapter for LlamaCppAdapter {
         match &request.payload {
             Payload::Embed { texts } => {
                 let embeddings = self.embed(texts)?;
-                Ok(InferenceResponse {
-                    success: true,
-                    content: None,
-                    embeddings: Some(embeddings),
-                    transcription: None,
-                    audio: None,
-                    images: None,
-                    videos: None,
-                    model: Some(self.config.model_id.clone()),
-                    usage: None,
-                    estimated_cost: None,
-                    actual_cost: None,
-                    attempts: vec![],
-                })
+                Ok(response_with_embeddings(&self.config.model_id, embeddings))
+            }
+            Payload::Chat {
+                messages,
+                system,
+                max_tokens,
+                temperature,
+            } => {
+                let content = self.generate(
+                    messages,
+                    system.as_deref(),
+                    *max_tokens,
+                    *temperature,
+                )?;
+                Ok(response_with_content(&self.config.model_id, content))
             }
             _ => Err(self.err(
-                "LlamaCppAdapter only supports Payload::Embed in this commit",
+                "LlamaCppAdapter supports Payload::Embed (Embedding mode) \
+                 and Payload::Chat (Generation mode) only",
             )),
         }
     }
@@ -341,6 +585,18 @@ mod tests {
     use super::*;
     use crate::registry::{ModelFormat, ModelSource};
     use std::path::PathBuf;
+
+    /// `LlamaBackend::init()` may only be called once per process. Cargo
+    /// runs `#[test]`s in parallel threads inside one process, so the two
+    /// integration tests below have to share a single backend handle —
+    /// otherwise the second to run gets an "already initialized" error.
+    fn shared_backend() -> Arc<LlamaBackend> {
+        use std::sync::OnceLock;
+        static BACKEND: OnceLock<Arc<LlamaBackend>> = OnceLock::new();
+        BACKEND
+            .get_or_init(|| Arc::new(LlamaBackend::init().expect("LlamaBackend::init")))
+            .clone()
+    }
 
     fn external_entry(path: impl Into<PathBuf>) -> ModelEntry {
         let path = path.into();
@@ -379,8 +635,67 @@ mod tests {
         assert_eq!(cfg.model_id, "all-minilm");
         assert_eq!(cfg.adapter_id, "llama-cpp");
         assert_eq!(cfg.n_ctx, 512);
-        assert!(matches!(cfg.pooling, LlamaPoolingType::Mean));
         assert_eq!(cfg.n_seq_max, 64);
+        match cfg.mode {
+            LlamaCppMode::Embedding { pooling } => assert!(matches!(pooling, LlamaPoolingType::Mean)),
+            _ => panic!("expected Embedding mode"),
+        }
+    }
+
+    #[test]
+    fn chat_config_builder_sets_sensible_defaults_for_generation() {
+        let cfg = LlamaCppConfig::chat("llama-3.2");
+        assert_eq!(cfg.model_id, "llama-3.2");
+        assert_eq!(cfg.adapter_id, "llama-cpp");
+        assert_eq!(cfg.n_ctx, 4096);
+        assert_eq!(cfg.n_seq_max, 1);
+        match cfg.mode {
+            LlamaCppMode::Generation {
+                default_max_tokens,
+                default_temperature,
+                ..
+            } => {
+                assert_eq!(default_max_tokens, 512);
+                assert_eq!(default_temperature, 0.0);
+            }
+            _ => panic!("expected Generation mode"),
+        }
+    }
+
+    #[test]
+    fn build_chat_messages_translates_roles_and_prepends_system() {
+        let msgs = vec![
+            Message {
+                role: MessageRole::User,
+                content: "hi".into(),
+                tool_call_id: None,
+            },
+            Message {
+                role: MessageRole::Assistant,
+                content: "hello".into(),
+                tool_call_id: None,
+            },
+        ];
+        let chat = build_chat_messages(&msgs, Some("you are a test bot")).unwrap();
+        assert_eq!(chat.len(), 3, "system + user + assistant");
+        // LlamaChatMessage doesn't expose role/content getters, but the
+        // count + non-error construction is what we need here.
+    }
+
+    #[test]
+    fn build_chat_messages_rejects_content_with_null_bytes() {
+        let msgs = vec![Message {
+            role: MessageRole::User,
+            content: "has\0null".into(),
+            tool_call_id: None,
+        }];
+        let err = build_chat_messages(&msgs, None).unwrap_err();
+        match err {
+            GatewayError::ProviderError { message, .. } => {
+                assert!(message.contains("user"), "got: {message}");
+            }
+            other => panic!("expected ProviderError, got {other:?}"),
+        }
     }
 
     /// End-to-end embedding against a real GGUF. Ignored by default so
@@ -396,7 +711,7 @@ mod tests {
             .expect("LLAMA_TEST_GGUF must point at a BERT GGUF file");
         let entry = external_entry(path);
 
-        let backend = Arc::new(LlamaBackend::init().expect("backend init"));
+        let backend = shared_backend();
         let adapter = LlamaCppAdapter::load(backend, &entry, LlamaCppConfig::embed("test-model"))
             .expect("load model");
 
@@ -415,5 +730,41 @@ mod tests {
                 "embedding[{i}]: expected unit-length, got |v|={mag}",
             );
         }
+    }
+
+    /// End-to-end chat against a real generative GGUF (e.g. llama-3.2,
+    /// qwen2.5, etc.). Ignored by default. Run with:
+    ///
+    ///     LLAMA_TEST_CHAT_GGUF=$HOME/.ollama/models/blobs/sha256-... \
+    ///       cargo test -p gateway-embedded --features llama-cpp -- --ignored
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires LLAMA_TEST_CHAT_GGUF env var pointing at a generative GGUF with a chat template"]
+    async fn generate_against_real_model_returns_non_empty_text() {
+        let path = std::env::var("LLAMA_TEST_CHAT_GGUF")
+            .expect("LLAMA_TEST_CHAT_GGUF must point at a generative GGUF");
+        let entry = external_entry(path);
+
+        let backend = shared_backend();
+        let mut cfg = LlamaCppConfig::chat("test-chat-model");
+        // Keep the test fast: cap to 16 new tokens.
+        if let LlamaCppMode::Generation {
+            default_max_tokens, ..
+        } = &mut cfg.mode
+        {
+            *default_max_tokens = 16;
+        }
+        let adapter = LlamaCppAdapter::load(backend, &entry, cfg).expect("load model");
+
+        let messages = vec![Message {
+            role: MessageRole::User,
+            content: "Reply with the single word: pong.".to_string(),
+            tool_call_id: None,
+        }];
+        let text = adapter
+            .generate(&messages, None, Some(16), Some(0.0))
+            .expect("generate");
+
+        assert!(!text.is_empty(), "expected non-empty generation");
+        assert!(text.len() < 256, "expected short response under max_tokens cap, got {text:?}");
     }
 }
