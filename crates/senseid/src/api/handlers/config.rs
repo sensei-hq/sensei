@@ -70,6 +70,7 @@ pub(crate) async fn marketplace_install(
         "commands_installed": result.commands_installed,
         "acps_configured": result.acps_configured,
         "errors": result.errors,
+        "warnings": result.warnings,
     }))
 }
 

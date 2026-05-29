@@ -115,11 +115,18 @@ pub struct AssistantFamily {
     pub config_path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct ConfigureResult {
     pub configured: Vec<String>,
     pub skipped: Vec<String>,
+    /// Hard failures — configure() did not complete for this assistant.
     pub errors: Vec<String>,
+    /// Soft failures — configure() finished but a secondary side-effect (e.g.
+    /// writing dev hooks) failed. The assistant is still considered configured.
+    /// Kept separate from `errors` so callers can decide whether to surface
+    /// loudly or just log.
+    #[serde(default)]
+    pub warnings: Vec<String>,
     /// True if `claude plugin install` succeeded (commands are namespaced under the plugin).
     pub plugin_installed: bool,
 }
@@ -159,12 +166,7 @@ pub fn detect_families() -> Vec<AssistantFamily> {
 
 pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
     let assistants = all_assistants();
-    let mut result = ConfigureResult {
-        configured: vec![],
-        skipped: vec![],
-        errors: vec![],
-        plugin_installed: false,
-    };
+    let mut result = ConfigureResult::default();
 
     let mcp_cmd = match find_mcp_binary() {
         Some(p) => p.to_string_lossy().to_string(),
@@ -185,20 +187,31 @@ pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
             Ok(ok) => {
                 result.configured.push(asst.id().to_string());
                 if ok.plugin { result.plugin_installed = true; }
-                result.errors.extend(ok.warnings);
+                // Soft failures stay in `warnings` — the assistant did
+                // configure successfully, but a side-effect (e.g. dev-hook
+                // entries) didn't. Merging them into `errors` was hiding the
+                // distinction; callers were treating successful installs as
+                // failed when only dev hooks had a problem.
+                for w in ok.warnings {
+                    result.warnings.push(format!("{}: {}", asst.id(), w));
+                }
             }
             Err(e) => result.errors.push(format!("{}: {}", asst.id(), e)),
         }
     }
 
-    // Persist the set of successfully configured assistants.
+    // Persist the set of successfully configured assistants. If the save fails
+    // (disk full, permission denied), surface it as a warning — configure()
+    // already completed, the local config just won't reflect the run.
     let sensei_dir = crate::paths::sensei_dir();
     let mut local_cfg = sensei_bootstrap::SenseiLocalConfig::load(&sensei_dir);
     local_cfg.configured_assistants = targets.iter()
         .filter(|a| result.configured.contains(&a.id().to_string()))
         .map(|a| a.id().to_string())
         .collect();
-    local_cfg.save(&sensei_dir).ok();
+    if let Err(e) = local_cfg.save(&sensei_dir) {
+        result.warnings.push(format!("save SenseiLocalConfig: {}", e));
+    }
 
     result
 }
@@ -257,6 +270,39 @@ mod tests {
     use super::*;
     use helpers::{upsert_sensei_in_json, remove_sensei_from_json};
     use sensei_bootstrap::MCP_REGISTRY_KEY;
+
+    // ── ConfigureResult: warnings vs errors ───────────────────────────────────
+
+    #[test]
+    fn configure_result_default_has_empty_warnings_and_errors() {
+        let r = ConfigureResult::default();
+        assert!(r.warnings.is_empty(),
+            "default ConfigureResult must not carry warnings (got: {:?})", r.warnings);
+        assert!(r.errors.is_empty(),
+            "default ConfigureResult must not carry errors (got: {:?})", r.errors);
+        assert!(r.configured.is_empty());
+        assert!(!r.plugin_installed);
+    }
+
+    #[test]
+    fn configure_result_serialises_warnings_alongside_errors() {
+        // Callers (CLI/UI) need both fields so they can decide whether a
+        // run was a hard failure (errors) or a soft failure (warnings).
+        // If serde drops `warnings`, the CLI silently treats every install
+        // as success-with-no-caveats — the exact pattern we're fixing.
+        let r = ConfigureResult {
+            configured: vec!["claude-code".into()],
+            errors: vec!["plugin install: boom".into()],
+            warnings: vec!["dev hooks: settings.json not writable".into()],
+            plugin_installed: true,
+            ..Default::default()
+        };
+        let j = serde_json::to_value(&r).unwrap();
+        assert_eq!(j["errors"][0], "plugin install: boom");
+        assert_eq!(j["warnings"][0], "dev hooks: settings.json not writable");
+        assert_eq!(j["plugin_installed"], true);
+        assert_eq!(j["configured"][0], "claude-code");
+    }
 
     // ── upsert_sensei_in_json ──────────────────────────────────────────
 
