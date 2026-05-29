@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { tick } from 'svelte';
 import { mountComponent } from '$lib/test-mount.js';
 import Remedy from './Remedy.svelte';
 import type { Remedy as RemedyT } from '$lib/health-types.js';
@@ -23,12 +24,41 @@ describe('Remedy', () => {
     expect(pre?.textContent).toBe(r.script);
   });
 
-  it('Copy button calls onCopyScript', () => {
-    const onCopyScript = vi.fn();
-    const m = mountComponent(Remedy, { remedy: fixture(), onCopyScript });
+  it('Copy button writes the script to clipboard via injected writeText', async () => {
+    const writeText = vi.fn(async () => undefined);
+    const m = mountComponent(Remedy, { remedy: fixture(), writeText });
     cleanup.push(m.destroy);
-    (m.container.querySelector('button[data-action="copy"]') as HTMLButtonElement).click();
-    expect(onCopyScript).toHaveBeenCalledTimes(1);
+    const btn = m.container.querySelector('button[data-action="copy"]') as HTMLButtonElement;
+    btn.click();
+    await tick();
+    await tick();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith('brew install sensei-hq/tap/sensei');
+  });
+
+  it('Copy button shows "Copied ✓" feedback after a successful write', async () => {
+    const writeText = vi.fn(async () => undefined);
+    const m = mountComponent(Remedy, { remedy: fixture(), writeText });
+    cleanup.push(m.destroy);
+    const btn = m.container.querySelector('button[data-action="copy"]') as HTMLButtonElement;
+    expect(btn.textContent?.trim()).toBe('Copy script');
+    btn.click();
+    await tick();
+    await tick();
+    expect(btn.getAttribute('data-state')).toBe('copied');
+    expect(btn.textContent?.trim()).toContain('Copied');
+  });
+
+  it('Copy button shows "Copy failed" feedback when writeText rejects', async () => {
+    const writeText = vi.fn(async () => { throw new Error('clipboard blocked'); });
+    const m = mountComponent(Remedy, { remedy: fixture(), writeText });
+    cleanup.push(m.destroy);
+    const btn = m.container.querySelector('button[data-action="copy"]') as HTMLButtonElement;
+    btn.click();
+    await tick();
+    await tick();
+    expect(btn.getAttribute('data-state')).toBe('failed');
+    expect(btn.textContent?.toLowerCase()).toContain('failed');
   });
 
   it('Verify button calls onVerify', () => {
@@ -40,9 +70,8 @@ describe('Remedy', () => {
   });
 
   it('script and message are user-selectable (carry select-text class)', () => {
-    // Webview may default to non-selectable in some contexts. We opt
-    // these specific elements into selection so users can copy partial
-    // text / the message itself.
+    // Fallback for users whose webview rejects the clipboard API — they can
+    // still highlight the text and copy manually.
     const m = mountComponent(Remedy, { remedy: fixture() });
     cleanup.push(m.destroy);
     const pre = m.container.querySelector('pre');
