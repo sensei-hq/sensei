@@ -199,6 +199,7 @@ impl InferenceAdapter for StabilityAdapter {
             }]),
             videos: None,
             model: Some(model),
+            tool_calls: Vec::new(),
             usage: None,
             estimated_cost: None,
             actual_cost: None,

@@ -98,12 +98,96 @@ pub enum MessageRole {
     Tool,
 }
 
+/// Content body of a single chat message.
+///
+/// `Text` carries an ordinary string (user prompt, assistant reply,
+/// system instruction). `ToolResult` carries the caller's response to
+/// a prior tool call and links it back via `tool_call_id`. The
+/// surrounding [`Message`] still carries the assistant's tool call
+/// emissions in the separate `tool_calls` field, so a single struct
+/// can model both "assistant said X" and "assistant called tool T".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageContent {
+    Text { text: String },
+    ToolResult { tool_call_id: String, content: String },
+}
+
+impl MessageContent {
+    /// View the body as plain text. Returns the text for `Text`, the
+    /// result body for `ToolResult`. Adapters that don't yet model
+    /// tool calling natively can use this everywhere.
+    pub fn as_text(&self) -> &str {
+        match self {
+            MessageContent::Text { text } => text.as_str(),
+            MessageContent::ToolResult { content, .. } => content.as_str(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: MessageRole,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
+    pub content: MessageContent,
+    /// Tool calls emitted by an assistant turn. Empty for any other
+    /// role; non-empty implies `role == Assistant`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+}
+
+impl Message {
+    /// Build a plain text message — user, assistant, or system.
+    pub fn text(role: MessageRole, text: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: MessageContent::Text { text: text.into() },
+            tool_calls: Vec::new(),
+        }
+    }
+
+    /// Build a tool-result message linked to a prior [`ToolCall`].
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Tool,
+            content: MessageContent::ToolResult {
+                tool_call_id: tool_call_id.into(),
+                content: content.into(),
+            },
+            tool_calls: Vec::new(),
+        }
+    }
+
+    /// View the message body as plain text — shorthand for
+    /// `self.content.as_text()`.
+    pub fn as_text(&self) -> &str {
+        self.content.as_text()
+    }
+}
+
+/// A function/tool the model may call.
+///
+/// `input_schema` is a JSON Schema document describing the call's
+/// argument object (typically `{type: "object", properties: {...},
+/// required: [...]}`). We pass it through verbatim to every provider
+/// — OpenAI/Anthropic/Gemini/Bedrock all accept JSON Schema, with
+/// only minor wrapping differences handled by the adapters.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolDefinition {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub input_schema: serde_json::Value,
+}
+
+/// A tool call emitted by the model. `arguments` is the call's
+/// argument object encoded as a JSON string — matches OpenAI's wire
+/// shape directly; adapters whose providers emit a native JSON object
+/// (Anthropic, Gemini, Bedrock) serialize it on the way out.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +201,11 @@ pub enum Payload {
         max_tokens: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         temperature: Option<f32>,
+        /// Tool definitions the model may call. Empty disables
+        /// tool calling for this turn even if the underlying
+        /// provider would otherwise advertise tools.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tools: Vec<ToolDefinition>,
     },
     Embed {
         texts: Vec<String>,
@@ -215,6 +304,12 @@ pub struct InferenceResponse {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+    /// Tool calls emitted by the assistant for this turn. Empty when
+    /// the model returned plain text. Caller is expected to dispatch
+    /// each call and feed the results back via a follow-up request
+    /// containing one [`Message::tool_result`] per call.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_cost: Option<CostEstimate>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -264,14 +359,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Hello".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Hello")],
                 system: Some("You are helpful.".to_string()),
                 max_tokens: Some(1024),
                 temperature: Some(0.7),
+                tools: Vec::new(),
             },
             budget: Some(1.0),
         };
@@ -287,7 +379,7 @@ mod tests {
         {
             assert_eq!(messages.len(), 1);
             assert_eq!(messages[0].role, MessageRole::User);
-            assert_eq!(messages[0].content, "Hello");
+            assert_eq!(messages[0].as_text(), "Hello");
             assert_eq!(system.as_deref(), Some("You are helpful."));
         } else {
             panic!("Expected Chat payload");
@@ -335,6 +427,7 @@ mod tests {
                 output_tokens: 5,
                 total_tokens: 15,
             }),
+            tool_calls: Vec::new(),
             estimated_cost: None,
             actual_cost: None,
             attempts: vec![],
@@ -346,6 +439,125 @@ mod tests {
         assert!(deserialized.success);
         assert_eq!(deserialized.content, Some("Hello!".to_string()));
         assert!(deserialized.attempts.is_empty());
+    }
+
+    #[test]
+    fn message_text_helper_builds_text_content() {
+        let m = Message::text(MessageRole::User, "hello");
+        assert_eq!(m.role, MessageRole::User);
+        assert_eq!(m.as_text(), "hello");
+        assert!(m.tool_calls.is_empty());
+        match m.content {
+            MessageContent::Text { text } => assert_eq!(text, "hello"),
+            _ => panic!("expected Text content"),
+        }
+    }
+
+    #[test]
+    fn message_tool_result_helper_carries_call_id_and_role() {
+        let m = Message::tool_result("call_abc", "{\"weather\":\"sunny\"}");
+        assert_eq!(m.role, MessageRole::Tool);
+        match &m.content {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
+                assert_eq!(tool_call_id, "call_abc");
+                assert_eq!(content, "{\"weather\":\"sunny\"}");
+            }
+            _ => panic!("expected ToolResult content"),
+        }
+        // as_text exposes the result body for adapters that only
+        // understand plain text.
+        assert_eq!(m.as_text(), "{\"weather\":\"sunny\"}");
+    }
+
+    #[test]
+    fn message_content_round_trips_through_serde_as_tagged_enum() {
+        let text = Message::text(MessageRole::User, "hi");
+        let json = serde_json::to_value(&text).unwrap();
+        assert_eq!(json["content"]["type"], "text");
+        assert_eq!(json["content"]["text"], "hi");
+
+        let result = Message::tool_result("call_1", "body");
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["content"]["type"], "tool_result");
+        assert_eq!(json["content"]["tool_call_id"], "call_1");
+        assert_eq!(json["content"]["content"], "body");
+
+        // Round-trip
+        let deserialized: Message = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.role, MessageRole::Tool);
+        assert_eq!(deserialized.as_text(), "body");
+    }
+
+    #[test]
+    fn assistant_message_carries_tool_calls_alongside_content() {
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text {
+                text: String::new(),
+            },
+            tool_calls: vec![ToolCall {
+                id: "call_1".into(),
+                name: "get_weather".into(),
+                arguments: "{\"city\":\"Berlin\"}".into(),
+            }],
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["tool_calls"][0]["id"], "call_1");
+        assert_eq!(json["tool_calls"][0]["name"], "get_weather");
+        let deserialized: Message = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.tool_calls.len(), 1);
+        assert_eq!(deserialized.tool_calls[0].arguments, "{\"city\":\"Berlin\"}");
+    }
+
+    #[test]
+    fn tool_definition_round_trips_with_json_schema_pass_through() {
+        let def = ToolDefinition {
+            name: "get_weather".into(),
+            description: Some("Look up the weather for a city.".into()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }),
+        };
+        let json = serde_json::to_value(&def).unwrap();
+        let back: ToolDefinition = serde_json::from_value(json).unwrap();
+        assert_eq!(back, def);
+    }
+
+    #[test]
+    fn chat_payload_tools_field_omitted_from_json_when_empty() {
+        let payload = Payload::Chat {
+            messages: vec![Message::text(MessageRole::User, "hi")],
+            system: None,
+            max_tokens: None,
+            temperature: None,
+            tools: Vec::new(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert!(json.get("tools").is_none(), "empty tools should be omitted");
+    }
+
+    #[test]
+    fn chat_payload_tools_field_serializes_when_present() {
+        let payload = Payload::Chat {
+            messages: vec![Message::text(MessageRole::User, "hi")],
+            system: None,
+            max_tokens: None,
+            temperature: None,
+            tools: vec![ToolDefinition {
+                name: "ping".into(),
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+            }],
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["tools"][0]["name"], "ping");
     }
 
     #[test]
@@ -449,6 +661,7 @@ mod tests {
             videos: None,
             model: Some("whisper-1".to_string()),
             usage: None,
+            tool_calls: Vec::new(),
             estimated_cost: None,
             actual_cost: None,
             attempts: vec![],
@@ -478,6 +691,7 @@ mod tests {
             videos: None,
             model: Some("tts-1".to_string()),
             usage: None,
+            tool_calls: Vec::new(),
             estimated_cost: None,
             actual_cost: None,
             attempts: vec![],
@@ -570,6 +784,7 @@ mod tests {
             videos: None,
             model: Some("dall-e-3".to_string()),
             usage: None,
+            tool_calls: Vec::new(),
             estimated_cost: None,
             actual_cost: None,
             attempts: vec![],
@@ -679,6 +894,7 @@ mod tests {
             }]),
             model: Some("video-gen-1".to_string()),
             usage: None,
+            tool_calls: Vec::new(),
             estimated_cost: None,
             actual_cost: None,
             attempts: vec![],

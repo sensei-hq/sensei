@@ -52,14 +52,11 @@ fn chat_request(model: &str) -> InferenceRequest {
         router: None,
         chain: None,
         payload: Payload::Chat {
-            messages: vec![Message {
-                role: MessageRole::User,
-                content: "Hello, world!".to_string(),
-                tool_call_id: None,
-            }],
+            messages: vec![Message::text(MessageRole::User, "Hello, world!")],
             system: None,
             max_tokens: Some(128),
             temperature: Some(0.5),
+            tools: Vec::new(),
         },
         budget: None,
     }

@@ -165,9 +165,7 @@ fn build_contents(messages: &[Message]) -> Vec<GeminiContent<'_>> {
         .filter(|m| m.role != MessageRole::System)
         .map(|m| GeminiContent {
             role: gemini_role(&m.role),
-            parts: vec![GeminiPart {
-                text: m.content.as_str(),
-            }],
+            parts: vec![GeminiPart { text: m.as_text() }],
         })
         .collect()
 }
@@ -187,7 +185,7 @@ fn extract_system_instruction<'a>(
     let system_parts: Vec<&'a str> = messages
         .iter()
         .filter(|m| m.role == MessageRole::System)
-        .map(|m| m.content.as_str())
+        .map(|m| m.as_text())
         .collect();
     if system_parts.is_empty() {
         None
@@ -381,6 +379,7 @@ impl InferenceAdapter for GeminiAdapter {
                 system,
                 max_tokens,
                 temperature,
+                tools: _,
             } => {
                 let model = resolve_chat_model(request);
                 let url = format!(
@@ -418,6 +417,7 @@ impl InferenceAdapter for GeminiAdapter {
                     videos: None,
                     model: Some(model),
                     usage,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -435,6 +435,7 @@ impl InferenceAdapter for GeminiAdapter {
                         images: None,
                         videos: None,
                         model: request.model.clone(),
+                        tool_calls: Vec::new(),
                         usage: None,
                         estimated_cost: None,
                         actual_cost: None,
@@ -477,6 +478,7 @@ impl InferenceAdapter for GeminiAdapter {
                     videos: None,
                     model: Some(model),
                     usage: None,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -502,6 +504,7 @@ impl InferenceAdapter for GeminiAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -589,27 +592,15 @@ mod tests {
     use super::*;
 
     fn user(content: &str) -> Message {
-        Message {
-            role: MessageRole::User,
-            content: content.into(),
-            tool_call_id: None,
-        }
+        Message::text(MessageRole::User, content)
     }
 
     fn assistant(content: &str) -> Message {
-        Message {
-            role: MessageRole::Assistant,
-            content: content.into(),
-            tool_call_id: None,
-        }
+        Message::text(MessageRole::Assistant, content)
     }
 
     fn system_msg(content: &str) -> Message {
-        Message {
-            role: MessageRole::System,
-            content: content.into(),
-            tool_call_id: None,
-        }
+        Message::text(MessageRole::System, content)
     }
 
     #[test]
@@ -695,6 +686,7 @@ mod tests {
                 system: None,
                 max_tokens: None,
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         };
