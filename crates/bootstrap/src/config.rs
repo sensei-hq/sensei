@@ -212,6 +212,16 @@ impl SenseiConfig {
         }
     }
 
+    /// Returns the bare brew formula name (no tap prefix) for the current
+    /// mode — `sensei` in prod, `sensei-dev` in dev. Matches the formula
+    /// filename in `homebrew/Formula/` and the registered service name in
+    /// the formula's `service do` block. Use with `brew services start
+    /// <name>` / `brew services stop <name>` — the tap-qualified slug only
+    /// works for `brew install`.
+    pub fn brew_service_name(&self) -> &'static str {
+        if self.is_dev() { "sensei-dev" } else { "sensei" }
+    }
+
     /// Returns the formula slug and the brew install args for the current mode.
     /// Dev mode needs `--HEAD` because the dev formula is HEAD-only; prod uses
     /// the published bottle with no args. Suitable for direct use with

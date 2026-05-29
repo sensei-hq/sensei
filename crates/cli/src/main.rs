@@ -176,16 +176,34 @@ fn ensure_daemon() {
 }
 
 fn start_daemon() {
-    let bin = daemon_bin();
-    let port = cfg().daemon_port;
-    match std::process::Command::new(&bin)
-        .args(["start", "--port", &port.to_string()])
-        .spawn()
+    // Prefer `brew services start sensei` (or sensei-dev) — matches the
+    // postgres/ollama startup path AND inherits launchd's keep-alive
+    // auto-restart on crash. Direct spawn is the fallback when brew isn't
+    // available or the service isn't registered yet.
+    let cfg = cfg();
+    let service = cfg.brew_service_name();
+    let mut started_via_brew = false;
+    if let Ok(out) = std::process::Command::new("brew")
+        .args(["services", "start", service])
+        .output()
+        && out.status.success()
     {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("Failed to spawn daemon ({}): {}", bin.display(), e);
-            return;
+        started_via_brew = true;
+    }
+
+    if !started_via_brew {
+        let bin = daemon_bin();
+        let port = cfg.daemon_port;
+        match std::process::Command::new(&bin)
+            .args(["start", "--port", &port.to_string()])
+            .spawn()
+        {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Failed to spawn daemon ({}): {}", bin.display(), e);
+                eprintln!("Try: brew services start {service}");
+                return;
+            }
         }
     }
 
@@ -791,6 +809,18 @@ fn remove_all(purge: bool) {
 // ── Daemon / Scan / AddLib ──────────────────────────────────────────────────
 
 fn restart_daemon(port: u16) {
+    // Prefer brew services restart for parity with start (keep-alive +
+    // launchd ownership). Fall back to direct binary stop+start when brew
+    // isn't on PATH or the service isn't registered.
+    let service = cfg().brew_service_name();
+    if let Ok(out) = std::process::Command::new("brew")
+        .args(["services", "restart", service])
+        .status()
+        && out.success()
+    {
+        std::process::exit(0);
+    }
+
     let bin = daemon_bin();
     let _ = std::process::Command::new(&bin).arg("stop").status();
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -810,6 +840,23 @@ fn restart_daemon(port: u16) {
 }
 
 fn daemon_cmd(cmd: &str, port: Option<u16>) {
+    // Lifecycle commands (stop) prefer brew services so launchd's keep-alive
+    // marker stays in sync with the daemon's actual state. Status stays a
+    // direct call — it's an informational probe of the binary, not a
+    // lifecycle change.
+    if cmd == "stop" {
+        let service = cfg().brew_service_name();
+        if let Ok(out) = std::process::Command::new("brew")
+            .args(["services", "stop", service])
+            .status()
+            && out.success()
+        {
+            std::process::exit(0);
+        }
+        // Fall through to direct spawn — brew not available or service not
+        // registered with launchd.
+    }
+
     let bin = daemon_bin();
     let mut args = vec![cmd.to_string()];
     if let Some(p) = port {
