@@ -160,6 +160,33 @@ unsafe impl Send for SyncContext {}
 ///
 /// See module docs for the lifetime safety invariant — `context` must be
 /// declared before `model` so it drops first.
+/// Process-wide singleton [`LlamaBackend`].
+///
+/// `LlamaBackend::init()` is allowed to be called only once per
+/// process; a second call returns `BackendAlreadyInitialized`. Callers
+/// that need a backend (the test suite, sensei's `register_llama_cpp_*`
+/// helpers, anything else that loads multiple LlamaCpp adapters) should
+/// go through this function instead of calling `init()` directly so
+/// they get the same `Arc<LlamaBackend>` back every time.
+///
+/// The first-call error is cached in the `OnceLock`, so subsequent
+/// callers see the same error rather than blowing up on a misleading
+/// "already initialized" message.
+pub fn shared_backend() -> Result<Arc<LlamaBackend>, GatewayError> {
+    use std::sync::OnceLock;
+    static BACKEND: OnceLock<Result<Arc<LlamaBackend>, String>> = OnceLock::new();
+    let cached = BACKEND.get_or_init(|| {
+        LlamaBackend::init()
+            .map(Arc::new)
+            .map_err(|e| format!("LlamaBackend::init: {e}"))
+    });
+    cached.clone().map_err(|e| GatewayError::ProviderError {
+        adapter: "llama-cpp".into(),
+        message: e,
+        status: None,
+    })
+}
+
 pub struct LlamaCppAdapter {
     config: LlamaCppConfig,
     // Drop order: context first, then model, then backend.
@@ -586,16 +613,11 @@ mod tests {
     use crate::registry::{ModelFormat, ModelSource};
     use std::path::PathBuf;
 
-    /// `LlamaBackend::init()` may only be called once per process. Cargo
-    /// runs `#[test]`s in parallel threads inside one process, so the two
-    /// integration tests below have to share a single backend handle —
-    /// otherwise the second to run gets an "already initialized" error.
+    /// Test-only wrapper around the public [`super::shared_backend`].
+    /// Panics on init failure — tests run inside a single process so
+    /// `LlamaBackend::init` either works once or not at all.
     fn shared_backend() -> Arc<LlamaBackend> {
-        use std::sync::OnceLock;
-        static BACKEND: OnceLock<Arc<LlamaBackend>> = OnceLock::new();
-        BACKEND
-            .get_or_init(|| Arc::new(LlamaBackend::init().expect("LlamaBackend::init")))
-            .clone()
+        super::shared_backend().expect("shared_backend")
     }
 
     fn external_entry(path: impl Into<PathBuf>) -> ModelEntry {
