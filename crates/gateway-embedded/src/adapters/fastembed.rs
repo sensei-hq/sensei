@@ -202,6 +202,7 @@ impl InferenceAdapter for FastembedAdapter {
                     videos: None,
                     model: Some(self.config.model_id.clone()),
                     usage: None,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
