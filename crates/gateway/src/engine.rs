@@ -268,7 +268,7 @@ fn estimate_input_tokens(payload: &Payload) -> u32 {
         Payload::Chat {
             messages, system, ..
         } => {
-            let msg_chars: usize = messages.iter().map(|m| m.content.len()).sum();
+            let msg_chars: usize = messages.iter().map(|m| m.as_text().len()).sum();
             let sys_chars: usize = system.as_ref().map(|s| s.len()).unwrap_or(0);
             ((msg_chars + sys_chars) / 4) as u32
         }
@@ -381,14 +381,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Hello, world!".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Hello, world!")],
                 system: None,
                 max_tokens: None,
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         }
@@ -421,14 +418,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "transcribe".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "transcribe".to_string())],
                 system: None,
                 max_tokens: None,
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         };
@@ -454,14 +448,11 @@ mod tests {
             router: Some("noop".to_string()),
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Hello".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Hello".to_string())],
                 system: None,
                 max_tokens: None,
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         };

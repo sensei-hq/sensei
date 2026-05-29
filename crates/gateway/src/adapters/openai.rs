@@ -13,7 +13,8 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    ImageResult, InferenceRequest, InferenceResponse, Message, MessageRole, Payload, StreamChunk,
+    ImageResult, InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole,
+    Payload, StreamChunk, ToolCall, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,12 +30,61 @@ struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
+    /// Tool / function definitions the model may call. Wrapped in
+    /// `{type: "function", function: {…}}` per OpenAI's wire shape;
+    /// omitted entirely when no tools are configured for this turn.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<ChatTool>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatTool {
+    #[serde(rename = "type")]
+    tool_type: &'static str, // always "function" for now
+    function: ChatToolFunction,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatToolFunction {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    parameters: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
 struct ChatMessage {
     role: String,
-    content: String,
+    /// Plain message body. OpenAI accepts `null` content on assistant
+    /// turns that carry tool calls, so this is `Option<String>` rather
+    /// than `String`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    /// Tool calls emitted by an assistant turn (mirrored back from a
+    /// prior response when continuing the conversation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OpenAiToolCall>>,
+    /// Required on `role: "tool"` messages; links the tool result back
+    /// to the originating call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct OpenAiToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: OpenAiToolCallFunction,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct OpenAiToolCallFunction {
+    name: String,
+    /// JSON-encoded argument object — OpenAI emits this as a string,
+    /// not a structured object. We keep that shape and round-trip it
+    /// verbatim through [`ToolCall::arguments`].
+    arguments: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +109,11 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatResponseMessage {
     content: Option<String>,
+    /// Tool calls the assistant decided to emit. Absent for plain
+    /// text replies; present (and possibly non-empty) when tools were
+    /// advertised on the request.
+    #[serde(default)]
+    tool_calls: Option<Vec<OpenAiToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,16 +221,91 @@ fn build_chat_messages(messages: &[Message], system: &Option<String>) -> Vec<Cha
     if let Some(sys) = system {
         out.push(ChatMessage {
             role: "system".to_string(),
-            content: sys.clone(),
+            content: Some(sys.clone()),
+            tool_calls: None,
+            tool_call_id: None,
         });
     }
     for m in messages {
-        out.push(ChatMessage {
-            role: role_to_string(&m.role).to_string(),
-            content: m.content.clone(),
-        });
+        match &m.content {
+            MessageContent::ToolResult {
+                tool_call_id,
+                content,
+            } => {
+                // Tool results carry the linking id at the OpenAI level
+                // and force role=tool regardless of the gateway role
+                // (we treat MessageRole::Tool as canonical here).
+                out.push(ChatMessage {
+                    role: "tool".to_string(),
+                    content: Some(content.clone()),
+                    tool_calls: None,
+                    tool_call_id: Some(tool_call_id.clone()),
+                });
+            }
+            MessageContent::Text { text } => {
+                // Assistant turns with tool_calls can have empty / null
+                // content; serialize `None` so OpenAI accepts the turn.
+                let tool_calls = if m.tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(m.tool_calls.iter().map(to_openai_tool_call).collect())
+                };
+                let content_field = if text.is_empty() && tool_calls.is_some() {
+                    None
+                } else {
+                    Some(text.clone())
+                };
+                out.push(ChatMessage {
+                    role: role_to_string(&m.role).to_string(),
+                    content: content_field,
+                    tool_calls,
+                    tool_call_id: None,
+                });
+            }
+        }
     }
     out
+}
+
+/// Convert a gateway [`ToolDefinition`] into OpenAI's wire shape
+/// (`{type: "function", function: {name, description?, parameters}}`).
+fn build_tools(tools: &[ToolDefinition]) -> Vec<ChatTool> {
+    tools
+        .iter()
+        .map(|t| ChatTool {
+            tool_type: "function",
+            function: ChatToolFunction {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: t.input_schema.clone(),
+            },
+        })
+        .collect()
+}
+
+/// Mirror a gateway [`ToolCall`] onto an [`OpenAiToolCall`] so it can be
+/// echoed back to the provider when the caller continues a multi-turn
+/// tool-calling conversation.
+fn to_openai_tool_call(tc: &ToolCall) -> OpenAiToolCall {
+    OpenAiToolCall {
+        id: tc.id.clone(),
+        tool_type: "function".to_string(),
+        function: OpenAiToolCallFunction {
+            name: tc.name.clone(),
+            arguments: tc.arguments.clone(),
+        },
+    }
+}
+
+/// Convert OpenAI's wire [`OpenAiToolCall`] back to a gateway
+/// [`ToolCall`]. Non-function tool types (none today, but the API leaves
+/// the door open) are filtered upstream by the caller.
+fn from_openai_tool_call(tc: &OpenAiToolCall) -> ToolCall {
+    ToolCall {
+        id: tc.id.clone(),
+        name: tc.function.name.clone(),
+        arguments: tc.function.arguments.clone(),
+    }
 }
 
 fn usage_from_response(usage: &Option<UsageResponse>) -> Option<TokenUsage> {
@@ -284,6 +414,7 @@ impl InferenceAdapter for OpenAIAdapter {
                 system,
                 max_tokens,
                 temperature,
+                tools,
             } => {
                 let body = ChatCompletionRequest {
                     model: model.clone(),
@@ -291,6 +422,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     max_tokens: *max_tokens,
                     temperature: *temperature,
                     stream: false,
+                    tools: build_tools(tools),
                 };
 
                 let resp: ChatCompletionResponse = http_json(
@@ -303,10 +435,12 @@ impl InferenceAdapter for OpenAIAdapter {
                 )
                 .await?;
 
-                let content = resp
-                    .choices
-                    .first()
-                    .and_then(|c| c.message.content.clone());
+                let first = resp.choices.first();
+                let content = first.and_then(|c| c.message.content.clone());
+                let tool_calls: Vec<ToolCall> = first
+                    .and_then(|c| c.message.tool_calls.as_ref())
+                    .map(|tcs| tcs.iter().map(from_openai_tool_call).collect())
+                    .unwrap_or_default();
                 let usage = usage_from_response(&resp.usage);
 
                 Ok(InferenceResponse {
@@ -319,6 +453,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     videos: None,
                     model: Some(model),
                     usage,
+                    tool_calls,
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -354,6 +489,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     videos: None,
                     model: Some(model),
                     usage,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -448,6 +584,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     videos: None,
                     model: Some(model),
                     usage: None,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -521,6 +658,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     videos: None,
                     model: Some(model),
                     usage: None,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -610,6 +748,7 @@ impl InferenceAdapter for OpenAIAdapter {
                     videos: None,
                     model: Some(image_model),
                     usage: None,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -634,6 +773,7 @@ impl InferenceAdapter for OpenAIAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -652,6 +792,10 @@ impl InferenceAdapter for OpenAIAdapter {
             max_tokens: *max_tokens,
             temperature: *temperature,
             stream: true,
+            // Tools-on-streaming is deferred to a follow-up — argument
+            // deltas arrive as JSON fragments and need accumulation in
+            // the stream layer. For now we drop `tools` on streaming.
+            tools: Vec::new(),
         };
 
         let url = format!(
@@ -826,11 +970,7 @@ mod tests {
 
     #[test]
     fn build_chat_request() {
-        let messages = vec![Message {
-            role: MessageRole::User,
-            content: "Hello".to_string(),
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::text(MessageRole::User, "Hello")];
         let system = Some("You are helpful.".to_string());
         let chat_messages = build_chat_messages(&messages, &system);
 
@@ -840,6 +980,7 @@ mod tests {
             max_tokens: Some(1024),
             temperature: Some(0.7),
             stream: false,
+            tools: Vec::new(),
         };
 
         let json = serde_json::to_value(&body).unwrap();
@@ -855,6 +996,139 @@ mod tests {
         assert_eq!(msgs[0]["content"], "You are helpful.");
         assert_eq!(msgs[1]["role"], "user");
         assert_eq!(msgs[1]["content"], "Hello");
+        // tools omitted when empty
+        assert!(json.get("tools").is_none());
+        // tool_calls / tool_call_id omitted on plain messages
+        assert!(msgs[1].get("tool_calls").is_none());
+        assert!(msgs[1].get("tool_call_id").is_none());
+    }
+
+    #[test]
+    fn build_tools_wraps_each_definition_in_function_envelope() {
+        let defs = vec![
+            ToolDefinition {
+                name: "get_weather".into(),
+                description: Some("Look up the weather for a city.".into()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                }),
+            },
+            ToolDefinition {
+                name: "ping".into(),
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+        ];
+        let json = serde_json::to_value(build_tools(&defs)).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["type"], "function");
+        assert_eq!(arr[0]["function"]["name"], "get_weather");
+        assert_eq!(
+            arr[0]["function"]["description"],
+            "Look up the weather for a city."
+        );
+        assert_eq!(arr[0]["function"]["parameters"]["type"], "object");
+        // description omitted entirely when None
+        assert!(arr[1]["function"].get("description").is_none());
+    }
+
+    #[test]
+    fn build_chat_messages_maps_tool_result_to_role_tool_with_tool_call_id() {
+        let msgs = vec![Message::tool_result("call_abc", "{\"weather\":\"sunny\"}")];
+        let out = build_chat_messages(&msgs, &None);
+        let json = serde_json::to_value(&out).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["role"], "tool");
+        assert_eq!(arr[0]["tool_call_id"], "call_abc");
+        assert_eq!(arr[0]["content"], "{\"weather\":\"sunny\"}");
+        assert!(arr[0].get("tool_calls").is_none());
+    }
+
+    #[test]
+    fn build_chat_messages_echoes_assistant_tool_calls_back_to_the_wire() {
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text {
+                text: String::new(),
+            },
+            tool_calls: vec![ToolCall {
+                id: "call_1".into(),
+                name: "get_weather".into(),
+                arguments: "{\"city\":\"Berlin\"}".into(),
+            }],
+        };
+        let out = build_chat_messages(&[msg], &None);
+        let json = serde_json::to_value(&out).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr[0]["role"], "assistant");
+        // Empty text body + non-empty tool_calls → content serialized as null/omitted
+        assert!(arr[0].get("content").is_none());
+        let calls = arr[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["id"], "call_1");
+        assert_eq!(calls[0]["type"], "function");
+        assert_eq!(calls[0]["function"]["name"], "get_weather");
+        assert_eq!(calls[0]["function"]["arguments"], "{\"city\":\"Berlin\"}");
+    }
+
+    #[test]
+    fn chat_request_includes_tools_when_supplied() {
+        let messages = vec![Message::text(MessageRole::User, "What's the weather?")];
+        let tools = vec![ToolDefinition {
+            name: "get_weather".into(),
+            description: Some("Look up the weather.".into()),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let body = ChatCompletionRequest {
+            model: "gpt-4o".to_string(),
+            messages: build_chat_messages(&messages, &None),
+            max_tokens: None,
+            temperature: None,
+            stream: false,
+            tools: build_tools(&tools),
+        };
+        let json = serde_json::to_value(&body).unwrap();
+        let arr = json["tools"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn from_openai_tool_call_strips_function_envelope() {
+        let wire = OpenAiToolCall {
+            id: "call_1".into(),
+            tool_type: "function".into(),
+            function: OpenAiToolCallFunction {
+                name: "get_weather".into(),
+                arguments: "{\"city\":\"Berlin\"}".into(),
+            },
+        };
+        let tc = from_openai_tool_call(&wire);
+        assert_eq!(tc.id, "call_1");
+        assert_eq!(tc.name, "get_weather");
+        assert_eq!(tc.arguments, "{\"city\":\"Berlin\"}");
+    }
+
+    #[test]
+    fn chat_response_message_deserializes_tool_calls_field() {
+        let raw = r#"{
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": "{\"city\":\"Berlin\"}"}
+            }]
+        }"#;
+        let msg: ChatResponseMessage = serde_json::from_str(raw).unwrap();
+        assert!(msg.content.is_none());
+        let calls = msg.tool_calls.unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].function.name, "get_weather");
     }
 
     #[test]
@@ -956,14 +1230,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Hello".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Hello".to_string())],
                 system: None,
                 max_tokens: Some(64),
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         };
@@ -1059,14 +1330,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Say hello in one sentence.".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Say hello in one sentence.".to_string())],
                 system: None,
                 max_tokens: Some(64),
                 temperature: Some(0.3),
+                tools: Vec::new(),
             },
             budget: None,
         };

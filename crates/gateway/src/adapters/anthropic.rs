@@ -36,7 +36,7 @@ struct AnthropicRequest {
 struct AnthropicMessage {
     role: String,
     content: String,
-}
+    }
 
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
@@ -105,7 +105,7 @@ fn extract_system(messages: &[Message], system: &Option<String>) -> Option<Strin
     messages
         .iter()
         .find(|m| m.role == MessageRole::System)
-        .map(|m| m.content.clone())
+        .map(|m| m.as_text().to_string())
 }
 
 /// Build Anthropic message array: filter out System messages, map Tool → user.
@@ -122,7 +122,7 @@ fn build_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
             };
             AnthropicMessage {
                 role: role.to_string(),
-                content: m.content.clone(),
+                content: m.as_text().to_string(),
             }
         })
         .collect()
@@ -193,6 +193,7 @@ impl InferenceAdapter for AnthropicAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -275,6 +276,7 @@ impl InferenceAdapter for AnthropicAdapter {
             images: None,
             videos: None,
             model: Some(model),
+            tool_calls: Vec::new(),
             usage: Some(usage),
             estimated_cost: None,
             actual_cost: None,
@@ -293,6 +295,7 @@ impl InferenceAdapter for AnthropicAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -440,11 +443,7 @@ mod tests {
 
     #[test]
     fn build_anthropic_request_basic() {
-        let messages = vec![Message {
-            role: MessageRole::User,
-            content: "Hello".to_string(),
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::text(MessageRole::User, "Hello")];
 
         let anthropic_messages = build_messages(&messages);
         let body = AnthropicRequest {
@@ -471,11 +470,7 @@ mod tests {
 
     #[test]
     fn build_anthropic_request_with_system() {
-        let messages = vec![Message {
-            role: MessageRole::User,
-            content: "Hi".to_string(),
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::text(MessageRole::User, "Hi")];
         let system = Some("You are helpful.".to_string());
 
         let extracted = extract_system(&messages, &system);
@@ -505,26 +500,10 @@ mod tests {
     #[test]
     fn build_anthropic_request_filters_system_messages() {
         let messages = vec![
-            Message {
-                role: MessageRole::System,
-                content: "Be concise.".to_string(),
-                tool_call_id: None,
-            },
-            Message {
-                role: MessageRole::User,
-                content: "Hello".to_string(),
-                tool_call_id: None,
-            },
-            Message {
-                role: MessageRole::Assistant,
-                content: "Hi!".to_string(),
-                tool_call_id: None,
-            },
-            Message {
-                role: MessageRole::Tool,
-                content: "result: 42".to_string(),
-                tool_call_id: Some("tc_1".to_string()),
-            },
+            Message::text(MessageRole::System, "Be concise."),
+            Message::text(MessageRole::User, "Hello"),
+            Message::text(MessageRole::Assistant, "Hi!"),
+            Message::tool_result("tc_1", "result: 42"),
         ];
 
         let extracted = extract_system(&messages, &None);
@@ -634,14 +613,14 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Say hello in one sentence.".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(
+                    MessageRole::User,
+                    "Say hello in one sentence.",
+                )],
                 system: None,
                 max_tokens: Some(64),
                 temperature: Some(0.3),
+                tools: Vec::new(),
             },
             budget: None,
         };

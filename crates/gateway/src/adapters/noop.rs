@@ -67,6 +67,7 @@ impl InferenceAdapter for NoopAdapter {
             images: None,
             videos: None,
             model: None,
+            tool_calls: Vec::new(),
             usage: None,
             estimated_cost: None,
             actual_cost: None,
@@ -115,14 +116,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "hello".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "hello".to_string())],
                 system: None,
                 max_tokens: None,
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         }

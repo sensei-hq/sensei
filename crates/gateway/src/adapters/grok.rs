@@ -33,7 +33,7 @@ struct ChatCompletionRequest {
 struct ChatMessage {
     role: String,
     content: String,
-}
+    }
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
@@ -121,16 +121,10 @@ fn resolve_model(request: &InferenceRequest, default: &str) -> String {
 fn build_chat_messages(messages: &[Message], system: &Option<String>) -> Vec<ChatMessage> {
     let mut out = Vec::new();
     if let Some(sys) = system {
-        out.push(ChatMessage {
-            role: "system".to_string(),
-            content: sys.clone(),
-        });
+        out.push(ChatMessage { role: "system".to_string(), content: sys.clone() });
     }
     for m in messages {
-        out.push(ChatMessage {
-            role: role_to_string(&m.role).to_string(),
-            content: m.content.clone(),
-        });
+        out.push(ChatMessage { role: role_to_string(&m.role).to_string(), content: m.as_text().to_string() });
     }
     out
 }
@@ -212,6 +206,7 @@ impl InferenceAdapter for GrokAdapter {
                 system,
                 max_tokens,
                 temperature,
+                tools: _,
             } => {
                 let model = resolve_model(request, DEFAULT_CHAT_MODEL);
 
@@ -249,6 +244,7 @@ impl InferenceAdapter for GrokAdapter {
                     videos: None,
                     model: Some(model),
                     usage,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -345,6 +341,7 @@ impl InferenceAdapter for GrokAdapter {
                     videos: None,
                     model: Some(model),
                     usage: None,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -419,6 +416,7 @@ impl InferenceAdapter for GrokAdapter {
                     videos: None,
                     model: Some(model),
                     usage: None,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -453,6 +451,7 @@ impl InferenceAdapter for GrokAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -575,11 +574,7 @@ mod tests {
 
     #[test]
     fn build_chat_request() {
-        let messages = vec![Message {
-            role: MessageRole::User,
-            content: "Hello".to_string(),
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::text(MessageRole::User, "Hello".to_string())];
 
         let chat_messages = build_chat_messages(&messages, &None);
 
@@ -609,11 +604,7 @@ mod tests {
 
     #[test]
     fn build_chat_request_with_system() {
-        let messages = vec![Message {
-            role: MessageRole::User,
-            content: "Hi".to_string(),
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::text(MessageRole::User, "Hi".to_string())];
         let system = Some("You are a helpful assistant.".to_string());
 
         let chat_messages = build_chat_messages(&messages, &system);
@@ -721,14 +712,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Hello".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Hello".to_string())],
                 system: None,
                 max_tokens: Some(64),
                 temperature: None,
+                tools: Vec::new(),
             },
             budget: None,
         };
@@ -762,14 +750,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Say hello in one sentence.".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Say hello in one sentence.".to_string())],
                 system: None,
                 max_tokens: Some(64),
                 temperature: Some(0.3),
+                tools: Vec::new(),
             },
             budget: None,
         };
