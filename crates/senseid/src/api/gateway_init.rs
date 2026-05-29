@@ -125,6 +125,17 @@ pub async fn init_gateway() -> Arc<Gateway> {
         }
         Err(e) => tracing::warn!("Gateway: Gemini adapter failed: {}", e),
     }
+    // Bedrock loads AWS credentials lazily via the SDK's provider
+    // chain (env vars → shared credentials → IAM role → IMDS). The
+    // adapter constructs without credentials present; requests will
+    // fail at execute-time if no credentials resolve.
+    match gateway::adapters::bedrock::BedrockAdapter::new().await {
+        Ok(adapter) => {
+            tracing::info!("Gateway: Bedrock adapter registered");
+            adapters.register(Arc::new(adapter) as Arc<dyn InferenceAdapter>).await;
+        }
+        Err(e) => tracing::warn!("Gateway: Bedrock adapter failed: {}", e),
+    }
 
     // Baseline production config — ships the known router/model entries
     // that the setup wizard's Inference stage exposes. Without these,
@@ -223,6 +234,20 @@ fn baseline_production_config() -> GatewayConfig {
         timeout_ms: Some(120_000),
         headers: HashMap::new(),
     });
+    // AWS Bedrock — the SDK handles auth via the credential-provider
+    // chain (AWS_ACCESS_KEY_ID / shared credentials / IAM role) and the
+    // request URL is derived from the chosen region, so the
+    // RouterConfig.url + api_key fields aren't used. The url is set to
+    // a non-empty placeholder so existing config-validation paths that
+    // require a non-empty url stay happy.
+    routers.insert("bedrock".into(), RouterConfig {
+        url: "aws://bedrock".into(),
+        api_key_env: Some("AWS_ACCESS_KEY_ID".into()),
+        api_key: None,
+        enabled: true,
+        timeout_ms: Some(120_000),
+        headers: HashMap::new(),
+    });
 
     let mut models: HashMap<String, ModelConfig> = HashMap::new();
     models.insert("dall-e-3".into(), ModelConfig {
@@ -310,6 +335,18 @@ fn baseline_production_config() -> GatewayConfig {
         capabilities: vec![Capability::TextEmbed],
         context_window: 2_048,
         max_output_tokens: 0,
+        pricing: None,
+    });
+    // Bedrock — Claude Sonnet 3.5 v2 is the most broadly-available
+    // chat model. Additional Bedrock models (Llama, Mistral, Titan)
+    // can be added through the DB-driven config path.
+    models.insert("bedrock-claude-3-5-sonnet".into(), ModelConfig {
+        id: "bedrock-claude-3-5-sonnet".into(),
+        api_model_id: Some("anthropic.claude-3-5-sonnet-20241022-v2:0".into()),
+        provider: "bedrock".into(),
+        capabilities: vec![Capability::TextChat],
+        context_window: 200_000,
+        max_output_tokens: 8_192,
         pricing: None,
     });
 
@@ -477,7 +514,7 @@ mod tests {
     #[test]
     fn baseline_config_includes_routers_and_models_for_every_new_provider() {
         let cfg = baseline_production_config();
-        for id in ["openrouter", "vercel", "nvidia", "gemini"] {
+        for id in ["openrouter", "vercel", "nvidia", "gemini", "bedrock"] {
             assert!(
                 cfg.routers.contains_key(id),
                 "baseline routers should include '{id}', got {:?}",
@@ -498,7 +535,7 @@ mod tests {
             .values()
             .map(|m| m.provider.as_str())
             .collect();
-        for id in ["openrouter", "vercel", "nvidia", "gemini"] {
+        for id in ["openrouter", "vercel", "nvidia", "gemini", "bedrock"] {
             assert!(
                 providers_with_models.contains(id),
                 "expected at least one model with provider='{id}'"
