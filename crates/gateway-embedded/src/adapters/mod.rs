@@ -9,7 +9,7 @@
 pub mod llama_cpp;
 
 #[cfg(feature = "llama-cpp")]
-pub use llama_cpp::LlamaCppAdapter;
+pub use llama_cpp::{LlamaCppAdapter, LlamaCppConfig, LlamaCppMode};
 
 #[cfg(feature = "fastembed")]
 pub mod fastembed;
