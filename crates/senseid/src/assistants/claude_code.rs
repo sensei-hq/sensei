@@ -23,6 +23,127 @@ fn installed_plugins_manifest() -> PathBuf {
     home().join(".claude/plugins/installed_plugins.json")
 }
 
+/// MCP server registry keys the daemon owns. Any entry under these keys in a
+/// user/project MCP config is presumed to be sensei's and gets removed during
+/// cleanup so the plugin install can re-register cleanly. The user has
+/// explicitly authorised this scope (sensei/sensei-dev are daemon-owned).
+const SENSEI_MCP_KEYS: &[&str] = &["sensei", "sensei-dev"];
+
+/// Remove any sensei-keyed (`sensei` or `sensei-dev`) entries from a user/project
+/// `mcp.json`-shaped file. Writes a `.bak` next to the file before editing so
+/// the original is recoverable. Returns the list of keys removed. No-op (and
+/// no `.bak` written) when the file is missing or carries no sensei keys.
+///
+/// This is the auto-cleanup gate that lets `configure()` heal stale state
+/// from prior install attempts without the user having to edit JSON.
+fn clean_user_mcp_json(path: &Path) -> Result<Vec<String>, String> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let original = std::fs::read_to_string(path)
+        .map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let mut value: serde_json::Value = json5::from_str(&original)
+        .map_err(|e| format!("parse {}: {}", path.display(), e))?;
+
+    let Some(servers) = value.get_mut("mcpServers").and_then(|s| s.as_object_mut()) else {
+        return Ok(vec![]);
+    };
+
+    let mut removed = Vec::new();
+    for key in SENSEI_MCP_KEYS {
+        if servers.remove(*key).is_some() {
+            removed.push((*key).to_string());
+        }
+    }
+    if removed.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Backup BEFORE the destructive write. If anything below fails the user
+    // still has the original on disk at `<path>.bak`.
+    let backup = path.with_extension(
+        path.extension().and_then(|e| e.to_str()).map(|e| format!("{}.bak", e))
+            .unwrap_or_else(|| "bak".into()),
+    );
+    std::fs::write(&backup, &original)
+        .map_err(|e| format!("write backup {}: {}", backup.display(), e))?;
+
+    let serialized = serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("serialise {}: {}", path.display(), e))?;
+    std::fs::write(path, serialized)
+        .map_err(|e| format!("write {}: {}", path.display(), e))?;
+
+    info!(path = %path.display(), removed = ?removed, "cleaned stale sensei mcp entries");
+    Ok(removed)
+}
+
+/// Locate the on-disk manifest for an installed Claude Code plugin. Reads
+/// `installed_plugins.json`, finds the first entry whose key starts with
+/// `{plugin_name}@`, and returns `<installPath>/.claude-plugin/plugin.json`
+/// if it exists. Returns `None` if the plugin isn't installed, the manifest
+/// can't be parsed, or the file isn't where the manifest claims it is.
+///
+/// `_claude_bin` is reserved for a future implementation that queries the
+/// claude CLI directly; we read the manifest because it's stable and doesn't
+/// require parsing CLI output.
+fn find_cached_plugin_manifest(_claude_bin: &Path, plugin_name: &str) -> Option<PathBuf> {
+    let manifest = installed_plugins_manifest();
+    let content = std::fs::read_to_string(&manifest).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let plugins = value.get("plugins")?.as_object()?;
+    let prefix = format!("{}@", plugin_name);
+    let entries = plugins.iter().find(|(k, _)| k.starts_with(&prefix))?.1;
+    // `plugins[key]` is an array of install records; pick the first.
+    let install_path = entries.as_array()?
+        .first()?
+        .get("installPath")?
+        .as_str()?;
+    let plugin_json = Path::new(install_path).join(".claude-plugin/plugin.json");
+    plugin_json.exists().then_some(plugin_json)
+}
+
+/// In dev mode, rewrite the cached plugin manifest at `path` so the MCP entry
+/// uses the dev key (`sensei-dev`) and dev binary (`sensei-mcp-dev`) instead
+/// of the prod defaults. Returns Ok(true) if a change was written, Ok(false)
+/// if the manifest was already dev-shaped (idempotent), and Err on read/write
+/// failures.
+///
+/// The marketplace ships a single plugin manifest for both modes — this is
+/// the daemon-side override that makes the dev MCP actually connect to the
+/// dev binary. Re-running `configure()` is safe; `claude plugin update` will
+/// revert this and the daemon-startup re-apply (task #18) heals it.
+fn patch_dev_plugin_manifest(path: &Path) -> Result<bool, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let mut value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("parse {}: {}", path.display(), e))?;
+
+    let Some(servers) = value.get_mut("mcpServers").and_then(|s| s.as_object_mut()) else {
+        return Ok(false); // manifest has no MCP block; nothing to patch
+    };
+
+    // Already dev-shaped? Idempotent no-op.
+    if servers.contains_key("sensei-dev") && !servers.contains_key("sensei") {
+        return Ok(false);
+    }
+
+    // Pull the prod entry, rewrite its command, and re-insert under the dev key.
+    let Some(mut entry) = servers.remove("sensei") else {
+        return Ok(false); // no prod entry to migrate
+    };
+    if let Some(obj) = entry.as_object_mut() {
+        obj.insert("command".into(), serde_json::Value::String("sensei-mcp-dev".into()));
+    }
+    servers.insert("sensei-dev".into(), entry);
+
+    let serialized = serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("serialise {}: {}", path.display(), e))?;
+    std::fs::write(path, serialized)
+        .map_err(|e| format!("write {}: {}", path.display(), e))?;
+    info!(path = %path.display(), "patched dev plugin manifest (sensei → sensei-dev)");
+    Ok(true)
+}
+
 /// All Claude Code hook event types sensei listens to.
 const HOOK_EVENTS: &[&str] = &[
     "SessionStart",
@@ -69,6 +190,23 @@ impl Assistant for ClaudeCodeAssistant {
         let claude_bin = find_claude_binary()
             .ok_or_else(|| "claude binary not found on PATH".to_string())?;
 
+        let mut warnings = Vec::new();
+
+        // 0. Auto-cleanup of stale state from prior install attempts. The
+        //    daemon owns the sensei/sensei-dev MCP keys (user authorised); any
+        //    leftover entries here would either be broken (wrong binary path)
+        //    or about to be re-registered by the plugin install below. Sweep
+        //    them now so a re-run heals the state without the user editing
+        //    JSON by hand.
+        let user_mcp = home().join(".claude/mcp.json");
+        match clean_user_mcp_json(&user_mcp) {
+            Ok(removed) if !removed.is_empty() => {
+                info!(removed = ?removed, "configure: cleaned stale sensei entries from ~/.claude/mcp.json");
+            }
+            Ok(_)  => {}
+            Err(e) => warnings.push(format!("cleanup ~/.claude/mcp.json: {}", e)),
+        }
+
         // 1. Register marketplace. `claude plugin marketplace add` returns
         //    non-zero if the marketplace is already registered — that's not an
         //    error for us. Probe with `marketplace list` first instead of
@@ -112,11 +250,26 @@ impl Assistant for ClaudeCodeAssistant {
             ));
         }
 
-        // 3. Dev daemon additionally registers sensei-hook-dev.ts so the dev
+        // 3. Dev mode only: rewrite the cached plugin manifest's MCP entry to
+        //    use the dev binary (sensei-mcp-dev) and dev key (sensei-dev). The
+        //    marketplace ships a single prod-flavoured manifest; this is the
+        //    daemon-side override so dev MCP actually connects. Best-effort —
+        //    surfaced as a warning if it fails because the plugin install
+        //    itself is already healthy.
+        if crate::paths::mode().is_dev()
+            && let Some(plugin_manifest) = find_cached_plugin_manifest(&claude_bin, "sensei")
+        {
+            match patch_dev_plugin_manifest(&plugin_manifest) {
+                Ok(true)  => info!("configure: dev plugin manifest patched"),
+                Ok(false) => {}
+                Err(e)    => warnings.push(format!("dev plugin manifest patch: {}", e)),
+            }
+        }
+
+        // 4. Dev daemon additionally registers sensei-hook-dev.ts so the dev
         //    daemon also receives hook events (alongside the release hooks from
         //    step 2). Dev-hook failure is non-fatal — plugin install already
         //    succeeded — but surface it as a warning so the operator knows.
-        let mut warnings = Vec::new();
         if crate::paths::mode().is_dev()
             && let Err(e) = write_dev_hook_entries()
         {
@@ -406,6 +559,134 @@ mod tests {
             }
         }"#).unwrap();
         assert!(!verify_plugin_installed(&manifest, "sensei"));
+    }
+
+    // ── clean_user_mcp_json: auto-cleanup of stale sensei MCP entries ────────
+    //
+    // ~/.claude/mcp.json accumulates broken `sensei` entries from prior
+    // install attempts (e.g. command="sensei-mcp" when only sensei-mcp-dev
+    // is on PATH, or command="bun /old/path" pointing at a moved repo).
+    // configure() runs cleanup_stale() first so a re-run heals these without
+    // the user having to edit JSON by hand. The user has explicitly authorised
+    // removing ANY entry keyed sensei/sensei-dev — the daemon owns those keys.
+
+    #[test]
+    fn clean_user_mcp_json_removes_sensei_entry() {
+        let tmp = make_tmp_home();
+        let mcp = tmp.path().join("mcp.json");
+        std::fs::write(&mcp, r#"{
+            "mcpServers": {
+                "sensei":    { "command": "sensei-mcp" },
+                "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }
+            }
+        }"#).unwrap();
+
+        let removed = clean_user_mcp_json(&mcp).unwrap();
+        assert_eq!(removed.iter().map(|s| s.as_str()).collect::<Vec<_>>(), vec!["sensei"]);
+
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
+        assert!(v["mcpServers"]["sensei"].is_null(), "sensei key should be gone");
+        assert!(v["mcpServers"]["playwright"].is_object(), "playwright key must survive");
+    }
+
+    #[test]
+    fn clean_user_mcp_json_removes_sensei_dev_entry() {
+        let tmp = make_tmp_home();
+        let mcp = tmp.path().join("mcp.json");
+        std::fs::write(&mcp, r#"{
+            "mcpServers": {
+                "sensei-dev": { "command": "sensei-mcp-dev" }
+            }
+        }"#).unwrap();
+
+        let removed = clean_user_mcp_json(&mcp).unwrap();
+        assert_eq!(removed, vec!["sensei-dev"]);
+
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
+        let servers = v["mcpServers"].as_object().unwrap();
+        assert!(servers.is_empty(), "all sensei-keyed entries removed");
+    }
+
+    #[test]
+    fn clean_user_mcp_json_writes_backup_before_editing() {
+        let tmp = make_tmp_home();
+        let mcp = tmp.path().join("mcp.json");
+        let original = r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"}}}"#;
+        std::fs::write(&mcp, original).unwrap();
+
+        clean_user_mcp_json(&mcp).unwrap();
+
+        let backup = mcp.with_extension("json.bak");
+        assert!(backup.exists(), ".bak must be written before any destructive edit");
+        let backup_content = std::fs::read_to_string(&backup).unwrap();
+        assert_eq!(backup_content, original, "backup must mirror the file as it was before edit");
+    }
+
+    #[test]
+    fn clean_user_mcp_json_no_op_when_no_sensei_entries() {
+        let tmp = make_tmp_home();
+        let mcp = tmp.path().join("mcp.json");
+        std::fs::write(&mcp, r#"{"mcpServers":{"playwright":{"command":"npx"}}}"#).unwrap();
+
+        let removed = clean_user_mcp_json(&mcp).unwrap();
+        assert!(removed.is_empty());
+        // No backup when nothing changed
+        let backup = mcp.with_extension("json.bak");
+        assert!(!backup.exists(), "no .bak should be written when no edits happened");
+    }
+
+    #[test]
+    fn clean_user_mcp_json_no_op_when_file_missing() {
+        let tmp = make_tmp_home();
+        let mcp = tmp.path().join("does-not-exist.json");
+        let removed = clean_user_mcp_json(&mcp).unwrap();
+        assert!(removed.is_empty());
+    }
+
+    // ── patch_dev_plugin_manifest: rewrite cached plugin.json for dev mode ───
+    //
+    // The marketplace ships ONE plugin manifest with `mcpServers.sensei.command
+    // = "sensei-mcp"` (prod binary). In dev mode the binary doesn't exist —
+    // only `sensei-mcp-dev` does. After `claude plugin install sensei` lands,
+    // configure() runs this helper to rewrite the cached manifest's MCP entry
+    // to use the dev key + binary. Idempotent so re-running configure() is
+    // safe.
+
+    #[test]
+    fn patch_dev_plugin_manifest_renames_key_and_command() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("plugin.json");
+        std::fs::write(&manifest, r#"{
+            "name": "sensei",
+            "mcpServers": { "sensei": { "command": "sensei-mcp" } }
+        }"#).unwrap();
+
+        let changed = patch_dev_plugin_manifest(&manifest).unwrap();
+        assert!(changed, "first call should report a change");
+
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+        assert!(v["mcpServers"]["sensei"].is_null(), "prod key must be removed");
+        assert_eq!(v["mcpServers"]["sensei-dev"]["command"], "sensei-mcp-dev");
+    }
+
+    #[test]
+    fn patch_dev_plugin_manifest_is_idempotent() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("plugin.json");
+        std::fs::write(&manifest, r#"{
+            "name": "sensei",
+            "mcpServers": { "sensei-dev": { "command": "sensei-mcp-dev" } }
+        }"#).unwrap();
+
+        let changed = patch_dev_plugin_manifest(&manifest).unwrap();
+        assert!(!changed, "no change needed when manifest is already dev-shaped");
+    }
+
+    #[test]
+    fn patch_dev_plugin_manifest_errs_on_missing_file() {
+        let tmp = make_tmp_home();
+        let manifest = tmp.path().join("nope.json");
+        assert!(patch_dev_plugin_manifest(&manifest).is_err());
     }
 
     #[test]
