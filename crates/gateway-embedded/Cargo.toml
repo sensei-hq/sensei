@@ -1,0 +1,22 @@
+[package]
+name = "gateway-embedded"
+version = "0.2.14"
+edition = "2024"
+description = "In-process inference adapters and model registry for the sensei gateway"
+license = "MIT"
+
+[features]
+default = []
+# llama-cpp, fastembed, ort engines land in subsequent commits and gate their deps here.
+
+[dependencies]
+gateway = { path = "../gateway" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
