@@ -4,9 +4,10 @@ import { appState } from '$lib/appstate.svelte.js';
 
 export const load: PageLoad = async () => {
   const api = senseiApi(appState.port);
-  const [ftrData, projects] = await Promise.all([
+  const [ftrData, projects, sessionsData] = await Promise.all([
     api.getHolisticFtrDaily(14),
     api.listProjects(),
+    api.getSessions(),
   ]);
 
   // Build per-project FTR for sidebar
@@ -36,10 +37,19 @@ export const load: PageLoad = async () => {
     topRecommendations = (r as any[]).slice(0, 3);
   }
 
+  // Recent sessions (top 4) for the home page list. Total count drives the
+  // early-mode hero body ("Sensei has watched N sessions so far…"). The
+  // daemon returns sessions newest-first; no extra sort needed.
+  const allSessions = sessionsData.sessions ?? [];
+  const recentSessions = allSessions.slice(0, 4);
+  const sessionsTotal  = allSessions.length;
+
   return {
     ftrDaily: ftrData.ftr_daily,
     projectFtrs,
     teachings,
     topRecommendations,
+    recentSessions,
+    sessionsTotal,
   };
 };
