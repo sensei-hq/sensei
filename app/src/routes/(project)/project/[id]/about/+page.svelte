@@ -37,7 +37,7 @@
                 Stack
             </h3>
             <div class="flex flex-wrap gap-1.5">
-                {#each [...(p.stack.languages ?? []), ...(p.stack.frameworks ?? [])] as t}
+                {#each [...(p.stack?.languages ?? []), ...(p.stack?.frameworks ?? [])] as t}
                     <span class="bg-surface-z3 text-xs px-2 py-1 rounded-md"
                         >{t}</span
                     >

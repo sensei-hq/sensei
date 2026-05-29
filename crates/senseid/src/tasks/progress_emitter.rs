@@ -6,9 +6,6 @@
 //! and emits a StateEvent::folder_update at most every 300ms or after 25
 //! files (whichever fires first). When the terminal BuildConnections task
 //! for a folder completes, emits a final folder_update with status=Indexed.
-//!
-//! NOTE: Currently wired in W5. Functions and types marked #[allow(dead_code)]
-//! are intentionally unused here but will be called by the event emitter task.
 
 use crate::api::events::{StateEvent, ScanFolder, FolderKind, FolderStatus};
 use crate::tasks::progress::TaskEvent;
@@ -17,11 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
-// TEMP (2026-05-28): throttle effectively disabled to diagnose "stuck at 0/N"
-// reports in the live app. Restore 300ms / 25 files once we understand whether
-// the issue is throttling, missing trackers, or upstream task execution.
-const THROTTLE_DURATION: Duration = Duration::from_millis(0);
-const THROTTLE_FILE_DELTA: u32 = 1;
+const THROTTLE_DURATION: Duration = Duration::from_millis(300);
+const THROTTLE_FILE_DELTA: u32 = 25;
 
 #[derive(Clone)]
 struct FolderTracker {
@@ -32,7 +26,13 @@ struct FolderTracker {
     kind:            FolderKind,
     stack:           Vec<String>,
     files_total:     u32,
+    /// Successfully processed + failed file tasks combined. A failed task
+    /// has still consumed its slot in the work list, so progress (and the
+    /// UI bar) needs to count it toward completion or the bar permanently
+    /// undershoots. The breakdown is kept on `files_failed` for future
+    /// reporting; the wire `files_completed` is the union.
     files_completed: u32,
+    files_failed:    u32,
     last_emit_at:    Instant,
     last_emit_count: u32,
 }
@@ -84,9 +84,27 @@ async fn run(
                     trackers.insert(folder_path, t);
                 }
             }
+            // Both Completed and Failed advance the progress denominator. A
+            // file task that errored out (parse failure, IO error) still
+            // consumed its slot in the work list; without counting it the
+            // bar can never reach 100% on a repo where any file fails.
             TaskEvent::Completed { kind, folder_path, .. } if kind == "process_file" => {
                 if let Some(t) = trackers.get_mut(&folder_path) {
                     t.files_completed += 1;
+                    let now = Instant::now();
+                    if t.should_emit(now) {
+                        t.last_emit_at = now;
+                        t.last_emit_count = t.files_completed;
+                        let _ = state_events.send(StateEvent::folder_update(
+                            scan_folder_from(t, FolderStatus::Indexing),
+                        ));
+                    }
+                }
+            }
+            TaskEvent::Failed { kind, folder_path, .. } if kind == "process_file" => {
+                if let Some(t) = trackers.get_mut(&folder_path) {
+                    t.files_completed += 1;
+                    t.files_failed += 1;
                     let now = Instant::now();
                     if t.should_emit(now) {
                         t.last_emit_at = now;
@@ -165,6 +183,7 @@ async fn build_tracker(
         stack: vec![],
         files_total,
         files_completed: 0,
+        files_failed: 0,
         last_emit_at: Instant::now(),
         last_emit_count: 0,
     })
@@ -186,6 +205,7 @@ mod tests {
             stack: vec![],
             files_total,
             files_completed: 0,
+            files_failed: 0,
             last_emit_at: now,
             last_emit_count: 0,
         }

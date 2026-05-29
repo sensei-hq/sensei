@@ -55,6 +55,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@rokkit/ui@1.0.5": "patches/@rokkit%2Fui@1.0.5.patch",
+  },
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.4.4", "", {}, "sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg=="],
 

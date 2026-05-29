@@ -1,140 +1,29 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
-    import { appState } from "$lib/appstate.svelte.js";
-    import { senseiApi } from "$lib/api.js";
-    import { wizardState } from "$lib/wizard-state.svelte.js";
-    import { EventManager } from "$lib/events.js";
-    import {
-        ScanProjectState,
-        ScanActivityState,
-    } from "$lib/scan-state.svelte.js";
-    import type {
-        StateEvent,
-        ScanProject,
-        ScanFolderEvent,
-        ActivityEvent,
-    } from "$lib/types.js";
+    import { onMount } from "svelte";
+    import { scanState } from "$lib/scan-state.svelte.js";
 
-    const projects = new ScanProjectState();
-    const activities = new ScanActivityState();
+    const projects = scanState.projects;
+    const activities = scanState.activities;
 
-    let rootCount = $state(0);
-    let started = $state(false);
-    let error = $state<string | null>(null);
-    let daemonReachable = $state(true);
-    let unsub: (() => void) | null = null;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    // The scan is owned by this stage. Auto-engage on mount so the page
+    // reflects current daemon state without a manual button — the
+    // singleton's idempotency guard makes repeat calls cheap.
+    onMount(() => { void scanState.start(); });
 
-    const LEVEL_COLORS: Record<string, string> = {
-        discover: "oklch(var(--color-surface-z6) / 1)",
-        queue: "oklch(var(--color-warning-z5) / 1)",
-        process: "oklch(var(--color-primary-z5) / 1)",
-        info: "oklch(var(--color-surface-z7) / 1)",
-        success: "oklch(var(--color-success-z5) / 1)",
-        error: "oklch(var(--color-danger-z5) / 1)",
+    // Task-status colors used by the right-panel folder list. Status
+    // transitions queued → indexing → indexed (or → failed), each shown
+    // with its own colour so the user can see live state at a glance.
+    const STATUS_COLORS: Record<string, string> = {
+        discovered: "oklch(var(--color-surface-z6) / 1)",
+        queued:     "oklch(var(--color-warning-z5) / 1)",
+        indexing:   "oklch(var(--color-primary-z5) / 1)",
+        indexed:    "oklch(var(--color-success-z5) / 1)",
+        failed:     "oklch(var(--color-danger-z5) / 1)",
     };
-
-    /**
-     * Poll /api/index/status until the task queue is idle (pending=0, running=0).
-     *
-     * SSE gives us per-item progress events but no "queue idle" event, so we poll
-     * the status endpoint as the authoritative completion signal. The interval is
-     * long (1.5 s) and there is no artificial upper limit — large codebases can
-     * take hours and should not be cut short.
-     *
-     * Polling stops naturally when:
-     *   • The queue reaches idle (2 consecutive empty polls to debounce transients)
-     *   • The component is destroyed (onDestroy clears the interval)
-     *   • The user navigates away (same)
-     */
-    function startDonePoller(api: ReturnType<typeof senseiApi>) {
-        let idlePolls = 0;
-        setTimeout(() => {
-            pollTimer = setInterval(async () => {
-                try {
-                    const s = await api.getIndexStatus();
-                    daemonReachable = true;
-                    if (s.queue.pending === 0 && s.queue.running === 0) {
-                        idlePolls++;
-                        // Require 2 consecutive idle polls to debounce a transient empty queue
-                        if (idlePolls >= 2) {
-                            wizardState.scan.done = true;
-                            if (pollTimer) clearInterval(pollTimer);
-                        }
-                    } else {
-                        idlePolls = 0; // reset on any active work
-                    }
-                } catch {
-                    // Surface daemon-unreachable transiently so the user has
-                    // a signal instead of staring at a stalled progress bar.
-                    daemonReachable = false;
-                }
-            }, 1500);
-        }, 1500);
-    }
-
-    function resetScanState() {
-        error = null;
-        daemonReachable = true;
-        wizardState.scan.done = false;
-        projects.items = [];
-        activities.items = [];
-        if (pollTimer) {
-            clearInterval(pollTimer);
-            pollTimer = null;
-        }
-        unsub?.();
-        unsub = null;
-    }
-
-    async function startScan() {
-        resetScanState();
-        started = true;
-        const api = senseiApi(appState.port);
-
-        try {
-            const roots = await api.getScanRoots();
-            rootCount = roots.length;
-
-            // Connect to SSE
-            const events = new EventManager<StateEvent<any>>(
-                `http://127.0.0.1:${appState.port}/api/scan/events`,
-                (data) => JSON.parse(data),
-            );
-
-            unsub = events.subscribe((event) => {
-                if (event.entity === "project")
-                    projects.apply(event as StateEvent<ScanProject>);
-                if (event.entity === "folder")
-                    projects.applyFolder(
-                        event as StateEvent<ScanFolderEvent>,
-                    );
-                if (event.entity === "activity")
-                    activities.apply(event as StateEvent<ActivityEvent>);
-            });
-
-            // Trigger scans in parallel — a sequential await blocks a slow
-            // root from being processed while siblings are still pending.
-            // Already-scanned roots are skipped; the daemon's file watcher
-            // manages them.
-            const pending = roots.filter((r) => !r.scanned);
-            await Promise.all(pending.map((r) => api.scanFolder(r.path)));
-
-            // Begin polling for task queue idle — marks scan done when complete
-            startDonePoller(api);
-        } catch (e) {
-            error = e instanceof Error ? e.message : String(e);
-        }
-    }
-
-    onDestroy(() => {
-        unsub?.();
-        if (pollTimer) clearInterval(pollTimer);
-    });
 </script>
 
 <div class="max-w-[960px]">
-    {#if !started}
+    {#if !scanState.started}
         <div
             class="flex flex-col items-center text-center gap-6 bg-surface-z2 rounded-lg px-10 py-12"
         >
@@ -147,10 +36,10 @@
                 The daemon will recurse your folders, identify folders, and
                 extract the code graph.
             </p>
-            <button class="btn-solid" onclick={startScan}>Begin scan →</button>
+            <button class="btn-solid" onclick={() => scanState.start()}>Begin scan →</button>
         </div>
     {:else}
-        {#if error}
+        {#if scanState.error}
             <div
                 class="mb-6 p-4 rounded-md border border-danger-z5 bg-surface-z2 flex items-start justify-between gap-4"
             >
@@ -159,14 +48,14 @@
                         Scan failed
                     </div>
                     <div class="text-xs text-surface-z7 mt-1 font-mono">
-                        {error}
+                        {scanState.error}
                     </div>
                 </div>
-                <button class="btn-outline shrink-0" onclick={startScan}>
+                <button class="btn-outline shrink-0" onclick={() => scanState.start()}>
                     Retry
                 </button>
             </div>
-        {:else if !daemonReachable}
+        {:else if !scanState.daemonReachable}
             <div
                 class="mb-4 p-2.5 rounded-md bg-surface-z2 text-xs text-warning-z5"
             >
@@ -178,7 +67,7 @@
         <div
             class="grid grid-cols-4 gap-4 mb-6 pb-6 border-b border-surface-z2"
         >
-            {#each [{ value: rootCount, label: "ROOTS" }, { value: activities.discovered, label: "DISCOVERED" }, { value: activities.queued, label: "QUEUED" }, { value: projects.readyFolders, label: "PROCESSED" }] as stat}
+            {#each [{ value: scanState.rootCount, label: "ROOTS" }, { value: activities.discovered, label: "DISCOVERED" }, { value: projects.pendingFolders, label: "QUEUED" }, { value: projects.readyFolders, label: "PROCESSED" }] as stat}
                 <div class="text-center">
                     <div class="display text-3xl leading-tight">
                         {stat.value}
@@ -193,7 +82,7 @@
         <div class="grid grid-cols-[1fr_340px] gap-6">
             <!-- Left: Project cards -->
             <div class="flex flex-col gap-4">
-                {#each projects.items as proj (proj.id)}
+                {#each projects.sortedItems as proj (proj.id)}
                     {@const path = projects.projectPath(proj)}
                     {@const folderCount = proj.folders.length}
                     {@const readyCount = proj.folders.filter(
@@ -235,7 +124,7 @@
                         {/if}
 
                         <div class="flex flex-col gap-2">
-                            {#each proj.folders as f (f.id)}
+                            {#each [...proj.folders].sort((a, b) => (b.lastUpdated ?? 0) - (a.lastUpdated ?? 0)) as f (f.id)}
                                 <div class="flex items-center gap-3">
                                     <span
                                         class="text-sm font-medium min-w-[120px]"
@@ -270,43 +159,57 @@
                     </div>
                 {/each}
 
-                {#if projects.items.length === 0 && started}
+                {#if projects.items.length === 0 && scanState.started}
                     <div class="text-sm text-surface-z5 p-6 text-center">
                         Discovering projects...
                     </div>
                 {/if}
             </div>
 
-            <!-- Right: Activity feed -->
+            <!-- Right: Task list (one row per folder, status evolves) -->
             <div
                 class="bg-surface-z2 rounded-lg p-4 border border-surface-z3 max-h-[600px] flex flex-col"
             >
                 <div
                     class="flex justify-between pb-3 border-b border-surface-z2 mb-3 text-xs text-surface-z6"
                 >
-                    <span class="mono">SSE · /EVENTS</span>
+                    <span class="mono">TASKS</span>
                     <span class="mono text-surface-z7"
-                        >{activities.totalElapsed.toFixed(1)}s</span
+                        >{projects.pendingFolders} active · {activities.totalElapsed.toFixed(
+                            1,
+                        )}s</span
                     >
                 </div>
                 <div class="flex-1 overflow-y-auto flex flex-col gap-0.5">
-                    {#each activities.recent as evt (evt.id)}
-                        <div class="flex gap-3 text-xs py-0.5 items-baseline">
+                    {#each projects.allFolders as f (f.id)}
+                        <div
+                            class="flex gap-3 text-xs py-1 items-baseline border-b border-surface-z2 last:border-b-0"
+                        >
                             <span
-                                class="mono text-surface-z5 min-w-[52px] text-right"
-                                >+{evt.elapsed.toFixed(2)}s</span
+                                class="font-medium flex-1 min-w-0 truncate"
+                                title={f.path}>{f.name}</span
                             >
                             <span
-                                class="font-medium min-w-[56px]"
-                                style="color: {LEVEL_COLORS[evt.level] ??
+                                class="text-xs min-w-[64px] text-right"
+                                style="color: {STATUS_COLORS[f.status] ??
                                     'oklch(var(--color-surface-z6) / 1)'}"
-                                >{evt.level}</span
+                                >{f.status}</span
                             >
-                            <span class="text-surface-z7 flex-1"
-                                >{evt.message}</span
-                            >
+                            {#if f.filesTotal > 0}
+                                <span
+                                    class="mono text-xs text-surface-z6 min-w-[60px] text-right"
+                                    >{f.filesCompleted}/{f.filesTotal}</span
+                                >
+                            {:else}
+                                <span class="mono text-xs text-surface-z6 min-w-[60px] text-right">—</span>
+                            {/if}
                         </div>
                     {/each}
+                    {#if projects.allFolders.length === 0}
+                        <div class="text-xs text-surface-z5 text-center p-4">
+                            Waiting for the daemon to discover folders…
+                        </div>
+                    {/if}
                 </div>
             </div>
         </div>

@@ -109,10 +109,12 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 // ── Branch Switch ─────────────────────────────────────────────────────────
 
 pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
     let new_branch = task.branch.as_deref().ok_or("branch_switch requires branch field")?;
 
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder_name = folder.as_ref()
+        .and_then(|f| f["name"].as_str())
+        .unwrap_or_else(|| task.folder_name());
     let folder_uuid = folder.as_ref()
         .and_then(|f| f["id"].as_str())
         .and_then(|s| uuid::Uuid::parse_str(s).ok());

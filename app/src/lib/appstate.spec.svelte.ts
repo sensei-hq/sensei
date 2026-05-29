@@ -178,29 +178,27 @@ describe('AppState', () => {
     expect(state.config['sidebar_max_items']).toBe('8');
   });
 
-  // ── setSetupComplete ───────────────────────────────────────
+  // ── setConfigs ─────────────────────────────────────────────
+  // (setup_complete write moved to wizardState.setCompleted — tested there.
+  //  These tests cover the batch-write + rollback semantics on appState.)
 
-  it('setSetupComplete marks setup done', async () => {
-    await state.setSetupComplete();
-    expect(state.setupComplete).toBe(true);
+  it('setConfigs updates cache and calls daemon (via trySetConfig)', async () => {
+    await state.setConfigs({ user_name: 'Jerry', 'setup.preferences': '{}' });
+    expect(state.config['user_name']).toBe('Jerry');
+    expect(state.config['setup.preferences']).toBe('{}');
+    expect(apiMock.trySetConfig).toHaveBeenCalledWith({ user_name: 'Jerry', 'setup.preferences': '{}' });
   });
 
-  it('setSetupComplete writes sensei:setup-complete=1 on daemon success', async () => {
-    storage.delete('sensei:setup-complete');
-    await state.setSetupComplete();
-    expect(storage.get('sensei:setup-complete')).toBe('1');
-  });
-
-  it('setSetupComplete throws when daemon write fails (L4)', async () => {
+  it('setConfigs rolls back cache when daemon write fails', async () => {
     apiMock.trySetConfig.mockResolvedValueOnce({ ok: false, error: { status: 500, message: 'boom' } });
-    await expect(state.setSetupComplete()).rejects.toThrow(/setup complete/i);
+    state.config = { user_name: 'Pre' };
+    await expect(state.setConfigs({ user_name: 'Post' })).rejects.toThrow(/boom/);
+    expect(state.config['user_name']).toBe('Pre');
   });
 
-  it('setSetupComplete does not write localStorage when daemon write fails (L4)', async () => {
-    apiMock.trySetConfig.mockResolvedValueOnce({ ok: false, error: { status: 500, message: 'boom' } });
-    storage.delete('sensei:setup-complete');
-    await state.setSetupComplete().catch(() => {});
-    expect(storage.has('sensei:setup-complete')).toBe(false);
+  it('setConfigs throws (not silent) on daemon error so callers can react', async () => {
+    apiMock.trySetConfig.mockResolvedValueOnce({ ok: false, error: { status: 503, message: 'unreachable' } });
+    await expect(state.setConfigs({ setup_complete: '1' })).rejects.toThrow();
   });
 
   // ── dismissSuggestion ──────────────────────────────────────

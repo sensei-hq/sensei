@@ -8,7 +8,6 @@
         prevStagePath,
     } from "./stages.js";
     import { wizardState } from "$lib/wizard-state.svelte.js";
-    import { loadWizardData } from "$lib/setup/loaders.js";
     import { appState } from "$lib/appstate.svelte.js";
     import { StatusDot } from "$lib/components";
 
@@ -32,13 +31,15 @@
     });
 
     onMount(async () => {
-        const data = await loadWizardData(appState.port);
-        await wizardState.hydrate(data);
+        // wizardState.load() owns the fetch+apply cycle — matches
+        // healthState.init() / appState.load(). The layout doesn't reach
+        // into the daemon directly.
+        await wizardState.load();
         loaded = true;
         // Daemon-canonical: if setup is already complete, the user was
         // dropped here during the cold-start race (appState wasn't loaded
         // when reroute decided). Send them to the observatory now.
-        if (wizardState.isOk) goto("/");
+        if (appState.setupOk) goto("/");
     });
 
     async function next() {
@@ -51,10 +52,15 @@
             if (isLast) {
                 await wizardState.commitStage("done");
                 // Reload appState so reroute sees setup_complete=1 before goto fires.
-                // The optimistic update in setSetupComplete handles the in-memory
-                // case, but the load() guards against any race on cold paths.
                 await appState.load();
-                goto("/");
+                // The microtask break + invalidateAll are load-bearing:
+                // without yielding once, pending wizard-layout $effects can
+                // hold an in-flight navigation context and SvelteKit will
+                // coalesce the goto into a no-op (reroute never fires).
+                // invalidateAll re-runs every layout/page load so the
+                // observatory doesn't render with stale wizard state.
+                await Promise.resolve();
+                await goto("/", { invalidateAll: true });
                 return;
             }
             const ok = await wizardState.commitStage(stage.id);

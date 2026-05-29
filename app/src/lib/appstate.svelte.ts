@@ -5,6 +5,8 @@
  */
 import { senseiApi } from './api.js';
 import { hasTauri } from './bootstrap.js';
+import { healthState } from './health-state.svelte.js';
+import { STORAGE_KEYS } from './storage-keys.js';
 
 // Build-time port injected by vite.config.ts — 7745 for dev/debug, 7744 for prod.
 // No async resolution needed; page loaders can read appState.port immediately.
@@ -31,7 +33,27 @@ export class AppState {
   }
 
   get setupComplete(): boolean {
-    return this.config['setup_complete'] === '1';
+    // Daemon-canonical when in-memory cache is hydrated.
+    if (this.config['setup_complete'] === '1') return true;
+    // Cold-start sync gate. appState.load() runs from the observatory
+    // layout's load() — but the reroute hook fires BEFORE that load on
+    // the very first navigation of the app session, so config is still
+    // {} and we'd incorrectly bounce to /setup/welcome. The localStorage
+    // cache is written by wizardState.setCompleted() and reconciled by
+    // appState.load() on every successful refresh, so it cannot drift
+    // ahead of the daemon — only behind, which is the safe direction
+    // for a "did setup already complete?" gate.
+    if (this.loaded) return false;
+    // Guarded localStorage access — vitest's node test env can leave a
+    // partial `localStorage` global on the window without getItem,
+    // which would throw on `.getItem()`.
+    try {
+      const ls = (globalThis as { localStorage?: Storage }).localStorage;
+      if (!ls || typeof ls.getItem !== 'function') return false;
+      return ls.getItem(STORAGE_KEYS.setupComplete) === '1';
+    } catch {
+      return false;
+    }
   }
 
   get userName(): string {
@@ -47,7 +69,7 @@ export class AppState {
   async setPort(port: number) {
     this.port = port;
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sensei:port', String(port));
+      localStorage.setItem(STORAGE_KEYS.port, String(port));
     }
   }
 
@@ -56,6 +78,43 @@ export class AppState {
     const api = senseiApi(this.port);
     await api.setConfig({ [key]: value });
   }
+
+  /**
+   * Batch config write — daemon write + cache update in one call. Use this
+   * from state classes (e.g. wizardState commit handlers) instead of calling
+   * `senseiApi(...).setConfig({...})` directly, so the in-memory cache and
+   * daemon stay in sync without a follow-up load(). Values may be strings
+   * (raw) or any JSON-serialisable object — passed through as-is.
+   */
+  async setConfigs(map: Record<string, string>) {
+    // Optimistic-with-rollback. CRUCIAL: use trySetConfig (Result-returning)
+    // instead of setConfig (the helper-level swallow that returns void on
+    // every failure including 5xx and network errors). Without trySetConfig
+    // a transient daemon error silently drops the write, the next load()
+    // refetches daemon truth — which now diverges from our cache — and
+    // any downstream gate (e.g. reroute's setup_complete check) reads the
+    // wrong value. This was the cause of the "Enter observatory → bounced
+    // back to /setup/welcome" symptom.
+    const prev = this.config;
+    this.config = { ...prev, ...map };
+    const api = senseiApi(this.port);
+    const result = await api.trySetConfig(map);
+    if (!result.ok) {
+      this.config = prev;
+      throw new Error(
+        `Daemon config write failed (${result.error.status}): ${result.error.message}`,
+      );
+    }
+  }
+
+  // ── Facade passthroughs ──────────────────────────────────────────────
+  // Encapsulate cross-global status so consumers can read app status from
+  // one object rather than importing health/wizard/scan singletons
+  // individually. Keep the underlying globals as the source of truth —
+  // these are read-only views, not duplicates.
+
+  get healthOk(): boolean { return healthState.isOk; }
+  get setupOk():  boolean { return this.setupComplete; }
 
   async setActiveProjectId(id: string | null) {
     if (id) {
@@ -76,29 +135,6 @@ export class AppState {
     await this.setConfig('global_skills', JSON.stringify(skills));
   }
 
-  async setSetupComplete() {
-    // Optimistically update in-memory config so callers reading appState
-    // immediately after this method see a consistent state on success.
-    this.config = { ...this.config, setup_complete: '1' };
-
-    // Daemon is canonical — only write the local cache if the daemon write
-    // succeeded. Throwing on failure lets the wizard surface the error to
-    // the user instead of silently passing the setup gate next launch.
-    const api = senseiApi(this.port);
-    const result = await api.trySetConfig({ setup_complete: '1' });
-    if (!result.ok) {
-      delete this.config['setup_complete'];
-      this.config = { ...this.config };
-      throw new Error(
-        `Failed to mark setup complete on daemon: ${result.error.message}`,
-      );
-    }
-
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sensei:setup-complete', '1');
-    }
-  }
-
   async dismissSuggestion(id: string) {
     const current = this.dismissedSuggestions;
     if (!current.includes(id)) {
@@ -117,7 +153,7 @@ export class AppState {
    */
   async load(): Promise<boolean> {
     if (typeof localStorage !== 'undefined') {
-      const stored = parseInt(localStorage.getItem('sensei:port') ?? '', 10);
+      const stored = parseInt(localStorage.getItem(STORAGE_KEYS.port) ?? '', 10);
       if (!isNaN(stored) && stored > 0) this.port = stored;
     }
 
@@ -134,7 +170,6 @@ export class AppState {
       // Daemon unreachable — leave the cache untouched so a transient
       // outage doesn't bounce the user back through setup. Don't mark
       // loaded — the caller decides whether to retry or surface 503.
-      this.config = {};
       return false;
     }
 
@@ -144,9 +179,9 @@ export class AppState {
     // can never drift past a daemon write that didn't actually land.
     if (typeof localStorage !== 'undefined') {
       if (this.config['setup_complete'] === '1') {
-        localStorage.setItem('sensei:setup-complete', '1');
+        localStorage.setItem(STORAGE_KEYS.setupComplete, '1');
       } else {
-        localStorage.removeItem('sensei:setup-complete');
+        localStorage.removeItem(STORAGE_KEYS.setupComplete);
       }
     }
     this.loaded = true;
@@ -162,7 +197,7 @@ export class AppState {
     // own (port discovery, the upgrader's staged-version flag, …). Clearing
     // them here would silently skip an in-flight upgrade or strand the port.
     if (typeof localStorage !== 'undefined') {
-      const PROTECTED = ['sensei:port', 'sensei:app-version'] as const;
+      const PROTECTED = [STORAGE_KEYS.port, STORAGE_KEYS.appVersion] as const;
       const preserved = PROTECTED
         .map((k) => [k, localStorage.getItem(k)] as const)
         .filter(([, v]) => v !== null);

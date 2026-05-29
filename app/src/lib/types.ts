@@ -35,6 +35,14 @@ export interface ScanProjectFolder {
   filesTotal: number;
   filesCompleted: number;
   status: FolderStatus;
+  /**
+   * Wall-clock ms timestamp of the last add/update event the client received
+   * for this folder. Drives the task-list panel's reverse-chronological
+   * ordering — in-flight folders bubble up as their progress events arrive,
+   * terminal-status folders drift down once their lastUpdated freezes.
+   * Optional because hydration from /api/projects has no event timestamp.
+   */
+  lastUpdated?: number;
 }
 
 /** Folder-level SSE event from daemon — includes projectId for routing. */

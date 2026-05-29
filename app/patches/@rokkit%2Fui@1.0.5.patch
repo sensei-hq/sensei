@@ -1,0 +1,37 @@
+diff --git a/node_modules/@rokkit/ui/src/components/ItemContent.svelte.d.ts b/src/components/ItemContent.svelte.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b9e4d1044530014b0f840663217ad71a7336186a
+--- /dev/null
++++ b/src/components/ItemContent.svelte.d.ts
+@@ -0,0 +1,4 @@
++import type { Component } from 'svelte';
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++declare const ItemContent: Component<any>;
++export default ItemContent;
+diff --git a/node_modules/@rokkit/ui/src/components/StatusList.svelte.d.ts b/src/components/StatusList.svelte.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff8ebbed7d547b5b68b8f8f759287c46936786d4
+--- /dev/null
++++ b/src/components/StatusList.svelte.d.ts
+@@ -0,0 +1,4 @@
++import type { Component } from 'svelte';
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++declare const StatusList: Component<any>;
++export default StatusList;
+diff --git a/src/types/tree.ts b/src/types/tree.ts
+index 2e10cec72fc27bd6acc1402ce6b277a786c8d2e8..8aa16e26fe5893e282e7c5988a46704b5c5e6f03 100644
+--- a/src/types/tree.ts
++++ b/src/types/tree.ts
+@@ -19,10 +19,10 @@ import { DEFAULT_STATE_ICONS } from '@rokkit/core'
+  */
+ export interface TreeFields extends Record<string, string> {
+ 	/** Field for expanded state - default: 'expanded' */
+-	expanded?: string
++	expanded: string
+ 
+ 	/** Field for node level/depth - default: 'level' */
+-	level?: string
++	level: string
+ }
+ 
+ /**
