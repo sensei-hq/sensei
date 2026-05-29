@@ -27,14 +27,22 @@
 //!   `execute()` calls serialise on the mutex; the work is fully blocking
 //!   on llama.cpp's native side anyway.
 //!
-//! Lifetime gymnastics: a [`LlamaContext<'b>`] borrows from the
-//! [`LlamaModel`] that created it. To store both in one struct without a
-//! self-referential crate, we extend the context's lifetime to `'static`
-//! via [`std::mem::transmute`] and rely on Rust's struct drop order
-//! (fields drop in declaration order) to guarantee the context's storage
-//! goes away before the model it borrows from. The
-//! [`LlamaCppAdapter::context`] field is declared before
-//! [`LlamaCppAdapter::model`] for that reason.
+//! Lifetime gymnastics: a [`LlamaContext<'b>`] holds an `&'b LlamaModel`
+//! reference. To store both in one struct without a self-referential
+//! crate, two invariants have to hold:
+//!
+//! 1. The [`LlamaModel`] must live at a fixed address that survives moves
+//!    of the surrounding struct. Inner holds it in a [`Box`] so the
+//!    reference inside [`LlamaContext`] points at a heap-stable address.
+//!    A direct `model: LlamaModel` field would dangle the moment Inner is
+//!    moved (e.g., into [`Arc::new`]). NRVO can hide that on Rust 1.x but
+//!    is not a soundness guarantee — relying on it caused EXC_BAD_ACCESS
+//!    in `llama_n_embd` once the adapter started living behind `Arc<Inner>`.
+//! 2. The context's lifetime is extended to `'static` via
+//!    [`std::mem::transmute`], and Rust's struct drop order (declaration
+//!    order) guarantees the context drops before the model it borrows from.
+//!    The [`Inner::context`] field is declared before [`Inner::model`]
+//!    for that reason.
 
 use crate::math::l2_normalize_in_place;
 use crate::registry::{ModelEntry, ModelSource};
@@ -196,9 +204,14 @@ pub fn shared_backend() -> Result<Arc<LlamaBackend>, GatewayError> {
 /// Field order is the load-bearing invariant for the LlamaContext
 /// `'static` transmute trick — `context` must drop before `model`
 /// and `_backend`. Don't reorder.
+///
+/// `model` is held in a [`Box`] so its address is stable even when
+/// `Inner` is moved (e.g., into [`Arc::new`]). The reference stored
+/// inside the [`LlamaContext`] points at that heap address, not at
+/// the `Inner` field, so moves of the struct don't dangle it.
 struct Inner {
     context: Mutex<SyncContext>,
-    model: LlamaModel,
+    model: Box<LlamaModel>,
     _backend: Arc<LlamaBackend>,
 }
 
@@ -218,6 +231,9 @@ impl LlamaCppAdapter {
         let model_params = LlamaModelParams::default();
         let model = LlamaModel::load_from_file(backend.as_ref(), path, &model_params)
             .map_err(|e| Self::provider_err(&config, format!("model load: {e}")))?;
+        // Box first so the address we hand to `new_context` is on the
+        // heap and survives moves of the surrounding `Inner` struct.
+        let model: Box<LlamaModel> = Box::new(model);
 
         // n_batch sizes the per-batch token budget. n_ctx works for both
         // single-sequence chat and small-batch embedding.
@@ -240,12 +256,12 @@ impl LlamaCppAdapter {
             .new_context(backend.as_ref(), ctx_params)
             .map_err(|e| Self::provider_err(&config, format!("context create: {e}")))?;
 
-        // SAFETY: `context` borrows from `model` (and `_backend`). We extend
-        // its lifetime to `'static` only for storage, and the surrounding
-        // struct declares `context` before `model`/`_backend`, so Rust
-        // drops `context` first when the adapter is dropped. The model and
-        // backend are therefore guaranteed to outlive every use of
-        // `context`, satisfying llama-cpp-2's actual aliasing invariant.
+        // SAFETY: `context` holds an `&LlamaModel` reference into the
+        // heap allocation owned by the `Box<LlamaModel>` we built above.
+        // That address is stable across moves of `Inner`. The struct
+        // declares `context` before `model`/`_backend`, so on drop the
+        // context is destroyed first and the model outlives every use
+        // of it. Both invariants are documented at the top of this file.
         let context: LlamaContext<'static> = unsafe { std::mem::transmute(context) };
 
         let adapter = Self {
