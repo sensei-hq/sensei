@@ -426,6 +426,7 @@ fn chunk_from_event(event: &ConverseStreamOutput) -> Option<StreamChunk> {
                     content: text.clone(),
                     finish_reason: None,
                     usage: None,
+                    tool_calls: Vec::new(),
                 }),
                 // ToolUse / ToolResult / Image / Reasoning / Citation
                 // deltas are not surfaced in v1.
@@ -436,6 +437,7 @@ fn chunk_from_event(event: &ConverseStreamOutput) -> Option<StreamChunk> {
             content: String::new(),
             finish_reason: Some(ev.stop_reason().as_str().to_string()),
             usage: None,
+            tool_calls: Vec::new(),
         }),
         ConverseStreamOutput::Metadata(ev) => ev.usage().map(|u| StreamChunk {
             content: String::new(),
@@ -445,6 +447,7 @@ fn chunk_from_event(event: &ConverseStreamOutput) -> Option<StreamChunk> {
                 output_tokens: u.output_tokens.max(0) as u32,
                 total_tokens: u.total_tokens.max(0) as u32,
             }),
+            tool_calls: Vec::new(),
         }),
         // MessageStart / ContentBlockStart / ContentBlockStop and any
         // Unknown variant are routine framing events — nothing to do.
