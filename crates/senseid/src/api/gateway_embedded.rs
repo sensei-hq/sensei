@@ -3,12 +3,13 @@
 //!
 //! Each adapter sits behind its own cargo feature so the default
 //! daemon build doesn't pay the native build cost (ORT runtime for
-//! `fastembed`, C++ toolchain for `llama-cpp`). Operators opt in at
-//! `cargo build` time with:
+//! `fastembed` / `ort`, C++ toolchain for `llama-cpp`). Operators opt
+//! in at `cargo build` time with:
 //!
 //! ```text
 //! cargo build -p senseid --features embedded-fastembed
 //! cargo build -p senseid --features embedded-llama-cpp
+//! cargo build -p senseid --features embedded-ort
 //! ```
 //!
 //! Registration happens at gateway construction (or later, against an
@@ -19,6 +20,9 @@
 
 #[cfg(feature = "embedded-fastembed")]
 pub use fastembed_init::register_fastembed;
+
+#[cfg(feature = "embedded-ort")]
+pub use ort_init::register_ort;
 
 #[cfg(feature = "embedded-fastembed")]
 mod fastembed_init {
@@ -174,6 +178,162 @@ mod fastembed_init {
             assert_eq!(
                 response.model.as_deref(),
                 Some("test-fastembed-minilm"),
+                "response.model should echo the resolved model id",
+            );
+        }
+    }
+}
+
+#[cfg(feature = "embedded-ort")]
+mod ort_init {
+    use gateway::adapters::{AdapterRegistry, InferenceAdapter};
+    use gateway_embedded::adapters::{OrtAdapter, OrtConfig};
+    use gateway_embedded::registry::{ModelEntry, ModelFormat, ModelSource};
+    use std::path::Path;
+    use std::sync::Arc;
+
+    /// Build an [`OrtAdapter`] against an on-disk ONNX export directory
+    /// and register it with the given gateway adapter registry.
+    /// Returns the registered adapter id so the caller can wire it
+    /// into [`gateway::types::config::GatewayConfig`] as a router/model
+    /// provider.
+    ///
+    /// Same on-disk contract as the fastembed wire-up: `dir` must
+    /// contain `model.onnx` plus `tokenizer.json` (and the rest of the
+    /// standard tokenizer files when the model uses them). The ORT
+    /// adapter is the lower-level alternative — caller gets explicit
+    /// control over pooling strategy via [`OrtConfig`] and the model
+    /// surface isn't constrained to fastembed's known repos.
+    pub async fn register_ort(
+        registry: &AdapterRegistry,
+        dir: impl AsRef<Path>,
+        model_id: impl Into<String>,
+    ) -> Result<String, String> {
+        let model_id = model_id.into();
+        let onnx_path = dir.as_ref().join("model.onnx");
+        let entry = ModelEntry {
+            id: model_id.clone(),
+            name: model_id.clone(),
+            format: ModelFormat::Onnx,
+            source: ModelSource::External { path: onnx_path },
+            sha256: None,
+            size_bytes: None,
+        };
+        let cfg = OrtConfig::bert(&model_id);
+        let adapter = OrtAdapter::load(&entry, cfg)
+            .map_err(|e| format!("OrtAdapter::load: {e}"))?;
+        let id = adapter.id().to_string();
+        registry
+            .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
+            .await;
+        Ok(id)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use gateway::Gateway;
+        use gateway::circuit_breaker::{CircuitBreakerConfig, CircuitBreakerManager};
+        use gateway::types::capability::Capability;
+        use gateway::types::config::{GatewayConfig, ModelConfig, RouterConfig};
+        use gateway::types::request::{InferenceRequest, Payload};
+        use std::collections::HashMap;
+
+        /// End-to-end smoke test: an embedded ORT adapter registered
+        /// via [`register_ort`] is reachable through `Gateway::execute`
+        /// — the same call path the daemon uses for every inference
+        /// request. Mirrors the fastembed test exactly so the two
+        /// adapters land at parity from the daemon's perspective.
+        ///
+        /// Ignored by default; requires a fastembed-compatible ONNX
+        /// directory on disk. Run with:
+        ///
+        /// ```text
+        /// SENSEI_ORT_DIR=/path/to/all-MiniLM-L6-v2-qdrant \
+        ///   cargo test -p senseid --features embedded-ort \
+        ///     gateway_embedded -- --ignored
+        /// ```
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        #[ignore = "requires SENSEI_ORT_DIR env var pointing at a fastembed-compatible ONNX directory"]
+        async fn ort_through_gateway_returns_embeddings_for_a_real_model() {
+            let dir = std::env::var("SENSEI_ORT_DIR").expect(
+                "SENSEI_ORT_DIR must point at an ONNX embedding model directory",
+            );
+
+            let registry = AdapterRegistry::new();
+            let adapter_id = register_ort(&registry, &dir, "test-ort-minilm")
+                .await
+                .expect("register ort adapter");
+            assert_eq!(
+                adapter_id, "ort",
+                "OrtAdapter::id() should default to \"ort\""
+            );
+
+            // Same router/model wiring as the fastembed smoke test —
+            // model.provider matches the adapter id so the engine's
+            // direct-tier selection finds it.
+            let mut routers = HashMap::new();
+            routers.insert(
+                "ort".into(),
+                RouterConfig {
+                    url: "embedded://ort".into(),
+                    api_key_env: None,
+                    api_key: None,
+                    enabled: true,
+                    timeout_ms: None,
+                    headers: HashMap::new(),
+                },
+            );
+
+            let mut models = HashMap::new();
+            models.insert(
+                "test-ort-minilm".into(),
+                ModelConfig {
+                    id: "test-ort-minilm".into(),
+                    api_model_id: None,
+                    provider: "ort".into(),
+                    capabilities: vec![Capability::TextEmbed],
+                    context_window: 0,
+                    max_output_tokens: 0,
+                    pricing: None,
+                },
+            );
+
+            let config = GatewayConfig {
+                routers,
+                models,
+                chains: HashMap::new(),
+            };
+            let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
+            let gw = Gateway::new(config, registry, cb);
+
+            let request = InferenceRequest {
+                capability: Capability::TextEmbed,
+                model: Some("test-ort-minilm".into()),
+                router: Some("ort".into()),
+                chain: None,
+                payload: Payload::Embed {
+                    texts: vec![
+                        "hello from sensei".into(),
+                        "embedded ort adapter via gateway execute".into(),
+                    ],
+                },
+                budget: None,
+            };
+
+            let response = gw.execute(&request).await.expect("gateway.execute");
+
+            assert!(response.success, "expected successful response");
+            let embeddings = response
+                .embeddings
+                .expect("embed response should include embeddings");
+            assert_eq!(embeddings.len(), 2);
+            for (i, v) in embeddings.iter().enumerate() {
+                assert!(!v.is_empty(), "embedding[{i}] should be non-empty");
+            }
+            assert_eq!(
+                response.model.as_deref(),
+                Some("test-ort-minilm"),
                 "response.model should echo the resolved model id",
             );
         }
