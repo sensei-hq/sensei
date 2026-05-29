@@ -80,6 +80,48 @@ pub async fn init_gateway() -> Arc<Gateway> {
             ),
         }
     }
+    // LlamaCpp has two distinct modes (embedding + chat). The daemon
+    // can register either or both, depending on which GGUF files the
+    // operator supplies. Each call shares the same process-singleton
+    // LlamaBackend behind the scenes, so loading two adapters is safe.
+    #[cfg(feature = "embedded-llama-cpp")]
+    if let Ok(path) = std::env::var("SENSEI_LLAMA_CPP_EMBED_GGUF") {
+        let model_id = std::env::var("SENSEI_LLAMA_CPP_EMBED_MODEL_ID")
+            .unwrap_or_else(|_| "llama-cpp-embed-default".to_string());
+        match crate::api::gateway_embedded::register_llama_cpp_embed(
+            &adapters, &path, &model_id,
+        )
+        .await
+        {
+            Ok(id) => tracing::info!(
+                "Gateway: LlamaCppAdapter (embed) registered as '{}' for model '{}' from {}",
+                id, model_id, path
+            ),
+            Err(e) => tracing::warn!(
+                "Gateway: LlamaCppAdapter (embed) from SENSEI_LLAMA_CPP_EMBED_GGUF={} failed: {}",
+                path, e
+            ),
+        }
+    }
+    #[cfg(feature = "embedded-llama-cpp")]
+    if let Ok(path) = std::env::var("SENSEI_LLAMA_CPP_CHAT_GGUF") {
+        let model_id = std::env::var("SENSEI_LLAMA_CPP_CHAT_MODEL_ID")
+            .unwrap_or_else(|_| "llama-cpp-chat-default".to_string());
+        match crate::api::gateway_embedded::register_llama_cpp_chat(
+            &adapters, &path, &model_id,
+        )
+        .await
+        {
+            Ok(id) => tracing::info!(
+                "Gateway: LlamaCppAdapter (chat) registered as '{}' for model '{}' from {}",
+                id, model_id, path
+            ),
+            Err(e) => tracing::warn!(
+                "Gateway: LlamaCppAdapter (chat) from SENSEI_LLAMA_CPP_CHAT_GGUF={} failed: {}",
+                path, e
+            ),
+        }
+    }
 
     // Probe Ollama
     if probe_ollama().await {
