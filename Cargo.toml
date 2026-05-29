@@ -5,6 +5,7 @@ members = [
     "crates/mcp",
     "crates/bootstrap",
     "crates/gateway",
+    "crates/gateway-embedded",
     "crates/logger",
 ]
 resolver = "2"
