@@ -162,7 +162,8 @@ done 2026-05-16**:
 
 ## 1. Bootstrap (6 gates)
 
-**Mockup:** [mockups/lib/bootstrap.jsx](./mockups/lib/bootstrap.jsx)
+**Mockup:** [mockups/lib/bootstrap-splash.jsx](./mockups/lib/bootstrap-splash.jsx) (current — splash two-column)
+**Original mockup:** [mockups/lib/bootstrap.jsx](./mockups/lib/bootstrap.jsx) (full-screen, superseded 2026-05-29)
 **Journey:** [journeys/01-install-bootstrap.md](./journeys/01-install-bootstrap.md)
 **Route:** `/health`
 
@@ -185,6 +186,14 @@ done 2026-05-16**:
 - [x] PATH enrichment for macOS .app bundle (Homebrew binaries)
 - [x] Verified in compiled Tauri app — zero console errors, daemon stop → restart → auto-advance
 - [x] 82 tests (41 Rust crate + 18 Tauri integration + 23 frontend unit)
+
+**Completed (2026-05-29) — splash redesign:**
+- [x] Two-column layout (left: wordmark/headline/remedy/footer · right: hero status/ledger/continue)
+- [x] PM (homebrew/winget) promoted to the 6th ledger row; ledger now expects exactly 6 components
+- [x] Per-gate `description` (poetic one-liner) hydrated frontend-side via DESCRIPTIONS map in HealthState — wire payload never has to carry it
+- [x] Per-row spinner inside the 20px status disc for checking/installing rows; 32px hero disc with spinner for the overall busy state
+- [x] New Footer component (`sensei {version} · {platform}`) for the left-column bottom
+- [x] svelte-check 707/0/0 · vitest 482 (+22 new) · clippy clean · sensei-bootstrap 159 tests
 
 ---
 
