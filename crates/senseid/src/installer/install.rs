@@ -37,6 +37,7 @@ pub fn install(acps: &[String], scope: &str) -> InstallResult {
     let acp_result = crate::assistants::configure(acps);
     result.acps_configured = acp_result.configured;
     result.errors.extend(acp_result.errors);
+    result.warnings.extend(acp_result.warnings);
 
     result
 }
@@ -181,6 +182,7 @@ mod tests {
             stale_skills_removed: 0,
             acps_configured: vec!["claude-code".into()],
             errors: vec![],
+            warnings: vec!["claude-code: dev hooks: settings.json read-only".into()],
             marketplace_version: "1.0.0".into(),
         };
         let json: serde_json::Value = serde_json::to_value(&result).unwrap();
@@ -189,6 +191,9 @@ mod tests {
         assert_eq!(json["commands_installed"], 2);
         assert_eq!(json["stale_commands_removed"], 1);
         assert_eq!(json["marketplace_version"], "1.0.0");
+        // warnings must survive the round-trip — that's the field this fix adds.
+        assert_eq!(json["warnings"][0], "claude-code: dev hooks: settings.json read-only");
+        assert!(json["errors"].as_array().unwrap().is_empty());
     }
 
     // ── install_hooks (requires network — downloads from GitHub) ────
