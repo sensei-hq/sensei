@@ -1,8 +1,18 @@
 <script lang="ts">
   import { sparklinePath } from '$lib/sparkline';
   import { Eyebrow, Kanji, StatusDot } from '$lib/components';
+  import RecentSessions from './RecentSessions.svelte';
 
   let { data } = $props();
+
+  // Mode = listening (no insights/teachings) vs mature (sensei has something to say).
+  // Sessions and projects alone don't tip us into mature — the user's guidance:
+  // "if we don't have insights it is still in learning phase".
+  const mode = $derived<'early' | 'mature'>(
+    data.teachings.length === 0 && data.topRecommendations.length === 0
+      ? 'early'
+      : 'mature',
+  );
 
   let holisticFtr = $derived(
     data.ftrDaily.length > 0
@@ -18,17 +28,39 @@
 
   let ftrDelta = $derived(holisticFtr - ftrPrev);
 
-  let hasData = $derived(data.ftrDaily.length > 0 || data.projectFtrs.length > 0);
-
   let greeting = $derived(() => {
     const h = new Date().getHours();
     if (h < 12) return 'Good morning';
     if (h < 17) return 'Good afternoon';
     return 'Good evening';
   });
+
+  // Early-mode hero body uses concrete numbers from the loader so the page
+  // reflects actual progress instead of a static placeholder.
+  const earlyBody = $derived.by(() => {
+    const n = data.sessionsTotal;
+    const p = data.projectFtrs.length;
+    if (n === 0 && p === 0) {
+      return 'Sensei is ready to watch. Start a session with your assistant — sensei watches in silence, learns the shape of each project, and later begins to teach.';
+    }
+    if (n === 0) {
+      const projects = p === 1 ? '1 project' : `${p} projects`;
+      return `Sensei is watching ${projects}. Run a session with your assistant to give it something to learn from.`;
+    }
+    const sessions = n === 1 ? '1 session' : `${n} sessions`;
+    const projects = p === 1 ? '1 project' : `${p} projects`;
+    return `Sensei has watched ${sessions} across ${projects} so far. A few early signals are forming, but nothing confident enough to teach yet.`;
+  });
+
+  const earlyHint = $derived.by(() => {
+    const n = data.sessionsTotal;
+    if (n === 0) return null;
+    if (n < 5)  return `~${5 - n} more sessions until first lesson`;
+    return 'Listening for a confident pattern';
+  });
 </script>
 
-<div class="max-w-[860px] mx-auto px-12 py-10 pb-16">
+<div class="max-w-[860px] mx-auto px-12 py-10 pb-16" data-mode={mode}>
   <!-- Greeting + FTR header -->
   <div class="flex items-start justify-between mb-8">
     <div>
@@ -38,8 +70,8 @@
       </h1>
     </div>
 
-    {#if hasData}
-      <div class="flex items-end gap-5 text-right">
+    {#if mode === 'mature'}
+      <div data-ftr-header class="flex items-end gap-5 text-right">
         <div>
           <p class="m-0 mb-1"><Eyebrow>First-Try-Right · 14d</Eyebrow></p>
           <div class="flex items-baseline gap-2 justify-end">
@@ -66,27 +98,71 @@
     {/if}
   </div>
 
-  {#if !hasData}
-    <!-- Early / listening state -->
-    <div class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
+  {#if mode === 'early'}
+    <!-- Early / listening hero: 観 + dynamic body with session count -->
+    <div data-hero-early class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
       <Kanji char="観" size="4xl" tone="watermark" />
       <div>
+        <p class="m-0 mb-3"><Eyebrow>sensei is listening</Eyebrow></p>
         <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">Still listening.</p>
-        <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[520px]">
-          Sensei is watching your sessions. A few early signals are forming,
-          but nothing confident enough to teach yet.
+        <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[560px]">
+          {earlyBody}
         </p>
+        {#if earlyHint}
+          <div class="flex items-center gap-2 text-xs text-surface-z6 mt-4">
+            <StatusDot status="busy" size="sm" />
+            <span>{earlyHint}</span>
+          </div>
+        {/if}
       </div>
     </div>
-    <p class="text-xs text-surface-z6 leading-loose max-w-[480px]">
-      Start a session with your assistant. Sensei watches in silence,
-      learns the shape of each project, and later begins to teach.
-    </p>
+
+    <!-- Early-mode two columns: placeholder insights + empty adopted -->
+    <div class="grid grid-cols-[1.4fr_1fr] gap-8 mb-10">
+      <div>
+        <div class="flex items-baseline justify-between mb-4">
+          <h2 class="display text-base font-normal m-0">Forming signals</h2>
+        </div>
+        <div data-early-insights class="flex flex-col">
+          <div class="flex gap-3 py-3.5 border-b border-surface-z3 text-left">
+            <span class="kanji text-lg w-6 text-surface-z6">耳</span>
+            <div class="flex-1">
+              <p class="m-0 mb-1"><Eyebrow>listening</Eyebrow></p>
+              <p class="text-sm text-surface-z7 leading-snug m-0">
+                Watching the shape of your sessions. No confident pattern yet.
+              </p>
+            </div>
+          </div>
+          <div class="flex gap-3 py-3.5 border-b border-surface-z3 text-left">
+            <span class="kanji text-lg w-6 text-surface-z6">試</span>
+            <div class="flex-1">
+              <p class="m-0 mb-1"><Eyebrow>calibrating</Eyebrow></p>
+              <p class="text-sm text-surface-z7 leading-snug m-0">
+                Learning your correction cadence. Too early to suggest rules.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex items-baseline justify-between mb-4">
+          <h2 class="display text-base font-normal m-0">System has learned</h2>
+        </div>
+        <div class="py-6 text-center border border-dashed border-surface-z3 rounded-lg">
+          <span class="block mb-2"><Kanji char="空" size="2xl" tone="muted" /></span>
+          <p class="text-xs text-surface-z6 leading-snug m-0">
+            No teachings adopted yet.<br />
+            Sensei needs a few more sessions.
+          </p>
+        </div>
+      </div>
+    </div>
   {:else}
-    <!-- Hero: top recommendation -->
+    <!-- Mature hero: top recommendation -->
     {#if data.topRecommendations.length > 0}
       {@const hero = data.topRecommendations[0]}
-      <div class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
+      <div data-hero-mature class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
         <Kanji char={hero.urgency === 'high' ? '聴' : hero.urgency === 'medium' ? '繰' : '探'} size="4xl" />
         <div>
           <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">{hero.title}</p>
@@ -101,9 +177,8 @@
       </div>
     {/if}
 
-    <!-- Two columns: Insights + Adopted teachings -->
+    <!-- Mature two columns: Insights + Adopted teachings -->
     <div class="grid grid-cols-[1.4fr_1fr] gap-8 mb-10">
-      <!-- Insights (remaining recommendations) -->
       <div>
         <div class="flex items-baseline justify-between mb-4">
           <h2 class="display text-base font-normal m-0">Also worth noticing</h2>
@@ -127,7 +202,6 @@
         {/if}
       </div>
 
-      <!-- Adopted teachings -->
       <div>
         <div class="flex items-baseline justify-between mb-4">
           <h2 class="display text-base font-normal m-0">System has learned</h2>
@@ -153,6 +227,9 @@
       </div>
     </div>
   {/if}
+
+  <!-- Recent sessions — both modes -->
+  <RecentSessions sessions={data.recentSessions} />
 </div>
 
 <style>
