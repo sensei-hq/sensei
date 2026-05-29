@@ -15,4 +15,4 @@ pub use llama_cpp::LlamaCppAdapter;
 pub mod fastembed;
 
 #[cfg(feature = "fastembed")]
-pub use fastembed::FastembedAdapter;
+pub use fastembed::{FastembedAdapter, FastembedConfig};

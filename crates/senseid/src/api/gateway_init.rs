@@ -44,6 +44,28 @@ pub async fn init_gateway() -> Arc<Gateway> {
         .register(Arc::new(NoopAdapter) as Arc<dyn InferenceAdapter>)
         .await;
 
+    // Optional in-process embedding adapter. Only active when the binary
+    // is built with `--features embedded-fastembed` AND the operator
+    // points `SENSEI_FASTEMBED_DIR` at a fastembed-compatible ONNX
+    // directory. Lets the daemon serve embeddings without going through
+    // the local Ollama HTTP layer — see docs/backlog.md (Future scope —
+    // gateway-embedded) for the design rationale.
+    #[cfg(feature = "embedded-fastembed")]
+    if let Ok(dir) = std::env::var("SENSEI_FASTEMBED_DIR") {
+        let model_id = std::env::var("SENSEI_FASTEMBED_MODEL_ID")
+            .unwrap_or_else(|_| "fastembed-default".to_string());
+        match crate::api::gateway_embedded::register_fastembed(&adapters, &dir, &model_id).await {
+            Ok(id) => tracing::info!(
+                "Gateway: FastembedAdapter registered as '{}' for model '{}' from {}",
+                id, model_id, dir
+            ),
+            Err(e) => tracing::warn!(
+                "Gateway: FastembedAdapter from SENSEI_FASTEMBED_DIR={} failed: {}",
+                dir, e
+            ),
+        }
+    }
+
     // Probe Ollama
     if probe_ollama().await {
         match gateway::adapters::ollama::OllamaAdapter::new() {
