@@ -322,6 +322,63 @@ pub struct StreamChunk {
     pub content: String,
     pub finish_reason: Option<String>,
     pub usage: Option<TokenUsage>,
+    /// Tool calls that finalised on this chunk. Empty on every
+    /// chunk until the stream resolves them — adapters accumulate
+    /// fragmented argument JSON internally (via
+    /// [`StreamingToolCall`]) and emit the assembled calls in the
+    /// terminal chunk that carries `finish_reason`.
+    pub tool_calls: Vec<ToolCall>,
+}
+
+/// Per-call accumulator used by the streaming layer in each
+/// adapter. OpenAI emits `tool_calls` deltas keyed by index;
+/// Anthropic emits `content_block_delta` events with
+/// `input_json_delta` fragments; Bedrock streams `ToolUseBlockDelta`
+/// with partial JSON. All three share the same problem — name + id
+/// arrive once on the opening event and argument JSON arrives as a
+/// sequence of string fragments that the caller would have to
+/// concatenate. The accumulator captures that intermediate state.
+#[derive(Debug, Default, Clone)]
+pub struct StreamingToolCall {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub arguments_buffer: String,
+}
+
+impl StreamingToolCall {
+    /// Build a fresh accumulator pre-populated with id + name, as
+    /// they're emitted on the opening event of every provider's
+    /// streaming tool-call format.
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: Some(id.into()),
+            name: Some(name.into()),
+            arguments_buffer: String::new(),
+        }
+    }
+
+    /// Append a partial JSON-arguments fragment to the buffer.
+    pub fn push_arguments(&mut self, fragment: &str) {
+        self.arguments_buffer.push_str(fragment);
+    }
+
+    /// Materialise a complete [`ToolCall`] when both `id` and `name`
+    /// have arrived. Returns `None` if either is still missing —
+    /// safer than emitting half-formed calls.
+    pub fn finalize(self) -> Option<ToolCall> {
+        let id = self.id?;
+        let name = self.name?;
+        let arguments = if self.arguments_buffer.is_empty() {
+            "{}".to_string()
+        } else {
+            self.arguments_buffer
+        };
+        Some(ToolCall {
+            id,
+            name,
+            arguments,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1046,10 +1103,12 @@ mod tests {
                 output_tokens: 5,
                 total_tokens: 15,
             }),
+            tool_calls: Vec::new(),
         };
         assert_eq!(chunk.content, "hello");
         assert_eq!(chunk.finish_reason.as_deref(), Some("stop"));
         assert!(chunk.usage.is_some());
+        assert!(chunk.tool_calls.is_empty());
 
         let event = StreamEvent::Chunk {
             content: "hi".to_string(),
@@ -1102,5 +1161,46 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn streaming_tool_call_finalises_when_id_and_name_both_set() {
+        let mut acc = StreamingToolCall::new("call_1", "get_weather");
+        acc.push_arguments("{\"city\":");
+        acc.push_arguments("\"Berlin\"}");
+        let call = acc.finalize().expect("finalise");
+        assert_eq!(call.id, "call_1");
+        assert_eq!(call.name, "get_weather");
+        assert_eq!(call.arguments, "{\"city\":\"Berlin\"}");
+    }
+
+    #[test]
+    fn streaming_tool_call_empty_buffer_finalises_to_empty_object_string() {
+        let acc = StreamingToolCall::new("call_2", "ping");
+        let call = acc.finalize().expect("finalise");
+        // An empty args buffer would be invalid JSON; emit `{}` so the
+        // gateway-side ToolCall is always a usable JSON object.
+        assert_eq!(call.arguments, "{}");
+    }
+
+    #[test]
+    fn streaming_tool_call_without_id_or_name_does_not_finalise() {
+        // OpenAI emits id on the opening delta but Anthropic emits it
+        // on content_block_start — if a downstream caller assembles
+        // a partial accumulator with only fragments, finalise yields
+        // None rather than half-formed calls.
+        let acc = StreamingToolCall {
+            id: None,
+            name: Some("foo".into()),
+            arguments_buffer: String::new(),
+        };
+        assert!(acc.finalize().is_none());
+
+        let acc = StreamingToolCall {
+            id: Some("call_1".into()),
+            name: None,
+            arguments_buffer: String::new(),
+        };
+        assert!(acc.finalize().is_none());
     }
 }

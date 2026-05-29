@@ -527,6 +527,7 @@ impl InferenceAdapter for GrokAdapter {
                             content,
                             finish_reason: choice.finish_reason.clone(),
                             usage,
+                            tool_calls: Vec::new(),
                         });
                     }
                 }
