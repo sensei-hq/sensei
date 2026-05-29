@@ -26,6 +26,12 @@ export interface Component {
    *  `DependencySpec::installing_verb` — carried on the wire so this file
    *  doesn't duplicate the mapping. */
   installingVerb: string;
+  /** Poetic one-liner per gate, shown beneath the label in the ledger.
+   *  Frontend-only: hydrated by HealthState.apply()/#patch() from the
+   *  DESCRIPTIONS map. The wire never has to carry it; if it does, the
+   *  state still overwrites with the canonical line so copy stays in
+   *  one place. */
+  description: string;
 }
 
 // ── Remedy — opaque strings produced by the Rust crate ───────────────────

@@ -1,81 +1,93 @@
 <script lang="ts">
   import type { Component, HealthStatus } from '$lib/health-types.js';
-  import { Kanji } from '$lib/components';
+  import { Eyebrow, Kanji } from '$lib/components';
 
   interface Props {
-    packageManager: Component;
+    /** Overall daemon health status. */
     status: HealthStatus;
+    /** All 6 gates (PM + 5 components). Used for the "X of 6 ready" line. */
     components: Component[];
-    onEnter?: () => void;
   }
-  let { packageManager, status, components, onEnter }: Props = $props();
+  let { status, components }: Props = $props();
 
-  const activeIdx = $derived.by(() => {
-    const i = components.findIndex(
-      (c) => c.status === 'installing' || c.status === 'checking'
-    );
-    if (i >= 0) return i;
-    return components.filter((c) => c.status === 'ready').length - 1;
+  const isBusy = $derived(status === 'checking' || status === 'resolving');
+  const total      = $derived(components.length);
+  const readyCount = $derived(components.filter((c) => c.status === 'ready').length);
+
+  const activeLabel = $derived.by(() => {
+    const c = components.find((c) => c.status === 'installing' || c.status === 'checking');
+    return c?.label ?? '';
   });
-  const total = $derived(components.length);
-  const activeLabel = $derived(
-    components[Math.min(activeIdx, total - 1)]?.label ?? ''
-  );
-  const activeCount = $derived(Math.min(activeIdx + 1, total));
+
+  const discBorderClass = $derived.by(() => {
+    if (status === 'ok')           return 'border-success-z5';
+    if (status === 'needs-action') return 'border-primary-z5';
+    return 'border-primary-z5'; // checking / resolving — busy
+  });
 </script>
 
-<section class="rounded-xl bg-surface-z1 p-6" style="border: var(--hairline);">
-  <div class="flex items-center gap-4">
-    <div class="w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
-         class:border-success-z5={status === 'ok'}
-         class:border-primary-z5={status === 'needs-action'}
-         class:border-surface-z3={status === 'checking' || status === 'resolving'}>
+<section class="flex items-center gap-3">
+  <div class="hero-disc {discBorderClass}">
+    {#if status === 'ok'}
+      <svg width="14" height="14" viewBox="0 0 10 10" fill="none">
+        <path d="M2 5.2 L4.2 7.2 L8 3" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+              class="text-success-z5"/>
+      </svg>
+    {:else if isBusy}
+      <span data-hero-spinner class="hero-spinner"></span>
+    {:else if status === 'needs-action'}
+      <Kanji char="?" size="lg" />
+    {/if}
+  </div>
+
+  <div class="min-w-0">
+    <div class="flex items-baseline gap-1.5">
+      <Kanji char="支" size="sm" />
+      <Eyebrow>foundation</Eyebrow>
+    </div>
+    <div class="text-base text-surface-z7 leading-snug mt-0.5">
       {#if status === 'ok'}
-        <span class="text-2xl text-success-z5 leading-none">✓</span>
+        The foundation <span class="text-surface-z9 font-medium">holds.</span>
       {:else if status === 'needs-action'}
-        <Kanji char="?" size="xl" />
+        One component <span class="text-surface-z9 font-medium">needs your hand.</span>
+      {:else if status === 'resolving'}
+        {#if activeLabel}
+          <span class="text-surface-z9 font-medium">Installing</span>
+          <span class="text-surface-z9">{activeLabel}</span>
+          · {readyCount} of {total} ready.
+        {:else}
+          <span class="text-surface-z9 font-medium">Installing</span>
+          · {readyCount} of {total} ready.
+        {/if}
       {:else}
-        <span class="spinner-ring"></span>
+        <span class="text-surface-z9 font-medium">Checking</span> each component.
       {/if}
     </div>
-
-    <div class="flex-1 min-w-0">
-      <div class="flex items-baseline gap-2.5 mb-1">
-        <span class="display text-lg font-semibold text-surface-z9">{packageManager.label}</span>
-        {#if packageManager.note}
-          <span class="mono text-xs text-surface-z6">{packageManager.note}</span>
-        {/if}
-      </div>
-      <div class="text-sm text-surface-z8 leading-snug">
-        {#if status === 'ok'}
-          Detected. All dependencies installed.
-        {:else if status === 'needs-action'}
-          Couldn't finish automatically. Run the script below.
-        {:else if status === 'resolving'}
-          Detected. Installing
-          <span class="text-surface-z9">{activeLabel}</span>
-          <span class="mono text-xs text-surface-z6 ml-2">({activeCount}/{total})</span>
-        {:else}
-          Checking system…
-        {/if}
-      </div>
-    </div>
-
-    {#if status === 'ok'}
-      <button data-action="enter" class="btn-solid shrink-0" onclick={onEnter}>Enter</button>
-    {/if}
   </div>
 </section>
 
 <style>
-  .spinner-ring {
-    display: block;
-    width: 20px;
-    height: 20px;
+  .hero-disc {
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
-    border: 2px solid oklch(var(--color-surface-z3) / 1);
-    border-top-color: transparent;
-    animation: spin 0.9s linear infinite;
+    border-width: 2px;
+    border-style: solid;
+    background: oklch(var(--color-surface-z0) / 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .hero-spinner {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid oklch(var(--color-primary-z5) / 1);
+    border-top-color: transparent;
+    animation: hero-spin 0.9s linear infinite;
+  }
+  @keyframes hero-spin { to { transform: rotate(360deg); } }
 </style>
