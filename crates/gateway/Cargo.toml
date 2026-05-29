@@ -6,6 +6,10 @@ description = "LLM inference routing engine — fallback chains, circuit breaker
 license = "MIT"
 
 [dependencies]
+# AWS Bedrock — heavy native deps (smithy runtime, hyper, etc.) but
+# brings SigV4, credential-provider chain, and Converse API for free.
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-bedrockruntime = "1"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
