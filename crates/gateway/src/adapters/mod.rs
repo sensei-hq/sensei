@@ -3,6 +3,7 @@ pub mod async_job;
 pub mod base;
 pub mod fal;
 pub mod flux;
+pub mod gemini;
 pub mod grok;
 pub mod kling;
 pub mod luma;
