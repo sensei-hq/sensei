@@ -16,3 +16,9 @@ pub mod fastembed;
 
 #[cfg(feature = "fastembed")]
 pub use fastembed::{FastembedAdapter, FastembedConfig};
+
+#[cfg(feature = "ort")]
+pub mod ort;
+
+#[cfg(feature = "ort")]
+pub use self::ort::{OrtAdapter, OrtConfig, OrtPoolingStrategy};
