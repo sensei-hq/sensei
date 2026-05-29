@@ -57,7 +57,15 @@ function webkitNodeReexportFix(): Plugin {
 
 // Daemon port: 7745 in dev/debug builds, 7744 in production.
 // Injected at build time so the frontend default is always correct.
-const daemonPort = process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production' ? 7745 : 7744;
+const isDev = !!process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production';
+const daemonPort = isDev ? 7745 : 7744;
+// `senseiNamespace` keeps localStorage / sessionStorage keys isolated
+// between dev (sensei-dev) and prod (sensei) installs, mirroring the
+// daemon dir layout (~/.sensei-dev vs ~/.sensei) and the brew formula
+// labels (sensei-dev vs sensei). Without this, running dev and prod
+// side-by-side would have them stomping each other's setup-complete
+// flag, port cache, app-version cache, etc.
+const senseiNamespace = isDev ? 'sensei-dev' : 'sensei';
 
 // Health-bypass is decided at RUNTIME via `window.__TAURI__` (set by
 // Tauri's pre-injected bootstrap script before any user JS runs). No
@@ -76,6 +84,7 @@ export default defineConfig({
   define: {
     __SENSEI_DEFAULT_PORT__: JSON.stringify(daemonPort),
     __SENSEI_APP_VERSION__: JSON.stringify(pkg.version),
+    __SENSEI_NAMESPACE__: JSON.stringify(senseiNamespace),
   },
 
   // Tauri: don't open browser, use Tauri window

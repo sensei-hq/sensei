@@ -14,9 +14,18 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         return Err(format!("Repo path does not exist: {}", task.path));
     }
 
-    let folder_name = task.folder_name();
     let folder_path = &task.folder_path;
     let emit = |evt: crate::api::events::StateEvent| { let _ = ctx.app_state.event_tx.send(evt); };
+
+    // Display name comes from the DB row (looked up by abs_path) so subtree
+    // labels like "sensei:homebrew" survive — task.folder_name() would
+    // return the basename only.
+    let pre_registered = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
+    let folder_name_owned: String = pre_registered
+        .as_ref()
+        .and_then(|r| r["name"].as_str().map(String::from))
+        .unwrap_or_else(|| task.folder_name().to_string());
+    let folder_name: &str = &folder_name_owned;
 
     // ── 1. Detect stack ──────────────────────────────────────────────
     let stack = super::scan_logic::detect_stack(repo_path);
@@ -57,9 +66,10 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     };
 
     // ── 4. Emit: folder add with stack + file count ──────────────────
-    // Use get_repo_by_path (abs_path) to get the exact row for this scan run,
-    // avoiding name collisions with identically-named repos from prior runs.
-    let folder_by_path = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
+    // Reuse the lookup we already did to derive folder_name. abs_path is
+    // unique on sensei.folders so the row identifies this exact repo
+    // (vs name which can collide across roots).
+    let folder_by_path = pre_registered;
     let folder_uuid_str = folder_by_path.as_ref()
         .and_then(|f| f["id"].as_str().map(|s| s.to_string()))
         .unwrap_or_else(|| format!("f-{}", folder_name));
@@ -241,10 +251,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 }
 
                 for (name, subtree_path) in &subtrees {
-                    let subtree_folder_name = format!("{}:{}", folder_name, name);
-                    let sub_task = Task::new(TaskKind::ProcessGitFolder, &subtree_folder_name, subtree_path)
+                    // folder_path is an abs_path per the Task struct contract;
+                    // the composite display name "{folder_name}:{name}" lives
+                    // on sensei.folders.name (upserted above) and is read
+                    // back by handlers via get_repo_by_path.
+                    let sub_task = Task::new(TaskKind::ProcessGitFolder, subtree_path, subtree_path)
                         .with_parent(task.id);
                     ctx.queue.enqueue(sub_task).await;
+                    let subtree_folder_name = format!("{}:{}", folder_name, name);
                     tracing::info!("process_git_folder: enqueued subtree {} at {}", subtree_folder_name, subtree_path);
                 }
             }
@@ -280,16 +294,15 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
 
 /// Create module node for a folder.
 pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
-    let _folder_path = &task.folder_path;
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+    // folder_path is the repo's abs_path by contract — look the row up
+    // directly instead of round-tripping through name (which can collide
+    // across roots and breaks for subtrees whose DB name is a composite
+    // like "sensei:homebrew").
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
     let folder_id = folder.as_ref()
         .and_then(|f| crate::api::util::json_uuid(&f["id"]));
-    let repo_path_str = folder.as_ref()
-        .and_then(|f| f["abs_path"].as_str())
-        .unwrap_or("");
 
-    let rel_dir = Path::new(&task.path).strip_prefix(Path::new(repo_path_str))
+    let rel_dir = Path::new(&task.path).strip_prefix(Path::new(&task.folder_path))
         .unwrap_or(Path::new(&task.path))
         .to_string_lossy().to_string();
 
@@ -306,21 +319,21 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
 
 /// Parse a single file using file_processor, then write results to graph.
 pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
-    let _folder_path = &task.folder_path;
     let abs_path = &task.path;
 
-    let repo_path_str = ctx.pg().get_repo_by_name(folder_name).await
-        .ok().flatten()
-        .and_then(|r| r["abs_path"].as_str().map(String::from))
-        .unwrap_or_default();
+    // Lookup once by abs_path; folder name comes from the DB row so subtree
+    // composite names ("sensei:homebrew") survive as the repo_id passed to
+    // downstream processors that namespace symbol IDs by repo.
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder_name = folder.as_ref()
+        .and_then(|r| r["name"].as_str())
+        .unwrap_or_else(|| task.folder_name());
 
     // Parse the file
-    let result = crate::tasks::processors::process_file(abs_path, &repo_path_str, folder_name)?;
+    let result = crate::tasks::processors::process_file(abs_path, &task.folder_path, folder_name)?;
 
     // Write parsed symbols to PG
     let symbols_count = result.symbols.len();
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
     if let Some(folder) = folder
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             // Write file node
@@ -377,8 +390,8 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 // ── Delete File / Folder ──────────────────────────────────────────────────
 
 pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    // Look up folder UUID for PgStore operations
-    let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
+    // folder_path is the repo abs_path (Task contract).
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             ctx.pg().delete_nodes_by_file(&folder_id, &task.path).await.ok();
@@ -388,8 +401,7 @@ pub async fn delete_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
 }
 
 pub async fn delete_folder(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    // Look up folder UUID for PgStore operations
-    let folder = ctx.pg().get_repo_by_name(&task.folder_path).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
     if let Some(folder) = folder
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             ctx.pg().delete_nodes_by_path_prefix(&folder_id, &task.path).await.ok();

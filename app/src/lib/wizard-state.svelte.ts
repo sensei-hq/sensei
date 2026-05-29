@@ -12,6 +12,9 @@
 import { senseiApi } from './api.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
+import { scanState } from './scan-state.svelte.js';
+import { loadWizardData } from './setup/loaders.js';
+import { STORAGE_KEYS } from './storage-keys.js';
 import { STAGES, type WizardStage } from '../routes/(config)/stages.js';
 import type {
   DaemonAssistantFamily, DaemonWatchRoot, DaemonProject,
@@ -87,8 +90,11 @@ type CommitFn = (ws: WizardState, api: ReturnType<typeof senseiApi>) => Promise<
 
 const COMMIT_HANDLERS: Record<string, CommitFn> = {
   welcome:     async () => {},
-  preferences: async (ws, api) => {
-    await api.setConfig({
+  preferences: async (ws) => {
+    // Daemon write + appState cache update in one call so the next reader
+    // (e.g. greeting on the welcome page) sees the new user_name without
+    // a fresh appState.load().
+    await appState.setConfigs({
       'setup.preferences': JSON.stringify(ws.preferences),
       'user_name': ws.preferences.displayName,
     });
@@ -158,12 +164,13 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       throw new Error(`Failed to update: ${failed.join(', ')}`);
     }
   },
-  roots:       async (ws, api) => {
-    // Roots are persisted to the DB when the user clicks "Add" on the roots page.
-    // Here we trigger scanning for any roots that are in DB but not yet scanned.
-    for (const root of ws.roots.roots) {
-      if (!root.scanned && root.path) await api.scanFolder(root.path);
-    }
+  roots:       async () => {
+    // Roots are persisted to the DB at "Add" time on the roots page; this
+    // stage's commit is now a no-op. Scan triggering moved to the Scan
+    // stage (scanState.start) so SSE is subscribed before any work emits.
+    // Without that ordering, the wave of events from scan_root would land
+    // on a broadcast channel with no subscriber and the UI would show
+    // "stuck at queued" for everything that finished pre-mount.
   },
   scan:        async () => {},
   projects:    async (ws, api) => {
@@ -179,7 +186,7 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       }
     }
   },
-  libraries:   async (ws, api) => {
+  libraries:   async (ws) => {
     // Persist the wrapped/disabled split to `setup.libraries`. The daemon
     // reads this when deciding which libs to index/wrap. Both lists are
     // stored explicitly so that adding a new lib after this commit defaults
@@ -190,14 +197,14 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
     for (const lib of ws.libraries.libs) {
       (lib.enabled ? wrapped : disabled).push(lib.name);
     }
-    await api.setConfig({ 'setup.libraries': JSON.stringify({ wrapped, disabled }) });
+    await appState.setConfigs({ 'setup.libraries': JSON.stringify({ wrapped, disabled }) });
   },
-  instruments: async (ws, api) => {
+  instruments: async (ws) => {
     // Persist the user's MCP selection to `setup.instruments`. Once a daemon
     // registry endpoint lands, the same key can drive install/uninstall.
     const selected = ws.instruments.mcps.filter(m => m.selected).map(m => m.id);
     const deselected = ws.instruments.mcps.filter(m => !m.selected).map(m => m.id);
-    await api.setConfig({ 'setup.instruments': JSON.stringify({ selected, deselected }) });
+    await appState.setConfigs({ 'setup.instruments': JSON.stringify({ selected, deselected }) });
   },
   inference: async (ws, api) => {
     // Persist any non-empty drafted keys. Per-card status updates so
@@ -218,7 +225,7 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
       }
     }
   },
-  done:        async () => { await appState.setSetupComplete(); },
+  done:        async (ws) => { await ws.setCompleted(); },
 };
 
 // ── WizardState ─────────────────────────────────────────────
@@ -289,14 +296,72 @@ export class WizardState {
     switch (stageId) {
       case 'preferences': return this.preferences.displayName.trim().length > 0;
       case 'roots':       return this.roots.roots.length > 0;
-      case 'scan':        return this.scan.done;
+      // Scan completion now lives on scanState (the live runtime singleton)
+      // because the scan can finish while the user is on another stage; the
+      // wizardState slice is just the persisted baseline snapshot.
+      case 'scan':        return scanState.completed;
       default:            return true;
     }
   }
 
   // ── Lifecycle ──
 
+  /**
+   * Mark the wizard as completed end-to-end. Writes setup_complete to the
+   * daemon and updates the appState cache + localStorage sync-gate so the
+   * reroute hook sees the new state immediately on the next navigation.
+   *
+   * Lives here (not on appState) because completion is a wizard concern —
+   * appState just exposes the resulting flag via .setupOk for callers that
+   * want a status read without coupling to the wizard module.
+   */
+  async setCompleted(): Promise<void> {
+    // setConfigs throws on daemon failure — the done-stage commit handler
+    // re-raises so the wizard layout can show the error instead of
+    // navigating to the observatory.
+    await appState.setConfigs({ setup_complete: '1' });
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.setupComplete, '1');
+    }
+  }
+
+  /** True once load() has resolved at least once. The (config) layout uses
+   *  this as the gate before rendering — keeps wizard pages from flashing
+   *  with empty state during the cold mount. */
+  loaded = $state(false);
+
+  /**
+   * Fetch wizard data from the daemon and apply it. Single entry point —
+   * components / layouts call this; nobody else should reach into the
+   * daemon for wizard concerns. Mirrors `healthState.init()` and
+   * `appState.load()` so all three globals share the same idempotent
+   * load() + state-driven UI pattern.
+   *
+   * Returns false on daemon unreachable so the layout can surface a 503
+   * instead of mounting with stale or empty state.
+   */
+  async load(): Promise<boolean> {
+    try {
+      const data = await loadWizardData(appState.port);
+      await this.hydrate(data);
+      this.loaded = true;
+      return true;
+    } catch {
+      // Don't clear existing state — a transient daemon outage shouldn't
+      // wipe the cache the user is currently looking at (mirrors the
+      // contract appState.load() now follows after the comment/code
+      // contradiction was resolved).
+      return false;
+    }
+  }
+
   async hydrate(data: WizardLoadData): Promise<void> {
+    // Wizard init resets the live scan runtime — a fresh wizard session
+    // starts with an empty SSE stream + Begin button. The runtime survives
+    // stage navigation within the session; only re-entering the wizard
+    // (which is what triggers hydrate) clears it.
+    scanState.reset();
+
     // Reset stages from the canonical static defs, then layer persisted status.
     this.stages = cloneStages();
     for (const s of this.stages) {
@@ -472,7 +537,11 @@ export class WizardState {
     if (!handler) return true;
     try {
       await handler(this, api);
-      await api.setConfig({ [`setup.${stageId}`]: 'done' });
+      // Marker write goes through appState so the in-memory config picks
+      // up the `setup.X: done` keys — that matters for reroute()'s setup
+      // gate and any other reader of appState.config that runs before the
+      // next load().
+      await appState.setConfigs({ [`setup.${stageId}`]: 'done' });
       const stage = this.stages.find(s => s.id === stageId);
       if (stage) stage.status = 'done';
       return true;
@@ -490,7 +559,7 @@ export class WizardState {
 async function guessUserName(): Promise<string> {
   try {
     const stored = typeof localStorage !== 'undefined'
-      ? localStorage.getItem('sensei:userName') : null;
+      ? localStorage.getItem(STORAGE_KEYS.userName) : null;
     if (stored) return stored;
 
     // In Tauri, homeDir() returns the real home directory (e.g. /Users/jerry)

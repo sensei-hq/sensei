@@ -2,9 +2,11 @@
  * Mock data for test mode — allows running all pages in the browser
  * without daemon or Tauri sidecar.
  *
- * Enable: set localStorage.setItem('sensei:test-mode', '1')
- * Disable: localStorage.removeItem('sensei:test-mode')
+ * Enable: set localStorage.setItem(STORAGE_KEYS.testMode, '1')  // e.g. 'sensei-dev:test-mode'
+ * Disable: localStorage.removeItem(STORAGE_KEYS.testMode)
  */
+
+import { STORAGE_KEYS } from './storage-keys.js';
 
 export function isTestMode(): boolean {
   if (typeof window === 'undefined') return false;
@@ -12,11 +14,11 @@ export function isTestMode(): boolean {
   if (typeof URLSearchParams !== 'undefined') {
     const params = new URLSearchParams(window.location.search);
     if (params.get('test') === '1') {
-      localStorage.setItem('sensei:test-mode', '1');
+      localStorage.setItem(STORAGE_KEYS.testMode, '1');
       return true;
     }
   }
-  return localStorage.getItem('sensei:test-mode') === '1';
+  return localStorage.getItem(STORAGE_KEYS.testMode) === '1';
 }
 
 // ── Assistants mock data ─────────────────────────────────────────────────────
