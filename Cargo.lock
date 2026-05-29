@@ -3819,6 +3819,7 @@ dependencies = [
  "clap",
  "dirs",
  "gateway",
+ "gateway-embedded",
  "globset",
  "hex",
  "ignore",

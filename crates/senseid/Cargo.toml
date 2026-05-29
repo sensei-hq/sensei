@@ -6,6 +6,12 @@ description = "Sensei indexer daemon — graph-based code intelligence"
 
 [features]
 dev = ["sensei-bootstrap/dev"]
+# Opt-in in-process inference adapters from gateway-embedded. Each one
+# enables heavyweight native deps (ORT runtime for fastembed, C++ for
+# llama.cpp). Off by default — the daemon ships only HTTP adapters
+# unless one of these is enabled at build time.
+embedded-fastembed = ["gateway-embedded/fastembed"]
+embedded-llama-cpp = ["gateway-embedded/llama-cpp"]
 
 [dependencies]
 # HTTP server
@@ -65,6 +71,9 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "stream"] }
 gateway = { path = "../gateway" }
+# Registry + trait types only by default — engine adapters land via the
+# `embedded-*` cargo features above.
+gateway-embedded = { path = "../gateway-embedded" }
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-logger = { path = "../logger" }
 
