@@ -19,15 +19,15 @@ const remedy = (): Remedy => ({ message: 'msg', script: 'cmd', url: null });
 
 const ok = (): HealthPayload => ({
   version: '0.2.14', uptimeSeconds: 0, platform: 'macos',
-  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null, installingVerb: 'installing' },
-  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'ready' as const, version: '1.0', detail: null, installingVerb: 'installing' })),
+  packageManager: { id: 'homebrew', label: 'Homebrew', note: null, status: 'ready', version: '4.2.0', detail: null, installingVerb: 'installing', description: '' },
+  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'ready' as const, version: '1.0', detail: null, installingVerb: 'installing', description: '' })),
   status: 'ok', remedy: null,
 });
 
 const needsAction = (): HealthPayload => ({
   ...ok(),
   packageManager: { ...ok().packageManager, status: 'failed' },
-  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'failed' as const, version: null, detail: 'blocked', installingVerb: 'installing' })),
+  components: COMPONENT_ORDER.map((id) => ({ id, label: String(id), note: null, status: 'failed' as const, version: null, detail: 'blocked', installingVerb: 'installing', description: '' })),
   status: 'needs-action', remedy: remedy(),
 });
 
