@@ -7,13 +7,14 @@ use super::super::Task;
 
 /// Resolve unresolved edges by matching target_name against existing nodes.
 pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
-    let _folder_path = &task.folder_path;
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder_name = folder.as_ref()
+        .and_then(|f| f["name"].as_str())
+        .unwrap_or_else(|| task.folder_name());
     let folder_id = match folder.as_ref()
         .and_then(|f| crate::api::util::json_uuid(&f["id"])) {
         Some(id) => id,
-        None => { tracing::warn!("resolve_edges: {} — folder not found", folder_name); return Ok(0); }
+        None => { tracing::warn!("resolve_edges: {} — folder not found", task.folder_path); return Ok(0); }
     };
 
     // Get all unresolved edges (target_id IS NULL, target_name IS NOT NULL)
@@ -73,15 +74,16 @@ pub async fn resolve_edges(ctx: &TaskContext, task: &Task) -> Result<u32, String
 
 /// Build doc↔code traceability edges and mark as indexed.
 pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
     let folder_path = &task.folder_path;
-    // Use path-based lookup so we mark the correct folder even when multiple
-    // folders share the same basename (e.g., test runs, cloned repos).
+    // abs_path lookup avoids name collisions across roots.
     let folder = ctx.pg().get_repo_by_path(folder_path).await.ok().flatten();
+    let folder_name = folder.as_ref()
+        .and_then(|f| f["name"].as_str())
+        .unwrap_or_else(|| task.folder_name());
     let folder_id = match folder.as_ref()
         .and_then(|f| crate::api::util::json_uuid(&f["id"])) {
         Some(id) => id,
-        None => { tracing::info!("build_connections: {} — folder not found", folder_name); return Ok(0); }
+        None => { tracing::info!("build_connections: {} — folder not found", folder_path); return Ok(0); }
     };
 
     let nodes = ctx.pg().get_nodes_by_folder(&folder_id).await.unwrap_or_default();
@@ -148,9 +150,10 @@ pub async fn build_connections(ctx: &TaskContext, task: &Task) -> Result<u32, St
 /// Re-evaluate cross-repo edges after a branch switch or repo update.
 /// Detects shared symbols across repos in the same project.
 pub async fn reconcile_connections(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
-    let _folder_path = &task.folder_path;
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder_name = folder.as_ref()
+        .and_then(|f| f["name"].as_str())
+        .unwrap_or_else(|| task.folder_name());
     let folder_id = folder.as_ref()
         .and_then(|f| crate::api::util::json_uuid(&f["id"]));
     let project_id = folder.as_ref()

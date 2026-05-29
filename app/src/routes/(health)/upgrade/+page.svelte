@@ -12,6 +12,7 @@
     import { onMount } from "svelte";
     import { hasTauri } from "$lib/bootstrap.js";
     import { Eyebrow, Kanji, StatusDot } from "$lib/components";
+    import { STORAGE_KEYS } from "$lib/storage-keys.js";
 
     type StepStatus = "pending" | "running" | "done" | "failed";
 
@@ -40,7 +41,7 @@
             setTimeout(() => {
                 // Clear the upgrade-pending flag
                 if (typeof localStorage !== "undefined") {
-                    localStorage.removeItem("sensei:app-version");
+                    localStorage.removeItem(STORAGE_KEYS.appVersion);
                 }
                 goto("/health", { replaceState: true });
             }, 1200);

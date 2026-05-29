@@ -169,7 +169,9 @@ pub fn run() {
                     }
                     "go-health"      => { let _ = app.emit("dev-navigate", "/health"); }
                     "go-upgrade"     => { let _ = app.emit("dev-navigate", "/upgrade"); }
-                    "go-observatory" => { let _ = app.emit("dev-navigate", "/observatory"); }
+                    // "(observatory)" is a SvelteKit group, not a URL segment —
+                    // the observatory page lives at "/".
+                    "go-observatory" => { let _ = app.emit("dev-navigate", "/"); }
                     "go-setup"       => { let _ = app.emit("dev-navigate", "/setup/welcome"); }
                     "report-issue" => {
                         use tauri_plugin_opener::OpenerExt;

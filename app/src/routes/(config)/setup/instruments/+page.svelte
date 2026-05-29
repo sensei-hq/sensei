@@ -28,10 +28,10 @@
     const seen = new Set<string>();
     for (const p of wizardState.projects.projects) {
       for (const tag of [
-        ...(p.stack.languages ?? []),
-        ...(p.stack.frameworks ?? []),
-        ...(p.stack.runtimes ?? []),
-        ...(p.stack.services ?? []),
+        ...(p.stack?.languages ?? []),
+        ...(p.stack?.frameworks ?? []),
+        ...(p.stack?.runtimes ?? []),
+        ...(p.stack?.services ?? []),
       ]) {
         if (tag) seen.add(tag);
       }
