@@ -102,6 +102,15 @@ pub async fn init_gateway() -> Arc<Gateway> {
         }
         Err(e) => tracing::warn!("Gateway: OpenAI adapter failed: {}", e),
     }
+    // OpenAI-compatible aggregators / routers. Each uses the same wire
+    // format as OpenAI but with a different base URL + API key. The
+    // `with_id` constructor lets a single adapter implementation be
+    // registered under multiple router-matching ids so the gateway
+    // engine (which dispatches by router id) can pick the right
+    // RouterConfig per request.
+    register_openai_compatible(&adapters, "openrouter").await;
+    register_openai_compatible(&adapters, "vercel").await;
+    register_openai_compatible(&adapters, "nvidia").await;
     match gateway::adapters::grok::GrokAdapter::new() {
         Ok(adapter) => {
             tracing::info!("Gateway: Grok adapter registered");
@@ -171,6 +180,32 @@ fn baseline_production_config() -> GatewayConfig {
         timeout_ms: Some(120_000),
         headers: HashMap::new(),
     });
+    // OpenAI-compatible aggregators. The adapter implementation is the
+    // same as OpenAI's; each router has its own base URL + key env var.
+    routers.insert("openrouter".into(), RouterConfig {
+        url: "https://openrouter.ai/api/v1".into(),
+        api_key_env: Some("OPENROUTER_API_KEY".into()),
+        api_key: None,
+        enabled: true,
+        timeout_ms: Some(120_000),
+        headers: HashMap::new(),
+    });
+    routers.insert("vercel".into(), RouterConfig {
+        url: "https://ai-gateway.vercel.sh/v1".into(),
+        api_key_env: Some("AI_GATEWAY_API_KEY".into()),
+        api_key: None,
+        enabled: true,
+        timeout_ms: Some(120_000),
+        headers: HashMap::new(),
+    });
+    routers.insert("nvidia".into(), RouterConfig {
+        url: "https://integrate.api.nvidia.com/v1".into(),
+        api_key_env: Some("NVIDIA_API_KEY".into()),
+        api_key: None,
+        enabled: true,
+        timeout_ms: Some(120_000),
+        headers: HashMap::new(),
+    });
 
     let mut models: HashMap<String, ModelConfig> = HashMap::new();
     models.insert("dall-e-3".into(), ModelConfig {
@@ -209,6 +244,37 @@ fn baseline_production_config() -> GatewayConfig {
         max_output_tokens: 8_192,
         pricing: None,
     });
+    // One representative model per OpenAI-compatible aggregator so the
+    // router entries above have something to dispatch to out of the box.
+    // The DB-load path / setup wizard can add more once table-driven
+    // configuration lands.
+    models.insert("openrouter-claude-sonnet-4-5".into(), ModelConfig {
+        id: "openrouter-claude-sonnet-4-5".into(),
+        api_model_id: Some("anthropic/claude-sonnet-4-5".into()),
+        provider: "openrouter".into(),
+        capabilities: vec![Capability::TextChat],
+        context_window: 200_000,
+        max_output_tokens: 8_192,
+        pricing: None,
+    });
+    models.insert("vercel-gpt-4o".into(), ModelConfig {
+        id: "vercel-gpt-4o".into(),
+        api_model_id: Some("openai/gpt-4o".into()),
+        provider: "vercel".into(),
+        capabilities: vec![Capability::TextChat],
+        context_window: 128_000,
+        max_output_tokens: 16_384,
+        pricing: None,
+    });
+    models.insert("nvidia-llama-3.1-70b-instruct".into(), ModelConfig {
+        id: "nvidia-llama-3.1-70b-instruct".into(),
+        api_model_id: Some("meta/llama-3.1-70b-instruct".into()),
+        provider: "nvidia".into(),
+        capabilities: vec![Capability::TextChat],
+        context_window: 128_000,
+        max_output_tokens: 4_096,
+        pricing: None,
+    });
 
     let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
     chains.insert("image_generate".into(), FallbackChainConfig {
@@ -243,6 +309,25 @@ fn baseline_production_config() -> GatewayConfig {
     });
 
     GatewayConfig { routers, models, chains }
+}
+
+/// Register an OpenAI-compatible adapter under the given router id.
+///
+/// The adapter shares the OpenAI wire format and per-request URL +
+/// API key come from the matching [`RouterConfig`] entry in
+/// [`baseline_production_config`]. Used for OpenAI-compatible
+/// aggregators (OpenRouter), unified gateways (Vercel AI Gateway),
+/// and inference services (NVIDIA NIM).
+async fn register_openai_compatible(adapters: &AdapterRegistry, id: &str) {
+    match gateway::adapters::openai::OpenAIAdapter::with_id(id) {
+        Ok(adapter) => {
+            tracing::info!("Gateway: OpenAI-compatible adapter registered as '{id}'");
+            adapters
+                .register(Arc::new(adapter) as Arc<dyn InferenceAdapter>)
+                .await;
+        }
+        Err(e) => tracing::warn!("Gateway: '{id}' adapter failed: {e}"),
+    }
 }
 
 /// Probe Ollama at localhost:11434.
@@ -323,4 +408,64 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
     };
     let cb = CircuitBreakerManager::new(CircuitBreakerConfig::default());
     Arc::new(Gateway::new(config, adapters, cb))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Confirms the OpenAI-compatible aggregators we register at startup
+    /// (OpenRouter, Vercel AI Gateway, NVIDIA NIM) actually land in the
+    /// registry under the matching router ids. The gateway engine
+    /// dispatches by router id, so a mismatch here would make those
+    /// providers unreachable even with a valid `RouterConfig`.
+    #[tokio::test]
+    async fn register_openai_compatible_adds_each_id_to_the_registry() {
+        let adapters = AdapterRegistry::new();
+        register_openai_compatible(&adapters, "openrouter").await;
+        register_openai_compatible(&adapters, "vercel").await;
+        register_openai_compatible(&adapters, "nvidia").await;
+
+        for id in ["openrouter", "vercel", "nvidia"] {
+            let got = adapters.get(id).await;
+            assert!(got.is_some(), "expected adapter '{id}' to be registered");
+            assert_eq!(got.unwrap().id(), id);
+        }
+    }
+
+    /// The baseline production config must ship router entries for every
+    /// OpenAI-compatible aggregator we register at startup; otherwise the
+    /// adapter registration succeeds but `Gateway::execute` returns
+    /// `NoCandidates` / `NotConfigured` because the router lookup misses.
+    #[test]
+    fn baseline_config_includes_new_openai_compatible_routers_and_models() {
+        let cfg = baseline_production_config();
+        for id in ["openrouter", "vercel", "nvidia"] {
+            assert!(
+                cfg.routers.contains_key(id),
+                "baseline routers should include '{id}', got {:?}",
+                cfg.routers.keys().collect::<Vec<_>>()
+            );
+            let r = &cfg.routers[id];
+            assert!(r.enabled, "router '{id}' should be enabled by default");
+            assert!(
+                r.api_key_env.is_some(),
+                "router '{id}' should ship an api_key_env reference"
+            );
+        }
+
+        // Each aggregator ships at least one representative model so
+        // the routers have something to dispatch to out of the box.
+        let providers_with_models: std::collections::HashSet<&str> = cfg
+            .models
+            .values()
+            .map(|m| m.provider.as_str())
+            .collect();
+        for id in ["openrouter", "vercel", "nvidia"] {
+            assert!(
+                providers_with_models.contains(id),
+                "expected at least one model with provider='{id}'"
+            );
+        }
+    }
 }
