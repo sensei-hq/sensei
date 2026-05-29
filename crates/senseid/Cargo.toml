@@ -12,6 +12,7 @@ dev = ["sensei-bootstrap/dev"]
 # unless one of these is enabled at build time.
 embedded-fastembed = ["gateway-embedded/fastembed"]
 embedded-llama-cpp = ["gateway-embedded/llama-cpp"]
+embedded-ort = ["gateway-embedded/ort"]
 
 [dependencies]
 # HTTP server
