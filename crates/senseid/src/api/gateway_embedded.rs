@@ -389,13 +389,18 @@ mod llama_cpp_init {
     /// (mean-pooled BERT-class GGUF: all-minilm, bge, nomic-embed).
     /// `gguf_path` points at a single GGUF file — no tokenizer
     /// sidecar, the tokenizer is baked into the GGUF itself.
+    ///
+    /// The adapter is registered under id `"llama-cpp-embed"` so it
+    /// can coexist with [`register_llama_cpp_chat`] without an id
+    /// collision in the [`AdapterRegistry`].
     pub async fn register_llama_cpp_embed(
         registry: &AdapterRegistry,
         gguf_path: impl AsRef<Path>,
         model_id: impl Into<String>,
     ) -> Result<String, String> {
         let model_id = model_id.into();
-        let cfg = LlamaCppConfig::embed(&model_id);
+        let mut cfg = LlamaCppConfig::embed(&model_id);
+        cfg.adapter_id = "llama-cpp-embed".into();
         register_with_config(registry, gguf_path, model_id, cfg).await
     }
 
@@ -403,13 +408,18 @@ mod llama_cpp_init {
     /// (any generative GGUF: llama-3.x, qwen, mistral, …). Same model
     /// file shape as the embed variant; the configuration choice
     /// determines how the engine runs the forward pass.
+    ///
+    /// The adapter is registered under id `"llama-cpp-chat"` so it
+    /// can coexist with [`register_llama_cpp_embed`] without an id
+    /// collision.
     pub async fn register_llama_cpp_chat(
         registry: &AdapterRegistry,
         gguf_path: impl AsRef<Path>,
         model_id: impl Into<String>,
     ) -> Result<String, String> {
         let model_id = model_id.into();
-        let cfg = LlamaCppConfig::chat(&model_id);
+        let mut cfg = LlamaCppConfig::chat(&model_id);
+        cfg.adapter_id = "llama-cpp-chat".into();
         register_with_config(registry, gguf_path, model_id, cfg).await
     }
 
@@ -426,13 +436,14 @@ mod llama_cpp_init {
         fn gateway_with_one(
             registry: AdapterRegistry,
             model_id: &str,
+            provider: &str,
             capability: Capability,
         ) -> Gateway {
             let mut routers = HashMap::new();
             routers.insert(
-                "llama-cpp".into(),
+                provider.into(),
                 RouterConfig {
-                    url: "embedded://llama-cpp".into(),
+                    url: format!("embedded://{provider}"),
                     api_key_env: None,
                     api_key: None,
                     enabled: true,
@@ -446,7 +457,7 @@ mod llama_cpp_init {
                 ModelConfig {
                     id: model_id.into(),
                     api_model_id: None,
-                    provider: "llama-cpp".into(),
+                    provider: provider.into(),
                     capabilities: vec![capability],
                     context_window: 0,
                     max_output_tokens: 0,
@@ -481,18 +492,19 @@ mod llama_cpp_init {
                 register_llama_cpp_embed(&registry, &path, "test-llama-embed-minilm")
                     .await
                     .expect("register llama-cpp embed adapter");
-            assert_eq!(adapter_id, "llama-cpp");
+            assert_eq!(adapter_id, "llama-cpp-embed");
 
             let gw = gateway_with_one(
                 registry,
                 "test-llama-embed-minilm",
+                "llama-cpp-embed",
                 Capability::TextEmbed,
             );
 
             let request = InferenceRequest {
                 capability: Capability::TextEmbed,
                 model: Some("test-llama-embed-minilm".into()),
-                router: Some("llama-cpp".into()),
+                router: Some("llama-cpp-embed".into()),
                 chain: None,
                 payload: Payload::Embed {
                     texts: vec![
@@ -532,18 +544,19 @@ mod llama_cpp_init {
                 register_llama_cpp_chat(&registry, &path, "test-llama-chat-model")
                     .await
                     .expect("register llama-cpp chat adapter");
-            assert_eq!(adapter_id, "llama-cpp");
+            assert_eq!(adapter_id, "llama-cpp-chat");
 
             let gw = gateway_with_one(
                 registry,
                 "test-llama-chat-model",
+                "llama-cpp-chat",
                 Capability::TextChat,
             );
 
             let request = InferenceRequest {
                 capability: Capability::TextChat,
                 model: Some("test-llama-chat-model".into()),
-                router: Some("llama-cpp".into()),
+                router: Some("llama-cpp-chat".into()),
                 chain: None,
                 payload: Payload::Chat {
                     messages: vec![Message {
