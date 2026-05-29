@@ -34,7 +34,8 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Message, MessageRole, Payload, StreamChunk,
+    InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole, Payload,
+    StreamChunk, ToolCall, ToolDefinition,
 };
 
 const ADAPTER_ID: &str = "gemini";
@@ -46,20 +47,55 @@ const DEFAULT_MAX_TOKENS: u32 = 1024;
 // Wire format
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
-struct GeminiPart<'a> {
-    text: &'a str,
+/// A single part of a Gemini message. Each part can hold text, a
+/// function call (assistant emits when invoking a tool), or a function
+/// response (caller sends to feed a tool result back). Gemini accepts
+/// either form on a part — fields not in use are omitted from the wire
+/// shape.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+struct GeminiPart {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(
+        default,
+        rename = "functionCall",
+        skip_serializing_if = "Option::is_none"
+    )]
+    function_call: Option<GeminiFunctionCall>,
+    #[serde(
+        default,
+        rename = "functionResponse",
+        skip_serializing_if = "Option::is_none"
+    )]
+    function_response: Option<GeminiFunctionResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GeminiFunctionCall {
+    name: String,
+    /// Argument object — a JSON value, not a string. We round-trip
+    /// this against the gateway's JSON-string `ToolCall::arguments`.
+    args: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GeminiFunctionResponse {
+    name: String,
+    /// Caller's response to a prior function call. Must be a JSON
+    /// object — if the gateway tool result is a JSON document we use
+    /// it directly, otherwise we wrap it as `{"content": <str>}`.
+    response: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
-struct GeminiContent<'a> {
+struct GeminiContent {
     role: &'static str,
-    parts: Vec<GeminiPart<'a>>,
+    parts: Vec<GeminiPart>,
 }
 
 #[derive(Debug, Serialize)]
-struct GeminiSystemInstruction<'a> {
-    parts: Vec<GeminiPart<'a>>,
+struct GeminiSystemInstruction {
+    parts: Vec<GeminiPart>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -71,12 +107,32 @@ struct GeminiGenerationConfig {
 }
 
 #[derive(Debug, Serialize)]
-struct GeminiChatRequest<'a> {
-    contents: Vec<GeminiContent<'a>>,
+struct GeminiChatRequest {
+    contents: Vec<GeminiContent>,
     #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
-    system_instruction: Option<GeminiSystemInstruction<'a>>,
+    system_instruction: Option<GeminiSystemInstruction>,
     #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
     generation_config: Option<GeminiGenerationConfig>,
+    /// Tool definitions for this turn. Gemini wraps function lists
+    /// inside `{functionDeclarations: [...]}` envelopes — typically
+    /// one envelope per request. We always emit a single envelope.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<GeminiTool>,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiTool {
+    #[serde(rename = "functionDeclarations")]
+    function_declarations: Vec<GeminiFunctionDeclaration>,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiFunctionDeclaration {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    /// JSON Schema describing the call's arguments object.
+    parameters: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,14 +156,11 @@ struct GeminiCandidate {
 
 #[derive(Debug, Deserialize)]
 struct GeminiResponseContent {
+    /// Response parts share the same wire shape as the parts we emit —
+    /// reuse [`GeminiPart`] so tool-use blocks deserialise alongside
+    /// text without a second type.
     #[serde(default)]
-    parts: Vec<GeminiResponsePart>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GeminiResponsePart {
-    #[serde(default)]
-    text: Option<String>,
+    parts: Vec<GeminiPart>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,14 +174,14 @@ struct GeminiUsageMetadata {
 }
 
 #[derive(Debug, Serialize)]
-struct GeminiEmbedRequestItem<'a> {
+struct GeminiEmbedRequestItem {
     model: String,
-    content: GeminiContent<'a>,
+    content: GeminiContent,
 }
 
 #[derive(Debug, Serialize)]
-struct GeminiBatchEmbedRequest<'a> {
-    requests: Vec<GeminiEmbedRequestItem<'a>>,
+struct GeminiBatchEmbedRequest {
+    requests: Vec<GeminiEmbedRequestItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,33 +212,170 @@ fn gemini_role(role: &MessageRole) -> &'static str {
 
 /// Convert gateway messages into Gemini `contents`, skipping system-role
 /// messages (which are hoisted into `systemInstruction` by the caller).
-fn build_contents(messages: &[Message]) -> Vec<GeminiContent<'_>> {
+///
+/// Each gateway message becomes one [`GeminiContent`]. The parts list
+/// composes text + function-call / function-response blocks from
+/// `Message.content` and `Message.tool_calls`. Empty text bodies are
+/// elided so a pure-tool-call assistant turn doesn't ship an empty
+/// text part.
+fn build_contents(messages: &[Message]) -> Vec<GeminiContent> {
     messages
         .iter()
         .filter(|m| m.role != MessageRole::System)
         .map(|m| GeminiContent {
             role: gemini_role(&m.role),
-            parts: vec![GeminiPart { text: m.as_text() }],
+            parts: build_parts(m),
         })
         .collect()
+}
+
+/// Compose the [`GeminiPart`] list for one gateway message.
+fn build_parts(m: &Message) -> Vec<GeminiPart> {
+    let mut parts: Vec<GeminiPart> = Vec::new();
+    match &m.content {
+        MessageContent::Text { text } => {
+            if !text.is_empty() {
+                parts.push(GeminiPart {
+                    text: Some(text.clone()),
+                    ..Default::default()
+                });
+            }
+        }
+        MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } => {
+            parts.push(GeminiPart {
+                function_response: Some(GeminiFunctionResponse {
+                    // Gemini matches results back to calls by function
+                    // name, not id. The gateway id may have a "#N"
+                    // disambiguator suffix added on the way in; strip
+                    // it to recover the original function name.
+                    name: function_name_from_tool_call_id(tool_call_id),
+                    response: tool_result_response_value(content),
+                }),
+                ..Default::default()
+            });
+        }
+    }
+    for tc in &m.tool_calls {
+        parts.push(GeminiPart {
+            function_call: Some(GeminiFunctionCall {
+                name: tc.name.clone(),
+                args: parse_tool_input(&tc.arguments),
+            }),
+            ..Default::default()
+        });
+    }
+    parts
+}
+
+/// Strip any `#N` disambiguator suffix that `extract_tool_calls`
+/// appends when the model emits the same function name multiple times
+/// in one turn. A raw function name (no suffix) round-trips unchanged.
+fn function_name_from_tool_call_id(id: &str) -> String {
+    id.split('#').next().unwrap_or(id).to_string()
+}
+
+/// Build the JSON value Gemini expects in a `functionResponse.response`
+/// field. Gemini wants an object — if the gateway tool result is
+/// already a JSON document we surface it directly; otherwise wrap it
+/// as `{"content": <string>}` so the model still sees structured data.
+fn tool_result_response_value(content: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .filter(|v| v.is_object() || v.is_array())
+        .unwrap_or_else(|| serde_json::json!({ "content": content }))
+}
+
+/// Parse a JSON-string `arguments` payload back into a JSON value for
+/// Gemini's `functionCall.args` field. Malformed input degrades to an
+/// empty object — Gemini would reject a string here, and dropping the
+/// args is safer than panicking.
+fn parse_tool_input(args: &str) -> serde_json::Value {
+    if args.is_empty() {
+        return serde_json::json!({});
+    }
+    serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+/// Convert gateway [`ToolDefinition`]s into Gemini's
+/// `tools: [{functionDeclarations: [...]}]` envelope. We always emit
+/// a single envelope — Gemini does support multiple, but the gateway
+/// model is a flat list of definitions per request.
+fn build_tools(tools: &[ToolDefinition]) -> Vec<GeminiTool> {
+    if tools.is_empty() {
+        return Vec::new();
+    }
+    vec![GeminiTool {
+        function_declarations: tools
+            .iter()
+            .map(|t| GeminiFunctionDeclaration {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: t.input_schema.clone(),
+            })
+            .collect(),
+    }]
+}
+
+/// Pull `functionCall` parts out of a [`GeminiChatResponse`] and
+/// convert them into gateway [`ToolCall`]s. Gemini doesn't carry a
+/// per-call id — we synthesise one from the function name. When the
+/// same function name appears more than once in a turn, the second
+/// and later calls get a `#N` suffix so the caller can disambiguate;
+/// [`function_name_from_tool_call_id`] strips that on the way out.
+/// Arguments (a JSON object on the wire) are re-serialised into the
+/// gateway's JSON-string `ToolCall::arguments` form for parity with
+/// OpenAI / Anthropic.
+fn extract_tool_calls(resp: &GeminiChatResponse) -> Vec<ToolCall> {
+    let mut out: Vec<ToolCall> = Vec::new();
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for candidate in &resp.candidates {
+        let Some(content) = &candidate.content else {
+            continue;
+        };
+        for part in &content.parts {
+            let Some(fc) = &part.function_call else {
+                continue;
+            };
+            let n = counts.entry(fc.name.clone()).or_insert(0);
+            let id = if *n == 0 {
+                fc.name.clone()
+            } else {
+                format!("{}#{}", fc.name, *n)
+            };
+            *n += 1;
+            let arguments = serde_json::to_string(&fc.args).unwrap_or_default();
+            out.push(ToolCall {
+                id,
+                name: fc.name.clone(),
+                arguments,
+            });
+        }
+    }
+    out
 }
 
 /// Resolve the system instruction: prefer the explicit `system` field on
 /// the Chat payload; fall back to concatenating any `MessageRole::System`
 /// messages in the conversation.
-fn extract_system_instruction<'a>(
-    messages: &'a [Message],
-    system: &'a Option<String>,
-) -> Option<GeminiSystemInstruction<'a>> {
+fn extract_system_instruction(
+    messages: &[Message],
+    system: &Option<String>,
+) -> Option<GeminiSystemInstruction> {
     if let Some(s) = system.as_deref() {
         return Some(GeminiSystemInstruction {
-            parts: vec![GeminiPart { text: s }],
+            parts: vec![GeminiPart {
+                text: Some(s.to_string()),
+                ..Default::default()
+            }],
         });
     }
-    let system_parts: Vec<&'a str> = messages
+    let system_parts: Vec<String> = messages
         .iter()
         .filter(|m| m.role == MessageRole::System)
-        .map(|m| m.as_text())
+        .map(|m| m.as_text().to_string())
         .collect();
     if system_parts.is_empty() {
         None
@@ -193,7 +383,10 @@ fn extract_system_instruction<'a>(
         Some(GeminiSystemInstruction {
             parts: system_parts
                 .into_iter()
-                .map(|text| GeminiPart { text })
+                .map(|text| GeminiPart {
+                    text: Some(text),
+                    ..Default::default()
+                })
                 .collect(),
         })
     }
@@ -379,7 +572,7 @@ impl InferenceAdapter for GeminiAdapter {
                 system,
                 max_tokens,
                 temperature,
-                tools: _,
+                tools,
             } => {
                 let model = resolve_chat_model(request);
                 let url = format!(
@@ -399,12 +592,14 @@ impl InferenceAdapter for GeminiAdapter {
                     contents: build_contents(messages),
                     system_instruction: extract_system_instruction(messages, system),
                     generation_config,
+                    tools: build_tools(tools),
                 };
 
                 let resp: GeminiChatResponse =
                     gemini_post(&self.client, &url, &api_key, &body, &config.headers).await?;
 
                 let content = extract_text(&resp);
+                let tool_calls = extract_tool_calls(&resp);
                 let usage = usage_from_gemini(&resp.usage_metadata);
 
                 Ok(InferenceResponse {
@@ -417,7 +612,7 @@ impl InferenceAdapter for GeminiAdapter {
                     videos: None,
                     model: Some(model),
                     usage,
-                    tool_calls: Vec::new(),
+                    tool_calls,
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -456,7 +651,10 @@ impl InferenceAdapter for GeminiAdapter {
                             model: qualified_model.clone(),
                             content: GeminiContent {
                                 role: "user",
-                                parts: vec![GeminiPart { text: t.as_str() }],
+                                parts: vec![GeminiPart {
+                                    text: Some(t.clone()),
+                                    ..Default::default()
+                                }],
                             },
                         })
                         .collect(),
@@ -533,6 +731,11 @@ impl InferenceAdapter for GeminiAdapter {
             contents: build_contents(messages),
             system_instruction: extract_system_instruction(messages, system),
             generation_config,
+            // Tool calling + streaming is deferred: Gemini emits
+            // `functionCall` parts only on terminal chunks anyway, so
+            // the v1 contract is "tools work through execute()
+            // only". Streaming explicitly omits the tools field.
+            tools: Vec::new(),
         };
 
         let mut req = self
@@ -634,7 +837,7 @@ mod tests {
         assert_eq!(contents[0].role, "user");
         assert_eq!(contents[1].role, "model");
         assert_eq!(contents[2].role, "user");
-        assert_eq!(contents[0].parts[0].text, "hi");
+        assert_eq!(contents[0].parts[0].text.as_deref(), Some("hi"));
     }
 
     #[test]
@@ -643,7 +846,7 @@ mod tests {
         let explicit = Some("explicit rules".to_string());
         let si = extract_system_instruction(&msgs, &explicit).unwrap();
         assert_eq!(si.parts.len(), 1);
-        assert_eq!(si.parts[0].text, "explicit rules");
+        assert_eq!(si.parts[0].text.as_deref(), Some("explicit rules"));
     }
 
     #[test]
@@ -651,8 +854,8 @@ mod tests {
         let msgs = vec![system_msg("rule one"), system_msg("rule two"), user("hi")];
         let si = extract_system_instruction(&msgs, &None).unwrap();
         assert_eq!(si.parts.len(), 2);
-        assert_eq!(si.parts[0].text, "rule one");
-        assert_eq!(si.parts[1].text, "rule two");
+        assert_eq!(si.parts[0].text.as_deref(), Some("rule one"));
+        assert_eq!(si.parts[1].text.as_deref(), Some("rule two"));
     }
 
     #[test]
@@ -699,12 +902,14 @@ mod tests {
             candidates: vec![GeminiCandidate {
                 content: Some(GeminiResponseContent {
                     parts: vec![
-                        GeminiResponsePart {
+                        GeminiPart {
                             text: Some("hello".into()),
+                            ..Default::default()
                         },
-                        GeminiResponsePart { text: None },
-                        GeminiResponsePart {
+                        GeminiPart::default(),
+                        GeminiPart {
                             text: Some(" world".into()),
+                            ..Default::default()
                         },
                     ],
                 }),
@@ -800,20 +1005,184 @@ mod tests {
         let body = GeminiChatRequest {
             contents: vec![GeminiContent {
                 role: "user",
-                parts: vec![GeminiPart { text: "hi" }],
+                parts: vec![GeminiPart {
+                    text: Some("hi".into()),
+                    ..Default::default()
+                }],
             }],
             system_instruction: Some(GeminiSystemInstruction {
-                parts: vec![GeminiPart { text: "be brief" }],
+                parts: vec![GeminiPart {
+                    text: Some("be brief".into()),
+                    ..Default::default()
+                }],
             }),
             generation_config: Some(GeminiGenerationConfig {
                 max_output_tokens: Some(64),
                 temperature: Some(0.2),
             }),
+            tools: Vec::new(),
         };
         let json = serde_json::to_value(&body).unwrap();
         assert!(json.get("systemInstruction").is_some());
         assert!(json.get("generationConfig").is_some());
         let gc = &json["generationConfig"];
         assert_eq!(gc["maxOutputTokens"], 64);
+        // tools omitted when empty
+        assert!(json.get("tools").is_none());
+    }
+
+    #[test]
+    fn build_tools_emits_function_declarations_envelope() {
+        let defs = vec![
+            ToolDefinition {
+                name: "get_weather".into(),
+                description: Some("Look up the weather for a city.".into()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                }),
+            },
+            ToolDefinition {
+                name: "ping".into(),
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+        ];
+        let json = serde_json::to_value(build_tools(&defs)).unwrap();
+        let outer = json.as_array().unwrap();
+        // Gemini's `tools` is an array of envelopes; we emit exactly one.
+        assert_eq!(outer.len(), 1);
+        let decls = outer[0]["functionDeclarations"].as_array().unwrap();
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0]["name"], "get_weather");
+        assert_eq!(decls[0]["description"], "Look up the weather for a city.");
+        assert_eq!(decls[0]["parameters"]["type"], "object");
+        // description omitted when None
+        assert!(decls[1].get("description").is_none());
+    }
+
+    #[test]
+    fn build_tools_returns_empty_vec_for_empty_definitions() {
+        assert!(build_tools(&[]).is_empty());
+    }
+
+    #[test]
+    fn build_parts_emits_function_response_for_tool_result() {
+        let m = Message::tool_result("get_weather", "{\"temp\":72}");
+        let parts = build_parts(&m);
+        assert_eq!(parts.len(), 1);
+        let fr = parts[0].function_response.as_ref().unwrap();
+        assert_eq!(fr.name, "get_weather");
+        // JSON tool result is surfaced directly (object), not wrapped.
+        assert_eq!(fr.response, serde_json::json!({"temp": 72}));
+    }
+
+    #[test]
+    fn build_parts_strips_disambiguator_suffix_from_tool_call_id() {
+        // extract_tool_calls appends `#N` to the second/third/... calls
+        // with the same function name. On the way back out we recover
+        // the bare function name.
+        let m = Message::tool_result("get_weather#1", "{}");
+        let parts = build_parts(&m);
+        assert_eq!(
+            parts[0].function_response.as_ref().unwrap().name,
+            "get_weather"
+        );
+    }
+
+    #[test]
+    fn build_parts_wraps_non_json_tool_result_in_content_envelope() {
+        // Gemini wants an object in functionResponse.response. A raw
+        // string degrades to `{"content": "..."}`.
+        let m = Message::tool_result("ping", "all good");
+        let parts = build_parts(&m);
+        let fr = parts[0].function_response.as_ref().unwrap();
+        assert_eq!(fr.response, serde_json::json!({"content": "all good"}));
+    }
+
+    #[test]
+    fn build_parts_emits_function_call_for_assistant_tool_calls() {
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text {
+                text: "Looking…".into(),
+            },
+            tool_calls: vec![ToolCall {
+                id: "get_weather".into(),
+                name: "get_weather".into(),
+                arguments: "{\"city\":\"Berlin\"}".into(),
+            }],
+        };
+        let parts = build_parts(&msg);
+        assert_eq!(parts.len(), 2, "text part + function_call part");
+        assert_eq!(parts[0].text.as_deref(), Some("Looking…"));
+        let fc = parts[1].function_call.as_ref().unwrap();
+        assert_eq!(fc.name, "get_weather");
+        assert_eq!(fc.args, serde_json::json!({"city": "Berlin"}));
+    }
+
+    #[test]
+    fn extract_tool_calls_assigns_disambiguator_to_repeat_function_names() {
+        let resp = GeminiChatResponse {
+            candidates: vec![GeminiCandidate {
+                content: Some(GeminiResponseContent {
+                    parts: vec![
+                        GeminiPart {
+                            function_call: Some(GeminiFunctionCall {
+                                name: "search".into(),
+                                args: serde_json::json!({"q": "rust"}),
+                            }),
+                            ..Default::default()
+                        },
+                        GeminiPart {
+                            function_call: Some(GeminiFunctionCall {
+                                name: "search".into(),
+                                args: serde_json::json!({"q": "gemini"}),
+                            }),
+                            ..Default::default()
+                        },
+                    ],
+                }),
+                finish_reason: None,
+            }],
+            usage_metadata: None,
+        };
+        let calls = extract_tool_calls(&resp);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "search");
+        assert_eq!(calls[1].id, "search#1");
+        // Arguments round-trip as JSON-encoded strings.
+        let p1: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(p1, serde_json::json!({"q": "rust"}));
+    }
+
+    #[test]
+    fn extract_tool_calls_returns_empty_when_no_function_call_parts() {
+        let resp = GeminiChatResponse {
+            candidates: vec![GeminiCandidate {
+                content: Some(GeminiResponseContent {
+                    parts: vec![GeminiPart {
+                        text: Some("hello".into()),
+                        ..Default::default()
+                    }],
+                }),
+                finish_reason: Some("STOP".into()),
+            }],
+            usage_metadata: None,
+        };
+        assert!(extract_tool_calls(&resp).is_empty());
+    }
+
+    #[test]
+    fn parse_tool_input_handles_empty_and_malformed_inputs() {
+        assert_eq!(parse_tool_input(""), serde_json::json!({}));
+        assert_eq!(
+            parse_tool_input("{\"city\":\"Berlin\"}"),
+            serde_json::json!({"city": "Berlin"})
+        );
+        // Malformed JSON degrades to an empty object — Gemini requires
+        // an object here, so this is the safest fallback.
+        assert_eq!(parse_tool_input("not json"), serde_json::json!({}));
     }
 }
