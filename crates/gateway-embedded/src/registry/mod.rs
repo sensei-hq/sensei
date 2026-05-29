@@ -12,9 +12,11 @@
 
 pub mod external;
 pub mod managed;
+pub mod ollama;
 
 pub use external::ExternalResolver;
 pub use managed::ManagedResolver;
+pub use ollama::OllamaResolver;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
