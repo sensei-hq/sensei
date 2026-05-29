@@ -28,9 +28,11 @@ use aws_sdk_bedrockruntime::{
     operation::converse::ConverseOutput as ConverseResponse,
     types::{
         ContentBlock, ConversationRole, ConverseOutput as ConverseOutputUnion,
-        InferenceConfiguration, Message, SystemContentBlock,
+        InferenceConfiguration, Message, SystemContentBlock, Tool, ToolConfiguration,
+        ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolSpecification, ToolUseBlock,
     },
 };
+use aws_smithy_types::{Document, Number};
 use futures::Stream;
 
 use crate::adapters::InferenceAdapter;
@@ -39,7 +41,8 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Message as GwMessage, MessageRole, Payload, StreamChunk,
+    InferenceRequest, InferenceResponse, Message as GwMessage, MessageContent, MessageRole,
+    Payload, StreamChunk, ToolCall, ToolDefinition,
 };
 
 const ADAPTER_ID: &str = "bedrock";
@@ -107,7 +110,7 @@ impl InferenceAdapter for BedrockAdapter {
             system,
             max_tokens,
             temperature,
-            tools: _,
+            tools,
         } = &request.payload
         else {
             return Err(Self::err(
@@ -140,10 +143,14 @@ impl InferenceAdapter for BedrockAdapter {
         for s in system_blocks {
             builder = builder.system(s);
         }
+        if let Some(cfg) = build_tool_config(tools) {
+            builder = builder.tool_config(cfg);
+        }
 
         let response = builder.send().await.map_err(map_sdk_error)?;
 
         let content = extract_text(&response);
+        let tool_calls = extract_tool_calls(&response);
         let usage = response.usage.as_ref().map(|u| TokenUsage {
             input_tokens: u.input_tokens.max(0) as u32,
             output_tokens: u.output_tokens.max(0) as u32,
@@ -160,7 +167,7 @@ impl InferenceAdapter for BedrockAdapter {
             videos: None,
             model: Some(model_id),
             usage,
-            tool_calls: Vec::new(),
+            tool_calls,
             estimated_cost: None,
             actual_cost: None,
             attempts: vec![],
@@ -202,20 +209,208 @@ fn role_to_bedrock(role: &MessageRole) -> Option<ConversationRole> {
 /// Convert gateway messages into Bedrock Messages. System-role messages
 /// are dropped here — they're hoisted into the `system` parameter by
 /// [`build_system`].
+///
+/// Each gateway message becomes one Bedrock [`Message`] with a content
+/// list composed by [`build_content_blocks`]: text + tool_use blocks
+/// from `Message.content` and `Message.tool_calls`, or a tool_result
+/// block for `MessageContent::ToolResult`. Empty content lists are
+/// dropped — Bedrock rejects messages without content blocks.
 fn build_messages(messages: &[GwMessage]) -> Result<Vec<Message>, GatewayError> {
-    messages
-        .iter()
-        .filter_map(|m| role_to_bedrock(&m.role).map(|r| (r, m.as_text().to_string())))
-        .map(|(role, content)| {
-            Message::builder()
-                .role(role)
-                .content(ContentBlock::Text(content))
+    let mut out = Vec::new();
+    for m in messages {
+        let Some(role) = role_to_bedrock(&m.role) else {
+            continue;
+        };
+        let blocks = build_content_blocks(m);
+        if blocks.is_empty() {
+            continue;
+        }
+        let mut builder = Message::builder().role(role);
+        for block in blocks {
+            builder = builder.content(block);
+        }
+        out.push(
+            builder
                 .build()
-                .map_err(|e| {
-                    BedrockAdapter::err(format!("build Bedrock message: {e}"), None)
-                })
+                .map_err(|e| BedrockAdapter::err(format!("build Bedrock message: {e}"), None))?,
+        );
+    }
+    Ok(out)
+}
+
+/// Compose the [`ContentBlock`] list for one gateway message.
+///
+/// Bedrock packs the entire message body — text, tool_use emissions,
+/// and tool_result responses — into a single Vec of content blocks
+/// per message. The block order mirrors what we'd expect to see on
+/// the wire: text first, tool_use blocks last.
+fn build_content_blocks(m: &GwMessage) -> Vec<ContentBlock> {
+    let mut blocks: Vec<ContentBlock> = Vec::new();
+    match &m.content {
+        MessageContent::Text { text } => {
+            if !text.is_empty() {
+                blocks.push(ContentBlock::Text(text.clone()));
+            }
+        }
+        MessageContent::ToolResult {
+            tool_call_id,
+            content,
+        } => {
+            // Bedrock wraps tool result content in a list of
+            // ToolResultContentBlocks. We emit a single block; JSON
+            // bodies surface as Json blocks so the model can introspect
+            // structure, plain strings as Text.
+            let inner = match serde_json::from_str::<serde_json::Value>(content) {
+                Ok(v) if v.is_object() || v.is_array() => {
+                    ToolResultContentBlock::Json(json_to_document(v))
+                }
+                _ => ToolResultContentBlock::Text(content.clone()),
+            };
+            match ToolResultBlock::builder()
+                .tool_use_id(tool_call_id.clone())
+                .content(inner)
+                .build()
+            {
+                Ok(block) => blocks.push(ContentBlock::ToolResult(block)),
+                Err(_) => {
+                    // ToolResultBlock requires tool_use_id; we always
+                    // set it above, so a build error here is structural
+                    // and we drop the block rather than panic.
+                }
+            }
+        }
+    }
+    for tc in &m.tool_calls {
+        match ToolUseBlock::builder()
+            .tool_use_id(tc.id.clone())
+            .name(tc.name.clone())
+            .input(json_to_document(parse_tool_input(&tc.arguments)))
+            .build()
+        {
+            Ok(block) => blocks.push(ContentBlock::ToolUse(block)),
+            Err(_) => {
+                // All three required fields are populated above; skip
+                // on the impossible build-error path.
+            }
+        }
+    }
+    blocks
+}
+
+/// Parse the gateway's JSON-string `arguments` payload into a JSON
+/// value. Empty / malformed input becomes an empty object — Bedrock
+/// requires a JSON object for tool inputs.
+fn parse_tool_input(args: &str) -> serde_json::Value {
+    if args.is_empty() {
+        return serde_json::json!({});
+    }
+    serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+/// Convert gateway [`ToolDefinition`]s into a Bedrock
+/// [`ToolConfiguration`]. Returns `None` for an empty definition
+/// list so the caller can skip setting `tool_config` on the request
+/// entirely (Bedrock rejects an empty toolConfig).
+fn build_tool_config(tools: &[ToolDefinition]) -> Option<ToolConfiguration> {
+    if tools.is_empty() {
+        return None;
+    }
+    let mut builder = ToolConfiguration::builder();
+    for t in tools {
+        let mut spec = ToolSpecification::builder()
+            .name(t.name.clone())
+            .input_schema(ToolInputSchema::Json(json_to_document(
+                t.input_schema.clone(),
+            )));
+        if let Some(desc) = &t.description {
+            spec = spec.description(desc.clone());
+        }
+        if let Ok(built) = spec.build() {
+            builder = builder.tools(Tool::ToolSpec(built));
+        }
+    }
+    builder.build().ok()
+}
+
+/// Pull `tool_use` blocks out of the Converse response and convert
+/// them into gateway [`ToolCall`]s. Bedrock natively carries an id
+/// per call, so we surface it directly; arguments are re-serialised
+/// into the gateway's JSON-string form for parity with OpenAI.
+fn extract_tool_calls(response: &ConverseResponse) -> Vec<ToolCall> {
+    let Some(output) = response.output.as_ref() else {
+        return Vec::new();
+    };
+    let ConverseOutputUnion::Message(msg) = output else {
+        return Vec::new();
+    };
+    msg.content
+        .iter()
+        .filter_map(|cb| match cb {
+            ContentBlock::ToolUse(tu) => Some(ToolCall {
+                id: tu.tool_use_id().to_string(),
+                name: tu.name().to_string(),
+                arguments: serde_json::to_string(&document_to_json(tu.input()))
+                    .unwrap_or_default(),
+            }),
+            _ => None,
         })
         .collect()
+}
+
+/// Recursively convert a [`serde_json::Value`] into an
+/// [`aws_smithy_types::Document`]. Both have the same JSON-shaped
+/// tree — only the number wrapping differs.
+fn json_to_document(v: serde_json::Value) -> Document {
+    match v {
+        serde_json::Value::Null => Document::Null,
+        serde_json::Value::Bool(b) => Document::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                Document::Number(Number::PosInt(u))
+            } else if let Some(i) = n.as_i64() {
+                Document::Number(Number::NegInt(i))
+            } else if let Some(f) = n.as_f64() {
+                Document::Number(Number::Float(f))
+            } else {
+                Document::Null
+            }
+        }
+        serde_json::Value::String(s) => Document::String(s),
+        serde_json::Value::Array(arr) => {
+            Document::Array(arr.into_iter().map(json_to_document).collect())
+        }
+        serde_json::Value::Object(map) => Document::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, json_to_document(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// Inverse of [`json_to_document`]. Floats that don't fit a JSON
+/// number (NaN / infinity) degrade to Null, mirroring serde_json's
+/// own behaviour.
+fn document_to_json(d: &Document) -> serde_json::Value {
+    match d {
+        Document::Null => serde_json::Value::Null,
+        Document::Bool(b) => serde_json::Value::Bool(*b),
+        Document::Number(n) => match n {
+            Number::PosInt(u) => serde_json::Value::Number((*u).into()),
+            Number::NegInt(i) => serde_json::Value::Number((*i).into()),
+            Number::Float(f) => serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null),
+        },
+        Document::String(s) => serde_json::Value::String(s.clone()),
+        Document::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(document_to_json).collect())
+        }
+        Document::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), document_to_json(v)))
+                .collect(),
+        ),
+    }
 }
 
 /// Build the system-prompt blocks. The explicit `system` field on the
@@ -411,5 +606,229 @@ mod tests {
     fn empty_messages_produce_empty_bedrock_list() {
         let msgs: Vec<GwMessage> = vec![];
         assert!(build_messages(&msgs).unwrap().is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Tool calling
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn json_to_document_round_trips_through_document_to_json() {
+        let original = serde_json::json!({
+            "city": "Berlin",
+            "limit": 5,
+            "negative": -3,
+            "ratio": 0.75,
+            "flag": true,
+            "tags": ["a", "b"],
+            "nested": {"deep": null},
+        });
+        let doc = json_to_document(original.clone());
+        let back = document_to_json(&doc);
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn parse_tool_input_handles_empty_and_malformed_inputs() {
+        assert_eq!(parse_tool_input(""), serde_json::json!({}));
+        assert_eq!(
+            parse_tool_input("{\"city\":\"Berlin\"}"),
+            serde_json::json!({"city": "Berlin"})
+        );
+        // Malformed JSON degrades to an empty object — Bedrock would
+        // reject a string here, so empty-object is the safer fallback.
+        assert_eq!(parse_tool_input("not json"), serde_json::json!({}));
+    }
+
+    #[test]
+    fn build_tool_config_returns_none_for_empty_definition_list() {
+        assert!(build_tool_config(&[]).is_none());
+    }
+
+    #[test]
+    fn build_tool_config_wraps_each_definition_in_tool_spec() {
+        let defs = vec![
+            ToolDefinition {
+                name: "get_weather".into(),
+                description: Some("Look up the weather for a city.".into()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                }),
+            },
+            ToolDefinition {
+                name: "ping".into(),
+                description: None,
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+        ];
+        let cfg = build_tool_config(&defs).expect("non-empty config");
+        let tools = cfg.tools();
+        assert_eq!(tools.len(), 2);
+        let Tool::ToolSpec(spec0) = &tools[0] else {
+            panic!("expected ToolSpec variant");
+        };
+        assert_eq!(spec0.name(), "get_weather");
+        assert_eq!(spec0.description(), Some("Look up the weather for a city."));
+        // input_schema is the JSON-Schema document we passed through.
+        let ToolInputSchema::Json(doc) = spec0.input_schema().unwrap() else {
+            panic!("expected Json schema variant");
+        };
+        let schema = document_to_json(doc);
+        assert_eq!(schema["type"], "object");
+        // Second tool: description should be absent.
+        let Tool::ToolSpec(spec1) = &tools[1] else {
+            panic!("expected ToolSpec variant");
+        };
+        assert_eq!(spec1.name(), "ping");
+        assert!(spec1.description().is_none());
+    }
+
+    #[test]
+    fn build_content_blocks_for_tool_result_emits_tool_result_with_tool_use_id() {
+        let m = GwMessage::tool_result("tu_01", "{\"temp\":72}");
+        let blocks = build_content_blocks(&m);
+        assert_eq!(blocks.len(), 1);
+        let ContentBlock::ToolResult(block) = &blocks[0] else {
+            panic!("expected ToolResult content block");
+        };
+        assert_eq!(block.tool_use_id(), "tu_01");
+        // JSON tool result surfaces as a Json content block (object).
+        let inner = &block.content[0];
+        let ToolResultContentBlock::Json(doc) = inner else {
+            panic!("expected Json inner block for JSON tool result");
+        };
+        assert_eq!(document_to_json(doc), serde_json::json!({"temp": 72}));
+    }
+
+    #[test]
+    fn build_content_blocks_wraps_non_json_tool_result_in_text_inner_block() {
+        let m = GwMessage::tool_result("tu_01", "all good");
+        let blocks = build_content_blocks(&m);
+        let ContentBlock::ToolResult(block) = &blocks[0] else {
+            panic!("expected ToolResult content block");
+        };
+        let ToolResultContentBlock::Text(t) = &block.content[0] else {
+            panic!("expected Text inner block for plain-string tool result");
+        };
+        assert_eq!(t, "all good");
+    }
+
+    #[test]
+    fn build_content_blocks_emits_tool_use_block_for_assistant_tool_calls() {
+        let msg = GwMessage {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text {
+                text: "Looking…".into(),
+            },
+            tool_calls: vec![ToolCall {
+                id: "tu_01".into(),
+                name: "get_weather".into(),
+                arguments: "{\"city\":\"Berlin\"}".into(),
+            }],
+        };
+        let blocks = build_content_blocks(&msg);
+        // Text first, tool_use last.
+        assert_eq!(blocks.len(), 2);
+        let ContentBlock::Text(t) = &blocks[0] else {
+            panic!("expected leading Text block");
+        };
+        assert_eq!(t, "Looking…");
+        let ContentBlock::ToolUse(tu) = &blocks[1] else {
+            panic!("expected trailing ToolUse block");
+        };
+        assert_eq!(tu.tool_use_id(), "tu_01");
+        assert_eq!(tu.name(), "get_weather");
+        assert_eq!(
+            document_to_json(tu.input()),
+            serde_json::json!({"city": "Berlin"})
+        );
+    }
+
+    #[test]
+    fn build_content_blocks_elides_empty_text_when_only_tool_calls_present() {
+        let msg = GwMessage {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text {
+                text: String::new(),
+            },
+            tool_calls: vec![ToolCall {
+                id: "tu_01".into(),
+                name: "ping".into(),
+                arguments: "{}".into(),
+            }],
+        };
+        let blocks = build_content_blocks(&msg);
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(blocks[0], ContentBlock::ToolUse(_)));
+    }
+
+    #[test]
+    fn extract_tool_calls_returns_empty_when_response_is_text_only() {
+        let response = ConverseResponse::builder()
+            .output(ConverseOutputUnion::Message(
+                Message::builder()
+                    .role(ConversationRole::Assistant)
+                    .content(ContentBlock::Text("just text".into()))
+                    .build()
+                    .unwrap(),
+            ))
+            .stop_reason(aws_sdk_bedrockruntime::types::StopReason::EndTurn)
+            .usage(
+                aws_sdk_bedrockruntime::types::TokenUsage::builder()
+                    .input_tokens(1)
+                    .output_tokens(1)
+                    .total_tokens(2)
+                    .build()
+                    .unwrap(),
+            )
+            .metrics(
+                aws_sdk_bedrockruntime::types::ConverseMetrics::builder().latency_ms(0).build().unwrap(),
+            )
+            .build()
+            .unwrap();
+        assert!(extract_tool_calls(&response).is_empty());
+    }
+
+    #[test]
+    fn extract_tool_calls_pulls_tool_use_blocks_and_serialises_arguments() {
+        let tu = ToolUseBlock::builder()
+            .tool_use_id("tu_42")
+            .name("get_weather")
+            .input(json_to_document(serde_json::json!({"city": "Berlin"})))
+            .build()
+            .unwrap();
+        let response = ConverseResponse::builder()
+            .output(ConverseOutputUnion::Message(
+                Message::builder()
+                    .role(ConversationRole::Assistant)
+                    .content(ContentBlock::Text("Looking up…".into()))
+                    .content(ContentBlock::ToolUse(tu))
+                    .build()
+                    .unwrap(),
+            ))
+            .stop_reason(aws_sdk_bedrockruntime::types::StopReason::ToolUse)
+            .usage(
+                aws_sdk_bedrockruntime::types::TokenUsage::builder()
+                    .input_tokens(10)
+                    .output_tokens(5)
+                    .total_tokens(15)
+                    .build()
+                    .unwrap(),
+            )
+            .metrics(
+                aws_sdk_bedrockruntime::types::ConverseMetrics::builder().latency_ms(0).build().unwrap(),
+            )
+            .build()
+            .unwrap();
+        let calls = extract_tool_calls(&response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "tu_42");
+        assert_eq!(calls[0].name, "get_weather");
+        let parsed: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(parsed, serde_json::json!({"city": "Berlin"}));
+        // extract_text on the same response still returns just the text.
+        assert_eq!(extract_text(&response), "Looking up…");
     }
 }

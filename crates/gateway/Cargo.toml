@@ -10,6 +10,10 @@ license = "MIT"
 # brings SigV4, credential-provider chain, and Converse API for free.
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-bedrockruntime = "1"
+# Direct on aws-smithy-types so the Bedrock adapter can construct
+# Document values for tool input schemas and tool_use payloads
+# without going through a private re-export.
+aws-smithy-types = "1"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
