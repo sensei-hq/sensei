@@ -311,13 +311,13 @@ impl PgStore {
 
     /// Get a repo (folder with kind='git'/'subtree') by abs_path.
     pub async fn get_repo_by_path(&self, abs_path: &str) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
+        let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, kind::text, name, abs_path, project_id, props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
+                "SELECT id, root_id, kind::text, name, abs_path, project_id, props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
             ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(row.map(|(id, kind, name, abs, pid, props, tags, modified)| {
+        Ok(row.map(|(id, root_id, kind, name, abs, pid, props, tags, modified)| {
             serde_json::json!({
-                "id": id, "kind": kind, "name": name, "abs_path": abs,
+                "id": id, "root_id": root_id, "kind": kind, "name": name, "abs_path": abs,
                 "project_id": pid, "props": props, "tags": tags,
                 "modified_at": modified.to_rfc3339(),
             })

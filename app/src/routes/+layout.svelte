@@ -15,40 +15,27 @@
         (window as { __sensei_state__?: unknown }).__sensei_state__ = { appState };
     }
 
-    //   function applyColorScheme() {
-    //     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    //     document.body.dataset.mode = dark ? 'dark' : 'light';
-    //   }
-
-    //   onMount(() => {
-    //     // Port resolution now happens in +layout.ts load() — runs before any page loader.
-
-    //     applyColorScheme();
-    //     const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    //     mq.addEventListener('change', applyColorScheme);
-
-    //     const unlistens: Array<() => void> = [];
-    //     if (hasTauri()) {
-    //       import('@tauri-apps/api/event').then(({ listen }) => {
-    //         listen<void>('open-logs', () => {
-    //           goto('/logs');
-    //         }).then(fn => unlistens.push(fn));
-
-    //         // View-menu navigation — just navigates. The routing guard still
-    //         // applies; if health is not ready, reroute will intercept and send
-    //         // the user to /health (HealthState owns the cache, not this listener).
-    //         listen<string>('dev-navigate', (e) => {
-    //           goto(e.payload, { replaceState: true });
-    //         }).then(fn => unlistens.push(fn));
-    //       });
-    //     }
-
-    //     return () => {
-    //       mq.removeEventListener('change', applyColorScheme);
-    //       unlistens.forEach(fn => fn());
-    //     };
-    //   });
-    //
+    // Wire up the Tauri native menu → SvelteKit navigation bridge. The
+    // Rust side emits `open-logs` (one specific shortcut) and
+    // `dev-navigate` (any view-menu item) events; we just translate them
+    // into goto() so the routing guard in hooks.reroute applies the same
+    // way as in-app navigation.
+    onMount(() => {
+        if (!hasTauri()) return;
+        const unlistens: Array<() => void> = [];
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        import("@tauri-apps/api/event").then(({ listen }) => {
+            listen<void>("open-logs", () => {
+                goto("/logs");
+            }).then((fn) => unlistens.push(fn));
+            listen<string>("dev-navigate", (e) => {
+                goto(e.payload, { replaceState: true });
+            }).then((fn) => unlistens.push(fn));
+        });
+        return () => {
+            for (const fn of unlistens) fn();
+        };
+    });
 </script>
 
 {@render children()}

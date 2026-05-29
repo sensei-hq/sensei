@@ -1,6 +1,8 @@
 use axum::{
     routing::{get, post, put, delete},
     Router,
+    response::Json,
+    http::StatusCode,
 };
 
 use crate::api::state::AppState;
@@ -171,6 +173,43 @@ pub fn create_router(state: AppState) -> Router {
         // Stop
         .route("/stop", post(workspace::stop))
         .with_state(state)
+}
+
+/// Build the **degraded-mode** router used when the daemon can boot but
+/// can't connect to PostgreSQL.
+///
+/// The full router requires `AppState` (which carries `PgStore`); if the
+/// connect fails we still want to keep the port open so the frontend's
+/// health page can surface the failure rather than seeing connection
+/// refused. This router:
+///
+///   * Serves `/health` and `/api/health` via the same probe as full mode
+///     (`sensei_bootstrap::check`) — the DB component will report its
+///     real state (not_ok with detail) on every poll.
+///   * Returns 503 with a structured payload on every other route so a
+///     misguided client (e.g. a wizard mid-step) sees a clear "daemon
+///     degraded" error instead of confusing partial responses.
+///
+/// The daemon exits this mode only on restart — once DB is fixed and the
+/// daemon comes back up, `start_server` takes the full-mode path.
+pub fn create_degraded_router(db_url: String, error: String) -> Router {
+    let fallback_msg = format!(
+        "Daemon is running in degraded mode — PostgreSQL is unreachable. URL: {}. Error: {}. Fix the database and restart the daemon.",
+        db_url, error
+    );
+    Router::new()
+        .route("/health", get(health::health))
+        .route("/api/health", get(health::health))
+        .fallback(move || {
+            let msg = fallback_msg.clone();
+            async move {
+                (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
+                    "ok": false,
+                    "reason": "db_unavailable",
+                    "message": msg,
+                })))
+            }
+        })
 }
 
 #[cfg(test)]

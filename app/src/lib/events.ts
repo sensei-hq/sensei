@@ -25,6 +25,23 @@ export class EventManager<T> {
     return () => this.unsubscribe(handler);
   }
 
+  /**
+   * Resolve once the EventSource is OPEN (or immediately if already open).
+   * Use after subscribe() and before triggering server-side work whose
+   * broadcast events you need to capture — without this, the POST that
+   * kicks the work can land before the SSE handshake completes, and the
+   * first wave of events fans out to zero subscribers.
+   */
+  ready(timeoutMs = 5000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.source?.readyState === EventSource.OPEN) { resolve(); return; }
+      if (!this.source) { reject(new Error('not connected')); return; }
+      const src = this.source;
+      const t = setTimeout(() => reject(new Error('sse open timeout')), timeoutMs);
+      src.addEventListener('open', () => { clearTimeout(t); resolve(); }, { once: true });
+    });
+  }
+
   /** Number of active subscribers. */
   get subscriberCount(): number {
     return this.handlers.length;

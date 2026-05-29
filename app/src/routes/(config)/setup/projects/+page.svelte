@@ -79,9 +79,9 @@
         {@const isConfirmed = confirmed[project.id] !== false}
         {@const path = projectPath(project)}
         {@const stackChips = [
-          ...(project.stack.languages ?? []),
-          ...(project.stack.frameworks ?? []),
-          ...(project.stack.runtimes ?? []),
+          ...(project.stack?.languages ?? []),
+          ...(project.stack?.frameworks ?? []),
+          ...(project.stack?.runtimes ?? []),
         ]}
         <div
           data-testid={`project-card-${project.id}`}

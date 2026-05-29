@@ -16,7 +16,8 @@
  *     `/health`.
  */
 
-const KEY = 'sensei:health';
+import { STORAGE_KEYS } from './storage-keys.js';
+const KEY = STORAGE_KEYS.health;
 const VALUE_READY = 'ready';
 
 /** Reroute consults this to decide whether to redirect to /health. */

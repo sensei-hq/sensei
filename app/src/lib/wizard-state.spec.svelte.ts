@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { WizardState } from './wizard-state.svelte.js';
+import { scanState } from './scan-state.svelte.js';
 import { mockWizardLoadData, mockWatchRoot, mockRouter } from './setup/mock-contracts.js';
 
 describe('WizardState', () => {
@@ -178,13 +179,17 @@ describe('WizardState', () => {
     });
 
     it('returns false for scan when not done', () => {
-      ws.scan.done = false;
+      scanState.reset();
       expect(ws.canAdvance('scan')).toBe(false);
     });
 
     it('returns true for scan when done', () => {
-      ws.scan.done = true;
+      // canAdvance reads from the live scan runtime singleton — scan
+      // completion can happen while the user is on another stage, so the
+      // gate is driven by scanState.status rather than the wizard slice.
+      scanState.status = 'done';
       expect(ws.canAdvance('scan')).toBe(true);
+      scanState.reset();
     });
 
     it('returns true for stages with no gate', () => {
@@ -290,8 +295,11 @@ describe('WizardState', () => {
   describe('commitStage failure paths', () => {
     it('commitStage("done") propagates errors instead of returning false', async () => {
       const ws = new WizardState();
-      const { appState } = await import('$lib/appstate.svelte.js');
-      vi.spyOn(appState, 'setSetupComplete').mockRejectedValue(new Error('boom'));
+      // setCompleted lives on WizardState now (moved from appState in the
+      // single-source-of-truth refactor). Mock it to fail and confirm the
+      // error escapes — otherwise the wizard would navigate to the
+      // observatory despite the daemon write failing.
+      vi.spyOn(ws, 'setCompleted').mockRejectedValue(new Error('boom'));
 
       await expect(ws.commitStage('done')).rejects.toThrow();
 

@@ -8,17 +8,17 @@ use crate::languages;
 
 /// Classify imports as internal vs external libraries. Update project.libs.
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
-    let _folder_path = &task.folder_path;
-
     let mut lib_set = std::collections::HashSet::new();
 
-    // Re-read source files and extract non-relative imports
-    // This is expensive but accurate. TODO: store raw imports in a metadata field.
-    let repo_path_str = ctx.pg().get_repo_by_name(folder_name).await
-        .ok().flatten()
-        .and_then(|r| r["abs_path"].as_str().map(String::from))
-        .unwrap_or_default();
+    // folder_path is the repo abs_path (Task contract); look up the row
+    // once and reuse for both repo_path and the later mark_folder_indexed
+    // call. folder_name comes from the DB row so subtree composite names
+    // like "sensei:homebrew" survive in log messages.
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder_name = folder.as_ref()
+        .and_then(|f| f["name"].as_str())
+        .unwrap_or_else(|| task.folder_name());
+    let repo_path_str = task.folder_path.clone();
 
     // Walk source files in the repo directory and extract external imports
     if !repo_path_str.is_empty() {
@@ -85,9 +85,8 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .filter_map(|p| p["name"].as_str().map(|s| s.to_lowercase()))
         .collect();
 
-    // Update folder libs via PgStore
-    let folder = ctx.pg().get_repo_by_name(folder_name).await.ok().flatten();
-    if let Some(folder) = folder
+    // Update folder libs via PgStore (reusing the folder row from above)
+    if let Some(folder) = folder.as_ref()
         && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
             ctx.pg().mark_folder_indexed(&folder_id, &libs).await.ok();
         }
@@ -225,12 +224,12 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
 /// Parse manifest files (package.json, Cargo.toml, pyproject.toml) and upsert
 /// detected dependencies into libraries + referenced_libraries.
 pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let folder_name = task.folder_name();
-
-    let folder = ctx.pg().get_repo_by_name(folder_name).await
+    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await
         .map_err(|e| format!("DB error: {}", e))?
-        .ok_or_else(|| format!("Folder '{}' not found", folder_name))?;
+        .ok_or_else(|| format!("Folder '{}' not found", task.folder_path))?;
 
+    let folder_name = folder["name"].as_str()
+        .unwrap_or_else(|| task.folder_name());
     let folder_id = crate::api::util::json_uuid(&folder["id"])
         .ok_or("Invalid folder id")?;
 

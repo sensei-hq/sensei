@@ -19,7 +19,10 @@ fn detect_git_subtrees(repo_path: &std::path::Path) -> Vec<(String, String)> {
                 if let Some(end) = rest.find("/'") {
                     let dir = &rest[..end];
                     let full_path = repo_path.join(dir);
-                    if full_path.is_dir() {
+                    // A subtree may appear in many squash commits (one per
+                    // `git subtree pull`); dedupe by dir so we don't enqueue
+                    // ProcessGitFolder N times for the same path.
+                    if full_path.is_dir() && !subtrees.iter().any(|(n, _)| n == dir) {
                         subtrees.push((dir.to_string(), full_path.to_string_lossy().to_string()));
                     }
                 }
