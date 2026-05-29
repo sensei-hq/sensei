@@ -7,16 +7,22 @@ license = "MIT"
 
 [features]
 default = []
-# llama-cpp, fastembed, ort engines land in subsequent commits and gate their deps here.
+# In-process inference engine adapters. Each pulls in heavyweight native deps
+# (C++ for llama-cpp, C++ for ort, both for fastembed) so they're opt-in.
+llama-cpp = ["dep:llama-cpp-2"]
+# fastembed, ort engines land in subsequent commits and gate their deps here.
 
 [dependencies]
 gateway = { path = "../gateway" }
 async-trait = "0.1"
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "sync"] }
 tracing = "0.1"
+
+llama-cpp-2 = { version = "0.1.146", default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile = "3"
