@@ -258,11 +258,7 @@ fn resolve_step_input(
 fn build_step_request(step: &PurposeStep, input_text: &str) -> InferenceRequest {
     let system = step.system_prompt.clone();
 
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: input_text.to_string(),
-        tool_call_id: None,
-    }];
+    let messages = vec![Message::text(MessageRole::User, input_text.to_string())];
 
     let payload = match &step.capability {
         Capability::TextEmbed => Payload::Embed {
@@ -274,6 +270,7 @@ fn build_step_request(step: &PurposeStep, input_text: &str) -> InferenceRequest 
             system,
             max_tokens: step.max_tokens,
             temperature: None,
+            tools: Vec::new(),
         },
     };
 
@@ -668,7 +665,7 @@ mod tests {
         {
             assert_eq!(messages.len(), 1);
             assert_eq!(messages[0].role, MessageRole::User);
-            assert_eq!(messages[0].content, "What is Rust?");
+            assert_eq!(messages[0].as_text(), "What is Rust?");
             assert_eq!(system.as_deref(), Some("Be concise"));
             assert_eq!(*max_tokens, Some(200));
         } else {

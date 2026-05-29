@@ -35,7 +35,7 @@ struct ChatCompletionRequest {
 struct ChatMessage {
     role: String,
     content: String,
-}
+    }
 
 #[derive(Debug, Serialize)]
 struct EmbedRequest {
@@ -124,16 +124,10 @@ fn build_chat_messages(
 ) -> Vec<ChatMessage> {
     let mut out = Vec::new();
     if let Some(sys) = system {
-        out.push(ChatMessage {
-            role: "system".to_string(),
-            content: sys.clone(),
-        });
+        out.push(ChatMessage { role: "system".to_string(), content: sys.clone() });
     }
     for m in messages {
-        out.push(ChatMessage {
-            role: role_to_string(&m.role).to_string(),
-            content: m.content.clone(),
-        });
+        out.push(ChatMessage { role: role_to_string(&m.role).to_string(), content: m.as_text().to_string() });
     }
     out
 }
@@ -205,6 +199,7 @@ impl InferenceAdapter for OllamaAdapter {
                 system,
                 max_tokens,
                 temperature,
+                tools: _,
             } => {
                 let body = ChatCompletionRequest {
                     model: model.clone(),
@@ -240,6 +235,7 @@ impl InferenceAdapter for OllamaAdapter {
                     videos: None,
                     model: Some(model),
                     usage,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -275,6 +271,7 @@ impl InferenceAdapter for OllamaAdapter {
                     videos: None,
                     model: Some(model),
                     usage,
+                    tool_calls: Vec::new(),
                     estimated_cost: None,
                     actual_cost: None,
                     attempts: vec![],
@@ -299,6 +296,7 @@ impl InferenceAdapter for OllamaAdapter {
             system,
             max_tokens,
             temperature,
+            tools: _,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -414,11 +412,7 @@ mod tests {
     #[test]
     fn build_chat_request_body() {
         let messages = vec![
-            Message {
-                role: MessageRole::User,
-                content: "Hello".to_string(),
-                tool_call_id: None,
-            },
+            Message::text(MessageRole::User, "Hello".to_string()),
         ];
         let system = Some("You are helpful.".to_string());
         let chat_messages = build_chat_messages(&messages, &system);
@@ -527,14 +521,11 @@ mod tests {
             router: None,
             chain: None,
             payload: Payload::Chat {
-                messages: vec![Message {
-                    role: MessageRole::User,
-                    content: "Say hello in one sentence.".to_string(),
-                    tool_call_id: None,
-                }],
+                messages: vec![Message::text(MessageRole::User, "Say hello in one sentence.".to_string())],
                 system: None,
                 max_tokens: Some(64),
                 temperature: Some(0.3),
+                tools: Vec::new(),
             },
             budget: None,
         };
