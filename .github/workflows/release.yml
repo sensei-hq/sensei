@@ -200,7 +200,7 @@ jobs:
             /if OS\.mac\? && Hardware::CPU\.arm\?/    { plat="mac_arm" }
             /elsif OS\.mac\? && Hardware::CPU\.intel\?/ { plat="mac_x86" }
             /elsif OS\.linux\? && Hardware::CPU\.arm\?/ { plat="lnx_arm" }
-            /else/                                    { plat="lnx_x86" }
+            /^[[:space:]]*else[[:space:]]*$/          { plat="lnx_x86" }
             /sha256/ {
               gsub(/"([0-9a-f]{64}|REPLACE_WITH_[A-Z0-9_]+)"/, \
                 plat=="mac_arm"  ? "\"" arm64   "\"" : \
