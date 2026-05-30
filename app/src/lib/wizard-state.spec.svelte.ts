@@ -344,17 +344,35 @@ describe('WizardState', () => {
   });
 
   describe('commitStage failure paths', () => {
-    it('commitStage("done") propagates errors instead of returning false', async () => {
+    // commitStage's contract is now uniform: throw on failure, return void
+    // on success. The layout's catch (config/+layout.svelte) surfaces the
+    // message via commitError. Previously non-`done` stages silently
+    // returned false, leaving the Continue button stuck with no feedback.
+
+    it('commitStage("done") propagates errors from setCompleted', async () => {
       const ws = new WizardState();
-      // setCompleted lives on WizardState now (moved from appState in the
-      // single-source-of-truth refactor). Mock it to fail and confirm the
-      // error escapes — otherwise the wizard would navigate to the
-      // observatory despite the daemon write failing.
       vi.spyOn(ws, 'setCompleted').mockRejectedValue(new Error('boom'));
-
-      await expect(ws.commitStage('done')).rejects.toThrow();
-
+      await expect(ws.commitStage('done')).rejects.toThrow(/boom/);
       vi.restoreAllMocks();
+    });
+
+    it('commitStage propagates errors from non-done stages (no silent return)', async () => {
+      const ws = new WizardState();
+      // Force the libraries handler to fail by making setConfigs reject.
+      // Previously this returned false silently — now it must throw so the
+      // layout can show an error.
+      const appStateModule = await import('./appstate.svelte.js');
+      const spy = vi.spyOn(appStateModule.appState, 'setConfigs')
+        .mockRejectedValue(new Error('daemon down'));
+
+      await expect(ws.commitStage('libraries')).rejects.toThrow(/daemon down/);
+      spy.mockRestore();
+    });
+
+    it('commitStage("welcome") with no handler resolves to void and marks stage done', async () => {
+      const ws = new WizardState();
+      await expect(ws.commitStage('welcome')).resolves.toBeUndefined();
+      expect(ws.stages.find(s => s.id === 'welcome')?.status).toBe('done');
     });
   });
 

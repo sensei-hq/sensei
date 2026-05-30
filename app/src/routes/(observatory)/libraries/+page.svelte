@@ -15,6 +15,7 @@
     let selectedLib = $state<LibEntry | null>(null);
     let usageData = $state<UsageEntry[]>([]);
     let usageLoading = $state(false);
+    let usageError = $state<string | null>(null);
 
     onMount(async () => {
         const api = senseiApi(appState.port);
@@ -26,12 +27,21 @@
     // Fetch usage data when selection changes
     $effect(() => {
         const lib = selectedLib;
-        if (!lib?.id) { usageData = []; return; }
+        if (!lib?.id) { usageData = []; usageError = null; return; }
         usageLoading = true;
+        usageError = null;
         senseiApi(appState.port).getLibraryUsage(lib.id).then(d => {
             usageData = d.usage ?? [];
             usageLoading = false;
-        }).catch(() => { usageData = []; usageLoading = false; });
+        }).catch((e: unknown) => {
+            // Surface the fetch failure so the user can tell "no usage" from
+            // "we couldn't load usage". Was previously silently emptying the
+            // list, which looked identical to a genuinely-unused library.
+            console.warn('[libraries] getLibraryUsage failed', { libId: lib.id }, e);
+            usageData = [];
+            usageError = e instanceof Error ? e.message : String(e);
+            usageLoading = false;
+        });
     });
 
     let filtered = $derived(
@@ -119,6 +129,8 @@
 
                     {#if usageLoading}
                         <p class="text-xs text-surface-z6">Loading usage...</p>
+                    {:else if usageError}
+                        <p class="text-xs text-error">Couldn't load usage: {usageError}</p>
                     {:else if usageData.length > 0}
                         <div>
                             <p class="m-0 mb-2"><Eyebrow>Usage by folder</Eyebrow></p>

@@ -111,7 +111,10 @@ export class RepoStore {
   connect() {
     this.disconnect();
     this.es = new EventSource(`http://127.0.0.1:${this.port}/api/tasks/progress`);
-    this.es.onmessage = (e) => { try { this.onEvent(JSON.parse(e.data)); } catch {} };
+    this.es.onmessage = (e) => {
+      try { this.onEvent(JSON.parse(e.data)); }
+      catch (err) { console.warn('[repos] malformed SSE event dropped', err, e.data); }
+    };
     this.es.onerror = () => { this.disconnect(); setTimeout(() => this.connect(), 3000); };
     this.fetchAll();
     this.pollTimer = setInterval(() => this.fetchAll(), 5000);

@@ -54,7 +54,8 @@ export class RealTransport implements HealthTransport {
       let resolvingStarted = false;
 
       const cleanup = () => {
-        try { unlisten?.(); } catch { /* ignore */ }
+        try { unlisten?.(); }
+        catch (e) { console.warn('[health-transport] unlisten failed during teardown', e); }
       };
 
       listen<HealthEvent>('health', (e) => {

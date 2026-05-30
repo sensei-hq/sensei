@@ -30,7 +30,10 @@ export class AppState {
   get globalSkills(): string[] {
     try {
       return JSON.parse(this.config['global_skills'] ?? '["zero-errors-policy","managing-project-sessions","pattern-based-development"]');
-    } catch { return []; }
+    } catch (e) {
+      console.warn('[appState] global_skills JSON.parse failed; returning empty list', e);
+      return [];
+    }
   }
 
   /** Facade passthrough — `setupComplete` is owned by wizardState (the
@@ -48,7 +51,10 @@ export class AppState {
   get dismissedSuggestions(): string[] {
     try {
       return JSON.parse(this.config['dismissed_suggestions'] ?? '[]');
-    } catch { return []; }
+    } catch (e) {
+      console.warn('[appState] dismissed_suggestions JSON.parse failed; returning empty list', e);
+      return [];
+    }
   }
 
   async setPort(port: number) {
