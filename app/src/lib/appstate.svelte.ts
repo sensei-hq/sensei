@@ -6,6 +6,7 @@
 import { senseiApi } from './api.js';
 import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
+import { wizardState } from './wizard-state.svelte.js';
 import { STORAGE_KEYS } from './storage-keys.js';
 
 // Build-time port injected by vite.config.ts — 7745 for dev/debug, 7744 for prod.
@@ -32,28 +33,12 @@ export class AppState {
     } catch { return []; }
   }
 
+  /** Facade passthrough — `setupComplete` is owned by wizardState (the
+   *  wizard is what completes setup, and what reconciles against the
+   *  daemon's `setup_complete` config). appState surfaces it here so
+   *  callers can read app status from one place. */
   get setupComplete(): boolean {
-    // Daemon-canonical when in-memory cache is hydrated.
-    if (this.config['setup_complete'] === '1') return true;
-    // Cold-start sync gate. appState.load() runs from the observatory
-    // layout's load() — but the reroute hook fires BEFORE that load on
-    // the very first navigation of the app session, so config is still
-    // {} and we'd incorrectly bounce to /setup/welcome. The localStorage
-    // cache is written by wizardState.setCompleted() and reconciled by
-    // appState.load() on every successful refresh, so it cannot drift
-    // ahead of the daemon — only behind, which is the safe direction
-    // for a "did setup already complete?" gate.
-    if (this.loaded) return false;
-    // Guarded localStorage access — vitest's node test env can leave a
-    // partial `localStorage` global on the window without getItem,
-    // which would throw on `.getItem()`.
-    try {
-      const ls = (globalThis as { localStorage?: Storage }).localStorage;
-      if (!ls || typeof ls.getItem !== 'function') return false;
-      return ls.getItem(STORAGE_KEYS.setupComplete) === '1';
-    } catch {
-      return false;
-    }
+    return wizardState.setupComplete;
   }
 
   get userName(): string {
@@ -174,16 +159,9 @@ export class AppState {
     }
 
     this.config = result.data;
-    // Daemon is the canonical source for setup completion. Reconcile the
-    // localStorage cache (the sync gate read by hooks.client.ts) so it
-    // can never drift past a daemon write that didn't actually land.
-    if (typeof localStorage !== 'undefined') {
-      if (this.config['setup_complete'] === '1') {
-        localStorage.setItem(STORAGE_KEYS.setupComplete, '1');
-      } else {
-        localStorage.removeItem(STORAGE_KEYS.setupComplete);
-      }
-    }
+    // `setup_complete` ↔ localStorage reconciliation lives in
+    // wizardState.hydrate() now (single owner). appState just caches the
+    // config map; reroute reads `setupComplete` through the facade.
     this.loaded = true;
     return true;
   }
@@ -209,33 +187,3 @@ export class AppState {
 
 /** Singleton instance — import and use directly. */
 export const appState = new AppState();
-
-// Cross-state bridge: when health flips to ok (typically right after a
-// resolve pass that may have recreated the DB and its config table),
-// re-hydrate appState so its in-memory config and the
-// localStorage[`setupComplete`] cache reflect daemon truth. Without this,
-// a DB drop leaves the pre-drop '1' in localStorage and reroute keeps
-// sending the user to the observatory even though the daemon's
-// `setup_complete` config is gone — there'd be no UI path back into the
-// wizard.
-//
-// Lives here, not in HealthState, because appState is the facade that
-// composes health + wizard state — the facade should observe its
-// components, not the other way around.
-//
-// $effect.root creates a module-level reactive scope; the inner $effect
-// re-runs every time healthState.isOk flips, and we fire the load only
-// on the false→true transition.
-let _prevHealthOk = false;
-$effect.root(() => {
-  $effect(() => {
-    const ok = healthState.isOk;
-    if (ok && !_prevHealthOk) {
-      // Fire-and-forget — failure is non-fatal (next page-level load()
-      // catches up). Suppress unhandled-rejection noise from the
-      // browser-only no-daemon path returning false.
-      void appState.load().catch(() => {});
-    }
-    _prevHealthOk = ok;
-  });
-});

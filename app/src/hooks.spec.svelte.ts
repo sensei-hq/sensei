@@ -9,14 +9,16 @@ function setHealth(status: 'ok' | 'checking' | 'resolving' | 'needs-action') {
 }
 
 /**
- * Setup completion is sourced from `appState.config.setup_complete`, exposed
- * to hooks via `wizardState.isOk`. Mutating the config drives both.
+ * Setup completion is owned by `wizardState.setupComplete` (the wizard is
+ * what completes setup and what reconciles against daemon truth).
+ * `appState.setupComplete` is a facade passthrough. Mutating the canonical
+ * field drives both.
  */
 function setSetupComplete(complete: boolean) {
-  appState.config = complete ? { setup_complete: '1' } : {};
+  wizardState.setupComplete = complete;
 }
 
-// Sanity check — the gate must read through wizardState, not directly off appState.
+// Sanity check — the appState facade must mirror its underlying owner.
 if (wizardState.isOk !== appState.setupComplete) {
   throw new Error('wizardState.isOk should mirror appState.setupComplete');
 }

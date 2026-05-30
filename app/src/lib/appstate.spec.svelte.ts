@@ -74,13 +74,18 @@ describe('AppState', () => {
 
   // ── Derived getters ────────────────────────────────────────
 
-  it('setupComplete is false when config empty', () => {
+  it('setupComplete is false when wizardState reports false', async () => {
+    const { wizardState } = await import('./wizard-state.svelte.js');
+    wizardState.setupComplete = false;
     expect(state.setupComplete).toBe(false);
   });
 
-  it('setupComplete is true when set', () => {
-    state.config = { setup_complete: '1' };
+  it('setupComplete passes through wizardState.setupComplete (facade contract)', async () => {
+    const { wizardState } = await import('./wizard-state.svelte.js');
+    wizardState.setupComplete = true;
     expect(state.setupComplete).toBe(true);
+    wizardState.setupComplete = false;
+    expect(state.setupComplete).toBe(false);
   });
 
   it('activeProjectId returns null when empty', () => {
@@ -229,17 +234,16 @@ describe('AppState', () => {
     expect(state.config['active_project']).toBe('proj-1');
   });
 
-  it('load reconciles localStorage to "1" when daemon returns setup_complete=1 (L4)', async () => {
-    storage.delete('sensei:setup-complete');
-    await state.load();
-    expect(storage.get('sensei:setup-complete')).toBe('1');
-  });
+  // The `setup_complete` ↔ localStorage reconciliation moved to
+  // wizardState.hydrate() — that's the canonical owner of the
+  // setupComplete flag. appState.load() no longer touches the
+  // localStorage cache; it just hydrates `config`. Coverage for the
+  // reconcile behaviour lives in wizard-state.spec.svelte.ts.
 
-  it('load clears localStorage when daemon returns no setup_complete (L4)', async () => {
-    apiMock.tryGetConfig.mockResolvedValueOnce({ ok: true, data: { active_project: 'proj-1' } });
-    storage.set('sensei:setup-complete', '1');
+  it('load does not touch localStorage[setup-complete] (single-owner contract)', async () => {
+    storage.set('sensei:setup-complete', 'sentinel');
     await state.load();
-    expect(storage.has('sensei:setup-complete')).toBe(false);
+    expect(storage.get('sensei:setup-complete')).toBe('sentinel');
   });
 
   it('load leaves localStorage alone when daemon is unreachable (L4)', async () => {
