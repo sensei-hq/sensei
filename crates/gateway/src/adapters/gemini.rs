@@ -490,6 +490,14 @@ async fn gemini_post<Req: Serialize, Resp: serde::de::DeserializeOwned>(
 /// [`extract_text`] semantics); `finish_reason` is taken from the
 /// first candidate that carries one. `usage` is sourced from
 /// `usageMetadata`, which Gemini only sets on the terminal chunk.
+///
+/// Tool calling: unlike OpenAI / Anthropic / Bedrock, Gemini does
+/// **not** fragment `functionCall.args` across stream chunks — each
+/// `functionCall` part arrives complete, typically on the same
+/// terminal chunk that carries `finishReason`. So no per-call
+/// accumulator is needed; [`extract_tool_calls`] runs directly on
+/// each parsed chunk and the resulting `ToolCall`s ride on whatever
+/// `StreamChunk` carries them.
 fn parse_stream_line(line: &str) -> Option<Result<StreamChunk, GatewayError>> {
     let line = line.trim();
     let payload = line.strip_prefix("data:")?.trim();
@@ -512,11 +520,12 @@ fn parse_stream_line(line: &str) -> Option<Result<StreamChunk, GatewayError>> {
         .iter()
         .find_map(|c| c.finish_reason.clone());
     let usage = usage_from_gemini(&parsed.usage_metadata);
+    let tool_calls = extract_tool_calls(&parsed);
     Some(Ok(StreamChunk {
         content,
         finish_reason,
         usage,
-    tool_calls: Vec::new(),
+        tool_calls,
     }))
 }
 
@@ -703,7 +712,7 @@ impl InferenceAdapter for GeminiAdapter {
             system,
             max_tokens,
             temperature,
-            tools: _,
+            tools,
         } = &request.payload
         else {
             return Err(GatewayError::ProviderError {
@@ -732,11 +741,7 @@ impl InferenceAdapter for GeminiAdapter {
             contents: build_contents(messages),
             system_instruction: extract_system_instruction(messages, system),
             generation_config,
-            // Tool calling + streaming is deferred: Gemini emits
-            // `functionCall` parts only on terminal chunks anyway, so
-            // the v1 contract is "tools work through execute()
-            // only". Streaming explicitly omits the tools field.
-            tools: Vec::new(),
+            tools: build_tools(tools),
         };
 
         let mut req = self
@@ -999,6 +1004,38 @@ mod tests {
         let line = r#"data:{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"}}]}"#;
         let chunk = parse_stream_line(line).expect("Some").expect("Ok");
         assert_eq!(chunk.content, "hi");
+    }
+
+    #[test]
+    fn parse_stream_line_surfaces_function_call_parts_as_tool_calls() {
+        // Gemini doesn't fragment `functionCall.args` across chunks —
+        // each call arrives complete, typically on the terminal chunk
+        // alongside `finishReason`. extract_tool_calls runs directly
+        // on the parsed chunk; no per-call accumulator needed.
+        let line = r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Berlin"}}}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":6,"totalTokenCount":10}}"#;
+        let chunk = parse_stream_line(line).expect("Some").expect("Ok");
+        assert_eq!(chunk.finish_reason.as_deref(), Some("STOP"));
+        assert!(chunk.usage.is_some());
+        assert_eq!(chunk.tool_calls.len(), 1);
+        let call = &chunk.tool_calls[0];
+        assert_eq!(call.id, "get_weather");
+        assert_eq!(call.name, "get_weather");
+        let parsed_args: serde_json::Value =
+            serde_json::from_str(&call.arguments).expect("valid JSON args");
+        assert_eq!(parsed_args, serde_json::json!({"city": "Berlin"}));
+    }
+
+    #[test]
+    fn parse_stream_line_disambiguates_repeated_function_names_within_a_chunk() {
+        let line = r#"data: {"candidates":[{"content":{"parts":[
+            {"functionCall":{"name":"search","args":{"q":"rust"}}},
+            {"functionCall":{"name":"search","args":{"q":"gemini"}}}
+        ],"role":"model"},"finishReason":"STOP"}]}"#;
+        let chunk = parse_stream_line(line).expect("Some").expect("Ok");
+        assert_eq!(chunk.tool_calls.len(), 2);
+        assert_eq!(chunk.tool_calls[0].id, "search");
+        // Second call gets the #1 disambiguator suffix.
+        assert_eq!(chunk.tool_calls[1].id, "search#1");
     }
 
     #[test]
