@@ -20,6 +20,7 @@
 //! from the standard provider chain). For tests or callers that need to
 //! pin a region explicitly, use [`BedrockAdapter::with_region`].
 
+use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;
 
 use async_trait::async_trait;
@@ -43,7 +44,7 @@ use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
     InferenceRequest, InferenceResponse, Message as GwMessage, MessageContent, MessageRole,
-    Payload, StreamChunk, ToolCall, ToolDefinition,
+    Payload, StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
 };
 
 const ADAPTER_ID: &str = "bedrock";
@@ -131,7 +132,7 @@ impl InferenceAdapter for BedrockAdapter {
             system,
             max_tokens,
             temperature,
-            tools: _,
+            tools,
         } = &request.payload
         else {
             return Err(Self::err(
@@ -160,10 +161,9 @@ impl InferenceAdapter for BedrockAdapter {
         for s in system_blocks {
             builder = builder.system(s);
         }
-        // Tool calling on streaming is deferred — Bedrock streams
-        // tool_use arguments via `ToolUseBlockDelta::input` JSON
-        // fragments that need accumulation in the stream layer. The
-        // streaming path explicitly omits the toolConfig for now.
+        if let Some(cfg) = build_tool_config(tools) {
+            builder = builder.tool_config(cfg);
+        }
 
         let output = builder.send().await.map_err(map_sdk_error)?;
 
@@ -368,57 +368,89 @@ impl BedrockAdapter {
 ///
 /// The Converse stream is a sequence of typed events (MessageStart /
 /// ContentBlockStart / ContentBlockDelta / ContentBlockStop /
-/// MessageStop / Metadata). Most of these don't map to a gateway
-/// chunk by themselves — we only emit when we have something useful
-/// to surface:
+/// MessageStop / Metadata):
 ///
-/// - `ContentBlockDelta::Text(s)` → chunk with `content = s`
-/// - `MessageStop` → empty-content chunk with `finish_reason`
-/// - `Metadata` → empty-content chunk with `usage`
-///
-/// `ToolUse` / `ToolResult` deltas are skipped for v1; argument
-/// fragments would need accumulation in this layer before we can
-/// surface a complete `ToolCall`, which is its own follow-up.
+/// - `ContentBlockStart::ToolUse` → seed a per-index accumulator
+///   with the tool_use_id + name from the start payload.
+/// - `ContentBlockDelta::Text(s)` → emit chunk with `content = s`.
+/// - `ContentBlockDelta::ToolUse { input }` → append the JSON-string
+///   fragment to the active accumulator at this index.
+/// - `MessageStop` → drain accumulators into the terminal chunk's
+///   `tool_calls`, surfacing the SDK's `stop_reason` as
+///   `finish_reason`.
+/// - `Metadata` → empty-content chunk with `usage`.
 ///
 /// The `EventReceiver` type that backs `output.stream` lives in a
-/// `pub(crate)` module of the SDK and isn't directly nameable from
-/// outside the crate. We work around that by keeping the output
-/// value as captured state inside `unfold` — its type only appears
-/// through inference, never in a signature.
+/// `pub(crate)` module of the SDK and isn't nameable from outside
+/// the crate. We work around that by keeping the output value as
+/// captured state inside `unfold` — its type only appears through
+/// inference, never in a signature.
 fn into_stream_chunks(
     output: aws_sdk_bedrockruntime::operation::converse_stream::ConverseStreamOutput,
 ) -> impl Stream<Item = Result<StreamChunk, GatewayError>> + Send {
-    futures::stream::unfold((output, false), |(mut output, done)| async move {
-        if done {
-            return None;
-        }
+    // Initial state: the SDK output + a fresh tool-call accumulator
+    // map + a `done` latch + an emission queue (for byte-events that
+    // produce zero or one chunks, we'd ordinarily skip the queue, but
+    // the same shape lets future drop-on-error / flush-on-eof logic
+    // queue multiple terminal chunks).
+    let initial = (
+        output,
+        BTreeMap::<u32, StreamingToolCall>::new(),
+        VecDeque::<Result<StreamChunk, GatewayError>>::new(),
+        false,
+    );
+    futures::stream::unfold(initial, |(mut output, mut tool_calls, mut pending, done)| async move {
         loop {
+            if let Some(item) = pending.pop_front() {
+                return Some((item, (output, tool_calls, pending, done)));
+            }
+            if done {
+                return None;
+            }
             match output.stream.recv().await {
                 Ok(Some(event)) => {
-                    if let Some(chunk) = chunk_from_event(&event) {
-                        return Some((Ok(chunk), (output, false)));
+                    if let Some(chunk) = chunk_from_event(&event, &mut tool_calls) {
+                        pending.push_back(Ok(chunk));
                     }
-                    // Silent framing event (ContentBlockStart/Stop,
-                    // MessageStart, …) — keep reading.
                 }
                 Ok(None) => return None,
                 Err(e) => {
-                    let err = GatewayError::ProviderError {
+                    pending.push_back(Err(GatewayError::ProviderError {
                         adapter: ADAPTER_ID.into(),
                         message: format!("bedrock stream error: {e}"),
                         status: None,
-                    };
-                    return Some((Err(err), (output, true)));
+                    }));
+                    return Some((
+                        pending.pop_front().unwrap(),
+                        (output, tool_calls, pending, true),
+                    ));
                 }
             }
         }
     })
 }
 
-/// Map a single Converse stream event to a [`StreamChunk`] when it
-/// carries data the caller cares about, or `None` to skip.
-fn chunk_from_event(event: &ConverseStreamOutput) -> Option<StreamChunk> {
+/// Map a single Converse stream event to a [`StreamChunk`] (when
+/// there's something to surface) and update the per-index tool-call
+/// accumulator map.
+fn chunk_from_event(
+    event: &ConverseStreamOutput,
+    tool_calls: &mut BTreeMap<u32, StreamingToolCall>,
+) -> Option<StreamChunk> {
     match event {
+        // Opening a content block — only ToolUse seeds an
+        // accumulator. The SDK exposes the tool_use_id + name on the
+        // start event; subsequent deltas only carry input fragments.
+        ConverseStreamOutput::ContentBlockStart(ev) => {
+            if let Some(aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(tu)) = ev.start()
+            {
+                tool_calls.insert(
+                    ev.content_block_index().max(0) as u32,
+                    StreamingToolCall::new(tu.tool_use_id(), tu.name()),
+                );
+            }
+            None
+        }
         ConverseStreamOutput::ContentBlockDelta(ev) => {
             let delta = ev.delta()?;
             match delta {
@@ -428,17 +460,34 @@ fn chunk_from_event(event: &ConverseStreamOutput) -> Option<StreamChunk> {
                     usage: None,
                     tool_calls: Vec::new(),
                 }),
-                // ToolUse / ToolResult / Image / Reasoning / Citation
-                // deltas are not surfaced in v1.
+                ContentBlockDelta::ToolUse(tu) => {
+                    let idx = ev.content_block_index().max(0) as u32;
+                    if let Some(acc) = tool_calls.get_mut(&idx) {
+                        acc.push_arguments(tu.input());
+                    }
+                    None
+                }
+                // ToolResult / Image / Reasoning / Citation deltas
+                // aren't surfaced in v1.
                 _ => None,
             }
         }
-        ConverseStreamOutput::MessageStop(ev) => Some(StreamChunk {
-            content: String::new(),
-            finish_reason: Some(ev.stop_reason().as_str().to_string()),
-            usage: None,
-            tool_calls: Vec::new(),
-        }),
+        // ContentBlockStop is framing — we hold accumulators alive
+        // until MessageStop so all tool calls finalise together on
+        // the terminal chunk.
+        ConverseStreamOutput::ContentBlockStop(_) => None,
+        ConverseStreamOutput::MessageStop(ev) => {
+            let calls: Vec<ToolCall> = std::mem::take(tool_calls)
+                .into_values()
+                .filter_map(StreamingToolCall::finalize)
+                .collect();
+            Some(StreamChunk {
+                content: String::new(),
+                finish_reason: Some(ev.stop_reason().as_str().to_string()),
+                usage: None,
+                tool_calls: calls,
+            })
+        }
         ConverseStreamOutput::Metadata(ev) => ev.usage().map(|u| StreamChunk {
             content: String::new(),
             finish_reason: None,
@@ -449,8 +498,7 @@ fn chunk_from_event(event: &ConverseStreamOutput) -> Option<StreamChunk> {
             }),
             tool_calls: Vec::new(),
         }),
-        // MessageStart / ContentBlockStart / ContentBlockStop and any
-        // Unknown variant are routine framing events — nothing to do.
+        // MessageStart and any Unknown variant — routine framing.
         _ => None,
     }
 }
@@ -1275,7 +1323,7 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        let chunk = chunk_from_event(&ev).expect("text delta should produce a chunk");
+        let chunk = chunk_from_event(&ev, &mut BTreeMap::new()).expect("text delta should produce a chunk");
         assert_eq!(chunk.content, "Hello");
         assert!(chunk.finish_reason.is_none());
         assert!(chunk.usage.is_none());
@@ -1289,7 +1337,7 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        let chunk = chunk_from_event(&ev).expect("MessageStop should produce a chunk");
+        let chunk = chunk_from_event(&ev, &mut BTreeMap::new()).expect("MessageStop should produce a chunk");
         assert_eq!(chunk.content, "");
         // StopReason::EndTurn renders as "end_turn" via the SDK's as_str().
         assert_eq!(chunk.finish_reason.as_deref(), Some("end_turn"));
@@ -1316,7 +1364,7 @@ mod tests {
                 )
                 .build(),
         );
-        let chunk = chunk_from_event(&ev).expect("Metadata should produce a chunk");
+        let chunk = chunk_from_event(&ev, &mut BTreeMap::new()).expect("Metadata should produce a chunk");
         assert_eq!(chunk.content, "");
         assert!(chunk.finish_reason.is_none());
         let usage = chunk.usage.expect("usage present on metadata chunk");
@@ -1335,7 +1383,7 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        assert!(chunk_from_event(&start).is_none());
+        assert!(chunk_from_event(&start, &mut BTreeMap::new()).is_none());
 
         let block_start = ConverseStreamOutput::ContentBlockStart(
             aws_sdk_bedrockruntime::types::ContentBlockStartEvent::builder()
@@ -1343,7 +1391,7 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        assert!(chunk_from_event(&block_start).is_none());
+        assert!(chunk_from_event(&block_start, &mut BTreeMap::new()).is_none());
 
         let block_stop = ConverseStreamOutput::ContentBlockStop(
             aws_sdk_bedrockruntime::types::ContentBlockStopEvent::builder()
@@ -1351,7 +1399,7 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        assert!(chunk_from_event(&block_stop).is_none());
+        assert!(chunk_from_event(&block_stop, &mut BTreeMap::new()).is_none());
     }
 
     #[test]
@@ -1370,7 +1418,72 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        assert!(chunk_from_event(&ev).is_none());
+        assert!(chunk_from_event(&ev, &mut BTreeMap::new()).is_none());
+    }
+
+    #[test]
+    fn chunk_from_event_seeds_accumulator_on_tool_use_block_start() {
+        let mut accs: BTreeMap<u32, StreamingToolCall> = BTreeMap::new();
+        let start = ConverseStreamOutput::ContentBlockStart(
+            aws_sdk_bedrockruntime::types::ContentBlockStartEvent::builder()
+                .content_block_index(1)
+                .start(aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(
+                    aws_sdk_bedrockruntime::types::ToolUseBlockStart::builder()
+                        .tool_use_id("tu_01")
+                        .name("get_weather")
+                        .build()
+                        .unwrap(),
+                ))
+                .build()
+                .unwrap(),
+        );
+        assert!(chunk_from_event(&start, &mut accs).is_none());
+        // The accumulator now exists at the start event's index.
+        let acc = accs.get(&1).expect("accumulator seeded");
+        assert_eq!(acc.id.as_deref(), Some("tu_01"));
+        assert_eq!(acc.name.as_deref(), Some("get_weather"));
+        assert!(acc.arguments_buffer.is_empty());
+    }
+
+    #[test]
+    fn chunk_from_event_appends_tool_use_input_fragments() {
+        let mut accs: BTreeMap<u32, StreamingToolCall> = BTreeMap::new();
+        accs.insert(0, StreamingToolCall::new("tu_01", "get_weather"));
+        let delta = ConverseStreamOutput::ContentBlockDelta(
+            aws_sdk_bedrockruntime::types::ContentBlockDeltaEvent::builder()
+                .content_block_index(0)
+                .delta(ContentBlockDelta::ToolUse(
+                    aws_sdk_bedrockruntime::types::ToolUseBlockDelta::builder()
+                        .input("{\"ci")
+                        .build()
+                        .unwrap(),
+                ))
+                .build()
+                .unwrap(),
+        );
+        assert!(chunk_from_event(&delta, &mut accs).is_none());
+        assert_eq!(accs.get(&0).unwrap().arguments_buffer, "{\"ci");
+    }
+
+    #[test]
+    fn chunk_from_event_drains_accumulators_into_message_stop_terminal_chunk() {
+        let mut accs: BTreeMap<u32, StreamingToolCall> = BTreeMap::new();
+        let mut acc = StreamingToolCall::new("tu_01", "get_weather");
+        acc.push_arguments(r#"{"city":"Berlin"}"#);
+        accs.insert(0, acc);
+        let ev = ConverseStreamOutput::MessageStop(
+            aws_sdk_bedrockruntime::types::MessageStopEvent::builder()
+                .stop_reason(aws_sdk_bedrockruntime::types::StopReason::ToolUse)
+                .build()
+                .unwrap(),
+        );
+        let chunk = chunk_from_event(&ev, &mut accs).expect("MessageStop emits chunk");
+        assert_eq!(chunk.finish_reason.as_deref(), Some("tool_use"));
+        assert_eq!(chunk.tool_calls.len(), 1);
+        assert_eq!(chunk.tool_calls[0].id, "tu_01");
+        assert_eq!(chunk.tool_calls[0].arguments, r#"{"city":"Berlin"}"#);
+        // Accumulators drained.
+        assert!(accs.is_empty());
     }
 
     #[test]
