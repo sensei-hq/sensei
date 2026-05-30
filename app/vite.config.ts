@@ -81,6 +81,17 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 export default defineConfig({
   plugins: [webkitNodeReexportFix(), UnoCSS(), sveltekit()],
 
+  // Force postcss transformer over lightningcss. Vite 8 picks lightningcss
+  // by default when `build.target` is set, which makes it choke on the
+  // `@apply` directives in vendored Rokkit theme CSS (UnoCSS's
+  // transformerDirectives expands @apply for source files it scans, but
+  // not for CSS @import-ed from node_modules). postcss + esbuild handle
+  // unknown at-rules silently; we get a clean build either way at the
+  // cost of a slightly slower CSS pipeline (postcss is ~ms not ns).
+  css: {
+    transformer: 'postcss',
+  },
+
   define: {
     __SENSEI_DEFAULT_PORT__: JSON.stringify(daemonPort),
     __SENSEI_APP_VERSION__: JSON.stringify(pkg.version),
@@ -100,6 +111,20 @@ export default defineConfig({
     target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari15',
     minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+  },
+
+  // Vite 8 splits config per build environment (client, ssr). Setting
+  // `build.cssMinify` at the top level applies only to `client`; the SSR
+  // environment defaults to `"lightningcss"`, which then warns on every
+  // `@apply` directive in vendored Rokkit theme CSS (`@apply text-warning`,
+  // `@apply bg-primary`, …). UnoCSS's transformerDirectives expands @apply
+  // for sources it scans, but not for CSS @import-ed from node_modules.
+  // Setting cssMinify to "esbuild" in BOTH environments routes through
+  // esbuild's CSS minifier, which passes unknown at-rules through silently
+  // — same functional output, no console noise.
+  environments: {
+    client: { build: { cssMinify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false } },
+    ssr:    { build: { cssMinify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false } },
   },
 
   optimizeDeps: {
