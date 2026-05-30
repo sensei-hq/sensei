@@ -38,8 +38,12 @@
         loaded = true;
         // Daemon-canonical: if setup is already complete, the user was
         // dropped here during the cold-start race (appState wasn't loaded
-        // when reroute decided). Send them to the observatory now.
-        if (appState.setupOk) goto("/");
+        // when reroute decided). Send them to the observatory now —
+        // UNLESS the user explicitly asked to re-enter setup (via the
+        // View → Setup menu, which appends `?force=1`). That's the path
+        // that lets a fully-configured user re-run the wizard.
+        const forced = page.url.searchParams.get("force") === "1";
+        if (appState.setupOk && !forced) goto("/");
     });
 
     async function next() {
