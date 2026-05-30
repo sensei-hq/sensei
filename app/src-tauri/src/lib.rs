@@ -172,7 +172,12 @@ pub fn run() {
                     // "(observatory)" is a SvelteKit group, not a URL segment —
                     // the observatory page lives at "/".
                     "go-observatory" => { let _ = app.emit("dev-navigate", "/"); }
-                    "go-setup"       => { let _ = app.emit("dev-navigate", "/setup/welcome"); }
+                    // `?force=1` lets the user re-enter setup after it's already
+                    // been completed. The (config) layout's setupOk-redirect
+                    // (which exists to recover from a cold-start race) bails
+                    // out when this param is present, so the menu always
+                    // brings the user back to the welcome stage.
+                    "go-setup"       => { let _ = app.emit("dev-navigate", "/setup/welcome?force=1"); }
                     "report-issue" => {
                         use tauri_plugin_opener::OpenerExt;
                         let url = format!(
