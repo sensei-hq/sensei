@@ -29,6 +29,14 @@ export function extractCompletion(config: Record<string, unknown>): Record<strin
   return result;
 }
 
+/** Read the daemon's `setup_complete` flag — `'1'` means the wizard
+ *  finished end-to-end. Any other value (missing key, empty string, an
+ *  explicit `'0'`) reads as not-complete, which is the right behaviour
+ *  after a DB drop or a fresh install. */
+export function extractSetupComplete(config: Record<string, unknown>): boolean {
+  return config['setup_complete'] === '1';
+}
+
 /** Parse the setup.preferences config key into PreferencesData. */
 export function extractPreferences(config: Record<string, unknown>): PreferencesData {
   const stored = config['setup.preferences'];
@@ -101,6 +109,7 @@ export async function loadWizardData(port: number): Promise<WizardLoadData> {
 
   return {
     completion: extractCompletion(config),
+    setupComplete: extractSetupComplete(config),
     preferences: extractPreferences(config),
     assistantFamilies: mapFamilies(families),
     roots: roots as any[],
