@@ -240,8 +240,13 @@ function cloneStages(): WizardStage[] {
  *  before any async load(). Updated by load() (from daemon truth) and
  *  setCompleted() (when the user finishes the wizard). */
 function initialSetupComplete(): boolean {
-  if (typeof localStorage === 'undefined') return false;
-  try { return localStorage.getItem(STORAGE_KEYS.setupComplete) === '1'; }
+  // SvelteKit static prerender (adapter-static) shims `localStorage` as
+  // an object whose methods are absent — so `typeof localStorage` is
+  // 'object' but `localStorage.getItem` is undefined. Probe getItem
+  // directly instead of trusting the global presence.
+  const ls = (globalThis as { localStorage?: Storage }).localStorage;
+  if (!ls || typeof ls.getItem !== 'function') return false;
+  try { return ls.getItem(STORAGE_KEYS.setupComplete) === '1'; }
   catch (e) {
     console.warn('[wizardState] localStorage read failed at cold start; defaulting to false', e);
     return false;

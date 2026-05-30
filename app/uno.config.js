@@ -10,15 +10,20 @@ export default defineConfig({
   transformers: [transformerDirectives()],
   presets: [presetRokkit(config)],
   theme: {
+    // UnoCSS tuple-short form `[fontSize, lineHeight]` is preferred over
+    // the object form `[size, { lineHeight: ... }]`. The object form was
+    // emitting the JS key literally as `lineHeight:` (camelCase) into the
+    // generated CSS, which is not a valid CSS property and produced a
+    // wave of esbuild [unsupported-css-property] warnings during build.
     fontSize: {
-      xs:    ["11px", { lineHeight: "1.4" }],
-      sm:    ["13px", { lineHeight: "1.5" }],
-      base:  ["15px", { lineHeight: "1.6" }],
-      lg:    ["17px", { lineHeight: "1.5" }],
-      xl:    ["22px", { lineHeight: "1.2" }],
-      "2xl": ["28px", { lineHeight: "1.2" }],
-      "3xl": ["40px", { lineHeight: "1.2" }],
-      "4xl": ["56px", { lineHeight: "1.05" }],
+      xs:    ["11px", "1.4"],
+      sm:    ["13px", "1.5"],
+      base:  ["15px", "1.6"],
+      lg:    ["17px", "1.5"],
+      xl:    ["22px", "1.2"],
+      "2xl": ["28px", "1.2"],
+      "3xl": ["40px", "1.2"],
+      "4xl": ["56px", "1.05"],
     },
     letterSpacing: {
       tight:  "-0.02em",
