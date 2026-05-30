@@ -59,6 +59,26 @@ pub fn which_binary(name: &str) -> Option<String> {
     None
 }
 
+/// Build a `Command` for `name` after resolving it via [`which_binary`].
+///
+/// Callers MUST use this instead of `Command::new(name)` when the binary
+/// may live outside the calling process's `PATH` — which is the default
+/// situation in the Tauri `.app`'s Finder-launched environment (no
+/// `/opt/homebrew/bin`). The resolution uses the same fallback as
+/// `which_binary`, and the returned `Command` is invoked by absolute
+/// path so the kernel never re-searches PATH at spawn time.
+///
+/// Returns `Err("<name> not installed")` if the binary isn't on PATH or
+/// in any of the fallback directories. That string is end-user readable
+/// — bubble it straight up to the remedy / detail field instead of
+/// surfacing the raw `std::io::Error` from a failed spawn ("No such
+/// file or directory (os error 2)"), which is what every prior code
+/// path that used `Command::new(name)` produced.
+pub fn command_for(name: &str) -> Result<Command, String> {
+    let path = which_binary(name).ok_or_else(|| format!("{name} not installed"))?;
+    Ok(Command::new(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

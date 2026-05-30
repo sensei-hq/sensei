@@ -15,22 +15,30 @@
 
 use dbd_core::adapter::postgres::PostgresAdapter;
 use dbd_core::{deploy::resolve_source, Design};
-use std::process::Command;
 
 use crate::config::SenseiConfig;
 
 /// True when `pg_isready --quiet` exits 0.
+///
+/// Resolves `pg_isready` via `which_binary` first so the spawn doesn't
+/// rely on the calling process's `PATH` (which is narrow in the Tauri
+/// .app's Finder-launched environment). A missing binary returns false
+/// — equivalent to "not ready".
 pub fn pg_is_ready() -> bool {
-    Command::new("pg_isready")
-        .args(["--quiet"])
-        .status()
+    crate::util::command_for("pg_isready")
+        .ok()
+        .and_then(|mut cmd| cmd.args(["--quiet"]).status().ok())
         .map(|s| s.success())
         .unwrap_or(false)
 }
 
 /// Parse `psql -lqt` output for an exact db name match.
 pub fn database_exists(db_name: &str) -> Result<bool, String> {
-    let output = Command::new("psql")
+    // Resolve psql via which_binary so the spawn works in the Tauri .app
+    // (whose Finder-launched PATH misses /opt/homebrew/bin). A missing
+    // psql surfaces as a clean "psql not installed" rather than the raw
+    // "No such file or directory (os error 2)" callers used to see.
+    let output = crate::util::command_for("psql")?
         .args(["-lqt"])
         .output()
         .map_err(|e| format!("could not run psql: {e}"))?;
@@ -56,7 +64,7 @@ pub fn database_exists(db_name: &str) -> Result<bool, String> {
 /// Run `createdb <db_name>`. Treats "already exists" as success — the
 /// idempotent shape resolvers want.
 pub fn create(db_name: &str) -> Result<(), String> {
-    let output = Command::new("createdb")
+    let output = crate::util::command_for("createdb")?
         .arg(db_name)
         .output()
         .map_err(|e| format!("createdb failed: {e}"))?;
@@ -73,7 +81,7 @@ pub fn create(db_name: &str) -> Result<(), String> {
 
 /// `CREATE EXTENSION IF NOT EXISTS vector` against `db_name`.
 pub fn ensure_extensions(db_name: &str) -> Result<(), String> {
-    let output = Command::new("psql")
+    let output = crate::util::command_for("psql")?
         .args(["-d", db_name, "-c", "CREATE EXTENSION IF NOT EXISTS vector"])
         .output()
         .map_err(|e| format!("psql failed: {e}"))?;
