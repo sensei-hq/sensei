@@ -17,11 +17,33 @@ const EXTRA_BIN_DIRS: &[&str] = &[
     "/home/linuxbrew/.linuxbrew/bin", // Linuxbrew on dedicated user
 ];
 
+/// Homebrew "opt" prefixes whose subdirectories hold keg-only formula
+/// binaries. Versioned PostgreSQL formulas (`postgresql@17`,
+/// `postgresql@16`, …) install keg-only by default — their bins land at
+/// `<opt_prefix>/postgresql@<N>/bin` and are *not* symlinked into
+/// `/opt/homebrew/bin` unless the user runs `brew link --force`. So
+/// even though `pg_isready` happens to be linked on some installs (via
+/// an older non-versioned `postgresql` formula or a manual link),
+/// `psql` / `createdb` from a keg-only versioned install stay invisible
+/// to `which`. Scanning the opt prefix's `postgresql*` subdirs catches
+/// them.
+const EXTRA_BIN_OPT_PREFIXES: &[&str] = &[
+    "/opt/homebrew/opt",  // macOS Apple Silicon Homebrew
+    "/usr/local/opt",     // macOS Intel Homebrew
+];
+
+/// Subdir name prefixes inside an `opt` directory that we'll scan for
+/// a missing binary. Restricted to postgres for now — adding more
+/// keg-only formulas (e.g. `openssl@3`) is just a matter of listing
+/// them here.
+const EXTRA_BIN_OPT_SUBDIR_PREFIXES: &[&str] = &["postgresql@", "postgresql"];
+
 /// Find a binary on PATH (and well-known directories).
 ///
 /// Uses `which` on Unix and `where` on Windows; falls back to scanning
-/// `EXTRA_BIN_DIRS` and `~/.local/bin` directly. Returns the full path
-/// if found, `None` otherwise.
+/// `EXTRA_BIN_DIRS`, `~/.local/bin`, and Homebrew "opt" subdirs for
+/// keg-only formulas (currently postgresql variants). Returns the full
+/// path if found, `None` otherwise.
 pub fn which_binary(name: &str) -> Option<String> {
     #[cfg(unix)]
     let cmd = "which";
@@ -53,6 +75,31 @@ pub fn which_binary(name: &str) -> Option<String> {
         let candidate = format!("{home}/.local/bin/{name}");
         if std::path::Path::new(&candidate).exists() {
             return Some(candidate);
+        }
+    }
+
+    // Keg-only Homebrew formulas (versioned postgres in particular).
+    // We list directory entries under each opt prefix and only descend
+    // into ones whose name starts with one of the documented prefixes,
+    // so this stays O(few-dirs) regardless of how many formulas the
+    // user has installed.
+    for prefix in EXTRA_BIN_OPT_PREFIXES {
+        let Ok(entries) = std::fs::read_dir(prefix) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let entry_name = entry.file_name();
+            let entry_name = entry_name.to_string_lossy();
+            if !EXTRA_BIN_OPT_SUBDIR_PREFIXES
+                .iter()
+                .any(|p| entry_name.starts_with(p))
+            {
+                continue;
+            }
+            let candidate = entry.path().join("bin").join(name);
+            if candidate.exists() {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
         }
     }
 
@@ -95,5 +142,54 @@ mod tests {
             let p = which_binary("ls").expect("ls must exist on unix");
             assert!(p.ends_with("/ls") || p.ends_with("/bin/ls"));
         }
+    }
+
+    /// Smoke test for the keg-only Homebrew fallback. Only runs when
+    /// `/opt/homebrew/opt/postgresql*/bin/psql` actually exists on the
+    /// host — otherwise we'd be testing absence rather than the
+    /// fallback path. Skipping silently keeps CI green on non-macOS
+    /// boxes and on machines that lack a keg-only postgres install.
+    #[test]
+    fn which_binary_falls_back_to_homebrew_opt_for_keg_only_postgres() {
+        // Locate a real keg-only psql, if any, to gate the assertion.
+        let mut keg_only_psql: Option<String> = None;
+        for prefix in EXTRA_BIN_OPT_PREFIXES {
+            let Ok(entries) = std::fs::read_dir(prefix) else { continue };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy().into_owned();
+                if EXTRA_BIN_OPT_SUBDIR_PREFIXES
+                    .iter()
+                    .any(|p| name.starts_with(p))
+                {
+                    let candidate = entry.path().join("bin").join("psql");
+                    if candidate.exists() {
+                        keg_only_psql = Some(candidate.to_string_lossy().into_owned());
+                        break;
+                    }
+                }
+            }
+            if keg_only_psql.is_some() {
+                break;
+            }
+        }
+        let Some(expected) = keg_only_psql else { return };
+
+        // `which_binary("psql")` may resolve to a symlinked
+        // /opt/homebrew/bin/psql instead of the opt-dir one when both
+        // exist (PATH lookup wins). The assertion is just that
+        // *something* is found — i.e., the fallback doesn't fail to
+        // surface psql when only the keg-only copy exists.
+        let resolved = which_binary("psql").unwrap_or_else(|| {
+            panic!(
+                "which_binary(\"psql\") returned None even though a keg-only \
+                 install exists at {expected}",
+            )
+        });
+        // Sanity: resolution lands on a real psql file.
+        assert!(
+            std::path::Path::new(&resolved).exists(),
+            "resolved path should exist on disk: {resolved}",
+        );
     }
 }
