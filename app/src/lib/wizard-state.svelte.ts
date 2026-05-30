@@ -12,6 +12,7 @@
 import { senseiApi } from './api.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
+import { healthState } from './health-state.svelte.js';
 import { scanState } from './scan-state.svelte.js';
 import { loadWizardData } from './setup/loaders.js';
 import { STORAGE_KEYS } from './storage-keys.js';
@@ -234,10 +235,60 @@ function cloneStages(): WizardStage[] {
   return STAGES.map(s => ({ ...s }));
 }
 
+/** Seed for `setupComplete` $state — reads localStorage[`setupComplete`]
+ *  as the cold-start fallback so the reroute hook gets a stable answer
+ *  before any async load(). Updated by load() (from daemon truth) and
+ *  setCompleted() (when the user finishes the wizard). */
+function initialSetupComplete(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try { return localStorage.getItem(STORAGE_KEYS.setupComplete) === '1'; }
+  catch { return false; }
+}
+
 export class WizardState {
+  /**
+   * Canonical "is the wizard finished?" flag. Owned here (rather than on
+   * appState) because completion is a wizard concern. appState surfaces
+   * this through its `setupComplete` / `setupOk` facade.
+   *
+   * Lifecycle:
+   *   - Initial value seeded from localStorage so reroute has a stable
+   *     answer on cold start.
+   *   - `load()` reconciles against daemon's `config['setup_complete']`
+   *     on every invocation, and syncs localStorage to whatever the
+   *     daemon reports. The module-level $effect.root below re-fires
+   *     load() whenever healthState flips to ok (typically right after
+   *     a resolve pass that may have recreated the DB), so a dropped DB
+   *     can't leave the cache stuck at '1'.
+   *   - `setCompleted()` flips it to true on the final wizard stage and
+   *     writes '1' to localStorage.
+   */
+  setupComplete = $state<boolean>(initialSetupComplete());
+
   // Single source of truth for stage metadata + persisted status + transient active.
   // The rail iterates this array; the page header indexes it.
   stages = $state<WizardStage[]>(cloneStages());
+
+  constructor() {
+    // Reactive bridge from healthState. When health flips to ok (typically
+    // right after a resolve pass that may have recreated the DB and its
+    // config table), re-run load() so `setupComplete` + the localStorage
+    // cache reconcile against fresh daemon truth — a dropped DB can't
+    // leave the cache stuck at '1'.
+    //
+    // `$effect` is the right primitive here, NOT `$derived`: $derived is
+    // synchronous and would store a Promise instead of the boolean.
+    // The effect only re-fires when `healthState.isOk` actually changes,
+    // so steady-state-ok doesn't re-trigger load.
+    //
+    // $effect.root creates a non-component tracking scope so this works
+    // for a module-level singleton.
+    $effect.root(() => {
+      $effect(() => {
+        if (healthState.isOk) void this.load().catch(() => { /* page-level load() catches up */ });
+      });
+    });
+  }
 
   preferences = $state<PreferencesData>({
     displayName: '', contributeLearnings: true, reviewBeforeShare: true,
@@ -267,11 +318,11 @@ export class WizardState {
   /**
    * Mirror of healthState.isOk — true when the user has finished the setup
    * wizard. Read by hooks.reroute to decide whether the user should be in
-   * the setup flow or the observatory. Daemon's `setup_complete` config key
-   * is the canonical source; appState surfaces it as a sync getter.
+   * the setup flow or the observatory. Reads our own `setupComplete`
+   * field, which is the canonical owner of this state (see field docs).
    */
   get isOk(): boolean {
-    return appState.setupComplete;
+    return this.setupComplete;
   }
 
   isStageComplete(id: string): boolean {
@@ -320,8 +371,10 @@ export class WizardState {
     // re-raises so the wizard layout can show the error instead of
     // navigating to the observatory.
     await appState.setConfigs({ setup_complete: '1' });
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_KEYS.setupComplete, '1');
+    this.setupComplete = true;
+    const ls = (globalThis as { localStorage?: Storage }).localStorage;
+    if (ls && typeof ls.setItem === 'function') {
+      ls.setItem(STORAGE_KEYS.setupComplete, '1');
     }
   }
 
@@ -361,6 +414,21 @@ export class WizardState {
     // stage navigation within the session; only re-entering the wizard
     // (which is what triggers hydrate) clears it.
     scanState.reset();
+
+    // Reconcile the canonical `setupComplete` flag against daemon truth
+    // and propagate to localStorage. Single source of truth: this method
+    // and `setCompleted()` are the only writers — anywhere else that
+    // touches `localStorage[setupComplete]` is a layering violation.
+    //
+    // Guard the global access — vitest's node env can leave a partial
+    // `localStorage` global on globalThis without setItem/removeItem
+    // wired up; `typeof localStorage !== 'undefined'` alone isn't enough.
+    this.setupComplete = data.setupComplete;
+    const ls = (globalThis as { localStorage?: Storage }).localStorage;
+    if (ls && typeof ls.setItem === 'function' && typeof ls.removeItem === 'function') {
+      if (data.setupComplete) ls.setItem(STORAGE_KEYS.setupComplete, '1');
+      else                    ls.removeItem(STORAGE_KEYS.setupComplete);
+    }
 
     // Reset stages from the canonical static defs, then layer persisted status.
     this.stages = cloneStages();

@@ -120,6 +120,12 @@ export interface PreferencesData {
 /** Bundle returned by layout load — assembled from parallel daemon fetches. */
 export interface WizardLoadData {
   completion: Record<string, 'pending' | 'done'>;
+  /** Daemon's `config['setup_complete']` — true when the user finished the
+   *  wizard end-to-end. Sourced from the same getConfig() call that
+   *  populates `completion`; we surface it separately so wizardState can
+   *  reconcile its `setupComplete` $state (and the localStorage cache)
+   *  against daemon truth on every load. */
+  setupComplete: boolean;
   preferences: PreferencesData;
   assistantFamilies: DaemonAssistantFamily[];
   roots: DaemonWatchRoot[];
