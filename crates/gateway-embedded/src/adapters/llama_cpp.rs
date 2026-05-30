@@ -195,6 +195,69 @@ pub fn shared_backend() -> Result<Arc<LlamaBackend>, GatewayError> {
     })
 }
 
+/// Process-wide cache of loaded [`LlamaModel`] weights, keyed by the
+/// canonicalised on-disk path. Entries are `Weak<LlamaModel>` so a
+/// model that no [`LlamaCppAdapter`] is holding gets dropped and the
+/// next [`cached_model`] call re-reads the file. Held in a
+/// `RwLock` so the common path (cache hit) only takes a read lock.
+fn model_cache()
+-> &'static std::sync::RwLock<std::collections::HashMap<std::path::PathBuf, std::sync::Weak<LlamaModel>>>
+{
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<
+        std::sync::RwLock<
+            std::collections::HashMap<std::path::PathBuf, std::sync::Weak<LlamaModel>>,
+        >,
+    > = OnceLock::new();
+    CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Get an `Arc<LlamaModel>` for the GGUF at `path`, loading from disk
+/// only on a cache miss.
+///
+/// The key is the path as given. Two callers that pass the same
+/// `&Path` reuse the same model; symlinks or different relative paths
+/// that point at the same file currently get separate cache entries.
+/// `canonicalize` would be safer, but it requires the file to exist
+/// at lookup time and would add an `std::fs` round-trip per call —
+/// not worth it for the expected usage pattern (a handful of adapters
+/// per process).
+///
+/// Loading is protected with the write-lock held so a thundering
+/// herd doesn't race to read the same multi-GB file. A second caller
+/// that arrives while the first is loading blocks on the write lock,
+/// then sees the freshly-inserted entry.
+fn cached_model(
+    backend: &Arc<LlamaBackend>,
+    path: &std::path::Path,
+) -> Result<Arc<LlamaModel>, String> {
+    // Cheap-path: a read lock + an upgrade. Returns immediately when
+    // a live model is already cached.
+    {
+        let cache = model_cache().read().map_err(|e| format!("model cache poisoned: {e}"))?;
+        if let Some(weak) = cache.get(path)
+            && let Some(arc) = weak.upgrade()
+        {
+            return Ok(arc);
+        }
+    }
+    // Slow path: take the write lock. Re-check inside the lock —
+    // another thread may have populated the entry while we were
+    // upgrading the lock.
+    let mut cache = model_cache().write().map_err(|e| format!("model cache poisoned: {e}"))?;
+    if let Some(weak) = cache.get(path)
+        && let Some(arc) = weak.upgrade()
+    {
+        return Ok(arc);
+    }
+    let params = LlamaModelParams::default();
+    let model = LlamaModel::load_from_file(backend.as_ref(), path, &params)
+        .map_err(|e| format!("model load: {e}"))?;
+    let arc = Arc::new(model);
+    cache.insert(path.to_path_buf(), Arc::downgrade(&arc));
+    Ok(arc)
+}
+
 /// Shared engine state for [`LlamaCppAdapter`]. Held behind an
 /// [`Arc`] so streaming generation can clone it cheaply and hand the
 /// clone to a `spawn_blocking` worker that produces tokens
@@ -205,13 +268,21 @@ pub fn shared_backend() -> Result<Arc<LlamaBackend>, GatewayError> {
 /// `'static` transmute trick — `context` must drop before `model`
 /// and `_backend`. Don't reorder.
 ///
-/// `model` is held in a [`Box`] so its address is stable even when
-/// `Inner` is moved (e.g., into [`Arc::new`]). The reference stored
-/// inside the [`LlamaContext`] points at that heap address, not at
-/// the `Inner` field, so moves of the struct don't dangle it.
+/// `model` is held in an [`Arc`] so two things hold simultaneously:
+///
+/// 1. The address `&*model` is heap-stable across moves of `Inner`
+///    (Arc's inner T sits behind an indirection — the same property
+///    a Box gives). The reference inside the [`LlamaContext`] points
+///    at that heap address, so moves of the struct don't dangle it.
+/// 2. Multiple [`LlamaCppAdapter`] instances for the same on-disk
+///    GGUF can share the same loaded model via [`cached_model`] —
+///    each new instance clones the Arc instead of re-loading the
+///    file from disk. The KV-cache-carrying `LlamaContext` is still
+///    per-adapter (each adapter calls `model.new_context(...)`
+///    separately), so isolation between adapters is preserved.
 struct Inner {
     context: Mutex<SyncContext>,
-    model: Box<LlamaModel>,
+    model: Arc<LlamaModel>,
     _backend: Arc<LlamaBackend>,
 }
 
@@ -222,18 +293,22 @@ pub struct LlamaCppAdapter {
 
 impl LlamaCppAdapter {
     /// Load a GGUF model and build a context around it.
+    ///
+    /// The model weights are cached process-wide by [`cached_model`].
+    /// Repeat calls for the same on-disk path reuse the loaded
+    /// `LlamaModel` — a multi-GB disk read on first load becomes a
+    /// pointer clone on subsequent loads. The cache only holds
+    /// `Weak<LlamaModel>` entries, so a model with no live
+    /// `LlamaCppAdapter` referencing it gets dropped and the next
+    /// load re-reads the file.
     pub fn load(
         backend: Arc<LlamaBackend>,
         entry: &ModelEntry,
         config: LlamaCppConfig,
     ) -> Result<Self, GatewayError> {
         let path = entry.source.path();
-        let model_params = LlamaModelParams::default();
-        let model = LlamaModel::load_from_file(backend.as_ref(), path, &model_params)
+        let model = cached_model(&backend, path)
             .map_err(|e| Self::provider_err(&config, format!("model load: {e}")))?;
-        // Box first so the address we hand to `new_context` is on the
-        // heap and survives moves of the surrounding `Inner` struct.
-        let model: Box<LlamaModel> = Box::new(model);
 
         // n_batch sizes the per-batch token budget. n_ctx works for both
         // single-sequence chat and small-batch embedding.
@@ -923,6 +998,46 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let entry = external_entry(tmp.path());
         LlamaCppAdapter::check_source_supported(&entry).expect("present file");
+    }
+
+    /// Loading the same GGUF path twice reuses the cached
+    /// `Arc<LlamaModel>` — pointer equality is the cheap end-to-end
+    /// proof. Gated on `LLAMA_TEST_GGUF` because the cache hit only
+    /// matters once a real model file is available.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires LLAMA_TEST_GGUF env var pointing at a BERT-class embedding GGUF"]
+    async fn cached_model_reuses_arc_across_load_calls() {
+        let path = std::env::var("LLAMA_TEST_GGUF")
+            .expect("LLAMA_TEST_GGUF must point at a GGUF file");
+        // Use the test-module helper, which already unwraps to an
+        // Arc<LlamaBackend> (tests panic on init failure).
+        let backend = shared_backend();
+        let path = std::path::PathBuf::from(path);
+
+        let a = cached_model(&backend, &path).expect("first load");
+        let b = cached_model(&backend, &path).expect("second load");
+
+        // Same underlying model — Arc::ptr_eq is exact pointer
+        // equality, so any miss falls out cleanly.
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "second load must return the cached Arc, not reload from disk",
+        );
+
+        // After dropping all strong refs, the cache should re-load
+        // on the next call. We can't directly assert "weights were
+        // re-read from disk" without instrumenting the loader, but
+        // we can at least check that the third Arc is distinct from
+        // the first (because the original Arc backing `a`/`b` has
+        // been dropped between the second and third load).
+        drop(a);
+        drop(b);
+        let c = cached_model(&backend, &path).expect("third load after drop");
+        // `c` is necessarily a fresh Arc — its inner pointer may or
+        // may not match the original allocation (depends on the
+        // allocator). The contract worth asserting is just that the
+        // call succeeded.
+        let _ = c;
     }
 
     #[test]
