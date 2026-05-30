@@ -1126,6 +1126,7 @@ mod tests {
                 name: "get_weather".into(),
                 arguments: "{\"city\":\"Berlin\"}".into(),
             }],
+            attachments: vec![],
         };
         let blocks = build_content_blocks(&msg);
         // Text first, tool_use last.
@@ -1157,6 +1158,7 @@ mod tests {
                 name: "ping".into(),
                 arguments: "{}".into(),
             }],
+            attachments: vec![],
         };
         let blocks = build_content_blocks(&msg);
         assert_eq!(blocks.len(), 1);

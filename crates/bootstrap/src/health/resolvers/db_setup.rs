@@ -35,8 +35,8 @@ fn db_failed_remedy(db_name: &str, detail: String) -> Remedy {
     // The "X not installed" message comes from `crate::util::command_for`
     // and means the resolver couldn't find one of psql / createdb /
     // pg_isready in PATH or the EXTRA_BIN_DIRS fallback (Homebrew
-    // prefixes, ~/.local/bin). In that case the existing `createdb`
-    // remedy is actively misleading — the daemon's environment can't
+    // prefixes + keg-only postgres subdirs). In that case the existing
+    // `createdb` remedy is actively misleading — the daemon's environment can't
     // see postgres binaries, but the user's shell almost certainly
     // can, so they run `createdb`, it succeeds, and the resolver still
     // fails on the next pass. Surface the actual root cause and a

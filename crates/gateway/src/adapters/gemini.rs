@@ -1151,6 +1151,7 @@ mod tests {
                 name: "get_weather".into(),
                 arguments: "{\"city\":\"Berlin\"}".into(),
             }],
+            attachments: vec![],
         };
         let parts = build_parts(&msg);
         assert_eq!(parts.len(), 2, "text part + function_call part");

@@ -787,15 +787,11 @@ fn remove_all(purge: bool) {
             println!("  ✓ Dev data directory removed (~/.sensei-dev/)");
         }
 
-        // Remove dev binaries from ~/.local/bin if present
-        let local_bin = home().join(".local/bin");
-        for name in &["senseid-dev", "sensei-dev", "sensei-mcp-dev"] {
-            let p = local_bin.join(name);
-            if p.exists() {
-                fs::remove_file(&p).ok();
-                println!("  ✓ Removed ~/.local/bin/{}", name);
-            }
-        }
+        // Note: pre-brew installs dropped binaries in ~/.local/bin/. We
+        // intentionally don't reach into that directory here — brew is the
+        // single source of truth and ~/.local/bin/ is now user-owned. If
+        // a user has stale `senseid-dev` etc. there, they can rm it
+        // themselves.
 
         println!(
             "\nSensei fully removed. To reinstall: {} && {SENSEI_BIN} init",

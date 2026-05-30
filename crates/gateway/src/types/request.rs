@@ -133,6 +133,13 @@ pub struct Message {
     /// role; non-empty implies `role == Assistant`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    /// Media attachments — images today, future audio / document /
+    /// video. Adapters that don't yet model multimodal input drop the
+    /// list silently; ones that do (OpenAI / Anthropic / Gemini /
+    /// Bedrock) translate each entry into the provider-native shape
+    /// alongside the message's text content.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<MediaAttachment>,
 }
 
 impl Message {
@@ -142,6 +149,7 @@ impl Message {
             role,
             content: MessageContent::Text { text: text.into() },
             tool_calls: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -154,7 +162,16 @@ impl Message {
                 content: content.into(),
             },
             tool_calls: Vec::new(),
+            attachments: Vec::new(),
         }
+    }
+
+    /// Attach a single media item to the message and return self.
+    /// Convenience for the common one-image case:
+    /// `Message::text(User, "what's this?").with_attachment(image)`.
+    pub fn with_attachment(mut self, attachment: MediaAttachment) -> Self {
+        self.attachments.push(attachment);
+        self
     }
 
     /// View the message body as plain text — shorthand for
@@ -188,6 +205,69 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
+}
+
+/// A non-text item attached to a [`Message`]. Today only `Image` is
+/// modelled; future variants will cover audio, documents, and video
+/// for providers that accept them inline (Gemini's `inline_data`
+/// supports all three; OpenAI / Anthropic / Bedrock add coverage
+/// piecemeal).
+///
+/// Attachments are kept on a separate field from
+/// [`MessageContent`] so single-text messages stay simple. The
+/// per-adapter translation interleaves text + attachments into the
+/// provider's native multi-part content shape — text comes first,
+/// attachments after. Adapters that don't yet model multimodal
+/// drop the list silently.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MediaAttachment {
+    Image {
+        source: MediaSource,
+        /// MIME type — `image/jpeg`, `image/png`, `image/webp`,
+        /// `image/gif`. Required by Anthropic and Bedrock on inline
+        /// (base64) sources; optional for URL sources where the
+        /// provider can infer from the response's Content-Type.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+    },
+}
+
+/// How a [`MediaAttachment`] payload is delivered. `Url` works
+/// everywhere that supports image input; `Base64` is what providers
+/// require for local files that aren't reachable from their network.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MediaSource {
+    /// HTTPS URL the provider fetches on its side. OpenAI / Gemini
+    /// accept this directly; Anthropic supports it via a `url`
+    /// source type since 2024.
+    Url { url: String },
+    /// Inline base64-encoded bytes. Required for local files; all
+    /// providers support this shape.
+    Base64 { data: String },
+}
+
+impl MediaAttachment {
+    /// Convenience: build an inline image attachment from a base64
+    /// payload + MIME type.
+    pub fn image_base64(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        MediaAttachment::Image {
+            source: MediaSource::Base64 {
+                data: data.into(),
+            },
+            mime_type: Some(mime_type.into()),
+        }
+    }
+
+    /// Convenience: build an image attachment from a URL the
+    /// provider fetches itself.
+    pub fn image_url(url: impl Into<String>) -> Self {
+        MediaAttachment::Image {
+            source: MediaSource::Url { url: url.into() },
+            mime_type: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -560,6 +640,7 @@ mod tests {
                 name: "get_weather".into(),
                 arguments: "{\"city\":\"Berlin\"}".into(),
             }],
+            attachments: vec![],
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["tool_calls"][0]["id"], "call_1");

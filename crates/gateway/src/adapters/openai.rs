@@ -1176,6 +1176,7 @@ mod tests {
                 name: "get_weather".into(),
                 arguments: "{\"city\":\"Berlin\"}".into(),
             }],
+            attachments: vec![],
         };
         let out = build_chat_messages(&[msg], &None);
         let json = serde_json::to_value(&out).unwrap();
