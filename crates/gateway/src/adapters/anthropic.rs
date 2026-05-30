@@ -14,8 +14,8 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole, Payload,
-    StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
+    InferenceRequest, InferenceResponse, MediaAttachment, MediaSource, Message, MessageContent,
+    MessageRole, Payload, StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -78,6 +78,30 @@ enum OutContentBlock {
     ToolResult {
         tool_use_id: String,
         content: String,
+    },
+    /// Vision input. Anthropic accepts either a base64-encoded inline
+    /// payload (with `media_type`) or a URL (since 2024) — the
+    /// [`AnthropicImageSource`] discriminator picks between them.
+    Image {
+        source: AnthropicImageSource,
+    },
+}
+
+/// Anthropic image source — the inner `source` field of an
+/// `{type: "image"}` content block. Both base64 and URL inputs map
+/// onto a tagged shape with `type: "base64"|"url"`.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicImageSource {
+    /// Inline image bytes. `media_type` is required on base64 sources
+    /// — Anthropic uses it to pick the decoder.
+    Base64 {
+        media_type: String,
+        data: String,
+    },
+    /// HTTPS URL fetched by Anthropic on the way in.
+    Url {
+        url: String,
     },
 }
 
@@ -237,12 +261,22 @@ fn build_messages(messages: &[Message]) -> Vec<AnthropicMessage> {
 }
 
 /// Compose the `Vec<OutContentBlock>` for a single gateway message.
+///
+/// Order: text first (when non-empty), then one image block per
+/// [`MediaAttachment::Image`], then tool_use blocks. Tool-result
+/// messages emit a single tool_result block and skip everything
+/// else.
 fn build_content_blocks(m: &Message) -> Vec<OutContentBlock> {
     let mut blocks: Vec<OutContentBlock> = Vec::new();
     match &m.content {
         MessageContent::Text { text } => {
             if !text.is_empty() {
                 blocks.push(OutContentBlock::Text { text: text.clone() });
+            }
+            for att in &m.attachments {
+                if let Some(block) = attachment_to_block(att) {
+                    blocks.push(block);
+                }
             }
         }
         MessageContent::ToolResult {
@@ -263,6 +297,30 @@ fn build_content_blocks(m: &Message) -> Vec<OutContentBlock> {
         });
     }
     blocks
+}
+
+/// Translate a gateway [`MediaAttachment`] into an Anthropic content
+/// block. Returns `None` for variants we don't yet model.
+///
+/// Base64 sources without a `mime_type` default to `image/jpeg` —
+/// Anthropic requires `media_type` on inline payloads, so we have to
+/// pick something. JPEG matches the most common case (camera roll
+/// uploads).
+fn attachment_to_block(att: &MediaAttachment) -> Option<OutContentBlock> {
+    match att {
+        MediaAttachment::Image { source, mime_type } => {
+            let source = match source {
+                MediaSource::Url { url } => AnthropicImageSource::Url { url: url.clone() },
+                MediaSource::Base64 { data } => AnthropicImageSource::Base64 {
+                    media_type: mime_type
+                        .clone()
+                        .unwrap_or_else(|| "image/jpeg".to_string()),
+                    data: data.clone(),
+                },
+            };
+            Some(OutContentBlock::Image { source })
+        }
+    }
 }
 
 /// Parse a JSON-string `arguments` payload back into a JSON value for
@@ -1082,6 +1140,60 @@ mod tests {
         // Anthropic uses tool_use_id (singular), unlike OpenAI's tool_call_id.
         assert_eq!(blocks[0]["tool_use_id"], "tu_01");
         assert_eq!(blocks[0]["content"], "{\"temp\":72}");
+    }
+
+    #[test]
+    fn build_messages_appends_url_image_block_for_image_attachment() {
+        let msg = Message::text(MessageRole::User, "what's in this?")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/cat.jpg"));
+        let json = serde_json::to_value(build_messages(&[msg])).unwrap();
+        let blocks = json[0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "what's in this?");
+        assert_eq!(blocks[1]["type"], "image");
+        assert_eq!(blocks[1]["source"]["type"], "url");
+        assert_eq!(blocks[1]["source"]["url"], "https://ex.com/cat.jpg");
+    }
+
+    #[test]
+    fn build_messages_appends_base64_image_block_with_media_type() {
+        let msg = Message::text(MessageRole::User, "see this")
+            .with_attachment(MediaAttachment::image_base64("Zm9v", "image/png"));
+        let json = serde_json::to_value(build_messages(&[msg])).unwrap();
+        let blocks = json[0]["content"].as_array().unwrap();
+        assert_eq!(blocks[1]["type"], "image");
+        assert_eq!(blocks[1]["source"]["type"], "base64");
+        assert_eq!(blocks[1]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[1]["source"]["data"], "Zm9v");
+    }
+
+    #[test]
+    fn build_messages_defaults_media_type_for_base64_without_one() {
+        // Anthropic requires media_type on base64 sources. We default
+        // to image/jpeg when the gateway attachment doesn't specify
+        // one — matches the most common case (camera roll uploads).
+        let msg = Message::text(MessageRole::User, "x").with_attachment(
+            MediaAttachment::Image {
+                source: MediaSource::Base64 {
+                    data: "AAAA".into(),
+                },
+                mime_type: None,
+            },
+        );
+        let json = serde_json::to_value(build_messages(&[msg])).unwrap();
+        assert_eq!(json[0]["content"][1]["source"]["media_type"], "image/jpeg");
+    }
+
+    #[test]
+    fn build_messages_emits_image_only_block_when_text_is_empty() {
+        let msg = Message::text(MessageRole::User, "")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/x.png"));
+        let json = serde_json::to_value(build_messages(&[msg])).unwrap();
+        let blocks = json[0]["content"].as_array().unwrap();
+        // Empty text would be noise; the image block stands alone.
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "image");
     }
 
     #[test]
