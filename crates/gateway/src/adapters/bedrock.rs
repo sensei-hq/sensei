@@ -29,12 +29,13 @@ use aws_sdk_bedrockruntime::{
     operation::converse::ConverseOutput as ConverseResponse,
     types::{
         ContentBlock, ContentBlockDelta, ConversationRole, ConverseOutput as ConverseOutputUnion,
-        ConverseStreamOutput, InferenceConfiguration, Message, SystemContentBlock, Tool,
-        ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock,
-        ToolSpecification, ToolUseBlock,
+        ConverseStreamOutput, ImageBlock, ImageFormat, ImageSource, InferenceConfiguration, Message,
+        S3Location, SystemContentBlock, Tool, ToolConfiguration, ToolInputSchema, ToolResultBlock,
+        ToolResultContentBlock, ToolSpecification, ToolUseBlock,
     },
 };
 use aws_smithy_types::{Blob, Document, Number};
+use base64::Engine;
 use futures::Stream;
 
 use crate::adapters::InferenceAdapter;
@@ -43,8 +44,9 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Message as GwMessage, MessageContent, MessageRole,
-    Payload, StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
+    InferenceRequest, InferenceResponse, MediaAttachment, MediaSource, Message as GwMessage,
+    MessageContent, MessageRole, Payload, StreamChunk, StreamingToolCall, ToolCall,
+    ToolDefinition,
 };
 
 const ADAPTER_ID: &str = "bedrock";
@@ -650,6 +652,11 @@ fn build_content_blocks(m: &GwMessage) -> Vec<ContentBlock> {
             if !text.is_empty() {
                 blocks.push(ContentBlock::Text(text.clone()));
             }
+            for att in &m.attachments {
+                if let Some(block) = attachment_to_block(att) {
+                    blocks.push(block);
+                }
+            }
         }
         MessageContent::ToolResult {
             tool_call_id,
@@ -704,6 +711,68 @@ fn parse_tool_input(args: &str) -> serde_json::Value {
         return serde_json::json!({});
     }
     serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+/// Translate a gateway [`MediaAttachment`] into a Bedrock content
+/// block. Bedrock's Converse API only accepts two source shapes:
+///
+/// - Inline bytes (`ImageSource::Bytes(Blob)`) — base64 sources land
+///   here after decode.
+/// - S3 reference (`ImageSource::S3Location`) — `s3://` URLs are
+///   translated; the bucketOwner field stays unset (relies on the
+///   credential's own permissions).
+///
+/// HTTPS URLs are dropped with a `tracing::warn` log — Bedrock won't
+/// fetch them and there's no useful default the adapter can pick
+/// without round-tripping to fetch the bytes itself. Callers that
+/// need to attach a remote HTTPS image should download it client-side
+/// and pass it as `MediaAttachment::image_base64`.
+fn attachment_to_block(att: &MediaAttachment) -> Option<ContentBlock> {
+    let MediaAttachment::Image { source, mime_type } = att;
+    let format = image_format_from_mime(mime_type.as_deref()).unwrap_or(ImageFormat::Jpeg);
+    let image_source = match source {
+        MediaSource::Base64 { data } => {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data.as_bytes())
+                .ok()?;
+            ImageSource::Bytes(Blob::new(decoded))
+        }
+        MediaSource::Url { url } => {
+            if let Some(s3_uri) = url.strip_prefix("s3://") {
+                // Re-prefix and pass through — S3Location.uri wants the
+                // full `s3://bucket/key` URI back.
+                let _ = s3_uri; // silence unused-binding lint with the .uri call below
+                let loc = S3Location::builder().uri(url.clone()).build().ok()?;
+                ImageSource::S3Location(loc)
+            } else {
+                tracing::warn!(
+                    adapter = ADAPTER_ID,
+                    url = %url,
+                    "dropping URL image attachment — Bedrock Converse only accepts inline bytes or s3:// references; pass base64 instead",
+                );
+                return None;
+            }
+        }
+    };
+    let block = ImageBlock::builder()
+        .format(format)
+        .source(image_source)
+        .build()
+        .ok()?;
+    Some(ContentBlock::Image(block))
+}
+
+/// Map a MIME type string to Bedrock's `ImageFormat` enum. Returns
+/// `None` for unknown / missing inputs so the caller can fall back
+/// to a sensible default.
+fn image_format_from_mime(mime: Option<&str>) -> Option<ImageFormat> {
+    match mime?.to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
+        "image/png" => Some(ImageFormat::Png),
+        "image/gif" => Some(ImageFormat::Gif),
+        "image/webp" => Some(ImageFormat::Webp),
+        _ => None,
+    }
 }
 
 /// Convert gateway [`ToolDefinition`]s into a Bedrock
@@ -1112,6 +1181,107 @@ mod tests {
             panic!("expected Text inner block for plain-string tool result");
         };
         assert_eq!(t, "all good");
+    }
+
+    #[test]
+    fn image_format_from_mime_table() {
+        assert_eq!(
+            image_format_from_mime(Some("image/jpeg")),
+            Some(ImageFormat::Jpeg)
+        );
+        assert_eq!(
+            image_format_from_mime(Some("image/jpg")),
+            Some(ImageFormat::Jpeg)
+        );
+        assert_eq!(
+            image_format_from_mime(Some("image/png")),
+            Some(ImageFormat::Png)
+        );
+        assert_eq!(
+            image_format_from_mime(Some("image/gif")),
+            Some(ImageFormat::Gif)
+        );
+        assert_eq!(
+            image_format_from_mime(Some("image/webp")),
+            Some(ImageFormat::Webp)
+        );
+        // Case-insensitive matches.
+        assert_eq!(
+            image_format_from_mime(Some("IMAGE/PNG")),
+            Some(ImageFormat::Png)
+        );
+        // Unsupported / missing → None so caller falls back.
+        assert!(image_format_from_mime(Some("image/bmp")).is_none());
+        assert!(image_format_from_mime(None).is_none());
+    }
+
+    #[test]
+    fn build_content_blocks_decodes_base64_image_to_inline_bytes() {
+        // base64("foo") = "Zm9v" → bytes [0x66, 0x6f, 0x6f]
+        let msg = GwMessage::text(MessageRole::User, "what's in this?")
+            .with_attachment(MediaAttachment::image_base64("Zm9v", "image/png"));
+        let blocks = build_content_blocks(&msg);
+        assert_eq!(blocks.len(), 2);
+        let ContentBlock::Image(img) = &blocks[1] else {
+            panic!("expected Image block, got {:?}", blocks[1]);
+        };
+        assert!(matches!(img.format(), ImageFormat::Png));
+        let ImageSource::Bytes(blob) = img.source().expect("source set") else {
+            panic!("expected Bytes source for base64 attachment");
+        };
+        assert_eq!(blob.as_ref(), b"foo");
+    }
+
+    #[test]
+    fn build_content_blocks_emits_s3_location_for_s3_url_attachment() {
+        let msg = GwMessage::text(MessageRole::User, "look").with_attachment(
+            MediaAttachment::Image {
+                source: MediaSource::Url {
+                    url: "s3://my-bucket/path/img.jpg".into(),
+                },
+                mime_type: Some("image/jpeg".into()),
+            },
+        );
+        let blocks = build_content_blocks(&msg);
+        let ContentBlock::Image(img) = &blocks[1] else {
+            panic!("expected Image block");
+        };
+        let ImageSource::S3Location(loc) = img.source().unwrap() else {
+            panic!("expected S3Location source for s3:// URL");
+        };
+        assert_eq!(loc.uri(), "s3://my-bucket/path/img.jpg");
+    }
+
+    #[test]
+    fn build_content_blocks_drops_https_url_image_with_warning() {
+        // Bedrock Converse can't fetch HTTPS URLs — they get dropped
+        // rather than silently shipping an attachment Bedrock won't
+        // understand. The text part still goes through.
+        let msg = GwMessage::text(MessageRole::User, "see this")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/cat.jpg"));
+        let blocks = build_content_blocks(&msg);
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            ContentBlock::Text(t) => assert_eq!(t, "see this"),
+            other => panic!("expected lone Text block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_content_blocks_defaults_image_format_to_jpeg_when_mime_missing() {
+        let msg = GwMessage::text(MessageRole::User, "x").with_attachment(
+            MediaAttachment::Image {
+                source: MediaSource::Base64 {
+                    data: "AAAA".into(),
+                },
+                mime_type: None,
+            },
+        );
+        let blocks = build_content_blocks(&msg);
+        let ContentBlock::Image(img) = &blocks[1] else {
+            panic!("expected Image block");
+        };
+        assert!(matches!(img.format(), ImageFormat::Jpeg));
     }
 
     #[test]
