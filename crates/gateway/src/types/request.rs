@@ -584,10 +584,77 @@ mod tests {
         assert_eq!(m.role, MessageRole::User);
         assert_eq!(m.as_text(), "hello");
         assert!(m.tool_calls.is_empty());
+        assert!(m.attachments.is_empty(), "default attachments must be empty");
         match m.content {
             MessageContent::Text { text } => assert_eq!(text, "hello"),
             _ => panic!("expected Text content"),
         }
+    }
+
+    #[test]
+    fn message_with_attachment_appends_to_attachments_list() {
+        let m = Message::text(MessageRole::User, "what's in this?")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/cat.jpg"));
+        assert_eq!(m.attachments.len(), 1);
+        match &m.attachments[0] {
+            MediaAttachment::Image { source, mime_type } => {
+                assert!(mime_type.is_none(), "url source defaults to None mime type");
+                match source {
+                    MediaSource::Url { url } => assert_eq!(url, "https://ex.com/cat.jpg"),
+                    _ => panic!("expected Url source"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn media_attachment_image_base64_sets_inline_source_and_mime_type() {
+        let a = MediaAttachment::image_base64("AAAA", "image/png");
+        match a {
+            MediaAttachment::Image { source, mime_type } => {
+                assert_eq!(mime_type.as_deref(), Some("image/png"));
+                match source {
+                    MediaSource::Base64 { data } => assert_eq!(data, "AAAA"),
+                    _ => panic!("expected Base64 source"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn media_attachment_round_trips_through_serde_as_tagged_enum() {
+        let url = MediaAttachment::image_url("https://ex.com/x.png");
+        let json = serde_json::to_value(&url).unwrap();
+        assert_eq!(json["type"], "image");
+        assert_eq!(json["source"]["kind"], "url");
+        assert_eq!(json["source"]["url"], "https://ex.com/x.png");
+
+        let inline = MediaAttachment::image_base64("Zm9v", "image/jpeg");
+        let json = serde_json::to_value(&inline).unwrap();
+        assert_eq!(json["type"], "image");
+        assert_eq!(json["source"]["kind"], "base64");
+        assert_eq!(json["source"]["data"], "Zm9v");
+        assert_eq!(json["mime_type"], "image/jpeg");
+    }
+
+    #[test]
+    fn message_attachments_omitted_from_json_when_empty() {
+        let m = Message::text(MessageRole::User, "hi");
+        let json = serde_json::to_value(&m).unwrap();
+        assert!(
+            json.get("attachments").is_none(),
+            "empty attachments should be skipped in the wire shape",
+        );
+    }
+
+    #[test]
+    fn message_attachments_serialize_when_present() {
+        let m = Message::text(MessageRole::User, "hi")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/a.png"));
+        let json = serde_json::to_value(&m).unwrap();
+        let arr = json["attachments"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["type"], "image");
     }
 
     #[test]
