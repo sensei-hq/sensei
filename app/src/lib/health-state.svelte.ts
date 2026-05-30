@@ -145,8 +145,25 @@ export class HealthState {
     this.remedy         = p.remedy;
     this.status         = p.status;
 
-    if (p.status === 'ok') setHealthReady();
-    else                   clearHealthCache();
+    if (p.status === 'ok') {
+      setHealthReady();
+      // After a healthy resolve (which may have just recreated the DB and
+      // its config table), reconcile appState from the daemon. Without
+      // this, localStorage[`setupComplete`] keeps its pre-drop '1' value
+      // and reroute happily sends the user to the observatory even
+      // though the daemon's `setup_complete` config is gone — leaving
+      // no UI path to re-enter setup. `appState.load()` already does the
+      // localStorage reconcile from daemon truth; we just need to
+      // trigger it at the moment the DB step is known-good.
+      //
+      // Dynamic import breaks the circular dep — appState.ts imports
+      // healthState, so a static `import { appState }` here would form
+      // a cycle. The Promise is intentionally floating: failure to
+      // refresh is non-fatal (the next page-level load() will catch up).
+      void import('./appstate.svelte.js').then(({ appState }) => appState.load()).catch(() => {});
+    } else {
+      clearHealthCache();
+    }
   }
 
   applyEvent(e: HealthEvent): void {
