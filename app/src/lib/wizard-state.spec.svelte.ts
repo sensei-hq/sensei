@@ -292,6 +292,57 @@ describe('WizardState', () => {
     });
   });
 
+  describe('setupComplete reconciliation (single-owner contract)', () => {
+    // wizardState owns the setupComplete flag and the localStorage cache
+    // for it. These tests assert the writer contract: only hydrate() and
+    // setCompleted() touch `sensei:setup-complete`. (appState.load() used
+    // to do this — that pathway moved here in the layering correction.)
+    const storage = new Map<string, string>();
+    const stub = {
+      getItem:    (k: string) => storage.get(k) ?? null,
+      setItem:    (k: string, v: string) => storage.set(k, v),
+      removeItem: (k: string) => storage.delete(k),
+      clear:      () => storage.clear(),
+    };
+
+    beforeEach(() => {
+      storage.clear();
+      vi.stubGlobal('localStorage', stub);
+    });
+
+    it('hydrate writes "1" to localStorage when data.setupComplete=true', async () => {
+      const ws = new WizardState();
+      await ws.hydrate(mockWizardLoadData({ setupComplete: true }));
+      expect(ws.setupComplete).toBe(true);
+      expect(storage.get('sensei:setup-complete')).toBe('1');
+    });
+
+    it('hydrate clears localStorage when data.setupComplete=false', async () => {
+      storage.set('sensei:setup-complete', '1');
+      const ws = new WizardState();
+      await ws.hydrate(mockWizardLoadData({ setupComplete: false }));
+      expect(ws.setupComplete).toBe(false);
+      expect(storage.has('sensei:setup-complete')).toBe(false);
+    });
+
+    it('setCompleted writes "1" and flips the flag', async () => {
+      // setCompleted calls appState.setConfigs internally, which would
+      // attempt to call the daemon API. Stub the appState module so this
+      // test stays at the wizardState/localStorage seam.
+      const appStateModule = await import('./appstate.svelte.js');
+      const setConfigsSpy = vi.spyOn(appStateModule.appState, 'setConfigs')
+        .mockResolvedValue(undefined);
+
+      const ws = new WizardState();
+      await ws.setCompleted();
+      expect(ws.setupComplete).toBe(true);
+      expect(storage.get('sensei:setup-complete')).toBe('1');
+      expect(setConfigsSpy).toHaveBeenCalledWith({ setup_complete: '1' });
+
+      setConfigsSpy.mockRestore();
+    });
+  });
+
   describe('commitStage failure paths', () => {
     it('commitStage("done") propagates errors instead of returning false', async () => {
       const ws = new WizardState();

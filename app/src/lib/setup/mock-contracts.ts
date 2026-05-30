@@ -93,6 +93,7 @@ export function mockPreferences(overrides: Partial<PreferencesData> = {}): Prefe
 
 export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): WizardLoadData {
   return {
+    setupComplete: false,
     completion: {
       welcome: 'pending', preferences: 'pending', assistants: 'pending',
       roots: 'pending', scan: 'pending', projects: 'pending',
