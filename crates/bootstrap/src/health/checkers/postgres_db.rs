@@ -1,7 +1,6 @@
 //! Check that the sensei database exists with pgvector + the expected
 //! `sessions` table.
 
-use std::process::Command;
 use crate::health::checker::{Checker, CheckOutcome};
 use crate::health::process_util::{output_with_timeout, TimedOutcome, DEFAULT_CHECKER_TIMEOUT};
 
@@ -12,12 +11,19 @@ pub struct PostgresDatabaseChecker {
 impl Checker for PostgresDatabaseChecker {
     fn check(&self) -> CheckOutcome {
         tracing::debug!(check = "postgres_db", db = %self.db_name, "probing database existence");
+        // psql must be resolved via which_binary so the spawn works in the
+        // Tauri .app's narrow Finder-launched PATH. Failing here produces
+        // a clean "psql not installed" detail rather than the raw OS
+        // error 2 the previous bare-name spawn surfaced.
+        let mut exists_cmd = match crate::util::command_for("psql") {
+            Ok(c)  => c,
+            Err(e) => return CheckOutcome::failed(e),
+        };
         // 1) database exists?
         // `-d postgres` pins the connection to the always-present admin DB.
         // Without this, psql defaults to a DB named after the OS user
         // (e.g. "Jerry" on macOS) and fails with `database "Jerry" does not
         // exist` before it can even run the existence query.
-        let mut exists_cmd = Command::new("psql");
         exists_cmd.args(["-d", "postgres", "-tAc", &format!("SELECT 1 FROM pg_database WHERE datname='{}'", self.db_name)]);
         match output_with_timeout(exists_cmd, DEFAULT_CHECKER_TIMEOUT) {
             TimedOutcome::Done(o) if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "1" => {
@@ -49,7 +55,10 @@ impl Checker for PostgresDatabaseChecker {
         let check_sql =
             "SELECT 1 FROM pg_extension WHERE extname='vector' UNION ALL \
              SELECT 1 FROM information_schema.schemata WHERE schema_name='sensei'";
-        let mut probe_cmd = Command::new("psql");
+        let mut probe_cmd = match crate::util::command_for("psql") {
+            Ok(c)  => c,
+            Err(e) => return CheckOutcome::failed(e),
+        };
         probe_cmd.args(["-d", &self.db_name, "-tAc", check_sql]);
         match output_with_timeout(probe_cmd, DEFAULT_CHECKER_TIMEOUT) {
             TimedOutcome::Done(o) if o.status.success() => {
