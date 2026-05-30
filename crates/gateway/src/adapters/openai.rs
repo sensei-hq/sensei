@@ -14,8 +14,8 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    ImageResult, InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole,
-    Payload, StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
+    ImageResult, InferenceRequest, InferenceResponse, MediaAttachment, MediaSource, Message,
+    MessageContent, MessageRole, Payload, StreamChunk, StreamingToolCall, ToolCall, ToolDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -56,11 +56,13 @@ struct ChatToolFunction {
 #[derive(Debug, Serialize)]
 struct ChatMessage {
     role: String,
-    /// Plain message body. OpenAI accepts `null` content on assistant
-    /// turns that carry tool calls, so this is `Option<String>` rather
-    /// than `String`.
+    /// Polymorphic body: a plain string for text-only turns, or an
+    /// array of typed content parts (text + image_url) for
+    /// multimodal turns. OpenAI also accepts `null` content on
+    /// assistant turns that carry only tool calls, so the field is
+    /// optional + skip-if-none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<ChatContent>,
     /// Tool calls emitted by an assistant turn (mirrored back from a
     /// prior response when continuing the conversation).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,6 +71,39 @@ struct ChatMessage {
     /// to the originating call.
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
+}
+
+/// OpenAI's `content` field is polymorphic — string or array of parts.
+/// `serde(untagged)` reproduces that shape: text-only turns serialise
+/// as a bare JSON string, multimodal turns as an array.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum ChatContent {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+/// One typed entry of a multipart `content` array. Today only `text`
+/// and `image_url` are modelled; OpenAI also accepts `input_audio`
+/// and `file` entries which can land as separate variants when those
+/// capabilities are wired through the gateway.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ContentPart {
+    Text {
+        text: String,
+    },
+    ImageUrl {
+        image_url: ImageUrl,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct ImageUrl {
+    /// HTTPS URL or a `data:` URL with base64-encoded bytes. OpenAI
+    /// also supports an optional `detail: "low" | "high" | "auto"`
+    /// field — we don't surface it yet on the gateway request side.
+    url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -249,7 +284,7 @@ fn build_chat_messages(messages: &[Message], system: &Option<String>) -> Vec<Cha
     if let Some(sys) = system {
         out.push(ChatMessage {
             role: "system".to_string(),
-            content: Some(sys.clone()),
+            content: Some(ChatContent::Text(sys.clone())),
             tool_calls: None,
             tool_call_id: None,
         });
@@ -265,7 +300,7 @@ fn build_chat_messages(messages: &[Message], system: &Option<String>) -> Vec<Cha
                 // (we treat MessageRole::Tool as canonical here).
                 out.push(ChatMessage {
                     role: "tool".to_string(),
-                    content: Some(content.clone()),
+                    content: Some(ChatContent::Text(content.clone())),
                     tool_calls: None,
                     tool_call_id: Some(tool_call_id.clone()),
                 });
@@ -278,11 +313,7 @@ fn build_chat_messages(messages: &[Message], system: &Option<String>) -> Vec<Cha
                 } else {
                     Some(m.tool_calls.iter().map(to_openai_tool_call).collect())
                 };
-                let content_field = if text.is_empty() && tool_calls.is_some() {
-                    None
-                } else {
-                    Some(text.clone())
-                };
+                let content_field = build_chat_content(text, &m.attachments, tool_calls.is_some());
                 out.push(ChatMessage {
                     role: role_to_string(&m.role).to_string(),
                     content: content_field,
@@ -293,6 +324,63 @@ fn build_chat_messages(messages: &[Message], system: &Option<String>) -> Vec<Cha
         }
     }
     out
+}
+
+/// Pick the right `content` shape for a single chat message.
+///
+/// - No attachments + non-empty text → bare string.
+/// - No attachments + empty text + tool_calls present → `None`
+///   (assistant tool-call turn with no text body; OpenAI accepts
+///   null/omitted content here).
+/// - Attachments present → array of typed parts. Text comes first
+///   (if non-empty), then one `image_url` part per attachment.
+fn build_chat_content(
+    text: &str,
+    attachments: &[MediaAttachment],
+    has_tool_calls: bool,
+) -> Option<ChatContent> {
+    if attachments.is_empty() {
+        if text.is_empty() && has_tool_calls {
+            return None;
+        }
+        return Some(ChatContent::Text(text.to_string()));
+    }
+    let mut parts: Vec<ContentPart> = Vec::with_capacity(attachments.len() + 1);
+    if !text.is_empty() {
+        parts.push(ContentPart::Text {
+            text: text.to_string(),
+        });
+    }
+    for att in attachments {
+        if let Some(part) = attachment_to_part(att) {
+            parts.push(part);
+        }
+    }
+    Some(ChatContent::Parts(parts))
+}
+
+/// Translate a gateway [`MediaAttachment`] into an OpenAI content
+/// part. Base64 sources become a `data:` URL — OpenAI accepts that
+/// form everywhere it accepts an `image_url`. URL sources pass
+/// through verbatim. Returns `None` for variants we don't yet model.
+fn attachment_to_part(att: &MediaAttachment) -> Option<ContentPart> {
+    match att {
+        MediaAttachment::Image { source, mime_type } => {
+            let url = match source {
+                MediaSource::Url { url } => url.clone(),
+                MediaSource::Base64 { data } => {
+                    // OpenAI's image_url accepts a data URL; the MIME
+                    // type defaults to `image/jpeg` when unspecified
+                    // because the wire shape requires one.
+                    let mime = mime_type.as_deref().unwrap_or("image/jpeg");
+                    format!("data:{mime};base64,{data}")
+                }
+            };
+            Some(ContentPart::ImageUrl {
+                image_url: ImageUrl { url },
+            })
+        }
+    }
 }
 
 /// Convert a gateway [`ToolDefinition`] into OpenAI's wire shape
@@ -1190,6 +1278,77 @@ mod tests {
         assert_eq!(calls[0]["type"], "function");
         assert_eq!(calls[0]["function"]["name"], "get_weather");
         assert_eq!(calls[0]["function"]["arguments"], "{\"city\":\"Berlin\"}");
+    }
+
+    #[test]
+    fn build_chat_messages_keeps_string_content_when_no_attachments() {
+        // Text-only turns must serialise content as a bare string, not
+        // an array — OpenAI accepts both but mixing shapes when
+        // unnecessary needlessly enlarges every request.
+        let msgs = vec![Message::text(MessageRole::User, "hello")];
+        let json = serde_json::to_value(build_chat_messages(&msgs, &None)).unwrap();
+        assert_eq!(json[0]["content"], "hello");
+        assert!(json[0]["content"].as_array().is_none(), "text-only must stay a string");
+    }
+
+    #[test]
+    fn build_chat_messages_emits_array_content_when_attachment_present() {
+        let msg = Message::text(MessageRole::User, "what's in this?")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/cat.jpg"));
+        let json = serde_json::to_value(build_chat_messages(&[msg], &None)).unwrap();
+        let parts = json[0]["content"].as_array().expect("array form");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "what's in this?");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "https://ex.com/cat.jpg");
+    }
+
+    #[test]
+    fn build_chat_messages_omits_empty_text_part_when_only_attachment_present() {
+        let mut msg = Message::text(MessageRole::User, "");
+        msg.attachments
+            .push(MediaAttachment::image_url("https://ex.com/x.png"));
+        let json = serde_json::to_value(build_chat_messages(&[msg], &None)).unwrap();
+        let parts = json[0]["content"].as_array().unwrap();
+        // Empty text would just be noise; the image_url part is the
+        // entire body.
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["type"], "image_url");
+    }
+
+    #[test]
+    fn build_chat_messages_encodes_base64_attachment_as_data_url() {
+        // OpenAI accepts base64 only via a `data:<mime>;base64,<data>`
+        // URL — same field as the URL case. We synthesise the data
+        // URL from the gateway's MediaSource::Base64.
+        let msg = Message::text(MessageRole::User, "see this")
+            .with_attachment(MediaAttachment::image_base64("Zm9v", "image/png"));
+        let json = serde_json::to_value(build_chat_messages(&[msg], &None)).unwrap();
+        let parts = json[0]["content"].as_array().unwrap();
+        assert_eq!(parts[1]["type"], "image_url");
+        let url = parts[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"), "got: {url}");
+        assert!(url.ends_with("Zm9v"));
+    }
+
+    #[test]
+    fn build_chat_messages_defaults_mime_type_for_base64_without_one() {
+        // Base64 without a mime type still has to ship something —
+        // OpenAI requires a media type in the data URL. We default to
+        // image/jpeg, which matches OpenAI's own conservative default
+        // for the legacy `image_url` shape.
+        let msg = Message::text(MessageRole::User, "x").with_attachment(
+            MediaAttachment::Image {
+                source: MediaSource::Base64 {
+                    data: "AAAA".into(),
+                },
+                mime_type: None,
+            },
+        );
+        let json = serde_json::to_value(build_chat_messages(&[msg], &None)).unwrap();
+        let url = json[0]["content"][1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/jpeg;base64,"));
     }
 
     #[test]
