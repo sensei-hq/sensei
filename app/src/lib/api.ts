@@ -21,11 +21,21 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError 
 export function senseiApi(port: number) {
   const base = `http://127.0.0.1:${port}`;
 
+  // Legacy fallback-returning helpers — kept for callers that pre-date
+  // the Result-based `tryGet`/`tryPost` etc. New code should use the
+  // try-prefixed variants so errors flow through ApiResult instead of
+  // being absorbed into a sentinel value. The console.warn here keeps
+  // failures observable until the migration finishes.
   async function get<T>(path: string, fallback: T): Promise<T> {
     try {
       const res = await fetch(`${base}${path}`);
-      return res.ok ? await res.json() as T : fallback;
-    } catch { return fallback; }
+      if (res.ok) return await res.json() as T;
+      console.warn('[api] GET non-ok; using fallback', { path, status: res.status, statusText: res.statusText });
+      return fallback;
+    } catch (e) {
+      console.warn('[api] GET failed; using fallback', { path }, e);
+      return fallback;
+    }
   }
 
   async function post<T>(path: string, body: unknown, fallback: T): Promise<T> {
@@ -35,18 +45,26 @@ export function senseiApi(port: number) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      return res.ok ? await res.json() as T : fallback;
-    } catch { return fallback; }
+      if (res.ok) return await res.json() as T;
+      console.warn('[api] POST non-ok; using fallback', { path, status: res.status, statusText: res.statusText });
+      return fallback;
+    } catch (e) {
+      console.warn('[api] POST failed; using fallback', { path }, e);
+      return fallback;
+    }
   }
 
   async function put(path: string, body: unknown) {
     try {
-      await fetch(`${base}${path}`, {
+      const res = await fetch(`${base}${path}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-    } catch { /* non-fatal */ }
+      if (!res.ok) console.warn('[api] PUT non-ok', { path, status: res.status, statusText: res.statusText });
+    } catch (e) {
+      console.warn('[api] PUT failed', { path }, e);
+    }
   }
 
   async function tryPut(path: string, body: unknown): Promise<ApiResult<void>> {
