@@ -34,8 +34,8 @@ use crate::types::config::RouterConfig;
 use crate::types::cost::TokenUsage;
 use crate::types::error::GatewayError;
 use crate::types::request::{
-    InferenceRequest, InferenceResponse, Message, MessageContent, MessageRole, Payload,
-    StreamChunk, ToolCall, ToolDefinition,
+    InferenceRequest, InferenceResponse, MediaAttachment, MediaSource, Message, MessageContent,
+    MessageRole, Payload, StreamChunk, ToolCall, ToolDefinition,
 };
 
 const ADAPTER_ID: &str = "gemini";
@@ -47,11 +47,11 @@ const DEFAULT_MAX_TOKENS: u32 = 1024;
 // Wire format
 // ---------------------------------------------------------------------------
 
-/// A single part of a Gemini message. Each part can hold text, a
-/// function call (assistant emits when invoking a tool), or a function
-/// response (caller sends to feed a tool result back). Gemini accepts
-/// either form on a part — fields not in use are omitted from the wire
-/// shape.
+/// A single part of a Gemini message. Each part holds exactly one of
+/// the variants below — text, a function call (assistant emits when
+/// invoking a tool), a function response (caller sends back a tool
+/// result), an inline media payload (base64), or a file reference
+/// (URL). Gemini accepts the flat shape with absent fields omitted.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct GeminiPart {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,6 +68,38 @@ struct GeminiPart {
         skip_serializing_if = "Option::is_none"
     )]
     function_response: Option<GeminiFunctionResponse>,
+    /// Inline base64-encoded media payload (images today; audio /
+    /// video for models that accept them).
+    #[serde(
+        default,
+        rename = "inlineData",
+        skip_serializing_if = "Option::is_none"
+    )]
+    inline_data: Option<GeminiInlineData>,
+    /// External file reference. `file_uri` is typically a `gs://`
+    /// Cloud Storage URI; HTTPS URLs work only when the resource is
+    /// publicly accessible to Gemini at request time.
+    #[serde(
+        default,
+        rename = "fileData",
+        skip_serializing_if = "Option::is_none"
+    )]
+    file_data: Option<GeminiFileData>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GeminiInlineData {
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+    data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct GeminiFileData {
+    #[serde(default, rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    mime_type: Option<String>,
+    #[serde(rename = "fileUri")]
+    file_uri: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -230,6 +262,10 @@ fn build_contents(messages: &[Message]) -> Vec<GeminiContent> {
 }
 
 /// Compose the [`GeminiPart`] list for one gateway message.
+///
+/// Order: text first (when non-empty), then one part per
+/// [`MediaAttachment`], then any tool-call parts. Tool-result
+/// messages emit a single functionResponse part and skip the rest.
 fn build_parts(m: &Message) -> Vec<GeminiPart> {
     let mut parts: Vec<GeminiPart> = Vec::new();
     match &m.content {
@@ -239,6 +275,11 @@ fn build_parts(m: &Message) -> Vec<GeminiPart> {
                     text: Some(text.clone()),
                     ..Default::default()
                 });
+            }
+            for att in &m.attachments {
+                if let Some(part) = attachment_to_part(att) {
+                    parts.push(part);
+                }
             }
         }
         MessageContent::ToolResult {
@@ -268,6 +309,38 @@ fn build_parts(m: &Message) -> Vec<GeminiPart> {
         });
     }
     parts
+}
+
+/// Translate a gateway [`MediaAttachment`] into a Gemini part. Base64
+/// sources go via `inlineData`; URL sources via `fileData.fileUri`
+/// (Gemini fetches the URI on its side — works for `gs://` Cloud
+/// Storage objects and publicly accessible HTTPS URLs). Returns
+/// `None` for variants we don't yet model.
+fn attachment_to_part(att: &MediaAttachment) -> Option<GeminiPart> {
+    match att {
+        MediaAttachment::Image { source, mime_type } => match source {
+            MediaSource::Base64 { data } => Some(GeminiPart {
+                inline_data: Some(GeminiInlineData {
+                    // Gemini requires mimeType on inline data. We
+                    // default to image/jpeg when unspecified — same
+                    // conservative choice the OpenAI / Anthropic
+                    // adapters make for the equivalent shape.
+                    mime_type: mime_type
+                        .clone()
+                        .unwrap_or_else(|| "image/jpeg".to_string()),
+                    data: data.clone(),
+                }),
+                ..Default::default()
+            }),
+            MediaSource::Url { url } => Some(GeminiPart {
+                file_data: Some(GeminiFileData {
+                    mime_type: mime_type.clone(),
+                    file_uri: url.clone(),
+                }),
+                ..Default::default()
+            }),
+        },
+    }
 }
 
 /// Strip any `#N` disambiguator suffix that `extract_tool_calls`
@@ -1137,6 +1210,66 @@ mod tests {
         let parts = build_parts(&m);
         let fr = parts[0].function_response.as_ref().unwrap();
         assert_eq!(fr.response, serde_json::json!({"content": "all good"}));
+    }
+
+    #[test]
+    fn build_parts_emits_inline_data_part_for_base64_image_attachment() {
+        let msg = Message::text(MessageRole::User, "what's in this?")
+            .with_attachment(MediaAttachment::image_base64("Zm9v", "image/png"));
+        let parts = build_parts(&msg);
+        assert_eq!(parts.len(), 2);
+        // First part = text.
+        assert_eq!(parts[0].text.as_deref(), Some("what's in this?"));
+        // Second part = inlineData.
+        let inline = parts[1]
+            .inline_data
+            .as_ref()
+            .expect("inline_data populated");
+        assert_eq!(inline.mime_type, "image/png");
+        assert_eq!(inline.data, "Zm9v");
+        let json = serde_json::to_value(&parts[1]).unwrap();
+        assert_eq!(json["inlineData"]["mimeType"], "image/png");
+        assert_eq!(json["inlineData"]["data"], "Zm9v");
+    }
+
+    #[test]
+    fn build_parts_emits_file_data_part_for_url_image_attachment() {
+        let msg = Message::text(MessageRole::User, "see this")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/cat.jpg"));
+        let parts = build_parts(&msg);
+        let json = serde_json::to_value(&parts[1]).unwrap();
+        // URL sources land in fileData.fileUri — Gemini fetches the
+        // URI itself (works for gs:// and publicly accessible HTTPS).
+        assert_eq!(json["fileData"]["fileUri"], "https://ex.com/cat.jpg");
+        // No mime_type on the gateway side → field omitted on the wire.
+        assert!(json["fileData"].get("mimeType").is_none());
+    }
+
+    #[test]
+    fn build_parts_defaults_inline_mime_type_to_image_jpeg_when_unspecified() {
+        let msg = Message::text(MessageRole::User, "x").with_attachment(
+            MediaAttachment::Image {
+                source: MediaSource::Base64 {
+                    data: "AAAA".into(),
+                },
+                mime_type: None,
+            },
+        );
+        let parts = build_parts(&msg);
+        assert_eq!(
+            parts[1].inline_data.as_ref().unwrap().mime_type,
+            "image/jpeg",
+        );
+    }
+
+    #[test]
+    fn build_parts_emits_attachment_only_when_text_empty() {
+        let msg = Message::text(MessageRole::User, "")
+            .with_attachment(MediaAttachment::image_url("https://ex.com/x.png"));
+        let parts = build_parts(&msg);
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].text.is_none());
+        assert!(parts[0].file_data.is_some());
     }
 
     #[test]
