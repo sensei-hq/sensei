@@ -209,3 +209,33 @@ export class AppState {
 
 /** Singleton instance — import and use directly. */
 export const appState = new AppState();
+
+// Cross-state bridge: when health flips to ok (typically right after a
+// resolve pass that may have recreated the DB and its config table),
+// re-hydrate appState so its in-memory config and the
+// localStorage[`setupComplete`] cache reflect daemon truth. Without this,
+// a DB drop leaves the pre-drop '1' in localStorage and reroute keeps
+// sending the user to the observatory even though the daemon's
+// `setup_complete` config is gone — there'd be no UI path back into the
+// wizard.
+//
+// Lives here, not in HealthState, because appState is the facade that
+// composes health + wizard state — the facade should observe its
+// components, not the other way around.
+//
+// $effect.root creates a module-level reactive scope; the inner $effect
+// re-runs every time healthState.isOk flips, and we fire the load only
+// on the false→true transition.
+let _prevHealthOk = false;
+$effect.root(() => {
+  $effect(() => {
+    const ok = healthState.isOk;
+    if (ok && !_prevHealthOk) {
+      // Fire-and-forget — failure is non-fatal (next page-level load()
+      // catches up). Suppress unhandled-rejection noise from the
+      // browser-only no-daemon path returning false.
+      void appState.load().catch(() => {});
+    }
+    _prevHealthOk = ok;
+  });
+});
