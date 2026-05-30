@@ -8,9 +8,12 @@
 
 use std::process::Command;
 
-/// Directories searched when `which`/`where` lookup misses. These cover the
-/// standard Homebrew prefixes on macOS / Linux and the user-local install
-/// directory used by `make install-dev`.
+/// Directories searched when `which`/`where` lookup misses. Homebrew is
+/// sensei's single source of truth — `make install-{dev,release}` and the
+/// `claude plugin install sensei` flow both land binaries in the brew
+/// prefix. `~/.local/bin` is intentionally NOT scanned: pre-brew install
+/// scripts dropped binaries there, and continuing to look in it would
+/// keep a stale copy alive after the user upgrades via brew.
 const EXTRA_BIN_DIRS: &[&str] = &[
     "/opt/homebrew/bin",        // macOS Apple Silicon Homebrew
     "/usr/local/bin",           // macOS Intel Homebrew, common Linux
@@ -41,9 +44,9 @@ const EXTRA_BIN_OPT_SUBDIR_PREFIXES: &[&str] = &["postgresql@", "postgresql"];
 /// Find a binary on PATH (and well-known directories).
 ///
 /// Uses `which` on Unix and `where` on Windows; falls back to scanning
-/// `EXTRA_BIN_DIRS`, `~/.local/bin`, and Homebrew "opt" subdirs for
-/// keg-only formulas (currently postgresql variants). Returns the full
-/// path if found, `None` otherwise.
+/// `EXTRA_BIN_DIRS` and Homebrew "opt" subdirs for keg-only formulas
+/// (currently postgresql variants). Returns the full path if found,
+/// `None` otherwise.
 pub fn which_binary(name: &str) -> Option<String> {
     #[cfg(unix)]
     let cmd = "which";
@@ -66,13 +69,6 @@ pub fn which_binary(name: &str) -> Option<String> {
 
     for dir in EXTRA_BIN_DIRS {
         let candidate = format!("{dir}/{name}");
-        if std::path::Path::new(&candidate).exists() {
-            return Some(candidate);
-        }
-    }
-
-    if let Ok(home) = std::env::var("HOME") {
-        let candidate = format!("{home}/.local/bin/{name}");
         if std::path::Path::new(&candidate).exists() {
             return Some(candidate);
         }

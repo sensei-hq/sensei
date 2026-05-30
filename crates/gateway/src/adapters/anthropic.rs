@@ -1096,6 +1096,7 @@ mod tests {
                 name: "get_weather".into(),
                 arguments: "{\"city\":\"Berlin\"}".into(),
             }],
+            attachments: vec![],
         };
         let json = serde_json::to_value(build_messages(&[msg])).unwrap();
         let blocks = json[0]["content"].as_array().unwrap();
@@ -1122,6 +1123,7 @@ mod tests {
                 name: "noop".into(),
                 arguments: "{}".into(),
             }],
+            attachments: vec![],
         };
         let json = serde_json::to_value(build_messages(&[msg])).unwrap();
         let blocks = json[0]["content"].as_array().unwrap();

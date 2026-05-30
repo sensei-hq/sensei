@@ -118,21 +118,6 @@ install-release: crates-release
 	codesign --sign - --options runtime --force "$$DEST/sensei" && \
 	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
 	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
-	@# Clean up the legacy `~/.local/bin/` install location ONLY AFTER the
-	@# overlay above is confirmed in place. Pre-brew versions of this
-	@# target dropped binaries there; removing them after the new install
-	@# is verified avoids a window in which the user has no sensei binary
-	@# anywhere on disk (which the bootstrap check would then flag as
-	@# "sensei not installed" and trigger the auto-resolver's brew install
-	@# loop). If the overlay step above failed, the && chain short-circuits
-	@# and we never reach this — leaving the legacy copies intact as a
-	@# fallback.
-	@for b in senseid sensei sensei-mcp; do \
-	  if [ -f "$$HOME/.local/bin/$$b" ]; then \
-	    echo "Removing legacy $$HOME/.local/bin/$$b (now lives in brew prefix)..."; \
-	    rm -f "$$HOME/.local/bin/$$b"; \
-	  fi; \
-	done
 	@echo "Run prod daemon: sensei start"
 
 build-dev: crates-dev
