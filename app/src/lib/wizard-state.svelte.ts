@@ -242,7 +242,10 @@ function cloneStages(): WizardStage[] {
 function initialSetupComplete(): boolean {
   if (typeof localStorage === 'undefined') return false;
   try { return localStorage.getItem(STORAGE_KEYS.setupComplete) === '1'; }
-  catch { return false; }
+  catch (e) {
+    console.warn('[wizardState] localStorage read failed at cold start; defaulting to false', e);
+    return false;
+  }
 }
 
 export class WizardState {
@@ -285,7 +288,12 @@ export class WizardState {
     // for a module-level singleton.
     $effect.root(() => {
       $effect(() => {
-        if (healthState.isOk) void this.load().catch(() => { /* page-level load() catches up */ });
+        // load() catches its own errors and returns false on failure —
+        // it can't reject, so no .catch() is needed here. `void` makes
+        // the fire-and-forget intent explicit (and satisfies the rule
+        // against returning a Promise from an $effect callback, which
+        // Svelte would mistake for a cleanup function).
+        if (healthState.isOk) void this.load();
       });
     });
   }
@@ -599,57 +607,72 @@ export class WizardState {
     };
   }
 
-  async commitStage(stageId: string): Promise<boolean> {
+  /**
+   * Commit the named stage's data to the daemon and mark the stage done.
+   *
+   * Throws on failure — the layout's commit handler catches and surfaces
+   * the error message via `commitError`. Previously this method swallowed
+   * errors for non-`done` stages and returned `false`, which left the
+   * user with a stuck Continue button and no feedback. The aggregate
+   * error message is additive to any per-card UI (e.g. assistants /
+   * inference set their own per-row failure state in their handlers).
+   *
+   * Returns `void` on success — handler-less stages (welcome, roots,
+   * scan) succeed trivially.
+   */
+  async commitStage(stageId: string): Promise<void> {
     const api = senseiApi(appState.port);
     const handler = COMMIT_HANDLERS[stageId];
-    if (!handler) return true;
-    try {
+    if (handler) {
       await handler(this, api);
       // Marker write goes through appState so the in-memory config picks
       // up the `setup.X: done` keys — that matters for reroute()'s setup
       // gate and any other reader of appState.config that runs before the
       // next load().
       await appState.setConfigs({ [`setup.${stageId}`]: 'done' });
-      const stage = this.stages.find(s => s.id === stageId);
-      if (stage) stage.status = 'done';
-      return true;
-    } catch (e) {
-      // The done stage flips setup_complete on the daemon — its failure
-      // must propagate, not silently return false. Otherwise the layout
-      // navigates to / regardless of success.
-      if (stageId === 'done') throw e;
-      return false;
     }
+    const stage = this.stages.find(s => s.id === stageId);
+    if (stage) stage.status = 'done';
   }
 }
 
-/** Best-effort username — async so it can call Tauri's homeDir(). */
+/** Best-effort username — async so it can call Tauri's homeDir().
+ *  Each external boundary (localStorage, Tauri native, location) is
+ *  wrapped separately so a failure in one source falls through to the
+ *  next instead of aborting the whole guess. Failures are logged so
+ *  they don't go silent. */
 async function guessUserName(): Promise<string> {
-  try {
-    const stored = typeof localStorage !== 'undefined'
-      ? localStorage.getItem(STORAGE_KEYS.userName) : null;
-    if (stored) return stored;
+  // localStorage boundary — can throw in Safari private mode or under
+  // quota pressure. typeof guard handles SSR/test envs where it's undefined.
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.userName);
+      if (stored) return stored;
+    } catch (e) {
+      console.warn('guessUserName: localStorage read failed', e);
+    }
+  }
 
-    // In Tauri, homeDir() returns the real home directory (e.g. /Users/jerry)
-    if (hasTauri()) {
+  // Tauri native boundary — homeDir() can throw if the path plugin isn't
+  // registered, and the dynamic import can fail if the bundle is stale.
+  // Don't bail out of the guess on failure — fall through to the browser
+  // pathname heuristic.
+  if (hasTauri()) {
+    try {
       const { homeDir } = await import('@tauri-apps/api/path');
       const home = await homeDir();
-      // Strip trailing slash, then take the last path segment
       const match = home.replace(/\/$/, '').match(/\/([^/]+)$/);
-      if (match) {
-        const name = match[1];
-        return name.charAt(0).toUpperCase() + name.slice(1);
-      }
+      if (match) return match[1].charAt(0).toUpperCase() + match[1].slice(1);
+    } catch (e) {
+      console.warn('guessUserName: Tauri homeDir() failed', e);
     }
+  }
 
-    // Browser fallback: try location.pathname (works outside Tauri)
-    const pathMatch = (typeof location !== 'undefined' ? location.pathname : '')
-      .match(/\/Users\/([^/]+)/);
-    if (pathMatch) {
-      const name = pathMatch[1];
-      return name.charAt(0).toUpperCase() + name.slice(1);
-    }
-  } catch { /* ignore */ }
+  // Browser fallback — pure string ops, can't throw.
+  const pathMatch = (typeof location !== 'undefined' ? location.pathname : '')
+    .match(/\/Users\/([^/]+)/);
+  if (pathMatch) return pathMatch[1].charAt(0).toUpperCase() + pathMatch[1].slice(1);
+
   return '';
 }
 

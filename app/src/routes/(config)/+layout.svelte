@@ -67,11 +67,9 @@
                 await goto("/", { invalidateAll: true });
                 return;
             }
-            const ok = await wizardState.commitStage(stage.id);
-            if (ok) {
-                const path = nextStagePath(page.url.pathname);
-                if (path) goto(path);
-            }
+            await wizardState.commitStage(stage.id);
+            const path = nextStagePath(page.url.pathname);
+            if (path) goto(path);
         } catch (e) {
             commitError = e instanceof Error ? e.message : String(e);
         } finally {
