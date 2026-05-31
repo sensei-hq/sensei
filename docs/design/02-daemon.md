@@ -4,7 +4,7 @@
 
 Rust HTTP server. The core engine of Sensei. Owns the code graph, session store, task queue, intelligence pipeline, analytics engine, and all derived analysis. Every other component (desktop app, MCP server, CLI) is a consumer of the daemon's API.
 
-Port 7744 (release) / 7745 (dev). Mode is compile-time via Cargo feature flag (`--features dev`), not a runtime environment variable. Dev builds connect to `sensei_dev`, release builds connect to `sensei`.
+Port 7744, database `sensei`, data directory `~/.sensei/`. There is no dev/prod split — one binary, one DB. For local DDL iteration, set `SENSEI_DDL_DIR=/abs/path` to override the schema source at runtime.
 
 See [ideas/03-observatory](../ideas/03-observatory.md) and [ideas/04-project](../ideas/04-project.md) for the "what." This document covers the "how."
 

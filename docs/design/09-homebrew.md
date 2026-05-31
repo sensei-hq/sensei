@@ -37,14 +37,15 @@ Installs the universal macOS `.dmg` bundle (`Sensei.app`). Depends on the formul
 
 ### Cold-install onramp
 
-Single command, no file to fetch. Branches by build mode:
+Single command, no file to fetch:
 
 ```bash
-# Stable / production
+# Released tarball (default)
 brew install sensei-hq/tap/sensei
 
-# Dev / contributor (built from develop branch HEAD)
-brew install --HEAD sensei-hq/tap/sensei-dev
+# Build from main branch HEAD — used as a fallback when no release
+# tarball is published yet (right after `make bump` before CI catches up)
+brew install --HEAD sensei-hq/tap/sensei
 ```
 
 Prerequisites (postgresql@17, ollama) are *not* installed here. They are
@@ -56,7 +57,7 @@ prerequisite no longer cascades to block the others.
 
 ```mermaid
 flowchart TD
-    user["User: brew install [--HEAD] sensei-hq/tap/sensei[-dev]"] --> brew["Homebrew installs sensei binaries<br/>(/opt/homebrew/Cellar/...)"]
+    user["User: brew install [--HEAD] sensei-hq/tap/sensei"] --> brew["Homebrew installs sensei binaries<br/>(/opt/homebrew/Cellar/...)"]
     brew --> first["First daemon boot"]
     first --> health["sensei-bootstrap runs health check"]
     health --> chk_pg["Postgres checker"]

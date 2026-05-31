@@ -218,12 +218,21 @@ jobs:
           sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$f"
           sed -i "s/sha256 \"[^\"]*\"/sha256 \"${SHA256_dmg}\"/" "$f"
 
+      - name: Sweep legacy dev artefacts from tap
+        # The dev/prod split has been removed (commits 4f269126 onward).
+        # Tap still has sensei-dev.rb + the legacy Brewfiles from earlier
+        # syncs. `git rm -f` is a no-op (exit 0) when the path is already
+        # gone, so this step is safe to keep on every release.
+        run: |
+          cd tap
+          git rm -f --ignore-unmatch Formula/sensei-dev.rb Brewfile Brewfile-dev || true
+
       - name: Commit and push
         run: |
           cd tap
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/sensei.rb Casks/senseihq.rb
+          git add -A Formula Casks
           if git diff --cached --quiet; then
             echo "Nothing to commit"
           else

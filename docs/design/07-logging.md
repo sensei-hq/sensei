@@ -19,7 +19,7 @@ The daemon uses the `tracing` crate with structured spans and events. Each log e
 - **Span context** — nested spans for request tracing (e.g., `api::scan::process_folder`)
 - **Structured fields** — typed key-value pairs (duration_ms, step, exit_code, etc.)
 
-Output is JSON-formatted and written to a log file at `~/.sensei/logs/daemon.log` (release) or `~/.sensei-dev/logs/daemon.log` (dev). The daemon does not log to stdout in production — only in dev mode when run interactively via `make daemon-dev`.
+Output is JSON-formatted and written to `~/.sensei/logs/daemon.log`. The daemon does not log to stdout when running as a brew service; it logs to stdout when invoked interactively via `sensei start` in the foreground.
 
 ### Desktop app
 
