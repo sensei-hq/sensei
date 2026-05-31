@@ -5,10 +5,9 @@
 #   brew install sensei-hq/tap/sensei          # released artefacts (default)
 #   brew install --HEAD sensei-hq/tap/sensei   # build from main branch source
 #
-# The HEAD path mirrors the sensei-dev formula's behaviour — useful when no
-# release has been tagged yet (404 on the tarball URL). Build invocation goes
-# through `make crates-release` so the formula and `make install-release`
-# share one cargo invocation.
+# The HEAD path is the fallback when no release has been tagged yet (404 on
+# the tarball URL). Build invocation goes through `make crates-release` so
+# the formula and `make install-release` share one cargo invocation.
 
 class Sensei < Formula
   desc "AI development intelligence — CLI, daemon, and MCP server"
@@ -32,8 +31,7 @@ class Sensei < Formula
     sha256 "REPLACE_WITH_LINUX_X86_64_SHA256"
   end
 
-  # HEAD path: build from source on `main`. Mirrors the sensei-dev formula so
-  # the two install flows differ only in branch + version + -dev suffix.
+  # HEAD path: build from source on `main`.
   # SSH (not HTTPS) so the private sensei-hq/sensei repo can be cloned via
   # the developer's existing GitHub SSH key — HTTPS would prompt for
   # username/password and hang brew bundle.
@@ -66,7 +64,6 @@ class Sensei < Formula
 
     # Adhoc codesign on macOS so the Tauri sidecar can spawn them.
     # (macOS Sequoia Code Signing Monitor at level 2 requires this.)
-    # Mirrors sensei-dev.rb — both formulae produce sidecar-ready binaries.
     if OS.mac?
       %w[senseid sensei sensei-mcp].each do |name|
         system "codesign", "--sign", "-", "--options", "runtime", "--force",
@@ -90,9 +87,9 @@ class Sensei < Formula
 
   def caveats
     <<~EOS
-      Installed sensei prod binaries (port 7744, db sensei, dir ~/.sensei/).
+      Installed sensei binaries (port 7744, db sensei, dir ~/.sensei/).
 
-      Start the prod daemon:
+      Start the daemon:
 
         brew services start sensei   # managed by launchd, restarts on crash
         # or, for a foreground process:
@@ -102,10 +99,6 @@ class Sensei < Formula
 
         sensei install --acp claude-code   # or cursor, windsurf
         sensei scan ~/Developer            # scan and index your repos
-
-      The prod binaries coexist with the sensei-dev formula — both can be
-      installed on the same machine and registered with Claude Code under
-      distinct MCP keys (`sensei` and `sensei-dev`).
 
       Before uninstalling:
 
