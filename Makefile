@@ -85,11 +85,15 @@ install-service: crates
 	  brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap >/dev/null 2>&1 || true; \
 	  brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei; \
 	fi
-	@if pgrep -x senseid > /dev/null; then \
-	  echo "Stopping senseid (pid $$(pgrep -x senseid))..."; \
-	  pkill -x senseid; \
-	  sleep 1; \
-	fi
+	@# Stop via brew services FIRST, then pkill any stragglers. `pkill`
+	@# alone is not enough: launchd's keep_alive in the brew service plist
+	@# respawns the daemon within a few ms, so the cp lands while a stale
+	@# process is still up. After the install, restart so the new binary
+	@# is the one serving requests.
+	@echo "Stopping sensei service (so the new binary actually takes effect)..."
+	-@brew services stop sensei >/dev/null 2>&1
+	-@pkill -x senseid 2>/dev/null
+	@sleep 1
 	@DEST=$$(brew --prefix sensei)/bin && \
 	rm -f "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
 	cp target/release/senseid    "$$DEST/senseid" && \
@@ -99,6 +103,8 @@ install-service: crates
 	codesign --sign - --options runtime --force "$$DEST/sensei" && \
 	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
 	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
+	@echo "Restarting sensei service so the new daemon is live..."
+	-@brew services start sensei
 
 # Build the desktop .app bundle and install it to /Applications/.
 # Stop any running instance first — `cp -R` over a running .app would mix
