@@ -135,34 +135,38 @@ export class AppState {
   }
 
   /**
-   * Hydrate from the daemon (Tauri) or skip in browser-only dev mode.
-   *
-   * Returns `true` if appState is usable after this call — either daemon
-   * config landed or we deliberately skipped the daemon. Returns `false`
-   * only when we expected the daemon (Tauri mode) and couldn't reach it;
-   * group layouts (`(observatory)/+layout.ts` etc.) translate that into
-   * a 503 so non-health pages never silently mount with empty config.
+   * Hydrate from the daemon. Always succeeds — if the daemon is unreachable
+   * we log and fall back to an empty config so callers never have to deal
+   * with a "load failed" branch. The routing layer (hooks.ts::reroute) is
+   * the canonical place that decides what to show when health isn't ok; it
+   * will send the user to /health, where the bootstrap resolver chain heals
+   * whatever's broken and brings the user back. This module just provides
+   * a usable cache.
    */
-  async load(): Promise<boolean> {
+  async load(): Promise<void> {
     if (typeof localStorage !== 'undefined') {
       const stored = parseInt(localStorage.getItem(STORAGE_KEYS.port) ?? '', 10);
       if (!isNaN(stored) && stored > 0) this.port = stored;
     }
 
-    // Browser (no Tauri) → skip daemon calls
+    // Browser (no Tauri) → skip daemon calls and fall through to defaults.
     if (!hasTauri()) {
       this.config = {};
       this.loaded = true;
-      return true;
+      return;
     }
 
     const api = senseiApi(this.port);
     const result = await api.tryGetConfig();
     if (!result.ok) {
-      // Daemon unreachable — leave the cache untouched so a transient
-      // outage doesn't bounce the user back through setup. Don't mark
-      // loaded — the caller decides whether to retry or surface 503.
-      return false;
+      // Daemon unreachable — fall back to empty defaults. Don't throw,
+      // don't reroute — hooks::reroute is the single source of truth for
+      // routing decisions; if health isn't ok it'll bounce to /health,
+      // where the resolver chain handles the actual repair.
+      console.warn('[appState] load() falling back to defaults — daemon-config fetch failed', result.error);
+      this.config = {};
+      this.loaded = true;
+      return;
     }
 
     this.config = result.data;
@@ -170,7 +174,6 @@ export class AppState {
     // wizardState.hydrate() now (single owner). appState just caches the
     // config map; reroute reads `setupComplete` through the facade.
     this.loaded = true;
-    return true;
   }
 
   async reset() {

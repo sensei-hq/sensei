@@ -253,15 +253,21 @@ describe('AppState', () => {
     expect(storage.get('sensei:setup-complete')).toBe('1');
   });
 
-  it('load returns true on daemon success (L5)', async () => {
-    expect(await state.load()).toBe(true);
+  it('load resolves to void and marks state loaded on daemon success', async () => {
+    await expect(state.load()).resolves.toBeUndefined();
     expect(state.loaded).toBe(true);
   });
 
-  it('load returns false when daemon unreachable in Tauri mode (L5)', async () => {
+  it('load falls back to empty config + sets loaded when daemon is unreachable', async () => {
+    // Contract change: load() no longer surfaces daemon failure to callers.
+    // Hooks::reroute is the single source of truth for routing decisions;
+    // if health isn't ok it'll bounce to /health. appState just gives every
+    // caller a usable cache so no page ever blocks on a daemon hiccup.
     apiMock.tryGetConfig.mockResolvedValueOnce({ ok: false, error: { status: 0, message: 'Network error' } });
-    expect(await state.load()).toBe(false);
-    expect(state.loaded).toBe(false);
+    state.config = { stale: 'value' };
+    await state.load();
+    expect(state.loaded).toBe(true);
+    expect(state.config).toEqual({});
   });
 
   // ── reset ──────────────────────────────────────────────────
