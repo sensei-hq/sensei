@@ -24,20 +24,23 @@ Run `make bump v=patch|minor|major|X.Y.Z` to update all manifests, commit, tag, 
 ## Common commands
 
 ```bash
-# Build Rust crates (dev)
-make crates-dev          # build senseid + sensei-cli + sensei-mcp
-make install-dev         # build + install to ~/.local/bin
+# Build Rust crates (single path — release binaries)
+make crates              # cargo build --release for senseid + sensei-cli + sensei-mcp
+make install             # overlay target/release/ binaries into brew prefix + codesign
 
-# Build Rust crates (release)
-make crates-release
-make install-release
+# Faster dev iteration: same overlay path, debug binaries
+make crates-debug
+make install-debug
 
-# Run desktop app (dev)
-make app-dev             # tauri dev with vite HMR
+# Run desktop app (dev — tauri dev with Vite HMR)
+make app-dev
+
+# Build + install the desktop .app to /Applications/
+make app-release
 
 # Run all tests
 make test
-make test-fast           # no DB required (pre-commit)
+make test-fast           # no DB required (pre-commit hook)
 
 # Bump version across all manifests + tag + push
 make bump v=patch        # 0.2.13 → 0.2.14
@@ -47,8 +50,11 @@ make bump v=0.5.0        # explicit version
 
 ## Database
 
-See `database/` for DDL. Dev builds (`--features dev`) connect to `sensei_dev`; release builds connect to `sensei`.
-Mode is compile-time via Cargo feature flag — no runtime env var detection.
+See `database/` for DDL. The daemon connects to `sensei` on port 7744 with
+data dir `~/.sensei/`. There's no dev/prod mode any more — one binary, one
+DB. For iterating on DDL without publishing a release tag, set
+`SENSEI_DDL_DIR=/abs/path/to/database` before launching the daemon and
+`SenseiConfig::db_schema_source()` will resolve to that local directory.
 
 ## Rules
 
