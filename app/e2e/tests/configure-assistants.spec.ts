@@ -7,7 +7,7 @@
  * Tests 1-2 drive the Tauri UI.
  * Tests 3-4 call the daemon API directly to verify hook write/remove/idempotency.
  *
- * Runs against the dev daemon (port 7745) — never touches production config.
+ * Runs against the dev daemon (port 7744) — never touches production config.
  */
 
 import { test, expect } from '../fixtures';

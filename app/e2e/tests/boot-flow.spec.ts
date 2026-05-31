@@ -2,7 +2,7 @@
  * Boot flow E2E tests — real Sensei.app, real IPC.
  *
  * Tests the /health bootstrap page against the running app.
- * App is built with --features dev (compile-time: port 7745, sensei_dev DB).
+ * App is built with  (compile-time: port 7744, sensei_e2e DB).
  */
 
 import { test, expect } from '../fixtures';

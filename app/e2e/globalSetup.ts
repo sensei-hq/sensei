@@ -4,14 +4,16 @@
  * Building binaries is the Makefile's job:
  *   make test-app-e2e
  *     ├── app-e2e-build
- *     │     ├── install-dev   (builds + overlays senseid-dev, sensei-dev, sensei-mcp-dev into brew prefix)
- *     │     └── tauri build --debug --features dev,e2e-testing
- *     └── bun run test:e2e    (runs Playwright → this file)
+ *     │     ├── install-debug   (builds + overlays senseid/sensei/sensei-mcp into brew prefix)
+ *     │     └── tauri build --debug --features e2e-testing
+ *     └── bun run test:e2e      (runs Playwright → this file)
  *
  * Here we only:
- *   • stop any running dev daemon and clean stale sockets
- *   • launch the e2e-built Sensei.app
- *   • wait for the Tauri IPC socket and the dev daemon port
+ *   • stop any running daemon and clean stale sockets
+ *   • launch the e2e-built Sensei.app with SENSEI_INSTANCE=e2e so the
+ *     daemon talks to a throwaway `sensei_e2e` DB in `~/.sensei-e2e/`
+ *     instead of the user's real `sensei` DB
+ *   • wait for the Tauri IPC socket and the daemon port
  *
  * Running `bun run test:e2e` directly (without `make test-app-e2e`) assumes
  * the binaries and the bundle are already current. If they're not, the
@@ -31,7 +33,8 @@ const APP_BINARY = join(
 );
 const SOCKET = '/tmp/tauri-playwright.sock';
 const PID_FILE = '/tmp/sensei-e2e-pid';
-const DAEMON_PORT = 7745;
+const DAEMON_PORT = 7744;
+const INSTANCE  = 'e2e';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -66,14 +69,24 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  // Stop any running dev daemon — the Tauri sidecar will spawn its own.
-  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid-dev'], { stdio: 'ignore' }); } catch { /* not running */ }
+  // Stop any running daemon — the Tauri sidecar will spawn its own with
+  // the e2e env vars set. Without stopping first the new process can't
+  // bind port 7744.
+  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid'], { stdio: 'ignore' }); } catch { /* not running */ }
   await sleep(500);
 
   // Remove stale socket from any previous run.
   try { unlinkSync(SOCKET); } catch { /* did not exist */ }
 
-  const proc = spawn(APP_BINARY, [], { detached: true, stdio: 'ignore' });
+  // Spawn the .app with SENSEI_INSTANCE=e2e so the daemon resolves DB +
+  // data dir to a throwaway pair (sensei_e2e / ~/.sensei-e2e/). On macOS,
+  // Tauri inherits the spawning environment for child process spawns, so
+  // the sidecar will see this when it spawns senseid.
+  const proc = spawn(APP_BINARY, [], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, SENSEI_INSTANCE: INSTANCE },
+  });
   await new Promise<void>((res, rej) => {
     proc.once('error', rej);
     proc.once('spawn', res);
@@ -86,7 +99,7 @@ export default async function globalSetup(): Promise<void> {
   await waitForSocket(SOCKET, 60_000);
   console.log('[globalSetup] Socket ready.');
 
-  console.log(`[globalSetup] Waiting for dev daemon on port ${DAEMON_PORT}...`);
+  console.log(`[globalSetup] Waiting for daemon on port ${DAEMON_PORT} (instance=${INSTANCE})...`);
   await waitForPort(DAEMON_PORT, 120_000);
-  console.log('[globalSetup] Dev daemon ready — tests may begin.');
+  console.log('[globalSetup] Daemon ready — tests may begin.');
 }
