@@ -7,7 +7,7 @@
  *   3. Persists setup.assistants=done in the daemon config
  *   4. Navigates to /setup/roots only after all configures succeed
  *
- * The daemon is real (dev daemon on port 7745). Claude is the only family
+ * The daemon is real (dev daemon on port 7744). Claude is the only family
  * detected on the test machine; configure marks configured=true on both
  * claude-code and claude-desktop variants.
  */

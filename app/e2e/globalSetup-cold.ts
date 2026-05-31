@@ -3,14 +3,15 @@
  *
  * Building binaries is the Makefile's job:
  *   make test-app-e2e-cold
- *     ├── app-e2e-build       (install-dev + tauri build --features dev,e2e-testing)
- *     ├── _e2e-cold-pre       (drops sensei_dev, stops postgres + ollama)
+ *     ├── app-e2e-build       (install-debug + tauri build --features e2e-testing)
+ *     ├── _e2e-cold-pre       (drops sensei_e2e, stops postgres + ollama)
  *     ├── bun run test:e2e:cold
  *     └── _e2e-cold-post      (restarts postgres + ollama, always)
  *
  * Here we only:
- *   • stop any running dev daemon and clean stale sockets
- *   • launch the e2e-built Sensei.app
+ *   • stop any running daemon and clean stale sockets
+ *   • launch the e2e-built Sensei.app with SENSEI_INSTANCE=e2e so the
+ *     daemon uses sensei_e2e + ~/.sensei-e2e/ (NOT the user's real DB)
  *   • wait for the Tauri IPC socket (NOT the daemon — the test observes
  *     the resolver bringing it up)
  */
@@ -28,6 +29,7 @@ const APP_BINARY = join(
 );
 const SOCKET = '/tmp/tauri-playwright.sock';
 const PID_FILE = '/tmp/sensei-e2e-cold-pid';
+const INSTANCE = 'e2e';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -48,14 +50,20 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid-dev'], { stdio: 'ignore' }); } catch { /* not running */ }
+  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid'], { stdio: 'ignore' }); } catch { /* not running */ }
   await sleep(500);
   try { unlinkSync(SOCKET); } catch { /* did not exist */ }
 
-  // SENSEI_DB_SCHEMA_PATH points bootstrap at local DDL so the database
+  // SENSEI_DDL_DIR points bootstrap at the local DDL so the database
   // resolver doesn't need GitHub access during the cold-start test.
+  // SENSEI_INSTANCE=e2e isolates the DB + data dir from the user's real
+  // install.
   const proc = spawn(APP_BINARY, [], {
-    env: { ...process.env, SENSEI_DB_SCHEMA_PATH: join(REPO_ROOT, 'database') },
+    env: {
+      ...process.env,
+      SENSEI_DDL_DIR:   join(REPO_ROOT, 'database'),
+      SENSEI_INSTANCE:  INSTANCE,
+    },
     detached: true,
     stdio: 'ignore',
   });
@@ -69,5 +77,5 @@ export default async function globalSetup(): Promise<void> {
 
   console.log('[cold-globalSetup] Waiting for Tauri socket...');
   await waitForSocket(SOCKET, 60_000);
-  console.log('[cold-globalSetup] Socket ready — tests may begin.');
+  console.log(`[cold-globalSetup] Socket ready (instance=${INSTANCE}) — tests may begin.`);
 }

@@ -2,7 +2,7 @@
 // the full check → resolve → land flow with NO test-driven navigation.
 //
 // Setup (globalSetup-cold.ts) has already:
-//   • dropped sensei_dev
+//   • dropped sensei_e2e
 //   • stopped postgresql@17 + ollama
 //   • launched Sensei.app without pre-starting senseid
 //

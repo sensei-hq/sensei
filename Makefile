@@ -185,13 +185,13 @@ test-app: test-app-unit
 test-app-unit:
 	cd app && bun run test:unit
 
-# TODO: e2e needs an isolated DB so it doesn't clobber the user's real
-# `sensei` data. A runtime SENSEI_DB_NAME override on the daemon would let
-# e2e point at `sensei_e2e`. Until that lands, e2e prep is a no-op and e2e
-# runs against whatever DB the daemon is currently using. Don't run e2e on a
-# box with real data until the override is in.
+# E2E runs against the throw-away `sensei_e2e` DB (set by SENSEI_INSTANCE=e2e
+# in the e2e globalSetup). Dropping it here guarantees each run starts clean.
+# The user's real `sensei` DB is never touched.
 reset-e2e-db:
-	@echo "[e2e] No DB reset (override not yet implemented — see TODO above)."
+	@echo "[e2e] Dropping sensei_e2e for a clean slate..."
+	dropdb --if-exists sensei_e2e
+	@echo "[e2e] Done — bootstrap will recreate via the DB resolver."
 
 # reset=true  → drop and recreate e2e DB before running (default)
 # reset=false → skip DB reset (use existing DB)
@@ -208,15 +208,21 @@ test-app-e2e: app-e2e-build
 # even if the test fails.
 
 _e2e-cold-pre:
-	@echo "[e2e-cold] Setup: stop services (DB reset deferred — see reset-e2e-db TODO)"
+	@echo "[e2e-cold] Setup: drop sensei_e2e + stop all three services"
+	-brew services start postgresql@17
+	@sleep 2
+	-dropdb --if-exists sensei_e2e
 	-brew services stop postgresql@17
 	-brew services stop ollama
+	-brew services stop sensei
+	-pkill -x senseid
 	@sleep 1
 
 _e2e-cold-post:
-	@echo "[e2e-cold] Teardown: restart services"
+	@echo "[e2e-cold] Teardown: restart services (including user's brew sensei)"
 	-brew services start postgresql@17
 	-brew services start ollama
+	-brew services start sensei
 
 # Note: uses literal `make` (not $(MAKE)) inside the shell pipeline so
 # `make -n test-app-e2e-cold` is an honest dry-run. With $(MAKE) inside

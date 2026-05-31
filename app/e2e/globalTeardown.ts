@@ -2,9 +2,9 @@
  * Playwright global teardown — kill the e2e Sensei.app and its daemon.
  *
  * Binary lifecycle (build, install, brew overlay) is owned by the Makefile;
- * there's nothing to "restore" here — the brew-installed senseid-dev formula
- * is the single source of truth for the dev binary path. After teardown,
- * the next `make app-dev` / `make app-dev-bundle` picks up where we left off.
+ * there's nothing to "restore" here — the brew-installed sensei formula is
+ * the single source of truth for the binary path. After teardown, the next
+ * `make app-dev` picks up where we left off.
  */
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
@@ -24,6 +24,6 @@ export default async function globalTeardown(): Promise<void> {
     unlinkSync(PID_FILE);
   }
 
-  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid-dev'], { stdio: 'ignore' }); } catch { /* not running */ }
+  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid'], { stdio: 'ignore' }); } catch { /* not running */ }
   try { unlinkSync(SOCKET); } catch { /* already gone */ }
 }
