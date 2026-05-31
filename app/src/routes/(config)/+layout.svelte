@@ -195,7 +195,7 @@
             </div>
 
             {#if commitError}
-                <div class="mx-16 mb-2 p-3 rounded-md border border-danger-z5 bg-surface-z2 text-xs text-danger-z5">
+                <div class="mx-16 mb-2 p-3 rounded-md border border-danger-z5 bg-surface-z2 text-xs text-danger-z5 select-text">
                     Could not finish: {commitError} — fix and try Continue again.
                 </div>
             {/if}
