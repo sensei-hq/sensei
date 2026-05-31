@@ -769,29 +769,15 @@ fn remove_all(purge: bool) {
         let bin = daemon_bin();
         let _ = std::process::Command::new(&bin).arg("stop").status();
 
-        // Also stop dev daemon if running
-        if sensei_bootstrap::util::which_binary("senseid-dev").is_some() {
-            let _ = std::process::Command::new("senseid-dev")
-                .arg("stop")
-                .status();
-        }
-
         let sensei_dir = home().join(".sensei");
         if sensei_dir.exists() {
             fs::remove_dir_all(&sensei_dir).ok();
             println!("  ✓ Data directory removed (~/.sensei/)");
         }
-        let sensei_dev_dir = home().join(".sensei-dev");
-        if sensei_dev_dir.exists() {
-            fs::remove_dir_all(&sensei_dev_dir).ok();
-            println!("  ✓ Dev data directory removed (~/.sensei-dev/)");
-        }
 
         // Note: pre-brew installs dropped binaries in ~/.local/bin/. We
         // intentionally don't reach into that directory here — brew is the
-        // single source of truth and ~/.local/bin/ is now user-owned. If
-        // a user has stale `senseid-dev` etc. there, they can rm it
-        // themselves.
+        // single source of truth and ~/.local/bin/ is now user-owned.
 
         println!(
             "\nSensei fully removed. To reinstall: {} && {SENSEI_BIN} init",
