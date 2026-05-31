@@ -64,7 +64,7 @@
     <div class="mb-6 p-4 rounded-md border border-danger-z5 bg-surface-z2 flex items-start gap-4">
       <div>
         <div class="text-sm font-semibold text-danger-z5">Could not load projects</div>
-        <div class="text-xs text-surface-z7 mt-1 font-mono">{error}</div>
+        <div class="text-xs text-surface-z7 mt-1 font-mono select-text">{error}</div>
       </div>
     </div>
   {:else if projects.length === 0}
