@@ -25,8 +25,9 @@
 ##   homebrew/    → sensei-hq/homebrew-tap   (make tap-push)
 ##   marketplace/ → sensei-hq/marketplace    (make marketplace-push)
 
-.PHONY: crates crates-debug install install-debug \
-        app-dev app-release app-check \
+.PHONY: crates crates-debug crates-all \
+        install install-service install-app install-debug \
+        app-dev app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
         test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build \
@@ -48,15 +49,34 @@ crates:
 crates-debug:
 	cargo build -p senseid -p sensei-cli -p sensei-mcp
 
+# Full-coverage build — exercises every Rust crate, including the Tauri
+# sidecar (which lives in its own `[workspace]` and so is skipped by the
+# root `cargo build --workspace`). Use this as the compile-time gate
+# before bumping or releasing: catches symbol drift in any crate that
+# wasn't part of the daemon/CLI/MCP build set.
+crates-all:
+	cargo build --release --workspace
+	cargo build --release --manifest-path app/src-tauri/Cargo.toml
+
+# ── Install ───────────────────────────────────────────────────────────────────
+#
+# `make install` does the full install: the service binaries (CLI, daemon,
+# MCP) overlaid into the brew prefix, plus the desktop .app bundle copied
+# into /Applications/. The two halves are exposed as `install-service` and
+# `install-app` for when you only need one. `install-debug` is the fast
+# iteration variant of `install-service` — same brew-prefix overlay path,
+# debug binaries.
+
+install: install-service install-app
+
 # Overlay freshly-built release binaries into the brew prefix.
 #
-# Single install path: prod binaries (port 7744, db `sensei`, dir `~/.sensei/`).
 # `bin.install` in the brew Formula sets the destination mode to 0555
 # (read+exec, no write), so cp-overwrite fails with EACCES; `rm -f` unlinks
 # the read-only file (needs write on parent dir, not on the file itself).
 # Re-sign with hardened runtime so the Tauri sidecar can spawn them (macOS
 # Sequoia Code Signing Monitor level 2 requires this).
-install: crates
+install-service: crates
 	@# Cold install: ensure the sensei formula is present. Try the release
 	@# tarball first; fall back to --HEAD (build from main) when no release
 	@# is tagged yet (typically right after `make bump` before CI publishes).
@@ -80,8 +100,26 @@ install: crates
 	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
 	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
 
-# Fast iteration variant — uses `target/debug/` instead of `target/release/`.
-# Same install location as `make install`; the binary just isn't optimised.
+# Build the desktop .app bundle and install it to /Applications/.
+# Stop any running instance first — `cp -R` over a running .app would mix
+# old code with new resources, and the next launch would crash with a
+# code-signature mismatch.
+install-app:
+	cd app && bunx tauri build
+	@if [ -d app/src-tauri/target/release/bundle/macos/Sensei.app ]; then \
+	  if pgrep -x sensei-desktop > /dev/null; then \
+	    echo "Stopping running Sensei.app (pid $$(pgrep -x sensei-desktop))..."; \
+	    osascript -e 'tell application "Sensei" to quit' 2>/dev/null || pkill -x sensei-desktop || true; \
+	    sleep 1; \
+	  fi; \
+	  rm -rf /Applications/Sensei.app; \
+	  cp -R app/src-tauri/target/release/bundle/macos/Sensei.app /Applications/; \
+	  echo "Installed Sensei.app to /Applications/"; \
+	else \
+	  echo "Warning: app/src-tauri/target/release/bundle/macos/Sensei.app not found — skipping /Applications copy"; \
+	fi
+
+# Fast iteration variant — debug binaries into the brew prefix (no app).
 install-debug: crates-debug
 	@if pgrep -x senseid > /dev/null; then \
 	  echo "Stopping senseid (pid $$(pgrep -x senseid))..."; \
@@ -98,31 +136,11 @@ install-debug: crates-debug
 	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
 	echo "Overlaid debug binaries into $$DEST (codesigned)"
 
-# ── Desktop app ───────────────────────────────────────────────────────────────
+# ── Desktop app dev / e2e ─────────────────────────────────────────────────────
 
 # Tauri dev with Vite HMR — pre-builds Rust backend then starts tauri dev
 app-dev:
 	cd app && cargo build --manifest-path src-tauri/Cargo.toml && bunx tauri dev
-
-app-release:
-	cd app && bunx tauri build
-	@# Install the bundled .app to /Applications/ on macOS so the user
-	@# doesn't have to drag the artefact out of the build tree. Stop any
-	@# running instance first — `cp -R` over a running .app would mix old
-	@# code and new resources, and the next launch would crash with a
-	@# code-signature mismatch.
-	@if [ -d app/src-tauri/target/release/bundle/macos/Sensei.app ]; then \
-	  if pgrep -x sensei-desktop > /dev/null; then \
-	    echo "Stopping running Sensei.app (pid $$(pgrep -x sensei-desktop))..."; \
-	    osascript -e 'tell application "Sensei" to quit' 2>/dev/null || pkill -x sensei-desktop || true; \
-	    sleep 1; \
-	  fi; \
-	  rm -rf /Applications/Sensei.app; \
-	  cp -R app/src-tauri/target/release/bundle/macos/Sensei.app /Applications/; \
-	  echo "Installed Sensei.app to /Applications/"; \
-	else \
-	  echo "Warning: app/src-tauri/target/release/bundle/macos/Sensei.app not found — skipping /Applications copy"; \
-	fi
 
 # Build the debug .app bundle with the e2e-testing feature enabled
 # (exposes the playwright IPC socket at /tmp/tauri-playwright.sock).
