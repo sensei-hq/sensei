@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tower_http::cors::{CorsLayer, Any};
+use axum::http::Method;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::executor::{TaskContext, spawn_workers};
 use super::routes::{create_router, create_degraded_router};
@@ -48,10 +49,29 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
     let cfg = sensei_bootstrap::SenseiConfig::from_env();
     let database_url = cfg.db_url.clone();
+    // CORS: WKWebView (Safari) does NOT honour `Access-Control-Allow-Methods: *`
+    // — it requires an explicit method list, otherwise the preflight for any
+    // non-simple request (PUT/DELETE/PATCH, or POST with JSON Content-Type)
+    // is treated as blocked and the in-app fetch throws "Load failed" with no
+    // server hit. Curl and Chrome accept the wildcard, which is why this only
+    // bit in the Tauri app. List the methods we actually serve; same fix for
+    // headers since Safari has the same wildcard-rejection there.
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+            Method::HEAD,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::ACCEPT,
+            axum::http::header::AUTHORIZATION,
+        ]);
 
     // Try DB connect. Branch on result: full router on success, degraded
     // router (health endpoint + 503 catch-all) on failure.
