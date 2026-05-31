@@ -24,19 +24,19 @@ Run `make bump v=patch|minor|major|X.Y.Z` to update all manifests, commit, tag, 
 ## Common commands
 
 ```bash
-# Build Rust crates (single path — release binaries)
+# Build Rust crates
 make crates              # cargo build --release for senseid + sensei-cli + sensei-mcp
-make install             # overlay target/release/ binaries into brew prefix + codesign
+make crates-debug        # debug variant (faster compile, same code path)
+make crates-all          # full-coverage build: root workspace + sidecar workspace
 
-# Faster dev iteration: same overlay path, debug binaries
-make crates-debug
-make install-debug
+# Install (one umbrella + two sub-parts)
+make install             # full install: service binaries + desktop .app
+make install-service     # overlay senseid/sensei/sensei-mcp into brew prefix + codesign
+make install-app         # build desktop .app + cp to /Applications/
+make install-debug       # service overlay with debug binaries (fast iteration)
 
 # Run desktop app (dev — tauri dev with Vite HMR)
 make app-dev
-
-# Build + install the desktop .app to /Applications/
-make app-release
 
 # Run all tests
 make test

@@ -66,22 +66,28 @@ After updating, `bump` commits, tags (`vX.Y.Z`), pushes the commit and tag, then
 ```bash
 make crates           # cargo build --release for senseid + sensei-cli + sensei-mcp
 make crates-debug     # debug variant (faster compile, same code path)
+make crates-all       # full-coverage: root workspace + Tauri sidecar workspace
 ```
 
-### Install (overlay built binaries into the brew prefix)
+The `crates-all` target is the verification gate before a bump or release. The Tauri sidecar (`app/src-tauri/`) declares its own `[workspace]`, so plain `cargo build --workspace` from the root skips it; `crates-all` builds both halves so a broken sidecar can't slip through.
+
+### Install
+
+Single umbrella target plus two halves and a fast-iteration variant.
 
 ```bash
-make install          # uses target/release/
-make install-debug    # uses target/debug/ — same install location, no -dev suffix
+make install            # full install: service binaries + desktop .app
+make install-service    # overlay senseid/sensei/sensei-mcp into the brew prefix + codesign
+make install-app        # build the .app bundle and cp it to /Applications/
+make install-debug      # service overlay with debug binaries (no .app rebuild)
 ```
 
-Both `install` targets overlay the freshly-built binaries onto the brew install (`$(brew --prefix sensei)/bin`) and re-codesign with hardened runtime so the Tauri sidecar can spawn them on macOS Sequoia.
+`install-service` overlays the freshly-built binaries onto the brew install (`$(brew --prefix sensei)/bin`) and re-codesigns with hardened runtime so the Tauri sidecar can spawn them on macOS Sequoia. `install-app` does the equivalent for the Tauri bundle, stopping any running Sensei.app first so the cp doesn't mix old code with new resources.
 
-### Desktop app
+### Desktop app dev / e2e
 
 ```bash
 make app-dev          # Tauri dev with Vite HMR
-make app-release      # Build .app bundle + cp to /Applications/
 make app-e2e-build    # Debug .app with --features e2e-testing
 ```
 
@@ -99,23 +105,27 @@ make website-build    # Static production build
 | Target               | Purpose                                                   |
 |----------------------|-----------------------------------------------------------|
 | `setup-hooks`        | Configure git hooks path to `.githooks/`, enable pre-commit |
-| `crates`             | Build senseid + cli + mcp (release)                       |
-| `install`            | Overlay release binaries into brew prefix + codesign      |
-| `install-debug`      | Same overlay, debug binaries                              |
-| `app-dev`            | Tauri dev with Vite HMR                                   |
-| `app-release`        | Production .app bundle + cp to /Applications/             |
-| `app-check`          | Type-check SvelteKit sources (`svelte-check`)             |
-| `test`               | Full test suite (requires PostgreSQL test database)       |
-| `test-fast`          | Fast tests only (no DB) — used by pre-commit hook         |
-| `test-crates`        | `cargo test --workspace`                                  |
-| `test-crates-fast`   | `cargo test -p sensei-bootstrap` (pure Rust, no DB)       |
-| `test-app-unit`      | Vitest unit tests                                         |
-| `test-app-e2e`       | Playwright E2E tests (optionally resets DB)               |
-| `update`             | Update Rust + Node deps, run tests                        |
-| `bump`               | Version bump across all manifests, commit, tag, push, sync |
-| `tap-push`           | Sync `homebrew/` to `sensei-hq/homebrew-tap`              |
-| `marketplace-push`   | Sync `marketplace/` to `sensei-hq/marketplace`            |
-| `clean`              | `cargo clean` + remove SvelteKit build artifacts          |
+| `crates`              | Build senseid + cli + mcp (release)                      |
+| `crates-debug`        | Same set, debug profile                                  |
+| `crates-all`          | Full-coverage Rust build: root workspace + sidecar       |
+| `install`             | Full install: service binaries + desktop .app            |
+| `install-service`     | Overlay service binaries into brew prefix + codesign     |
+| `install-app`         | Build .app bundle + cp to /Applications/                 |
+| `install-debug`       | Service overlay with debug binaries (fast iteration)     |
+| `app-dev`             | Tauri dev with Vite HMR                                  |
+| `app-check`           | Type-check SvelteKit sources (`svelte-check`)            |
+| `app-e2e-build`       | Debug .app with `--features e2e-testing`                 |
+| `test`                | Full test suite (requires PostgreSQL test database)      |
+| `test-fast`           | Fast tests only (no DB) — used by pre-commit hook        |
+| `test-crates`         | `cargo test --workspace`                                 |
+| `test-crates-fast`    | `cargo test -p sensei-bootstrap` (pure Rust, no DB)      |
+| `test-app-unit`       | Vitest unit tests                                        |
+| `test-app-e2e`        | Playwright E2E tests (optionally resets DB)              |
+| `update`              | Update Rust + Node deps, run tests                       |
+| `bump`                | Version bump across all manifests, commit, tag, push, sync |
+| `tap-push`            | Sync `homebrew/` to `sensei-hq/homebrew-tap`             |
+| `marketplace-push`    | Sync `marketplace/` to `sensei-hq/marketplace`           |
+| `clean`               | `cargo clean` + remove SvelteKit build artifacts         |
 
 ---
 
