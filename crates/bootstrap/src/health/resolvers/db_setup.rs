@@ -78,8 +78,8 @@ mod tests {
 
     #[test]
     fn failed_remedy_uses_db_name_in_script() {
-        let r = db_failed_remedy("sensei_dev", "bang".to_string());
-        assert_eq!(r.script, "createdb sensei_dev");
+        let r = db_failed_remedy("sensei_test", "bang".to_string());
+        assert_eq!(r.script, "createdb sensei_test");
         assert!(r.message.contains("bang"));
         assert!(r.message.contains("dbd"),
             "remedy message should explain that dbd handles the extension + schema");
@@ -92,8 +92,8 @@ mod tests {
 
     #[test]
     fn fallback_remedy_carries_db_name_and_manual_script() {
-        let r = DatabaseResolver { db_name: "sensei_dev".to_string() }.fallback_remedy();
-        assert_eq!(r.script, "createdb sensei_dev");
+        let r = DatabaseResolver { db_name: "sensei_test".to_string() }.fallback_remedy();
+        assert_eq!(r.script, "createdb sensei_test");
     }
 
     #[test]
@@ -105,7 +105,7 @@ mod tests {
         // it succeeds, and the resolver still fails next pass. The
         // remedy should instead point at the actual cause — link or
         // install postgresql so the daemon can see it.
-        let r = db_failed_remedy("sensei_dev", "psql not installed".to_string());
+        let r = db_failed_remedy("sensei_test", "psql not installed".to_string());
         assert!(r.script.contains("brew install postgresql"));
         assert!(r.script.contains("brew link"));
         assert!(r.message.contains("not visible to the daemon"));
