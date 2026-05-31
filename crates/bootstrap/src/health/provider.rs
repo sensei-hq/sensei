@@ -785,7 +785,7 @@ mod tests {
             "brew link --force --overwrite postgresql@17 && brew services restart postgresql@17",
         );
         let ol = r("Ollama needs restart.", "brew services restart ollama");
-        let db = r("Database doesn't exist.", "createdb sensei_dev");
+        let db = r("Database doesn't exist.", "createdb sensei_test");
         let merged = consolidate_remedies(&[
             (ComponentId::Postgres, pg),
             (ComponentId::Ollama, ol),
@@ -795,7 +795,7 @@ mod tests {
         let expected_script = "\
 brew link --force --overwrite postgresql@17 && brew services restart postgresql@17
 brew services restart ollama
-createdb sensei_dev";
+createdb sensei_test";
         assert_eq!(merged.script, expected_script);
         // Message: each component appears as a bullet with its reason.
         assert!(merged.message.starts_with("3 components need attention:"),
@@ -990,7 +990,7 @@ createdb sensei_dev";
                  // would pass with the wrong remedy. Failing means the skip
                  // gate actually fired.
                  ResolveOutcome::Resolved,
-                 r("would-be db remedy", "createdb sensei_dev")),
+                 r("would-be db remedy", "createdb sensei_test")),
             ],
         };
         let current = p.check("0.0.0-test");
@@ -1051,9 +1051,9 @@ createdb sensei_dev";
                         targets: &[ComponentId::Database],
                         outcome: ResolveOutcome::NeedsHumanAction(r(
                             "dbd partial deploy",
-                            "createdb sensei_dev",
+                            "createdb sensei_test",
                         )),
-                        fallback: r("db fallback", "createdb sensei_dev"),
+                        fallback: r("db fallback", "createdb sensei_test"),
                         calls: Arc::new(Mutex::new(Vec::new())),
                     }),
                     Box::new(StubResolver {
