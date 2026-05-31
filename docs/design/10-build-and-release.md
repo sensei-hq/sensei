@@ -2,84 +2,58 @@
 
 ## Overview
 
-The build system coordinates Rust crates, the Tauri desktop app, the marketing website, and Homebrew distribution from a single monorepo. Versioning uses a single `VERSION` file. Dev and release modes are separated at compile time via a Cargo feature flag — no runtime environment variables.
+The build system coordinates Rust crates, the Tauri desktop app, the marketing website, and Homebrew distribution from a single monorepo. Versioning uses a single `VERSION` file.
+
+There is **one build mode**. Sensei previously bifurcated into "dev" (port 7745, `sensei_dev` DB, `~/.sensei-dev/`, `-dev`-suffixed binaries) and "prod" (port 7744, `sensei`, `~/.sensei/`). That split was a constant source of state-leak bugs and has been removed — one binary, one port, one DB.
 
 ---
 
-## Debug vs Release
+## Configuration
 
-Mode is determined at compile time by the `dev` Cargo feature. There is no `--mode` flag, no `SENSEI_MODE` env var, no binary name detection. The binary knows what it is because the decision was baked in at compile time.
+All compile-time values live in `crates/bootstrap/src/config.rs::SenseiConfig`:
 
-```
-cargo build --features dev    -> dev mode
-cargo build                   -> release mode
-```
+| Setting        | Value                                |
+|----------------|--------------------------------------|
+| Daemon port    | `7744`                               |
+| Data directory | `~/.sensei/`                         |
+| Database name  | `sensei`                             |
+| Binary names   | `senseid`, `sensei`, `sensei-mcp`    |
+| Brew tap       | `sensei-hq/tap/sensei`               |
 
-### Compile-time configuration
+### Runtime overrides
 
-All mode-sensitive values live in `sensei-bootstrap/src/config.rs`:
+There is one knob, used for iterating on DDL without publishing a release tag:
 
-| Setting | Dev | Release |
-|---------|-----|---------|
-| Daemon port | 7745 | 7744 |
-| Data directory | `~/.sensei-dev/` | `~/.sensei/` |
-| Database name | `sensei_dev` | `sensei` |
-
-### Feature propagation
-
-Every crate that depends on `sensei-bootstrap` forwards the feature:
-
-```toml
-# crates/senseid/Cargo.toml
-[features]
-dev = ["sensei-bootstrap/dev"]
+```bash
+SENSEI_DDL_DIR=/abs/path/to/database senseid start
 ```
 
-The Tauri sidecar does the same — `app/src-tauri/Cargo.toml` declares `dev = ["sensei-bootstrap/dev"]`. The SvelteKit frontend gets the daemon port injected at Vite build time via `__SENSEI_DEFAULT_PORT__`.
+When `SENSEI_DDL_DIR` is set, `SenseiConfig::db_schema_source()` resolves to that local directory instead of the GitHub-tagged release. No other runtime overrides exist.
 
-### Binary naming
+### Why hardcoded port, not dynamic
 
-| Release | Dev | Purpose |
-|---------|-----|---------|
-| `senseid` | `senseid-dev` | Daemon |
-| `sensei` | `sensei-dev` | CLI |
-| `sensei-mcp` | `sensei-mcp-dev` | MCP server |
-
-Dev binaries are installed to `~/.local/bin/` alongside release binaries. They coexist without conflict. Dev binaries are re-signed with hardened runtime for macOS Code Signing Monitor compatibility.
-
-### Why compile-time, not runtime
-
-Runtime detection (env vars, binary name checks) is fragile — env vars can be unset, binary names can be wrong. Compile-time guarantees the binary knows what it is regardless of how it is invoked.
-
-### Why hardcoded ports, not dynamic
-
-Hook scripts, Tauri apps, and the CLI all need to know the port without negotiation. Dynamic port selection would require a discovery mechanism. Two well-known ports is simpler.
+Hook scripts, Tauri apps, and the CLI all need to know the port without negotiation. Dynamic port selection would require a discovery mechanism that the CLI and external hooks could not consult easily. One well-known port is simpler.
 
 ---
 
 ## Version management
 
-`VERSION` at the repo root is the single source of truth. Current version: `0.2.2`.
+`VERSION` at the repo root is the single source of truth.
 
-`make bump v=X.Y.Z` updates all manifests in one atomic commit:
+`make bump v=X.Y.Z` (or `v=patch|minor|major`) updates all manifests in one atomic commit:
 
-| File | What changes |
-|------|-------------|
-| `VERSION` | Raw version string |
-| `app/package.json` | `version` field |
-| `app/src-tauri/tauri.conf.json` | `version` field |
-| `app/src-tauri/Cargo.toml` | `version` field |
-| `website/package.json` | `version` field |
-| `website/src/routes/+page.svelte` | Footer version string |
-| `crates/senseid/Cargo.toml` | `version` field |
-| `crates/cli/Cargo.toml` | `version` field |
-| `crates/mcp/Cargo.toml` | `version` field |
-| `crates/gateway/Cargo.toml` | `version` field |
-| `crates/bootstrap/Cargo.toml` | `version` field |
-| `homebrew/Formula/sensei.rb` | `version` string |
-| `homebrew/Casks/senseihq.rb` | `version` string |
-| `marketplace/package.json` | `version` field |
-| `marketplace/catalog.json` | `version` field |
+| File                                 | What changes        |
+|--------------------------------------|---------------------|
+| `VERSION`                            | Raw version string  |
+| `app/package.json`                   | `version` field     |
+| `app/src-tauri/tauri.conf.json`      | `version` field     |
+| `app/src-tauri/Cargo.toml`           | `version` field     |
+| `website/package.json`               | `version` field     |
+| `website/src/routes/+page.svelte`    | Footer version      |
+| `crates/{senseid,cli,mcp,gateway,bootstrap}/Cargo.toml` | `version` field |
+| `homebrew/Formula/sensei.rb`         | `version` string    |
+| `homebrew/Casks/senseihq.rb`         | `version` string    |
+| `marketplace/{package,catalog}.json` | `version` field     |
 
 After updating, `bump` commits, tags (`vX.Y.Z`), pushes the commit and tag, then syncs homebrew-tap and marketplace subtrees.
 
@@ -89,22 +63,27 @@ After updating, `bump` commits, tags (`vX.Y.Z`), pushes the commit and tag, then
 
 ### Rust crates
 
-The workspace contains five crates: `senseid`, `cli`, `mcp`, `gateway`, `bootstrap`.
+```bash
+make crates           # cargo build --release for senseid + sensei-cli + sensei-mcp
+make crates-debug     # debug variant (faster compile, same code path)
+```
+
+### Install (overlay built binaries into the brew prefix)
 
 ```bash
-make crates-dev       # cargo build --features dev -p senseid -p sensei-cli -p sensei-mcp
-make crates-release   # cargo build --release -p senseid -p sensei-cli -p sensei-mcp
+make install          # uses target/release/
+make install-debug    # uses target/debug/ — same install location, no -dev suffix
 ```
+
+Both `install` targets overlay the freshly-built binaries onto the brew install (`$(brew --prefix sensei)/bin`) and re-codesign with hardened runtime so the Tauri sidecar can spawn them on macOS Sequoia.
 
 ### Desktop app
 
 ```bash
-make app-dev          # Tauri dev with Vite HMR (--features dev)
-make app-dev-bundle   # Build debug .app bundle and launch it
-make app-release      # Production build (no dev feature)
+make app-dev          # Tauri dev with Vite HMR
+make app-release      # Build .app bundle + cp to /Applications/
+make app-e2e-build    # Debug .app with --features e2e-testing
 ```
-
-`app-dev` pre-builds the Rust backend then starts `tauri dev`. `app-dev-bundle` builds a full native bundle, installs dev binaries, and launches the .app.
 
 ### Website
 
@@ -113,35 +92,30 @@ make website-dev      # Vite HMR dev server
 make website-build    # Static production build
 ```
 
-### Build order
-
-No strict ordering between independent targets. Dependencies within the app build: Rust sidecar must compile before Tauri bundles the app. The website and crates are fully independent.
-
 ---
 
 ## Key Makefile targets
 
-| Target | Purpose |
-|--------|---------|
-| `setup-hooks` | Configure git hooks path to `.githooks/`, enable pre-commit |
-| `install-dev` | Build dev crates, install to `~/.local/bin/` with `-dev` suffix, codesign |
-| `install-release` | Build release crates, install to `~/.local/bin/` |
-| `daemon-dev` | Run dev daemon directly from build dir (port 7745) |
-| `app-dev` | Tauri dev with Vite HMR |
-| `app-dev-bundle` | Full debug .app bundle |
-| `app-release` | Production app build |
-| `app-check` | Type-check SvelteKit sources (`svelte-check`) |
-| `test` | Full test suite (requires PostgreSQL test database) |
-| `test-fast` | Fast tests only (no DB) — used by pre-commit hook |
-| `test-crates` | `cargo test --workspace` |
-| `test-crates-fast` | `cargo test -p sensei-bootstrap` (pure Rust, no DB) |
-| `test-app-unit` | Vitest unit tests |
-| `test-app-e2e` | Playwright E2E tests (optionally resets DB) |
-| `update` | Update Rust + Node dependencies, run tests |
-| `bump` | Version bump across all manifests, commit, tag, push, sync subtrees |
-| `tap-push` | Sync `homebrew/` to `sensei-hq/homebrew-tap` |
-| `marketplace-push` | Sync `marketplace/` to `sensei-hq/marketplace` |
-| `clean` | `cargo clean` + remove SvelteKit build artifacts |
+| Target               | Purpose                                                   |
+|----------------------|-----------------------------------------------------------|
+| `setup-hooks`        | Configure git hooks path to `.githooks/`, enable pre-commit |
+| `crates`             | Build senseid + cli + mcp (release)                       |
+| `install`            | Overlay release binaries into brew prefix + codesign      |
+| `install-debug`      | Same overlay, debug binaries                              |
+| `app-dev`            | Tauri dev with Vite HMR                                   |
+| `app-release`        | Production .app bundle + cp to /Applications/             |
+| `app-check`          | Type-check SvelteKit sources (`svelte-check`)             |
+| `test`               | Full test suite (requires PostgreSQL test database)       |
+| `test-fast`          | Fast tests only (no DB) — used by pre-commit hook         |
+| `test-crates`        | `cargo test --workspace`                                  |
+| `test-crates-fast`   | `cargo test -p sensei-bootstrap` (pure Rust, no DB)       |
+| `test-app-unit`      | Vitest unit tests                                         |
+| `test-app-e2e`       | Playwright E2E tests (optionally resets DB)               |
+| `update`             | Update Rust + Node deps, run tests                        |
+| `bump`               | Version bump across all manifests, commit, tag, push, sync |
+| `tap-push`           | Sync `homebrew/` to `sensei-hq/homebrew-tap`              |
+| `marketplace-push`   | Sync `marketplace/` to `sensei-hq/marketplace`            |
+| `clean`              | `cargo clean` + remove SvelteKit build artifacts          |
 
 ---
 
@@ -149,7 +123,7 @@ No strict ordering between independent targets. Dependencies within the app buil
 
 1. **Tests pass** — `make test` (full suite including database tests)
 2. **Bump** — `make bump v=X.Y.Z` updates manifests, commits, tags, pushes
-3. **CI builds** — tag push triggers GitHub Actions: build release artifacts for all platforms, compute SHA256 hashes, update Homebrew formula
+3. **CI builds** — tag push triggers GitHub Actions: build release artifacts for all platforms, compute SHA256 hashes, update the Homebrew tap's `Formula/sensei.rb` + `Casks/senseihq.rb`
 4. **Subtree sync** — `bump` automatically runs `tap-push` and `marketplace-push`
 5. **Distribution** — users receive the update via `brew upgrade sensei` or the app's update check
 
@@ -159,8 +133,8 @@ No strict ordering between independent targets. Dependencies within the app buil
 
 ### Uninstall scope
 
-Each binary only removes its own scope:
-- `sensei remove all --purge` removes `~/.sensei/` and release binaries
-- `sensei-dev remove all --purge` removes `~/.sensei-dev/` and dev binaries
+```bash
+sensei remove all --purge   # removes ~/.sensei/ and binaries
+```
 
-Homebrew distributes release binaries only. Dev binaries are built locally by contributors.
+The `sensei reset` CLI additionally sweeps legacy `senseid-dev` binaries and `~/.sensei-dev/` left behind by older installs.
