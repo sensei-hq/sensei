@@ -167,15 +167,13 @@ test-app: test-app-unit
 test-app-unit:
 	cd app && bun run test:unit
 
-# TODO: e2e currently drops `sensei-dev` (legacy from the dev/prod split that
-# was ripped out). A clean fix is to give the daemon a runtime SENSEI_DB_NAME
-# override so e2e can run against `sensei_e2e` without colliding with the
-# user's real `sensei` DB. Until that lands, the e2e flow drops the
-# (now-unused) `sensei-dev` DB; if it doesn't exist the dropdb is a no-op.
+# TODO: e2e needs an isolated DB so it doesn't clobber the user's real
+# `sensei` data. A runtime SENSEI_DB_NAME override on the daemon would let
+# e2e point at `sensei_e2e`. Until that lands, e2e prep is a no-op and e2e
+# runs against whatever DB the daemon is currently using. Don't run e2e on a
+# box with real data until the override is in.
 reset-e2e-db:
-	@echo "[e2e] Dropping sensei-dev (legacy e2e DB; will become sensei_e2e once the DB override lands)..."
-	dropdb --if-exists sensei-dev
-	@echo "[e2e] Done — bootstrap owns the rest."
+	@echo "[e2e] No DB reset (override not yet implemented — see TODO above)."
 
 # reset=true  → drop and recreate e2e DB before running (default)
 # reset=false → skip DB reset (use existing DB)
@@ -192,10 +190,7 @@ test-app-e2e: app-e2e-build
 # even if the test fails.
 
 _e2e-cold-pre:
-	@echo "[e2e-cold] Setup: drop legacy sensei_dev (placeholder), stop services"
-	-brew services start postgresql@17
-	@sleep 2
-	-dropdb --if-exists sensei_dev
+	@echo "[e2e-cold] Setup: stop services (DB reset deferred — see reset-e2e-db TODO)"
 	-brew services stop postgresql@17
 	-brew services stop ollama
 	@sleep 1

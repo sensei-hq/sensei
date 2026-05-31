@@ -25,14 +25,13 @@ fn installed_plugins_manifest() -> PathBuf {
 
 /// MCP server registry keys the daemon owns. Any entry under these keys in a
 /// user/project MCP config is presumed to be sensei's and gets removed during
-/// cleanup so the plugin install can re-register cleanly. The user has
-/// explicitly authorised this scope (sensei/sensei-dev are daemon-owned).
-const SENSEI_MCP_KEYS: &[&str] = &["sensei", "sensei-dev"];
+/// cleanup so the plugin install can re-register cleanly.
+const SENSEI_MCP_KEYS: &[&str] = &["sensei"];
 
-/// Remove any sensei-keyed (`sensei` or `sensei-dev`) entries from a user/project
-/// `mcp.json`-shaped file. Writes a `.bak` next to the file before editing so
-/// the original is recoverable. Returns the list of keys removed. No-op (and
-/// no `.bak` written) when the file is missing or carries no sensei keys.
+/// Remove any sensei-keyed entries from a user/project `mcp.json`-shaped file.
+/// Writes a `.bak` next to the file before editing so the original is
+/// recoverable. Returns the list of keys removed. No-op (and no `.bak`
+/// written) when the file is missing or carries no sensei keys.
 ///
 /// This is the auto-cleanup gate that lets `configure()` heal stale state
 /// from prior install attempts without the user having to edit JSON.
@@ -111,11 +110,11 @@ impl Assistant for ClaudeCodeAssistant {
         let mut warnings = Vec::new();
 
         // 0. Auto-cleanup of stale state from prior install attempts. The
-        //    daemon owns the sensei/sensei-dev MCP keys (user authorised); any
-        //    leftover entries here would either be broken (wrong binary path)
-        //    or about to be re-registered by the plugin install below. Sweep
-        //    them now so a re-run heals the state without the user editing
-        //    JSON by hand.
+        //    daemon owns the sensei MCP key (user authorised); any leftover
+        //    entry here would either be broken (wrong binary path) or about
+        //    to be re-registered by the plugin install below. Sweep it now
+        //    so a re-run heals the state without the user editing JSON by
+        //    hand.
         let user_mcp = home().join(".claude/mcp.json");
         match clean_user_mcp_json(&user_mcp) {
             Ok(removed) if !removed.is_empty() => {
@@ -349,11 +348,10 @@ mod tests {
     // ── clean_user_mcp_json: auto-cleanup of stale sensei MCP entries ────────
     //
     // ~/.claude/mcp.json accumulates broken `sensei` entries from prior
-    // install attempts (e.g. command="sensei-mcp" when only sensei-mcp-dev
-    // is on PATH, or command="bun /old/path" pointing at a moved repo).
-    // configure() runs cleanup_stale() first so a re-run heals these without
-    // the user having to edit JSON by hand. The user has explicitly authorised
-    // removing ANY entry keyed sensei/sensei-dev — the daemon owns those keys.
+    // install attempts (e.g. command="bun /old/path" pointing at a moved
+    // repo). configure() runs cleanup_stale() first so a re-run heals these
+    // without the user having to edit JSON by hand. The daemon owns the
+    // `sensei` MCP key, so removing any entry under that key is authorised.
 
     #[test]
     fn clean_user_mcp_json_removes_sensei_entry() {
@@ -372,24 +370,6 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
         assert!(v["mcpServers"]["sensei"].is_null(), "sensei key should be gone");
         assert!(v["mcpServers"]["playwright"].is_object(), "playwright key must survive");
-    }
-
-    #[test]
-    fn clean_user_mcp_json_removes_sensei_dev_entry() {
-        let tmp = make_tmp_home();
-        let mcp = tmp.path().join("mcp.json");
-        std::fs::write(&mcp, r#"{
-            "mcpServers": {
-                "sensei-dev": { "command": "sensei-mcp-dev" }
-            }
-        }"#).unwrap();
-
-        let removed = clean_user_mcp_json(&mcp).unwrap();
-        assert_eq!(removed, vec!["sensei-dev"]);
-
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
-        let servers = v["mcpServers"].as_object().unwrap();
-        assert!(servers.is_empty(), "all sensei-keyed entries removed");
     }
 
     #[test]
