@@ -23,6 +23,6 @@ export default async function globalTeardown(): Promise<void> {
     unlinkSync(PID_FILE);
   }
 
-  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid-dev'], { stdio: 'ignore' }); } catch { /* not running */ }
+  try { execFileSync('/usr/bin/pkill', ['-x', 'senseid'], { stdio: 'ignore' }); } catch { /* not running */ }
   try { unlinkSync(SOCKET); } catch { /* already gone */ }
 }

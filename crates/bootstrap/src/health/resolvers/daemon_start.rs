@@ -18,27 +18,36 @@ impl Resolver for DaemonStartResolver {
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         let cfg = SenseiConfig::from_env();
 
-        // Stage 1: brew services start sensei. Matches the postgres/ollama
-        // resolver path. Gains launchd auto-restart so the daemon comes back
-        // after a crash without the user noticing.
-        let service = cfg.brew_service_name();
-        tracing::info!(service, "stage 1: brew services start");
-        match brew_services_start(service) {
-            Ok(()) => {
-                tracing::info!(service, "stage 1: brew services start ok");
-                return ResolveOutcome::Resolved;
+        // Instance isolation: when SENSEI_INSTANCE is set (e2e tests), skip
+        // brew services entirely. The brew-services launchd shim doesn't
+        // inherit the caller's environment, so a daemon brought up via brew
+        // would ignore SENSEI_INSTANCE and write to the default DB/dir —
+        // defeating the point of isolation. Direct spawn inherits this
+        // process's env, so the daemon honours the instance.
+        let instance_set = std::env::var_os("SENSEI_INSTANCE")
+            .is_some_and(|v| !v.is_empty());
+
+        if !instance_set {
+            // Stage 1: brew services start sensei. Matches the postgres/ollama
+            // resolver path. Gains launchd auto-restart so the daemon comes back
+            // after a crash without the user noticing.
+            let service = cfg.brew_service_name();
+            tracing::info!(service, "stage 1: brew services start");
+            match brew_services_start(service) {
+                Ok(()) => {
+                    tracing::info!(service, "stage 1: brew services start ok");
+                    return ResolveOutcome::Resolved;
+                }
+                Err(BrewError::BrewNotFound) => {
+                    tracing::warn!("brew not on PATH — falling back to direct daemon spawn");
+                    // Fall through to stage 2.
+                }
+                Err(e) => {
+                    tracing::info!(service, error = ?e, "stage 1 failed — falling back to direct spawn");
+                }
             }
-            Err(BrewError::BrewNotFound) => {
-                tracing::warn!("brew not on PATH — falling back to direct daemon spawn");
-                // Fall through to stage 2. The daemon binary might still be
-                // on PATH (e.g., user copied it manually) even though brew
-                // isn't, so try direct spawn before giving up.
-            }
-            Err(e) => {
-                tracing::info!(service, error = ?e, "stage 1 failed — service likely not registered with brew yet, falling back to direct spawn");
-                // Same fallthrough — direct spawn handles "service not
-                // installed via brew" the same way it handles "brew missing".
-            }
+        } else {
+            tracing::info!("SENSEI_INSTANCE set — skipping brew services (cannot propagate env), using direct spawn");
         }
 
         // Stage 2: direct binary spawn. The daemon daemonises itself on

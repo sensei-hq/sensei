@@ -96,26 +96,39 @@ pub const DB_POOL_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 /// How long (in seconds) an idle connection is kept alive before being closed.
 pub const DB_POOL_IDLE_TIMEOUT_SECS: u64 = 300;
 
-/// Configuration for all sensei components. Singleton values — no per-instance
-/// variation, kept as a struct only because callers historically read fields
-/// off `SenseiConfig::from_env()`.
+/// Configuration for all sensei components.
+///
+/// Default: production install — port 7744, DB `sensei`, dir `~/.sensei/`.
+///
+/// Set `SENSEI_INSTANCE=<name>` at runtime to derive an isolated DB + data
+/// directory (DB becomes `sensei_<name>`, dir becomes `~/.sensei-<name>/`).
+/// The daemon port is NOT affected — only one instance can run at a time
+/// per machine. Used by e2e tests to avoid clobbering the user's real
+/// `sensei` DB; set `SENSEI_INSTANCE=e2e` and the daemon talks to a
+/// throw-away `sensei_e2e` DB in `~/.sensei-e2e/`.
 #[derive(Debug, Clone)]
 pub struct SenseiConfig {
     pub daemon_port: u16,
     pub db_name: String,
     pub db_url: String,
-    pub dir_suffix: &'static str,
+    pub dir_suffix: String,
 }
 
 impl SenseiConfig {
     pub fn from_env() -> Self {
-        let db_name = "sensei".to_string();
+        let instance = std::env::var("SENSEI_INSTANCE")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let (db_name, dir_suffix) = match instance.as_deref() {
+            Some(name) => (format!("sensei_{name}"), format!(".sensei-{name}")),
+            None       => ("sensei".to_string(),    ".sensei".to_string()),
+        };
         let db_url = format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}");
         Self {
             daemon_port: DAEMON_PORT,
             db_name,
             db_url,
-            dir_suffix: ".sensei",
+            dir_suffix,
         }
     }
 
@@ -129,7 +142,7 @@ impl SenseiConfig {
 
     /// Sensei data directory (`~/.sensei/`).
     pub fn sensei_dir(&self) -> PathBuf {
-        home_dir().join(self.dir_suffix)
+        home_dir().join(&self.dir_suffix)
     }
 
     /// Log file path.
@@ -245,11 +258,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_uses_prod_values() {
+    fn config_instance_override_and_defaults() {
+        // Combined into one test because cargo runs tests in parallel and
+        // these branches all mutate the shared SENSEI_INSTANCE env var.
+        // Same pattern as `db_schema_source_default_and_override`.
+        //
+        // SAFETY: process-global env mutation. Safe here because no other
+        // test in this binary reads SENSEI_INSTANCE and the var is cleared
+        // before returning.
+
+        // 1. Default — no env var set.
+        unsafe { std::env::remove_var("SENSEI_INSTANCE"); }
         let cfg = SenseiConfig::from_env();
         assert_eq!(cfg.daemon_port, 7744);
-        assert_eq!(cfg.db_name, "sensei");
+        assert_eq!(cfg.db_name,    "sensei");
         assert_eq!(cfg.dir_suffix, ".sensei");
+
+        // 2. Override — SENSEI_INSTANCE=e2e.
+        unsafe { std::env::set_var("SENSEI_INSTANCE", "e2e"); }
+        let cfg = SenseiConfig::from_env();
+        assert_eq!(cfg.db_name,    "sensei_e2e",  "DB derived from instance");
+        assert_eq!(cfg.dir_suffix, ".sensei-e2e", "dir derived from instance");
+        assert!(
+            cfg.db_url.ends_with("/sensei_e2e"),
+            "db_url embeds the derived db_name: {}",
+            cfg.db_url,
+        );
+        // Port is NOT instance-scoped — only one instance runs at a time.
+        assert_eq!(cfg.daemon_port, 7744);
+
+        // 3. Empty value — falls back to default.
+        unsafe { std::env::set_var("SENSEI_INSTANCE", ""); }
+        let cfg = SenseiConfig::from_env();
+        assert_eq!(cfg.db_name,    "sensei", "empty instance falls back to default");
+        assert_eq!(cfg.dir_suffix, ".sensei");
+
+        unsafe { std::env::remove_var("SENSEI_INSTANCE"); }
     }
 
     #[test]

@@ -1,8 +1,9 @@
 /**
  * Shared test helpers for Playwright e2e tests.
  *
- * The daemon is built with --features dev (compile-time: port 7745,
- * sensei_dev DB, ~/.sensei-dev/) so tests never touch production data.
+ * Tests use SENSEI_INSTANCE=e2e at runtime so the daemon talks to the
+ * throw-away `sensei_e2e` DB in `~/.sensei-e2e/` — the user's real
+ * `sensei` install is never touched.
  */
 
 import { execSync, spawn, type ChildProcess } from 'child_process';
@@ -13,7 +14,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = parseInt(process.env.SENSEI_PORT ?? '7745', 10);
+const PORT = parseInt(process.env.SENSEI_PORT ?? '7744', 10);
 const BIN = process.env.SENSEID_BIN ?? '../../target/debug/senseid';
 const LOCAL_FOLDER = (process.env.LOCAL_FOLDER ?? '~/Developer').replace('~', process.env.HOME ?? '');
 
@@ -33,13 +34,13 @@ function resolveBin(): string {
   return resolved;
 }
 
-/** Start the daemon in dev mode. Kills any existing instance first. */
+/** Start the daemon with SENSEI_INSTANCE=e2e. Kills any existing instance first. */
 export async function startDaemon(): Promise<void> {
   await stopDaemon();
 
   const bin = resolveBin();
-  // Binary is built with --features dev (compile-time mode). No env vars needed.
   daemonProcess = spawn(bin, ['start', '--port', String(PORT)], {
+    env: { ...process.env, SENSEI_INSTANCE: 'e2e' },
     stdio: 'ignore',
     detached: true,
   });

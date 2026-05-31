@@ -1,16 +1,16 @@
 /**
  * Daemon API Verification — verifies that bootstrap and each wizard stage
- * produce real, persisted state in the running daemon (port 7745 / sensei-dev DB).
+ * produce real, persisted state in the running daemon (port 7744 / sensei-e2e DB).
  *
  * These tests call the daemon's HTTP API directly — they do NOT rely on UI
  * screenshots or DOM assertions. Each assertion proves something real happened
  * in the database, not just that a screen rendered.
  *
  * Prerequisites (satisfied by globalSetup):
- *   • sensei-dev DB dropped and recreated via `dbd apply` — guaranteed clean slate
- *   • App built with --features dev (compile-time: port 7745, sensei_dev DB)
- *   • Bootstrap ran: schema confirmed, daemon started on port 7745
- *   • Port 7745 is accepting connections
+ *   • sensei-e2e DB dropped and recreated via `dbd apply` — guaranteed clean slate
+ *   • App built with  (compile-time: port 7744, sensei_e2e DB)
+ *   • Bootstrap ran: schema confirmed, daemon started on port 7744
+ *   • Port 7744 is accepting connections
  *
  * Test design:
  *   • No shared reset between tests — globalSetup gives one clean DB per run
@@ -43,7 +43,7 @@ interface Project {
 // ── Bootstrap verification ─────────────────────────────────────────────────────
 
 test.describe('Bootstrap verification — daemon health and DB state', () => {
-  test('daemon is reachable on port 7745', async () => {
+  test('daemon is reachable on port 7744', async () => {
     const resp = await fetch(`${DAEMON_URL}/health`);
     expect(resp.status, 'daemon health endpoint should return 200').toBe(200);
   });
