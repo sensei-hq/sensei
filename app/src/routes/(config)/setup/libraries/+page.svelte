@@ -36,7 +36,7 @@
   {:else if error}
     <div data-testid="libraries-error" class="mb-6 p-4 rounded-md border border-danger-z5 bg-surface-z2">
       <div class="text-sm font-semibold text-danger-z5">Could not load libraries</div>
-      <div class="text-xs text-surface-z7 mt-1 font-mono">{error}</div>
+      <div class="text-xs text-surface-z7 mt-1 font-mono select-text">{error}</div>
     </div>
   {:else if libs.length === 0}
     <div data-testid="libraries-empty" class="text-center p-12 bg-surface-z2 rounded-lg border border-surface-z3">
