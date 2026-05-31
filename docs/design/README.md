@@ -185,7 +185,7 @@ Task / query      Token budget          Resolution selection     MCP            
 
 ### Rules
 
-- **Compile-time mode separation** — Debug and release builds are isolated via Cargo feature flags, not runtime environment detection. Debug uses port :7745 and database `sensei_dev`; release uses :7744 and `sensei`. Directories: `~/.sensei-dev/` vs `~/.sensei/`.
+- **Single build mode** — There is one binary, one port (:7744), one database (`sensei`), one directory (`~/.sensei/`). A previous dev/prod split was removed because the duplicated state surface created too many state-leak bugs. Local DDL iteration uses the `SENSEI_DDL_DIR` runtime override; no other mode toggles exist.
 - **No direct daemon calls from AI** — AI assistants interact exclusively through MCP. The MCP server translates tool calls to daemon HTTP requests. This keeps the daemon API internal and the MCP contract stable.
 - **No executable code in marketplace** — Marketplace contains markdown (skills, commands), JSON (catalog, plugin configs), and bash (hooks). No compiled binaries, no package dependencies, no build steps.
 - **Desktop observes, never blocks** — The desktop app reads from the daemon and database. It never writes to the code graph or modifies session state. It is a consumer, not a producer.
@@ -207,7 +207,7 @@ Task / query      Token budget          Resolution selection     MCP            
 - **Context within token budget** — Every context delivery response fits within the configured token budget. The system degrades resolution (L3 down to L0) rather than exceeding the limit.
 - **Graceful degradation** — If Ollama is unavailable, indexing proceeds without model-assisted descriptions (L0 only). If PostgreSQL is down, the daemon reports the error and exits cleanly. No component crashes silently.
 - **All state survives restart** — Session state, task queue, events, and graph data persist in PostgreSQL. A daemon restart resumes from where it left off. No in-memory-only state.
-- **Debug/release isolation** — Ports: :7744 (release) / :7745 (dev). Databases: `sensei` / `sensei_dev`. Directories: `~/.sensei/` / `~/.sensei-dev/`. A developer can run both modes simultaneously without conflict.
+- **Single mode** — Port :7744, database `sensei`, directory `~/.sensei/`. Developers iterate in-place against the same install users get; if a clean slate is needed, drop the DB and re-run the wizard. The previous two-mode setup is documented in the `archive/` design docs for historical context.
 - **No secrets in marketplace** — The marketplace is a public GitHub repo. API keys, tokens, and credentials never appear in skills, commands, hooks, or plugin configs.
 
 ---
