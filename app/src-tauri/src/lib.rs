@@ -61,9 +61,9 @@ pub fn run() {
             // ── Startup banner ────────────────────────────────────────────
             let cfg = sensei_bootstrap::SenseiConfig::from_env();
             flog::log(&format!(
-                "=== Sensei.app starting v={} mode={:?} db={} port={} ===",
+                "=== Sensei.app starting v={} db={} port={} ===",
                 app.package_info().version,
-                cfg.mode, cfg.db_name, cfg.daemon_port,
+                cfg.db_name, cfg.daemon_port,
             ));
 
             // ── Vibrancy ──────────────────────────────────────────────────
