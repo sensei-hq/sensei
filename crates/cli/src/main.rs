@@ -176,10 +176,10 @@ fn ensure_daemon() {
 }
 
 fn start_daemon() {
-    // Prefer `brew services start sensei` (or sensei-dev) — matches the
-    // postgres/ollama startup path AND inherits launchd's keep-alive
-    // auto-restart on crash. Direct spawn is the fallback when brew isn't
-    // available or the service isn't registered yet.
+    // Prefer `brew services start sensei` — matches the postgres/ollama
+    // startup path AND inherits launchd's keep-alive auto-restart on crash.
+    // Direct spawn is the fallback when brew isn't available or the service
+    // isn't registered yet.
     let cfg = cfg();
     let service = cfg.brew_service_name();
     let mut started_via_brew = false;

@@ -1060,7 +1060,7 @@ createdb sensei_dev";
                         id: "daemon_start",
                         targets: &[ComponentId::Daemon],
                         outcome: ResolveOutcome::Resolved,
-                        fallback: r("daemon fallback", "senseid-dev start"),
+                        fallback: r("daemon fallback", "senseid start"),
                         calls: Arc::new(Mutex::new(Vec::new())),
                     }),
                 ]
@@ -1085,7 +1085,7 @@ createdb sensei_dev";
         let remedy = terminal.remedy.as_ref().expect("must have a remedy");
         assert!(!remedy.script.contains("createdb"),
             "database remedy must be dropped — database recovered. Got: {}", remedy.script);
-        assert!(remedy.script.contains("senseid-dev start"),
+        assert!(remedy.script.contains("senseid start"),
             "daemon remedy must be present. Got: {}", remedy.script);
         assert!(!remedy.message.contains("database:"),
             "consolidated message must NOT mention database. Got: {}", remedy.message);
@@ -1135,7 +1135,7 @@ createdb sensei_dev";
                 })]
             }
             fn default_remedy(&self) -> Remedy {
-                r("install sensei (default)", "brew install --HEAD sensei-hq/tap/sensei-dev")
+                r("install sensei (default)", "brew install sensei-hq/tap/sensei")
             }
         }
 

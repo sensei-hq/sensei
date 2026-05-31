@@ -53,17 +53,17 @@ pub fn which_binary(name: &str) -> Option<String> {
     #[cfg(windows)]
     let cmd = "where";
 
-    if let Ok(output) = Command::new(cmd).arg(name).output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if !path.is_empty() {
-                return Some(path);
-            }
+    if let Ok(output) = Command::new(cmd).arg(name).output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !path.is_empty() {
+            return Some(path);
         }
     }
 

@@ -84,7 +84,7 @@ pub fn run<F: Fn(UpgradeEvent)>(emit: F) -> bool {
 }
 
 fn brew_upgrade_sensei() -> Result<(), String> {
-    let (formula, _install_args) = SenseiConfig::from_env().sensei_tap_install_args();
+    let formula = SenseiConfig::from_env().sensei_tap_formula();
     let output = Command::new("brew")
         .args(["upgrade", formula])
         .output()

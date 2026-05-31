@@ -27,10 +27,10 @@ pub enum BrewError {
 }
 
 pub(crate) fn parse_brew_error(stderr: &str) -> BrewError {
-    if stderr.contains("already exists. You may want to remove it") {
-        if let Some(path) = extract_target_path(stderr) {
-            return BrewError::LinkConflict { path };
-        }
+    if stderr.contains("already exists. You may want to remove it")
+        && let Some(path) = extract_target_path(stderr)
+    {
+        return BrewError::LinkConflict { path };
     }
     if stderr.contains("No available formula with the name") {
         return BrewError::TapMissing;
@@ -119,14 +119,13 @@ pub(crate) fn tap_missing_remedy(formula: &str) -> Remedy {
 }
 
 pub(crate) fn generic_brew_remedy(formula: &str, stderr_tail: &str) -> Remedy {
-    // Sensei's own tap formulas (`sensei-hq/tap/sensei` + `…/sensei-dev`)
-    // each carry a `head` block, so when the published-tarball install fails
-    // — most often because a `make bump` just landed and GitHub Actions
-    // hasn't built the v0.X.Y assets yet (404 on the download URL) — the
-    // user's manual retry should chain into `--HEAD` to build from source.
-    // The Makefile target already does this; the remedy script must match
-    // so the loop "run the suggested script → it fails the same way →
-    // remedy reappears" doesn't trap the user.
+    // Sensei's tap formula (`sensei-hq/tap/sensei`) carries a `head` block,
+    // so when the published-tarball install fails — most often because a
+    // `make bump` just landed and GitHub Actions hasn't built the v0.X.Y
+    // assets yet (404 on the download URL) — the user's manual retry should
+    // chain into `--HEAD` to build from source. The Makefile target already
+    // does this; the remedy script must match so the loop "run the suggested
+    // script → it fails the same way → remedy reappears" doesn't trap the user.
     //
     // We only chain for sensei tap formulas because third-party formulas
     // (postgresql@17, ollama, etc.) don't declare a `head` block — running
@@ -357,7 +356,5 @@ Please create a new installation in /opt/homebrew using one of the
         let r = generic_brew_remedy("sensei-hq/tap/sensei", "Failed to download resource \"sensei (0.2.15)\"");
         assert_eq!(r.script, "brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei");
 
-        let r_dev = generic_brew_remedy("sensei-hq/tap/sensei-dev", "boom");
-        assert!(r_dev.script.contains("--HEAD"));
     }
 }

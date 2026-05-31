@@ -5,7 +5,6 @@ edition = "2024"
 description = "Sensei indexer daemon — graph-based code intelligence"
 
 [features]
-dev = ["sensei-bootstrap/dev"]
 # Opt-in in-process inference adapters from gateway-embedded. Each one
 # enables heavyweight native deps (ORT runtime for fastembed, C++ for
 # llama.cpp). Off by default — the daemon ships only HTTP adapters
