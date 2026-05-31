@@ -211,8 +211,9 @@ test.describe('Setup Wizard — Flow A: empty corpus (placeholder states)', () =
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/assistants');
     await clickAndExpectNav(tauriPage, '.btn-primary', '/setup/roots');
 
-    // Clear any roots accumulated from previous test runs — daemon DB persists
-    // between sessions and the app-level reset uses a different port (7745 vs 7744).
+    // Clear any roots accumulated from previous test runs — the sensei_e2e
+    // DB persists between sessions (Makefile drops it in reset-e2e-db at the
+    // start of each `make test-app-e2e` run, not between tests).
     const removes = tauriPage.locator('.btn-remove');
     for (let i = await removes.count(); i > 0; i--) {
       await removes.first().click();
