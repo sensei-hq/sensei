@@ -1,17 +1,13 @@
 /**
- * Centralised localStorage / sessionStorage keys, namespaced by build mode.
+ * Centralised localStorage / sessionStorage keys, namespaced by app id.
  *
- * Dev builds use the `sensei-dev:*` prefix so they don't collide with a
- * production install on the same machine — mirrors how the daemon dirs
- * (~/.sensei-dev vs ~/.sensei) and brew formula labels (sensei-dev vs
- * sensei) are partitioned. Without this, running dev next to prod would
- * have setup-complete, port discovery, app-version, and the health gate
- * stomping each other's state.
+ * The `sensei:` prefix exists so sensei's keys don't collide with other apps
+ * sharing a WebView storage origin. The previous dev/prod split (which used
+ * `sensei-dev:` for dev builds) is gone — there is one namespace now.
  *
  * The namespace is injected at build time by vite.config.ts via the
- * `__SENSEI_NAMESPACE__` define. The fallback is the prod label so a
- * non-vite consumer (e.g. a test runner that hasn't stubbed the define)
- * still gets stable keys.
+ * `__SENSEI_NAMESPACE__` define. The fallback exists so a non-vite consumer
+ * (e.g. a test runner that hasn't stubbed the define) still gets stable keys.
  */
 
 declare const __SENSEI_NAMESPACE__: string;
