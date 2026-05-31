@@ -9,8 +9,9 @@ import { healthState } from './health-state.svelte.js';
 import { wizardState } from './wizard-state.svelte.js';
 import { STORAGE_KEYS } from './storage-keys.js';
 
-// Build-time port injected by vite.config.ts — 7745 for dev/debug, 7744 for prod.
-// No async resolution needed; page loaders can read appState.port immediately.
+// Build-time port injected by vite.config.ts (single value: 7744). Kept as a
+// define so we don't hardcode 7744 at every fetch site; if the daemon ever
+// moves, vite.config.ts is the only place to change.
 declare const __SENSEI_DEFAULT_PORT__: number;
 const DEFAULT_PORT = typeof __SENSEI_DEFAULT_PORT__ !== 'undefined' ? __SENSEI_DEFAULT_PORT__ : 7744;
 

@@ -55,17 +55,12 @@ function webkitNodeReexportFix(): Plugin {
   };
 }
 
-// Daemon port: 7745 in dev/debug builds, 7744 in production.
-// Injected at build time so the frontend default is always correct.
-const isDev = !!process.env.TAURI_ENV_DEBUG || process.env.NODE_ENV !== 'production';
-const daemonPort = isDev ? 7745 : 7744;
-// `senseiNamespace` keeps localStorage / sessionStorage keys isolated
-// between dev (sensei-dev) and prod (sensei) installs, mirroring the
-// daemon dir layout (~/.sensei-dev vs ~/.sensei) and the brew formula
-// labels (sensei-dev vs sensei). Without this, running dev and prod
-// side-by-side would have them stomping each other's setup-complete
-// flag, port cache, app-version cache, etc.
-const senseiNamespace = isDev ? 'sensei-dev' : 'sensei';
+// Daemon port — single value now that dev/prod split is gone. Kept as a
+// define so the frontend can read one constant instead of hardcoding 7744
+// at every fetch site; if we ever need to relocate the daemon this is the
+// only knob to flip.
+const daemonPort = 7744;
+const senseiNamespace = 'sensei';
 
 // Health-bypass is decided at RUNTIME via `window.__TAURI__` (set by
 // Tauri's pre-injected bootstrap script before any user JS runs). No
@@ -106,7 +101,10 @@ export default defineConfig({
     hmr: host ? { protocol: 'ws', host, port: 5183 } : undefined,
   },
 
-  // Tauri expects a inlined build with no CDN
+  // Tauri expects an inlined build with no CDN. TAURI_ENV_DEBUG is still the
+  // right toggle for build-output knobs (minify/sourcemap) — Tauri sets it
+  // for `tauri build --debug` and unsets it for plain `tauri build`. It's
+  // not a dev/prod *mode* signal any more, just a sourcemap-on knob.
   build: {
     target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari15',
     minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
