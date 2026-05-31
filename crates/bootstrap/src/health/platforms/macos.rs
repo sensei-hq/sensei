@@ -151,15 +151,6 @@ mod tests {
         assert_eq!(by_id("sensei_install"), &[ComponentId::Sensei]);
     }
 
-    #[cfg(feature = "dev")]
-    #[test]
-    fn default_remedy_uses_dev_formula_and_head_in_dev_mode() {
-        let r = MacOSProvider.default_remedy();
-        assert!(r.script.contains("--HEAD"));
-        assert!(r.script.contains("sensei-hq/tap/sensei-dev"));
-    }
-
-    #[cfg(not(feature = "dev"))]
     #[test]
     fn default_remedy_uses_prod_formula_no_head() {
         let r = MacOSProvider.default_remedy();

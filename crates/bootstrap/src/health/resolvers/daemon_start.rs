@@ -1,9 +1,7 @@
 //! DaemonStartResolver — bring up the senseid daemon. The brew-services
 //! path is preferred (mirrors Postgres/Ollama and gets launchd's keep-alive
 //! restart on crash); direct binary spawn is the fallback when brew isn't
-//! available. Binary + service names are mode-aware via SenseiConfig —
-//! `senseid` / service `sensei` in prod, `senseid-dev` / service
-//! `sensei-dev` in dev.
+//! available.
 
 use std::process::Command;
 use crate::config::SenseiConfig;
@@ -20,9 +18,9 @@ impl Resolver for DaemonStartResolver {
     fn resolve(&self, _targets: &[ComponentId]) -> ResolveOutcome {
         let cfg = SenseiConfig::from_env();
 
-        // Stage 1: brew services start sensei (or sensei-dev). Matches the
-        // postgres/ollama resolver path. Gains launchd auto-restart so the
-        // daemon comes back after a crash without the user noticing.
+        // Stage 1: brew services start sensei. Matches the postgres/ollama
+        // resolver path. Gains launchd auto-restart so the daemon comes back
+        // after a crash without the user noticing.
         let service = cfg.brew_service_name();
         tracing::info!(service, "stage 1: brew services start");
         match brew_services_start(service) {

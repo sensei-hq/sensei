@@ -1,14 +1,8 @@
 [package]
 name = "sensei-bootstrap"
 version = "0.2.15"
-edition = "2021"
+edition = "2024"
 description = "Prerequisite detection, installation, and hardware profiling for sensei"
-
-[features]
-# Compile-time mode flag.
-# `dev`: port 7745, sensei_dev database, ~/.sensei-dev/
-# Default (no feature): port 7744, sensei database, ~/.sensei/
-dev = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

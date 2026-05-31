@@ -24,7 +24,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Port to listen on (default: 7744 prod, 7745 dev)
+    /// Port to listen on (default: 7744)
     #[arg(long)]
     port: Option<u16>,
 }
@@ -59,7 +59,6 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Mode is compile-time via Cargo features (--features dev).
     let startup_cfg = sensei_bootstrap::SenseiConfig::from_env();
     let default_port = startup_cfg.daemon_port;
 
@@ -122,7 +121,6 @@ fn start_daemon(port: u16) {
         .expect("senseid: cannot open log file");
     let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
 
-    // Spawn self — mode is baked in at compile time via --features dev.
     let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
     let mut child = Command::new(exe)
         .args(["--port", &port.to_string()])

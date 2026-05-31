@@ -77,88 +77,6 @@ fn clean_user_mcp_json(path: &Path) -> Result<Vec<String>, String> {
     Ok(removed)
 }
 
-/// Locate the on-disk manifest for an installed Claude Code plugin. Reads
-/// `installed_plugins.json`, finds the first entry whose key starts with
-/// `{plugin_name}@`, and returns `<installPath>/.claude-plugin/plugin.json`
-/// if it exists. Returns `None` if the plugin isn't installed, the manifest
-/// can't be parsed, or the file isn't where the manifest claims it is.
-///
-/// `_claude_bin` is reserved for a future implementation that queries the
-/// claude CLI directly; we read the manifest because it's stable and doesn't
-/// require parsing CLI output.
-fn find_cached_plugin_manifest(_claude_bin: &Path, plugin_name: &str) -> Option<PathBuf> {
-    let manifest = installed_plugins_manifest();
-    let content = std::fs::read_to_string(&manifest).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let plugins = value.get("plugins")?.as_object()?;
-    let prefix = format!("{}@", plugin_name);
-    let entries = plugins.iter().find(|(k, _)| k.starts_with(&prefix))?.1;
-    // `plugins[key]` is an array of install records; pick the first.
-    let install_path = entries.as_array()?
-        .first()?
-        .get("installPath")?
-        .as_str()?;
-    let plugin_json = Path::new(install_path).join(".claude-plugin/plugin.json");
-    plugin_json.exists().then_some(plugin_json)
-}
-
-/// In dev mode, rewrite the cached plugin manifest at `path` so the MCP entry
-/// uses the dev key (`sensei-dev`) and dev binary (`sensei-mcp-dev`) instead
-/// of the prod defaults. Returns Ok(true) if a change was written, Ok(false)
-/// if the manifest was already dev-shaped (idempotent), and Err on read/write
-/// failures.
-///
-/// The marketplace ships a single plugin manifest for both modes — this is
-/// the daemon-side override that makes the dev MCP actually connect to the
-/// dev binary. Re-running `configure()` is safe; `claude plugin update` will
-/// revert this and the daemon-startup re-apply (task #18) heals it.
-fn patch_dev_plugin_manifest(path: &Path) -> Result<bool, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let mut value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("parse {}: {}", path.display(), e))?;
-
-    let Some(servers) = value.get_mut("mcpServers").and_then(|s| s.as_object_mut()) else {
-        return Ok(false); // manifest has no MCP block; nothing to patch
-    };
-
-    // Already dev-shaped? Idempotent no-op.
-    if servers.contains_key("sensei-dev") && !servers.contains_key("sensei") {
-        return Ok(false);
-    }
-
-    // Pull the prod entry, rewrite its command, and re-insert under the dev key.
-    let Some(mut entry) = servers.remove("sensei") else {
-        return Ok(false); // no prod entry to migrate
-    };
-    if let Some(obj) = entry.as_object_mut() {
-        obj.insert("command".into(), serde_json::Value::String("sensei-mcp-dev".into()));
-    }
-    servers.insert("sensei-dev".into(), entry);
-
-    let serialized = serde_json::to_string_pretty(&value)
-        .map_err(|e| format!("serialise {}: {}", path.display(), e))?;
-    std::fs::write(path, serialized)
-        .map_err(|e| format!("write {}: {}", path.display(), e))?;
-    info!(path = %path.display(), "patched dev plugin manifest (sensei → sensei-dev)");
-    Ok(true)
-}
-
-/// All Claude Code hook event types sensei listens to.
-const HOOK_EVENTS: &[&str] = &[
-    "SessionStart",
-    "InstructionsLoaded",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "Stop",
-    "SubagentStart",
-    "SubagentStop",
-    "Notification",
-    "PreCompact",
-    "PostCompact",
-];
-
 pub(crate) struct ClaudeCodeAssistant;
 
 impl Assistant for ClaudeCodeAssistant {
@@ -250,32 +168,6 @@ impl Assistant for ClaudeCodeAssistant {
             ));
         }
 
-        // 3. Dev mode only: rewrite the cached plugin manifest's MCP entry to
-        //    use the dev binary (sensei-mcp-dev) and dev key (sensei-dev). The
-        //    marketplace ships a single prod-flavoured manifest; this is the
-        //    daemon-side override so dev MCP actually connects. Best-effort —
-        //    surfaced as a warning if it fails because the plugin install
-        //    itself is already healthy.
-        if crate::paths::mode().is_dev()
-            && let Some(plugin_manifest) = find_cached_plugin_manifest(&claude_bin, "sensei")
-        {
-            match patch_dev_plugin_manifest(&plugin_manifest) {
-                Ok(true)  => info!("configure: dev plugin manifest patched"),
-                Ok(false) => {}
-                Err(e)    => warnings.push(format!("dev plugin manifest patch: {}", e)),
-            }
-        }
-
-        // 4. Dev daemon additionally registers sensei-hook-dev.ts so the dev
-        //    daemon also receives hook events (alongside the release hooks from
-        //    step 2). Dev-hook failure is non-fatal — plugin install already
-        //    succeeded — but surface it as a warning so the operator knows.
-        if crate::paths::mode().is_dev()
-            && let Err(e) = write_dev_hook_entries()
-        {
-            warnings.push(format!("dev hooks: {}", e));
-        }
-
         Ok(AssistantConfigureOk { plugin: true, warnings })
     }
 
@@ -314,15 +206,6 @@ impl Assistant for ClaudeCodeAssistant {
         {
             Ok(out) => log_subprocess("claude plugin marketplace remove sensei-marketplace", &out),
             Err(e) => warn!(error = %e, "remove: failed to spawn claude plugin marketplace remove"),
-        }
-
-        // Dev daemon additionally removes its own hook entries (sensei-hook-dev.ts).
-        // This never touches the release plugin entries — only removes the dev entries.
-        if crate::paths::mode().is_dev() {
-            match remove_dev_hook_entries() {
-                Ok(_)  => {}
-                Err(e) => warn!(error = %e, "remove: failed to clean dev hook entries from settings.json"),
-            }
         }
 
         plugin_removed
@@ -377,97 +260,6 @@ fn log_subprocess(label: &str, out: &std::process::Output) {
     }
 }
 
-// ── Dev hook helpers ─────────────────────────────────────────────────────────
-
-/// Write `sensei-hook-dev.ts` entries into `~/.claude/settings.json`.
-/// Appends to existing arrays — does not overwrite entries from other tools.
-fn write_dev_hook_entries() -> Result<(), String> {
-    let settings = home().join(".claude/settings.json");
-    let hook_script = home().join(".claude/hooks/sensei-hook-dev.ts")
-        .display().to_string();
-
-    let mut config: serde_json::Value = if settings.exists() {
-        let s = std::fs::read_to_string(&settings).map_err(|e| e.to_string())?;
-        json5::from_str::<serde_json::Value>(&s).unwrap_or(serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
-
-    let new_entry = serde_json::json!({
-        "hooks": [{ "type": "command", "command": hook_script }]
-    });
-
-    let hooks = config
-        .as_object_mut()
-        .ok_or("invalid settings.json")?
-        .entry("hooks")
-        .or_insert(serde_json::json!({}));
-
-    let hooks_obj = hooks.as_object_mut().ok_or("invalid hooks section")?;
-
-    for event in HOOK_EVENTS {
-        let arr = hooks_obj
-            .entry(*event)
-            .or_insert(serde_json::json!([]));
-        let arr = arr.as_array_mut().ok_or("invalid hook array")?;
-
-        // Idempotent: skip if already registered
-        let already = arr.iter().any(|e| {
-            e["hooks"][0]["command"].as_str() == Some(hook_script.as_str())
-        });
-        if !already {
-            arr.push(new_entry.clone());
-        }
-    }
-
-    if let Some(parent) = settings.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&settings, serde_json::to_string_pretty(&config).unwrap())
-        .map_err(|e| e.to_string())
-}
-
-/// Remove `sensei-hook-dev.ts` entries from `~/.claude/settings.json`.
-/// Only removes entries whose command matches the dev hook script path.
-/// Never removes entries belonging to the release plugin or other tools.
-///
-/// Returns Ok(()) on success — including the no-op cases of "settings file
-/// doesn't exist" or "no hooks section". Returns Err with the underlying
-/// reason if reading/parsing/writing fails so the caller can log it instead
-/// of seeing a stale bool.
-fn remove_dev_hook_entries() -> Result<(), String> {
-    let settings = home().join(".claude/settings.json");
-    if !settings.exists() { return Ok(()); }
-
-    let hook_script = home().join(".claude/hooks/sensei-hook-dev.ts")
-        .display().to_string();
-
-    let s = std::fs::read_to_string(&settings)
-        .map_err(|e| format!("read settings.json: {}", e))?;
-    let mut config: serde_json::Value = json5::from_str(&s)
-        .map_err(|e| format!("parse settings.json: {}", e))?;
-
-    let Some(hooks_obj) = config.get_mut("hooks").and_then(|h| h.as_object_mut()) else {
-        return Ok(()); // no hooks section — nothing to remove
-    };
-
-    let mut modified = false;
-    for event in HOOK_EVENTS {
-        if let Some(arr) = hooks_obj.get_mut(*event).and_then(|a| a.as_array_mut()) {
-            let before = arr.len();
-            arr.retain(|e| e["hooks"][0]["command"].as_str() != Some(hook_script.as_str()));
-            if arr.len() < before { modified = true; }
-        }
-    }
-
-    if !modified { return Ok(()); }
-
-    let serialized = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("serialise settings.json: {}", e))?;
-    std::fs::write(&settings, serialized)
-        .map_err(|e| format!("write settings.json: {}", e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,13 +267,6 @@ mod tests {
 
     fn make_tmp_home() -> TempDir {
         tempfile::tempdir().unwrap()
-    }
-
-    #[test]
-    fn hook_events_list_is_nonempty() {
-        assert!(!HOOK_EVENTS.is_empty());
-        assert!(HOOK_EVENTS.contains(&"SessionStart"));
-        assert!(HOOK_EVENTS.contains(&"PostToolUse"));
     }
 
     // ── verify_plugin_installed: the post-condition gate ─────────────────────
@@ -643,146 +428,4 @@ mod tests {
         assert!(removed.is_empty());
     }
 
-    // ── patch_dev_plugin_manifest: rewrite cached plugin.json for dev mode ───
-    //
-    // The marketplace ships ONE plugin manifest with `mcpServers.sensei.command
-    // = "sensei-mcp"` (prod binary). In dev mode the binary doesn't exist —
-    // only `sensei-mcp-dev` does. After `claude plugin install sensei` lands,
-    // configure() runs this helper to rewrite the cached manifest's MCP entry
-    // to use the dev key + binary. Idempotent so re-running configure() is
-    // safe.
-
-    #[test]
-    fn patch_dev_plugin_manifest_renames_key_and_command() {
-        let tmp = make_tmp_home();
-        let manifest = tmp.path().join("plugin.json");
-        std::fs::write(&manifest, r#"{
-            "name": "sensei",
-            "mcpServers": { "sensei": { "command": "sensei-mcp" } }
-        }"#).unwrap();
-
-        let changed = patch_dev_plugin_manifest(&manifest).unwrap();
-        assert!(changed, "first call should report a change");
-
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
-        assert!(v["mcpServers"]["sensei"].is_null(), "prod key must be removed");
-        assert_eq!(v["mcpServers"]["sensei-dev"]["command"], "sensei-mcp-dev");
-    }
-
-    #[test]
-    fn patch_dev_plugin_manifest_is_idempotent() {
-        let tmp = make_tmp_home();
-        let manifest = tmp.path().join("plugin.json");
-        std::fs::write(&manifest, r#"{
-            "name": "sensei",
-            "mcpServers": { "sensei-dev": { "command": "sensei-mcp-dev" } }
-        }"#).unwrap();
-
-        let changed = patch_dev_plugin_manifest(&manifest).unwrap();
-        assert!(!changed, "no change needed when manifest is already dev-shaped");
-    }
-
-    #[test]
-    fn patch_dev_plugin_manifest_errs_on_missing_file() {
-        let tmp = make_tmp_home();
-        let manifest = tmp.path().join("nope.json");
-        assert!(patch_dev_plugin_manifest(&manifest).is_err());
-    }
-
-    #[test]
-    fn write_dev_hook_entries_creates_settings_file() {
-        let tmp = make_tmp_home();
-        let settings = tmp.path().join(".claude/settings.json");
-
-        // Temporarily override home() is not possible without mocking, so we
-        // test the helper logic directly by calling the write/read functions.
-        let hook_script = tmp.path().join(".claude/hooks/sensei-hook-dev.ts")
-            .display().to_string();
-        let mut config = serde_json::json!({});
-
-        let new_entry = serde_json::json!({
-            "hooks": [{ "type": "command", "command": hook_script }]
-        });
-        let hooks = config
-            .as_object_mut().unwrap()
-            .entry("hooks")
-            .or_insert(serde_json::json!({}));
-        let hooks_obj = hooks.as_object_mut().unwrap();
-        for event in HOOK_EVENTS {
-            let arr = hooks_obj.entry(*event).or_insert(serde_json::json!([]));
-            arr.as_array_mut().unwrap().push(new_entry.clone());
-        }
-
-        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
-        std::fs::write(&settings, serde_json::to_string_pretty(&config).unwrap()).unwrap();
-
-        // Verify the file was written correctly
-        let content = std::fs::read_to_string(&settings).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert!(parsed["hooks"]["SessionStart"].is_array());
-        assert_eq!(
-            parsed["hooks"]["SessionStart"][0]["hooks"][0]["command"].as_str().unwrap(),
-            hook_script
-        );
-    }
-
-    #[test]
-    fn idempotent_write_does_not_duplicate_entries() {
-        let tmp = make_tmp_home();
-        let hook_script = tmp.path().join(".claude/hooks/sensei-hook-dev.ts")
-            .display().to_string();
-        let new_entry = serde_json::json!({
-            "hooks": [{ "type": "command", "command": hook_script }]
-        });
-
-        let mut config = serde_json::json!({ "hooks": {} });
-        let hooks_obj = config["hooks"].as_object_mut().unwrap();
-
-        // Write twice
-        for _ in 0..2 {
-            for event in HOOK_EVENTS {
-                let arr = hooks_obj.entry(*event).or_insert(serde_json::json!([]));
-                let arr = arr.as_array_mut().unwrap();
-                let already = arr.iter().any(|e| {
-                    e["hooks"][0]["command"].as_str() == Some(hook_script.as_str())
-                });
-                if !already { arr.push(new_entry.clone()); }
-            }
-        }
-
-        // Each event type should have exactly one entry
-        for event in HOOK_EVENTS {
-            let count = config["hooks"][event].as_array().unwrap().len();
-            assert_eq!(count, 1, "event {} should have exactly 1 entry, got {}", event, count);
-        }
-    }
-
-    #[test]
-    fn remove_leaves_other_entries_intact() {
-        let hook_dev = "/home/user/.claude/hooks/sensei-hook-dev.ts";
-        let hook_other = "/some/other/hook.sh";
-
-        let mut config = serde_json::json!({
-            "hooks": {
-                "SessionStart": [
-                    { "hooks": [{ "type": "command", "command": hook_dev }] },
-                    { "hooks": [{ "type": "command", "command": hook_other }] }
-                ]
-            }
-        });
-
-        let hooks_obj = config["hooks"].as_object_mut().unwrap();
-        for event in HOOK_EVENTS {
-            if let Some(arr) = hooks_obj.get_mut(*event).and_then(|a| a.as_array_mut()) {
-                arr.retain(|e| e["hooks"][0]["command"].as_str() != Some(hook_dev));
-            }
-        }
-
-        let remaining = &config["hooks"]["SessionStart"];
-        assert_eq!(remaining.as_array().unwrap().len(), 1);
-        assert_eq!(
-            remaining[0]["hooks"][0]["command"].as_str().unwrap(),
-            hook_other
-        );
-    }
 }
