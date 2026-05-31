@@ -25,13 +25,12 @@
 ##   homebrew/    → sensei-hq/homebrew-tap   (make tap-push)
 ##   marketplace/ → sensei-hq/marketplace    (make marketplace-push)
 
-.PHONY: build-dev build-release install-dev install-release \
-        crates-dev crates-release daemon-dev \
-        app-dev app-dev-bundle app-release app-check \
+.PHONY: crates crates-debug install install-debug \
+        app-dev app-release app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
         test-app test-app-unit test-app-e2e test-app-e2e-cold app-e2e-build \
-        _e2e-cold-pre _e2e-cold-post \
+        _e2e-cold-pre _e2e-cold-post reset-e2e-db \
         setup-hooks update bump tap-push marketplace-push clean
 
 VERSION := $(shell cat VERSION)
@@ -40,75 +39,37 @@ VERSION := $(shell cat VERSION)
 # injects it before any user script runs (`withGlobalTauri: true`).
 # `vite dev`/`vite preview` outside Tauri never sees it, so they auto-
 # bypass. No env vars, no build-time flags.
-#
-# Mode (dev/prod) is compile-time via --features dev, not env vars.
 
 # ── Rust crates ───────────────────────────────────────────────────────────────
 
-crates-dev:
-	cargo build --features dev -p senseid -p sensei-cli -p sensei-mcp
-
-crates-release:
+crates:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp
 
-install-dev: crates-dev
-	@# Cold install: ensure the sensei-dev formula is present via direct
-	@# `brew install --HEAD`. Postgres + ollama are no longer cold-installed
-	@# here — the daemon's health resolvers handle them on first boot.
-	@if ! brew list --formula sensei-dev >/dev/null 2>&1; then \
-	  echo "Cold install: brew install --HEAD sensei-hq/tap/sensei-dev (one-time, slow)..."; \
-	  brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap >/dev/null 2>&1 || true; \
-	  brew install --HEAD sensei-hq/tap/sensei-dev; \
-	fi
-	@# Stop any running dev daemon before overlay.
-	@if pgrep -x senseid-dev > /dev/null; then \
-	  echo "Stopping senseid-dev (pid $$(pgrep -x senseid-dev))..."; \
-	  pkill -x senseid-dev; \
-	  sleep 1; \
-	fi
-	@# Fast iteration overlay: replace the brew-installed binaries with the
-	@# freshly-built ones from target/debug/ (uses local cargo cache — fast).
-	@# `bin.install` in the brew Formula sets the destination mode to 0555
-	@# (read+exec, no write), so cp-overwrite fails with EACCES. `rm -f`
-	@# unlinks the read-only file (needs write on parent dir, not on file).
-	@# Re-sign with hardened runtime so the Tauri sidecar can spawn them
-	@# (macOS Sequoia Code Signing Monitor level 2 requires this).
-	@DEST=$$(brew --prefix sensei-dev)/bin && \
-	rm -f "$$DEST/senseid-dev" "$$DEST/sensei-dev" "$$DEST/sensei-mcp-dev" && \
-	cp target/debug/senseid    "$$DEST/senseid-dev" && \
-	cp target/debug/sensei     "$$DEST/sensei-dev" && \
-	cp target/debug/sensei-mcp "$$DEST/sensei-mcp-dev" && \
-	codesign --sign - --options runtime --force "$$DEST/senseid-dev" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei-dev" && \
-	codesign --sign - --options runtime --force "$$DEST/sensei-mcp-dev" && \
-	echo "Overlaid fresh dev binaries into $$DEST (codesigned)"
-	@echo "Run dev daemon: make daemon-dev"
+crates-debug:
+	cargo build -p senseid -p sensei-cli -p sensei-mcp
 
-install-release: crates-release
+# Overlay freshly-built release binaries into the brew prefix.
+#
+# Single install path: prod binaries (port 7744, db `sensei`, dir `~/.sensei/`).
+# `bin.install` in the brew Formula sets the destination mode to 0555
+# (read+exec, no write), so cp-overwrite fails with EACCES; `rm -f` unlinks
+# the read-only file (needs write on parent dir, not on the file itself).
+# Re-sign with hardened runtime so the Tauri sidecar can spawn them (macOS
+# Sequoia Code Signing Monitor level 2 requires this).
+install: crates
 	@# Cold install: ensure the sensei formula is present. Try the release
 	@# tarball first; fall back to --HEAD (build from main) when no release
-	@# is tagged for `version` in the formula. The HEAD branch was added to
-	@# homebrew/Formula/sensei.rb so dev and prod install flows differ only
-	@# in branch + version + -dev suffix — same brew + codesign + overlay
-	@# pattern as install-dev.
+	@# is tagged yet (typically right after `make bump` before CI publishes).
 	@if ! brew list --formula sensei >/dev/null 2>&1; then \
 	  echo "Cold install: brew install sensei-hq/tap/sensei (one-time)..."; \
 	  brew tap sensei-hq/tap https://github.com/sensei-hq/homebrew-tap >/dev/null 2>&1 || true; \
 	  brew install sensei-hq/tap/sensei || brew install --HEAD sensei-hq/tap/sensei; \
 	fi
-	@# Stop any running prod daemon before overlay.
 	@if pgrep -x senseid > /dev/null; then \
 	  echo "Stopping senseid (pid $$(pgrep -x senseid))..."; \
 	  pkill -x senseid; \
 	  sleep 1; \
 	fi
-	@# Fast iteration overlay: replace the brew-installed binaries with the
-	@# freshly-built ones from target/release/. Mirrors install-dev exactly.
-	@# `bin.install` in the brew Formula sets the destination mode to 0555
-	@# (read+exec, no write), so cp-overwrite fails with EACCES. `rm -f`
-	@# unlinks the read-only file (needs write on parent dir, not on file).
-	@# Re-sign with hardened runtime so the Tauri sidecar can spawn them
-	@# (macOS Sequoia Code Signing Monitor level 2 requires this).
 	@DEST=$$(brew --prefix sensei)/bin && \
 	rm -f "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
 	cp target/release/senseid    "$$DEST/senseid" && \
@@ -118,29 +79,30 @@ install-release: crates-release
 	codesign --sign - --options runtime --force "$$DEST/sensei" && \
 	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
 	echo "Overlaid fresh release binaries into $$DEST (codesigned)"
-	@echo "Run prod daemon: sensei start"
 
-build-dev: crates-dev
-	@echo "Dev build complete — binaries in target/debug/"
-
-build-release: crates-release
-	@echo "Release build complete — binaries in target/release/"
-
-# Run the dev daemon directly from the build directory (port 7745, sensei_dev DB).
-# Does NOT install to ~/.local/bin — coexists alongside the release daemon on port 7744.
-# Mode is baked in at compile time via --features dev (no env var needed).
-daemon-dev: crates-dev
-	target/debug/senseid start
+# Fast iteration variant — uses `target/debug/` instead of `target/release/`.
+# Same install location as `make install`; the binary just isn't optimised.
+install-debug: crates-debug
+	@if pgrep -x senseid > /dev/null; then \
+	  echo "Stopping senseid (pid $$(pgrep -x senseid))..."; \
+	  pkill -x senseid; \
+	  sleep 1; \
+	fi
+	@DEST=$$(brew --prefix sensei)/bin && \
+	rm -f "$$DEST/senseid" "$$DEST/sensei" "$$DEST/sensei-mcp" && \
+	cp target/debug/senseid    "$$DEST/senseid" && \
+	cp target/debug/sensei     "$$DEST/sensei" && \
+	cp target/debug/sensei-mcp "$$DEST/sensei-mcp" && \
+	codesign --sign - --options runtime --force "$$DEST/senseid" && \
+	codesign --sign - --options runtime --force "$$DEST/sensei" && \
+	codesign --sign - --options runtime --force "$$DEST/sensei-mcp" && \
+	echo "Overlaid debug binaries into $$DEST (codesigned)"
 
 # ── Desktop app ───────────────────────────────────────────────────────────────
 
 # Tauri dev with Vite HMR — pre-builds Rust backend then starts tauri dev
 app-dev:
-	cd app && cargo build --features dev --manifest-path src-tauri/Cargo.toml && bunx tauri dev --features dev
-
-# Build debug .app bundle and launch it (full native bundle, slower than app-dev)
-app-dev-bundle: install-dev
-	cd app && bunx tauri build --debug --features dev && ./src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop
+	cd app && cargo build --manifest-path src-tauri/Cargo.toml && bunx tauri dev
 
 app-release:
 	cd app && bunx tauri build
@@ -166,8 +128,8 @@ app-release:
 # (exposes the playwright IPC socket at /tmp/tauri-playwright.sock).
 # Used by the Playwright globalSetup — kept here so the build recipe is
 # discoverable and not buried in TypeScript.
-app-e2e-build: install-dev
-	cd app && bunx tauri build --debug --features dev,e2e-testing
+app-e2e-build: install-debug
+	cd app && bunx tauri build --debug --features e2e-testing
 
 # Type-check SvelteKit sources
 app-check:
@@ -189,7 +151,6 @@ website-build:
 #
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
-#   or override: make test TEST_DATABASE_URL=postgresql://localhost:5432/sensei_dev
 
 test-fast: test-crates-fast test-app-unit
 
@@ -206,12 +167,17 @@ test-app: test-app-unit
 test-app-unit:
 	cd app && bun run test:unit
 
+# TODO: e2e currently drops `sensei-dev` (legacy from the dev/prod split that
+# was ripped out). A clean fix is to give the daemon a runtime SENSEI_DB_NAME
+# override so e2e can run against `sensei_e2e` without colliding with the
+# user's real `sensei` DB. Until that lands, the e2e flow drops the
+# (now-unused) `sensei-dev` DB; if it doesn't exist the dropdb is a no-op.
 reset-e2e-db:
-	@echo "[e2e] Dropping sensei-dev (bootstrap will recreate and apply schema)..."
+	@echo "[e2e] Dropping sensei-dev (legacy e2e DB; will become sensei_e2e once the DB override lands)..."
 	dropdb --if-exists sensei-dev
 	@echo "[e2e] Done — bootstrap owns the rest."
 
-# reset=true  → drop and recreate sensei-dev before running (default)
+# reset=true  → drop and recreate e2e DB before running (default)
 # reset=false → skip DB reset (use existing DB)
 reset ?= true
 test-app-e2e: app-e2e-build
@@ -221,12 +187,12 @@ test-app-e2e: app-e2e-build
 # ── Cold-start E2E ────────────────────────────────────────────────────────────
 # Verifies the health page drives itself through the full check → resolve →
 # land flow with no test-driven navigation. Setup stops postgres + ollama
-# and drops sensei_dev so the resolvers have real work to do. Teardown
+# and drops the e2e DB so the resolvers have real work to do. Teardown
 # always restarts services so the dev box returns to a working state,
 # even if the test fails.
 
 _e2e-cold-pre:
-	@echo "[e2e-cold] Setup: drop sensei_dev, stop services"
+	@echo "[e2e-cold] Setup: drop legacy sensei_dev (placeholder), stop services"
 	-brew services start postgresql@17
 	@sleep 2
 	-dropdb --if-exists sensei_dev
@@ -351,13 +317,12 @@ tap-push:
 	@tmpdir=$$(mktemp -d) && \
 	git clone git@github.com:sensei-hq/homebrew-tap.git "$$tmpdir" 2>&1 && \
 	cp homebrew/Formula/sensei.rb "$$tmpdir/Formula/" && \
-	cp homebrew/Formula/sensei-dev.rb "$$tmpdir/Formula/" && \
 	cp homebrew/Casks/senseihq.rb "$$tmpdir/Casks/" && \
-	rm -f "$$tmpdir/Brewfile" "$$tmpdir/Brewfile-dev" && \
+	rm -f "$$tmpdir/Formula/sensei-dev.rb" "$$tmpdir/Brewfile" "$$tmpdir/Brewfile-dev" && \
 	cd "$$tmpdir" && \
 	git add -A && \
 	git diff --cached --quiet && echo "homebrew-tap already up to date" || \
-	  (git commit -m "chore: sync from sensei monorepo (retire Brewfiles)" && git push origin main) && \
+	  (git commit -m "chore: sync from sensei monorepo (drop sensei-dev formula)" && git push origin main) && \
 	rm -rf "$$tmpdir"
 
 # Sync marketplace/ files to sensei-hq/marketplace.
