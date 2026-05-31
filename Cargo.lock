@@ -1876,6 +1876,7 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "futures",
  "pin-project-lite",

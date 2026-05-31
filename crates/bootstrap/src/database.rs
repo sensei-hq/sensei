@@ -96,17 +96,17 @@ pub fn ensure_extensions(db_name: &str) -> Result<(), String> {
 /// Deploy the sensei schema via dbd-core. Idempotent — dbd tracks state in
 /// `_dbd_meta` and only applies pending changes. Requires a reachable DB.
 ///
-/// `app_version` chooses the schema source: in prod builds the GitHub tag
-/// `v{app_version}` of `sensei-hq/sensei/database`; in dev builds the local
-/// workspace `database/` directory (baked in at compile time).
+/// `app_version` chooses the schema source: by default the GitHub tag
+/// `v{app_version}` of `sensei-hq/sensei/database`. Override at runtime by
+/// setting `SENSEI_DDL_DIR=/abs/path/to/database` to point at a local
+/// directory — useful when iterating on DDL before publishing a release.
 pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
     let cfg = SenseiConfig::from_env();
-    let env = if cfg.is_dev() { "dev" } else { "prod" };
     // postgres:// with no user — psql / dbd use the OS user by default.
     let db_url = format!("postgres://localhost/{db_name}");
     let source = cfg.db_schema_source(app_version);
 
-    tracing::info!(env, db = db_name, source = %source, url = %db_url, "starting dbd deploy");
+    tracing::info!(db = db_name, source = %source, url = %db_url, "starting dbd deploy");
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -120,7 +120,7 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
         tracing::debug!(project_dir = %project_dir.display(), "dbd source resolved");
 
         let config_path = project_dir.join("design.yaml");
-        let design = Design::from_config_with_dir(&config_path, env, Some(&project_dir))
+        let design = Design::from_config_with_dir(&config_path, "prod", Some(&project_dir))
             .map_err(|e| format!("dbd config load failed: {e}"))?;
         tracing::debug!(entities = design.entities().len(), "dbd design loaded");
 
@@ -215,26 +215,9 @@ mod tests {
         assert!(url.ends_with("sensei_test"));
     }
 
-    #[test]
-    fn deploy_source_resolves_per_mode() {
-        let cfg = SenseiConfig::from_env();
-        let version = "0.2.14";
-        let source = cfg.db_schema_source(version);
-        if cfg.is_dev() {
-            // Dev: workspace `database/` directory baked in at compile time.
-            assert!(
-                source.ends_with("/database"),
-                "dev schema source must end with /database, got: {source}",
-            );
-        } else {
-            // Prod: GitHub-tagged source.
-            let parsed = dbd_core::github::parse_github_source(&source).unwrap();
-            assert_eq!(parsed.owner, "sensei-hq");
-            assert_eq!(parsed.repo, "sensei");
-            assert_eq!(parsed.subpath, Some("database".to_string()));
-            assert_eq!(parsed.git_ref, format!("v{version}"));
-        }
-    }
+    // Schema-source resolution (default GitHub tag vs SENSEI_DDL_DIR override)
+    // is covered by the unit tests in config::tests — duplicating them here
+    // races on the shared env var across test threads.
 
     #[test]
     fn setup_without_postgres_returns_err() {

@@ -1,11 +1,22 @@
-//! Single source of truth for all mode-sensitive sensei configuration.
+//! Single source of truth for sensei configuration.
 //!
-//! Every component that needs mode-awareness (daemon port, DB name, directory
-//! suffix) should derive those values from [`SenseiConfig::from_env()`] rather
-//! than implementing its own env-var reading.
+//! Every component that needs configuration (daemon port, DB name, directory)
+//! should derive those values from [`SenseiConfig::from_env()`] rather than
+//! implementing its own env-var reading.
 //!
 //! All three dependents — Tauri sidecar, bootstrap crate, and senseid daemon —
 //! already depend on this crate, so importing from here creates no new edges.
+//!
+//! ## Mode
+//!
+//! Sensei has a single mode now: port 7744, `sensei` database, `~/.sensei/`.
+//! The previous `dev` Cargo feature (port 7745, `sensei_dev` DB, `~/.sensei-dev/`)
+//! has been removed — developers iterate against the production install. If a
+//! clean slate is needed, drop and re-create the DB.
+//!
+//! The one remaining knob: `SENSEI_DDL_DIR=/path/to/database` overrides the
+//! schema source at runtime, so DDL changes can be tested locally before
+//! pushing a release tag.
 
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
@@ -21,37 +32,22 @@ pub const GITHUB_REPO: &str = "sensei";
 /// Homebrew tap slug used in install/reinstall messages.
 pub const BREW_TAP: &str = "sensei-hq/tap/sensei";
 
-// ── Compile-time binary names (single source of truth) ────────────────────────
+// ── Binary names ──────────────────────────────────────────────────────────────
 //
-// These exist as `const &str` so they can be used at attribute / macro time —
-// e.g. clap's `#[command(name = SENSEI_BIN, ...)]`. Runtime callers should use
-// the equivalent `SenseiConfig::sensei_binary()` etc. accessors.
+// Exposed as `const &str` so they can be used at attribute/macro time
+// (e.g. clap's `#[command(name = SENSEI_BIN, ...)]`).
 
-/// Compile-time `sensei` CLI binary name for the current build mode.
-#[cfg(feature = "dev")]
-pub const SENSEI_BIN: &str = "sensei-dev";
-#[cfg(not(feature = "dev"))]
+/// `sensei` CLI binary name.
 pub const SENSEI_BIN: &str = "sensei";
 
-/// Compile-time `senseid` daemon binary name for the current build mode.
-#[cfg(feature = "dev")]
-pub const SENSEID_BIN: &str = "senseid-dev";
-#[cfg(not(feature = "dev"))]
+/// `senseid` daemon binary name.
 pub const SENSEID_BIN: &str = "senseid";
 
-/// Compile-time `sensei-mcp` server binary name for the current build mode.
-#[cfg(feature = "dev")]
-pub const SENSEI_MCP_BIN: &str = "sensei-mcp-dev";
-#[cfg(not(feature = "dev"))]
+/// `sensei-mcp` server binary name.
 pub const SENSEI_MCP_BIN: &str = "sensei-mcp";
 
-/// MCP server registry key for the current build mode. Used by sensei CLI and
-/// senseid daemon when registering / removing the MCP entry in ACP configs
-/// (Claude Code, Cursor, etc.) — dev runs register as a distinct key so dev
-/// and prod can coexist in the same ACP without colliding.
-#[cfg(feature = "dev")]
-pub const MCP_REGISTRY_KEY: &str = "sensei-dev";
-#[cfg(not(feature = "dev"))]
+/// MCP server registry key. Used by sensei CLI and senseid daemon when
+/// registering/removing the MCP entry in ACP configs (Claude Code, Cursor, …).
 pub const MCP_REGISTRY_KEY: &str = "sensei";
 
 /// Homebrew tap repository slug (for reference/logging).
@@ -73,15 +69,8 @@ pub const HOMEBREW_TAP_URL: &str = "https://github.com/sensei-hq/homebrew-tap";
 
 // ── Service ports ─────────────────────────────────────────────────────────────
 
-/// Compile-time mode flag. Set by the `dev` Cargo feature.
-/// `true` when built with `cargo build --features dev`.
-#[cfg(feature = "dev")]
-pub const COMPILE_DEV: bool = true;
-#[cfg(not(feature = "dev"))]
-pub const COMPILE_DEV: bool = false;
-
-/// Default daemon port — derived at compile time from the `dev` feature.
-const DAEMON_PORT: u16 = if COMPILE_DEV { 7745 } else { 7744 };
+/// Default daemon port.
+pub const DAEMON_PORT: u16 = 7744;
 
 /// Default Ollama port.
 pub const OLLAMA_PORT: u16 = 11434;
@@ -94,7 +83,7 @@ pub const POSTGRES_PORT: u16 = 5432;
 /// Maximum number of connections in the pool.
 ///
 /// Scan operations are I/O-bound and batched, so a small pool keeps pressure
-/// on the DB low while still supporting concurrent tasks.  Individual tasks
+/// on the DB low while still supporting concurrent tasks. Individual tasks
 /// acquire a connection for a single query and release it immediately.
 pub const DB_POOL_MAX_CONNECTIONS: u32 = 10;
 
@@ -107,38 +96,11 @@ pub const DB_POOL_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 /// How long (in seconds) an idle connection is kept alive before being closed.
 pub const DB_POOL_IDLE_TIMEOUT_SECS: u64 = 300;
 
-/// Runtime mode — controls ports, directory names, and database names.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SenseiMode {
-    /// Production mode: port 7744, `sensei` DB, `~/.sensei/`
-    Prod,
-    /// Development / E2E mode: port 7745, `sensei_dev` DB, `~/.sensei-dev/`
-    Dev,
-}
-
-impl SenseiMode {
-    /// Compile-time mode. Determined by the `dev` Cargo feature — not env vars.
-    pub fn from_env() -> Self {
-        if COMPILE_DEV { SenseiMode::Dev } else { SenseiMode::Prod }
-    }
-
-    pub fn is_dev(self) -> bool {
-        self == SenseiMode::Dev
-    }
-}
-
-/// Compile-time configuration for all sensei components.
-///
-/// All values are determined by the `dev` Cargo feature at build time.
-/// No runtime env var overrides.
-///
-/// | Feature       | Port  | Database     | Directory       |
-/// |---------------|-------|-------------|-----------------|
-/// | `--features dev` | 7745  | `sensei_dev` | `~/.sensei-dev/` |
-/// | *(default)*   | 7744  | `sensei`     | `~/.sensei/`    |
+/// Configuration for all sensei components. Singleton values — no per-instance
+/// variation, kept as a struct only because callers historically read fields
+/// off `SenseiConfig::from_env()`.
 #[derive(Debug, Clone)]
 pub struct SenseiConfig {
-    pub mode: SenseiMode,
     pub daemon_port: u16,
     pub db_name: String,
     pub db_url: String,
@@ -146,22 +108,15 @@ pub struct SenseiConfig {
 }
 
 impl SenseiConfig {
-    /// Build configuration. All values derived from the compile-time `dev`
-    /// Cargo feature. No runtime env var overrides — what you compiled is
-    /// what you get.
     pub fn from_env() -> Self {
-        let mode = SenseiMode::from_env();
-        let daemon_port = DAEMON_PORT;
-        let db_name = if COMPILE_DEV { "sensei_dev".to_string() } else { "sensei".to_string() };
+        let db_name = "sensei".to_string();
         let db_url = format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}");
-        let dir_suffix = if COMPILE_DEV { ".sensei-dev" } else { ".sensei" };
-        Self { mode, daemon_port, db_name, db_url, dir_suffix }
-    }
-
-    /// Alias for `from_env()`.
-    #[deprecated(note = "Use from_env() — mode is compile-time via Cargo features")]
-    pub fn detect() -> Self {
-        Self::from_env()
+        Self {
+            daemon_port: DAEMON_PORT,
+            db_name,
+            db_url,
+            dir_suffix: ".sensei",
+        }
     }
 
     /// Daemon base URL derived from the configured port.
@@ -169,17 +124,10 @@ impl SenseiConfig {
         format!("http://127.0.0.1:{}", self.daemon_port)
     }
 
-    /// Daemon binary name for the current mode (`senseid` or `senseid-dev`).
-    pub fn daemon_binary(&self) -> &'static str {
-        self.senseid_binary()
-    }
+    /// Daemon binary name.
+    pub fn daemon_binary(&self) -> &'static str { SENSEID_BIN }
 
-    /// Returns `true` when running in dev / E2E mode.
-    pub fn is_dev(&self) -> bool {
-        self.mode.is_dev()
-    }
-
-    /// Sensei data directory (`~/.sensei/` or `~/.sensei-dev/`).
+    /// Sensei data directory (`~/.sensei/`).
     pub fn sensei_dir(&self) -> PathBuf {
         home_dir().join(self.dir_suffix)
     }
@@ -194,81 +142,49 @@ impl SenseiConfig {
         self.sensei_dir().join("serve.pid")
     }
 
-    /// Returns the sensei CLI binary name for the current mode.
+    /// Returns the sensei CLI binary name.
     pub fn sensei_binary(&self) -> &'static str { SENSEI_BIN }
 
-    /// Returns the senseid daemon binary name for the current mode.
+    /// Returns the senseid daemon binary name.
     pub fn senseid_binary(&self) -> &'static str { SENSEID_BIN }
 
-    /// Returns the sensei homebrew tap formula slug for the current mode —
-    /// `sensei-hq/tap/sensei` in prod, `sensei-hq/tap/sensei-dev` in dev.
-    /// Single source of truth — callers that need to install or reference the
-    /// formula must use this method.
-    pub fn sensei_tap_formula(&self) -> &'static str {
-        if self.is_dev() {
-            "sensei-hq/tap/sensei-dev"
-        } else {
-            "sensei-hq/tap/sensei"
-        }
-    }
+    /// Returns the sensei homebrew tap formula slug.
+    pub fn sensei_tap_formula(&self) -> &'static str { BREW_TAP }
 
-    /// Returns the bare brew formula name (no tap prefix) for the current
-    /// mode — `sensei` in prod, `sensei-dev` in dev. Matches the formula
-    /// filename in `homebrew/Formula/` and the registered service name in
-    /// the formula's `service do` block. Use with `brew services start
-    /// <name>` / `brew services stop <name>` — the tap-qualified slug only
-    /// works for `brew install`.
-    pub fn brew_service_name(&self) -> &'static str {
-        if self.is_dev() { "sensei-dev" } else { "sensei" }
-    }
+    /// Returns the bare brew formula name (no tap prefix). Matches the formula
+    /// filename in `homebrew/Formula/` and the registered service name in the
+    /// formula's `service do` block. Use with `brew services start <name>` /
+    /// `brew services stop <name>` — the tap-qualified slug only works for
+    /// `brew install`.
+    pub fn brew_service_name(&self) -> &'static str { "sensei" }
 
-    /// Returns the formula slug and the brew install args for the current mode.
-    /// Dev mode needs `--HEAD` because the dev formula is HEAD-only; prod uses
-    /// the published bottle with no args. Suitable for direct use with
-    /// `brew_install(formula, args)`.
-    pub fn sensei_tap_install_args(&self) -> (&'static str, &'static [&'static str]) {
-        if self.is_dev() {
-            (self.sensei_tap_formula(), &["--HEAD"])
-        } else {
-            (self.sensei_tap_formula(), &[])
-        }
-    }
-
-    /// Returns the full `brew install [--HEAD] <formula>` script for the
-    /// current mode. Suitable for direct copy/paste in a shell or for display
-    /// in a [`Remedy`].
+    /// Returns the full `brew install <formula>` script. Suitable for direct
+    /// copy/paste in a shell or for display in a [`Remedy`].
     pub fn brew_install_script(&self) -> String {
-        if self.is_dev() {
-            format!("brew install --HEAD {}", self.sensei_tap_formula())
-        } else {
-            format!("brew install {}", self.sensei_tap_formula())
-        }
+        format!("brew install {}", self.sensei_tap_formula())
     }
 
-    /// Returns the sensei-mcp binary name for the current mode.
+    /// Returns the sensei-mcp binary name.
     pub fn sensei_mcp_binary(&self) -> &'static str { SENSEI_MCP_BIN }
 
-    /// Returns the MCP registry key for the current mode — `"sensei"` in prod,
-    /// `"sensei-dev"` in dev. Used so dev and prod can coexist in the same
-    /// ACP config without overwriting each other.
+    /// Returns the MCP registry key.
     pub fn mcp_registry_key(&self) -> &'static str { MCP_REGISTRY_KEY }
 
     /// Resolve the database schema source string for dbd-core's
     /// `resolve_source()`.
     ///
-    /// - Prod build → the GitHub-tagged release matching `version`.
-    /// - Dev build  → the local `database/` directory in this workspace,
-    ///   resolved at compile time from this crate's `CARGO_MANIFEST_DIR`.
-    ///
-    /// Pure compile-time decision driven by the `dev` Cargo feature.
-    /// No env vars; the dev path is baked into the binary at build time.
+    /// Default: the GitHub-tagged release matching `version`.
+    /// Override: set `SENSEI_DDL_DIR=/abs/path/to/database` to point at a
+    /// local directory — useful when iterating on DDL before publishing a
+    /// release tag. The env var is read at runtime so a single binary
+    /// supports both flows.
     pub fn db_schema_source(&self, version: &str) -> String {
-        if COMPILE_DEV {
-            // crates/bootstrap → ../../database in the workspace.
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../../database").to_string()
-        } else {
-            format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
+        if let Ok(local) = std::env::var("SENSEI_DDL_DIR")
+            && !local.is_empty()
+        {
+            return local;
         }
+        format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
     }
 }
 
@@ -285,10 +201,10 @@ pub fn home_dir() -> PathBuf {
 
 // ── Local config file ─────────────────────────────────────────────────────────
 
-/// Contents of `~/.sensei/config.json` (or `~/.sensei-dev/config.json`).
+/// Contents of `~/.sensei/config.json`.
 ///
-/// This is the single source of truth for persisted local state shared between
-/// the daemon and the CLI. Read/write via [`SenseiLocalConfig::load`] and
+/// Single source of truth for persisted local state shared between the daemon
+/// and the CLI. Read/write via [`SenseiLocalConfig::load`] and
 /// [`SenseiLocalConfig::save`].
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SenseiLocalConfig {
@@ -329,19 +245,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mode_matches_compile_flag() {
+    fn config_uses_prod_values() {
         let cfg = SenseiConfig::from_env();
-        if COMPILE_DEV {
-            assert_eq!(cfg.mode, SenseiMode::Dev);
-            assert_eq!(cfg.daemon_port, 7745);
-            assert_eq!(cfg.db_name, "sensei_dev");
-            assert_eq!(cfg.dir_suffix, ".sensei-dev");
-        } else {
-            assert_eq!(cfg.mode, SenseiMode::Prod);
-            assert_eq!(cfg.daemon_port, 7744);
-            assert_eq!(cfg.db_name, "sensei");
-            assert_eq!(cfg.dir_suffix, ".sensei");
-        }
+        assert_eq!(cfg.daemon_port, 7744);
+        assert_eq!(cfg.db_name, "sensei");
+        assert_eq!(cfg.dir_suffix, ".sensei");
     }
 
     #[test]
@@ -364,32 +272,21 @@ mod tests {
 
     #[test]
     fn port_constants() {
+        assert_eq!(DAEMON_PORT, 7744);
         assert_eq!(OLLAMA_PORT, 11434);
         assert_eq!(POSTGRES_PORT, 5432);
-        // DAEMON_PORT depends on compile-time feature
-        if COMPILE_DEV {
-            assert_eq!(DAEMON_PORT, 7745);
-        } else {
-            assert_eq!(DAEMON_PORT, 7744);
-        }
     }
 
     #[test]
-    fn binary_names_match_mode() {
+    fn binary_names() {
         let cfg = SenseiConfig::from_env();
-        if COMPILE_DEV {
-            assert_eq!(cfg.sensei_binary(), "sensei-dev");
-            assert_eq!(cfg.senseid_binary(), "senseid-dev");
-            assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp-dev");
-        } else {
-            assert_eq!(cfg.sensei_binary(), "sensei");
-            assert_eq!(cfg.senseid_binary(), "senseid");
-            assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp");
-        }
+        assert_eq!(cfg.sensei_binary(), "sensei");
+        assert_eq!(cfg.senseid_binary(), "senseid");
+        assert_eq!(cfg.sensei_mcp_binary(), "sensei-mcp");
     }
 
     #[test]
-    fn compile_time_binary_consts_match_runtime_accessors() {
+    fn const_binary_names_match_accessors() {
         let cfg = SenseiConfig::from_env();
         assert_eq!(SENSEI_BIN, cfg.sensei_binary());
         assert_eq!(SENSEID_BIN, cfg.senseid_binary());
@@ -397,47 +294,54 @@ mod tests {
     }
 
     #[test]
-    fn sensei_tap_formula_matches_mode() {
+    fn sensei_tap_formula_is_prod_tap() {
         let cfg = SenseiConfig::from_env();
-        let formula = cfg.sensei_tap_formula();
-        if cfg.is_dev() {
-            assert_eq!(formula, "sensei-hq/tap/sensei-dev");
-        } else {
-            assert_eq!(formula, "sensei-hq/tap/sensei");
-        }
+        assert_eq!(cfg.sensei_tap_formula(), "sensei-hq/tap/sensei");
     }
 
     #[test]
-    fn sensei_tap_install_args_matches_mode() {
-        let cfg = SenseiConfig::from_env();
-        let (formula, args) = cfg.sensei_tap_install_args();
-        assert_eq!(formula, cfg.sensei_tap_formula());
-        if cfg.is_dev() {
-            assert_eq!(args, &["--HEAD"]);
-        } else {
-            assert_eq!(args, &[] as &[&str]);
-        }
-    }
-
-    #[test]
-    fn brew_install_script_matches_mode() {
+    fn brew_install_script_has_no_head_flag() {
         let cfg = SenseiConfig::from_env();
         let script = cfg.brew_install_script();
-        if cfg.is_dev() {
-            assert_eq!(script, "brew install --HEAD sensei-hq/tap/sensei-dev");
-        } else {
-            assert_eq!(script, "brew install sensei-hq/tap/sensei");
-        }
+        assert_eq!(script, "brew install sensei-hq/tap/sensei");
+        assert!(!script.contains("--HEAD"));
     }
 
     #[test]
-    fn mcp_registry_key_matches_mode() {
+    fn mcp_registry_key_is_sensei() {
         let cfg = SenseiConfig::from_env();
-        if COMPILE_DEV {
-            assert_eq!(MCP_REGISTRY_KEY, "sensei-dev");
-        } else {
-            assert_eq!(MCP_REGISTRY_KEY, "sensei");
-        }
-        assert_eq!(MCP_REGISTRY_KEY, cfg.mcp_registry_key());
+        assert_eq!(MCP_REGISTRY_KEY, "sensei");
+        assert_eq!(cfg.mcp_registry_key(), "sensei");
+    }
+
+    #[test]
+    fn db_schema_source_default_and_override() {
+        // Combined into one test because cargo runs tests in parallel by
+        // default and these two cases both mutate the shared SENSEI_DDL_DIR
+        // env var. Splitting them caused intermittent failures where the
+        // "default" test would see the env var set by the "override" test.
+        // Each branch sets/clears the env var in the order it expects.
+        //
+        // SAFETY: process-global env mutation. Safe here because no other
+        // test in this binary reads SENSEI_DDL_DIR and the var is cleared
+        // before returning.
+
+        unsafe { std::env::remove_var("SENSEI_DDL_DIR"); }
+        let cfg = SenseiConfig::from_env();
+        assert_eq!(
+            cfg.db_schema_source("1.2.3"),
+            "sensei-hq/sensei/database@v1.2.3",
+            "default → GitHub tag",
+        );
+
+        unsafe { std::env::set_var("SENSEI_DDL_DIR", "/tmp/test-ddl"); }
+        let cfg = SenseiConfig::from_env();
+        assert_eq!(
+            cfg.db_schema_source("1.2.3"),
+            "/tmp/test-ddl",
+            "SENSEI_DDL_DIR set → override path",
+        );
+
+        unsafe { std::env::remove_var("SENSEI_DDL_DIR"); }
     }
 }
