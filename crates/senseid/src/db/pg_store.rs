@@ -2221,9 +2221,16 @@ mod tests {
     use super::*;
     use sqlx_core::query_as::query_as;
 
+    /// Test DB URL. Defaults to `sensei_test` — the throwaway DB the
+    /// monorepo convention reserves for `cargo test` and CI. NEVER default
+    /// to `sensei`: every test that inserts (e.g. `create_test_folder`)
+    /// would leak into the user's production data, and the `/_test` row
+    /// from earlier runs is a real example of how that surfaces in the UI.
+    /// Override with `TEST_DATABASE_URL` for ad-hoc targets (e.g. a forked
+    /// snapshot for debugging).
     fn test_db_url() -> String {
         std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei", sensei_bootstrap::POSTGRES_PORT))
+            .unwrap_or_else(|_| format!("postgresql://localhost:{}/sensei_test", sensei_bootstrap::POSTGRES_PORT))
     }
 
     #[tokio::test]
