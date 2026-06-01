@@ -130,15 +130,18 @@ describe('AssistantCard', () => {
     expect(card(m, 'claude').querySelector('[role="alert"]')).toBeFalsy();
   });
 
-  it('chips forced to idle styling when enabled=false (even with done status)', () => {
-    // Daemon truth says a part is done, but the user has toggled the
-    // switch off — the chips should display as idle to reflect intent.
+  it('chips reflect actual part status even when enabled=false', () => {
+    // Why this is intentional: during a remove operation the slice flips
+    // selected=false the same tick it sets partStatus to 'configuring'.
+    // If the chip clamped to idle on enabled=false, the user would see
+    // no spinner during removal. Trust partStatus directly — the slice
+    // is responsible for setting it to idle when truly idle.
     const m = mountComponent(AssistantCard, {
       id: 'claude', name: 'Claude', found: true, enabled: false,
-      parts: [{ id: 'plugins', label: 'plugins', status: 'done' }],
+      parts: [{ id: 'plugins', label: 'plugins', status: 'configuring' }],
     });
     cleanup.push(m.destroy);
     const chip = card(m, 'claude').querySelector('.chip') as HTMLElement;
-    expect(chip.getAttribute('data-status')).toBe('idle');
+    expect(chip.getAttribute('data-status')).toBe('configuring');
   });
 });
