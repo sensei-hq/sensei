@@ -94,12 +94,13 @@
   <script type="text/babel" src="lib/collective-settings.jsx"></script>
   <script type="text/babel" src="lib/navigation.jsx"></script>
   <script type="text/babel" src="lib/bootstrap.jsx"></script>
-  <script type="text/babel" src="lib/bootstrap-simple.jsx"></script>
+  <script type="text/babel" src="lib/discarded/bootstrap-simple.jsx"></script>
+  <script type="text/babel" src="lib/bootstrap-splash.jsx"></script>
 
   <script type="text/babel" data-presets="env,react">
     // Tweaks — dark/light mode
     const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-      "theme": "dark"
+      "theme": "light"
     }/*EDITMODE-END*/;
 
     const App = () => {
@@ -139,26 +140,26 @@
             {/* ═════════ FLOW 1 · BOOTSTRAP ═════════ */}
             <DCSection id="bootstrap"
                        title="① Bootstrap"
-                       subtitle="Runs on every startup. The platform package manager (Homebrew on Mac/Linux, winget on Windows) is the single visible gate — everything else (Postgres · Ollama · sensei components · DB · daemon) is resolved by running a single Brewfile / winget manifest from sensei-hq/homebrew-tap. When the auto-fix can't complete, the screen hands the user a copy-pasteable script and a re-check.">
-              <DCArtboard id="boot-fixing"
-                          label="★ Auto-fixing · Mac · Homebrew Brewfile (cycles scenarios)"
+                       subtitle="Runs on every startup. The platform package manager (Homebrew on Mac/Linux, winget on Windows) is the single visible gate — everything else (Postgres · Ollama · sensei components · DB · daemon) is resolved by running a single Brewfile / winget manifest from sensei-hq/homebrew-tap. Now expressed as a small system dialog rather than a full app screen: minimal when green, expands into a two-column layout when there's work to do or report.">
+              <DCArtboard id="boot-probing"
+                          label="① Probing · initial detect"
                           width={1280} height={860}>
-                <div className="artboard-shell"><BootstrapSimpleDemo/></div>
+                <div className="artboard-shell"><SplashOnDesktop state="probing"/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-fixing"
+                          label="② Auto-fixing · running Brewfile"
+                          width={1280} height={860}>
+                <div className="artboard-shell"><SplashOnDesktop state="auto-fixing"/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-manual"
+                          label="③ Manual fallback · Homebrew missing, script provided"
+                          width={1280} height={860}>
+                <div className="artboard-shell"><SplashOnDesktop state="manual"/></div>
               </DCArtboard>
               <DCArtboard id="boot-green"
-                          label="All green — ready to enter"
+                          label="★ ④ All green · foundation holds"
                           width={1280} height={860}>
-                <div className="artboard-shell"><BootstrapSimple scenario="all-green-mac" onReady={()=>{}}/></div>
-              </DCArtboard>
-              <DCArtboard id="boot-manual-mac"
-                          label="Manual fallback · Homebrew missing (script)"
-                          width={1280} height={860}>
-                <div className="artboard-shell"><BootstrapSimple scenario="manual-mac-no-brew" onReady={()=>{}}/></div>
-              </DCArtboard>
-              <DCArtboard id="boot-manual-win"
-                          label="Windows · winget manifest"
-                          width={1280} height={860}>
-                <div className="artboard-shell"><BootstrapSimple scenario="manual-windows" onReady={()=>{}}/></div>
+                <div className="artboard-shell"><SplashOnDesktop state="all-green"/></div>
               </DCArtboard>
             </DCSection>
 
@@ -412,6 +413,23 @@
             {/* ═════════════════════════════════════════════════════════════
                 DISCARDED · earlier directions kept for reference
                ═════════════════════════════════════════════════════════════ */}
+
+            <DCSection id="discarded-bootstrap-simple"
+                       title="Discarded · BootstrapSimple (full-screen one-door)"
+                       subtitle="The intermediate take — a full app-screen one-door bootstrap that replaced the original 6-gate version. Superseded by the small system-dialog Splash in Flow ①.">
+              <DCArtboard id="boot-simple-fixing" label="BootstrapSimple · cycles all scenarios" width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimpleDemo/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-simple-green"  label="BootstrapSimple · all green" width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimple scenario="all-green-mac" onReady={()=>{}}/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-simple-manual" label="BootstrapSimple · Homebrew missing" width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimple scenario="manual-mac-no-brew" onReady={()=>{}}/></div>
+              </DCArtboard>
+              <DCArtboard id="boot-simple-win"    label="BootstrapSimple · Windows winget" width={1280} height={860}>
+                <div className="artboard-shell"><BootstrapSimple scenario="manual-windows" onReady={()=>{}}/></div>
+              </DCArtboard>
+            </DCSection>
 
             <DCSection id="discarded-bootstrap"
                        title="Discarded · old 6-gate Bootstrap"
