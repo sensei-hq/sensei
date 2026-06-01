@@ -308,11 +308,18 @@ bump:
 	@# Tauri app manifest + Cargo.toml
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' app/src-tauri/tauri.conf.json
 	@sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" app/src-tauri/Cargo.toml
-	@# Rust crates
-	@for crate in senseid cli mcp gateway bootstrap; do \
+	@# Rust crates — every published or internally-pathed crate in the
+	@# workspace tracks the monorepo version. Adding a new crate? Append
+	@# its directory name here and to the git-add list below.
+	@for crate in senseid cli mcp gateway gateway-embedded bootstrap logger sensei-config; do \
 	  f="crates/$$crate/Cargo.toml"; \
 	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" "$$f"; \
 	done
+	@# Refresh Cargo.lock files so the new versions are reflected before we
+	@# stage. The pre-commit hook runs `cargo build` and would otherwise
+	@# modify these AFTER `git add` and leave them dirty in the working tree.
+	@cargo check --workspace --offline --quiet 2>/dev/null || cargo check --workspace --quiet
+	@(cd app/src-tauri && cargo check --offline --quiet 2>/dev/null || cargo check --quiet)
 	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Formula/sensei.rb
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Casks/senseihq.rb
@@ -328,10 +335,12 @@ bump:
 	@# Website footer version
 	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(_v)<\/div>/' website/src/routes/+page.svelte
 	@# Commit everything
-	@git add VERSION \
+	@git add VERSION Cargo.lock app/src-tauri/Cargo.lock \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
 	  website/package.json website/src/routes/+page.svelte \
-	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml crates/gateway/Cargo.toml crates/bootstrap/Cargo.toml \
+	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml \
+	  crates/gateway/Cargo.toml crates/gateway-embedded/Cargo.toml \
+	  crates/bootstrap/Cargo.toml crates/logger/Cargo.toml crates/sensei-config/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \
 	  marketplace/package.json marketplace/catalog.json \
 	  marketplace/.claude-plugin/marketplace.json \

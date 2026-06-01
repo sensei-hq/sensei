@@ -21,7 +21,7 @@ jobs:
             os: macos-latest
             artifact: sensei-macos-arm64
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             artifact: sensei-macos-x86_64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -32,6 +32,9 @@ jobs:
             use-cross: true
 
     runs-on: ${{ matrix.os }}
+    # Fail fast if a runner type ever goes silent again — v0.2.15 sat 24h
+    # on macos-13 waiting for a runner. Healthy daemon builds finish in ~10m.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
