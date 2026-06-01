@@ -316,9 +316,15 @@ bump:
 	@# Homebrew formula and cask (SHA256s updated by GitHub Actions after release)
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Formula/sensei.rb
 	@sed -i '' "s/version \"[^\"]*\"/version \"$(_v)\"/" homebrew/Casks/senseihq.rb
-	@# Marketplace
+	@# Marketplace — package.json/catalog.json are tooling metadata; the two
+	@# .claude-plugin manifests are what Claude Code actually reads to decide
+	@# whether an installed plugin has an update available. If those two stay
+	@# frozen, `claude plugin update sensei` will always report "up to date"
+	@# even after a real bump.
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/package.json
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/catalog.json
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/.claude-plugin/marketplace.json
+	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/plugins/sensei/.claude-plugin/plugin.json
 	@# Website footer version
 	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(_v)<\/div>/' website/src/routes/+page.svelte
 	@# Commit everything
@@ -327,7 +333,9 @@ bump:
 	  website/package.json website/src/routes/+page.svelte \
 	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml crates/gateway/Cargo.toml crates/bootstrap/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \
-	  marketplace/package.json marketplace/catalog.json
+	  marketplace/package.json marketplace/catalog.json \
+	  marketplace/.claude-plugin/marketplace.json \
+	  marketplace/plugins/sensei/.claude-plugin/plugin.json
 	@git commit -m "chore: bump to v$(_v)"
 	@git tag v$(_v)
 	@git push origin HEAD
