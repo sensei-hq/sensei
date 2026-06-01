@@ -35,6 +35,16 @@ export function mockAssistant(overrides: Partial<DaemonAssistantFamily> = {}): D
       mockAssistantVariant(),
       mockAssistantVariant({ id: 'claude-desktop', name: 'Claude Desktop' }),
     ],
+    // Default to the Claude family's canonical chip strip. Tests that
+    // care about parts should override; tests that don't get a realistic
+    // shape so reducers don't trip on undefined.
+    parts: [
+      { id: 'plugins',  label: 'plugins' },
+      { id: 'skills',   label: 'skills' },
+      { id: 'commands', label: 'commands' },
+      { id: 'agents',   label: 'agents' },
+      { id: 'mcp',      label: 'mcp server' },
+    ],
     ...overrides,
   };
 }
@@ -106,6 +116,7 @@ export function mockWizardLoadData(overrides: Partial<WizardLoadData> = {}): Wiz
       mockAssistant({
         id: 'cursor', name: 'Cursor', selected: false,
         variants: [mockAssistantVariant({ id: 'cursor', name: 'Cursor', installed: false })],
+        parts: [{ id: 'mcp', label: 'mcp server' }],
       }),
     ],
     roots: [mockWatchRoot()],

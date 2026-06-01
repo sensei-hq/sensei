@@ -22,10 +22,13 @@ import type {
   DaemonLibEntry, DaemonMcpEntry, PreferencesData,
   ScanBaseline, WizardLoadData,
 } from './setup/contracts.js';
+import type { AssistantPartEvent, AssistantPartStatus } from './types.js';
 
 // ── Slice interfaces ────────────────────────────────────────
 
-/** Per-family configuration progress during commit. */
+/** Per-family configuration progress during commit. Kept for compat with
+ *  legacy callers; the live status truth now flows through `partStatus`
+ *  and the per-card UI derives its header label from that. */
 export type AssistantConfigureState = 'idle' | 'configuring' | 'removing' | 'failed' | 'skipped';
 
 /** True when every installed variant of a family is currently configured. */
@@ -36,10 +39,14 @@ export function familyIsConfigured(family: DaemonAssistantFamily): boolean {
 
 export interface AssistantsSlice {
   assistants: DaemonAssistantFamily[];
-  /** Configure status per family id — updated live while Continue is in flight. */
-  configureState: Record<string, AssistantConfigureState>;
-  /** Error message per family id when configureState is 'failed'. */
-  configureError: Record<string, string>;
+  /** Live per-part status, keyed by family id then part id. The daemon
+   *  emits one StateEvent per (family × part × transition) over SSE; the
+   *  reducer (`applyAssistantEvent`) writes into this map. The
+   *  AssistantCard reads it for chip state. */
+  partStatus: Record<string, Record<string, AssistantPartStatus>>;
+  /** Last-seen error message per family.part. Cleared on the next
+   *  `configuring` transition so a retry resets the consolidated error. */
+  partErrors: Record<string, Record<string, string>>;
 }
 
 export interface RootsSlice {
@@ -102,10 +109,12 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
   },
   assistants:  async (ws, api) => {
     // Reconcile user intent (switch state) with daemon truth (variant.configured)
-    // family-by-family so the UI can show per-card progress:
-    //   selected=true,  was configured=false → configure  (POST /api/assistants/configure)
-    //   selected=false, was configured=true  → remove     (POST /api/assistants/remove)
-    //   selected==was-configured             → no-op
+    // family-by-family. The HTTP call returns when configure() has fully
+    // finished server-side; the SSE stream delivers per-part chip
+    // transitions in flight (configuring → done | error) so the card
+    // animates while the request is open. On HTTP error or daemon-reported
+    // errors[] we fall back to writing the part status directly here —
+    // covers the "subscriber wasn't ready" / "daemon crashed mid-run" cases.
     //
     // Daemon endpoints take *variant* ids (claude-code, claude-desktop), so each
     // family flows through with the list of its installed variants. On success,
@@ -115,46 +124,36 @@ const COMMIT_HANDLERS: Record<string, CommitFn> = {
 
     for (const family of ws.assistants.assistants) {
       const variantIds = family.variants.filter(v => v.installed).map(v => v.id);
-      if (variantIds.length === 0) {
-        if (family.selected) ws.assistants.configureState[family.id] = 'skipped';
-        continue;
-      }
+      if (variantIds.length === 0) continue;
       const wasConfigured = familyIsConfigured(family);
 
       if (family.selected && !wasConfigured) {
-        ws.assistants.configureState[family.id] = 'configuring';
-        delete ws.assistants.configureError[family.id];
         try {
           const result = await api.configureAssistants(variantIds);
           if (result.errors.length > 0) {
-            ws.assistants.configureState[family.id] = 'failed';
-            ws.assistants.configureError[family.id] = result.errors.join('; ');
+            const msg = result.errors.join('; ');
+            ws.markFamilyError(family.id, msg);
             failed.push(family.id);
           } else {
             for (const v of family.variants) if (v.installed) v.configured = true;
-            ws.assistants.configureState[family.id] = 'idle';
+            ws.markFamilyDone(family.id);
           }
         } catch (e) {
-          ws.assistants.configureState[family.id] = 'failed';
-          ws.assistants.configureError[family.id] = e instanceof Error ? e.message : String(e);
+          ws.markFamilyError(family.id, e instanceof Error ? e.message : String(e));
           failed.push(family.id);
         }
       } else if (!family.selected && wasConfigured) {
-        ws.assistants.configureState[family.id] = 'removing';
-        delete ws.assistants.configureError[family.id];
         try {
           const result = await api.removeAssistants(variantIds);
           if (result.errors.length > 0) {
-            ws.assistants.configureState[family.id] = 'failed';
-            ws.assistants.configureError[family.id] = result.errors.join('; ');
+            ws.markFamilyError(family.id, result.errors.join('; '));
             failed.push(family.id);
           } else {
             for (const v of family.variants) v.configured = false;
-            ws.assistants.configureState[family.id] = 'idle';
+            ws.markFamilyIdle(family.id);
           }
         } catch (e) {
-          ws.assistants.configureState[family.id] = 'failed';
-          ws.assistants.configureError[family.id] = e instanceof Error ? e.message : String(e);
+          ws.markFamilyError(family.id, e instanceof Error ? e.message : String(e));
           failed.push(family.id);
         }
       }
@@ -309,7 +308,7 @@ export class WizardState {
     correctionAggressiveness: 'balanced', digestCadence: 'daily',
     nudgeOnRegression: true, anonymizedTelemetry: false, showWelcome: true,
   });
-  assistants  = $state<AssistantsSlice>({ assistants: [], configureState: {}, configureError: {} });
+  assistants  = $state<AssistantsSlice>({ assistants: [], partStatus: {}, partErrors: {} });
   roots       = $state<RootsSlice>({ roots: [], newPath: '' });
   scan        = $state<ScanSlice>({ baseline: null, started: false, done: false });
   projects    = $state<ProjectsSlice>({ projects: [], confirmed: {} });
@@ -365,6 +364,150 @@ export class WizardState {
       // wizardState slice is just the persisted baseline snapshot.
       case 'scan':        return scanState.completed;
       default:            return true;
+    }
+  }
+
+  // ── Assistant per-part state ────────────────────────────────────
+
+  /**
+   * Apply one assistant-part SSE event from the daemon. Single entry point
+   * for live status: the assistants page subscribes to /api/scan/events
+   * and forwards every `entity: "assistant"` event here. Ignores events
+   * for unknown families so a stale subscription after navigation away
+   * from the page can't poison the slice.
+   *
+   * Mutates the slice's `partStatus` / `partErrors` maps with new object
+   * references at each level — Svelte 5 derived signals that walk the
+   * map need a fresh reference to know they've changed.
+   */
+  applyAssistantEvent(event: AssistantPartEvent): void {
+    if (!this.assistants.assistants.some(f => f.id === event.family)) return;
+
+    const status = { ...this.assistants.partStatus };
+    status[event.family] = { ...(status[event.family] ?? {}), [event.part]: event.status };
+
+    const errors = { ...this.assistants.partErrors };
+    if (event.status === 'error' && event.error) {
+      errors[event.family] = { ...(errors[event.family] ?? {}), [event.part]: event.error };
+    } else if (errors[event.family]?.[event.part]) {
+      // Clear stale error on the next transition for the same part.
+      const fam = { ...errors[event.family] };
+      delete fam[event.part];
+      errors[event.family] = fam;
+    }
+
+    this.assistants = { ...this.assistants, partStatus: status, partErrors: errors };
+  }
+
+  /** Mark every part of a family as `configuring`, clearing prior errors.
+   *  Called by `toggleAssistant` so the chip strip animates immediately
+   *  even if the SSE subscription handshake hasn't returned yet. */
+  markFamilyConfiguring(familyId: string): void {
+    const family = this.assistants.assistants.find(f => f.id === familyId);
+    if (!family) return;
+    for (const part of family.parts) {
+      this.applyAssistantEvent({ family: familyId, part: part.id, status: 'configuring' });
+    }
+  }
+
+  /** Mark every part of a family as `done` — used as the success
+   *  fallback when the HTTP response arrives before any SSE event. */
+  markFamilyDone(familyId: string): void {
+    const family = this.assistants.assistants.find(f => f.id === familyId);
+    if (!family) return;
+    for (const part of family.parts) {
+      this.applyAssistantEvent({ family: familyId, part: part.id, status: 'done' });
+    }
+  }
+
+  /** Mark every part of a family as `error` with the same consolidated
+   *  message. The card surfaces one error block under the chip strip. */
+  markFamilyError(familyId: string, message: string): void {
+    const family = this.assistants.assistants.find(f => f.id === familyId);
+    if (!family) return;
+    for (const part of family.parts) {
+      this.applyAssistantEvent({ family: familyId, part: part.id, status: 'error', error: message });
+    }
+  }
+
+  /** Reset every part of a family back to `idle` — used after a
+   *  successful remove() so the chips return to the empty ring. */
+  markFamilyIdle(familyId: string): void {
+    const family = this.assistants.assistants.find(f => f.id === familyId);
+    if (!family) return;
+    for (const part of family.parts) {
+      this.applyAssistantEvent({ family: familyId, part: part.id, status: 'idle' });
+    }
+  }
+
+  /**
+   * Flip the per-family switch and trigger configure or remove on the
+   * daemon. Optimistically updates the chip strip via
+   * `markFamilyConfiguring` so the card animates the moment the user
+   * clicks — actual progress refines the chips via SSE.
+   *
+   * Uninstalled families with no installed variants no-op (the daemon
+   * has nothing to configure). Throws on HTTP error so the caller can
+   * surface a retry; the chip strip's error state is set first.
+   */
+  async toggleAssistant(familyId: string): Promise<void> {
+    const family = this.assistants.assistants.find(f => f.id === familyId);
+    if (!family) return;
+    const variantIds = family.variants.filter(v => v.installed).map(v => v.id);
+    if (variantIds.length === 0) return;
+
+    const willEnable = !family.selected;
+    family.selected = willEnable;
+
+    const api = senseiApi(appState.port);
+    this.markFamilyConfiguring(familyId);
+    try {
+      if (willEnable) {
+        const result = await api.configureAssistants(variantIds);
+        if (result.errors.length > 0) {
+          this.markFamilyError(familyId, result.errors.join('; '));
+          throw new Error(result.errors.join('; '));
+        }
+        for (const v of family.variants) if (v.installed) v.configured = true;
+        this.markFamilyDone(familyId);
+      } else {
+        const result = await api.removeAssistants(variantIds);
+        if (result.errors.length > 0) {
+          this.markFamilyError(familyId, result.errors.join('; '));
+          throw new Error(result.errors.join('; '));
+        }
+        for (const v of family.variants) v.configured = false;
+        this.markFamilyIdle(familyId);
+      }
+    } catch (e) {
+      // Revert switch so user intent stays consistent with daemon truth.
+      family.selected = !willEnable;
+      this.markFamilyError(familyId, e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  }
+
+  /** Retry configure for a family that currently has at least one part
+   *  in `error`. Equivalent to forcing the switch on. */
+  async retryAssistant(familyId: string): Promise<void> {
+    const family = this.assistants.assistants.find(f => f.id === familyId);
+    if (!family) return;
+    if (!family.selected) family.selected = true;
+    const variantIds = family.variants.filter(v => v.installed).map(v => v.id);
+    if (variantIds.length === 0) return;
+
+    const api = senseiApi(appState.port);
+    this.markFamilyConfiguring(familyId);
+    try {
+      const result = await api.configureAssistants(variantIds);
+      if (result.errors.length > 0) {
+        this.markFamilyError(familyId, result.errors.join('; '));
+        return;
+      }
+      for (const v of family.variants) if (v.installed) v.configured = true;
+      this.markFamilyDone(familyId);
+    } catch (e) {
+      this.markFamilyError(familyId, e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -461,13 +604,24 @@ export class WizardState {
     // start with it selected (so the switch reflects daemon truth). If it's
     // installed but not configured, also start selected so the user's first
     // pass through configures it. Uninstalled families start unselected.
+    //
+    // Seed `partStatus` from variant.configured: every part of an already-
+    // configured family lands in `done`, anything else starts `idle`. SSE
+    // events from a later configure() run override these as transitions happen.
+    const partStatus: Record<string, Record<string, AssistantPartStatus>> = {};
+    for (const a of data.assistantFamilies) {
+      const configured = familyIsConfigured(a);
+      partStatus[a.id] = Object.fromEntries(
+        a.parts.map(p => [p.id, configured ? 'done' : 'idle' as AssistantPartStatus])
+      );
+    }
     this.assistants = {
       assistants: data.assistantFamilies.map(a => ({
         ...a,
         selected: a.selected ?? (a.variants.some(v => v.installed)),
       })),
-      configureState: {},
-      configureError: {},
+      partStatus,
+      partErrors: {},
     };
 
     this.roots = { roots: [...data.roots], newPath: '' };

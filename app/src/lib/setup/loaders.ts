@@ -53,6 +53,12 @@ function mapFamilies(families: AssistantFamily[]): DaemonAssistantFamily[] {
     name: f.name,
     selected: f.installed,
     variants: f.members.map(m => ({ id: m.id, name: m.name, installed: m.installed, configured: m.configured })),
+    // `parts` is the per-capability chip list from the daemon. Pass it
+    // through as-is — order is already canonical at the daemon layer.
+    // Older daemon builds without the field default to an empty list so
+    // mismatched-version installs degrade gracefully (chips just don't
+    // render) rather than throwing.
+    parts: (f.parts ?? []).map(p => ({ id: p.id, label: p.label })),
   }));
 }
 
