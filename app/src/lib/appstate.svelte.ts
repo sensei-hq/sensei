@@ -9,14 +9,16 @@ import { healthState } from './health-state.svelte.js';
 import { wizardState } from './wizard-state.svelte.js';
 import { STORAGE_KEYS } from './storage-keys.js';
 
-// Build-time port injected by vite.config.ts (single value: 7744). Kept as a
-// define so we don't hardcode 7744 at every fetch site; if the daemon ever
-// moves, vite.config.ts is the only place to change.
-declare const __SENSEI_DEFAULT_PORT__: number;
-const DEFAULT_PORT = typeof __SENSEI_DEFAULT_PORT__ !== 'undefined' ? __SENSEI_DEFAULT_PORT__ : 7744;
+// Daemon port. Hardcoded — there is one daemon, one port, one source of
+// truth. The previous indirection (a vite-define + a localStorage override)
+// added two failure modes (stale localStorage value, stale bundle) without
+// any callsite that actually needed runtime variability.
+const DEFAULT_PORT = 7744;
 
 export class AppState {
-  port = $state(DEFAULT_PORT);
+  /** Daemon port. Build-time constant — see DEFAULT_PORT above for why
+   *  this is not a runtime $state and not read from localStorage. */
+  readonly port = DEFAULT_PORT;
   config = $state<Record<string, string>>({});
   loaded = $state(false);
 
@@ -55,13 +57,6 @@ export class AppState {
     } catch (e) {
       console.warn('[appState] dismissed_suggestions JSON.parse failed; returning empty list', e);
       return [];
-    }
-  }
-
-  async setPort(port: number) {
-    this.port = port;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_KEYS.port, String(port));
     }
   }
 
@@ -144,11 +139,6 @@ export class AppState {
    * a usable cache.
    */
   async load(): Promise<void> {
-    if (typeof localStorage !== 'undefined') {
-      const stored = parseInt(localStorage.getItem(STORAGE_KEYS.port) ?? '', 10);
-      if (!isNaN(stored) && stored > 0) this.port = stored;
-    }
-
     // Browser (no Tauri) → skip daemon calls and fall through to defaults.
     if (!hasTauri()) {
       this.config = {};
@@ -181,11 +171,10 @@ export class AppState {
     this.loaded = false;
 
     // sensei:health is owned by HealthState — do not touch it here.
-    // The PROTECTED list captures localStorage keys that other subsystems
-    // own (port discovery, the upgrader's staged-version flag, …). Clearing
-    // them here would silently skip an in-flight upgrade or strand the port.
+    // sensei:app-version is owned by the upgrader so an in-flight staged
+    // upgrade survives reset.
     if (typeof localStorage !== 'undefined') {
-      const PROTECTED = [STORAGE_KEYS.port, STORAGE_KEYS.appVersion] as const;
+      const PROTECTED = [STORAGE_KEYS.appVersion] as const;
       const preserved = PROTECTED
         .map((k) => [k, localStorage.getItem(k)] as const)
         .filter(([, v]) => v !== null);

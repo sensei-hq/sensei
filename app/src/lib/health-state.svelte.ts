@@ -4,7 +4,6 @@ import type {
 } from './health-types.js';
 import { COMPONENT_ORDER } from './health-types.js';
 import { RealTransport, type HealthTransport } from './health-transport.js';
-import { setHealthReady, clearHealthCache } from './health-cache.js';
 
 /** Display labels for each ledger component. The Rust crate provides these in Phase 2/3 — here they live as cold-load defaults so the UI matches the mockup before any transport runs. */
 const COMPONENT_DEFAULTS: Record<ComponentId, { label: string; note: string | null; installingVerb: string }> = {
@@ -83,10 +82,9 @@ export class HealthState {
     this.apply(seed);
   }
 
-  /** Force a fresh check. Clears the session cache. Same idempotency while in flight. */
+  /** Force a fresh check. Same idempotency while in flight. */
   verify(): Promise<void> {
     if (this.#verifyPromise) return this.#verifyPromise;
-    clearHealthCache();
     this.#initPromise = null;
     this.#verifyPromise = this.#runCheckThenMaybeResolve().then(() => {
       this.#verifyPromise = null;
@@ -144,9 +142,6 @@ export class HealthState {
     this.components     = p.components.map((c) => ({ ...c, description: DESCRIPTIONS[c.id] }));
     this.remedy         = p.remedy;
     this.status         = p.status;
-
-    if (p.status === 'ok') setHealthReady();
-    else                   clearHealthCache();
   }
 
   applyEvent(e: HealthEvent): void {
