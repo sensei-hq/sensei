@@ -91,9 +91,13 @@ pub(crate) struct AssistantConfigureBody {
 }
 
 pub(crate) async fn assistant_configure(
+    State(state): State<AppState>,
     Json(body): Json<AssistantConfigureBody>,
 ) -> Json<crate::assistants::ConfigureResult> {
-    Json(crate::assistants::configure(&body.acps))
+    // Hand the state event sender to configure() so it can broadcast
+    // per-part configuring/done/error transitions to SSE subscribers
+    // (the wizard's AssistantCard) as each variant lands.
+    Json(crate::assistants::configure(&body.acps, Some(&state.event_tx)))
 }
 
 #[derive(Deserialize)]
@@ -103,9 +107,10 @@ pub(crate) struct AssistantRemoveBody {
 }
 
 pub(crate) async fn assistant_remove(
+    State(state): State<AppState>,
     Json(body): Json<AssistantRemoveBody>,
 ) -> Json<serde_json::Value> {
-    let removed = crate::assistants::remove_selected(&body.acps);
+    let removed = crate::assistants::remove_selected(&body.acps, Some(&state.event_tx));
     serde_json::json!({"assistants_removed": removed, "errors": []}).into()
 }
 
