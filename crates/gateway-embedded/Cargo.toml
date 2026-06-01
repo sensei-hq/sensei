@@ -1,6 +1,6 @@
 [package]
 name = "gateway-embedded"
-version = "0.2.14"
+version = "0.2.17"
 edition = "2024"
 description = "In-process inference adapters and model registry for the sensei gateway"
 license = "MIT"
