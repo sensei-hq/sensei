@@ -1,15 +1,21 @@
 /**
- * Per-family assistant configuration flow.
+ * Per-family assistant configuration flow (post-mockup rehab).
  *
- * Verifies that the Configure & Continue button:
- *   1. Iterates over selected families one at a time
- *   2. Flips each card's data-configure-state through configuring → done
- *   3. Persists setup.assistants=done in the daemon config
- *   4. Navigates to /setup/roots only after all configures succeed
+ * The card now fires configure / remove the moment the switch toggles —
+ * matching docs/mockups/lib/assistant-tick-options.jsx. Continue persists
+ * setup.assistants=done and navigates; commitStage is a no-op for any
+ * family that's already converged because of the eager toggle.
  *
- * The daemon is real (dev daemon on port 7744). Claude is the only family
- * detected on the test machine; configure marks configured=true on both
- * claude-code and claude-desktop variants.
+ * Verifies:
+ *   1. Card renders with per-part chips + a switch with .on class when enabled.
+ *   2. Toggling the switch fires configure → SSE drives chips through
+ *      configuring → done → data-configured flips to true.
+ *   3. Toggling off a configured family fires remove → chips return to idle.
+ *   4. Continue persists setup.assistants=done and routes to /setup/roots.
+ *
+ * The daemon is real (e2e daemon on port 7744 against the sensei_e2e DB,
+ * driven by SENSEI_INSTANCE=e2e in globalSetup). The user's prod config is
+ * not touched.
  */
 
 import { test, expect } from '../fixtures';
@@ -103,65 +109,58 @@ test.describe('Assistants — per-family configure', () => {
     await navigateTo(tauriPage, '/setup/assistants');
   });
 
-  test('card renders with switch and capability chips', async ({ tauriPage }) => {
+  test('card renders with switch and per-part chips', async ({ tauriPage }) => {
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     await expect(card).toBeVisible({ timeout: 10_000 });
     await expect(card.locator('button[aria-label="Enable Claude"]')).toBeVisible();
-    await expect(card.locator('.chip').first()).toBeVisible();
+    // Claude has five capability parts: plugins, skills, commands, agents, mcp.
+    // Lock the count so a future trim/expansion of the daemon's parts list
+    // surfaces here instead of going unnoticed.
+    await expect(card.locator('.chip')).toHaveCount(5, { timeout: 5_000 });
+    // Slice starts every part idle until the daemon emits a transition.
     await expect(card).toHaveAttribute('data-configure-state', 'idle');
   });
 
-  test('switch toggles selected state without firing configure', async ({ tauriPage }) => {
+  test('toggling the switch off does not fire configure (already-idle family stays idle)', async ({ tauriPage }) => {
+    // Claude was put into not-configured state in beforeEach; the wizard
+    // defaults `selected` to any-variant-installed = true. Toggling off
+    // an unconfigured family is a no-op — there's nothing to remove.
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     const sw = card.locator('button[aria-label="Enable Claude"]');
 
-    // Card starts selected (variants are installed → defaults to on)
-    await expect(sw).toHaveClass(/\bon\b/);
+    await expect(sw).toHaveClass(/\bon\b/, { timeout: 10_000 });
     await sw.click();
     await expect(sw).not.toHaveClass(/\bon\b/);
-    // State stays idle — toggling alone never calls configure
     await expect(card).toHaveAttribute('data-configure-state', 'idle');
   });
 
-  test('Configure & Continue → card flips to configuring → navigates → daemon persists', async ({ tauriPage }) => {
+  test('toggling the switch on fires configure → chips settle to done', async ({ tauriPage }) => {
+    // Start from a known-off state so the toggle has work to do.
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
-    await expect(card).toHaveAttribute('data-configure-state', 'idle');
+    const sw = card.locator('button[aria-label="Enable Claude"]');
 
-    const button = tauriPage.locator('.btn-primary');
-    await expect(button).toContainText('Configure');
+    await expect(sw).toHaveClass(/\bon\b/, { timeout: 10_000 });
+    await sw.click();  // off
+    await expect(sw).not.toHaveClass(/\bon\b/);
+    await sw.click();  // back on → triggers configure
 
-    await button.click();
-
-    // The card must visibly enter the 'configuring' state so the user sees
-    // progress. (The 'done' state is transient — the card unmounts the same
-    // tick as navigation fires, so we assert via URL + daemon state instead.)
-    await expect(card).toHaveAttribute('data-configure-state', 'configuring', { timeout: 5_000 });
-
-    // Navigation completes only when every selected family finished cleanly.
-    await waitForPath(tauriPage, '/setup/roots', 20_000);
-
-    // Daemon persisted the completion (setConfig setup.assistants=done is the
-    // final step of commitStage and only runs if all configures succeeded).
-    const config = await fetch(`${DAEMON_URL}/api/config`).then(r => r.json()) as Record<string, string>;
-    expect(config['setup.assistants']).toBe('done');
+    // The chip strip must visibly enter 'configuring' so the user sees
+    // progress. SSE then settles each part to 'done' as the daemon
+    // finishes the plugin install.
+    await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configure-state', 'configuring', 5_000);
+    await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configured', 'true', 30_000);
   });
 
-  test('after configure, every installed Claude variant reports configured=true', async ({ tauriPage }) => {
-    // Wait for the card to render — confirms hydrate ran before we click Continue.
-    await expect(tauriPage.locator('[data-testid="assistant-card-claude"]')).toBeVisible({ timeout: 10_000 });
+  test('Continue persists setup.assistants=done and navigates to roots', async ({ tauriPage }) => {
+    // After eager-toggle configures already landed, Continue is a thin
+    // marker write + navigate.
+    const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
+    await expect(card).toBeVisible({ timeout: 10_000 });
     await tauriPage.locator('.btn-primary').click();
     await waitForPath(tauriPage, '/setup/roots', 20_000);
 
-    const families = await fetch(`${DAEMON_URL}/api/assistants/families`).then(r => r.json()) as Array<{
-      family: string;
-      members: Array<{ id: string; installed: boolean; configured: boolean }>;
-    }>;
-    const claude = families.find(f => f.family === 'claude')!;
-    const installed = claude.members.filter(m => m.installed);
-    expect(installed.length).toBeGreaterThan(0);
-    for (const variant of installed) {
-      expect(variant.configured, `${variant.id} should be configured after the flow`).toBe(true);
-    }
+    const config = await fetch(`${DAEMON_URL}/api/config`).then(r => r.json()) as Record<string, string>;
+    expect(config['setup.assistants']).toBe('done');
   });
 });
 
@@ -183,7 +182,7 @@ test.describe('Assistants — re-entry and removal', () => {
     await expect(card.locator('.mono').filter({ hasText: /configured/i })).toBeVisible({ timeout: 5_000 });
   });
 
-  test('unchecking a configured family + Continue triggers removal', async ({ tauriPage }) => {
+  test('toggling off a configured family fires remove → chips return to idle', async ({ tauriPage }) => {
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     const sw = card.locator('button[aria-label="Enable Claude"]');
 
@@ -191,16 +190,14 @@ test.describe('Assistants — re-entry and removal', () => {
     await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configured', 'true');
     await expect(sw).toHaveClass(/\bon\b/);
     await sw.click();
-    await expect(sw).not.toHaveClass(/\bon\b/);
 
-    await tauriPage.locator('.btn-primary').click();
+    // Removal goes through the same 'configuring' visual state as install
+    // (chips spin while the daemon's remove() runs), then settles to idle.
+    await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configure-state', 'configuring', 5_000);
+    await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configure-state', 'idle', 30_000);
 
-    // Card must visibly transition through removing (not configuring).
-    await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configure-state', 'removing', 5_000);
-    await waitForPath(tauriPage, '/setup/roots', 20_000);
-
-    // Daemon's now-canonical state — at least one installed Claude variant
-    // should report configured=false now. (claude-desktop's MCP entry is
+    // Daemon's canonical state — at least one installed Claude variant
+    // should report configured=false. (claude-desktop's MCP entry is
     // cleanly removed by file edit; claude-code's plugin uninstall depends
     // on `claude` CLI being on PATH for the spawned daemon process.)
     const after = await fetch(`${DAEMON_URL}/api/assistants/families`).then(r => r.json()) as Array<{
