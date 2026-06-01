@@ -2,6 +2,11 @@
 
 # Personal capture — staged for import via `dbd import hook_events …`. May
 # contain session payloads (prompts, file paths, tool output) and varies
-# per developer, so it must never be committed. The repo placeholder lives
-# at ~/.sensei/seed/hook_events.jsonl on machines that have captured data.
+# per developer, so it must never be committed.
 import/staging/hook_events.jsonl
+
+# Local DB snapshots produced by `make db-backup` (and by every `make
+# install*` invocation, which hooks db-backup first). One pg_dump custom-
+# format file per install: backup-YYYYMMDD-HHMMSS.dump. Restore with
+# `pg_restore -d sensei -c database/backup/backup-…dump`.
+backup/
