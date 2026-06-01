@@ -48,6 +48,85 @@ describe('WizardState', () => {
       expect(ws.assistants.assistants[1].selected).toBe(false);  // cursor — no installed variants
     });
 
+    it('seeds partStatus to idle for not-yet-configured families', () => {
+      // Claude variants in the default mock are installed but not configured,
+      // so every chip starts idle until the user toggles configure or a
+      // prior run's status hydrates in via daemon truth.
+      ws.hydrate(mockWizardLoadData());
+      const claude = ws.assistants.partStatus['claude'];
+      expect(claude).toBeDefined();
+      expect(Object.values(claude!).every(s => s === 'idle')).toBe(true);
+    });
+  });
+
+  describe('applyAssistantEvent', () => {
+    it('writes part status into the slice', () => {
+      ws.hydrate(mockWizardLoadData());
+      ws.applyAssistantEvent({ family: 'claude', part: 'plugins', status: 'configuring' });
+      expect(ws.assistants.partStatus['claude']!['plugins']).toBe('configuring');
+    });
+
+    it('stores error message on status=error transitions', () => {
+      ws.hydrate(mockWizardLoadData());
+      ws.applyAssistantEvent({
+        family: 'claude', part: 'plugins', status: 'error',
+        error: '~/.claude/agents — permission denied',
+      });
+      expect(ws.assistants.partStatus['claude']!['plugins']).toBe('error');
+      expect(ws.assistants.partErrors['claude']!['plugins'])
+        .toBe('~/.claude/agents — permission denied');
+    });
+
+    it('clears stale error on next non-error transition', () => {
+      // Otherwise the consolidated error banner would persist under a
+      // freshly retrying chip and the user would think the retry failed
+      // again. Reducer is responsible for resetting messages when a
+      // configuring/done/idle event lands.
+      ws.hydrate(mockWizardLoadData());
+      ws.applyAssistantEvent({ family: 'claude', part: 'plugins', status: 'error', error: 'boom' });
+      ws.applyAssistantEvent({ family: 'claude', part: 'plugins', status: 'configuring' });
+      expect(ws.assistants.partErrors['claude']?.['plugins']).toBeUndefined();
+    });
+
+    it('ignores events for unknown families', () => {
+      // A stale SSE subscription from a prior wizard session could deliver
+      // events for a family that's no longer in the loaded set; we must
+      // not synthesise empty rows in partStatus on the fly.
+      ws.hydrate(mockWizardLoadData());
+      const before = ws.assistants.partStatus['ghost'];
+      ws.applyAssistantEvent({ family: 'ghost', part: 'plugins', status: 'configuring' });
+      expect(ws.assistants.partStatus['ghost']).toBe(before);
+    });
+  });
+
+  describe('markFamily helpers', () => {
+    it('markFamilyConfiguring sets every part to configuring', () => {
+      ws.hydrate(mockWizardLoadData());
+      ws.markFamilyConfiguring('claude');
+      const fam = ws.assistants.partStatus['claude']!;
+      expect(Object.values(fam).every(s => s === 'configuring')).toBe(true);
+    });
+
+    it('markFamilyError consolidates one message across all parts', () => {
+      // The card shows a single error block; per-part chips all flip to
+      // 'error' so the user sees that everything in the family is stuck,
+      // not just one chip.
+      ws.hydrate(mockWizardLoadData());
+      ws.markFamilyError('claude', 'claude binary not found on PATH');
+      const fam = ws.assistants.partStatus['claude']!;
+      const errs = ws.assistants.partErrors['claude']!;
+      expect(Object.values(fam).every(s => s === 'error')).toBe(true);
+      expect(Object.values(errs).every(m => m === 'claude binary not found on PATH')).toBe(true);
+    });
+
+    it('markFamilyIdle resets every part to idle', () => {
+      ws.hydrate(mockWizardLoadData());
+      ws.markFamilyConfiguring('claude');
+      ws.markFamilyIdle('claude');
+      const fam = ws.assistants.partStatus['claude']!;
+      expect(Object.values(fam).every(s => s === 'idle')).toBe(true);
+    });
+
     it('populates roots slice', () => {
       ws.hydrate(mockWizardLoadData());
       expect(ws.roots.roots).toHaveLength(1);
