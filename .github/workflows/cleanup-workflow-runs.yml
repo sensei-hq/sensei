@@ -1,0 +1,51 @@
+name: Cleanup Workflow Runs
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Delete runs older than this many days'
+        required: false
+        default: '15'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete workflow runs older than N days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DAYS: ${{ inputs.days || '15' }}
+        run: |
+          cutoff=$(date -u -d "${DAYS} days ago" +%Y-%m-%d)
+          echo "Deleting workflow runs created before $cutoff"
+
+          deleted=0
+          failed=0
+          ids=$(gh run list \
+            --created "<${cutoff}" \
+            --limit 1000 \
+            --json databaseId \
+            --jq '.[].databaseId')
+
+          if [ -z "$ids" ]; then
+            echo "No runs older than $cutoff"
+            exit 0
+          fi
+
+          for id in $ids; do
+            if gh run delete "$id" 2>/dev/null; then
+              deleted=$((deleted + 1))
+            else
+              failed=$((failed + 1))
+            fi
+          done
+
+          echo "Deleted: $deleted, skipped/failed: $failed"
