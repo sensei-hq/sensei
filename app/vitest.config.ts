@@ -4,6 +4,14 @@ import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [svelte()],
+  // Mirror the vite-defines from `vite.config.ts` so tests see the same
+  // compile-time constants the production bundle does. Without this,
+  // `storage-keys.ts` would explode with `__SENSEI_NAMESPACE__ is not
+  // defined` because vitest doesn't pick up the app vite.config.ts.
+  define: {
+    __SENSEI_NAMESPACE__:   JSON.stringify('sensei'),
+    __SENSEI_APP_VERSION__: JSON.stringify('0.0.0-test'),
+  },
   test: {
     include: ['src/**/*.spec.ts', 'src/**/*.spec.svelte.ts'],
     // Route component tests run in jsdom; lib tests run in node

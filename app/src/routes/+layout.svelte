@@ -15,6 +15,15 @@
         (window as { __sensei_state__?: unknown }).__sensei_state__ = { appState };
     }
 
+    // One-shot migration: sweep the legacy `sensei:port` key. It used to
+    // hold a runtime port override but is no longer used — the port is a
+    // build-time constant. A stale value from a previous session would
+    // otherwise be ignored harmlessly, but better to clear it than to
+    // leave dead state lying around.
+    if (typeof localStorage !== 'undefined') {
+        try { localStorage.removeItem('sensei:port'); } catch { /* shim */ }
+    }
+
     // Wire up the Tauri native menu → SvelteKit navigation bridge. The
     // Rust side emits `open-logs` (one specific shortcut) and
     // `dev-navigate` (any view-menu item) events; we just translate them

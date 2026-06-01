@@ -136,11 +136,13 @@ describe('AppState', () => {
     expect(state.dismissedSuggestions).toEqual(['s1', 's2']);
   });
 
-  // ── setPort ────────────────────────────────────────────────
+  // ── port is a readonly build-time constant ─────────────────
 
-  it('setPort updates port', async () => {
-    await state.setPort(9999);
-    expect(state.port).toBe(9999);
+  it('port is a readonly build-time constant (no runtime override)', () => {
+    // `setPort` and the localStorage `sensei:port` override are gone —
+    // a stale value from a previous session was silently routing every
+    // fetch to the wrong port. Port comes solely from DEFAULT_PORT now.
+    expect(state.port).toBe(7744);
   });
 
   // ── setConfig ──────────────────────────────────────────────
@@ -289,14 +291,14 @@ describe('AppState', () => {
     expect(sessionStore.get('sensei:health')).toBe('ready');
   });
 
-  it('reset preserves sensei:app-version so a staged upgrade is not skipped (L7)', async () => {
-    storage.set('sensei:port', '7745');
+  it('reset preserves sensei:app-version so a staged upgrade is not skipped', async () => {
+    // `sensei:port` is no longer a recognised key — port is a build-time
+    // constant now, no longer read from or written to localStorage.
     storage.set('sensei:app-version', '0.2.13');
     storage.set('sensei:setup-complete', '1');
     storage.set('something-else', 'x');
     await state.reset();
-    expect(storage.get('sensei:port')).toBe('7745');           // already preserved
-    expect(storage.get('sensei:app-version')).toBe('0.2.13');  // NEW — must survive reset
+    expect(storage.get('sensei:app-version')).toBe('0.2.13');  // must survive reset
     // non-protected keys can still be cleared
     expect(storage.has('sensei:setup-complete')).toBe(false);
     expect(storage.has('something-else')).toBe(false);
