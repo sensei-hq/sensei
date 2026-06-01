@@ -45,10 +45,12 @@
   /** Coarse, e2e-friendly view of the family's overall state.
    *  Drives data-configure-state for selectors in the playwright suite —
    *  the chip strip carries the fine-grained truth, this attribute is
-   *  the headline summary. */
+   *  the headline summary.
+   *  In-flight `configuring` wins regardless of `enabled` so an active
+   *  remove (which clears the switch first) still surfaces progress. */
   const configureState = $derived.by(() => {
-    if (!enabled) return 'idle';
     if (parts.some(p => p.status === 'configuring')) return 'configuring';
+    if (!enabled) return 'idle';
     if (parts.some(p => p.status === 'error'))       return 'failed';
     if (parts.length && parts.every(p => p.status === 'done')) return 'done';
     return 'idle';
@@ -100,7 +102,7 @@
 
     <div class="meta">
       {#if status.text}
-        <span class="status status-{status.tone}">
+        <span class="status mono status-{status.tone}">
           {#if status.icon === 'spinner'}
             <svg class="spin" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
               <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
@@ -136,12 +138,17 @@
 
   <div class="chips">
     {#each parts as p (p.id)}
+      <!-- Status is the source of truth for the chip's visual state.
+           Earlier this clamped to 'idle' when enabled=false, but that
+           hid the mid-flight spinner during removal (toggle off →
+           configuring → idle). The slice keeps partStatus correct
+           across all flows, so trust it directly. -->
       <span
-        class="chip chip-{enabled ? p.status : 'idle'}"
+        class="chip chip-{p.status}"
         data-part={p.id}
-        data-status={enabled ? p.status : 'idle'}
+        data-status={p.status}
       >
-        {#if !enabled || p.status === 'idle'}
+        {#if p.status === 'idle'}
           <span class="chip-ring" aria-hidden="true"></span>
         {:else if p.status === 'configuring'}
           <svg class="spin" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
