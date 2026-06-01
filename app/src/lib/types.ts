@@ -82,12 +82,39 @@ export interface AssistantStatus {
   config_path: string;
 }
 
+/** Capability area an Assistant configures — drives the per-part chips
+ *  on each AssistantCard. Stable across detect() so chip order doesn't
+ *  flicker when variants come and go. */
+export interface AssistantPart {
+  id: string;
+  label: string;
+}
+
 export interface AssistantFamily {
   family: string;
   name: string;
   members: AssistantStatus[];
   installed: boolean;
   config_path: string;
+  /** Union of parts across every variant in the family, in canonical order. */
+  parts: AssistantPart[];
+}
+
+/** Per-part status emitted by the daemon over SSE. Matches the wizard's
+ *  AssistantCard chip vocabulary. `idle` is the resting / unconfigured
+ *  state — the daemon emits it after a successful remove(), and the app
+ *  defaults to it when no event has arrived for a part yet. */
+export type AssistantPartStatus = 'idle' | 'configuring' | 'done' | 'error';
+
+/** Payload of StateEvent { entity: "assistant" } — one event per
+ *  family×part transition. The aggregated family-level error shown under
+ *  the chip strip is derived on the client by collecting messages from
+ *  parts whose status is `error`. */
+export interface AssistantPartEvent {
+  family: string;
+  part: string;
+  status: AssistantPartStatus;
+  error?: string;
 }
 
 export interface AssistantConfigureResult {
