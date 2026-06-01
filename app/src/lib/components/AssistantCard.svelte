@@ -42,6 +42,23 @@
   const busy = $derived(enabled && parts.some(p => p.status === 'configuring'));
   const showError = $derived(enabled && !!error && !busy);
 
+  /** Coarse, e2e-friendly view of the family's overall state.
+   *  Drives data-configure-state for selectors in the playwright suite —
+   *  the chip strip carries the fine-grained truth, this attribute is
+   *  the headline summary. */
+  const configureState = $derived.by(() => {
+    if (!enabled) return 'idle';
+    if (parts.some(p => p.status === 'configuring')) return 'configuring';
+    if (parts.some(p => p.status === 'error'))       return 'failed';
+    if (parts.length && parts.every(p => p.status === 'done')) return 'done';
+    return 'idle';
+  });
+
+  /** True iff the user-visible "configured ✓" badge would show. */
+  const configured = $derived(
+    enabled && parts.length > 0 && parts.every(p => p.status === 'done')
+  );
+
   /** Direct click on the switch button. Disabled (no-op) while the
    *  family is busy or has no installed variants — the daemon would
    *  reject either path anyway. */
@@ -71,6 +88,8 @@
   data-testid={`assistant-card-${id}`}
   data-found={found}
   data-enabled={enabled}
+  data-configure-state={configureState}
+  data-configured={configured}
 >
   <div class="header">
     <div class="logo-tile" class:dim={!enabled && found}>
@@ -103,14 +122,14 @@
       <button
         type="button"
         class="switch"
-        class:switch-on={enabled}
+        class:on={enabled}
         disabled={!found || busy}
         role="switch"
         aria-checked={enabled}
         aria-label={`Enable ${name}`}
         onclick={handleSwitchClick}
       >
-        <span class="switch-knob" class:switch-knob-on={enabled}></span>
+        <span class="switch-knob" class:on={enabled}></span>
       </button>
     </div>
   </div>
@@ -329,7 +348,7 @@
     cursor: default;
     opacity: 0.6;
   }
-  .switch.switch-on {
+  .switch.on {
     background: oklch(var(--color-ink-z9) / 1);
     border-color: transparent;
   }
@@ -344,7 +363,7 @@
     box-shadow: 0 1px 2px oklch(0 0 0 / 0.15);
     transition: left 180ms ease;
   }
-  .switch-knob.switch-knob-on {
+  .switch-knob.on {
     left: 18px;
   }
 </style>
