@@ -185,23 +185,50 @@
 </div>
 
 <style>
+  /* Local design tokens — mirror docs/mockups/lib/tokens.css exactly so
+     dashes / hairlines render identical to the static mockup regardless
+     of how Rokkit's `--color-surface-*` scale lands. Light defaults; the
+     `body[data-mode="dark"]` override below swaps in the dark stops. */
   .card {
+    --ac-paper:    oklch(0.975 0.008 85);
+    --ac-paper-2:  oklch(0.940 0.010 85);
+    --ac-paper-3:  oklch(0.920 0.012 85);
+    --ac-edge:     oklch(0.880 0.015 85);
+    --ac-ink:      oklch(0.210 0.012 50);
+    --ac-ink-2:    oklch(0.320 0.012 50);
+    --ac-ink-3:    oklch(0.420 0.012 50);
+    --ac-ink-4:    oklch(0.600 0.012 50);
+    --ac-accent:   oklch(0.625 0.180 35);
+    --ac-success:  oklch(0.620 0.080 160);
+    --ac-danger:   oklch(0.550 0.180 28);
+
     display: flex;
     flex-direction: column;
     gap: 11px;
     padding: 15px 18px;
-    border: var(--hairline);
+    border: 1px solid var(--ac-edge);
     border-radius: 10px;
-    background: oklch(var(--color-surface-z1) / 1);
+    background: var(--ac-paper-2);
     transition: opacity 180ms ease, background 180ms ease, border-color 180ms ease;
   }
-  /* Not-found mirrors the mockup: dashed border on transparent background,
-     using the same hairline stroke colour so the dash reads as "absence"
-     instead of an alarm chevron. */
+  /* Not-found is just dimmed — same solid hairline as found cards. */
   .card.not-found {
-    border: 1px dashed oklch(var(--color-surface-z9) / 0.08);
     background: transparent;
-    opacity: 0.55;
+    opacity: 0.6;
+  }
+
+  :global(body[data-mode="dark"]) .card {
+    --ac-paper:    oklch(0.170 0.010 50);
+    --ac-paper-2:  oklch(0.210 0.012 50);
+    --ac-paper-3:  oklch(0.250 0.012 50);
+    --ac-edge:     oklch(0.320 0.012 50);
+    --ac-ink:      oklch(0.940 0.008 85);
+    --ac-ink-2:    oklch(0.780 0.008 85);
+    --ac-ink-3:    oklch(0.600 0.010 85);
+    --ac-ink-4:    oklch(0.420 0.012 85);
+    --ac-accent:   oklch(0.700 0.150 35);
+    --ac-success:  oklch(0.720 0.090 160);
+    --ac-danger:   oklch(0.620 0.180 28);
   }
 
   .header {
@@ -214,14 +241,14 @@
     height: 34px;
     flex-shrink: 0;
     border-radius: 8px;
-    border: var(--hairline);
-    background: oklch(var(--color-surface-z0) / 1);
+    border: 1px solid var(--ac-edge);
+    background: var(--ac-paper);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: oklch(var(--color-surface-z9) / 1);
+    color: var(--ac-ink);
   }
-  .logo-tile.dim { color: oklch(var(--color-surface-z6) / 1); }
+  .logo-tile.dim { color: var(--ac-ink-2); }
 
   .title {
     font-size: 15px;
@@ -244,20 +271,19 @@
     flex-shrink: 0;
     font-family: var(--font-mono);
   }
-  .status-muted        { color: oklch(var(--color-surface-z6) / 1); }
-  .status-muted-italic { color: oklch(var(--color-surface-z6) / 1); font-style: italic; font-family: var(--font-ui); }
-  .status-accent       { color: oklch(var(--color-primary-z6) / 1); }
-  .status-success      { color: oklch(var(--color-success-z6) / 1); }
-  .status-danger       { color: oklch(var(--color-danger-z5) / 1); }
+  .status-muted        { color: var(--ac-ink-3); }
+  .status-muted-italic { color: var(--ac-ink-3); font-style: italic; font-family: var(--font-ui); }
+  .status-accent       { color: var(--ac-accent); }
+  .status-success      { color: var(--ac-success); }
+  .status-danger       { color: var(--ac-danger); }
 
   .chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
   }
-  /* Chips use the same low-opacity ink stroke as the card's hairline, so
-     the border reads as a subtle "rim" rather than a strong outline.
-     Per-state classes only change colour — width stays 1px everywhere. */
+  /* All chips share a solid 1px edge; only colour and bg differ between
+     states (mirrors docs/mockups/lib/assistant-card.jsx CapChip skin). */
   .chip {
     display: inline-flex;
     align-items: center;
@@ -266,29 +292,26 @@
     font-size: 11px;
     padding: 3px 10px 3px 8px;
     border-radius: 999px;
-    border: 1px solid oklch(var(--color-surface-z9) / 0.08);
+    border: 1px solid var(--ac-edge);
     background: transparent;
-    color: oklch(var(--color-surface-z6) / 1);
+    color: var(--ac-ink-4);
     white-space: nowrap;
     transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
   }
-  .chip-idle {
-    border-style: dashed;
-  }
   .chip-configuring {
-    color: oklch(var(--color-primary-z6) / 1);
-    background: oklch(var(--color-surface-z2) / 1);
-    border-color: oklch(var(--color-primary-z6) / 0.30);
+    color: var(--ac-accent);
+    background: var(--ac-paper-3);
+    border-color: var(--ac-edge);
   }
   .chip-done {
-    color: oklch(var(--color-success-z6) / 1);
-    background: oklch(var(--color-success-z6) / 0.10);
-    border-color: oklch(var(--color-success-z6) / 0.30);
+    color: var(--ac-success);
+    background: oklch(0.620 0.080 160 / 0.10);
+    border-color: oklch(0.620 0.080 160 / 0.30);
   }
   .chip-error {
-    color: oklch(var(--color-danger-z5) / 1);
-    background: oklch(var(--color-danger-z5) / 0.10);
-    border-color: oklch(var(--color-danger-z5) / 0.32);
+    color: var(--ac-danger);
+    background: oklch(0.550 0.180 28 / 0.10);
+    border-color: oklch(0.550 0.180 28 / 0.32);
   }
   .chip-ring {
     width: 8px;
@@ -304,11 +327,11 @@
     gap: 8px;
     padding: 9px 11px;
     border-radius: 7px;
-    background: oklch(var(--color-danger-z5) / 0.10);
-    border: 1px solid oklch(var(--color-danger-z5) / 0.32);
+    background: oklch(0.550 0.180 28 / 0.10);
+    border: 1px solid oklch(0.550 0.180 28 / 0.32);
   }
   .error-icon {
-    color: oklch(var(--color-danger-z5) / 1);
+    color: var(--ac-danger);
     margin-top: 1px;
     flex-shrink: 0;
   }
@@ -316,16 +339,16 @@
     min-width: 0;
     flex: 1;
     font-size: 12.5px;
-    color: oklch(var(--color-surface-z7) / 1);
+    color: var(--ac-ink-2);
     line-height: 1.45;
   }
   .error-message {
-    color: oklch(var(--color-danger-z5) / 1);
+    color: var(--ac-danger);
   }
   .retry {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: oklch(var(--color-primary-z6) / 1);
+    color: var(--ac-accent);
     background: transparent;
     border: 0;
     cursor: pointer;
@@ -353,16 +376,16 @@
     padding: 0;
     position: relative;
     cursor: pointer;
-    border: 1px solid oklch(var(--color-surface-z9) / 0.08);
-    background: oklch(var(--color-surface-z2) / 1);
-    transition: background 180ms ease, opacity 180ms ease;
+    border: 1px solid var(--ac-edge);
+    background: var(--ac-paper-3);
+    transition: background 180ms ease, opacity 180ms ease, border-color 180ms ease;
   }
   .switch:disabled {
     cursor: default;
     opacity: 0.6;
   }
   .switch.on {
-    background: oklch(var(--color-ink-z9) / 1);
+    background: var(--ac-ink);
     border-color: transparent;
   }
   .switch-knob {
@@ -372,7 +395,7 @@
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: oklch(var(--color-surface-z0) / 1);
+    background: var(--ac-paper);
     box-shadow: 0 1px 2px oklch(0 0 0 / 0.15);
     transition: left 180ms ease;
   }
