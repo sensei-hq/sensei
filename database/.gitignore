@@ -1,1 +1,7 @@
 .env.local
+
+# Personal capture — staged for import via `dbd import hook_events …`. May
+# contain session payloads (prompts, file paths, tool output) and varies
+# per developer, so it must never be committed. The repo placeholder lives
+# at ~/.sensei/seed/hook_events.jsonl on machines that have captured data.
+import/staging/hook_events.jsonl
