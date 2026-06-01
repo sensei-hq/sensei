@@ -106,6 +106,37 @@ pub struct ScanProjectFolder {
     pub status: FolderStatus,
 }
 
+// ── Assistant entity ────────────────────────────────────────────────────────
+
+/// Status of a single assistant part during a configure or remove run.
+/// Mirrors the `PART_STATUS` vocabulary the wizard's AssistantCard reads.
+/// `Idle` is the resting/empty state — the daemon never emits it (the UI
+/// derives "idle" from a missing or pre-configure state) but it's part of
+/// the enum so the type round-trips cleanly through serde with the app.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantPartStatus {
+    Idle,
+    Configuring,
+    Done,
+    Error,
+}
+
+/// Per-part status transition for one family in flight. The daemon emits
+/// one event per (family × part × transition); the app's AssistantState
+/// reducer keys on `family + part` to update its chip.
+#[derive(Debug, Clone, Serialize)]
+pub struct AssistantPartEvent {
+    pub family: String,
+    pub part: String,
+    pub status: AssistantPartStatus,
+    /// Per-part error message when `status == Error`. `None` otherwise.
+    /// The aggregated family-level error (shown under the chips) is
+    /// derived on the client by joining whichever parts hold messages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 // ── Activity entity ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -175,6 +206,14 @@ impl StateEvent {
         Self {
             action: Action::Add,
             entity: "activity".into(),
+            data: serde_json::to_value(&event).unwrap(),
+        }
+    }
+
+    pub fn assistant_part(event: AssistantPartEvent) -> Self {
+        Self {
+            action: Action::Update,
+            entity: "assistant".into(),
             data: serde_json::to_value(&event).unwrap(),
         }
     }

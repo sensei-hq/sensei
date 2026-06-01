@@ -10,7 +10,8 @@ use super::{cache_dir, home, plugin_dir, sensei_dir, RemoveRequest, RemoveResult
 /// Data directory (~/.sensei/) deletion is handled by the CLI after stopping the daemon.
 pub fn remove(req: &RemoveRequest) -> RemoveResult {
     let mut result = RemoveResult {
-        acps_removed: crate::assistants::remove_selected(&[]),
+        // CLI uninstall path — no SSE consumer.
+        acps_removed: crate::assistants::remove_selected(&[], None),
         ..Default::default()
     };
 
