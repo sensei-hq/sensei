@@ -152,6 +152,15 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         Arc::new(state.pg.clone()),
     );
 
+    // Re-enqueue tasks for folders left in a non-terminal state by a
+    // previous daemon session. Must run after workers and the progress
+    // emitter are live so resumed tasks get picked up immediately and
+    // their progress is broadcast to subscribers.
+    let resumed = crate::tasks::resume::resume_pending_scans(&task_queue, &state.pg).await;
+    if resumed > 0 {
+        tracing::info!("startup: resumed {} pending folder scan(s)", resumed);
+    }
+
     spawn_root_watchers(&state, task_queue.clone()).await;
 
     (create_router(state), task_queue)

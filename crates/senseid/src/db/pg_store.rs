@@ -699,6 +699,32 @@ impl PgStore {
         Ok(())
     }
 
+    /// List folders that were registered by a scan but never finished
+    /// indexing — i.e. status is `discovered` (scan ran, ProcessGitFolder
+    /// hadn't started) or `queued` (mid-flight when the daemon stopped).
+    /// `indexing`, `indexed`, `failed`, and `deferred` are excluded.
+    ///
+    /// Called once at daemon startup to rebuild the in-memory queue, which
+    /// otherwise loses every task on restart.
+    pub async fn list_pending_folders(&self) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT id, root_id, kind::text, name, abs_path, status::text \
+             FROM sensei.folders \
+             WHERE status IN ('discovered'::sensei.folder_status, 'queued'::sensei.folder_status) \
+             ORDER BY abs_path"
+        ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id, root_id, kind, name, abs_path, status)| {
+            serde_json::json!({
+                "id": id,
+                "root_id": root_id,
+                "kind": kind,
+                "name": name,
+                "abs_path": abs_path,
+                "status": status,
+            })
+        }).collect())
+    }
+
     /// Count folders belonging to a project that have not yet reached a terminal
     /// index state. Returns 0 when all folders are `indexed` or `failed`.
     pub async fn count_unindexed_folders(&self, project_id: uuid::Uuid) -> Result<i64, String> {
@@ -2429,6 +2455,59 @@ mod tests {
         let folders = s.list_folders_by_root(&rid).await.unwrap();
         assert!(folders.iter().any(|f| f["name"] == "myrepo"));
         s.delete_folder_tree(&fid).await.unwrap();
+        s.remove_watch_root(&rid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_pending_folders_returns_only_non_terminal_status() {
+        let s = pg_store().await;
+        let root_path = format!("/_test/pending_resume_{}", uuid::Uuid::new_v4().simple());
+        let rid = s.add_watch_root(&root_path, "pending_root", &serde_json::json!([])).await.unwrap();
+
+        // Seed one folder per status. Default is 'discovered'; the rest are
+        // forced with an explicit UPDATE because upsert_folder has no status
+        // parameter and `mark_folder_indexed` is the only writer of `indexed`.
+        for (status, suffix) in [
+            ("discovered", "a"),
+            ("queued",     "b"),
+            ("indexing",   "c"),
+            ("indexed",    "d"),
+            ("failed",     "e"),
+            ("deferred",   "f"),
+        ] {
+            let name = format!("repo_{}", suffix);
+            let abs_path = format!("{}/{}", root_path, name);
+            let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
+            sqlx_core::query::query(
+                "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1"
+            ).bind(fid).bind(status).execute(s.pool()).await.unwrap();
+        }
+
+        let rows = s.list_pending_folders().await.unwrap();
+        let ours: Vec<_> = rows.iter()
+            .filter(|r| r["abs_path"].as_str().unwrap_or("").starts_with(&root_path))
+            .collect();
+
+        // Only `discovered` and `queued` are non-terminal in the resume sense.
+        // `indexing` would mean a worker is still running, which can't be true
+        // at startup since the in-memory queue was just created.
+        let statuses: std::collections::BTreeSet<&str> = ours.iter()
+            .map(|r| r["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            statuses,
+            std::collections::BTreeSet::from(["discovered", "queued"]),
+            "expected only discovered+queued, got {:?}", statuses
+        );
+
+        // Resume needs enough info to enqueue ProcessGitFolder: id, kind, abs_path.
+        for r in &ours {
+            assert!(r["id"].is_string(),       "row missing id: {:?}", r);
+            assert!(r["kind"].is_string(),     "row missing kind: {:?}", r);
+            assert!(r["abs_path"].is_string(), "row missing abs_path: {:?}", r);
+        }
+
+        // cleanup — removing the watch root cascades to folders.
         s.remove_watch_root(&rid).await.unwrap();
     }
 
