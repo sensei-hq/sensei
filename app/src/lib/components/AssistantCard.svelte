@@ -190,13 +190,16 @@
     flex-direction: column;
     gap: 11px;
     padding: 15px 18px;
-    border: 1px solid oklch(var(--color-surface-z3) / 1);
+    border: var(--hairline);
     border-radius: 10px;
     background: oklch(var(--color-surface-z1) / 1);
     transition: opacity 180ms ease, background 180ms ease, border-color 180ms ease;
   }
+  /* Not-found mirrors the mockup: dashed border on transparent background,
+     using the same hairline stroke colour so the dash reads as "absence"
+     instead of an alarm chevron. */
   .card.not-found {
-    border-style: dashed;
+    border: 1px dashed oklch(var(--color-surface-z9) / 0.08);
     background: transparent;
     opacity: 0.55;
   }
@@ -211,7 +214,7 @@
     height: 34px;
     flex-shrink: 0;
     border-radius: 8px;
-    border: 1px solid oklch(var(--color-surface-z3) / 1);
+    border: var(--hairline);
     background: oklch(var(--color-surface-z0) / 1);
     display: inline-flex;
     align-items: center;
@@ -252,6 +255,9 @@
     flex-wrap: wrap;
     gap: 6px;
   }
+  /* Chips use the same low-opacity ink stroke as the card's hairline, so
+     the border reads as a subtle "rim" rather than a strong outline.
+     Per-state classes only change colour — width stays 1px everywhere. */
   .chip {
     display: inline-flex;
     align-items: center;
@@ -260,7 +266,7 @@
     font-size: 11px;
     padding: 3px 10px 3px 8px;
     border-radius: 999px;
-    border: 1px solid oklch(var(--color-surface-z3) / 1);
+    border: 1px solid oklch(var(--color-surface-z9) / 0.08);
     background: transparent;
     color: oklch(var(--color-surface-z6) / 1);
     white-space: nowrap;
@@ -272,7 +278,7 @@
   .chip-configuring {
     color: oklch(var(--color-primary-z6) / 1);
     background: oklch(var(--color-surface-z2) / 1);
-    border-color: oklch(var(--color-primary-z4) / 0.5);
+    border-color: oklch(var(--color-primary-z6) / 0.30);
   }
   .chip-done {
     color: oklch(var(--color-success-z6) / 1);
@@ -347,8 +353,8 @@
     padding: 0;
     position: relative;
     cursor: pointer;
-    border: 1px solid oklch(var(--color-surface-z3) / 1);
-    background: oklch(var(--color-surface-z3) / 1);
+    border: 1px solid oklch(var(--color-surface-z9) / 0.08);
+    background: oklch(var(--color-surface-z2) / 1);
     transition: background 180ms ease, opacity 180ms ease;
   }
   .switch:disabled {
