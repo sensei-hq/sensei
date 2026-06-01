@@ -1189,10 +1189,10 @@ createdb sensei_test";
         let calls = Arc::new(Mutex::new(Vec::<String>::new()));
         let cc = calls.clone();
         let terminal = p.resolve(&current, "0.0.0-test", &|ev| {
-            if let HealthEvent::Component { id, patch } = &ev {
-                if matches!(patch.status, Some(ComponentStatus::Installing)) {
-                    cc.lock().unwrap().push(id.clone());
-                }
+            if let HealthEvent::Component { id, patch } = &ev
+                && matches!(patch.status, Some(ComponentStatus::Installing))
+            {
+                cc.lock().unwrap().push(id.clone());
             }
         });
         assert_eq!(terminal.status, HealthStatus::Ok,

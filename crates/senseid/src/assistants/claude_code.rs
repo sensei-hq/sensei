@@ -28,14 +28,22 @@ fn installed_plugins_manifest() -> PathBuf {
 /// cleanup so the plugin install can re-register cleanly.
 const SENSEI_MCP_KEYS: &[&str] = &["sensei"];
 
+/// Filenames (basename match) the daemon recognises as legacy sensei hook
+/// dispatchers — installed by previous versions of the daemon directly into
+/// `~/.claude/settings.json` before the plugin migration. These are the ONLY
+/// commands `clean_legacy_sensei_hooks` will strip; anything else with
+/// "sensei" in the path is left alone so user-authored hooks don't get
+/// removed by mistake.
+const LEGACY_SENSEI_HOOK_BASENAMES: &[&str] = &["sensei-hook.ts", "sensei-hook-dev.ts"];
+
 /// Remove any sensei-keyed entries from a user/project `mcp.json`-shaped file.
 /// Writes a `.bak` next to the file before editing so the original is
 /// recoverable. Returns the list of keys removed. No-op (and no `.bak`
 /// written) when the file is missing or carries no sensei keys.
 ///
-/// This is the auto-cleanup gate that lets `configure()` heal stale state
-/// from prior install attempts without the user having to edit JSON.
-fn clean_user_mcp_json(path: &Path) -> Result<Vec<String>, String> {
+/// Path-agnostic — works for `~/.claude/mcp.json` (user scope) and
+/// `<project>/.mcp.json` (project scope) alike.
+fn clean_sensei_from_mcp_file(path: &Path) -> Result<Vec<String>, String> {
     if !path.exists() {
         return Ok(vec![]);
     }
@@ -74,6 +82,109 @@ fn clean_user_mcp_json(path: &Path) -> Result<Vec<String>, String> {
 
     info!(path = %path.display(), removed = ?removed, "cleaned stale sensei mcp entries");
     Ok(removed)
+}
+
+/// Strip hook entries whose command basename matches a known legacy sensei
+/// hook dispatcher (`sensei-hook.ts`, `sensei-hook-dev.ts`) from a Claude
+/// Code `settings.json`-shaped file. These were installed by versions of
+/// the daemon that wrote directly into user settings before the plugin
+/// migration; they survive `claude plugin uninstall sensei` because the
+/// plugin uninstaller only touches `installed_plugins.json`.
+///
+/// Behaviour mirrors `clean_sensei_from_mcp_file`: writes a `.bak` before
+/// any destructive edit, no-op (no `.bak`) when nothing to strip, returns
+/// the list of hook event names where at least one matcher group was
+/// modified or removed.
+fn clean_legacy_sensei_hooks(settings_path: &Path) -> Result<Vec<String>, String> {
+    if !settings_path.exists() {
+        return Ok(vec![]);
+    }
+    let original = std::fs::read_to_string(settings_path)
+        .map_err(|e| format!("read {}: {}", settings_path.display(), e))?;
+    let mut value: serde_json::Value = json5::from_str(&original)
+        .map_err(|e| format!("parse {}: {}", settings_path.display(), e))?;
+
+    let Some(hooks_obj) = value.get_mut("hooks").and_then(|h| h.as_object_mut()) else {
+        return Ok(vec![]);
+    };
+
+    let mut stripped_events: Vec<String> = Vec::new();
+    let event_names: Vec<String> = hooks_obj.keys().cloned().collect();
+    for event_name in event_names {
+        let Some(groups) = hooks_obj.get_mut(&event_name).and_then(|g| g.as_array_mut()) else {
+            continue;
+        };
+        let mut modified = false;
+        groups.retain_mut(|group| {
+            let Some(group_obj) = group.as_object_mut() else { return true; };
+            let Some(inner_hooks) = group_obj.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
+                return true;
+            };
+            let before = inner_hooks.len();
+            inner_hooks.retain(|hook| {
+                let cmd = hook.get("command").and_then(|c| c.as_str()).unwrap_or("");
+                let basename = std::path::Path::new(cmd)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                !LEGACY_SENSEI_HOOK_BASENAMES.contains(&basename)
+            });
+            if inner_hooks.len() != before { modified = true; }
+            // Drop the matcher group when its only hooks were legacy entries.
+            !inner_hooks.is_empty()
+        });
+        if modified {
+            stripped_events.push(event_name.clone());
+        }
+        if groups.is_empty() {
+            hooks_obj.remove(&event_name);
+        }
+    }
+
+    if stripped_events.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let backup = settings_path.with_extension(
+        settings_path.extension().and_then(|e| e.to_str()).map(|e| format!("{}.bak", e))
+            .unwrap_or_else(|| "bak".into()),
+    );
+    std::fs::write(&backup, &original)
+        .map_err(|e| format!("write backup {}: {}", backup.display(), e))?;
+
+    let serialized = serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("serialise {}: {}", settings_path.display(), e))?;
+    std::fs::write(settings_path, serialized)
+        .map_err(|e| format!("write {}: {}", settings_path.display(), e))?;
+
+    info!(path = %settings_path.display(), events = ?stripped_events, "cleaned legacy sensei hook entries");
+    Ok(stripped_events)
+}
+
+/// Delete any legacy sensei hook script files left under `<home>/.claude/hooks/`.
+/// Returns the paths actually removed. No-op when the directory or files
+/// are missing. Failing to remove a single file does not abort — the rest
+/// of remove() should still run.
+fn delete_legacy_sensei_hook_files(home_dir: &Path) -> Vec<PathBuf> {
+    let mut deleted = Vec::new();
+    let hooks_dir = home_dir.join(".claude/hooks");
+    for basename in LEGACY_SENSEI_HOOK_BASENAMES {
+        let p = hooks_dir.join(basename);
+        if p.exists() && std::fs::remove_file(&p).is_ok() {
+            deleted.push(p);
+        }
+    }
+    deleted
+}
+
+/// Read the daemon's tracked project list from `~/.sensei/projects.json`.
+/// The file is a JSON array of absolute path strings; missing file,
+/// malformed JSON, or wrong-shaped data all return an empty Vec rather
+/// than an error — the remove flow must not abort on a corrupted index.
+fn read_tracked_projects(projects_json: &Path) -> Vec<PathBuf> {
+    let Ok(s) = std::fs::read_to_string(projects_json) else { return vec![] };
+    let Ok(paths) = serde_json::from_str::<Vec<String>>(&s) else { return vec![] };
+    paths.into_iter().map(PathBuf::from).collect()
 }
 
 pub(crate) struct ClaudeCodeAssistant;
@@ -116,7 +227,7 @@ impl Assistant for ClaudeCodeAssistant {
         //    so a re-run heals the state without the user editing JSON by
         //    hand.
         let user_mcp = home().join(".claude/mcp.json");
-        match clean_user_mcp_json(&user_mcp) {
+        match clean_sensei_from_mcp_file(&user_mcp) {
             Ok(removed) if !removed.is_empty() => {
                 info!(removed = ?removed, "configure: cleaned stale sensei entries from ~/.claude/mcp.json");
             }
@@ -205,6 +316,45 @@ impl Assistant for ClaudeCodeAssistant {
         {
             Ok(out) => log_subprocess("claude plugin marketplace remove sensei-marketplace", &out),
             Err(e) => warn!(error = %e, "remove: failed to spawn claude plugin marketplace remove"),
+        }
+
+        // Strip the sensei MCP entry from every place we might have written it.
+        // `claude plugin uninstall` only touches `installed_plugins.json`; the
+        // plugin's bundled MCP comes back to life on the next install via the
+        // plugin manifest, so the actual leak risk is stale entries from
+        // pre-plugin installs (`claude mcp add sensei …`) that survive at
+        // user scope and at each registered project's `.mcp.json`.
+        let home_dir = home();
+        let user_mcp = home_dir.join(".claude/mcp.json");
+        if let Ok(removed) = clean_sensei_from_mcp_file(&user_mcp)
+            && !removed.is_empty()
+        {
+            info!(removed = ?removed, path = %user_mcp.display(),
+                "remove: cleaned sensei from user mcp.json");
+        }
+        let sensei_dir = crate::paths::sensei_dir();
+        for project in read_tracked_projects(&sensei_dir.join("projects.json")) {
+            let project_mcp = project.join(".mcp.json");
+            if let Ok(removed) = clean_sensei_from_mcp_file(&project_mcp)
+                && !removed.is_empty()
+            {
+                info!(removed = ?removed, path = %project_mcp.display(),
+                    "remove: cleaned sensei from project .mcp.json");
+            }
+        }
+
+        // Scrub legacy `sensei-hook[-dev].ts` references from settings.json,
+        // then delete the dispatcher files themselves. These predate the
+        // plugin migration and otherwise keep firing on every Claude session.
+        let settings = home_dir.join(".claude/settings.json");
+        if let Ok(stripped) = clean_legacy_sensei_hooks(&settings)
+            && !stripped.is_empty()
+        {
+            info!(events = ?stripped, "remove: cleaned legacy sensei hook entries from settings.json");
+        }
+        let deleted = delete_legacy_sensei_hook_files(&home_dir);
+        if !deleted.is_empty() {
+            info!(files = ?deleted, "remove: deleted legacy sensei hook dispatcher files");
         }
 
         plugin_removed
@@ -345,7 +495,7 @@ mod tests {
         assert!(!verify_plugin_installed(&manifest, "sensei"));
     }
 
-    // ── clean_user_mcp_json: auto-cleanup of stale sensei MCP entries ────────
+    // ── clean_sensei_from_mcp_file: auto-cleanup of stale sensei MCP entries ────────
     //
     // ~/.claude/mcp.json accumulates broken `sensei` entries from prior
     // install attempts (e.g. command="bun /old/path" pointing at a moved
@@ -354,7 +504,7 @@ mod tests {
     // `sensei` MCP key, so removing any entry under that key is authorised.
 
     #[test]
-    fn clean_user_mcp_json_removes_sensei_entry() {
+    fn clean_sensei_from_mcp_file_removes_sensei_entry() {
         let tmp = make_tmp_home();
         let mcp = tmp.path().join("mcp.json");
         std::fs::write(&mcp, r#"{
@@ -364,7 +514,7 @@ mod tests {
             }
         }"#).unwrap();
 
-        let removed = clean_user_mcp_json(&mcp).unwrap();
+        let removed = clean_sensei_from_mcp_file(&mcp).unwrap();
         assert_eq!(removed.iter().map(|s| s.as_str()).collect::<Vec<_>>(), vec!["sensei"]);
 
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
@@ -373,13 +523,13 @@ mod tests {
     }
 
     #[test]
-    fn clean_user_mcp_json_writes_backup_before_editing() {
+    fn clean_sensei_from_mcp_file_writes_backup_before_editing() {
         let tmp = make_tmp_home();
         let mcp = tmp.path().join("mcp.json");
         let original = r#"{"mcpServers":{"sensei":{"command":"sensei-mcp"}}}"#;
         std::fs::write(&mcp, original).unwrap();
 
-        clean_user_mcp_json(&mcp).unwrap();
+        clean_sensei_from_mcp_file(&mcp).unwrap();
 
         let backup = mcp.with_extension("json.bak");
         assert!(backup.exists(), ".bak must be written before any destructive edit");
@@ -388,12 +538,12 @@ mod tests {
     }
 
     #[test]
-    fn clean_user_mcp_json_no_op_when_no_sensei_entries() {
+    fn clean_sensei_from_mcp_file_no_op_when_no_sensei_entries() {
         let tmp = make_tmp_home();
         let mcp = tmp.path().join("mcp.json");
         std::fs::write(&mcp, r#"{"mcpServers":{"playwright":{"command":"npx"}}}"#).unwrap();
 
-        let removed = clean_user_mcp_json(&mcp).unwrap();
+        let removed = clean_sensei_from_mcp_file(&mcp).unwrap();
         assert!(removed.is_empty());
         // No backup when nothing changed
         let backup = mcp.with_extension("json.bak");
@@ -401,11 +551,218 @@ mod tests {
     }
 
     #[test]
-    fn clean_user_mcp_json_no_op_when_file_missing() {
+    fn clean_sensei_from_mcp_file_no_op_when_file_missing() {
         let tmp = make_tmp_home();
         let mcp = tmp.path().join("does-not-exist.json");
-        let removed = clean_user_mcp_json(&mcp).unwrap();
+        let removed = clean_sensei_from_mcp_file(&mcp).unwrap();
         assert!(removed.is_empty());
+    }
+
+    // ── clean_legacy_sensei_hooks: scrub pre-plugin sensei-hook[-dev].ts entries
+    //
+    // Older daemon versions installed hooks directly into ~/.claude/settings.json
+    // pointing at ~/.claude/hooks/sensei-hook(-dev).ts. `claude plugin uninstall`
+    // doesn't touch settings.json, so those entries kept firing on every Claude
+    // session after the plugin migration. These tests pin the cleanup behaviour.
+
+    #[test]
+    fn clean_legacy_sensei_hooks_strips_dev_ts_entries() {
+        let tmp = make_tmp_home();
+        let settings = tmp.path().join("settings.json");
+        std::fs::write(&settings, r#"{
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [
+                        { "type": "command", "command": "/Users/Jerry/.claude/hooks/sensei-hook-dev.ts" }
+                    ]
+                }],
+                "PreToolUse": [{
+                    "hooks": [
+                        { "type": "command", "command": "/some/other/hook.sh" }
+                    ]
+                }]
+            }
+        }"#).unwrap();
+
+        let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
+        assert_eq!(stripped, vec!["SessionStart".to_string()]);
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert!(v["hooks"]["SessionStart"].is_null(),
+            "SessionStart should be removed entirely (had only legacy hook)");
+        assert!(v["hooks"]["PreToolUse"].is_array(),
+            "PreToolUse should survive (no legacy entries)");
+    }
+
+    #[test]
+    fn clean_legacy_sensei_hooks_strips_release_ts_too() {
+        let tmp = make_tmp_home();
+        let settings = tmp.path().join("settings.json");
+        std::fs::write(&settings, r#"{
+            "hooks": {
+                "PostToolUse": [{
+                    "hooks": [
+                        { "type": "command", "command": "/Users/Jerry/.claude/hooks/sensei-hook.ts" }
+                    ]
+                }]
+            }
+        }"#).unwrap();
+
+        let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
+        assert_eq!(stripped, vec!["PostToolUse".to_string()]);
+    }
+
+    #[test]
+    fn clean_legacy_sensei_hooks_preserves_unrelated_hooks_in_same_group() {
+        // A matcher group with both a legacy entry and a user-authored hook
+        // should keep the user hook and drop only the legacy one.
+        let tmp = make_tmp_home();
+        let settings = tmp.path().join("settings.json");
+        std::fs::write(&settings, r#"{
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [
+                        { "type": "command", "command": "/Users/Jerry/.claude/hooks/sensei-hook-dev.ts" },
+                        { "type": "command", "command": "/Users/Jerry/.claude/hooks/my-custom.sh" }
+                    ]
+                }]
+            }
+        }"#).unwrap();
+
+        let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
+        assert_eq!(stripped, vec!["SessionStart".to_string()]);
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        let groups = v["hooks"]["SessionStart"].as_array().expect("SessionStart group survives");
+        assert_eq!(groups.len(), 1);
+        let inner = groups[0]["hooks"].as_array().unwrap();
+        assert_eq!(inner.len(), 1, "user hook survives");
+        assert_eq!(inner[0]["command"], "/Users/Jerry/.claude/hooks/my-custom.sh");
+    }
+
+    #[test]
+    fn clean_legacy_sensei_hooks_no_op_when_no_legacy_entries() {
+        let tmp = make_tmp_home();
+        let settings = tmp.path().join("settings.json");
+        let original = r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/x/y.sh"}]}]}}"#;
+        std::fs::write(&settings, original).unwrap();
+
+        let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
+        assert!(stripped.is_empty());
+        let backup = settings.with_extension("json.bak");
+        assert!(!backup.exists(),
+            "no .bak should be written when nothing was stripped");
+    }
+
+    #[test]
+    fn clean_legacy_sensei_hooks_no_op_when_file_missing() {
+        let tmp = make_tmp_home();
+        let settings = tmp.path().join("nope.json");
+        let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
+        assert!(stripped.is_empty());
+    }
+
+    #[test]
+    fn clean_legacy_sensei_hooks_writes_bak_before_destructive_write() {
+        let tmp = make_tmp_home();
+        let settings = tmp.path().join("settings.json");
+        let original = r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/x/sensei-hook-dev.ts"}]}]}}"#;
+        std::fs::write(&settings, original).unwrap();
+
+        clean_legacy_sensei_hooks(&settings).unwrap();
+
+        let backup = settings.with_extension("json.bak");
+        assert!(backup.exists(), ".bak must exist after destructive edit");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), original,
+            "backup must mirror original");
+    }
+
+    #[test]
+    fn clean_legacy_sensei_hooks_leaves_user_named_sensei_hooks_alone() {
+        // A user-authored hook with "sensei" anywhere in the path but a
+        // basename that doesn't exactly match one of the legacy filenames
+        // must NOT be removed — basename match is the only signal.
+        let tmp = make_tmp_home();
+        let settings = tmp.path().join("settings.json");
+        std::fs::write(&settings, r#"{
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [
+                        { "type": "command", "command": "/Users/Jerry/.claude/hooks/my-sensei-helper.ts" }
+                    ]
+                }]
+            }
+        }"#).unwrap();
+
+        let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
+        assert!(stripped.is_empty(),
+            "user-named files containing 'sensei' must not be touched");
+    }
+
+    // ── delete_legacy_sensei_hook_files ────────────────────────────────────
+
+    #[test]
+    fn delete_legacy_sensei_hook_files_removes_both_variants() {
+        let tmp = make_tmp_home();
+        let hooks_dir = tmp.path().join(".claude/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        std::fs::write(hooks_dir.join("sensei-hook-dev.ts"), "x").unwrap();
+        std::fs::write(hooks_dir.join("sensei-hook.ts"), "x").unwrap();
+        std::fs::write(hooks_dir.join("user-keepme.ts"), "x").unwrap();
+
+        let deleted = delete_legacy_sensei_hook_files(tmp.path());
+        assert_eq!(deleted.len(), 2);
+        assert!(!hooks_dir.join("sensei-hook-dev.ts").exists());
+        assert!(!hooks_dir.join("sensei-hook.ts").exists());
+        assert!(hooks_dir.join("user-keepme.ts").exists(),
+            "unrelated files must survive");
+    }
+
+    #[test]
+    fn delete_legacy_sensei_hook_files_no_op_when_dir_missing() {
+        let tmp = make_tmp_home();
+        let deleted = delete_legacy_sensei_hook_files(tmp.path());
+        assert!(deleted.is_empty());
+    }
+
+    // ── read_tracked_projects ──────────────────────────────────────────────
+
+    #[test]
+    fn read_tracked_projects_parses_string_array() {
+        let tmp = make_tmp_home();
+        let f = tmp.path().join("projects.json");
+        std::fs::write(&f, r#"["/path/one","/path/two"]"#).unwrap();
+        let paths = read_tracked_projects(&f);
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], PathBuf::from("/path/one"));
+        assert_eq!(paths[1], PathBuf::from("/path/two"));
+    }
+
+    #[test]
+    fn read_tracked_projects_empty_when_file_missing() {
+        let tmp = make_tmp_home();
+        let f = tmp.path().join("nope.json");
+        assert!(read_tracked_projects(&f).is_empty());
+    }
+
+    #[test]
+    fn read_tracked_projects_empty_when_wrong_shape() {
+        // projects.json is a root array; reject object shapes silently so
+        // a corrupted index doesn't abort remove().
+        let tmp = make_tmp_home();
+        let f = tmp.path().join("bad.json");
+        std::fs::write(&f, r#"{"projects":["/x"]}"#).unwrap();
+        assert!(read_tracked_projects(&f).is_empty());
+    }
+
+    #[test]
+    fn read_tracked_projects_empty_when_malformed_json() {
+        let tmp = make_tmp_home();
+        let f = tmp.path().join("bad.json");
+        std::fs::write(&f, "{ not even json").unwrap();
+        assert!(read_tracked_projects(&f).is_empty());
     }
 
 }
