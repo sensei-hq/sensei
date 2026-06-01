@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod progress;
 pub mod progress_emitter;
 pub mod processors;
+pub mod resume;
 
 use serde::{Serialize, Deserialize};
 use std::time::Instant;
