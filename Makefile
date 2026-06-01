@@ -27,6 +27,7 @@
 
 .PHONY: crates crates-debug crates-all \
         install install-service install-app install-debug \
+        db-backup \
         app-dev app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
@@ -69,6 +70,27 @@ crates-all:
 
 install: install-service install-app
 
+# Snapshot the sensei DB before any install* runs. Custom-format pg_dump
+# (-F c) is binary, compressed, and supports `pg_restore -d sensei -c …`
+# for clean+restore. No-op when the DB doesn't exist yet (first install).
+# Make's target memoisation guarantees this runs exactly once per
+# top-level `make install` invocation even though install-service/-app/
+# -debug each depend on it.
+#
+# Restore the latest backup:
+#   pg_restore -d sensei -c $$(ls -t database/backup/backup-*.dump | head -1)
+db-backup:
+	@mkdir -p database/backup
+	@if psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
+	  ts=$$(date +%Y%m%d-%H%M%S); \
+	  out="database/backup/backup-$${ts}.dump"; \
+	  echo "Backing up sensei DB to $$out..."; \
+	  pg_dump -d sensei -F c -f "$$out" && \
+	  echo "DB backed up: $$out ($$(ls -lh $$out | awk '{print $$5}'))"; \
+	else \
+	  echo "sensei DB not present — skipping backup (first-time install)"; \
+	fi
+
 # Overlay freshly-built release binaries into the brew prefix.
 #
 # `bin.install` in the brew Formula sets the destination mode to 0555
@@ -76,7 +98,7 @@ install: install-service install-app
 # the read-only file (needs write on parent dir, not on the file itself).
 # Re-sign with hardened runtime so the Tauri sidecar can spawn them (macOS
 # Sequoia Code Signing Monitor level 2 requires this).
-install-service: crates
+install-service: db-backup crates
 	@# Cold install: ensure the sensei formula is present. Try the release
 	@# tarball first; fall back to --HEAD (build from main) when no release
 	@# is tagged yet (typically right after `make bump` before CI publishes).
@@ -110,7 +132,7 @@ install-service: crates
 # Stop any running instance first — `cp -R` over a running .app would mix
 # old code with new resources, and the next launch would crash with a
 # code-signature mismatch.
-install-app:
+install-app: db-backup
 	cd app && bunx tauri build
 	@if [ -d app/src-tauri/target/release/bundle/macos/Sensei.app ]; then \
 	  if pgrep -x sensei-desktop > /dev/null; then \
@@ -126,7 +148,7 @@ install-app:
 	fi
 
 # Fast iteration variant — debug binaries into the brew prefix (no app).
-install-debug: crates-debug
+install-debug: db-backup crates-debug
 	@if pgrep -x senseid > /dev/null; then \
 	  echo "Stopping senseid (pid $$(pgrep -x senseid))..."; \
 	  pkill -x senseid; \
