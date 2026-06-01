@@ -5,15 +5,24 @@ mod mcp_file;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use tokio::sync::broadcast;
 use trait_def::Assistant;
 use claude_code::ClaudeCodeAssistant;
 use mcp_file::{McpFileAssistant, McpEntryFormat};
 use helpers::find_mcp_binary;
+use crate::api::events::{AssistantPartEvent, AssistantPartStatus, StateEvent};
 
 // ── Registry ───────────────────────────────────────────────────────────────
 
 fn all_assistants() -> Vec<Box<dyn Assistant>> {
+    // ClaudeCodeAssistant is registered before Claude Desktop so the
+    // detect_families() aggregation seeds the Claude family from the more
+    // capable variant — surface part order becomes
+    // [plugins, skills, commands, agents, mcp], which matches the
+    // user-visible install sequence (manifest → skills → commands →
+    // agents → mcp wiring). Claude Desktop's lone `mcp` part dedups in.
     vec![
+        Box::new(ClaudeCodeAssistant),
         Box::new(McpFileAssistant {
             id: "claude-desktop", name: "Claude Desktop",
             family_id: Some("claude"), family_label: Some("Claude"),
@@ -24,7 +33,6 @@ fn all_assistants() -> Vec<Box<dyn Assistant>> {
             bin_names: &[],
             home_paths: &[],
         }),
-        Box::new(ClaudeCodeAssistant),
         Box::new(McpFileAssistant {
             id: "cursor", name: "Cursor",
             family_id: None, family_label: None,
@@ -105,6 +113,15 @@ pub struct AssistantStatus {
     pub config_path: String,
 }
 
+/// A capability area an Assistant configures (e.g. plugins, skills, mcp).
+/// The wizard renders one chip per part on each AssistantCard, and the
+/// daemon emits per-part status transitions over SSE during configure().
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct AssistantPart {
+    pub id: String,
+    pub label: String,
+}
+
 /// Grouped view for the UI — one entry per family.
 #[derive(Debug, Serialize, Clone)]
 pub struct AssistantFamily {
@@ -113,6 +130,10 @@ pub struct AssistantFamily {
     pub members: Vec<AssistantStatus>,
     pub installed: bool,
     pub config_path: String,
+    /// Union of parts across every variant in the family, in declaration
+    /// order with duplicates removed. Stable across detect() so the UI
+    /// can render chips without flicker when variants come and go.
+    pub parts: Vec<AssistantPart>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -139,6 +160,10 @@ pub fn detect() -> Vec<AssistantStatus> {
 
 /// Grouped view — one entry per family for the UI.
 /// Claude Desktop + Claude Code become a single "Claude" family card.
+///
+/// `parts` is the union of every member variant's parts(), preserving the
+/// order in which each unique part id was first seen. The dedup pass is
+/// O(n²) but n is bounded by the small fixed registry — readable code wins.
 pub fn detect_families() -> Vec<AssistantFamily> {
     let statuses = detect();
     let assistants = all_assistants();
@@ -147,10 +172,16 @@ pub fn detect_families() -> Vec<AssistantFamily> {
     for asst in &assistants {
         let Some(status) = statuses.iter().find(|s| s.id == asst.id()).cloned() else { continue };
         let fam_id = asst.family();
+        let variant_parts = asst.parts();
 
         if let Some(existing) = families.iter_mut().find(|f| f.family == fam_id) {
             if status.installed { existing.installed = true; }
             existing.members.push(status);
+            for part in variant_parts {
+                if !existing.parts.iter().any(|p| p.id == part.id) {
+                    existing.parts.push(part);
+                }
+            }
         } else {
             families.push(AssistantFamily {
                 family: fam_id.to_string(),
@@ -158,13 +189,26 @@ pub fn detect_families() -> Vec<AssistantFamily> {
                 installed: status.installed,
                 config_path: status.config_path.clone(),
                 members: vec![status],
+                parts: variant_parts,
             });
         }
     }
     families
 }
 
-pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
+/// Configure assistants identified by id. When `event_tx` is Some, emits
+/// per-part SSE events as each variant transitions through
+/// configuring → done (or error). Each variant's parts transition
+/// together because `claude plugin install` and the MCP-file writes are
+/// atomic at the integration level. The wizard cascades the chip
+/// animations visually.
+///
+/// `event_tx = None` keeps existing CLI callers (installer/install.rs)
+/// behaviour identical — no SSE consumer in that path.
+pub fn configure(
+    assistant_ids: &[String],
+    event_tx: Option<&broadcast::Sender<StateEvent>>,
+) -> ConfigureResult {
     let assistants = all_assistants();
     let mut result = ConfigureResult::default();
 
@@ -183,6 +227,11 @@ pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
     };
 
     for asst in &targets {
+        let family = asst.family().to_string();
+        let parts = asst.parts();
+
+        emit_parts(event_tx, &family, &parts, AssistantPartStatus::Configuring, None);
+
         match asst.configure(&mcp_cmd) {
             Ok(ok) => {
                 result.configured.push(asst.id().to_string());
@@ -195,8 +244,12 @@ pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
                 for w in ok.warnings {
                     result.warnings.push(format!("{}: {}", asst.id(), w));
                 }
+                emit_parts(event_tx, &family, &parts, AssistantPartStatus::Done, None);
             }
-            Err(e) => result.errors.push(format!("{}: {}", asst.id(), e)),
+            Err(e) => {
+                emit_parts(event_tx, &family, &parts, AssistantPartStatus::Error, Some(&e));
+                result.errors.push(format!("{}: {}", asst.id(), e));
+            }
         }
     }
 
@@ -216,8 +269,37 @@ pub fn configure(assistant_ids: &[String]) -> ConfigureResult {
     result
 }
 
+/// Broadcast one StateEvent per part. No-op when `tx` is `None` (CLI path)
+/// or when the broadcast channel currently has no subscribers — `send`
+/// returns Err in that case and we ignore it; SSE events are best-effort.
+fn emit_parts(
+    tx: Option<&broadcast::Sender<StateEvent>>,
+    family: &str,
+    parts: &[AssistantPart],
+    status: AssistantPartStatus,
+    error: Option<&str>,
+) {
+    let Some(tx) = tx else { return };
+    for part in parts {
+        let evt = StateEvent::assistant_part(AssistantPartEvent {
+            family: family.to_string(),
+            part: part.id.clone(),
+            status: status.clone(),
+            error: error.map(|s| s.to_string()),
+        });
+        let _ = tx.send(evt);
+    }
+}
+
 /// Remove specific Assistant configs by ID. Empty slice = remove all.
-pub fn remove_selected(ids: &[String]) -> Vec<String> {
+///
+/// When `event_tx` is Some, emits per-part `configuring` then `idle`
+/// transitions so the wizard can show the removal in progress and then
+/// reset the card. Same `None` fast-path as `configure()` for CLI callers.
+pub fn remove_selected(
+    ids: &[String],
+    event_tx: Option<&broadcast::Sender<StateEvent>>,
+) -> Vec<String> {
     let assistants = all_assistants();
     let targets: Vec<&Box<dyn Assistant>> = if ids.is_empty() {
         assistants.iter().collect()
@@ -227,7 +309,20 @@ pub fn remove_selected(ids: &[String]) -> Vec<String> {
     targets
         .iter()
         .filter_map(|asst| {
-            if asst.remove() { Some(asst.id().to_string()) } else { None }
+            let family = asst.family().to_string();
+            let parts = asst.parts();
+            emit_parts(event_tx, &family, &parts, AssistantPartStatus::Configuring, None);
+            if asst.remove() {
+                // After removal, the parts return to the empty/idle ring.
+                emit_parts(event_tx, &family, &parts, AssistantPartStatus::Idle, None);
+                Some(asst.id().to_string())
+            } else {
+                emit_parts(
+                    event_tx, &family, &parts, AssistantPartStatus::Error,
+                    Some("remove failed"),
+                );
+                None
+            }
         })
         .collect()
 }
@@ -606,6 +701,143 @@ mod tests {
             let asst = assistants.iter().find(|a| a.id() == id).expect(id);
             assert_eq!(asst.mcp_key(), "mcpServers", "{} should use mcpServers key", id);
         }
+    }
+
+    // ── SSE event emission: emit_parts() helper ────────────────────────
+    //
+    // The wizard's AssistantCard relies on per-part SSE events to drive
+    // the chip animations. These tests pin the broadcast contract without
+    // needing a live HTTP server: a broadcast channel with a subscriber,
+    // a manual call to `emit_parts()`, and a drain of the receiver.
+
+    #[tokio::test]
+    async fn emit_parts_broadcasts_one_event_per_part() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<StateEvent>(16);
+        let parts = vec![
+            AssistantPart { id: "plugins".into(), label: "plugins".into() },
+            AssistantPart { id: "skills".into(),  label: "skills".into() },
+        ];
+
+        emit_parts(Some(&tx), "claude", &parts, AssistantPartStatus::Configuring, None);
+
+        let first = rx.recv().await.unwrap();
+        let second = rx.recv().await.unwrap();
+        assert_eq!(first.entity, "assistant");
+        assert_eq!(first.data["family"], "claude");
+        assert_eq!(first.data["part"], "plugins");
+        assert_eq!(first.data["status"], "configuring");
+        assert_eq!(second.data["part"], "skills");
+        assert_eq!(second.data["status"], "configuring");
+    }
+
+    #[tokio::test]
+    async fn emit_parts_carries_error_message_when_status_is_error() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<StateEvent>(8);
+        let parts = vec![AssistantPart { id: "mcp".into(), label: "mcp server".into() }];
+
+        emit_parts(Some(&tx), "cursor", &parts, AssistantPartStatus::Error, Some("permission denied"));
+
+        let evt = rx.recv().await.unwrap();
+        assert_eq!(evt.data["status"], "error");
+        assert_eq!(evt.data["error"], "permission denied");
+    }
+
+    #[tokio::test]
+    async fn emit_parts_omits_error_field_when_none() {
+        // serde skips `error: None` so the JSON shape stays tight on the
+        // happy path. The AssistantCard treats missing error as "no message
+        // to consolidate" — leaving the field in as `null` would force the
+        // app to treat null as a distinct case from absent.
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<StateEvent>(8);
+        let parts = vec![AssistantPart { id: "mcp".into(), label: "mcp server".into() }];
+
+        emit_parts(Some(&tx), "zed", &parts, AssistantPartStatus::Done, None);
+
+        let evt = rx.recv().await.unwrap();
+        assert!(evt.data.get("error").is_none(),
+            "error key should be absent on success, got {:?}", evt.data);
+    }
+
+    #[test]
+    fn emit_parts_no_op_when_tx_is_none() {
+        // CLI callers pass None — must not panic, must not allocate a
+        // channel, must not require any subscriber.
+        let parts = vec![AssistantPart { id: "mcp".into(), label: "mcp server".into() }];
+        emit_parts(None, "cursor", &parts, AssistantPartStatus::Configuring, None);
+    }
+
+    #[tokio::test]
+    async fn emit_parts_swallows_send_error_when_no_subscribers() {
+        // SSE events are best-effort. A broadcast with no live subscriber
+        // returns Err(SendError) from send(); emit_parts must drop it
+        // silently so configure() isn't aborted by transient UI churn.
+        let (tx, _rx) = tokio::sync::broadcast::channel::<StateEvent>(4);
+        // Drop the only receiver, then send.
+        drop(_rx);
+        let parts = vec![AssistantPart { id: "mcp".into(), label: "mcp server".into() }];
+        emit_parts(Some(&tx), "cursor", &parts, AssistantPartStatus::Configuring, None);
+    }
+
+    // ── Parts: per-Assistant capability declaration ────────────────────
+
+    #[test]
+    fn claude_code_declares_five_parts_in_canonical_order() {
+        // The wizard renders chips in declaration order; lock the order so
+        // a future refactor doesn't silently reshuffle the user-visible
+        // strip of capabilities on every Claude install. MCP is listed
+        // explicitly — skills/commands/agents all invoke sensei through
+        // it, so it belongs in the chip list alongside the others rather
+        // than being hidden as an implementation detail of the plugin.
+        let claude = all_assistants().into_iter()
+            .find(|a| a.id() == "claude-code")
+            .expect("claude-code registered");
+        let ids: Vec<String> = claude.parts().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["plugins", "skills", "commands", "agents", "mcp"]);
+    }
+
+    #[test]
+    fn mcp_file_assistants_declare_single_mcp_part() {
+        // Cursor/Zed/Windsurf/etc. all wire sensei in via the same MCP-config
+        // mechanism. They each get one chip labelled "mcp server" — anything
+        // else would imply per-feature granularity the integration doesn't
+        // actually have.
+        for id in ["cursor", "zed", "windsurf", "kiro", "opencode", "vscode", "claude-desktop"] {
+            let asst = all_assistants().into_iter().find(|a| a.id() == id).expect(id);
+            let parts = asst.parts();
+            assert_eq!(parts.len(), 1, "{id} should declare exactly one part");
+            assert_eq!(parts[0].id, "mcp", "{id} part id should be 'mcp'");
+            assert_eq!(parts[0].label, "mcp server", "{id} part label should be 'mcp server'");
+        }
+    }
+
+    #[test]
+    fn family_parts_union_dedups_in_declaration_order() {
+        // Claude family contains claude-code (4 parts) + claude-desktop (mcp).
+        // The aggregate should preserve claude-code's declaration order at
+        // the front, then append claude-desktop's mcp once. No duplicate
+        // ids in the union — the UI renders one chip per id and a dup
+        // would break the React-style key invariant on the chip list.
+        let families = detect_families();
+        let claude = families.iter().find(|f| f.family == "claude")
+            .expect("claude family should be present");
+        let ids: Vec<&str> = claude.parts.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["plugins", "skills", "commands", "agents", "mcp"]);
+    }
+
+    #[test]
+    fn family_parts_serialise_into_assistant_family() {
+        // The API hands AssistantFamily to the app over JSON. Pin the shape
+        // here so a future serde change (renaming `parts`, dropping fields)
+        // would fail loudly instead of silently breaking the wizard card.
+        let families = detect_families();
+        let cursor = families.iter().find(|f| f.family == "cursor")
+            .expect("cursor family should be present");
+        let json = serde_json::to_value(cursor).unwrap();
+        let parts = json.get("parts").and_then(|p| p.as_array())
+            .expect("parts array on AssistantFamily JSON");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["id"], "mcp");
+        assert_eq!(parts[0]["label"], "mcp server");
     }
 
     #[test]

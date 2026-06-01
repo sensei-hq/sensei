@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use super::trait_def::{Assistant, AssistantConfigureOk};
 use super::helpers::{home, find_claude_binary};
+use super::AssistantPart;
 
 use crate::paths::MARKETPLACE_REPO as SENSEI_MARKETPLACE_REPO;
 
@@ -196,6 +197,23 @@ impl Assistant for ClaudeCodeAssistant {
     fn family_name(&self) -> &str { "Claude" }
     fn mcp_key(&self) -> &str { "mcpServers" }
     fn config_path(&self) -> PathBuf { home().join(".claude/settings.json") }
+
+    /// Claude Code's plugin install lands five capability areas at once:
+    /// plugins (the manifest), skills, commands, agents, and the bundled
+    /// sensei MCP entry. They transition together — `claude plugin install`
+    /// has no per-part progress — but exposing them as separate chips makes
+    /// the wizard reflect what the install actually registered. MCP is on
+    /// the list because skills/commands/agents all invoke sensei *through*
+    /// MCP; the wizard's Instruments stage handles third-party MCPs only.
+    fn parts(&self) -> Vec<AssistantPart> {
+        vec![
+            AssistantPart { id: "plugins".into(),  label: "plugins".into() },
+            AssistantPart { id: "skills".into(),   label: "skills".into() },
+            AssistantPart { id: "commands".into(), label: "commands".into() },
+            AssistantPart { id: "agents".into(),   label: "agents".into() },
+            AssistantPart { id: "mcp".into(),      label: "mcp server".into() },
+        ]
+    }
 
     fn detect(&self) -> bool {
         let h = home();
