@@ -33,8 +33,9 @@ pub fn install(acps: &[String], scope: &str) -> InstallResult {
         Err(e) => result.errors.push(format!("marketplace: {}", e)),
     }
 
-    // 3. Configure ACPs
-    let acp_result = crate::assistants::configure(acps);
+    // 3. Configure ACPs. CLI path — no SSE consumer here, so pass None
+    //    and skip the broadcast.
+    let acp_result = crate::assistants::configure(acps, None);
     result.acps_configured = acp_result.configured;
     result.errors.extend(acp_result.errors);
     result.warnings.extend(acp_result.warnings);

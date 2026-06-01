@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use super::helpers::check_mcp_in_config;
-use super::AssistantStatus;
+use super::{AssistantPart, AssistantStatus};
 
 /// Result of configuring an Assistant. `plugin` is true when `claude plugin install` succeeded.
 pub(crate) struct AssistantConfigureOk {
@@ -24,6 +24,14 @@ pub(crate) trait Assistant {
 
     /// Display name for the family (used when grouped).
     fn family_name(&self) -> &str { self.name() }
+
+    /// Capability parts this Assistant configures. Drives the per-part chips
+    /// shown on each AssistantCard in the setup wizard. Default = one `mcp`
+    /// part, which matches every MCP-file integration. Claude Code overrides
+    /// to expose the four sub-capabilities its plugin install lands.
+    fn parts(&self) -> Vec<AssistantPart> {
+        vec![AssistantPart { id: "mcp".into(), label: "mcp server".into() }]
+    }
 
     /// Default integration check — looks for the sensei MCP entry in the
     /// assistant's config file. Override for assistants that integrate via
