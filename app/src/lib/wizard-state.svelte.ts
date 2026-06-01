@@ -442,13 +442,19 @@ export class WizardState {
 
   /**
    * Flip the per-family switch and trigger configure or remove on the
-   * daemon. Optimistically updates the chip strip via
-   * `markFamilyConfiguring` so the card animates the moment the user
-   * clicks — actual progress refines the chips via SSE.
+   * daemon when the user's intent diverges from daemon truth. Optimistically
+   * spins the chip strip via `markFamilyConfiguring` so the card animates
+   * the moment the user clicks — actual progress refines via SSE.
    *
-   * Uninstalled families with no installed variants no-op (the daemon
-   * has nothing to configure). Throws on HTTP error so the caller can
-   * surface a retry; the chip strip's error state is set first.
+   * Short-circuits when:
+   *   - the family has no installed variants (nothing the daemon can act on)
+   *   - the user toggled OFF an already-unconfigured family (asst.remove()
+   *     would return false and the daemon's emit_parts would surface an
+   *     "remove failed" error chip for a no-op)
+   *   - the user toggled ON an already-fully-configured family
+   *
+   * Throws on HTTP error so the caller can surface a retry. Reverts the
+   * switch and surfaces the consolidated error block on failure.
    */
   async toggleAssistant(familyId: string): Promise<void> {
     const family = this.assistants.assistants.find(f => f.id === familyId);
@@ -457,15 +463,29 @@ export class WizardState {
     if (variantIds.length === 0) return;
 
     const willEnable = !family.selected;
+    const wasConfigured = familyIsConfigured(family);
+
+    // No-op short-circuit: flip the switch only — no daemon round-trip.
+    if (willEnable === wasConfigured) {
+      family.selected = willEnable;
+      this.markFamilyIdle(familyId);
+      return;
+    }
+
+    // Mark configuring BEFORE flipping selected. Svelte batches in the
+    // same tick so there's no flash, but ordering matters when the chip
+    // strip is being driven off `partStatus` — the spinner appears as
+    // soon as the user clicks.
+    this.markFamilyConfiguring(familyId);
     family.selected = willEnable;
 
     const api = senseiApi(appState.port);
-    this.markFamilyConfiguring(familyId);
     try {
       if (willEnable) {
         const result = await api.configureAssistants(variantIds);
         if (result.errors.length > 0) {
           this.markFamilyError(familyId, result.errors.join('; '));
+          family.selected = false;
           throw new Error(result.errors.join('; '));
         }
         for (const v of family.variants) if (v.installed) v.configured = true;
@@ -474,13 +494,14 @@ export class WizardState {
         const result = await api.removeAssistants(variantIds);
         if (result.errors.length > 0) {
           this.markFamilyError(familyId, result.errors.join('; '));
+          family.selected = true;
           throw new Error(result.errors.join('; '));
         }
         for (const v of family.variants) v.configured = false;
         this.markFamilyIdle(familyId);
       }
     } catch (e) {
-      // Revert switch so user intent stays consistent with daemon truth.
+      // Defensive revert in case the inner branches missed something.
       family.selected = !willEnable;
       this.markFamilyError(familyId, e instanceof Error ? e.message : String(e));
       throw e;
