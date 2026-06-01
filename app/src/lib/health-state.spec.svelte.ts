@@ -361,23 +361,11 @@ describe('HealthState — B2: init() lifecycle', () => {
 });
 
 describe('HealthState — B3: verify() forces a fresh check', () => {
-  it('calls sessionStorage.removeItem for sensei:health during verify', async () => {
-    const sessionStore = new Map<string, string>();
-    const removedKeys: string[] = [];
-    vi.stubGlobal('sessionStorage', {
-      getItem:    (k: string) => sessionStore.get(k) ?? null,
-      setItem:    (k: string, v: string) => sessionStore.set(k, v),
-      removeItem: (k: string) => { removedKeys.push(k); sessionStore.delete(k); },
-    });
-    sessionStore.set('sensei:health', 'ready');
-
-    const transport = new MockTransport({ checkPayload: okPayload() });
-    const s = new HealthState(emptyPayload, transport);
-    await s.verify();
-    expect(removedKeys).toContain('sensei:health');
-
-    vi.unstubAllGlobals();
-  });
+  // The `sensei:health` sessionStorage cache was removed — nothing read it
+  // (HealthState's $state is the authoritative source for reroute via
+  // appState.healthOk), so the writes were dead. Tests that asserted those
+  // writes/removes are gone; what remains is the actual contract:
+  // verify() triggers a fresh transport.resolve() and is idempotent in flight.
 
   it('causes a fresh transport.resolve() call after a prior init()', async () => {
     const transport = new MockTransport({ checkPayload: okPayload() });
@@ -402,54 +390,10 @@ describe('HealthState — B3: verify() forces a fresh check', () => {
   });
 });
 
-describe('HealthState — B4: apply() writes sessionStorage cache', () => {
-  let sessionStore: Map<string, string>;
-
-  beforeEach(() => {
-    sessionStore = new Map<string, string>();
-    vi.stubGlobal('sessionStorage', {
-      getItem:    (k: string) => sessionStore.get(k) ?? null,
-      setItem:    (k: string, v: string) => sessionStore.set(k, v),
-      removeItem: (k: string) => sessionStore.delete(k),
-    });
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('applying an ok payload writes ready to sensei:health', () => {
-    const s = new HealthState(emptyPayload);
-    s.apply(okPayload());
-    expect(sessionStore.get('sensei:health')).toBe('ready');
-  });
-
-  it('applying a needs-action payload removes sensei:health', () => {
-    sessionStore.set('sensei:health', 'ready');
-    const s = new HealthState(emptyPayload);
-    s.apply(needsActionPayload());
-    expect(sessionStore.has('sensei:health')).toBe(false);
-  });
-
-  it('applying a checking payload removes sensei:health', () => {
-    sessionStore.set('sensei:health', 'ready');
-    const s = new HealthState(emptyPayload);
-    s.apply({ ...okPayload(), status: 'checking', remedy: null });
-    expect(sessionStore.has('sensei:health')).toBe(false);
-  });
-
-  it('applying a resolving payload removes sensei:health', () => {
-    sessionStore.set('sensei:health', 'ready');
-    const s = new HealthState(emptyPayload);
-    s.apply({ ...okPayload(), status: 'resolving', remedy: null });
-    expect(sessionStore.has('sensei:health')).toBe(false);
-  });
-
-  it('does not throw when sessionStorage is undefined', () => {
-    vi.unstubAllGlobals();
-    const s = new HealthState(emptyPayload);
-    expect(() => s.apply(okPayload())).not.toThrow();
-  });
-});
+// HealthState — B4: removed.
+// Previously asserted that apply() wrote/removed a `sensei:health`
+// sessionStorage cache key. The cache was dead — nothing consumed it —
+// so the writes are gone (see health-cache.ts deletion). HealthState's
+// $state is the canonical source for reroute via appState.healthOk.
 
 export { okPayload, needsActionPayload, remedyFixture };
