@@ -1,25 +1,30 @@
 /**
- * Centralised localStorage / sessionStorage keys, namespaced by app id.
+ * Centralised localStorage keys.
  *
- * The `sensei:` prefix exists so sensei's keys don't collide with other apps
- * sharing a WebView storage origin. The previous dev/prod split (which used
- * `sensei-dev:` for dev builds) is gone — there is one namespace now.
+ * Keep this list short and deliberate. Every entry here is mutable user
+ * state that needs to survive a session. Build-time constants (port,
+ * version) do NOT belong here — they should be baked in at compile time.
  *
- * The namespace is injected at build time by vite.config.ts via the
- * `__SENSEI_NAMESPACE__` define. The fallback exists so a non-vite consumer
- * (e.g. a test runner that hasn't stubbed the define) still gets stable keys.
+ * Previously this module also held `port`, `health`, and `testMode`:
+ *   - `port` was a runtime override for the daemon port. A stale value
+ *     from a previous session silently routed every fetch to the wrong
+ *     port. Removed — port is build-time.
+ *   - `health` was a sessionStorage cache for the reroute hook. Nothing
+ *     read it; HealthState is the authoritative source. Removed.
+ *   - `testMode` belonged to a dead mock-data module. Removed.
  */
 
 declare const __SENSEI_NAMESPACE__: string;
-const NS: string = typeof __SENSEI_NAMESPACE__ !== 'undefined' ? __SENSEI_NAMESPACE__ : 'sensei';
+const NS = __SENSEI_NAMESPACE__;
 
 export const STORAGE_KEYS = {
-  port:           `${NS}:port`,
   setupComplete:  `${NS}:setup-complete`,
   userName:       `${NS}:userName`,
+  /** Set by the upgrade flow before relaunch; cleared on the post-upgrade
+   *  page once the new sidecar is running. The value is the *staged*
+   *  version — used to detect "the binary I'm running now is older than
+   *  the one we just installed" and trigger the upgrade screen. */
   appVersion:     `${NS}:app-version`,
-  health:         `${NS}:health`,
-  testMode:       `${NS}:test-mode`,
 } as const;
 
 /** Re-exported namespace for any consumer that needs to build a key

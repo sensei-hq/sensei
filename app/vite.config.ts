@@ -55,11 +55,10 @@ function webkitNodeReexportFix(): Plugin {
   };
 }
 
-// Daemon port — single value now that dev/prod split is gone. Kept as a
-// define so the frontend can read one constant instead of hardcoding 7744
-// at every fetch site; if we ever need to relocate the daemon this is the
-// only knob to flip.
-const daemonPort = 7744;
+// Daemon namespace for localStorage keys. The port is no longer a vite
+// define — it's hardcoded in appstate.svelte.ts (single source of truth),
+// because the indirection caused a real bug where a stale localStorage
+// port override silently routed every fetch to the wrong port.
 const senseiNamespace = 'sensei';
 
 // Health-bypass is decided at RUNTIME via `window.__TAURI__` (set by
@@ -88,7 +87,6 @@ export default defineConfig({
   },
 
   define: {
-    __SENSEI_DEFAULT_PORT__: JSON.stringify(daemonPort),
     __SENSEI_APP_VERSION__: JSON.stringify(pkg.version),
     __SENSEI_NAMESPACE__: JSON.stringify(senseiNamespace),
   },
