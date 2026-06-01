@@ -24,12 +24,22 @@ export interface AssistantVariant {
   configured: boolean;
 }
 
+/** Capability area an Assistant configures (mirror of daemon AssistantPart). */
+export interface DaemonAssistantPart {
+  id: string;
+  label: string;
+}
+
 /** An AI coding assistant product family (e.g. "Claude", "Cursor"). */
 export interface DaemonAssistantFamily {
   id: string;        // family key: "claude", "cursor", "zed", etc.
   name: string;      // display name: "Claude", "Cursor", etc.
   selected: boolean;
   variants: AssistantVariant[];
+  /** Per-capability chips shown on the wizard card. Union of parts across
+   *  every variant in the family. Drives both the chip list rendering and
+   *  the keys used by the assistant-event reducer. */
+  parts: DaemonAssistantPart[];
 }
 
 /** A project with its folders. */

@@ -1,94 +1,117 @@
 <script lang="ts">
-  import { wizardState, familyIsConfigured } from '$lib/wizard-state.svelte.js';
-  import Switch from '$lib/components/Switch.svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import AssistantCard from '$lib/components/AssistantCard.svelte';
+  import { appState } from '$lib/appstate.svelte.js';
+  import { EventManager } from '$lib/events.js';
+  import { wizardState } from '$lib/wizard-state.svelte.js';
+  import type {
+    AssistantPartEvent, AssistantPartStatus,
+  } from '$lib/types.js';
+  import type { DaemonAssistantFamily } from '$lib/setup/contracts.js';
 
-  const assistants = $derived(wizardState.assistants.assistants);
-  const configState = $derived(wizardState.assistants.configureState);
-  const configError = $derived(wizardState.assistants.configureError);
+  /** StateEvent shape on the wire. Matches the daemon's serde output:
+   *  { action, entity, data }. We only care about entity="assistant"
+   *  events here; everything else (scan/folder/activity) is filtered
+   *  out at dispatch time. */
+  interface WireEvent {
+    action: string;
+    entity: string;
+    data: AssistantPartEvent;
+  }
 
-  // What gets registered when each family is enabled.
-  // Claude gets the full plugin suite; all others get MCP server only.
-  const CAPABILITIES: Record<string, string[]> = {
-    claude: ['plugins', 'skills', 'commands', 'agents'],
-  };
+  const families = $derived(wizardState.assistants.assistants);
+  const partStatus = $derived(wizardState.assistants.partStatus);
+  const partErrors = $derived(wizardState.assistants.partErrors);
 
-  function caps(id: string): string[] {
-    return CAPABILITIES[id] ?? ['mcp server'];
+  /** True when any installed variant of a family is currently set up
+   *  (mirrors the daemon's per-variant `configured` field). */
+  function anyInstalled(family: DaemonAssistantFamily): boolean {
+    return family.variants.some(v => v.installed);
+  }
+
+  /** Derive the AssistantCard's `parts` prop from the family + the live
+   *  status map. Missing entries default to 'idle' — happens for parts
+   *  that have never received an event since the slice hydrated. */
+  function partsFor(family: DaemonAssistantFamily) {
+    const status = partStatus[family.id] ?? {};
+    return family.parts.map(p => ({
+      id: p.id,
+      label: p.label,
+      status: (status[p.id] ?? 'idle') as AssistantPartStatus,
+    }));
+  }
+
+  /** Consolidated error message — concat unique messages from any parts
+   *  in error state. Mostly a single string since markFamilyError sets
+   *  the same message across every part, but SSE-driven flows could
+   *  legitimately differ per part if the daemon ever reports that way. */
+  function errorFor(family: DaemonAssistantFamily): string | null {
+    const errs = partErrors[family.id];
+    if (!errs) return null;
+    const messages = Object.values(errs).filter(Boolean);
+    if (messages.length === 0) return null;
+    return Array.from(new Set(messages)).join('; ');
+  }
+
+  // ── SSE subscription ────────────────────────────────────────────────
+  // The daemon broadcasts AssistantPartEvent over the same /api/scan/events
+  // channel used for scan progress, with entity="assistant". We open our
+  // own EventManager here (separate from scan-state's subscription) so the
+  // wizard's Assistants page can receive live chip transitions without
+  // depending on whether the Scan stage has been visited yet.
+  let events: EventManager<WireEvent> | null = $state(null);
+  let unsubscribe: (() => void) | null = null;
+
+  onMount(() => {
+    events = new EventManager<WireEvent>(
+      `http://127.0.0.1:${appState.port}/api/scan/events`,
+      (data) => JSON.parse(data) as WireEvent,
+    );
+    unsubscribe = events.subscribe((evt) => {
+      if (evt.entity !== 'assistant') return;
+      wizardState.applyAssistantEvent(evt.data);
+    });
+  });
+
+  onDestroy(() => {
+    unsubscribe?.();
+    events?.destroy();
+  });
+
+  async function handleToggle(familyId: string) {
+    try { await wizardState.toggleAssistant(familyId); }
+    catch { /* error already surfaced on the card via partErrors */ }
+  }
+
+  async function handleRetry(familyId: string) {
+    await wizardState.retryAssistant(familyId);
   }
 </script>
 
 <div>
   <p class="text-sm text-surface-z6 leading-normal m-0 mb-6">
-    Registers plugins, skills, commands, agents, logging and metrics.
+    One switch per assistant — sensei registers every capability it can,
+    or none. Flip a switch and watch the chips settle.
   </p>
 
-  <div class="grid grid-cols-2 gap-3">
-    {#each assistants as fam (fam.id)}
-      {@const installedCount = fam.variants.filter(v => v.installed).length}
-      {@const anyInstalled = installedCount > 0}
-      {@const isConfigured = familyIsConfigured(fam)}
-      {@const state = configState[fam.id] ?? 'idle'}
-      {@const err = configError[fam.id]}
-      <div
-        data-testid={`assistant-card-${fam.id}`}
-        data-configure-state={state}
-        data-configured={isConfigured}
-        class="card flex items-center gap-4 px-6 py-5 rounded-lg bg-surface-z1 border border-surface-z3 transition-all duration-fast min-w-0"
-        class:card-selected={fam.selected}
-        class:card-missing={!anyInstalled}
-      >
-        <div class="flex-1 min-w-0">
-          <div class="flex items-baseline justify-between gap-2 mb-1.5">
-            <span class="text-base font-semibold">{fam.name}</span>
-            {#if state === 'configuring'}
-              <span class="text-xs text-primary-z6 whitespace-nowrap mono">configuring…</span>
-            {:else if state === 'removing'}
-              <span class="text-xs text-warning-z6 whitespace-nowrap mono">removing…</span>
-            {:else if state === 'failed'}
-              <span class="text-xs text-danger-z5 whitespace-nowrap mono">failed</span>
-            {:else if state === 'skipped'}
-              <span class="text-xs text-surface-z5 whitespace-nowrap mono">skipped</span>
-            {:else if isConfigured}
-              <span class="text-xs text-success-z6 whitespace-nowrap mono">configured ✓</span>
-            {:else if anyInstalled}
-              <span class="text-xs text-surface-z5 whitespace-nowrap">{installedCount} detected</span>
-            {:else}
-              <span class="text-xs text-surface-z5 italic whitespace-nowrap">not found</span>
-            {/if}
-          </div>
-          <div class="flex flex-wrap gap-1">
-            {#each caps(fam.id) as cap}
-              <span class="chip text-xs font-mono text-surface-z7 px-2 py-0.5 bg-surface-z3 rounded-sm whitespace-nowrap">{cap}</span>
-            {/each}
-          </div>
-          {#if err}
-            <p class="text-xs text-danger-z5 font-mono mt-2 m-0 break-words">{err}</p>
-          {/if}
-        </div>
-        <Switch
-          bind:value={fam.selected}
-          label={`Enable ${fam.name}`}
-        />
-      </div>
+  <div class="flex flex-col gap-3">
+    {#each families as fam (fam.id)}
+      <AssistantCard
+        id={fam.id}
+        name={fam.name}
+        found={anyInstalled(fam)}
+        enabled={fam.selected}
+        parts={partsFor(fam)}
+        error={errorFor(fam)}
+        onToggle={() => handleToggle(fam.id)}
+        onRetry={() => handleRetry(fam.id)}
+      />
     {/each}
   </div>
 
-  {#if assistants.length === 0}
+  {#if families.length === 0}
     <p class="text-sm text-surface-z6 italic">
       No AI coding assistants detected. Make sure the daemon is running.
     </p>
   {/if}
 </div>
-
-<style>
-  .card-selected {
-    border: 2px solid oklch(var(--color-primary-z5) / 1);
-    background: oklch(var(--color-surface-z2) / 1);
-  }
-  .card-selected .chip {
-    background: oklch(var(--color-surface-z1) / 1);
-  }
-  .card-missing {
-    opacity: 0.55;
-  }
-</style>
