@@ -6,14 +6,14 @@
 
 use serde_json::{json, Value};
 
-/// Debug builds talk to the dev daemon (port 7745 / senseid-dev).
-/// Release builds talk to the release daemon (port 7744 / senseid).
-fn daemon_url() -> &'static str {
-    if cfg!(debug_assertions) {
-        "http://127.0.0.1:7745"
-    } else {
-        "http://127.0.0.1:7744"
-    }
+/// Daemon base URL — derived from `SenseiConfig::from_env()` (the
+/// single source of truth in `sensei-bootstrap`). Never hardcode the
+/// port or the prod/dev distinction here: previously this file used
+/// `cfg!(debug_assertions)` to talk to port 7745 in debug builds,
+/// which broke silently when the dev/prod split was ripped out (port
+/// is 7744 unconditionally now and nothing listens on 7745).
+fn daemon_url() -> String {
+    sensei_bootstrap::SenseiConfig::from_env().daemon_url()
 }
 
 /// Returns the daemon's full assistant list. Caller receives raw daemon JSON.
