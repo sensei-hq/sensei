@@ -98,7 +98,7 @@
       <AssistantBrandMark {id} {name} size={21} />
     </div>
 
-    <span class="title">{name}</span>
+    <span class="title text-ink">{name}</span>
 
     <div class="meta">
       {#if status.text}
@@ -238,10 +238,6 @@
   .title {
     font-size: 15px;
     font-weight: 600;
-    /* Explicit ink so the title doesn't rely on the body cascade — that
-     * resolves to whatever theme is set on body, which would be wrong if
-     * a parent component scopes a different mode. */
-    color: var(--ink);
   }
 
   .meta {
