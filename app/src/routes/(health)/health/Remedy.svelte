@@ -72,7 +72,7 @@
     </button>
     <button data-action="verify"
             class="btn-outline btn-sm"
-            style="color: var(--primary); border-color: color-mix(in oklch, var(--primary) 40%, transparent);"
+            style="color: oklch(var(--color-primary-z5) / 1); border-color: oklch(var(--color-primary-z5) / 0.4);"
             onclick={onVerify}>
       I've run it · verify
     </button>
