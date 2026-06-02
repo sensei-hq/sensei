@@ -72,6 +72,9 @@ Delete the manual `--font-*` declarations — they collide with Rokkit's emissio
 - `bun install` (verify lockfile resolves)
 - `bun run check` (svelte-check must remain at zero errors)
 - `bunx vitest run` (510 must stay green)
+- **`bun run build`** (catches UnoCSS preset preflight errors — e.g.
+  using a reserved named token in `rokkit.config.js custom` block.
+  Neither check nor vitest exercises the preset; only build does)
 - `make app-dev` — open the app, spot-check 3 stages (welcome, assistants, projects); no visual regression expected
 
 **Acceptance:** `--paper`, `--ink`, etc. resolve to non-empty values at runtime; existing z-scale call sites unchanged; all gates green.
