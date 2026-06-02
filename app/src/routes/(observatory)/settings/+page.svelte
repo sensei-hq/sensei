@@ -192,6 +192,6 @@
     }
 
     .extension-enabled.on {
-        color: oklch(var(--color-success-z5) / 1);
+        color: var(--success);
     }
 </style>

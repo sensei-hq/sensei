@@ -260,30 +260,30 @@
         padding: 7px 10px;
     }*/
     [data-rail-item].active {
-        background: oklch(var(--color-surface-z1) / 1);
-        border-color: oklch(var(--color-surface-z3) / 1);
-        color: oklch(var(--color-surface-z9) / 1);
+        background: var(--paper-soft);
+        border-color: var(--paper-edge);
+        color: var(--ink);
     }
     [data-rail-item].done {
-        color: oklch(var(--color-surface-z7) / 1);
+        color: var(--ink-mute);
     }
 
     /* Rail kanji states */
     .rail-kanji.done {
-        color: oklch(var(--color-surface-z7) / 1);
+        color: var(--ink-mute);
     }
 
     /* Back/primary button disabled states */
     .btn-back:disabled {
-        color: oklch(var(--color-surface-z5) / 1);
+        color: var(--ink-faint);
         cursor: default;
     }
     .btn-primary:hover:not(:disabled) {
         opacity: 0.9;
     }
     .btn-primary:disabled {
-        background: oklch(var(--color-surface-z3) / 1);
-        color: oklch(var(--color-surface-z6) / 1);
+        background: var(--paper-edge);
+        color: var(--ink-soft);
         cursor: default;
     }
 </style>

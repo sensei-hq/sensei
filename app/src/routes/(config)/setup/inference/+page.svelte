@@ -111,9 +111,9 @@
 
 <style>
   .key-input::placeholder {
-    color: oklch(var(--color-surface-z5) / 1);
+    color: var(--ink-faint);
   }
   .key-input:focus {
-    border-color: oklch(var(--color-primary-z5) / 1);
+    border-color: var(--primary);
   }
 </style>

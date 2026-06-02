@@ -185,50 +185,25 @@
 </div>
 
 <style>
-  /* Local design tokens — mirror docs/mockups/lib/tokens.css exactly so
-     dashes / hairlines render identical to the static mockup regardless
-     of how Rokkit's `--color-surface-*` scale lands. Light defaults; the
-     `body[data-mode="dark"]` override below swaps in the dark stops. */
+  /* Card reads its colours directly from Rokkit 1.1.0's flat token
+     vocabulary (--paper, --paper-soft, --paper-mute, --paper-edge,
+     --ink, --ink-mute, --ink-soft, --ink-faint, --primary, --success,
+     --danger). The preset auto-swaps these under
+     [data-mode="dark"] — no local light/dark block needed. */
   .card {
-    --ac-paper:    oklch(0.975 0.008 85);
-    --ac-paper-2:  oklch(0.940 0.010 85);
-    --ac-paper-3:  oklch(0.920 0.012 85);
-    --ac-edge:     oklch(0.880 0.015 85);
-    --ac-ink:      oklch(0.210 0.012 50);
-    --ac-ink-2:    oklch(0.320 0.012 50);
-    --ac-ink-3:    oklch(0.420 0.012 50);
-    --ac-ink-4:    oklch(0.600 0.012 50);
-    --ac-accent:   oklch(0.625 0.180 35);
-    --ac-success:  oklch(0.620 0.080 160);
-    --ac-danger:   oklch(0.550 0.180 28);
-
     display: flex;
     flex-direction: column;
     gap: 11px;
     padding: 15px 18px;
-    border: 1px solid var(--ac-edge);
+    border: 1px solid var(--paper-edge);
     border-radius: 10px;
-    background: var(--ac-paper-2);
+    background: var(--paper-soft);
     transition: opacity 180ms ease, background 180ms ease, border-color 180ms ease;
   }
   /* Not-found is just dimmed — same solid hairline as found cards. */
   .card.not-found {
     background: transparent;
     opacity: 0.6;
-  }
-
-  :global(body[data-mode="dark"]) .card {
-    --ac-paper:    oklch(0.170 0.010 50);
-    --ac-paper-2:  oklch(0.210 0.012 50);
-    --ac-paper-3:  oklch(0.250 0.012 50);
-    --ac-edge:     oklch(0.320 0.012 50);
-    --ac-ink:      oklch(0.940 0.008 85);
-    --ac-ink-2:    oklch(0.780 0.008 85);
-    --ac-ink-3:    oklch(0.600 0.010 85);
-    --ac-ink-4:    oklch(0.420 0.012 85);
-    --ac-accent:   oklch(0.700 0.150 35);
-    --ac-success:  oklch(0.720 0.090 160);
-    --ac-danger:   oklch(0.620 0.180 28);
   }
 
   .header {
@@ -241,14 +216,14 @@
     height: 34px;
     flex-shrink: 0;
     border-radius: 8px;
-    border: 1px solid var(--ac-edge);
-    background: var(--ac-paper);
+    border: 1px solid var(--paper-edge);
+    background: var(--paper);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: var(--ac-ink);
+    color: var(--ink);
   }
-  .logo-tile.dim { color: var(--ac-ink-2); }
+  .logo-tile.dim { color: var(--ink-mute); }
 
   .title {
     font-size: 15px;
@@ -271,11 +246,11 @@
     flex-shrink: 0;
     font-family: var(--font-mono);
   }
-  .status-muted        { color: var(--ac-ink-3); }
-  .status-muted-italic { color: var(--ac-ink-3); font-style: italic; font-family: var(--font-ui); }
-  .status-accent       { color: var(--ac-accent); }
-  .status-success      { color: var(--ac-success); }
-  .status-danger       { color: var(--ac-danger); }
+  .status-muted        { color: var(--ink-soft); }
+  .status-muted-italic { color: var(--ink-soft); font-style: italic; font-family: var(--font-sans); }
+  .status-accent       { color: var(--accent); }
+  .status-success      { color: var(--success); }
+  .status-danger       { color: var(--danger); }
 
   .chips {
     display: flex;
@@ -292,24 +267,24 @@
     font-size: 11px;
     padding: 3px 10px 3px 8px;
     border-radius: 999px;
-    border: 1px solid var(--ac-edge);
+    border: 1px solid var(--paper-edge);
     background: transparent;
-    color: var(--ac-ink-4);
+    color: var(--ink-faint);
     white-space: nowrap;
     transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
   }
   .chip-configuring {
-    color: var(--ac-accent);
-    background: var(--ac-paper-3);
-    border-color: var(--ac-edge);
+    color: var(--accent);
+    background: var(--paper-mute);
+    border-color: var(--paper-edge);
   }
   .chip-done {
-    color: var(--ac-success);
+    color: var(--success);
     background: oklch(0.620 0.080 160 / 0.10);
     border-color: oklch(0.620 0.080 160 / 0.30);
   }
   .chip-error {
-    color: var(--ac-danger);
+    color: var(--danger);
     background: oklch(0.550 0.180 28 / 0.10);
     border-color: oklch(0.550 0.180 28 / 0.32);
   }
@@ -331,7 +306,7 @@
     border: 1px solid oklch(0.550 0.180 28 / 0.32);
   }
   .error-icon {
-    color: var(--ac-danger);
+    color: var(--danger);
     margin-top: 1px;
     flex-shrink: 0;
   }
@@ -339,16 +314,16 @@
     min-width: 0;
     flex: 1;
     font-size: 12.5px;
-    color: var(--ac-ink-2);
+    color: var(--ink-mute);
     line-height: 1.45;
   }
   .error-message {
-    color: var(--ac-danger);
+    color: var(--danger);
   }
   .retry {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--ac-accent);
+    color: var(--accent);
     background: transparent;
     border: 0;
     cursor: pointer;
@@ -376,8 +351,8 @@
     padding: 0;
     position: relative;
     cursor: pointer;
-    border: 1px solid var(--ac-edge);
-    background: var(--ac-paper-3);
+    border: 1px solid var(--paper-edge);
+    background: var(--paper-mute);
     transition: background 180ms ease, opacity 180ms ease, border-color 180ms ease;
   }
   .switch:disabled {
@@ -385,7 +360,7 @@
     opacity: 0.6;
   }
   .switch.on {
-    background: var(--ac-ink);
+    background: var(--ink);
     border-color: transparent;
   }
   .switch-knob {
@@ -395,7 +370,7 @@
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: var(--ac-paper);
+    background: var(--paper);
     box-shadow: 0 1px 2px oklch(0 0 0 / 0.15);
     transition: left 180ms ease;
   }
