@@ -40,11 +40,11 @@
         border-bottom: none;
     }
     .scope-badge.global {
-        background: oklch(var(--color-surface-z3) / 1);
+        background: var(--paper-edge);
         opacity: 0.7;
     }
     .scope-badge.proj {
-        background: oklch(var(--color-primary-z5) / 0.15);
-        color: oklch(var(--color-primary-z5) / 1);
+        background: color-mix(in oklch, var(--primary) 15%, transparent);
+        color: var(--primary);
     }
 </style>

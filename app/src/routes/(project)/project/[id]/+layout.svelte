@@ -117,10 +117,10 @@
 
 <style>
     .proj-nav-item:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
     .proj-nav-item.active {
-        background: oklch(var(--color-surface-z2) / 1);
-        color: oklch(var(--color-primary-z5) / 1);
+        background: var(--paper-mute);
+        color: var(--primary);
     }
 </style>
