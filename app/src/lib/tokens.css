@@ -54,18 +54,18 @@ body[data-mode="dark"] {
 :hover > ::-webkit-scrollbar-thumb,
 *:hover::-webkit-scrollbar-thumb { background: oklch(0.5 0.01 50 / 0.2); }
 
-::selection { background: color-mix(in oklch, var(--primary) 12%, transparent); }
+::selection { background: oklch(var(--color-primary-z6) / 0.12); }
 
 .btn-solid {
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--on-primary, var(--paper));
-  background: var(--ink);
+  color: oklch(var(--color-surface-z1) / 1);
+  background: oklch(var(--color-surface-z9) / 1);
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   transition: opacity 0.14s;
   white-space: nowrap;
 }
@@ -75,27 +75,27 @@ body[data-mode="dark"] {
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink);
+  color: oklch(var(--color-surface-z9) / 1);
   background: transparent;
   border: var(--hairline);
   border-radius: 6px;
   cursor: pointer;
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   transition: background 0.14s;
   white-space: nowrap;
 }
-.btn-outline:hover { background: var(--paper-mute); }
+.btn-outline:hover { background: oklch(var(--color-surface-z2) / 1); }
 
 .btn-cta {
   padding: 10px 24px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--on-primary, var(--paper));
-  background: var(--ink);
+  color: oklch(var(--color-surface-z1) / 1);
+  background: oklch(var(--color-surface-z9) / 1);
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   transition: opacity 0.14s;
   white-space: nowrap;
 }
