@@ -14,11 +14,11 @@
     // transitions queued → indexing → indexed (or → failed), each shown
     // with its own colour so the user can see live state at a glance.
     const STATUS_COLORS: Record<string, string> = {
-        discovered: "oklch(var(--color-surface-z6) / 1)",
-        queued:     "oklch(var(--color-warning-z5) / 1)",
-        indexing:   "oklch(var(--color-primary-z5) / 1)",
-        indexed:    "oklch(var(--color-success-z5) / 1)",
-        failed:     "oklch(var(--color-danger-z5) / 1)",
+        discovered: "var(--ink-soft)",
+        queued:     "var(--warning)",
+        indexing:   "var(--primary)",
+        indexed:    "var(--success)",
+        failed:     "var(--danger)",
     };
 </script>
 
@@ -192,7 +192,7 @@
                             <span
                                 class="text-xs min-w-[64px] text-right"
                                 style="color: {STATUS_COLORS[f.status] ??
-                                    'oklch(var(--color-surface-z6) / 1)'}"
+                                    'var(--ink-soft)'}"
                                 >{f.status}</span
                             >
                             {#if f.filesTotal > 0}
