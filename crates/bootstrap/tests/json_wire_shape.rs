@@ -17,6 +17,7 @@ fn mock_payload(status: HealthStatus, with_remedy: bool) -> HealthPayload {
     HealthPayload {
         version:        "0.0.0-test".into(),
         uptime_seconds: 42,
+        db_name:        "sensei_test".into(),
         platform:       Platform::Macos,
         package_manager: mk("homebrew", "Homebrew", Some("which brew"), ComponentStatus::Ready, "installing"),
         components: vec![

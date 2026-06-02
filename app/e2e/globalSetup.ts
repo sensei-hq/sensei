@@ -61,6 +61,14 @@ async function waitForPort(port: number, timeoutMs: number): Promise<void> {
   throw new Error(`Port ${port} did not open within ${timeoutMs}ms`);
 }
 
+/** Stop the brew-managed sensei service so launchd can't race-respawn a
+ *  prod-DB daemon between our pkill and the Tauri shell bringing up its
+ *  own instance-tagged one. Restored in globalTeardown. */
+function stopBrewSensei(): void {
+  try { execFileSync('/opt/homebrew/bin/brew', ['services', 'stop', 'sensei'], { stdio: 'ignore' }); }
+  catch { /* brew may be elsewhere, or service may not exist */ }
+}
+
 export default async function globalSetup(): Promise<void> {
   if (!existsSync(APP_BINARY)) {
     throw new Error(
@@ -69,19 +77,26 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  // Stop any running daemon — the Tauri sidecar will spawn its own with
-  // the e2e env vars set. Without stopping first the new process can't
-  // bind port 7744.
+  // 1. Stop the brew service FIRST. launchd's keep-alive policy will
+  //    otherwise auto-respawn the prod daemon between our pkill below
+  //    and the Tauri shell coming up with SENSEI_INSTANCE=e2e — leaving
+  //    the .app talking to a prod-DB daemon that doesn't know it's
+  //    supposed to be isolated. globalTeardown restores it.
+  console.log('[globalSetup] Stopping brew sensei service (race-prevention)...');
+  stopBrewSensei();
+
+  // 2. Kill any senseid that survived the brew stop (e.g. a manual spawn).
   try { execFileSync('/usr/bin/pkill', ['-x', 'senseid'], { stdio: 'ignore' }); } catch { /* not running */ }
   await sleep(500);
 
-  // Remove stale socket from any previous run.
+  // 3. Remove stale socket from any previous run.
   try { unlinkSync(SOCKET); } catch { /* did not exist */ }
 
-  // Spawn the .app with SENSEI_INSTANCE=e2e so the daemon resolves DB +
-  // data dir to a throwaway pair (sensei_e2e / ~/.sensei-e2e/). On macOS,
-  // Tauri inherits the spawning environment for child process spawns, so
-  // the sidecar will see this when it spawns senseid.
+  // 4. Spawn the .app with SENSEI_INSTANCE=e2e so the daemon resolves DB
+  //    + data dir to a throwaway pair (sensei_e2e / ~/.sensei-e2e/). On
+  //    macOS, Tauri inherits the spawning environment for child process
+  //    spawns, and bootstrap's daemon_start resolver now ALSO passes
+  //    --instance=e2e on the senseid CLI as a second line of defence.
   const proc = spawn(APP_BINARY, [], {
     detached: true,
     stdio: 'ignore',
@@ -101,5 +116,24 @@ export default async function globalSetup(): Promise<void> {
 
   console.log(`[globalSetup] Waiting for daemon on port ${DAEMON_PORT} (instance=${INSTANCE})...`);
   await waitForPort(DAEMON_PORT, 120_000);
-  console.log('[globalSetup] Daemon ready — tests may begin.');
+
+  // 5. Authoritative DB-isolation check — fetch /health from the daemon
+  //    actually bound to the port and confirm it's on the expected
+  //    sensei_<instance> DB. If anything raced us (launchd, a stray
+  //    senseid spawn, a misconfigured Tauri build), the wrong daemon
+  //    is on the port and we must NOT proceed — the tests would write
+  //    to the prod DB and corrupt the user's data.
+  const expectedDb = `sensei_${INSTANCE}`;
+  // Authoritative DB-isolation check via /health — loopback-only daemon,
+  // same URL pattern as DAEMON_URL elsewhere in e2e/helpers.ts.
+  const { DAEMON_URL } = await import('./helpers.js');
+  const health = await fetch(`${DAEMON_URL}/health`).then(r => r.json());
+  if (health.dbName !== expectedDb) {
+    throw new Error(
+      `[globalSetup] DB ISOLATION CHECK FAILED. ` +
+      `Daemon on port ${DAEMON_PORT} is connected to "${health.dbName}", ` +
+      `expected "${expectedDb}". Refusing to run tests against the wrong DB.`,
+    );
+  }
+  console.log(`[globalSetup] Daemon DB verified: ${health.dbName} — tests may begin.`);
 }
