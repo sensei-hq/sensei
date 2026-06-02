@@ -194,18 +194,18 @@
 
     /* Active nav item */
     .nav-item.active {
-        background: var(--paper-edge);
-        color: var(--ink);
+        background: oklch(var(--color-surface-z3) / 1);
+        color: oklch(var(--color-surface-z9) / 1);
     }
 
     /* Active nav kanji accent */
     .nav-kanji-active {
-        color: var(--primary);
+        color: oklch(var(--color-primary-z5) / 1);
     }
 
     /* Collapse button hover */
     .collapse-btn:hover {
-        background: var(--paper-edge);
-        color: var(--ink-mute);
+        background: oklch(var(--color-surface-z3) / 1);
+        color: oklch(var(--color-surface-z7) / 1);
     }
 </style>

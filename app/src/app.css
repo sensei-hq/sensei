@@ -34,12 +34,12 @@ body {
     background: oklch(0.985 0.005 85 / 1);     /* kami-50 — page bg */
 }
 body[data-mode="dark"] {
-    color: var(--ink);
-    background: var(--paper);
+    color: oklch(var(--color-surface-z9) / 1);
+    background: oklch(var(--color-surface-z0) / 1);
 }
 body[data-mode="light"] {
-    color: var(--ink);
-    background: var(--paper);
+    color: oklch(var(--color-surface-z9) / 1);
+    background: oklch(var(--color-surface-z0) / 1);
 }
 
 /* Tauri webview can default to non-selectable text on some platforms,
@@ -70,7 +70,11 @@ button {
 
 /* Sidebar vibrancy */
 .sidebar-vibrancy {
-    background: color-mix(in oklch, var(--paper-soft) 85%, transparent);
+    background: color-mix(
+        in oklch,
+        oklch(var(--color-surface-z1) / 1) 85%,
+        transparent
+    );
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
@@ -81,10 +85,10 @@ button {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--primary);
+    background: oklch(var(--color-primary-z5) / 1);
 }
 
 /* Selection */
 ::selection {
-    background: color-mix(in oklch, var(--primary) 12%, transparent);
+    background: oklch(var(--color-primary-z5) / 0.12);
 }
