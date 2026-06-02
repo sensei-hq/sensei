@@ -211,6 +211,6 @@
 
 <style>
     .repo-row:hover {
-        background: var(--paper-mute);
+        background: oklch(var(--color-surface-z2) / 1);
     }
 </style>

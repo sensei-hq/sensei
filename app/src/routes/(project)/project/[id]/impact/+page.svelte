@@ -122,8 +122,8 @@
 </div>
 
 <style>
-  .verdict-item:hover { background: var(--paper-mute); }
-  .verdict-item.selected { background: var(--paper-mute); border-left: 2px solid var(--primary); }
-  .text-success { color: var(--success); }
-  .text-error { color: var(--primary); }
+  .verdict-item:hover { background: oklch(var(--color-surface-z2) / 1); }
+  .verdict-item.selected { background: oklch(var(--color-surface-z2) / 1); border-left: 2px solid oklch(var(--color-primary-z5) / 1); }
+  .text-success { color: oklch(var(--color-success-z5) / 1); }
+  .text-error { color: oklch(var(--color-primary-z5) / 1); }
 </style>

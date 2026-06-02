@@ -155,23 +155,23 @@
 
 <style>
     .lib-search:focus {
-        border-color: var(--ink-soft);
+        border-color: oklch(var(--color-surface-z6) / 1);
     }
 
     .filter-chip:hover {
-        background: var(--paper-mute);
+        background: oklch(var(--color-surface-z2) / 1);
     }
     .filter-chip.active {
-        background: var(--ink);
-        color: var(--paper-soft);
-        border-color: var(--ink);
+        background: oklch(var(--color-surface-z9) / 1);
+        color: oklch(var(--color-surface-z1) / 1);
+        border-color: oklch(var(--color-surface-z9) / 1);
     }
 
     .lib-card:hover {
-        background: var(--paper-mute);
+        background: oklch(var(--color-surface-z2) / 1);
     }
     .lib-card.selected {
-        border-color: var(--ink-soft);
-        background: var(--paper-mute);
+        border-color: oklch(var(--color-surface-z6) / 1);
+        background: oklch(var(--color-surface-z2) / 1);
     }
 </style>

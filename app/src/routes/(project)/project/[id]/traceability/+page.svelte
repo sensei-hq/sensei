@@ -12,9 +12,9 @@
         <div class="text-sm text-ink-z7">
             <span>{data.total} tracked</span>
             <span> · </span>
-            <span style="color: var(--warning);">{data.drifted} drifted</span>
+            <span style="color: oklch(var(--color-warning-z5) / 1);">{data.drifted} drifted</span>
             <span> · </span>
-            <span style="color: var(--primary);">{data.broken} broken</span>
+            <span style="color: oklch(var(--color-primary-z5) / 1);">{data.broken} broken</span>
         </div>
     {/snippet}
 </PageHeader>

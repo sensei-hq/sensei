@@ -106,7 +106,7 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    border: 1.5px solid var(--primary);
+    border: 1.5px solid oklch(var(--color-primary-z5) / 1);
     border-top-color: transparent;
     animation: ledger-spin 0.9s linear infinite;
   }
