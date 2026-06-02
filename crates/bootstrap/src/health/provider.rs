@@ -122,6 +122,7 @@ pub trait PlatformProvider: Send + Sync {
         let payload = HealthPayload {
             version: app_version.to_string(),
             uptime_seconds: 0,
+            db_name: crate::config::SenseiConfig::from_env().db_name,
             platform: self.platform(),
             package_manager: pm,
             components,

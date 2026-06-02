@@ -27,6 +27,15 @@ struct Cli {
     /// Port to listen on (default: 7744)
     #[arg(long)]
     port: Option<u16>,
+
+    /// Override the SENSEI_INSTANCE for this run. When set, derives DB
+    /// name `sensei_<instance>` and data dir `~/.sensei-<instance>/`
+    /// regardless of environment, and is propagated to the daemonized
+    /// child by `start` / `restart`. Used by e2e tests to guarantee
+    /// isolation without relying on env-var inheritance through
+    /// brew/launchd respawns. CLI value beats env value.
+    #[arg(long, global = true)]
+    instance: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -58,6 +67,16 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
+
+    // `--instance` overrides any SENSEI_INSTANCE inherited from env. Set
+    // the env var BEFORE any `SenseiConfig::from_env()` call (which
+    // happens immediately below) so every subsequent reader — including
+    // crates that read the env independently — sees the same value.
+    // SAFETY: this runs at process start, before any thread that could
+    // observe a torn read on the global env table.
+    if let Some(inst) = &cli.instance {
+        unsafe { std::env::set_var("SENSEI_INSTANCE", inst); }
+    }
 
     let startup_cfg = sensei_bootstrap::SenseiConfig::from_env();
     let default_port = startup_cfg.daemon_port;
@@ -122,8 +141,19 @@ fn start_daemon(port: u16) {
     let log_err = log_file.try_clone().expect("senseid: cannot clone log handle");
 
     let exe = std::env::current_exe().expect("senseid: cannot resolve own path");
-    let mut child = Command::new(exe)
-        .args(["--port", &port.to_string()])
+    let mut cmd = Command::new(exe);
+    cmd.args(["--port", &port.to_string()]);
+
+    // Propagate the instance explicitly via CLI as well as inherited env.
+    // Belt-and-suspenders against env-loss through any future shim that
+    // might re-exec without forwarding the parent's env table.
+    if let Ok(inst) = std::env::var("SENSEI_INSTANCE")
+        && !inst.is_empty()
+    {
+        cmd.args(["--instance", &inst]);
+    }
+
+    let mut child = cmd
         .stdout(log_file)
         .stderr(log_err)
         .stdin(std::process::Stdio::null())

@@ -26,4 +26,13 @@ export default async function globalTeardown(): Promise<void> {
 
   try { execFileSync('/usr/bin/pkill', ['-x', 'senseid'], { stdio: 'ignore' }); } catch { /* not running */ }
   try { unlinkSync(SOCKET); } catch { /* already gone */ }
+
+  // Restore the user's brew-managed sensei service so the prod daemon
+  // resumes on next launch. We stopped it in globalSetup so launchd
+  // couldn't race-respawn during e2e — that contract is over now.
+  // Best-effort: a failure here means the user has to `brew services
+  // start sensei` themselves; not fatal to the test run.
+  try {
+    execFileSync('/opt/homebrew/bin/brew', ['services', 'start', 'sensei'], { stdio: 'ignore' });
+  } catch { /* brew elsewhere, or service not registered; user can recover manually */ }
 }

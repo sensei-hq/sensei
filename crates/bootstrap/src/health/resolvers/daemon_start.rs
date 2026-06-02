@@ -53,13 +53,27 @@ impl Resolver for DaemonStartResolver {
         // Stage 2: direct binary spawn. The daemon daemonises itself on
         // start, so `status()` returns once the parent forks — port
         // readiness is the orchestrator's post-resolve re-check problem.
+        //
+        // When SENSEI_INSTANCE is set we forward it BOTH via inherited
+        // env AND as an explicit `--instance` CLI arg. Either alone
+        // would be enough in theory, but the daemon's self-re-spawn
+        // chain (Tauri → senseid start → daemonized senseid) has had
+        // env-loss issues in practice; the CLI arg can't be stripped.
         let bin = cfg.senseid_binary();
         let senseid = match crate::util::which_binary(bin) {
             Some(p) => p,
             None    => return ResolveOutcome::NeedsHumanAction(missing_remedy(bin)),
         };
         tracing::info!(bin, "stage 2: direct daemon spawn");
-        match Command::new(senseid).args(["start"]).status() {
+        let mut cmd = Command::new(senseid);
+        cmd.arg("start");
+        if let Ok(inst) = std::env::var("SENSEI_INSTANCE")
+            && !inst.is_empty()
+        {
+            cmd.args(["--instance", &inst]);
+            tracing::info!(instance = %inst, "stage 2: passing --instance to daemon");
+        }
+        match cmd.status() {
             Ok(s) if s.success() => ResolveOutcome::Resolved,
             Ok(s)  => ResolveOutcome::NeedsHumanAction(
                          failed_remedy(bin, format!("{bin} start exited {s}"))),
