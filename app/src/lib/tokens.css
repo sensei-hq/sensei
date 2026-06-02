@@ -24,6 +24,21 @@
   --hairline: 1px solid var(--paper-edge);
 }
 
+/* Dark-mode --paper-edge override.
+ *
+ * Rokkit's default skin maps `--paper-edge` to a mid-lightness stop in
+ * the surface palette — in light mode (kami) that's a soft cream just
+ * darker than `--paper-soft`, perfect for hairlines. In dark mode (the
+ * two-pole sumi palette) the same stop lands LIGHTER than `--paper`
+ * because the palette is inverted, which would render every hairline
+ * as a "raised edge" against the dark page. Override with a stop just
+ * a touch lighter than `--paper` so the etched-line look survives the
+ * theme flip. Mirrors the approach in rokkit/apps/learn/koan/compat.css.
+ */
+body[data-mode="dark"] {
+  --paper-edge: oklch(0.230 0.012 50);
+}
+
 .display {
   font-family: var(--font-display);
   font-feature-settings: "ss01";

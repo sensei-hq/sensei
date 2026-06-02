@@ -31,18 +31,6 @@ export default {
     info:      "ai",        // indigo blue (藍)
   },
 
-  /**
-   * Custom token overrides — light/dark variants emit through the preset
-   * so they swap automatically with `[data-mode="dark"]`. `paper-edge` in
-   * dark mode needs to be DARKER than `paper`, not lighter — Rokkit's
-   * default mapping (sumi-400) would land lighter than the sumi-50 bg and
-   * produce a "raised edge" look the design rejects. Override with sumi-800
-   * (just above paper bg) so the etched-line hairline reads correctly.
-   */
-  custom: {
-    "paper-edge":  { light: "kami.400", dark: "sumi.800" },
-  },
-
   typography: {
     sans:    "'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif",
     mono:    "'JetBrains Mono', 'SF Mono', Menlo, monospace",
