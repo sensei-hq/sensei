@@ -109,35 +109,35 @@ const kohaku = {
 };
 
 /**
- * sumi — dark-mode surface scale.
+ * sumi — the dark-mode counterpart to kami's surface/ink axes.
  *
- * Two-pole design: light end (50–400) = warm paper whites for dark-mode text,
- * dark end (500–950) = sumi-ink tones for dark-mode backgrounds.
- * The z-flip in base.css maps z0→950 and z9→100.
+ * Two-pole design, INVERTED relative to kami:
+ *   stops 50–400 hold sumi-ink darks (hue ~50, warm-shadow chroma) used
+ *     as dark-mode SURFACES via `paper-* → stop 50/100/200/400`
+ *   stops 600–950 hold warm-paper whites (hue ~85) used as dark-mode
+ *     TEXT via `ink → stop 900` / `ink-* → 700/800`
+ *   stop 500 sits between as a neutral midpoint
  *
- * Shifted so z1 dark = page bg (mirrors kami: z1 light = page bg):
+ * Why inverted? Rokkit 1.1.0's preset always maps `paper → stop 50` and
+ * `ink → stop 900` regardless of mode — it does NOT reverse-flip the
+ * palette per mode (the older 1.0.x behaviour). For a dual-mode token
+ * vocabulary to work, the dark palette must place its dark stops at the
+ * low indices so `paper → stop 50` gives `paper-dark = darkest`.
  *
- *   z0 dark (body)   ← sumi-950: 0.130 0.008 50  (deepest bg, body)
- *   z1 dark (page)   ← sumi-900: 0.170 0.010 50  (page bg = --paper dark)
- *   z2 dark (card)   ← sumi-800: 0.210 0.012 50  (--paper-2 dark)
- *   z3 dark (inset)  ← sumi-700: 0.250 0.012 50  (--paper-3 dark)
- *   z4 dark (border) ← sumi-600: 0.320 0.012 50  (separator)
- *   z5 dark (mid)    ← sumi-500: 0.380 0.010 60  (neutral midpoint, no flip)
- *   z6 dark (faint)  ← sumi-400: 0.420 0.012 85  (--sumi-4 dark)
- *   z9 dark (text)   ← sumi-100: 0.940 0.008 85  (--sumi dark)
+ * Matches rokkit/apps/learn/rokkit.config.js sumi palette stop-for-stop.
  */
 const sumi = {
-  50: "0.975 0.008 85",
-  100: "0.940 0.008 85",
-  200: "0.780 0.008 85",
-  300: "0.600 0.010 85",
-  400: "0.420 0.012 85",
-  500: "0.570 0.010 50",
-  600: "0.420 0.010 50",
-  700: "0.320 0.012 50",
-  800: "0.250 0.012 50",
-  900: "0.210 0.012 50",
-  950: "0.170 0.010 50",
+  50:  "0.170 0.010 50",   // darkest sumi-ink — paper-dark page bg
+  100: "0.210 0.012 50",   // paper-soft-dark
+  200: "0.250 0.012 50",   // paper-mute-dark
+  300: "0.320 0.012 50",
+  400: "0.420 0.010 50",   // paper-edge-dark
+  500: "0.570 0.010 50",   // mid neutral
+  600: "0.420 0.012 85",   // warm paper transition — ink-faint-dark
+  700: "0.600 0.010 85",   // ink-soft-dark
+  800: "0.780 0.008 85",   // ink-mute-dark
+  900: "0.940 0.008 85",   // primary text in dark — ink-dark
+  950: "0.975 0.008 85",   // lightest paper white
 };
 
 /** beni — deep crimson, danger/error (紅) */
