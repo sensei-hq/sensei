@@ -7,9 +7,9 @@ import type { LogSession, BootstrapTrace } from '$lib/types.js';
 // ── Action badge ──────────────────────────────────────────────────────────
 
 export const ACTION_META: Record<string, { label: string; color: string; bg: string }> = {
-    check:    { label: 'CHECK',    color: 'var(--ink-soft)',   bg: 'var(--paper-edge)' },
-    resolve:  { label: 'RESOLVE',  color: 'var(--warning)',   bg: 'color-mix(in oklch, var(--warning) 10%, transparent)' },
-    instruct: { label: 'INSTRUCT', color: 'var(--primary)',   bg: 'color-mix(in oklch, var(--primary) 8%, transparent)' },
+    check:    { label: 'CHECK',    color: 'oklch(var(--color-surface-z6) / 1)',   bg: 'oklch(var(--color-surface-z3) / 1)' },
+    resolve:  { label: 'RESOLVE',  color: 'oklch(var(--color-warning-z5) / 1)',   bg: 'oklch(var(--color-warning-z5) / 0.10)' },
+    instruct: { label: 'INSTRUCT', color: 'oklch(var(--color-primary-z5) / 1)',   bg: 'oklch(var(--color-primary-z5) / 0.08)' },
 };
 
 export function actionMeta(type: string): { label: string; color: string; bg: string } {
@@ -39,7 +39,7 @@ export function fmtMs(ms: number): string {
 }
 
 export function outcomeColor(o: string): string {
-    return o === 'success' ? 'var(--success)' : o === 'partial' ? 'var(--warning)' : 'var(--primary)';
+    return o === 'success' ? 'oklch(var(--color-success-z5) / 1)' : o === 'partial' ? 'oklch(var(--color-warning-z5) / 1)' : 'oklch(var(--color-primary-z5) / 1)';
 }
 
 export type DotStatus = 'ok' | 'warn' | 'fail';

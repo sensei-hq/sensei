@@ -89,7 +89,7 @@
           {@const vals = data.ftrDaily.map((p: { ftr_rate: number }) => p.ftr_rate)}
           {@const minV = Math.min(...vals)}
           {@const rangeV = Math.max(...vals) - minV || 0.01}
-          <svg width="140" height="40" class="block overflow-visible" style="color: var(--primary);">
+          <svg width="140" height="40" class="block overflow-visible" style="color: oklch(var(--color-primary-z5) / 1);">
             <path d={sparklinePath(data.ftrDaily, 140, 40)} fill="none" stroke="currentColor" stroke-width="1.5" />
             <circle cx="140" cy={40 - (40 - 2) * ((last.ftr_rate - minV) / rangeV) - 1} r="2.5" fill="currentColor" />
           </svg>
@@ -233,7 +233,7 @@
 </div>
 
 <style>
-  .ftr-up { color: var(--success); }
-  .ftr-down { color: var(--primary); }
+  .ftr-up { color: oklch(var(--color-success-z5) / 1); }
+  .ftr-down { color: oklch(var(--color-primary-z5) / 1); }
   .text-amber { color: oklch(0.75 0.15 75); }
 </style>

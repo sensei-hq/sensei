@@ -17,7 +17,7 @@
 </div>
 
 <style>
-  .ftr-mark.pass { color: var(--success); }
-  .ftr-mark.fail { color: var(--primary); }
+  .ftr-mark.pass { color: oklch(var(--color-success-z5) / 1); }
+  .ftr-mark.fail { color: oklch(var(--color-primary-z5) / 1); }
   .session-row:last-child { border-bottom: none; }
 </style>
