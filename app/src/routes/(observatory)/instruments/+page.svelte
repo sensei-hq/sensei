@@ -194,16 +194,16 @@
 
 <style>
     .tool-card:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
     .tool-card.selected {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
 
     .param-input:focus {
-        border-color: oklch(var(--color-surface-z6) / 1);
+        border-color: var(--ink-soft);
     }
     .text-error {
-        color: oklch(var(--color-primary-z5) / 1);
+        color: var(--primary);
     }
 </style>

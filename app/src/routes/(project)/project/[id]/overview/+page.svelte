@@ -53,7 +53,7 @@
         </div>
         {#if data.ftrDaily.length >= 2}
             <div class="bg-surface-z2 rounded-lg p-4">
-                <svg width="120" height="32" class="block overflow-visible" style="color: oklch(var(--color-primary-z5) / 1);">
+                <svg width="120" height="32" class="block overflow-visible" style="color: var(--primary);">
                     <path d={sparklinePath(data.ftrDaily, 120, 32)} fill="none" stroke="currentColor" stroke-width="1.5" />
                 </svg>
                 <span class="text-xs opacity-50 block mt-1">14d trend</span>
@@ -171,16 +171,16 @@
 
 <style>
     .stat-delta.pos {
-        color: oklch(var(--color-success-z5) / 1);
+        color: var(--success);
     }
     .stat-delta.neg {
-        color: oklch(var(--color-primary-z5) / 1);
+        color: var(--primary);
     }
     .ftr-mark.ftr-pass {
-        color: oklch(var(--color-success-z5) / 1);
+        color: var(--success);
     }
     .ftr-mark.ftr-fail {
-        color: oklch(var(--color-primary-z5) / 1);
+        color: var(--primary);
     }
     .session-row:last-child {
         border-bottom: none;
@@ -188,13 +188,13 @@
     .signal {
         padding: 3px 10px;
         border-radius: 4px;
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
         white-space: nowrap;
     }
-    .signal-pass { color: oklch(var(--color-success-z5) / 1); }
+    .signal-pass { color: var(--success); }
     .signal-warn { color: oklch(0.75 0.15 75); }
-    .signal-fail { color: oklch(var(--color-primary-z5) / 1); }
+    .signal-fail { color: var(--primary); }
     .teaching-card {
-        border-left: 2px solid oklch(var(--color-primary-z5) / 1);
+        border-left: 2px solid var(--primary);
     }
 </style>

@@ -28,5 +28,5 @@
 </div>
 
 <style>
-  .project-card:hover { background: oklch(var(--color-surface-z3) / 1); }
+  .project-card:hover { background: var(--paper-edge); }
 </style>

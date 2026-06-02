@@ -30,7 +30,7 @@
         <section>
             <h3
                 class="text-xs font-semibold m-0 mb-2 uppercase tracking-wide"
-                style="color: oklch(var(--color-primary-z5) / 1);"
+                style="color: var(--primary);"
             >
                 Anti-patterns ({data.antiPatterns.length})
             </h3>
