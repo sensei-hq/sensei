@@ -74,7 +74,7 @@
     border-radius: 50%;
     border-width: 2px;
     border-style: solid;
-    background: oklch(var(--color-surface-z0) / 1);
+    background: var(--paper);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -85,7 +85,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    border: 2px solid oklch(var(--color-primary-z5) / 1);
+    border: 2px solid var(--primary);
     border-top-color: transparent;
     animation: hero-spin 0.9s linear infinite;
   }
