@@ -83,6 +83,13 @@ pub struct Remedy {
 pub struct HealthPayload {
     pub version: String,
     pub uptime_seconds: u64,
+    /// The Postgres database name the running daemon is connected to.
+    /// Sourced from `SenseiConfig::from_env().db_name` at health-check
+    /// time, so a daemon spawned with `--instance=e2e` reports
+    /// `sensei_e2e` here. Lets e2e globalSetup assert isolation before
+    /// any test runs against the wrong DB — and lets the UI surface
+    /// "you're talking to the e2e daemon" if instance mismatch occurs.
+    pub db_name: String,
     pub platform: Platform,
     pub package_manager: Component,
     pub components: Vec<Component>,
@@ -318,6 +325,7 @@ mod tests {
         HealthPayload {
             version: "0.0.0-test".into(),
             uptime_seconds: 42,
+            db_name: "sensei_test".into(),
             platform: Platform::Macos,
             package_manager: mk("homebrew", "Homebrew", ComponentStatus::Ready),
             components: vec![
