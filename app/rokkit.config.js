@@ -31,6 +31,20 @@ export default {
     info:      "ai",        // indigo blue (藍)
   },
 
+  /**
+   * Reserved-name overrides (Rokkit 1.1.1+). The preset emits these per
+   * mode so `[data-mode="dark"]` swaps the value automatically — no CSS
+   * shim needed at the consumer.
+   *
+   * `paper-edge` defaults to the surface palette's mid-lightness stop,
+   * which on our two-pole sumi (dark) is LIGHTER than the page bg and
+   * reads as a "raised edge". Override the dark value to a stop just
+   * a touch above paper so the hairline looks etched, not lifted.
+   */
+  overrides: {
+    "paper-edge": { light: "kami.400", dark: "sumi.100" },
+  },
+
   typography: {
     sans:    "'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif",
     mono:    "'JetBrains Mono', 'SF Mono', Menlo, monospace",
