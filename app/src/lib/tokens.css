@@ -16,11 +16,12 @@
 @import '@fontsource/jetbrains-mono/500.css';
 
 :root {
-  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
-  --font-ui:      'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono:    'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  /* --font-display, --font-sans, --font-mono are now emitted by Rokkit's
+   * preset from the `typography:` block in rokkit.config.js. The old
+   * `--font-ui` alias is also emitted for back-compat with existing call
+   * sites; new code should prefer --font-sans. */
 
-  --hairline: 1px solid oklch(var(--color-surface-z9) / 0.08);
+  --hairline: 1px solid var(--paper-edge);
 }
 
 .display {
