@@ -22,10 +22,10 @@
 
 <style>
     .tab:hover {
-        color: var(--ink-mute);
+        color: oklch(var(--color-surface-z8) / 1);
     }
     .tab.active {
-        color: var(--ink);
-        border-bottom-color: var(--primary);
+        color: oklch(var(--color-surface-z9) / 1);
+        border-bottom-color: oklch(var(--color-primary-z5) / 1);
     }
 </style>

@@ -81,6 +81,6 @@
 
 <style>
     .shortcuts-row {
-        border-bottom: 1px solid var(--paper-mute);
+        border-bottom: 1px solid oklch(var(--color-surface-z2) / 1);
     }
 </style>

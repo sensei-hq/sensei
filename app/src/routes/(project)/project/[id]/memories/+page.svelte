@@ -8,7 +8,7 @@
     {#if data.pendingShare > 0}
         <div
             class="text-sm px-3.5 py-2.5 rounded-md mb-4"
-            style="background: color-mix(in oklch, var(--primary) 10%, transparent); color: var(--primary);"
+            style="background: oklch(var(--color-primary-z5) / 0.10); color: oklch(var(--color-primary-z5) / 1);"
         >
             {data.pendingShare} memories pending collective share
         </div>
