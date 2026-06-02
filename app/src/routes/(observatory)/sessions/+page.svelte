@@ -129,16 +129,16 @@
 
 <style>
     .filter-chip:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
     .filter-chip.active {
-        background: oklch(var(--color-surface-z9) / 1);
-        color: oklch(var(--color-surface-z1) / 1);
-        border-color: oklch(var(--color-surface-z9) / 1);
+        background: var(--ink);
+        color: var(--paper-soft);
+        border-color: var(--ink);
     }
 
     .session-row:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
 
 </style>
