@@ -107,9 +107,9 @@
 <style>
     /* Folder input pseudo-classes */
     .folder-input::placeholder {
-        color: oklch(var(--color-surface-z5) / 1);
+        color: var(--ink-faint);
     }
     .folder-input:focus {
-        border-color: oklch(var(--color-surface-z6) / 1);
+        border-color: var(--ink-soft);
     }
 </style>
