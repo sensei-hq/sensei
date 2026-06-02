@@ -153,13 +153,13 @@
 
                 <!-- Stats row -->
                 <div class="flex gap-6 pb-4">
-                    {#each [{ label: "Total time", value: fmtMs(s.duration_ms) }, { label: "Traces", value: String(bt.length) }, { label: "Auto-fixes", value: String(fixes), color: fixes > 0 ? "oklch(var(--color-warning-z5) / 1)" : undefined }, { label: "Outcome", value: s.outcome, color: outcomeColor(s.outcome) }] as stat (stat.label)}
+                    {#each [{ label: "Total time", value: fmtMs(s.duration_ms) }, { label: "Traces", value: String(bt.length) }, { label: "Auto-fixes", value: String(fixes), color: fixes > 0 ? "var(--warning)" : undefined }, { label: "Outcome", value: s.outcome, color: outcomeColor(s.outcome) }] as stat (stat.label)}
                         <div class="flex flex-col gap-0.5">
                             <Eyebrow>{stat.label}</Eyebrow>
                             <div
                                 class="text-sm font-medium"
                                 style:color={stat.color ??
-                                    "oklch(var(--color-surface-z9) / 1)"}
+                                    "var(--ink)"}
                             >
                                 {stat.value}
                             </div>
@@ -282,8 +282,8 @@
                                         <pre
                                             class="m-0 text-xs font-mono leading-normal whitespace-pre-wrap break-all"
                                             style:color={t.fix_ok
-                                                ? "oklch(var(--color-success-z5) / 1)"
-                                                : "oklch(var(--color-primary-z5) / 1)"}>$ {t.fix_approach ??
+                                                ? "var(--success)"
+                                                : "var(--primary)"}>$ {t.fix_approach ??
                                                 ""}  <span
                                                 class="text-surface-z5 text-xs"
                                                 >→ {t.fix_ok
@@ -424,14 +424,14 @@
 
     /* Session row hover/selected states */
     .session-row:hover {
-        background: oklch(var(--color-surface-z3) / 1);
+        background: var(--paper-edge);
     }
     .session-row.selected {
-        background: oklch(var(--color-surface-z1) / 1);
-        border-left-color: oklch(var(--color-primary-z5) / 1);
+        background: var(--paper-soft);
+        border-left-color: var(--primary);
     }
     .session-row.selected .session-time {
-        color: oklch(var(--color-surface-z9) / 1);
+        color: var(--ink);
     }
 
     /* Report button hover */
@@ -441,35 +441,35 @@
 
     /* Detail label variants */
     .detail-block-label.err {
-        color: oklch(var(--color-primary-z5) / 1);
+        color: var(--primary);
     }
     .detail-block-label.fix {
-        color: oklch(var(--color-warning-z5) / 1);
+        color: var(--warning);
     }
 
     /* Error text override */
     .err-text {
-        color: oklch(var(--color-primary-z5) / 1) !important;
+        color: var(--primary) !important;
     }
 
     /* Input focus ring */
     .ctx-input:focus {
         outline: none;
-        border-color: oklch(var(--color-surface-z6) / 1);
+        border-color: var(--ink-soft);
     }
 
     /* Code snippets in privacy note */
     .privacy-note code {
         font-family: var(--font-mono);
         font-size: 10.5px;
-        background: oklch(var(--color-surface-z3) / 1);
+        background: var(--paper-edge);
         padding: 1px 5px;
         border-radius: 3px;
     }
 
     /* Outline button hover */
     .outline-btn:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
 
     /* Modal overlay backdrop */

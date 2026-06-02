@@ -151,10 +151,10 @@
 
 <style>
     .memory-card:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
     .memory-card.selected {
-        border-color: oklch(var(--color-surface-z6) / 1);
-        background: oklch(var(--color-surface-z2) / 1);
+        border-color: var(--ink-soft);
+        background: var(--paper-mute);
     }
 </style>

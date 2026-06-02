@@ -228,13 +228,13 @@
         border-left: none;
     }
     .segment-btn.active {
-        background: oklch(var(--color-surface-z3) / 1);
-        color: oklch(var(--color-surface-z9) / 1);
+        background: var(--paper-edge);
+        color: var(--ink);
     }
 
     /* Name input focus */
     .name-input:focus {
         outline: none;
-        border-color: oklch(var(--color-surface-z7) / 1);
+        border-color: var(--ink-mute);
     }
 </style>

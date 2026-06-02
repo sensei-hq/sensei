@@ -258,7 +258,7 @@
         width: 20px;
         height: 20px;
         border-radius: 50%;
-        border: 2px solid oklch(var(--color-surface-z5) / 1);
+        border: 2px solid var(--ink-faint);
         border-top-color: transparent;
         animation: spin 0.9s linear infinite;
     }
