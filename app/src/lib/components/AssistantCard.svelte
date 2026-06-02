@@ -206,9 +206,13 @@
     background: var(--paper-soft);
     transition: opacity 180ms ease, background 180ms ease, border-color 180ms ease;
   }
-  /* Not-found is just dimmed — same solid hairline as found cards. */
+  /* Not-found cards keep the same border + a slightly more recessed
+     fill (paper-mute sits between paper and paper-soft in both modes),
+     plus reduced opacity to dim the whole card. Avoids the dark-mode
+     issue where `background: transparent` made the card disappear into
+     the page and the faded text looked washed-out. */
   .card.not-found {
-    background: transparent;
+    background: var(--paper-mute);
     opacity: 0.6;
   }
 
@@ -234,6 +238,10 @@
   .title {
     font-size: 15px;
     font-weight: 600;
+    /* Explicit ink so the title doesn't rely on the body cascade — that
+     * resolves to whatever theme is set on body, which would be wrong if
+     * a parent component scopes a different mode. */
+    color: var(--ink);
   }
 
   .meta {
