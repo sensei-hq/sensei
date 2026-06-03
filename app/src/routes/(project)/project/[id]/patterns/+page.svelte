@@ -15,7 +15,7 @@
             <ul class="list-none m-0 p-0">
                 {#each data.followed as p (p.id)}
                     <li
-                        class="pattern-row flex gap-3 py-2 border-b border-surface-z2 text-sm"
+                        class="pattern-row flex gap-3 py-2 border-b border-paper-mute text-sm"
                     >
                         <span class="flex-1">{p.name}</span>
                         <span class="text-xs opacity-50 font-mono"
@@ -30,14 +30,14 @@
         <section>
             <h3
                 class="text-xs font-semibold m-0 mb-2 uppercase tracking-wide"
-                style="color: oklch(var(--color-primary-z5) / 1);"
+                style="color: var(--accent);"
             >
                 Anti-patterns ({data.antiPatterns.length})
             </h3>
             <ul class="list-none m-0 p-0">
                 {#each data.antiPatterns as p (p.id)}
                     <li
-                        class="pattern-row flex gap-3 py-2 border-b border-surface-z2 text-sm opacity-80"
+                        class="pattern-row flex gap-3 py-2 border-b border-paper-mute text-sm opacity-80"
                     >
                         <span class="flex-1">{p.name}</span>
                         <span class="text-xs opacity-50 font-mono"

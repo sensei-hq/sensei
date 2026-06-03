@@ -63,7 +63,7 @@
 <div class="max-w-[820px] mx-auto px-12 pt-8 pb-16">
     <!-- Stats strip -->
     <div
-        class="flex gap-8 mb-7 px-6 py-5 bg-surface-z2 border border-surface-z3 rounded-lg"
+        class="flex gap-8 mb-7 px-6 py-5 bg-paper-mute border border-paper-mute rounded-lg"
     >
         {#each [
             { value: stats.count || null, label: "sessions (7d)" },
@@ -73,7 +73,7 @@
         ] as stat}
             <div class="flex flex-col gap-0.5">
                 <span class="display text-2xl font-normal">{stat.value ?? "—"}</span>
-                <span class="text-xs text-surface-z6">{stat.label}</span>
+                <span class="text-xs text-ink-soft">{stat.label}</span>
             </div>
         {/each}
     </div>
@@ -82,7 +82,7 @@
     <div class="flex gap-1.5 mb-6">
         {#each ["all", "completed", "corrected", "abandoned"] as f}
             <button
-                class="filter-chip px-3.5 py-1 rounded-full border border-surface-z3 bg-transparent text-xs cursor-pointer text-surface-z7 capitalize"
+                class="filter-chip px-3.5 py-1 rounded-full border border-paper-mute bg-transparent text-xs cursor-pointer text-ink-mute capitalize"
                 class:active={filter === f}
                 onclick={() => (filter = f as any)}>{f}</button
             >
@@ -91,7 +91,7 @@
 
     <!-- Sessions list -->
     {#if loading}
-        <p class="text-sm text-surface-z6">Loading sessions...</p>
+        <p class="text-sm text-ink-soft">Loading sessions...</p>
     {:else if filtered.length === 0}
         <EmptyState
             kanji="刻"
@@ -107,18 +107,18 @@
                     <StatusDot status={session.ftr === 1 ? 'ok' : 'warn'} />
                     <div class="flex-1 flex flex-col gap-0.5 min-w-0">
                         <span
-                            class="text-sm text-surface-z9 whitespace-nowrap overflow-hidden text-ellipsis"
+                            class="text-sm text-ink whitespace-nowrap overflow-hidden text-ellipsis"
                             >{session.task || session.id.slice(0, 8)}</span
                         >
-                        <span class="text-xs text-surface-z6"
+                        <span class="text-xs text-ink-soft"
                             >{session.project || "unknown"}</span
                         >
                     </div>
                     <span
-                        class="text-xs text-surface-z6 capitalize w-20 text-right"
+                        class="text-xs text-ink-soft capitalize w-20 text-right"
                         >{session.outcome ?? "—"}</span
                     >
-                    <span class="text-xs text-surface-z5 w-[140px] text-right"
+                    <span class="text-xs text-ink-soft w-[140px] text-right"
                         >{formatTime(session.startedAt)}</span
                     >
                 </div>
@@ -129,16 +129,16 @@
 
 <style>
     .filter-chip:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
     .filter-chip.active {
-        background: oklch(var(--color-surface-z9) / 1);
-        color: oklch(var(--color-surface-z1) / 1);
-        border-color: oklch(var(--color-surface-z9) / 1);
+        background: var(--ink);
+        color: var(--paper-soft);
+        border-color: var(--ink);
     }
 
     .session-row:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
 
 </style>

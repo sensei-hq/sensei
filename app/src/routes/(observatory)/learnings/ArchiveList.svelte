@@ -17,9 +17,9 @@
 {/if}
 
 <style>
-    .memory-row { padding: 0.75rem; border: 1px solid var(--surface-z3); border-radius: 4px; margin-bottom: 0.5rem; opacity: 0.7; }
+    .memory-row { padding: 0.75rem; border: 1px solid var(--paper-mute); border-radius: 4px; margin-bottom: 0.5rem; opacity: 0.7; }
     .title-btn { background: none; border: none; padding: 0; margin: 0.25rem 0; font-size: inherit; font-weight: 600; cursor: pointer; text-align: left; display: block; width: 100%; }
     .meta { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--surface-z3); }
+    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--paper-mute); }
     .empty { color: var(--text-muted); padding: 1rem; }
 </style>

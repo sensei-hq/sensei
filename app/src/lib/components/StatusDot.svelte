@@ -14,11 +14,11 @@
 
   const toneClass = $derived(
     ({
-      ok:   'bg-success-z6',
-      busy: 'bg-primary-z6',
-      warn: 'bg-warning-z6',
-      fail: 'bg-primary-z6',
-      idle: 'bg-ink-z5',
+      ok:   'bg-success',
+      busy: 'bg-accent',
+      warn: 'bg-warning',
+      fail: 'bg-accent',
+      idle: 'bg-paper-edge',
     })[status],
   );
 </script>
