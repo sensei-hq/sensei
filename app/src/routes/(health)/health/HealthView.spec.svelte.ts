@@ -56,10 +56,9 @@ describe('HealthView', () => {
     expect(m.container.querySelector('pre')).not.toBeNull();
   });
 
-  // When status=ok the right column (showChecks=false) is hidden entirely;
-  // the +page.svelte auto-navigates via goto() so the Continue button is not
-  // needed in practice. The selector is preserved for e2e tests that target
-  // the button via [data-action="continue"].
+  // When status=ok the right column stays visible (all six gates ready); the
+  // +page.svelte auto-navigates via goto() so a separate Continue button is
+  // not needed. The watermark logo fills the empty space in the left column.
   it('does NOT render Continue button when status=ok (auto-navigate handles it)', () => {
     const okState = new HealthState(ok());
     const m1 = mountComponent(HealthView, { state: okState });
@@ -74,17 +73,21 @@ describe('HealthView', () => {
     expect(m2.container.querySelector('button[data-action="continue"]')).toBeNull();
   });
 
-  it('reactively hides right column when state.status flips to ok', async () => {
+  it('right column stays visible with all-green ledger when state.status flips to ok', async () => {
     const state = new HealthState(needsAction());
     const m = mountComponent(HealthView, { state });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('pre')).not.toBeNull();
     expect(m.container.querySelectorAll('[data-component="gate-row"]').length).toBe(6);
+    // Watermark only renders in ok state
+    expect(m.container.querySelector('.watermark')).toBeNull();
 
     state.apply(ok());
     await tick();
     expect(m.container.querySelector('pre')).toBeNull();
-    // Right column (showChecks=false) disappears when ok
-    expect(m.container.querySelectorAll('[data-component="gate-row"]').length).toBe(0);
+    // Right column persists in ok state — user sees the all-green ledger
+    expect(m.container.querySelectorAll('[data-component="gate-row"]').length).toBe(6);
+    // Watermark fills the empty space in the left column
+    expect(m.container.querySelector('.watermark')).not.toBeNull();
   });
 });
