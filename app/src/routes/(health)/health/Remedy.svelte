@@ -48,7 +48,7 @@
   );
 </script>
 
-<section class="mt-4 border border-accent/30 rounded-xl bg-paper-soft">
+<section class="mt-4 border border-paper-edge rounded-xl bg-paper-soft">
   <header class="flex items-center gap-2.5 px-4 py-3.5 border-b border-paper-edge">
     <Kanji char="手" />
     <div class="flex-1">
@@ -71,7 +71,7 @@
       {copyLabel}
     </button>
     <button data-action="verify"
-            class="btn-outline btn-sm text-accent border-accent/40"
+            class="btn-outline btn-sm text-accent border-accent"
             onclick={onVerify}>
       I've run it · re-check
     </button>
