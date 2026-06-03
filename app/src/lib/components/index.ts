@@ -8,3 +8,4 @@ export { default as StatusDisc } from './StatusDisc.svelte';
 export { default as StatusDot } from './StatusDot.svelte';
 export { default as Switch } from './Switch.svelte';
 export { default as TabBar } from './TabBar.svelte';
+export { default as Wordmark } from './Wordmark.svelte';
