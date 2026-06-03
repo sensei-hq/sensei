@@ -53,7 +53,7 @@
         </div>
         {#if data.ftrDaily.length >= 2}
             <div class="bg-paper-mute rounded-lg p-4">
-                <svg width="120" height="32" class="block overflow-visible" style="color: var(--accent);">
+                <svg width="120" height="32" class="block overflow-visible text-accent">
                     <path d={sparklinePath(data.ftrDaily, 120, 32)} fill="none" stroke="currentColor" stroke-width="1.5" />
                 </svg>
                 <span class="text-xs opacity-50 block mt-1">14d trend</span>
@@ -192,8 +192,8 @@
         white-space: nowrap;
     }
     .signal-pass { color: var(--success); }
-    .signal-warn { color: oklch(0.75 0.15 75); }
-    .signal-fail { color: var(--accent); }
+    .signal-warn { color: var(--warning); }
+    .signal-fail { color: var(--danger); }
     .teaching-card {
         border-left: 2px solid var(--accent);
     }

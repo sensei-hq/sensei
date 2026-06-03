@@ -29,8 +29,7 @@
     {#if data.antiPatterns.length > 0}
         <section>
             <h3
-                class="text-xs font-semibold m-0 mb-2 uppercase tracking-wide"
-                style="color: var(--accent);"
+                class="text-xs font-semibold m-0 mb-2 uppercase tracking-wide text-accent"
             >
                 Anti-patterns ({data.antiPatterns.length})
             </h3>
