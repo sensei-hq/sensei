@@ -62,11 +62,11 @@
 
 <style>
     .learnings-page { display: flex; flex-direction: column; height: 100%; }
-    .tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--surface-z3); padding: 0.5rem 1rem; }
+    .tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--paper-mute); padding: 0.5rem 1rem; }
     .tab { padding: 0.5rem 1rem; border: none; background: transparent; cursor: pointer; }
     .tab.active { border-bottom: 2px solid var(--accent); font-weight: 600; }
     .count { margin-left: 0.5rem; opacity: 0.6; }
     .layout { display: grid; grid-template-columns: 1fr 1fr; flex: 1; min-height: 0; }
-    .list { overflow-y: auto; padding: 1rem; border-right: 1px solid var(--surface-z3); }
+    .list { overflow-y: auto; padding: 1rem; border-right: 1px solid var(--paper-mute); }
     .detail { overflow-y: auto; padding: 1rem; }
 </style>

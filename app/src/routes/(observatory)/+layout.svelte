@@ -48,7 +48,7 @@
 </script>
 
 <div
-    class="w-full h-screen flex flex-col bg-surface-z1 text-surface-z9 overflow-hidden"
+    class="w-full h-screen flex flex-col bg-paper-soft text-ink overflow-hidden"
 >
     <div class="drag-region h-8 shrink-0"></div>
 
@@ -58,14 +58,14 @@
     >
         <!-- Sidebar -->
         <aside
-            class="border-r border-surface-z2 px-3.5 py-6 bg-surface-z2 flex flex-col gap-5 overflow-auto"
+            class="border-r border-paper-mute px-3.5 py-6 bg-paper-mute flex flex-col gap-5 overflow-auto"
         >
             <div class="flex items-baseline gap-2 px-1.5">
-                <span class="kanji text-xl text-primary-z5">先</span>
+                <span class="kanji text-xl text-accent">先</span>
                 {#if !sidebarCollapsed}
                     <span class="display text-base">Sensei</span>
                     <button
-                        class="collapse-btn ml-auto bg-none border-none text-surface-z6 cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
+                        class="collapse-btn ml-auto bg-none border-none text-ink-soft cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
                         onclick={() => (sidebarCollapsed = true)}>‹</button
                     >
                 {/if}
@@ -75,7 +75,7 @@
                 {@const active = isActive(item.href)}
                 <a
                     href={item.href}
-                    class="nav-item flex items-center py-2 rounded-md text-sm text-surface-z7 no-underline transition-colors duration-fast hover:bg-surface-z3"
+                    class="nav-item flex items-center py-2 rounded-md text-sm text-ink-mute no-underline transition-colors duration-fast hover:bg-paper-mute"
                     class:justify-center={collapsed}
                     class:gap-2.5={!collapsed}
                     class:px-2.5={!collapsed}
@@ -83,7 +83,7 @@
                     title={collapsed ? item.label : undefined}
                 >
                     <span
-                        class="kanji text-sm w-3.5 text-surface-z6"
+                        class="kanji text-sm w-3.5 text-ink-soft"
                         class:nav-kanji-active={active}
                         >{item.kanji}</span
                     >
@@ -97,7 +97,7 @@
                 {@const active = !collapsed && isActive(`/projects/${proj.id}`)}
                 <button
                     type="button"
-                    class="nav-item flex items-center py-2 rounded-md text-sm text-surface-z7 no-underline transition-colors duration-fast hover:bg-surface-z3 bg-none border-none cursor-pointer w-full"
+                    class="nav-item flex items-center py-2 rounded-md text-sm text-ink-mute no-underline transition-colors duration-fast hover:bg-paper-mute bg-none border-none cursor-pointer w-full"
                     class:justify-center={collapsed}
                     class:gap-2.5={!collapsed}
                     class:px-2.5={!collapsed}
@@ -109,7 +109,7 @@
                     title={collapsed ? `${proj.name} ↗` : `${proj.name} ↗ opens in its own window`}
                 >
                     <span
-                        class="kanji text-sm w-3.5 text-surface-z6"
+                        class="kanji text-sm w-3.5 text-ink-soft"
                         class:nav-kanji-active={active}
                         >{proj.kanji}</span
                     >
@@ -128,7 +128,7 @@
                 </nav>
 
                 {#if projects.length > 0}
-                    <div class="h-px bg-surface-z3 mx-2.5"></div>
+                    <div class="h-px bg-paper-mute mx-2.5"></div>
                     <nav class="flex flex-col gap-px">
                         {#each projects as proj (proj.id)}
                             {@render projectItem(proj, true)}
@@ -136,9 +136,9 @@
                     </nav>
                 {/if}
 
-                <div class="mt-auto pt-2.5 border-t border-surface-z2">
+                <div class="mt-auto pt-2.5 border-t border-paper-mute">
                     <button
-                        class="collapse-btn bg-none border-none text-surface-z6 cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
+                        class="collapse-btn bg-none border-none text-ink-soft cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
                         onclick={() => (sidebarCollapsed = false)}>›</button
                     >
                 </div>
@@ -171,8 +171,8 @@
                     </nav>
                 </div>
 
-                <div class="pt-2.5 border-t border-surface-z2">
-                    <span class="mono text-xs text-surface-z6"
+                <div class="pt-2.5 border-t border-paper-mute">
+                    <span class="mono text-xs text-ink-soft"
                         >daemon · port {appState.port}</span
                     >
                 </div>
@@ -194,18 +194,18 @@
 
     /* Active nav item */
     .nav-item.active {
-        background: oklch(var(--color-surface-z3) / 1);
-        color: oklch(var(--color-surface-z9) / 1);
+        background: var(--paper-mute);
+        color: var(--ink);
     }
 
     /* Active nav kanji accent */
     .nav-kanji-active {
-        color: oklch(var(--color-primary-z5) / 1);
+        color: var(--accent);
     }
 
     /* Collapse button hover */
     .collapse-btn:hover {
-        background: oklch(var(--color-surface-z3) / 1);
-        color: oklch(var(--color-surface-z7) / 1);
+        background: var(--paper-mute);
+        color: var(--ink-mute);
     }
 </style>

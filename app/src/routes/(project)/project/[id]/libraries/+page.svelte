@@ -5,7 +5,7 @@
 
 <PageHeader title="Libraries">
     {#snippet right()}
-        <div class="text-sm text-ink-z6">
+        <div class="text-sm text-ink-mute">
             <span>{data.wrappedCount} wrapped</span>
             <span class="opacity-40"> · </span>
             <span>{data.unwrappedCount} unwrapped</span>
@@ -22,7 +22,7 @@
         <ul class="list-none m-0 p-0">
             {#each data.libraries as lib (lib.id)}
                 <li
-                    class="lib-row flex items-center gap-2.5 py-2 border-b border-surface-z2 text-sm"
+                    class="lib-row flex items-center gap-2.5 py-2 border-b border-paper-mute text-sm"
                 >
                     <span class="font-semibold flex-1">{lib.name}</span>
                     <span class="opacity-50 text-xs">{lib.ecosystem}</span>
@@ -44,11 +44,11 @@
         border-bottom: none;
     }
     .scope-badge.global {
-        background: oklch(var(--color-surface-z3) / 1);
+        background: var(--paper-mute);
         opacity: 0.7;
     }
     .scope-badge.proj {
-        background: oklch(var(--color-primary-z5) / 0.15);
-        color: oklch(var(--color-primary-z5) / 1);
+        background: color-mix(in oklch, var(--accent) 15%, transparent);
+        color: var(--accent);
     }
 </style>

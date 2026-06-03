@@ -84,21 +84,21 @@
 </script>
 
 <div
-    class="w-full h-screen flex flex-col bg-surface-z1 text-surface-z9 overflow-hidden"
+    class="w-full h-screen flex flex-col bg-paper-soft text-ink overflow-hidden"
 >
     <div class="drag-region h-8 shrink-0"></div>
 
     <div class="flex-1 grid grid-cols-[260px_1fr] min-h-0">
         <!-- Rail -->
         <aside
-            class="flex flex-col px-6 py-6 border-r border-surface-z2 bg-surface-z2 overflow-hidden"
+            class="flex flex-col px-6 py-6 border-r border-paper-mute bg-paper-mute overflow-hidden"
         >
             <div class="flex items-baseline gap-2 mb-7">
-                <span class="kanji text-[22px] text-primary-z6">先生</span>
+                <span class="kanji text-[22px] text-accent">先生</span>
                 <span class="display text-lg">Sensei</span>
             </div>
 
-            <div class="text-xs tracking-wide text-surface-z6 uppercase mb-3.5">
+            <div class="text-xs tracking-wide text-ink-soft uppercase mb-3.5">
                 Setup
             </div>
 
@@ -109,16 +109,16 @@
                         data-rail-item
                         data-stage-id={s.id}
                         data-active={s.active}
-                        class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-surface-z5 cursor-pointer transition-all duration-fast text-sm"
+                        class="grid grid-cols-[24px_1fr_14px] px-2 py-1 gap-2.5 items-center rounded-md text-left border border-transparent text-ink-soft cursor-pointer transition-all duration-fast text-sm"
                         class:active={s.active}
                         class:done={isDone}
                         onclick={() => goto(s.path)}
                     >
                         <span
-                            class="rail-kanji kanji text-sm text-center text-surface-z5"
+                            class="rail-kanji kanji text-sm text-center text-ink-soft"
                             class:active={s.active}
                             class:done={isDone}
-                            class:text-primary-z6={s.active}>{s.icon}</span
+                            class:text-accent={s.active}>{s.icon}</span
                         >
                         <div class="overflow-hidden">
                             <div class:leading-tight={s.active}>
@@ -126,26 +126,26 @@
                             </div>
                             {#if s.active}
                                 <div
-                                    class="mono text-xs text-surface-z6 mt-0.5"
+                                    class="mono text-xs text-ink-soft mt-0.5"
                                 >
                                     {s.brief}
                                 </div>
                             {/if}
                         </div>
                         <span
-                            class="text-xs text-center leading-none text-success-z6 opacity-0 transition-opacity duration-fast"
+                            class="text-xs text-center leading-none text-success opacity-0 transition-opacity duration-fast"
                             class:opacity-100={isDone}>✓</span
                         >
                     </button>
                 {/each}
             </div>
 
-            <div class="mt-auto border-t border-surface-z2 pt-3">
+            <div class="mt-auto border-t border-paper-mute pt-3">
                 <div class="flex items-center gap-2.5">
                     <StatusDot status="ok" />
-                    <div class="text-xs text-surface-z7 leading-snug">
+                    <div class="text-xs text-ink-mute leading-snug">
                         <div
-                            class="tracking-wide uppercase text-xs text-surface-z6"
+                            class="tracking-wide uppercase text-xs text-ink-soft"
                         >
                             Services
                         </div>
@@ -159,12 +159,12 @@
         <div class="flex flex-col min-h-0">
             {#if stage?.id !== "welcome"}
                 <div
-                    class="shrink-0 px-16 pt-7 pb-6 border-b border-surface-z3 bg-surface-z1 relative z-1"
+                    class="shrink-0 px-16 pt-7 pb-6 border-b border-paper-mute bg-paper-soft relative z-1"
                 >
                     <div
-                        class="text-xs text-surface-z6 tracking-wide uppercase mb-2"
+                        class="text-xs text-ink-soft tracking-wide uppercase mb-2"
                     >
-                        <span class="kanji text-primary-z6 mr-1.5 opacity-60"
+                        <span class="kanji text-accent mr-1.5 opacity-60"
                             >{stage.icon}</span
                         >Step
                     </div>
@@ -173,7 +173,7 @@
                     >
                         {stage.title}
                     </h1>
-                    <p class="text-sm text-surface-z6 m-0">
+                    <p class="text-sm text-ink-soft m-0">
                         {stage.description}
                     </p>
                 </div>
@@ -187,7 +187,7 @@
             >
                 {#if stage?.watermark}
                     <span
-                        class="watermark kanji absolute right-16 bottom-8 text-4xl text-primary-z6 opacity-[0.035] leading-none select-none pointer-events-none z-0"
+                        class="watermark kanji absolute right-16 bottom-8 text-4xl text-accent opacity-[0.035] leading-none select-none pointer-events-none z-0"
                         >{stage.icon}</span
                     >
                 {/if}
@@ -195,44 +195,44 @@
             </div>
 
             {#if commitError}
-                <div class="mx-16 mb-2 p-3 rounded-md border border-danger-z5 bg-surface-z2 text-xs text-danger-z5 select-text">
+                <div class="mx-16 mb-2 p-3 rounded-md border border-danger bg-paper-mute text-xs text-danger select-text">
                     Could not finish: {commitError} — fix and try Continue again.
                 </div>
             {/if}
 
             <!-- Bottom nav -->
             <div
-                class="flex items-center gap-5 px-16 py-3.5 border-t border-surface-z2 bg-surface-z1 shrink-0"
+                class="flex items-center gap-5 px-16 py-3.5 border-t border-paper-mute bg-paper-soft shrink-0"
             >
                 <div class="flex items-baseline gap-3">
                     <span
-                        class="text-xs tracking-wide text-surface-z6 uppercase"
+                        class="text-xs tracking-wide text-ink-soft uppercase"
                     >
                         {String(currentIdx + 1).padStart(2, "0")}
-                        <span class="text-surface-z5">/ {total}</span>
+                        <span class="text-ink-soft">/ {total}</span>
                     </span>
-                    <span class="text-sm text-surface-z7">{stage.title}</span>
+                    <span class="text-sm text-ink-mute">{stage.title}</span>
                 </div>
 
                 <div class="flex-1 flex gap-1 items-center">
                     {#each Array(total) as _, i}
                         <span
-                            class="flex-1 h-0.5 rounded-sm bg-surface-z3 transition-colors duration"
-                            class:bg-surface-z9={i <= currentIdx}
+                            class="flex-1 h-0.5 rounded-sm bg-paper-mute transition-colors duration"
+                            class:bg-ink={i <= currentIdx}
                         ></span>
                     {/each}
                 </div>
 
                 <div class="flex gap-2 items-center">
                     <button
-                        class="btn-back text-xs text-surface-z7 px-3.5 py-1 leading-3 bg-none border-none cursor-pointer"
+                        class="btn-back text-xs text-ink-mute px-3.5 py-1 leading-3 bg-none border-none cursor-pointer"
                         onclick={back}
                         disabled={isFirst}
                     >
                         ← Back
                     </button>
                     <button
-                        class="btn-primary text-sm leading-3 bg-surface-z9 text-surface-z1 px-6 py-2.5 rounded-md border-none tracking-normal cursor-pointer"
+                        class="btn-primary text-sm leading-3 bg-ink text-paper-soft px-6 py-2.5 rounded-md border-none tracking-normal cursor-pointer"
                         onclick={next}
                         disabled={!canAdvance || committing}
                     >
@@ -260,30 +260,30 @@
         padding: 7px 10px;
     }*/
     [data-rail-item].active {
-        background: oklch(var(--color-surface-z1) / 1);
-        border-color: oklch(var(--color-surface-z3) / 1);
-        color: oklch(var(--color-surface-z9) / 1);
+        background: var(--paper-soft);
+        border-color: var(--paper-mute);
+        color: var(--ink);
     }
     [data-rail-item].done {
-        color: oklch(var(--color-surface-z7) / 1);
+        color: var(--ink-mute);
     }
 
     /* Rail kanji states */
     .rail-kanji.done {
-        color: oklch(var(--color-surface-z7) / 1);
+        color: var(--ink-mute);
     }
 
     /* Back/primary button disabled states */
     .btn-back:disabled {
-        color: oklch(var(--color-surface-z5) / 1);
+        color: var(--ink-soft);
         cursor: default;
     }
     .btn-primary:hover:not(:disabled) {
         opacity: 0.9;
     }
     .btn-primary:disabled {
-        background: oklch(var(--color-surface-z3) / 1);
-        color: oklch(var(--color-surface-z6) / 1);
+        background: var(--paper-mute);
+        color: var(--ink-soft);
         cursor: default;
     }
 </style>

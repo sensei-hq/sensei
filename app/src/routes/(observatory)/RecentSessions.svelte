@@ -39,7 +39,7 @@
   <section class="mt-6">
     <div class="flex items-baseline justify-between mb-3">
       <h2 class="display text-base font-normal m-0">Recent sessions</h2>
-      <a href="/sessions" class="text-xs text-surface-z6 hover:text-surface-z9">all sessions →</a>
+      <a href="/sessions" class="text-xs text-ink-soft hover:text-ink">all sessions →</a>
     </div>
     <div class="flex flex-col">
       {#each sessions as s (s.id)}
@@ -48,25 +48,25 @@
         <a
           data-session-row={s.id}
           href={`/sessions#${s.id}`}
-          class="grid grid-cols-[8px_120px_1fr_auto_auto] gap-4 py-3 px-1 items-center text-left border-b border-surface-z2 hover:bg-surface-z1"
+          class="grid grid-cols-[8px_120px_1fr_auto_auto] gap-4 py-3 px-1 items-center text-left border-b border-paper-mute hover:bg-paper-soft"
         >
           <span
             data-ftr-dot
             data-tone={isSuccess ? 'success' : 'warn'}
             class="w-2 h-2 rounded-full"
-            class:bg-success-z6={isSuccess}
-            class:bg-warning-z6={!isSuccess}
+            class:bg-success={isSuccess}
+            class:bg-warning={!isSuccess}
           ></span>
-          <span class="mono text-xs text-surface-z6 truncate">{s.project}</span>
-          <span class="text-sm text-surface-z8 truncate">{s.task}</span>
+          <span class="mono text-xs text-ink-soft truncate">{s.project}</span>
+          <span class="text-sm text-ink-mute truncate">{s.task}</span>
           {#if mins !== null}
-            <span data-duration class="mono text-xs text-surface-z6 min-w-[3rem] text-right">
+            <span data-duration class="mono text-xs text-ink-soft min-w-[3rem] text-right">
               {formatDuration(mins)}
             </span>
           {:else}
             <span></span>
           {/if}
-          <span class="mono text-xs text-surface-z5">{timeOfDay(s.startedAt)}</span>
+          <span class="mono text-xs text-ink-soft">{timeOfDay(s.startedAt)}</span>
         </a>
       {/each}
     </div>

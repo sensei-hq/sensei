@@ -45,13 +45,13 @@
 </script>
 
 <!-- ── Page shell ────────────────────────────────────────────────────────── -->
-<div class="h-full flex overflow-hidden text-surface-z9">
+<div class="h-full flex overflow-hidden text-ink">
     <!-- ── Sidebar ─────────────────────────────────────────────────────────── -->
     <aside
-        class="w-[248px] shrink-0 border-r border-surface-z2 bg-surface-z2 flex flex-col overflow-hidden"
+        class="w-[248px] shrink-0 border-r border-paper-mute bg-paper-mute flex flex-col overflow-hidden"
     >
         <div
-            class="px-5 pt-6 pb-3.5 border-b border-surface-z2 flex items-center gap-2.5 shrink-0"
+            class="px-5 pt-6 pb-3.5 border-b border-paper-mute flex items-center gap-2.5 shrink-0"
         >
             <Kanji char="診" size="lg" />
             <Eyebrow>diagnostic logs</Eyebrow>
@@ -67,11 +67,11 @@
                     onclick={() => state.toggleDate(dg.date)}
                 >
                     <span
-                        class="text-xs text-surface-z5 leading-none inline-block transition-transform duration"
+                        class="text-xs text-ink-soft leading-none inline-block transition-transform duration"
                         class:collapsed={!open}>▾</span
                     >
                     <span
-                        class="text-xs font-semibold tracking-wide uppercase text-surface-z7"
+                        class="text-xs font-semibold tracking-wide uppercase text-ink-mute"
                         >{dg.date}</span
                     >
                 </button>
@@ -87,18 +87,18 @@
                         >
                             {#if isCurrent}
                                 <span
-                                    class="block text-xs tracking-wide uppercase text-primary-z5 mb-0.5"
+                                    class="block text-xs tracking-wide uppercase text-accent mb-0.5"
                                     >current</span
                                 >
                             {/if}
                             <div class="flex items-center gap-1.5 mb-0.5">
                                 <StatusDot status={outcomeStatus(s.outcome)} size="sm" />
                                 <span
-                                    class="session-time text-sm font-medium text-surface-z7"
+                                    class="session-time text-sm font-medium text-ink-mute"
                                     >{timeOfDay(s.started_at)}</span
                                 >
                             </div>
-                            <div class="ml-3 text-xs text-surface-z5">
+                            <div class="ml-3 text-xs text-ink-soft">
                                 {moduleLabel(s.module)} · {sessionSummary(s)}
                             </div>
                         </button>
@@ -107,7 +107,7 @@
             {/each}
 
             {#if state.sessions.length === 0}
-                <div class="px-5 py-4 text-xs text-surface-z5">
+                <div class="px-5 py-4 text-xs text-ink-soft">
                     No sessions yet
                 </div>
             {/if}
@@ -123,7 +123,7 @@
             {@const fixes = bt.filter((t) => t.fix_attempted).length}
 
             <!-- Session header -->
-            <div class="shrink-0 pt-6 px-9 border-b border-surface-z2">
+            <div class="shrink-0 pt-6 px-9 border-b border-paper-mute">
                 <div class="flex items-start justify-between mb-4">
                     <div>
                         <div class="mb-1.5"><Eyebrow>{moduleLabel(s.module)}</Eyebrow></div>
@@ -133,7 +133,7 @@
                             {formatTime(s.started_at)}
                         </h2>
                         <div
-                            class="flex items-center flex-wrap text-xs text-surface-z5"
+                            class="flex items-center flex-wrap text-xs text-ink-soft"
                         >
                             {#each [anonymize(si.os), si.arch, `${si.ram_gb} GB`, `${si.cpu_cores} cores`, `v${s.app_version}`] as v, i}
                                 {#if i > 0}<span class="mx-2 opacity-40">·</span
@@ -144,7 +144,7 @@
                     </div>
 
                     <button
-                        class="report-btn shrink-0 mt-1 text-sm font-medium border-none px-4 py-2 rounded-md cursor-pointer bg-surface-z9 text-surface-z1"
+                        class="report-btn shrink-0 mt-1 text-sm font-medium border-none px-4 py-2 rounded-md cursor-pointer bg-ink text-paper-soft"
                         onclick={() => state.openModal()}
                     >
                         Report this session ↗
@@ -153,13 +153,13 @@
 
                 <!-- Stats row -->
                 <div class="flex gap-6 pb-4">
-                    {#each [{ label: "Total time", value: fmtMs(s.duration_ms) }, { label: "Traces", value: String(bt.length) }, { label: "Auto-fixes", value: String(fixes), color: fixes > 0 ? "oklch(var(--color-warning-z5) / 1)" : undefined }, { label: "Outcome", value: s.outcome, color: outcomeColor(s.outcome) }] as stat (stat.label)}
+                    {#each [{ label: "Total time", value: fmtMs(s.duration_ms) }, { label: "Traces", value: String(bt.length) }, { label: "Auto-fixes", value: String(fixes), color: fixes > 0 ? "var(--warning)" : undefined }, { label: "Outcome", value: s.outcome, color: outcomeColor(s.outcome) }] as stat (stat.label)}
                         <div class="flex flex-col gap-0.5">
                             <Eyebrow>{stat.label}</Eyebrow>
                             <div
                                 class="text-sm font-medium"
                                 style:color={stat.color ??
-                                    "oklch(var(--color-surface-z9) / 1)"}
+                                    "var(--ink)"}
                             >
                                 {stat.value}
                             </div>
@@ -170,7 +170,7 @@
 
             <!-- Column headers -->
             <div
-                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-2 border-b border-surface-z2 bg-surface-z2 shrink-0 text-xs tracking-wide uppercase text-surface-z5"
+                class="grid grid-cols-[68px_148px_1fr_52px_40px] gap-3 px-9 py-2 border-b border-paper-mute bg-paper-mute shrink-0 text-xs tracking-wide uppercase text-ink-soft"
             >
                 <span>action</span>
                 <span>step</span>
@@ -186,7 +186,7 @@
                     {@const isOpen = state.expandedTraceId === t.id}
                     {@const hasDetail = !!(t.out || t.err || t.fix_attempted)}
 
-                    <div class="border-b border-surface-z2">
+                    <div class="border-b border-paper-mute">
                         <!-- Main row -->
                         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                         <div
@@ -214,31 +214,31 @@
                                 {am.label}
                             </span>
                             <span
-                                class="text-xs font-mono text-surface-z7 overflow-hidden whitespace-nowrap text-ellipsis"
+                                class="text-xs font-mono text-ink-mute overflow-hidden whitespace-nowrap text-ellipsis"
                                 >{t.step ?? ""}</span
                             >
                             <span
-                                class="text-xs font-mono text-surface-z5 overflow-hidden whitespace-nowrap text-ellipsis"
+                                class="text-xs font-mono text-ink-soft overflow-hidden whitespace-nowrap text-ellipsis"
                                 >{anonymize(t.cmd ?? "")}</span
                             >
                             <span
-                                class="text-xs text-surface-z5 tabular-nums text-right"
+                                class="text-xs text-ink-soft tabular-nums text-right"
                                 >{fmtMs(t.ms ?? 0)}</span
                             >
                             <div class="text-center">
                                 {#if t.ok}
                                     <span
-                                        class="text-success-z5 text-sm leading-none"
+                                        class="text-success text-sm leading-none"
                                         >✓</span
                                     >
                                 {:else if t.fix_ok}
                                     <span
-                                        class="text-xs font-semibold tracking-wide text-warning-z5"
+                                        class="text-xs font-semibold tracking-wide text-warning"
                                         >FIXED</span
                                     >
                                 {:else}
                                     <span
-                                        class="text-primary-z5 text-sm leading-none"
+                                        class="text-accent text-sm leading-none"
                                         >✗</span
                                     >
                                 {/if}
@@ -248,13 +248,13 @@
                         <!-- Expanded detail -->
                         {#if isOpen && hasDetail}
                             <div
-                                class="ml-20 mb-3 px-3.5 py-3 bg-surface-z2 rounded-md border border-surface-z2 flex flex-col gap-2.5"
+                                class="ml-20 mb-3 px-3.5 py-3 bg-paper-mute rounded-md border border-paper-mute flex flex-col gap-2.5"
                             >
                                 {#if t.out}
                                     <div class="flex flex-col gap-1">
                                         <Eyebrow>stdout</Eyebrow>
                                         <pre
-                                            class="m-0 text-xs font-mono text-surface-z7 leading-normal whitespace-pre-wrap break-all">{anonymize(
+                                            class="m-0 text-xs font-mono text-ink-mute leading-normal whitespace-pre-wrap break-all">{anonymize(
                                                 t.out,
                                             )}</pre>
                                     </div>
@@ -272,7 +272,7 @@
                                 {/if}
                                 {#if t.fix_attempted}
                                     <div
-                                        class="flex flex-col gap-1 pt-2.5 border-t border-surface-z2"
+                                        class="flex flex-col gap-1 pt-2.5 border-t border-paper-mute"
                                     >
                                         <div
                                             class="detail-block-label fix text-xs tracking-wide uppercase"
@@ -282,10 +282,10 @@
                                         <pre
                                             class="m-0 text-xs font-mono leading-normal whitespace-pre-wrap break-all"
                                             style:color={t.fix_ok
-                                                ? "oklch(var(--color-success-z5) / 1)"
-                                                : "oklch(var(--color-primary-z5) / 1)"}>$ {t.fix_approach ??
+                                                ? "var(--success)"
+                                                : "var(--accent)"}>$ {t.fix_approach ??
                                                 ""}  <span
-                                                class="text-surface-z5 text-xs"
+                                                class="text-ink-soft text-xs"
                                                 >→ {t.fix_ok
                                                     ? "succeeded"
                                                     : "failed"}</span
@@ -300,7 +300,7 @@
             </div>
         {:else}
             <div
-                class="flex-1 flex items-center justify-center text-sm text-surface-z5"
+                class="flex-1 flex items-center justify-center text-sm text-ink-soft"
             >
                 No sessions recorded yet. Run the app to generate logs.
             </div>
@@ -325,16 +325,16 @@
         tabindex="-1"
     >
         <div
-            class="modal w-[84vw] max-w-[960px] max-h-[90vh] bg-surface-z1 rounded-xl border border-surface-z2 flex flex-col"
+            class="modal w-[84vw] max-w-[960px] max-h-[90vh] bg-paper-soft rounded-xl border border-paper-mute flex flex-col"
         >
             <div
-                class="flex items-start justify-between pt-4 pb-3 px-7 border-b border-surface-z2 shrink-0"
+                class="flex items-start justify-between pt-4 pb-3 px-7 border-b border-paper-mute shrink-0"
             >
                 <div>
                     <div class="display text-lg font-normal mb-1">
                         Report session
                     </div>
-                    <div class="text-xs text-surface-z5">
+                    <div class="text-xs text-ink-soft">
                         {formatTime(s.started_at)} · {s.traces.length} traces ·
                         {s.traces.filter(
                             (t) => isBootstrapTrace(t) && t.fix_attempted,
@@ -342,7 +342,7 @@
                     </div>
                 </div>
                 <button
-                    class="bg-transparent border-none cursor-pointer text-surface-z6 text-xl px-2 py-1 leading-none ml-4 shrink-0"
+                    class="bg-transparent border-none cursor-pointer text-ink-soft text-xl px-2 py-1 leading-none ml-4 shrink-0"
                     onclick={() => state.closeModal()}>×</button
                 >
             </div>
@@ -352,12 +352,12 @@
                 <div class="flex-1 flex flex-col gap-2 min-h-0 overflow-hidden">
                     <Eyebrow>Issue preview — anonymized</Eyebrow>
                     <div
-                        class="bg-surface-z2 border border-surface-z2 rounded-md px-3 py-2 text-sm text-surface-z9 font-medium shrink-0"
+                        class="bg-paper-mute border border-paper-mute rounded-md px-3 py-2 text-sm text-ink font-medium shrink-0"
                     >
                         {buildTitle(s)}
                     </div>
                     <pre
-                        class="flex-1 bg-surface-z2 border border-surface-z2 rounded-md px-3.5 py-3 font-mono text-xs text-surface-z7 leading-loose overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
+                        class="flex-1 bg-paper-mute border border-paper-mute rounded-md px-3.5 py-3 font-mono text-xs text-ink-mute leading-loose overflow-auto whitespace-pre-wrap break-words min-h-0 m-0">{buildBody(
                             s,
                             state.addCtx,
                         )}</pre>
@@ -366,13 +366,13 @@
                 <!-- Compose column -->
                 <div class="w-[264px] shrink-0 flex flex-col gap-3">
                     <div
-                        class="bg-surface-z2 border border-surface-z2 rounded-md px-3.5 py-3"
+                        class="bg-paper-mute border border-paper-mute rounded-md px-3.5 py-3"
                     >
                         <div class="mb-2"><Eyebrow>Included in report</Eyebrow></div>
                         {#each [["Session", formatTime(s.started_at)], ["OS", anonymize(si.os)], ["Arch", si.arch], ["RAM", `${si.ram_gb} GB`], ["Traces", String(s.traces.length)], ["Fixes", String(s.traces.filter((t) => isBootstrapTrace(t) && t.fix_attempted).length)], ["App", `v${s.app_version}`]] as [k, v]}
                             <div class="flex justify-between text-xs mb-1">
-                                <span class="text-surface-z5">{k}</span>
-                                <span class="text-surface-z7 font-mono text-xs"
+                                <span class="text-ink-soft">{k}</span>
+                                <span class="text-ink-mute font-mono text-xs"
                                     >{v}</span
                                 >
                             </div>
@@ -382,7 +382,7 @@
                     <div>
                         <div class="mb-2"><Eyebrow>Additional context</Eyebrow></div>
                         <textarea
-                            class="ctx-input w-full resize-none font-sans text-sm text-surface-z9 bg-surface-z2 border border-surface-z2 rounded-md px-2.5 py-2 leading-normal"
+                            class="ctx-input w-full resize-none font-sans text-sm text-ink bg-paper-mute border border-paper-mute rounded-md px-2.5 py-2 leading-normal"
                             bind:value={state.addCtx}
                             placeholder="What were you doing? Any other details…"
                             rows={4}
@@ -390,7 +390,7 @@
                     </div>
 
                     <p
-                        class="privacy-note text-xs text-surface-z5 leading-loose m-0"
+                        class="privacy-note text-xs text-ink-soft leading-loose m-0"
                     >
                         Paths like <code>/Users/</code> are replaced with
                         <code>~/</code>. No personal data included.
@@ -404,7 +404,7 @@
                             Submit to GitHub ↗
                         </button>
                         <button
-                            class="outline-btn w-full text-sm px-4 py-2.5 bg-transparent border border-surface-z2 text-surface-z9 rounded-md cursor-pointer font-sans transition-colors duration"
+                            class="outline-btn w-full text-sm px-4 py-2.5 bg-transparent border border-paper-mute text-ink rounded-md cursor-pointer font-sans transition-colors duration"
                             onclick={copyMarkdown}
                         >
                             {state.copied ? "Copied ✓" : "Copy markdown"}
@@ -424,14 +424,14 @@
 
     /* Session row hover/selected states */
     .session-row:hover {
-        background: oklch(var(--color-surface-z3) / 1);
+        background: var(--paper-mute);
     }
     .session-row.selected {
-        background: oklch(var(--color-surface-z1) / 1);
-        border-left-color: oklch(var(--color-primary-z5) / 1);
+        background: var(--paper-soft);
+        border-left-color: var(--accent);
     }
     .session-row.selected .session-time {
-        color: oklch(var(--color-surface-z9) / 1);
+        color: var(--ink);
     }
 
     /* Report button hover */
@@ -441,35 +441,35 @@
 
     /* Detail label variants */
     .detail-block-label.err {
-        color: oklch(var(--color-primary-z5) / 1);
+        color: var(--accent);
     }
     .detail-block-label.fix {
-        color: oklch(var(--color-warning-z5) / 1);
+        color: var(--warning);
     }
 
     /* Error text override */
     .err-text {
-        color: oklch(var(--color-primary-z5) / 1) !important;
+        color: var(--accent) !important;
     }
 
     /* Input focus ring */
     .ctx-input:focus {
         outline: none;
-        border-color: oklch(var(--color-surface-z6) / 1);
+        border-color: var(--ink-soft);
     }
 
     /* Code snippets in privacy note */
     .privacy-note code {
         font-family: var(--font-mono);
         font-size: 10.5px;
-        background: oklch(var(--color-surface-z3) / 1);
+        background: var(--paper-mute);
         padding: 1px 5px;
         border-radius: 3px;
     }
 
     /* Outline button hover */
     .outline-btn:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
 
     /* Modal overlay backdrop */
