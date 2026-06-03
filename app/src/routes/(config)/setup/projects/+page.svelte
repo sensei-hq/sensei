@@ -105,7 +105,7 @@
                 aria-label="Project name"
                 class="display text-xl font-normal bg-transparent border-none outline-none w-full p-0 text-ink"
               />
-              <div class="mono text-xs text-ink-soft mt-0.5">
+              <div class="font-mono text-xs text-ink-soft mt-0.5">
                 {#if path}{path} · {/if}{project.folders.length} {project.folders.length === 1 ? 'folder' : 'folders'}
               </div>
             </div>
@@ -113,7 +113,7 @@
             <!-- Multi-repo badge -->
             {#if isMulti}
               <span
-                class="mono py-1 px-2 text-[11px] uppercase tracking-wider text-accent border border-accent rounded-sm bg-accent-soft"
+                class="font-mono py-1 px-2 text-[11px] uppercase tracking-wider text-accent border border-accent rounded-sm bg-accent-soft"
                 >multi-repo</span
               >
             {:else}
@@ -144,7 +144,7 @@
           {#if stackChips.length > 0}
             <div class="flex flex-wrap gap-1 mt-3 pl-13">
               {#each stackChips as chip}
-                <span class="mono text-[11px] text-ink-mute bg-paper-mute rounded-sm py-0.5 px-1.5">{chip}</span>
+                <span class="font-mono text-[11px] text-ink-mute bg-paper-mute rounded-sm py-0.5 px-1.5">{chip}</span>
               {/each}
             </div>
           {/if}
@@ -153,13 +153,13 @@
           {#if project.folders.length > 0}
             <div class="flex flex-wrap gap-2 mt-3 pl-13">
               {#each project.folders as folder (folder.id)}
-                <span class="mono inline-flex items-center gap-2 text-[11px] py-1 pl-2 pr-1 bg-paper-soft border border-paper-mute rounded-sm">
+                <span class="font-mono inline-flex items-center gap-2 text-[11px] py-1 pl-2 pr-1 bg-paper-soft border border-paper-mute rounded-sm">
                   <span class="text-ink-mute">{folder.name}</span>
                   <select
                     value={folder.role ?? 'backend'}
                     onchange={(e) => setRole(folder, (e.target as HTMLSelectElement).value)}
                     aria-label={`Role for ${folder.name}`}
-                    class="role-select mono text-[11px] py-0.5 px-1.5 rounded-sm border-none outline-none cursor-pointer font-semibold {roleClass(folder.role)}"
+                    class="role-select font-mono text-[11px] py-0.5 px-1.5 rounded-sm border-none outline-none cursor-pointer font-semibold {roleClass(folder.role)}"
                   >
                     {#each ROLES as r}
                       <option value={r.id}>{r.label}</option>

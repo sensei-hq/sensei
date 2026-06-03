@@ -173,14 +173,14 @@
                 {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
                 <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center">
                     <span class="font-mono text-xs">{stat.tool_name}</span>
-                    <span class="text-right mono text-xs">{stat.call_count}</span>
-                    <span class="text-right mono text-xs" class:text-error={errorRate > 0.1}>
+                    <span class="text-right font-mono text-xs">{stat.call_count}</span>
+                    <span class="text-right font-mono text-xs" class:text-error={errorRate > 0.1}>
                         {stat.error_count}
                         {#if errorRate > 0}
                             <span class="text-xs opacity-50">({Math.round(errorRate * 100)}%)</span>
                         {/if}
                     </span>
-                    <span class="text-right mono text-xs opacity-70">
+                    <span class="text-right font-mono text-xs opacity-70">
                         {stat.avg_duration_ms != null ? Math.round(stat.avg_duration_ms) : '—'}
                     </span>
                     <span class="text-right text-xs text-ink-soft">

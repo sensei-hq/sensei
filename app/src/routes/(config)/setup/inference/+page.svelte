@@ -38,7 +38,7 @@
     </div>
   {:else}
     <div class="flex items-center gap-2 mb-6">
-      <span class="mono py-1 px-2 text-xs text-success bg-paper-mute border border-success rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-success bg-paper-mute border border-success rounded-sm">
         {configuredCount} of {routers.length} configured
       </span>
     </div>
@@ -54,30 +54,30 @@
           <div class="flex items-baseline justify-between gap-3">
             <div class="flex items-baseline gap-2 min-w-0">
               <span class="text-sm text-ink font-semibold">{router.name}</span>
-              <span class="mono text-[11px] text-ink-soft uppercase">{router.id}</span>
+              <span class="font-mono text-[11px] text-ink-soft uppercase">{router.id}</span>
             </div>
             {#if router.saveState === 'saving'}
-              <span class="text-xs text-accent mono">saving…</span>
+              <span class="text-xs text-accent font-mono">saving…</span>
             {:else if router.saveState === 'done'}
-              <span class="text-xs text-success mono">saved ✓</span>
+              <span class="text-xs text-success font-mono">saved ✓</span>
             {:else if router.saveState === 'failed'}
-              <span class="text-xs text-danger mono">failed</span>
+              <span class="text-xs text-danger font-mono">failed</span>
             {:else if router.configured}
-              <span class="text-xs text-success mono">configured ✓</span>
+              <span class="text-xs text-success font-mono">configured ✓</span>
             {:else if !router.needsKey}
-              <span class="text-xs text-ink-soft mono">no key needed</span>
+              <span class="text-xs text-ink-soft font-mono">no key needed</span>
             {:else}
-              <span class="text-xs text-ink-soft mono">not configured</span>
+              <span class="text-xs text-ink-soft font-mono">not configured</span>
             {/if}
           </div>
 
           <!-- Providers + capabilities chips -->
           <div class="flex flex-wrap gap-1">
             {#each router.providers as p}
-              <span class="mono text-[11px] text-ink-mute bg-paper-soft border border-paper-mute rounded-sm px-1.5 py-0.5">{p}</span>
+              <span class="font-mono text-[11px] text-ink-mute bg-paper-soft border border-paper-mute rounded-sm px-1.5 py-0.5">{p}</span>
             {/each}
             {#each router.capabilities as c}
-              <span class="mono text-[11px] text-accent bg-paper-soft border border-accent rounded-sm px-1.5 py-0.5">{c}</span>
+              <span class="font-mono text-[11px] text-accent bg-paper-soft border border-accent rounded-sm px-1.5 py-0.5">{c}</span>
             {/each}
           </div>
 

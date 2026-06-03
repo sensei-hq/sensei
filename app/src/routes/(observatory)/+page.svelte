@@ -78,7 +78,7 @@
             <span class="display text-3xl font-normal">{holisticFtr}</span>
             <span class="text-xs text-ink-soft">%</span>
             {#if ftrDelta !== 0}
-              <span class="mono text-xs" class:ftr-up={ftrDelta > 0} class:ftr-down={ftrDelta < 0}>
+              <span class="font-mono text-xs" class:ftr-up={ftrDelta > 0} class:ftr-down={ftrDelta < 0}>
                 {ftrDelta > 0 ? '↑' : '↓'} {Math.abs(ftrDelta)}%
               </span>
             {/if}

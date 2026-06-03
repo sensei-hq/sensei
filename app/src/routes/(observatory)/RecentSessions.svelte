@@ -57,16 +57,16 @@
             class:bg-success={isSuccess}
             class:bg-warning={!isSuccess}
           ></span>
-          <span class="mono text-xs text-ink-soft truncate">{s.project}</span>
+          <span class="font-mono text-xs text-ink-soft truncate">{s.project}</span>
           <span class="text-sm text-ink-mute truncate">{s.task}</span>
           {#if mins !== null}
-            <span data-duration class="mono text-xs text-ink-soft min-w-[3rem] text-right">
+            <span data-duration class="font-mono text-xs text-ink-soft min-w-[3rem] text-right">
               {formatDuration(mins)}
             </span>
           {:else}
             <span></span>
           {/if}
-          <span class="mono text-xs text-ink-soft">{timeOfDay(s.startedAt)}</span>
+          <span class="font-mono text-xs text-ink-soft">{timeOfDay(s.startedAt)}</span>
         </a>
       {/each}
     </div>

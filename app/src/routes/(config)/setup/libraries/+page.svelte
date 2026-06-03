@@ -46,10 +46,10 @@
   {:else}
     <!-- Summary chips -->
     <div class="flex items-center gap-2 mb-6" data-testid="libraries-summary">
-      <span class="mono py-1 px-2 text-xs text-ink-mute bg-paper-mute border border-paper-mute rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-ink-mute bg-paper-mute border border-paper-mute rounded-sm">
         {detectedCount} detected
       </span>
-      <span class="mono py-1 px-2 text-xs text-success bg-paper-mute border border-success rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-success bg-paper-mute border border-success rounded-sm">
         {wrappedCount} will be wrapped
       </span>
     </div>
@@ -75,23 +75,23 @@
             <div class="flex items-baseline gap-2">
               <span class="text-sm text-ink font-medium truncate">{lib.name}</span>
               {#if lib.version}
-                <span class="mono text-[11px] text-ink-soft bg-paper-mute rounded-sm px-1.5 py-0.5">{lib.version}</span>
+                <span class="font-mono text-[11px] text-ink-soft bg-paper-mute rounded-sm px-1.5 py-0.5">{lib.version}</span>
               {/if}
               {#if lib.ecosystem}
-                <span class="mono text-[11px] text-ink-soft uppercase">{lib.ecosystem}</span>
+                <span class="font-mono text-[11px] text-ink-soft uppercase">{lib.ecosystem}</span>
               {/if}
             </div>
             {#if lib.description}
               <div class="text-xs text-ink-soft mt-0.5 truncate">{lib.description}</div>
             {:else if lib.repos.length > 0}
-              <div class="mono text-xs text-ink-soft mt-0.5 truncate">
+              <div class="font-mono text-xs text-ink-soft mt-0.5 truncate">
                 used by {lib.repos.slice(0, 3).join(', ')}{lib.repos.length > 3 ? ` +${lib.repos.length - 3} more` : ''}
               </div>
             {/if}
           </div>
 
           <!-- Usage count -->
-          <span class="mono text-xs text-ink-soft whitespace-nowrap">
+          <span class="font-mono text-xs text-ink-soft whitespace-nowrap">
             {lib.repoCount} repo{lib.repoCount === 1 ? '' : 's'}
           </span>
 

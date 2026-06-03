@@ -137,12 +137,12 @@
                             {#each usageData as u}
                                 <div class="flex justify-between py-1.5 border-b border-paper-mute text-sm">
                                     <div>
-                                        <span class="mono text-xs">{u.folder}</span>
+                                        <span class="font-mono text-xs">{u.folder}</span>
                                         {#if u.version_used}
                                             <span class="text-xs text-ink-soft ml-1.5">v{u.version_used}</span>
                                         {/if}
                                     </div>
-                                    <span class="mono text-xs text-ink-soft">{u.import_count} imports</span>
+                                    <span class="font-mono text-xs text-ink-soft">{u.import_count} imports</span>
                                 </div>
                             {/each}
                         </div>
