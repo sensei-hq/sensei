@@ -48,22 +48,22 @@
   );
 </script>
 
-<section class="mt-4 border border-primary-z5/30 rounded-xl bg-surface-z1">
-  <header class="flex items-center gap-2.5 px-4 py-3.5 border-b border-surface-z2">
+<section class="mt-4 border border-accent/30 rounded-xl bg-paper-soft">
+  <header class="flex items-center gap-2.5 px-4 py-3.5 border-b border-paper-edge">
     <Kanji char="手" />
     <div class="flex-1">
-      <div class="text-sm text-surface-z9">Run this in your terminal</div>
-      <div data-remedy-message class="text-xs text-surface-z7 mt-0.5 select-text">{remedy.message}</div>
+      <div class="text-sm text-ink">Run this in your terminal</div>
+      <div data-remedy-message class="text-xs text-ink-mute mt-0.5 select-text">{remedy.message}</div>
     </div>
     {#if remedy.url}
       <a data-role="remedy-url" href={remedy.url} target="_blank" rel="noopener noreferrer"
-         class="text-xs text-surface-z7 underline">Learn more</a>
+         class="text-xs text-ink-mute underline">Learn more</a>
     {/if}
   </header>
 
-  <pre class="m-0 px-4 py-4 mono text-xs text-surface-z9 bg-surface-z3 leading-normal whitespace-pre-wrap break-words max-h-56 overflow-auto select-text cursor-text">{remedy.script}</pre>
+  <pre class="m-0 px-4 py-4 mono text-xs text-ink bg-paper-mute leading-normal whitespace-pre-wrap break-words max-h-56 overflow-auto select-text cursor-text">{remedy.script}</pre>
 
-  <footer class="flex items-center justify-between gap-2.5 px-4 py-3 border-t border-surface-z2">
+  <footer class="flex items-center justify-between gap-2.5 px-4 py-3 border-t border-paper-edge">
     <button data-action="copy"
             data-state={copyState}
             class="btn-solid btn-sm"
@@ -71,10 +71,9 @@
       {copyLabel}
     </button>
     <button data-action="verify"
-            class="btn-outline btn-sm"
-            style="color: oklch(var(--color-primary-z5) / 1); border-color: oklch(var(--color-primary-z5) / 0.4);"
+            class="btn-outline btn-sm text-accent border-accent/40"
             onclick={onVerify}>
-      I've run it · verify
+      I've run it · re-check
     </button>
   </footer>
 </section>
