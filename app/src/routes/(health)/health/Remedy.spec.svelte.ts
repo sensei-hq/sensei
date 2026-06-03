@@ -15,11 +15,13 @@ const fixture = (over: Partial<RemedyT> = {}): RemedyT => ({
 });
 
 describe('Remedy', () => {
-  it('renders message and script verbatim', () => {
+  it('renders the script verbatim', () => {
+    // Note: `remedy.message` is intentionally NOT rendered inside the Remedy
+    // panel — the page header's sub-copy already shows the user-facing
+    // explanation, and surfacing it again in the card duplicated the text.
     const r = fixture();
     const m = mountComponent(Remedy, { remedy: r });
     cleanup.push(m.destroy);
-    expect(m.container.textContent).toContain(r.message);
     const pre = m.container.querySelector('pre');
     expect(pre?.textContent).toBe(r.script);
   });
@@ -69,15 +71,13 @@ describe('Remedy', () => {
     expect(onVerify).toHaveBeenCalledTimes(1);
   });
 
-  it('script and message are user-selectable (carry select-text class)', () => {
+  it('script is user-selectable (carries select-text class)', () => {
     // Fallback for users whose webview rejects the clipboard API — they can
-    // still highlight the text and copy manually.
+    // still highlight the script and copy manually.
     const m = mountComponent(Remedy, { remedy: fixture() });
     cleanup.push(m.destroy);
     const pre = m.container.querySelector('pre');
     expect(pre?.className).toContain('select-text');
-    const message = m.container.querySelector('[data-remedy-message]');
-    expect(message?.className).toContain('select-text');
   });
 
   it('renders a link only when remedy.url is non-null', () => {
