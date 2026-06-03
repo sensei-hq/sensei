@@ -95,15 +95,18 @@
 
         <!-- Content -->
         <div class="flex flex-col min-h-0">
-            {#if stage?.id !== "welcome"}
+            {#if stage?.id !== "welcome" && stage?.id !== "done"}
                 <StageHeader {stage} />
             {/if}
 
+            <!-- key= ensures the scroll container remounts on stage change so
+                 scroll position resets to top instead of carrying over -->
+            {#key stage?.id}
             <div
                 class="flex-1 overflow-y-auto px-16 relative"
-                class:py-8={stage?.id !== "welcome"}
-                class:pt-11={stage?.id === "welcome"}
-                class:pb-8={stage?.id === "welcome"}
+                class:py-8={stage?.id !== "welcome" && stage?.id !== "done"}
+                class:pt-11={stage?.id === "welcome" || stage?.id === "done"}
+                class:pb-8={stage?.id === "welcome" || stage?.id === "done"}
             >
                 {#if stage?.watermark}
                     <span
@@ -113,6 +116,7 @@
                 {/if}
                 {@render children()}
             </div>
+            {/key}
 
             {#if commitError}
                 <div class="mx-16 mb-2 p-3 rounded-md border border-danger bg-paper-mute text-xs text-danger select-text">

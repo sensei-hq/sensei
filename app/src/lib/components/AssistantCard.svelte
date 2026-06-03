@@ -268,7 +268,10 @@
     gap: 6px;
   }
   /* All chips share a solid 1px edge; only colour and bg differ between
-     states (mirrors docs/mockups/lib/assistant-card.jsx CapChip skin). */
+     states (mirrors docs/mockups/lib/assistant-card.jsx CapChip skin).
+     Disabled (base) chip uses ink-mute text instead of ink-faint so the
+     unchecked capabilities are still legible — ink-faint was too close
+     to paper-edge and disappeared. */
   .chip {
     display: inline-flex;
     align-items: center;
@@ -279,7 +282,7 @@
     border-radius: 999px;
     border: 1px solid var(--paper-edge);
     background: transparent;
-    color: var(--ink-faint);
+    color: var(--ink-mute);
     white-space: nowrap;
     transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
   }
@@ -288,9 +291,11 @@
     background: var(--paper-mute);
     border-color: var(--paper-edge);
   }
+  /* `done` chip — keep the green tick + green text, but use paper-mute
+     for the bg so we don't have green-on-green-tint low-contrast. */
   .chip-done {
     color: var(--success);
-    background: var(--success-soft);
+    background: var(--paper-mute);
     border-color: color-mix(in oklch, var(--success) 30%, transparent);
   }
   .chip-error {

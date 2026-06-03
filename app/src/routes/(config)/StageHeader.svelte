@@ -14,7 +14,7 @@
     class="shrink-0 px-16 pt-7 pb-6 border-b border-paper-mute bg-paper-soft relative z-1"
 >
     <div class="text-xs text-ink-soft tracking-wide uppercase mb-2">
-        <span class="kanji text-accent mr-1.5 opacity-60">{stage.icon}</span>Step
+        <span class="kanji text-accent mr-1.5">{stage.icon}</span>Step
     </div>
     <h1 class="font-display text-4xl font-light tracking-tight m-0 mb-1.5">
         {stage.title}
