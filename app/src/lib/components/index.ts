@@ -1,5 +1,6 @@
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as Eyebrow } from './Eyebrow.svelte';
+export { default as GateRow } from './GateRow.svelte';
 export { default as Kanji } from './Kanji.svelte';
 export { default as KanjiHeader } from './KanjiHeader.svelte';
 export { default as MemoryList } from './MemoryList.svelte';
@@ -7,6 +8,7 @@ export { default as PageHeader } from './PageHeader.svelte';
 export { default as Spinner } from './Spinner.svelte';
 export { default as StatusDisc } from './StatusDisc.svelte';
 export { default as StatusDot } from './StatusDot.svelte';
+export { default as StatusIndicator } from './StatusIndicator.svelte';
 export { default as Switch } from './Switch.svelte';
 export { default as TabBar } from './TabBar.svelte';
 export { default as Wordmark } from './Wordmark.svelte';
