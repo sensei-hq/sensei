@@ -1,10 +1,9 @@
 <script lang="ts">
   import type { HealthState } from '$lib/health-state.svelte.js';
-  import { KanjiHeader, StatusDisc } from '$lib/components';
+  import { KanjiHeader, StatusDisc, GateRow } from '$lib/components';
   import Header from './Header.svelte';
   import Footer from './Footer.svelte';
   import Remedy from './Remedy.svelte';
-  import GateRow from './GateRow.svelte';
 
   interface Props {
     state: HealthState;
