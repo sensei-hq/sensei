@@ -62,35 +62,46 @@ export class RealTransport implements HealthTransport {
         catch (e) { console.warn('[health-transport] unlisten failed during teardown', e); }
       };
 
-      listen<HealthEvent>('health', (e) => {
-        if (settled) return;
-        const ev = e.payload;
-        onEvent(ev);
-        if (ev.kind === 'phase' && ev.phase === 'resolving') {
-          resolvingStarted = true;
-          return;
-        }
-        if (ev.kind === 'report') {
-          const isTerminal = ev.payload.status === 'ok' || resolvingStarted;
-          if (!isTerminal) return;  // initial report — keep listening
-          settled = true;
-          cleanup();
-          resolveFn(ev.payload);
-        }
-      }).then((un) => {
-        unlisten = un;
-        // Listener is wired — now kick off the streaming resolve on the Rust side.
-        invoke<void>('health_check_and_resolve').catch((err) => {
+      // `listen()` can throw SYNCHRONOUSLY when Tauri's webview internals
+      // (`__TAURI_INTERNALS__`) haven't been injected yet — a startup race
+      // that hits `make app-dev` more than `make install`. Wrap the wiring
+      // in a try/catch so the throw becomes a rejection instead of an
+      // unhandled exception that takes Svelte's async tracker with it.
+      try {
+        listen<HealthEvent>('health', (e) => {
+          if (settled) return;
+          const ev = e.payload;
+          onEvent(ev);
+          if (ev.kind === 'phase' && ev.phase === 'resolving') {
+            resolvingStarted = true;
+            return;
+          }
+          if (ev.kind === 'report') {
+            const isTerminal = ev.payload.status === 'ok' || resolvingStarted;
+            if (!isTerminal) return;  // initial report — keep listening
+            settled = true;
+            cleanup();
+            resolveFn(ev.payload);
+          }
+        }).then((un) => {
+          unlisten = un;
+          // Listener is wired — now kick off the streaming resolve on the Rust side.
+          invoke<void>('health_check_and_resolve').catch((err) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            rejectFn(err);
+          });
+        }).catch((err) => {
           if (settled) return;
           settled = true;
-          cleanup();
           rejectFn(err);
         });
-      }).catch((err) => {
+      } catch (err) {
         if (settled) return;
         settled = true;
         rejectFn(err);
-      });
+      }
     });
   }
 }
