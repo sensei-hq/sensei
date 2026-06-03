@@ -139,7 +139,7 @@ export class HealthState {
           headlineKey:  'holds.',
           headlineTone: 'success',
           subCopy:      'Homebrew, Postgres, Ollama, sensei components, database, and the daemon are all present. Opening the observatory.',
-          heroTitle:    'The foundation holds',
+          heroTitle:    'All systems ready',
         };
     }
   }
