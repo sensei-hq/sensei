@@ -44,14 +44,24 @@
 :hover > ::-webkit-scrollbar-thumb,
 *:hover::-webkit-scrollbar-thumb { background: oklch(0.5 0.01 50 / 0.2); }
 
-::selection { background: oklch(var(--color-primary-z6) / 0.12); }
+::selection { background: var(--accent-soft); }
 
+/*
+ * Button helpers — use the canonical named tokens directly. Named-token CSS
+ * vars contain complete oklch(...) expressions, so we use them as-is rather
+ * than wrapping in `oklch(var(...) / 1)` (which would produce invalid CSS).
+ *
+ * btn-solid / btn-cta render as "ink-on-paper" per the design system:
+ *   light: ink (kami.900) bg + paper (kami.100) text — dark button
+ *   dark:  ink (sumi.900 = paper-white) bg + paper (sumi.50 = dark) text — light button
+ * The pair stays high-contrast in both modes via the named-token overrides.
+ */
 .btn-solid {
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: oklch(var(--color-surface-z1) / 1);
-  background: oklch(var(--color-surface-z9) / 1);
+  color: var(--on-primary);
+  background: var(--primary);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -65,7 +75,7 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: oklch(var(--color-surface-z9) / 1);
+  color: var(--ink);
   background: transparent;
   border: var(--hairline);
   border-radius: 6px;
@@ -74,14 +84,14 @@
   transition: background 0.14s;
   white-space: nowrap;
 }
-.btn-outline:hover { background: oklch(var(--color-surface-z2) / 1); }
+.btn-outline:hover { background: var(--paper-mute); }
 
 .btn-cta {
   padding: 10px 24px;
   font-size: 13px;
   font-weight: 500;
-  color: oklch(var(--color-surface-z1) / 1);
-  background: oklch(var(--color-surface-z9) / 1);
+  color: var(--on-primary);
+  background: var(--primary);
   border: none;
   border-radius: 6px;
   cursor: pointer;

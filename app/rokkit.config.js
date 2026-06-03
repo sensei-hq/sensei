@@ -46,13 +46,24 @@ export default {
     paper:        { light: "kami.100", dark: "sumi.50"  },
     "paper-soft": { light: "kami.200", dark: "sumi.100" },
     "paper-mute": { light: "kami.300", dark: "sumi.200" },
-    "paper-edge": { light: "kami.400", dark: "sumi.100" },  // etched hairline in dark
+    // Dark `paper-edge` MUST be lighter than `paper-soft` (sumi.100) to be
+    // visible against panel backgrounds. sumi.300 gives Δ 0.110 lightness vs
+    // paper-soft — subtle but distinctly etched (NOT the same shade as the bg).
+    "paper-edge": { light: "kami.400", dark: "sumi.300" },
 
-    // ── Ink (text-zone shades; sumi.600-900 is the two-pole text half) ─
+    // ── Ink (text-zone shades) ─────────────────────────────────────
+    // Light: kami.600-900 — the kami palette comments place text at z6+.
+    //   kami.300/400/500 are paper-shades (too light for text contrast).
+    // Dark: sumi.600-900 — sumi is two-pole; 600-900 is the text half.
+    // Mockup values (Zen-Sumi colors_and_type.css):
+    //   ink       light 0.220  ↔ kami.900 ✓ / dark 0.940 ↔ sumi.900 ✓
+    //   ink-soft  light 0.380  ↔ kami.700 ✓ / dark 0.780 ↔ sumi.800 ✓
+    //   ink-mute  light 0.580  ↔ kami.600 ✓ / dark 0.600 ↔ sumi.700 ✓
+    //   ink-faint light 0.750  ↔ kami.500 ✓ / dark 0.420 ↔ sumi.600 ✓
     ink:          { light: "kami.900", dark: "sumi.900" },
     "ink-soft":   { light: "kami.700", dark: "sumi.800" },
-    "ink-mute":   { light: "kami.500", dark: "sumi.700" },
-    "ink-faint":  { light: "kami.300", dark: "sumi.600" },
+    "ink-mute":   { light: "kami.600", dark: "sumi.700" },
+    "ink-faint":  { light: "kami.500", dark: "sumi.600" },
 
     // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
     // accent-soft is omitted: skin is now `accent: "shu"` so the canonical
