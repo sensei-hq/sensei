@@ -10,6 +10,8 @@
     import { wizardState } from "$lib/wizard-state.svelte.js";
     import { appState } from "$lib/appstate.svelte.js";
     import WizardRail from "./WizardRail.svelte";
+    import StageHeader from "./StageHeader.svelte";
+    import StageNav from "./StageNav.svelte";
 
     let { children } = $props();
 
@@ -94,25 +96,7 @@
         <!-- Content -->
         <div class="flex flex-col min-h-0">
             {#if stage?.id !== "welcome"}
-                <div
-                    class="shrink-0 px-16 pt-7 pb-6 border-b border-paper-mute bg-paper-soft relative z-1"
-                >
-                    <div
-                        class="text-xs text-ink-soft tracking-wide uppercase mb-2"
-                    >
-                        <span class="kanji text-accent mr-1.5 opacity-60"
-                            >{stage.icon}</span
-                        >Step
-                    </div>
-                    <h1
-                        class="display text-4xl font-light tracking-tight m-0 mb-1.5"
-                    >
-                        {stage.title}
-                    </h1>
-                    <p class="text-sm text-ink-soft m-0">
-                        {stage.description}
-                    </p>
-                </div>
+                <StageHeader {stage} />
             {/if}
 
             <div
@@ -136,73 +120,17 @@
                 </div>
             {/if}
 
-            <!-- Bottom nav -->
-            <div
-                class="flex items-center gap-5 px-16 py-3.5 border-t border-paper-mute bg-paper-soft shrink-0"
-            >
-                <div class="flex items-baseline gap-3">
-                    <span
-                        class="text-xs tracking-wide text-ink-soft uppercase"
-                    >
-                        {String(currentIdx + 1).padStart(2, "0")}
-                        <span class="text-ink-soft">/ {total}</span>
-                    </span>
-                    <span class="text-sm text-ink-mute">{stage.title}</span>
-                </div>
-
-                <div class="flex-1 flex gap-1 items-center">
-                    {#each Array(total) as _, i}
-                        <span
-                            class="flex-1 h-0.5 rounded-sm bg-paper-mute transition-colors duration"
-                            class:bg-ink={i <= currentIdx}
-                        ></span>
-                    {/each}
-                </div>
-
-                <div class="flex gap-2 items-center">
-                    <button
-                        class="btn-back text-xs text-ink-mute px-3.5 py-1 leading-3 bg-none border-none cursor-pointer"
-                        onclick={back}
-                        disabled={isFirst}
-                    >
-                        ← Back
-                    </button>
-                    <button
-                        class="btn-primary text-sm leading-3 bg-ink text-paper-soft px-6 py-2.5 rounded-md border-none tracking-normal cursor-pointer"
-                        onclick={next}
-                        disabled={!canAdvance || committing}
-                    >
-                        {#if committing}
-                            {stage?.id === "assistants"
-                                ? "Configuring…"
-                                : "Saving…"}
-                        {:else if isLast}
-                            Enter observatory →
-                        {:else if stage?.id === "assistants"}
-                            Configure &amp; Continue →
-                        {:else}
-                            Continue →
-                        {/if}
-                    </button>
-                </div>
-            </div>
+            <StageNav
+                {stage}
+                {currentIdx}
+                {total}
+                {canAdvance}
+                {committing}
+                {isFirst}
+                {isLast}
+                onBack={back}
+                onNext={next}
+            />
         </div>
     </div>
 </div>
-
-<style>
-    /* Back/primary button disabled states — rail-related styles moved
-       into WizardRail.svelte alongside their markup. */
-    .btn-back:disabled {
-        color: var(--ink-soft);
-        cursor: default;
-    }
-    .btn-primary:hover:not(:disabled) {
-        opacity: 0.9;
-    }
-    .btn-primary:disabled {
-        background: var(--paper-mute);
-        color: var(--ink-soft);
-        cursor: default;
-    }
-</style>
