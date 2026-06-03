@@ -8,7 +8,7 @@
     {#if data.pendingShare > 0}
         <div
             class="text-sm px-3.5 py-2.5 rounded-md mb-4"
-            style="background: oklch(var(--color-primary-z5) / 0.10); color: oklch(var(--color-primary-z5) / 1);"
+            style="background: color-mix(in oklch, var(--accent) 10%, transparent); color: var(--accent);"
         >
             {data.pendingShare} memories pending collective share
         </div>
@@ -16,7 +16,7 @@
     <ul class="list-none m-0 p-0">
         {#each data.memories as m (m.id)}
             <li
-                class="memory-row flex gap-3 py-2 border-b border-surface-z2 text-sm"
+                class="memory-row flex gap-3 py-2 border-b border-paper-mute text-sm"
             >
                 <span class="flex-1">{m.title}</span>
                 <span class="opacity-50 text-xs">{m.type}</span>

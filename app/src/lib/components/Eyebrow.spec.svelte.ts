@@ -30,17 +30,17 @@ describe('Eyebrow', () => {
     expect(el.className).toMatch(/\btext-xs\b/);
   });
 
-  it('uses muted tone (ink-z6) by default', () => {
+  it('uses ink-mute tone by default', () => {
     const m = mountComponent(EyebrowHarness, { label: 'X' });
     cleanup.push(m.destroy);
     const el = m.container.querySelector('[data-component="eyebrow"]') as HTMLElement;
-    expect(el.className).toMatch(/\btext-ink-z6\b/);
+    expect(el.className).toMatch(/\btext-ink-mute\b/);
   });
 
-  it('uses ink tone (ink-z9) when tone="ink"', () => {
-    const m = mountComponent(EyebrowHarness, { label: 'X', tone: 'ink' });
+  it('renders with the provided tone class', () => {
+    const m = mountComponent(EyebrowHarness, { label: 'X', tone: 'text-accent' });
     cleanup.push(m.destroy);
     const el = m.container.querySelector('[data-component="eyebrow"]') as HTMLElement;
-    expect(el.className).toMatch(/\btext-ink-z9\b/);
+    expect(el.className).toMatch(/\btext-accent\b/);
   });
 });

@@ -63,7 +63,7 @@
 <style>
     .empty { color: var(--text-muted); }
     .head { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
-    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--surface-z3); }
+    .chip { padding: 0.1rem 0.5rem; border-radius: 99px; font-size: 0.75rem; background: var(--paper-mute); }
     h2 { margin: 0.5rem 0; }
     .content { white-space: pre-wrap; }
     section { margin-top: 1rem; }
@@ -72,5 +72,5 @@
     .chip.outcome-violated, .chip.ex-bad  { background: var(--danger-bg, #533); }
     ul { padding-left: 1.25rem; margin: 0; }
     li { margin: 0.25rem 0; }
-    code { font-size: 0.85em; background: var(--surface-z2); padding: 0 0.25rem; border-radius: 3px; }
+    code { font-size: 0.85em; background: var(--paper-mute); padding: 0 0.25rem; border-radius: 3px; }
 </style>

@@ -66,7 +66,7 @@
             <dd class="opacity-70 mt-1 leading-normal ml-0">
                 A background process that indexes your repositories and watches
                 for new sessions. It runs at <code
-                    class="bg-surface-z3 px-1 py-px rounded-sm font-mono text-xs"
+                    class="bg-paper-mute px-1 py-px rounded-sm font-mono text-xs"
                     >localhost:7749</code
                 > by default.
             </dd>
@@ -81,6 +81,6 @@
 
 <style>
     .shortcuts-row {
-        border-bottom: 1px solid oklch(var(--color-surface-z2) / 1);
+        border-bottom: 1px solid var(--paper-mute);
     }
 </style>

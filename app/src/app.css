@@ -34,12 +34,12 @@ body {
     background: oklch(0.985 0.005 85 / 1);     /* kami-50 — page bg */
 }
 body[data-mode="dark"] {
-    color: oklch(var(--color-surface-z9) / 1);
-    background: oklch(var(--color-surface-z0) / 1);
+    color: var(--ink);
+    background: var(--paper);
 }
 body[data-mode="light"] {
-    color: oklch(var(--color-surface-z9) / 1);
-    background: oklch(var(--color-surface-z0) / 1);
+    color: var(--ink);
+    background: var(--paper);
 }
 
 /* Tauri webview can default to non-selectable text on some platforms,
@@ -72,7 +72,7 @@ button {
 .sidebar-vibrancy {
     background: color-mix(
         in oklch,
-        oklch(var(--color-surface-z1) / 1) 85%,
+        var(--paper-soft) 85%,
         transparent
     );
     backdrop-filter: blur(20px) saturate(180%);
@@ -85,10 +85,10 @@ button {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: oklch(var(--color-primary-z5) / 1);
+    background: var(--accent);
 }
 
 /* Selection */
 ::selection {
-    background: oklch(var(--color-primary-z5) / 0.12);
+    background: color-mix(in oklch, var(--accent) 12%, transparent);
 }

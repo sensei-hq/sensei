@@ -25,7 +25,7 @@ describe('Kanji', () => {
     cleanup.push(m.destroy);
     const el = m.container.querySelector('[data-component="kanji"]') as HTMLElement;
     expect(el.className).toMatch(/\btext-base\b/);
-    expect(el.className).toMatch(/\btext-primary-z6\b/);
+    expect(el.className).toMatch(/\btext-accent\b/);
   });
 
   it.each([
@@ -44,10 +44,10 @@ describe('Kanji', () => {
   });
 
   it.each([
-    ['muted',     /\btext-ink-z6\b/],
-    ['success',   /\btext-success-z6\b/],
-    ['warning',   /\btext-warning-z6\b/],
-    ['watermark', /\btext-primary-z6\b/, /\bopacity-55\b/],
+    ['muted',     /\btext-ink-mute\b/],
+    ['success',   /\btext-success\b/],
+    ['warning',   /\btext-warning\b/],
+    ['watermark', /\btext-accent\b/, /\bopacity-55\b/],
   ] as const)('applies tone %s', (tone, ...expected) => {
     const m = mountComponent(Kanji, { char: '繰', tone });
     cleanup.push(m.destroy);
