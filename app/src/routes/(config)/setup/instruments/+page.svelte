@@ -104,7 +104,7 @@
             </div>
             <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
             {#if mcp.installed}
-              <span class="font-mono text-[11px] text-success bg-success-soft border border-success/30 rounded-full px-2 py-0.5 whitespace-nowrap">installed</span>
+              <span class="font-mono text-[11px] text-success border border-success rounded-sm px-1.5 py-0.5 uppercase tracking-wide whitespace-nowrap">installed</span>
             {:else}
               <Switch bind:value={mcp.selected} label={`Install ${mcp.name}`} />
             {/if}
@@ -137,7 +137,7 @@
             </div>
             <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
             {#if mcp.installed}
-              <span class="font-mono text-[11px] text-success bg-success-soft border border-success/30 rounded-full px-2 py-0.5 whitespace-nowrap">installed</span>
+              <span class="font-mono text-[11px] text-success border border-success rounded-sm px-1.5 py-0.5 uppercase tracking-wide whitespace-nowrap">installed</span>
             {:else}
               <Switch bind:value={mcp.selected} label={`Install ${mcp.name}`} />
             {/if}
