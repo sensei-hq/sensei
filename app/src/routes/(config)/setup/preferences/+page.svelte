@@ -5,7 +5,7 @@
     const prefs = $derived(wizardState.preferences);
 </script>
 
-<div class="max-w-[760px] divide-y divide-paper-mute">
+<div class="max-w-[760px] divide-y divide-paper-edge">
     <!-- ── Display name ─────────────────────────────────── -->
     <section class="pt-6">
         <header class="flex items-center gap-3.5 mb-3.5">
@@ -50,7 +50,7 @@
                 </p>
             </div>
         </header>
-        <div class="pl-11 divide-y divide-paper-mute">
+        <div class="pl-11 divide-y divide-paper-edge">
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
                     <div class="text-sm text-ink">Contribute my learnings</div>
@@ -128,7 +128,7 @@
                 </p>
             </div>
         </header>
-        <div class="pl-11 divide-y divide-paper-mute">
+        <div class="pl-11 divide-y divide-paper-edge">
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
                     <div class="text-sm text-ink">Correction tone</div>
@@ -197,7 +197,7 @@
                 </p>
             </div>
         </header>
-        <div class="pl-11 divide-y divide-paper-mute">
+        <div class="pl-11 divide-y divide-paper-edge">
             <div class="row grid grid-cols-[1fr_auto] gap-8 items-center py-[11px]">
                 <div>
                     <div class="text-sm text-ink">Anonymized usage telemetry</div>

@@ -110,10 +110,11 @@
               </div>
             </div>
 
-            <!-- Multi-repo badge -->
+            <!-- Multi-repo badge — solid accent fill with paper text for contrast.
+                 Was text-accent + accent-soft bg, which gave near-zero contrast. -->
             {#if isMulti}
               <span
-                class="font-mono py-1 px-2 text-[11px] uppercase tracking-wider text-accent border border-accent rounded-sm bg-accent-soft"
+                class="font-mono py-1 px-2 text-[11px] uppercase tracking-wider text-on-primary bg-accent rounded-sm"
                 >multi-repo</span
               >
             {:else}
