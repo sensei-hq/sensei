@@ -30,12 +30,10 @@ describe('StatusIndicator', () => {
     expect(label.className).toMatch(/\buppercase\b/);
   });
 
-  it('renders "ready" label for status="ready"', () => {
+  it('renders no label when status="ready" (disc alone communicates ready)', () => {
     const m = mountComponent(StatusIndicatorHarness, { status: 'ready' });
     cleanup.push(m.destroy);
-    const label = m.container.querySelector('[data-component="status-indicator-label"]') as HTMLElement;
-    expect(label.textContent?.trim()).toBe('ready');
-    expect(label.className).toMatch(/\btext-success\b/);
+    expect(m.container.querySelector('[data-component="status-indicator-label"]')).toBeNull();
   });
 
   it('renders "blocked" label for status="failed"', () => {
