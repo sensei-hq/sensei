@@ -70,7 +70,7 @@
                     <div
                         class="setting-row flex justify-between py-2.5 border-b border-paper-mute"
                     >
-                        <span class="text-sm text-ink mono">{key}</span>
+                        <span class="text-sm text-ink font-mono">{key}</span>
                         <span class="text-sm text-ink-mute">{value}</span>
                     </div>
                 {/each}
@@ -110,7 +110,7 @@
                                 >
                             </div>
                             {#if asst.version}
-                                <span class="text-xs text-ink-soft mono"
+                                <span class="text-xs text-ink-soft font-mono"
                                     >{asst.version}</span
                                 >
                             {/if}

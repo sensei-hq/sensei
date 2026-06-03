@@ -172,7 +172,7 @@
                 </div>
 
                 <div class="pt-2.5 border-t border-paper-mute">
-                    <span class="mono text-xs text-ink-soft"
+                    <span class="font-mono text-xs text-ink-soft"
                         >daemon · port {appState.port}</span
                     >
                 </div>
