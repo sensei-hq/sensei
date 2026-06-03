@@ -12,9 +12,9 @@
         <div class="text-sm text-ink-mute">
             <span>{data.total} tracked</span>
             <span> · </span>
-            <span style="color: var(--warning);">{data.drifted} drifted</span>
+            <span class="text-warning">{data.drifted} drifted</span>
             <span> · </span>
-            <span style="color: var(--accent);">{data.broken} broken</span>
+            <span class="text-danger">{data.broken} broken</span>
         </div>
     {/snippet}
 </PageHeader>

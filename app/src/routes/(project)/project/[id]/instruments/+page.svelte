@@ -44,7 +44,7 @@
         opacity: 0.7;
     }
     .scope-badge.proj {
-        background: color-mix(in oklch, var(--accent) 15%, transparent);
+        background: var(--accent-soft);
         color: var(--accent);
     }
 </style>
