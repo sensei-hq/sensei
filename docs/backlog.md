@@ -10,6 +10,40 @@ One screen at a time. Each screen: read mockup → state class → component →
 
 ## Known bugs (next)
 
+### Daemon / ingest regressions surfaced after the UI migration (2026-06-03)
+
+Caught during the post-/health-migration smoke test against a real daemon
+(`make install`). All three are server-side / Rust crates, unrelated to the
+frontend named-token migration that just shipped (`81cd22e9`).
+
+- **Subfolders auto-promoted to projects.** Projects screen lists ~dozens
+  of subdirectories of one real project as separate "discovery" projects
+  (e.g., `src`, `src-tauri`, `workers`, `tauri-e2e-scaffold`, `sponsor`,
+  `Bezier3D`, etc., all rendering with kanji 場). All bear `discovery`
+  badges so they were created by the auto-discovery path, not user action.
+  Entry point: `crates/senseid/src/tasks/handlers/process.rs:50` — the one
+  non-test `create_project` caller. Likely interaction with recent commit
+  `27496488 feat(daemon): resume pending folder scans on startup` (the
+  stale-scan-resume change). Suspect: the scan resumer is treating every
+  walked directory as a project root instead of respecting the discovery
+  rule that promotes a folder only when it has a recognized project marker
+  (package.json / Cargo.toml / .git at exactly that level).
+
+- **Rokkit not detected as a library** despite being a direct dependency
+  of `app/`. The library-detection logic that feeds
+  `sensei.project_libraries_resolved` (queried at `pg_store.rs:1601`) misses
+  it — investigate the resolver step that maps `package.json` deps to known
+  libraries. Could be a namespace issue (Rokkit ships as `@rokkit/*` scoped
+  packages — `@rokkit/core`, `@rokkit/unocss`, `@rokkit/ui`, `@rokkit/themes`,
+  etc. — and the resolver may only recognize unscoped names) or a missing
+  entry in whatever known-libraries seed table the matcher uses.
+
+- **Sessions table empty** despite Claude hooks firing during this very
+  conversation. Check the sessions ingestion path that writes to
+  `sensei.sessions` from the Claude hook handlers — either the hooks aren't
+  reaching the daemon, the writes are silently failing, or the hooks
+  write somewhere else (e.g., a staging table that never gets promoted).
+
 ### Wizard rehab follow-ups (2026-05-28)
 
 - **Scan stats counters: queue is cumulative, processed is current-state.** `ScanActivityState.queued = items.filter(level==='queue').length` — counts every `queue` event ever received. `ScanProjectState.readyFolders` (wired to the PROCESSED stat) counts folders with `status='indexed'` at the current moment. Result: after a successful scan, QUEUED can show > PROCESSED forever even though the daemon is idle. Fix options: (a) make both counters current-state (queue counts pending tasks from /api/index/status instead of activity events); (b) clear all activity state on the page each time `startScan()` is called so counters reset. (b) is simpler — startScan already calls `resetScanState()` which clears `activities.items = []`, but the user's confusion suggests the cumulative semantics still surface across scans on a single page mount.
