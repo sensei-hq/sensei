@@ -8,12 +8,16 @@
   }
   let { status, label }: Props = $props();
 
+  // `ready` and `pending` show no label — the disc alone (green check vs
+  // empty muted ring) communicates the state, per the splash mockup's
+  // SplashStatusIndicator.labelMap. Active states (checking/installing) and
+  // failure (blocked) get a mono uppercase label because there's a verb
+  // worth surfacing.
   const defaultLabel = $derived(
-    status === 'ready'    ? 'ready'
-    : status === 'failed' ? 'blocked'
+    status === 'failed'       ? 'blocked'
     : status === 'checking'   ? 'checking'
     : status === 'installing' ? 'installing'
-    :                            null,  // pending — no label
+    :                            null,  // ready or pending — no label
   );
 
   const displayLabel = $derived(label ?? defaultLabel);
