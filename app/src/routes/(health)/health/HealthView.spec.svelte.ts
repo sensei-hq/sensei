@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { tick } from 'svelte';
 
 // Pretend Tauri is present so HealthState doesn't take the bypass path —
@@ -32,13 +32,14 @@ const needsAction = (): HealthPayload => ({
 });
 
 describe('HealthView', () => {
-  it('mounts all four sub-components', () => {
-    const state = new HealthState(ok());
+  it('mounts core sub-components', () => {
+    const state = new HealthState(needsAction());
     const m = mountComponent(HealthView, { state });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('header')).not.toBeNull();          // Header
-    expect(m.container.querySelector('section')).not.toBeNull();         // Hero is first <section>
-    expect(m.container.querySelector('ul')).not.toBeNull();              // Ledger
+    expect(m.container.querySelector('section')).not.toBeNull();         // KanjiHeader renders <section>
+    // GateRow rows rendered for each gate
+    expect(m.container.querySelectorAll('[data-component="gate-row"]').length).toBe(6);
   });
 
   it('does NOT render Remedy when status is not needs-action', () => {
@@ -55,37 +56,35 @@ describe('HealthView', () => {
     expect(m.container.querySelector('pre')).not.toBeNull();
   });
 
-  it('renders "Continue →" footer button iff state.isOk', () => {
+  // When status=ok the right column (showChecks=false) is hidden entirely;
+  // the +page.svelte auto-navigates via goto() so the Continue button is not
+  // needed in practice. The selector is preserved for e2e tests that target
+  // the button via [data-action="continue"].
+  it('does NOT render Continue button when status=ok (auto-navigate handles it)', () => {
     const okState = new HealthState(ok());
     const m1 = mountComponent(HealthView, { state: okState });
     cleanup.push(m1.destroy);
-    expect(m1.container.querySelector('button[data-action="continue"]')).not.toBeNull();
+    expect(m1.container.querySelector('button[data-action="continue"]')).toBeNull();
+  });
 
+  it('does NOT render Continue button when status=needs-action', () => {
     const naState = new HealthState(needsAction());
     const m2 = mountComponent(HealthView, { state: naState });
     cleanup.push(m2.destroy);
     expect(m2.container.querySelector('button[data-action="continue"]')).toBeNull();
   });
 
-  it('Continue button calls onEnter', () => {
-    const onEnter = vi.fn();
-    const state = new HealthState(ok());
-    const m = mountComponent(HealthView, { state, onEnter });
-    cleanup.push(m.destroy);
-    (m.container.querySelector('button[data-action="continue"]') as HTMLButtonElement).click();
-    expect(onEnter).toHaveBeenCalledTimes(1);
-  });
-
-  it('reactively toggles Remedy + Continue when state.status flips', async () => {
+  it('reactively hides right column when state.status flips to ok', async () => {
     const state = new HealthState(needsAction());
     const m = mountComponent(HealthView, { state });
     cleanup.push(m.destroy);
     expect(m.container.querySelector('pre')).not.toBeNull();
-    expect(m.container.querySelector('button[data-action="continue"]')).toBeNull();
+    expect(m.container.querySelectorAll('[data-component="gate-row"]').length).toBe(6);
 
     state.apply(ok());
     await tick();
     expect(m.container.querySelector('pre')).toBeNull();
-    expect(m.container.querySelector('button[data-action="continue"]')).not.toBeNull();
+    // Right column (showChecks=false) disappears when ok
+    expect(m.container.querySelectorAll('[data-component="gate-row"]').length).toBe(0);
   });
 });
