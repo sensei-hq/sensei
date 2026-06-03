@@ -97,37 +97,37 @@ const { useEffect: splashUseE } = React;
    ───────────────────────────────────────────────────────────── */
 
 const SPLASH_GATES = [
-  { id: 'homebrew', n: '一', name: 'Homebrew',          detail: 'package manager',   check: 'which brew',
-    zen: 'The gardener who tends the tools.' },
-  { id: 'postgres', n: '二', name: 'PostgreSQL',         detail: 'storage · @16',     check: 'brew list postgresql@16',
-    zen: 'A still pond where memories settle.' },
-  { id: 'ollama',   n: '三', name: 'Ollama',             detail: 'local models',      check: 'brew list ollama',
-    zen: 'A mind that thinks without leaving the room.' },
-  { id: 'sensei',   n: '四', name: 'Sensei components',  detail: 'cli · mcp · daemon', check: 'sensei --version',
-    zen: 'Three hands of the practice — speak, listen, attend.' },
-  { id: 'database', n: '五', name: 'Database',           detail: 'schema · pgvector', check: 'sensei db:create',
-    zen: 'Shelves shaped to the form of each memory.' },
-  { id: 'daemon',   n: '六', name: 'Daemon',             detail: 'background',        check: 'sensei daemon:start',
-    zen: 'The quiet breath that keeps watch.' },
-];
+{ id: 'homebrew', n: '一', name: 'Homebrew', detail: 'package manager', check: 'which brew',
+  zen: 'The gardener who tends the tools.' },
+{ id: 'postgres', n: '二', name: 'PostgreSQL', detail: 'storage · @16', check: 'brew list postgresql@16',
+  zen: 'A still pond where memories settle.' },
+{ id: 'ollama', n: '三', name: 'Ollama', detail: 'local models', check: 'brew list ollama',
+  zen: 'A mind that thinks without leaving the room.' },
+{ id: 'sensei', n: '四', name: 'Sensei components', detail: 'cli · mcp · daemon', check: 'sensei --version',
+  zen: 'Three hands of the practice — speak, listen, attend.' },
+{ id: 'database', n: '五', name: 'Database', detail: 'schema · pgvector', check: 'sensei db:create',
+  zen: 'Shelves shaped to the form of each memory.' },
+{ id: 'daemon', n: '六', name: 'Daemon', detail: 'background', check: 'sensei daemon:start',
+  zen: 'The quiet breath that keeps watch.' }];
+
 
 const SPLASH_STATE_STATUSES = {
   probing: {
     homebrew: 'checking', postgres: 'pending', ollama: 'pending',
-    sensei: 'pending', database: 'pending', daemon: 'pending',
+    sensei: 'pending', database: 'pending', daemon: 'pending'
   },
   'auto-fixing': {
     homebrew: 'ready', postgres: 'ready', ollama: 'ready',
-    sensei: 'installing', database: 'pending', daemon: 'pending',
+    sensei: 'installing', database: 'pending', daemon: 'pending'
   },
   manual: {
     homebrew: 'missing', postgres: 'pending', ollama: 'pending',
-    sensei: 'pending', database: 'pending', daemon: 'pending',
+    sensei: 'pending', database: 'pending', daemon: 'pending'
   },
   'all-green': {
     homebrew: 'ready', postgres: 'ready', ollama: 'ready',
-    sensei: 'ready', database: 'ready', daemon: 'ready',
-  },
+    sensei: 'ready', database: 'ready', daemon: 'ready'
+  }
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -137,9 +137,9 @@ const SPLASH_STATE_STATUSES = {
 function SplashChrome() {
   return (
     <div className="splash-chrome">
-      <div className="tauri-traffic"><span/><span/><span/></div>
-    </div>
-  );
+      <div className="tauri-traffic"><span /><span /><span /></div>
+    </div>);
+
 }
 
 function SplashWordmark({ size = 'md' }) {
@@ -149,8 +149,8 @@ function SplashWordmark({ size = 'md' }) {
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
       <span className="kanji" style={{ fontSize: k, color: 'var(--accent)', lineHeight: 1 }}>先生</span>
       <span className="display" style={{ fontSize: w, fontWeight: 400, letterSpacing: '-0.01em' }}>Sensei</span>
-    </div>
-  );
+    </div>);
+
 }
 
 function SplashSpinner({ size = 10, color = 'currentColor' }) {
@@ -160,22 +160,22 @@ function SplashSpinner({ size = 10, color = 'currentColor' }) {
         position: 'absolute', inset: 0,
         border: `1.5px solid ${color}`, borderTopColor: 'transparent',
         borderRadius: '50%',
-        animation: 'splashSpin 0.9s linear infinite',
-      }}/>
-    </span>
-  );
+        animation: 'splashSpin 0.9s linear infinite'
+      }} />
+    </span>);
+
 }
 
 function SplashStatusDisc({ status, size = 20 }) {
-  const isReady     = status === 'ready';
-  const isBusy      = status === 'checking' || status === 'starting' || status === 'installing';
-  const isBlocked   = status === 'missing'  || status === 'error';
-  const isPending   = status === 'pending';
+  const isReady = status === 'ready';
+  const isBusy = status === 'checking' || status === 'starting' || status === 'installing';
+  const isBlocked = status === 'missing' || status === 'error';
+  const isPending = status === 'pending';
 
-  const color = isReady   ? 'var(--success)'
-              : isBlocked ? 'var(--accent)'
-              : isBusy    ? 'var(--accent)'
-              : 'var(--ink-4)';
+  const color = isReady ? 'var(--success)' :
+  isBlocked ? 'var(--accent)' :
+  isBusy ? 'var(--accent)' :
+  'var(--ink-4)';
 
   const inner = size >= 32 ? 14 : size >= 24 ? 11 : 10;
   const stroke = size >= 32 ? 2 : 1.5;
@@ -189,82 +189,82 @@ function SplashStatusDisc({ status, size = 20 }) {
       flexShrink: 0,
       opacity: isPending ? 0.55 : 1,
       transition: 'opacity .25s, border-color .25s',
-      boxShadow: isBusy ? `0 0 0 ${Math.round(size * 0.18)}px ${color}1f` : 'none',
+      boxShadow: isBusy ? `0 0 0 ${Math.round(size * 0.18)}px ${color}1f` : 'none'
     }}>
-      {isReady && (
-        <svg width={inner} height={inner} viewBox="0 0 10 10" fill="none">
+      {isReady &&
+      <svg width={inner} height={inner} viewBox="0 0 10 10" fill="none">
           <path d="M2 5.2 L4.2 7.2 L8 3" stroke={color}
-                strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+        strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-      )}
-      {isBusy && (
-        <span style={{
-          width: inner, height: inner, borderRadius: '50%',
-          border: `${stroke}px solid ${color}`, borderTopColor: 'transparent',
-          animation: 'splashSpin 0.9s linear infinite',
-        }}/>
-      )}
-      {isBlocked && (
-        <span className="kanji" style={{
-          fontSize: Math.round(size * 0.6), color, lineHeight: 1, fontWeight: 400,
-        }}>?</span>
-      )}
-    </div>
-  );
+      }
+      {isBusy &&
+      <span style={{
+        width: inner, height: inner, borderRadius: '50%',
+        border: `${stroke}px solid ${color}`, borderTopColor: 'transparent',
+        animation: 'splashSpin 0.9s linear infinite'
+      }} />
+      }
+      {isBlocked &&
+      <span className="kanji" style={{
+        fontSize: Math.round(size * 0.6), color, lineHeight: 1, fontWeight: 400
+      }}>?</span>
+      }
+    </div>);
+
 }
 
 function SplashStatusIndicator({ status }) {
   const labelMap = {
-    checking:   'checking',
+    checking: 'checking',
     installing: 'installing',
-    starting:   'starting',
-    missing:    'missing',
-    error:      'blocked',
-    pending:    null,
-    ready:      null,
+    starting: 'starting',
+    missing: 'missing',
+    error: 'blocked',
+    pending: null,
+    ready: null
   };
   const label = labelMap[status];
-  const isReady   = status === 'ready';
-  const isBusy    = status === 'checking' || status === 'starting' || status === 'installing';
-  const isBlocked = status === 'missing'  || status === 'error';
-  const color = isReady   ? 'var(--success)'
-              : isBlocked ? 'var(--accent)'
-              : isBusy    ? 'var(--accent)'
-              : 'var(--ink-4)';
+  const isReady = status === 'ready';
+  const isBusy = status === 'checking' || status === 'starting' || status === 'installing';
+  const isBlocked = status === 'missing' || status === 'error';
+  const color = isReady ? 'var(--success)' :
+  isBlocked ? 'var(--accent)' :
+  isBusy ? 'var(--accent)' :
+  'var(--ink-4)';
   return (
     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-      {label && (
-        <span className="mono" style={{
-          fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
-          color, lineHeight: 1,
-        }}>{label}</span>
-      )}
-      <SplashStatusDisc status={status} size={20}/>
-    </div>
-  );
+      {label &&
+      <span className="mono" style={{
+        fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+        color, lineHeight: 1
+      }}>{label}</span>
+      }
+      <SplashStatusDisc status={status} size={20} />
+    </div>);
+
 }
 
 function splashOverallStatus(statuses) {
   const vals = Object.values(statuses);
-  if (vals.some(s => s === 'missing' || s === 'error')) return 'missing';
-  if (vals.some(s => s === 'installing'))               return 'installing';
-  if (vals.some(s => s === 'starting'))                 return 'starting';
-  if (vals.some(s => s === 'checking'))                 return 'checking';
-  if (vals.every(s => s === 'ready'))                   return 'ready';
+  if (vals.some((s) => s === 'missing' || s === 'error')) return 'missing';
+  if (vals.some((s) => s === 'installing')) return 'installing';
+  if (vals.some((s) => s === 'starting')) return 'starting';
+  if (vals.some((s) => s === 'checking')) return 'checking';
+  if (vals.every((s) => s === 'ready')) return 'ready';
   return 'pending';
 }
 
 /* One gate row — kanji numeral · name · detail + zen line · status indicator */
 function SplashGateRow({ gate, status, delay = 0 }) {
-  const isReady   = status === 'ready';
-  const isBusy    = status === 'checking' || status === 'starting' || status === 'installing';
-  const isBlocked = status === 'missing'  || status === 'error';
+  const isReady = status === 'ready';
+  const isBusy = status === 'checking' || status === 'starting' || status === 'installing';
+  const isBlocked = status === 'missing' || status === 'error';
   const isPending = status === 'pending';
 
-  const kanjiColor = isReady   ? 'var(--success)'
-                   : isBlocked ? 'var(--accent)'
-                   : isBusy    ? 'var(--ink-2)'
-                   : 'var(--ink-4)';
+  const kanjiColor = isReady ? 'var(--success)' :
+  isBlocked ? 'var(--accent)' :
+  isBusy ? 'var(--ink-2)' :
+  'var(--ink-4)';
 
   return (
     <div className="splash-ink" style={{
@@ -272,14 +272,14 @@ function SplashGateRow({ gate, status, delay = 0 }) {
       padding: '5px 0',
       borderBottom: '1px solid var(--edge)',
       opacity: isPending ? 0.5 : 1,
-      transition: 'opacity .3s',
+      transition: 'opacity .3s'
     }}>
       <div style={{
         display: 'grid', gridTemplateColumns: '22px 1fr auto',
-        alignItems: 'center', gap: 12,
+        alignItems: 'center', gap: 12
       }}>
         <div className="kanji" style={{
-          fontSize: 18, color: kanjiColor, textAlign: 'center', lineHeight: 1,
+          fontSize: 18, color: kanjiColor, textAlign: 'center', lineHeight: 1
         }}>{gate.n}</div>
 
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -289,20 +289,20 @@ function SplashGateRow({ gate, status, delay = 0 }) {
             </span>
             <span style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>· {gate.detail}</span>
           </div>
-          {gate.zen && (
-            <div style={{
-              fontSize: 10.5, color: 'var(--ink-3)',
-              fontStyle: 'italic', lineHeight: 1.35,
-            }}>
+          {gate.zen &&
+          <div style={{
+            fontSize: 10.5, color: 'var(--ink-3)',
+            fontStyle: 'italic', lineHeight: 1.35
+          }}>
               {gate.zen}
             </div>
-          )}
+          }
         </div>
 
-        <SplashStatusIndicator status={status}/>
+        <SplashStatusIndicator status={status} />
       </div>
-    </div>
-  );
+    </div>);
+
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -311,191 +311,212 @@ function SplashGateRow({ gate, status, delay = 0 }) {
 
 function splashCopyFor(state) {
   switch (state) {
-    case 'probing': return {
-      eyebrow: 'starting',
-      head: <>Checking the <span style={{ color: 'var(--accent)' }}>foundation.</span></>,
-      sub:  'A quick health check before opening the observatory.',
-    };
-    case 'auto-fixing': return {
-      eyebrow: 'setting up',
-      head: <>Putting the room <span style={{ color: 'var(--accent)' }}>in order.</span></>,
-      sub:  <>Running <span className="mono" style={{ color: 'var(--ink-2)' }}>brew bundle</span> with the manifest from <span className="mono" style={{ color: 'var(--ink-2)' }}>sensei-hq/homebrew-tap</span>. No input needed.</>,
-    };
-    case 'manual': return {
-      eyebrow: 'needs your hand',
-      head: <>One last <span style={{ color: 'var(--accent)' }}>step.</span></>,
-      sub:  <>Homebrew isn't here yet. Run the script — it installs Homebrew, then everything else.</>,
-    };
-    case 'all-green': return {
-      eyebrow: 'ready',
-      head: <>The foundation <span style={{ color: 'var(--success)' }}>holds.</span></>,
-      sub:  '12 projects · 1,284 memories · daemon listening. Opening the observatory.',
-    };
+    case 'probing':return {
+        eyebrow: 'starting',
+        head: <>Checking the <span style={{ color: 'var(--accent)' }}>foundation.</span></>,
+        sub: 'A quick health check before opening the observatory.'
+      };
+    case 'auto-fixing':return {
+        eyebrow: 'setting up',
+        head: <>Putting the room <span style={{ color: 'var(--accent)' }}>in order.</span></>,
+        sub: <>Running <span className="mono" style={{ color: 'var(--ink-2)' }}>brew bundle</span> with the manifest from <span className="mono" style={{ color: 'var(--ink-2)' }}>sensei-hq/homebrew-tap</span>. No input needed.</>
+      };
+    case 'manual':return {
+        eyebrow: 'needs your hand',
+        head: <>One last <span style={{ color: 'var(--accent)' }}>step.</span></>,
+        sub: <>Homebrew isn't here yet. Run the script — it installs Homebrew, then everything else.</>
+      };
+    case 'all-green':return {
+        eyebrow: 'ready',
+        head: <>The foundation <span style={{ color: 'var(--success)' }}>holds.</span></>,
+        sub: '12 projects · 1,284 memories · daemon listening. Opening the observatory.'
+      };
   }
 }
 
 function Splash({ state }) {
   const statuses = SPLASH_STATE_STATUSES[state];
-  const showChecks = state !== 'all-green';
+  const showChecks = true; // every state uses the two-column layout, incl. all-green
   const c = splashCopyFor(state);
 
   return (
     <div className="sensei splash-window" data-screen-label={`Splash · ${state}`}>
-      <SplashChrome/>
+      <SplashChrome />
 
-      {/* Watermark — only in the all-green case. Uses the logo as a
-          mask so it picks up the current ink color (works in both
-          light and dark themes). Anchored mid-right of the dialog. */}
-      {state === 'all-green' && (
-        <div aria-hidden="true"
-             style={{
-               position: 'absolute',
-               right: 28,
-               top: '50%',
-               transform: 'translateY(-50%)',
-               width: 260, height: 260,
-               background: 'var(--ink)',
-               WebkitMaskImage: 'url(site/sensei-logo.svg)',
-               maskImage: 'url(site/sensei-logo.svg)',
-               WebkitMaskSize: 'contain',
-               maskSize: 'contain',
-               WebkitMaskRepeat: 'no-repeat',
-               maskRepeat: 'no-repeat',
-               WebkitMaskPosition: 'center',
-               maskPosition: 'center',
-               opacity: 0.10,
-               pointerEvents: 'none',
-               userSelect: 'none',
-             }}/>
-      )}
 
       <div style={{
         flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: 0, padding: 48,
+        minHeight: 0, padding: 48
       }}>
       <div style={{
-        width: '100%', height: '100%',
-        maxWidth: showChecks ? 1000 : 720, maxHeight: 520,
-        display: 'grid',
-        gridTemplateColumns: showChecks ? '1fr 1px 1.05fr' : '1fr',
-        gap: showChecks ? 28 : 0,
-        alignItems: 'stretch',
-        minHeight: 0,
-      }}>
+          width: '100%', height: '100%',
+          maxWidth: showChecks ? 1000 : 720, maxHeight: 520,
+          display: 'grid',
+          gridTemplateColumns: showChecks ? '1fr 1px 1.05fr' : '1fr',
+          gap: showChecks ? 28 : 0,
+          alignItems: 'stretch',
+          minHeight: 0
+        }}>
         {/* ── Left · identity + headline ─── */}
         <div style={{
-          display: 'flex', flexDirection: 'column',
-          justifyContent: 'space-between',
-          minWidth: 0, minHeight: 0,
-        }}>
-          <div className="splash-ink" style={{
             display: 'flex', flexDirection: 'column',
-            flex: 1, minHeight: 0,
+            justifyContent: 'space-between',
+            minWidth: 0, minHeight: 0
           }}>
-            <SplashWordmark size={showChecks ? 'md' : 'lg'}/>
-            <div style={{
-              fontSize: 10.5, letterSpacing: '0.22em', color: 'var(--ink-3)',
-              textTransform: 'uppercase', fontWeight: 500, marginTop: showChecks ? 18 : 26,
+          <div className="splash-ink" style={{
+              display: 'flex', flexDirection: 'column',
+              flex: 1, minHeight: 0
             }}>
+            <SplashWordmark size={showChecks ? 'md' : 'lg'} />
+            <div style={{
+                fontSize: 10.5, letterSpacing: '0.22em', color: 'var(--ink-3)',
+                textTransform: 'uppercase', fontWeight: 500, marginTop: showChecks ? 18 : 26
+              }}>
               {c.eyebrow}
             </div>
             <div className="display" style={{
-              fontSize: showChecks ? 26 : 34,
-              fontWeight: 300, letterSpacing: '-0.02em',
-              color: 'var(--ink)', marginTop: 8, lineHeight: 1.12,
-            }}>
+                fontSize: showChecks ? 26 : 34,
+                fontWeight: 300, letterSpacing: '-0.02em',
+                color: 'var(--ink)', marginTop: 8, lineHeight: 1.12
+              }}>
               {c.head}
             </div>
             <div style={{
-              fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.6,
-              marginTop: 10, maxWidth: showChecks ? 280 : 360,
-            }}>
+                fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.6,
+                marginTop: 10, maxWidth: showChecks ? 280 : 360
+              }}>
               {c.sub}
             </div>
 
-            {/* Manual state · remedy script + buttons */}
-            {state === 'manual' && (
-              <div style={{ marginTop: 14, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                <pre className="splash-script" style={{ flex: 1, minHeight: 0, maxHeight: 'none' }}>{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            {/* Manual state · remedy card — header / script / footer */}
+            {state === 'manual' &&
+              <div style={{
+                marginTop: 14, flex: 1, minHeight: 0,
+                display: 'flex', flexDirection: 'column',
+                border: '1px solid var(--edge)', borderRadius: 8, overflow: 'hidden',
+              }}>
+                {/* Header */}
+                <div style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 12,
+                  padding: '14px 16px', borderBottom: '1px solid var(--edge)',
+                }}>
+                  <span className="kanji" style={{ fontSize: 22, color: 'var(--ink-3)', lineHeight: 1, flexShrink: 0 }}>手</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)' }}>Run this in your terminal</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 3, lineHeight: 1.5 }}>
+                      Homebrew isn't here yet. Run the script to install it, then re-check.
+                    </div>
+                  </div>
+                  <a style={{ fontSize: 12, color: 'var(--ink-3)', cursor: 'pointer', flexShrink: 0, textDecoration: 'none' }}>Learn more</a>
+                </div>
+
+                {/* Script */}
+                <pre className="splash-script" style={{
+                  flex: 1, minHeight: 0, maxHeight: 'none',
+                  borderRadius: 0, padding: '14px 16px',
+                }}>{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew bundle --file=https://raw.githubusercontent.com/sensei-hq/homebrew-tap/main/Brewfile
 sensei db:create && sensei daemon:start`}</pre>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexShrink: 0 }}>
+
+                {/* Footer */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: 6, padding: '12px 16px', borderTop: '1px solid var(--edge)',
+                }}>
                   <button style={{
                     fontSize: 11, padding: '5px 10px',
                     background: 'var(--ink)', color: 'var(--paper)',
                     border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                    letterSpacing: 0.2,
-                  }}>Copy</button>
+                    letterSpacing: 0.2
+                  }}>Copy script</button>
                   <button style={{
                     fontSize: 11, padding: '5px 10px',
                     background: 'transparent', color: 'var(--accent)',
-                    border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                    border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', cursor: 'pointer'
                   }}>I've run it · re-check</button>
                 </div>
               </div>
-            )}
+              }
+
+            {/* All-green · watermark logo fills the empty left-column space */}
+            {state === 'all-green' &&
+              <div aria-hidden="true" style={{
+                flex: 1, minHeight: 80, position: 'relative', marginTop: 18
+              }} data-comment-anchor="92c5792b83-div-415-15">
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  background: 'var(--ink)',
+                  WebkitMaskImage: 'url(site/sensei-logo.svg)',
+                  maskImage: 'url(site/sensei-logo.svg)',
+                  WebkitMaskSize: '62%', maskSize: '62%',
+                  WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+                  WebkitMaskPosition: 'center', maskPosition: 'center',
+                  opacity: 0.08, pointerEvents: 'none', userSelect: 'none'
+                }} />
+              </div>
+              }
 
             {/* compact handoff indicator in the green case */}
-            {state === 'all-green' && (
+            {state === 'all-green' &&
               <div style={{
                 marginTop: 22, display: 'flex', alignItems: 'center', gap: 10,
-                fontSize: 11, color: 'var(--ink-3)',
+                fontSize: 11, color: 'var(--ink-3)'
               }}>
                 <div className="splash-tickle" style={{
-                  height: 2, width: 80, background: 'var(--success)', borderRadius: 1,
-                }}/>
+                  height: 2, width: 80, background: 'var(--success)', borderRadius: 1
+                }} />
                 <span className="mono" style={{ letterSpacing: 0.2 }}>opening…</span>
               </div>
-            )}
+              }
           </div>
 
           {/* footer meta */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            fontSize: 10, fontFamily: 'var(--font-mono)',
-            color: 'var(--ink-4)', letterSpacing: 0.3,
-            marginTop: showChecks ? 16 : 28,
-          }}>
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 10, fontFamily: 'var(--font-mono)',
+              color: 'var(--ink-4)', letterSpacing: 0.3,
+              marginTop: showChecks ? 16 : 28
+            }}>
             <span>sensei 0.1.0</span>
-            <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }}/>
+            <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }} />
             <span>macOS 14.4 · arm64</span>
-            <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }}/>
+            <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }} />
             <span>16gb · 412gb free</span>
-            {state === 'all-green' && (
+            {state === 'all-green' &&
               <>
-                <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }}/>
+                <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--ink-4)' }} />
                 <span>session 247</span>
               </>
-            )}
+              }
           </div>
         </div>
 
-        {showChecks && <div style={{ background: 'var(--edge)' }}/>}
+        {showChecks && <div style={{ background: 'var(--edge)' }} />}
 
-        {showChecks && (
+        {showChecks &&
           <div className="splash-reveal" style={{
             display: 'flex', flexDirection: 'column',
-            minWidth: 0, overflow: 'hidden',
+            minWidth: 0, overflow: 'hidden'
           }}>
             {/* Hero status — standard KanjiHeader (kanji · eyebrow · title · right) */}
             {(() => {
               const total = SPLASH_GATES.length;
-              const readyCount = SPLASH_GATES.filter(g => statuses[g.id] === 'ready').length;
+              const readyCount = SPLASH_GATES.filter((g) => statuses[g.id] === 'ready').length;
               const o = splashOverallStatus(statuses);
               const title =
-                o === 'ready'      ? 'The foundation holds' :
-                o === 'missing'    ? 'Needs your hand' :
-                o === 'installing' ? `Installing · ${readyCount}/${total}` :
-                o === 'starting'   ? `Starting · ${readyCount}/${total}` :
-                o === 'checking'   ? 'Checking components' :
-                                     'Waiting to start';
+              o === 'ready' ? 'All systems ready' :
+              o === 'missing' ? 'Needs your hand' :
+              o === 'installing' ? `Installing · ${readyCount}/${total}` :
+              o === 'starting' ? `Starting · ${readyCount}/${total}` :
+              o === 'checking' ? 'Checking components' :
+              'Waiting to start';
               return (
                 <KanjiHeader
                   kanji="支"
                   eyebrow="foundation"
                   title={title}
-                  right={<SplashStatusDisc status={o} size={32}/>}/>
-              );
+                  right={<SplashStatusDisc status={o} size={32} />} />);
+
             })()}
 
             {/* Ledger */}
@@ -504,14 +525,14 @@ sensei db:create && sensei daemon:start`}</pre>
               borderTop: '1px solid var(--edge)',
               marginTop: 24,
               overflow: 'auto',
-              minHeight: 0, flex: 1,
+              minHeight: 0, flex: 1
             }}>
-              {SPLASH_GATES.map((g, i) => (
-                <SplashGateRow key={g.id}
-                               gate={g}
-                               status={statuses[g.id]}
-                               delay={0.05 + i * 0.04}/>
-              ))}
+              {SPLASH_GATES.map((g, i) =>
+              <SplashGateRow key={g.id}
+              gate={g}
+              status={statuses[g.id]}
+              delay={0.05 + i * 0.04} />
+              )}
             </div>
 
             {/* Continue */}
@@ -521,15 +542,15 @@ sensei db:create && sensei daemon:start`}</pre>
                 background: 'var(--ink)', color: 'var(--paper)',
                 border: 'none', borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer', letterSpacing: 0.2,
-                fontFamily: 'inherit',
+                fontFamily: 'inherit'
               }}>Continue →</button>
             </div>
           </div>
-        )}
+          }
       </div>
       </div>
-    </div>
-  );
+    </div>);
+
 }
 
 /* SplashOnDesktop — the bootstrap runs as a full desktop screen
@@ -539,10 +560,10 @@ function SplashOnDesktop({ state }) {
   return (
     <div className="splash-desktop">
       <div className="splash-window-frame">
-        <Splash state={state}/>
+        <Splash state={state} />
       </div>
-    </div>
-  );
+    </div>);
+
 }
 
 /* Expose to global scope for other Babel script blocks */
@@ -550,5 +571,5 @@ Object.assign(window, {
   Splash,
   SplashOnDesktop,
   SPLASH_GATES,
-  SPLASH_STATE_STATUSES,
+  SPLASH_STATE_STATUSES
 });

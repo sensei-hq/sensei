@@ -544,9 +544,9 @@ describe('HealthState — display', () => {
     expect(s.display.heroTitle).toBe('Creating · 4/6');
   });
 
-  it('heroTitle is "The foundation holds" when status="ok"', () => {
+  it('heroTitle is "All systems ready" when status="ok"', () => {
     const s = makeState({ status: 'ok' });
-    expect(s.display.heroTitle).toBe('The foundation holds');
+    expect(s.display.heroTitle).toBe('All systems ready');
   });
 
   it('heroTitle is "Needs your hand" when status="needs-action"', () => {
