@@ -47,7 +47,7 @@
 ::selection { background: var(--accent-soft); }
 
 /*
- * Tailwind `divide-{color}` color completion.
+ * Tailwind `divide-{color}` color completion. — REMOVE WHEN ROKKIT LANDS NATIVE SUPPORT.
  *
  * Rokkit's `buildNamedShortcuts()` emits `bg-/text-/border-/border-{tblr}-/
  * ring-/fill-/stroke-` for every named token — but NOT `divide-`. So
@@ -55,6 +55,10 @@
  * paints with the wrong (inherited) color. These rules fill in the gap
  * for the surface tokens we actually use, so the same `divide-{name}`
  * idiom works alongside `border-{name}`.
+ *
+ * Rokkit will ship `divide-` as part of the auto-emitted prefix set in a
+ * future release. When that lands and we bump the @rokkit/* versions,
+ * delete this block.
  */
 .divide-paper      > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper); }
 .divide-paper-soft > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper-soft); }
