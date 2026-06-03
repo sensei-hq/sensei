@@ -23,11 +23,11 @@
 
   const toneClass = $derived(
     ({
-      'accent':    'text-primary-z6',
-      'muted':     'text-ink-z6',
-      'success':   'text-success-z6',
-      'warning':   'text-warning-z6',
-      'watermark': 'text-primary-z6 opacity-55',
+      'accent':    'text-accent',
+      'muted':     'text-ink-mute',
+      'success':   'text-success',
+      'warning':   'text-warning',
+      'watermark': 'text-accent opacity-55',
     })[tone]
   );
 </script>

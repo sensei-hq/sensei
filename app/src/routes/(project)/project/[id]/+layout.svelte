@@ -71,21 +71,21 @@
 </script>
 
 <div
-    class="flex flex-col h-screen overflow-hidden bg-surface-z1 text-surface-z9"
+    class="flex flex-col h-screen overflow-hidden bg-paper-soft text-ink"
 >
     <!-- Primary accent stripe -->
-    <div class="h-0.5 bg-primary-z5 shrink-0"></div>
+    <div class="h-0.5 bg-accent shrink-0"></div>
 
     <!-- Titlebar / drag region -->
     <div class="drag-region h-9 flex items-center gap-2 px-4 shrink-0">
-        <span class="kanji text-lg text-primary-z5">{kanji}</span>
+        <span class="kanji text-lg text-accent">{kanji}</span>
         <span class="text-sm font-semibold">{data.project?.name ?? "…"}</span>
         <span class="text-xs opacity-50">· project window</span>
     </div>
 
     <div class="flex flex-1 overflow-hidden">
         <aside
-            class="w-[180px] shrink-0 border-r border-surface-z2 flex flex-col py-3"
+            class="w-[180px] shrink-0 border-r border-paper-mute flex flex-col py-3"
         >
             <div class="px-4 pb-4 pt-2">
                 <span class="text-2xl font-bold block">{ftr}%</span>
@@ -117,10 +117,10 @@
 
 <style>
     .proj-nav-item:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
     .proj-nav-item.active {
-        background: oklch(var(--color-surface-z2) / 1);
-        color: oklch(var(--color-primary-z5) / 1);
+        background: var(--paper-mute);
+        color: var(--accent);
     }
 </style>

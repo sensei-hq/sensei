@@ -117,7 +117,7 @@
     }
 </script>
 
-<div class="flex-1 min-h-0 overflow-hidden bg-surface-z1 text-surface-z9 flex flex-col">
+<div class="flex-1 min-h-0 overflow-hidden bg-paper-soft text-ink flex flex-col">
 
     <!-- ── Fixed top: header ───────────────────────────────────────────── -->
     <div class="shrink-0 pt-14 px-10">
@@ -130,15 +130,15 @@
 
             <h1 class="display text-4xl font-light leading-tight mb-3.5 tracking-tight">
                 {#if isComplete && !anyFailed}
-                    Up to date. <span class="text-success-z5">Resuming.</span>
+                    Up to date. <span class="text-success">Resuming.</span>
                 {:else if isComplete && anyFailed}
-                    Partial upgrade. <span class="text-primary-z5">Continuing.</span>
+                    Partial upgrade. <span class="text-accent">Continuing.</span>
                 {:else}
-                    Upgrading <span class="text-primary-z5">sensei.</span>
+                    Upgrading <span class="text-accent">sensei.</span>
                 {/if}
             </h1>
 
-            <p class="text-sm text-surface-z6 leading-loose max-w-[540px]">
+            <p class="text-sm text-ink-soft leading-loose max-w-[540px]">
                 {#if isComplete && !anyFailed}
                     Homebrew and the database schema are up to date. Running health checks now.
                 {:else if isComplete && anyFailed}
@@ -156,12 +156,12 @@
         <div class="max-w-[640px] w-full mx-auto">
 
             <!-- ── Hero card ─────────────────────────────────────────────── -->
-            <div class="hero-card relative overflow-hidden border border-surface-z2 rounded-xl bg-surface-z2 p-6">
+            <div class="hero-card relative overflow-hidden border border-paper-mute rounded-xl bg-paper-mute p-6">
                 <!-- Progress bar -->
                 {#if !isComplete}
-                    <div class="absolute top-0 left-0 right-0 h-0.5 bg-surface-z3">
+                    <div class="absolute top-0 left-0 right-0 h-0.5 bg-paper-mute">
                         <div
-                            class="h-full bg-primary-z5 transition-all duration-700 ease-out"
+                            class="h-full bg-accent transition-all duration-700 ease-out"
                             style="width: {progress}%"
                         ></div>
                     </div>
@@ -171,12 +171,12 @@
                     <!-- Status indicator -->
                     <div
                         class="indicator w-14 h-14 rounded-full border-[1.5px] flex items-center justify-center shrink-0"
-                        class:border-success-z5={isComplete && !anyFailed}
-                        class:border-primary-z5={isComplete && anyFailed}
-                        class:border-surface-z5={!isComplete}
+                        class:border-success={isComplete && !anyFailed}
+                        class:border-accent={isComplete && anyFailed}
+                        class:border-ink-soft={!isComplete}
                     >
                         {#if isComplete && !anyFailed}
-                            <span class="text-2xl text-success-z5 leading-none">✓</span>
+                            <span class="text-2xl text-success leading-none">✓</span>
                         {:else if isComplete && anyFailed}
                             <Kanji char="△" size="xl" />
                         {:else}
@@ -188,16 +188,16 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex items-baseline gap-2.5 mb-1">
                             <span class="display text-lg font-medium">Sensei update</span>
-                            <span class="mono text-xs text-surface-z5">health resolvers · dbd</span>
+                            <span class="mono text-xs text-ink-soft">health resolvers · dbd</span>
                         </div>
-                        <div class="text-sm text-surface-z7 leading-snug">
+                        <div class="text-sm text-ink-mute leading-snug">
                             {#if isComplete && !anyFailed}
                                 All upgrade steps completed.
                             {:else if isComplete && anyFailed}
                                 Completed with warnings. Continuing to health check.
                             {:else}
                                 {activeStepLabel}…
-                                <span class="mono text-xs text-surface-z5 ml-2">
+                                <span class="mono text-xs text-ink-soft ml-2">
                                     ({doneCount + 1}/{STEPS.length})
                                 </span>
                             {/if}
@@ -213,16 +213,16 @@
                     {#each STEPS as step}
                         {@const s = stepState(step.id)}
                         <div
-                            class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-surface-z2 transition-opacity duration"
+                            class="grid grid-cols-[10px_1fr_auto] gap-3 items-center py-2 border-b border-paper-mute transition-opacity duration"
                             class:opacity-50={s === "pending"}
                         >
                             <StatusDot status={s === "done" ? "ok" : s === "running" ? "busy" : s === "failed" ? "fail" : "idle"} />
 
                             <div>
-                                <span class="text-sm text-surface-z9">{step.label}</span>
-                                <span class="mono text-xs text-surface-z5 ml-2">· {step.note}</span>
+                                <span class="text-sm text-ink">{step.label}</span>
+                                <span class="mono text-xs text-ink-soft ml-2">· {step.note}</span>
                                 {#if s === "failed" && stepErrors[step.id]}
-                                    <div class="mono text-xs text-primary-z5 mt-0.5">
+                                    <div class="mono text-xs text-accent mt-0.5">
                                         {stepErrors[step.id]}
                                     </div>
                                 {/if}
@@ -230,9 +230,9 @@
 
                             <span
                                 class="mono text-xs tracking-wide uppercase"
-                                class:text-success-z5={s === "done"}
-                                class:text-primary-z5={s === "running" || s === "failed"}
-                                class:text-surface-z5={s === "pending"}
+                                class:text-success={s === "done"}
+                                class:text-accent={s === "running" || s === "failed"}
+                                class:text-ink-soft={s === "pending"}
                             >
                                 {s}
                             </span>
@@ -242,8 +242,8 @@
             </div>
 
             <!-- ── Footer ─────────────────────────────────────────────────── -->
-            <div class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-surface-z2">
-                <div class="text-xs text-surface-z5 leading-normal">
+            <div class="flex justify-between items-center gap-4 mt-8 pt-6 border-t border-paper-mute">
+                <div class="text-xs text-ink-soft leading-normal">
                     Upgrade steps run once after each update. The next launch will be quick.
                 </div>
             </div>
@@ -258,7 +258,7 @@
         width: 20px;
         height: 20px;
         border-radius: 50%;
-        border: 2px solid oklch(var(--color-surface-z5) / 1);
+        border: 2px solid var(--ink-soft);
         border-top-color: transparent;
         animation: spin 0.9s linear infinite;
     }

@@ -53,7 +53,7 @@
 
     {#if tab === "playground"}
         {#if loading}
-            <p class="text-sm text-surface-z6">Loading tools...</p>
+            <p class="text-sm text-ink-soft">Loading tools...</p>
         {:else if tools.length === 0}
             <EmptyState
                 kanji="具"
@@ -75,10 +75,10 @@
                             }}
                         >
                             <span
-                                class="block text-sm font-medium text-surface-z9 font-mono"
+                                class="block text-sm font-medium text-ink font-mono"
                                 >{tool.name}</span
                             >
-                            <span class="block text-xs text-surface-z6 mt-0.5"
+                            <span class="block text-xs text-ink-soft mt-0.5"
                                 >{tool.description}</span
                             >
                         </button>
@@ -87,14 +87,14 @@
 
                 <!-- Tool detail + execution -->
                 <div
-                    class="p-6 bg-surface-z2 border border-surface-z3 rounded-lg"
+                    class="p-6 bg-paper-mute border border-paper-mute rounded-lg"
                 >
                     {#if selectedTool}
                         <h3 class="text-base font-mono m-0 mb-1.5">
                             {selectedTool.name}
                         </h3>
                         <p
-                            class="text-sm text-surface-z7 m-0 mb-5 leading-normal"
+                            class="text-sm text-ink-mute m-0 mb-5 leading-normal"
                         >
                             {selectedTool.description}
                         </p>
@@ -104,12 +104,12 @@
                                 {#each selectedTool.params as param}
                                     <div class="flex flex-col gap-1">
                                         <label
-                                            class="text-xs text-surface-z6 font-mono"
+                                            class="text-xs text-ink-soft font-mono"
                                             for="param-{param}">{param}</label
                                         >
                                         <input
                                             id="param-{param}"
-                                            class="param-input px-3 py-2 border border-surface-z3 rounded-md bg-surface-z1 text-surface-z9 text-sm font-mono outline-none"
+                                            class="param-input px-3 py-2 border border-paper-mute rounded-md bg-paper-soft text-ink text-sm font-mono outline-none"
                                             type="text"
                                             placeholder={param}
                                             bind:value={toolParams[param]}
@@ -131,11 +131,11 @@
                             <div class="mt-5">
                                 <p class="m-0 mb-2"><Eyebrow>Response</Eyebrow></p>
                                 <pre
-                                    class="px-4 py-4 bg-surface-z1 border border-surface-z3 rounded-md text-xs font-mono text-surface-z9 overflow-auto max-h-[400px] whitespace-pre-wrap break-all m-0">{toolResult}</pre>
+                                    class="px-4 py-4 bg-paper-soft border border-paper-mute rounded-md text-xs font-mono text-ink overflow-auto max-h-[400px] whitespace-pre-wrap break-all m-0">{toolResult}</pre>
                             </div>
                         {/if}
                     {:else}
-                        <p class="text-sm text-surface-z6">
+                        <p class="text-sm text-ink-soft">
                             Select a tool to try it.
                         </p>
                     {/if}
@@ -162,7 +162,7 @@
         />
     {:else}
         <div class="flex flex-col gap-1">
-            <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-xs text-surface-z6 tracking-wide uppercase">
+            <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2 text-xs text-ink-soft tracking-wide uppercase">
                 <span>Tool</span>
                 <span class="text-right">Calls</span>
                 <span class="text-right">Errors</span>
@@ -171,7 +171,7 @@
             </div>
             {#each toolStats as stat (stat.tool_name)}
                 {@const errorRate = stat.call_count > 0 ? stat.error_count / stat.call_count : 0}
-                <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-surface-z2 text-sm items-center">
+                <div class="grid grid-cols-[1fr_80px_80px_100px_120px] gap-3 px-3 py-2.5 border-b border-paper-mute text-sm items-center">
                     <span class="font-mono text-xs">{stat.tool_name}</span>
                     <span class="text-right mono text-xs">{stat.call_count}</span>
                     <span class="text-right mono text-xs" class:text-error={errorRate > 0.1}>
@@ -183,7 +183,7 @@
                     <span class="text-right mono text-xs opacity-70">
                         {stat.avg_duration_ms != null ? Math.round(stat.avg_duration_ms) : '—'}
                     </span>
-                    <span class="text-right text-xs text-surface-z6">
+                    <span class="text-right text-xs text-ink-soft">
                         {new Date(stat.last_used_at).toLocaleDateString()}
                     </span>
                 </div>
@@ -194,16 +194,16 @@
 
 <style>
     .tool-card:hover {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
     .tool-card.selected {
-        background: oklch(var(--color-surface-z2) / 1);
+        background: var(--paper-mute);
     }
 
     .param-input:focus {
-        border-color: oklch(var(--color-surface-z6) / 1);
+        border-color: var(--ink-soft);
     }
     .text-error {
-        color: oklch(var(--color-primary-z5) / 1);
+        color: var(--accent);
     }
 </style>

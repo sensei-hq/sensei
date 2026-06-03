@@ -24,11 +24,11 @@ describe('StatusDot', () => {
   });
 
   it.each([
-    ['ok',   /\bbg-success-z6\b/],
-    ['busy', /\bbg-primary-z6\b/],
-    ['warn', /\bbg-warning-z6\b/],
-    ['fail', /\bbg-primary-z6\b/],
-    ['idle', /\bbg-ink-z5\b/],
+    ['ok',   /\bbg-success\b/],
+    ['busy', /\bbg-accent\b/],
+    ['warn', /\bbg-warning\b/],
+    ['fail', /\bbg-accent\b/],
+    ['idle', /\bbg-paper-edge\b/],
   ] as const)('status %s maps to %s', (status, expected) => {
     const m = mountComponent(StatusDot, { status });
     cleanup.push(m.destroy);

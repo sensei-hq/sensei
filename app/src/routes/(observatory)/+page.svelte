@@ -76,7 +76,7 @@
           <p class="m-0 mb-1"><Eyebrow>First-Try-Right · 14d</Eyebrow></p>
           <div class="flex items-baseline gap-2 justify-end">
             <span class="display text-3xl font-normal">{holisticFtr}</span>
-            <span class="text-xs text-surface-z6">%</span>
+            <span class="text-xs text-ink-soft">%</span>
             {#if ftrDelta !== 0}
               <span class="mono text-xs" class:ftr-up={ftrDelta > 0} class:ftr-down={ftrDelta < 0}>
                 {ftrDelta > 0 ? '↑' : '↓'} {Math.abs(ftrDelta)}%
@@ -89,7 +89,7 @@
           {@const vals = data.ftrDaily.map((p: { ftr_rate: number }) => p.ftr_rate)}
           {@const minV = Math.min(...vals)}
           {@const rangeV = Math.max(...vals) - minV || 0.01}
-          <svg width="140" height="40" class="block overflow-visible" style="color: oklch(var(--color-primary-z5) / 1);">
+          <svg width="140" height="40" class="block overflow-visible" style="color: var(--accent);">
             <path d={sparklinePath(data.ftrDaily, 140, 40)} fill="none" stroke="currentColor" stroke-width="1.5" />
             <circle cx="140" cy={40 - (40 - 2) * ((last.ftr_rate - minV) / rangeV) - 1} r="2.5" fill="currentColor" />
           </svg>
@@ -100,16 +100,16 @@
 
   {#if mode === 'early'}
     <!-- Early / listening hero: 観 + dynamic body with session count -->
-    <div data-hero-early class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
+    <div data-hero-early class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-paper-mute border border-paper-mute rounded-lg mb-8">
       <Kanji char="観" size="4xl" tone="watermark" />
       <div>
         <p class="m-0 mb-3"><Eyebrow>sensei is listening</Eyebrow></p>
         <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">Still listening.</p>
-        <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[560px]">
+        <p class="text-sm text-ink-mute leading-normal m-0 max-w-[560px]">
           {earlyBody}
         </p>
         {#if earlyHint}
-          <div class="flex items-center gap-2 text-xs text-surface-z6 mt-4">
+          <div class="flex items-center gap-2 text-xs text-ink-soft mt-4">
             <StatusDot status="busy" size="sm" />
             <span>{earlyHint}</span>
           </div>
@@ -124,20 +124,20 @@
           <h2 class="display text-base font-normal m-0">Forming signals</h2>
         </div>
         <div data-early-insights class="flex flex-col">
-          <div class="flex gap-3 py-3.5 border-b border-surface-z3 text-left">
-            <span class="kanji text-lg w-6 text-surface-z6">耳</span>
+          <div class="flex gap-3 py-3.5 border-b border-paper-mute text-left">
+            <span class="kanji text-lg w-6 text-ink-soft">耳</span>
             <div class="flex-1">
               <p class="m-0 mb-1"><Eyebrow>listening</Eyebrow></p>
-              <p class="text-sm text-surface-z7 leading-snug m-0">
+              <p class="text-sm text-ink-mute leading-snug m-0">
                 Watching the shape of your sessions. No confident pattern yet.
               </p>
             </div>
           </div>
-          <div class="flex gap-3 py-3.5 border-b border-surface-z3 text-left">
-            <span class="kanji text-lg w-6 text-surface-z6">試</span>
+          <div class="flex gap-3 py-3.5 border-b border-paper-mute text-left">
+            <span class="kanji text-lg w-6 text-ink-soft">試</span>
             <div class="flex-1">
               <p class="m-0 mb-1"><Eyebrow>calibrating</Eyebrow></p>
-              <p class="text-sm text-surface-z7 leading-snug m-0">
+              <p class="text-sm text-ink-mute leading-snug m-0">
                 Learning your correction cadence. Too early to suggest rules.
               </p>
             </div>
@@ -149,9 +149,9 @@
         <div class="flex items-baseline justify-between mb-4">
           <h2 class="display text-base font-normal m-0">System has learned</h2>
         </div>
-        <div class="py-6 text-center border border-dashed border-surface-z3 rounded-lg">
+        <div class="py-6 text-center border border-dashed border-paper-mute rounded-lg">
           <span class="block mb-2"><Kanji char="空" size="2xl" tone="muted" /></span>
-          <p class="text-xs text-surface-z6 leading-snug m-0">
+          <p class="text-xs text-ink-soft leading-snug m-0">
             No teachings adopted yet.<br />
             Sensei needs a few more sessions.
           </p>
@@ -162,15 +162,15 @@
     <!-- Mature hero: top recommendation -->
     {#if data.topRecommendations.length > 0}
       {@const hero = data.topRecommendations[0]}
-      <div data-hero-mature class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-surface-z2 border border-surface-z3 rounded-lg mb-8">
+      <div data-hero-mature class="grid grid-cols-[auto_1fr] gap-7 px-8 py-8 pb-8 bg-paper-mute border border-paper-mute rounded-lg mb-8">
         <Kanji char={hero.urgency === 'high' ? '聴' : hero.urgency === 'medium' ? '繰' : '探'} size="4xl" />
         <div>
           <p class="display text-2xl font-normal m-0 mb-3 tracking-tight">{hero.title}</p>
-          <p class="text-sm text-surface-z7 leading-normal m-0 max-w-[520px] mb-4">{hero.why}</p>
+          <p class="text-sm text-ink-mute leading-normal m-0 max-w-[520px] mb-4">{hero.why}</p>
           {#if hero.impact}
             <div class="flex items-center gap-2 text-xs">
               <StatusDot status="busy" size="sm" />
-              <span class="text-primary-z5">{hero.impact}</span>
+              <span class="text-accent">{hero.impact}</span>
             </div>
           {/if}
         </div>
@@ -185,18 +185,18 @@
         </div>
         {#if data.topRecommendations.length > 1}
           {#each data.topRecommendations.slice(1) as rec (rec.id)}
-            <div class="flex gap-3 py-3.5 border-b border-surface-z3 text-left">
-              <span class="kanji text-lg w-6" class:text-amber={rec.urgency === 'high'} class:text-surface-z6={rec.urgency !== 'high'}>
+            <div class="flex gap-3 py-3.5 border-b border-paper-mute text-left">
+              <span class="kanji text-lg w-6" class:text-amber={rec.urgency === 'high'} class:text-ink-soft={rec.urgency !== 'high'}>
                 {rec.urgency === 'high' ? '繰' : '探'}
               </span>
               <div class="flex-1">
                 <p class="m-0 mb-1"><Eyebrow>{rec.urgency}</Eyebrow></p>
-                <p class="text-sm text-surface-z7 leading-snug m-0">{rec.title}</p>
+                <p class="text-sm text-ink-mute leading-snug m-0">{rec.title}</p>
               </div>
             </div>
           {/each}
         {:else}
-          <div class="py-5 text-center text-sm text-surface-z6 border border-dashed border-surface-z3 rounded-lg">
+          <div class="py-5 text-center text-sm text-ink-soft border border-dashed border-paper-mute rounded-lg">
             No further insights yet.
           </div>
         {/if}
@@ -208,17 +208,17 @@
         </div>
         {#if data.teachings.length > 0}
           {#each data.teachings as t (t.id)}
-            <div class="py-3 px-3.5 mb-2.5 rounded-md bg-surface-z2 border border-surface-z3 border-l-2 border-l-primary-z5">
-              <p class="text-sm text-surface-z9 m-0 leading-snug">{t.name}</p>
-              <p class="text-xs text-surface-z6 m-0 mt-1">
+            <div class="py-3 px-3.5 mb-2.5 rounded-md bg-paper-mute border border-paper-mute border-l-2 border-l-accent">
+              <p class="text-sm text-ink m-0 leading-snug">{t.name}</p>
+              <p class="text-xs text-ink-soft m-0 mt-1">
                 {t.family ?? 'pattern'} · {t.instance_count} places
               </p>
             </div>
           {/each}
         {:else}
-          <div class="py-6 text-center border border-dashed border-surface-z3 rounded-lg">
+          <div class="py-6 text-center border border-dashed border-paper-mute rounded-lg">
             <span class="block mb-2"><Kanji char="空" size="2xl" tone="muted" /></span>
-            <p class="text-xs text-surface-z6 leading-snug m-0">
+            <p class="text-xs text-ink-soft leading-snug m-0">
               No teachings adopted yet.<br />
               Sensei needs a few more sessions.
             </p>
@@ -233,7 +233,7 @@
 </div>
 
 <style>
-  .ftr-up { color: oklch(var(--color-success-z5) / 1); }
-  .ftr-down { color: oklch(var(--color-primary-z5) / 1); }
+  .ftr-up { color: var(--success); }
+  .ftr-down { color: var(--accent); }
   .text-amber { color: oklch(0.75 0.15 75); }
 </style>

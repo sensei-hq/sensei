@@ -36,7 +36,7 @@
 
 <header
   data-component="page-header"
-  class="flex items-center gap-5 pt-5 pb-4 px-6 {bordered ? 'border-b border-paper-z2' : ''}"
+  class="flex items-center gap-5 pt-5 pb-4 px-6 {bordered ? 'border-b border-paper-edge' : ''}"
 >
   {#if kanji}
     <Kanji char={kanji} size={kanjiSize} />
@@ -45,9 +45,9 @@
     {#if eyebrow}
       <div class="mb-1"><Eyebrow>{eyebrow}</Eyebrow></div>
     {/if}
-    <h1 class="display {titleSize} font-normal m-0 tracking-tight text-ink-z9">{title}</h1>
+    <h1 class="display {titleSize} font-normal m-0 tracking-tight text-ink">{title}</h1>
     {#if description}
-      <p class="text-sm text-ink-z8 leading-normal m-0 mt-1 max-w-[720px]">{description}</p>
+      <p class="text-sm text-ink-soft leading-normal m-0 mt-1 max-w-[720px]">{description}</p>
     {/if}
   </div>
   {#if right}
