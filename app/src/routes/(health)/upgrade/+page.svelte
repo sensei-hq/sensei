@@ -188,7 +188,7 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex items-baseline gap-2.5 mb-1">
                             <span class="display text-lg font-medium">Sensei update</span>
-                            <span class="mono text-xs text-ink-soft">health resolvers · dbd</span>
+                            <span class="font-mono text-xs text-ink-soft">health resolvers · dbd</span>
                         </div>
                         <div class="text-sm text-ink-mute leading-snug">
                             {#if isComplete && !anyFailed}
@@ -197,7 +197,7 @@
                                 Completed with warnings. Continuing to health check.
                             {:else}
                                 {activeStepLabel}…
-                                <span class="mono text-xs text-ink-soft ml-2">
+                                <span class="font-mono text-xs text-ink-soft ml-2">
                                     ({doneCount + 1}/{STEPS.length})
                                 </span>
                             {/if}
@@ -220,16 +220,16 @@
 
                             <div>
                                 <span class="text-sm text-ink">{step.label}</span>
-                                <span class="mono text-xs text-ink-soft ml-2">· {step.note}</span>
+                                <span class="font-mono text-xs text-ink-soft ml-2">· {step.note}</span>
                                 {#if s === "failed" && stepErrors[step.id]}
-                                    <div class="mono text-xs text-accent mt-0.5">
+                                    <div class="font-mono text-xs text-accent mt-0.5">
                                         {stepErrors[step.id]}
                                     </div>
                                 {/if}
                             </div>
 
                             <span
-                                class="mono text-xs tracking-wide uppercase"
+                                class="font-mono text-xs tracking-wide uppercase"
                                 class:text-success={s === "done"}
                                 class:text-accent={s === "running" || s === "failed"}
                                 class:text-ink-soft={s === "pending"}

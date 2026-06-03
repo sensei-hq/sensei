@@ -140,8 +140,8 @@
                     <h3 class="text-sm font-semibold m-0 mb-2.5 opacity-70">Hotspots</h3>
                     {#each data.hotspots.slice(0, 5) as h}
                         <div class="flex justify-between py-1.5 border-b border-paper-mute text-sm">
-                            <span class="mono text-xs truncate flex-1 mr-3">{h.file_path}</span>
-                            <span class="mono text-xs opacity-50 shrink-0">
+                            <span class="font-mono text-xs truncate flex-1 mr-3">{h.file_path}</span>
+                            <span class="font-mono text-xs opacity-50 shrink-0">
                                 {h.correction_count > 0 ? `${h.correction_count}× rework` : `${h.edit_count} edits`}
                             </span>
                         </div>

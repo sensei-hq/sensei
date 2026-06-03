@@ -60,7 +60,7 @@
     {/if}
   </header>
 
-  <pre class="m-0 px-4 py-4 mono text-xs text-ink bg-paper-mute leading-normal whitespace-pre-wrap break-words max-h-56 overflow-auto select-text cursor-text">{remedy.script}</pre>
+  <pre class="m-0 px-4 py-4 font-mono text-xs text-ink bg-paper-mute leading-normal whitespace-pre-wrap break-words max-h-56 overflow-auto select-text cursor-text">{remedy.script}</pre>
 
   <footer class="flex items-center justify-between gap-2.5 px-4 py-3 border-t border-paper-edge">
     <button data-action="copy"

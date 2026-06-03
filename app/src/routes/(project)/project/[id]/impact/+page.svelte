@@ -41,14 +41,14 @@
               >{v.verdict}</span>
               {#if v.baseline_ftr != null && v.current_ftr != null}
                 {@const delta = Math.round((v.current_ftr - v.baseline_ftr) * 100)}
-                <span class="ml-auto mono text-xs" class:text-success={delta > 0} class:text-error={delta < 0}>
+                <span class="ml-auto font-mono text-xs" class:text-success={delta > 0} class:text-error={delta < 0}>
                   {delta > 0 ? '+' : ''}{delta}%
                 </span>
               {/if}
             </div>
             <p class="text-sm m-0 leading-snug">{v.title}</p>
             {#if v.measured_at}
-              <span class="text-xs text-ink-soft mono mt-1 block">
+              <span class="text-xs text-ink-soft font-mono mt-1 block">
                 measured {new Date(v.measured_at).toLocaleDateString()}
               </span>
             {/if}
@@ -60,7 +60,7 @@
       {#if selected}
         <div class="p-6 bg-paper-mute border border-paper-mute rounded-lg">
           <div class="flex items-center gap-3 mb-4">
-            <span class="text-xs mono opacity-50">{selected.urgency}</span>
+            <span class="text-xs font-mono opacity-50">{selected.urgency}</span>
             {#if selected.acted_at}
               <span class="text-xs opacity-50">acted {new Date(selected.acted_at).toLocaleDateString()}</span>
             {/if}
