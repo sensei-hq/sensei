@@ -167,7 +167,10 @@ pub fn run() {
                     "check-for-updates" => {
                         let _ = app.emit("update-check-requested", ());
                     }
-                    "go-health"      => { let _ = app.emit("dev-navigate", "/health"); }
+                    // View → Health is an explicit inspection request: pass
+                    // `?auto=false` so /health stays put when status is ok
+                    // instead of redirecting straight to the observatory.
+                    "go-health"      => { let _ = app.emit("dev-navigate", "/health?auto=false"); }
                     "go-upgrade"     => { let _ = app.emit("dev-navigate", "/upgrade"); }
                     // "(observatory)" is a SvelteKit group, not a URL segment —
                     // the observatory page lives at "/".
