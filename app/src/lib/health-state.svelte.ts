@@ -74,6 +74,89 @@ export class HealthState {
   get isBusy():      boolean { return this.status === 'checking' || this.status === 'resolving'; }
   get needsAction(): boolean { return this.status === 'needs-action'; }
 
+  // ── Collection derivations ─────────────────────────────────────
+  get gates(): Component[] {
+    return [this.packageManager, ...this.components];
+  }
+
+  get total(): number {
+    return this.gates.length;
+  }
+
+  get readyCount(): number {
+    return this.gates.filter((g) => g.status === 'ready').length;
+  }
+
+  get activeLabel(): string {
+    return this.gates.find((g) => g.status === 'installing' || g.status === 'checking')?.label ?? '';
+  }
+
+  get firstBlockedIdx(): number {
+    return this.gates.findIndex((g) => g.status === 'failed');
+  }
+
+  // ── Display copy per HealthStatus ──────────────────────────────
+  get display(): {
+    eyebrow:      string;
+    headlinePre:  string;
+    headlineKey:  string;
+    headlineTone: 'success' | 'accent' | 'ink-mute';
+    subCopy:      string;
+    heroTitle:    string;
+  } {
+    switch (this.status) {
+      case 'checking':
+        return {
+          eyebrow:      'starting',
+          headlinePre:  'Checking the',
+          headlineKey:  'foundation.',
+          headlineTone: 'accent',
+          subCopy:      'A quick health check before opening the observatory.',
+          heroTitle:    this.#composeHeroTitle('Checking components'),
+        };
+      case 'resolving':
+        return {
+          eyebrow:      'setting up',
+          headlinePre:  'Putting the room',
+          headlineKey:  'in order.',
+          headlineTone: 'accent',
+          subCopy:      'Running brew bundle with the manifest from sensei-hq/homebrew-tap. No input needed.',
+          heroTitle:    this.#composeHeroTitle('Checking components'),
+        };
+      case 'needs-action':
+        return {
+          eyebrow:      'needs your hand',
+          headlinePre:  'One last',
+          headlineKey:  'step.',
+          headlineTone: 'accent',
+          subCopy:      "Homebrew isn't here yet. Run the script — it installs Homebrew, then everything else.",
+          heroTitle:    'Needs your hand',
+        };
+      case 'ok':
+        return {
+          eyebrow:      'ready',
+          headlinePre:  'The foundation',
+          headlineKey:  'holds.',
+          headlineTone: 'success',
+          subCopy:      'Homebrew, Postgres, Ollama, sensei components, database, and the daemon are all present. Opening the observatory.',
+          heroTitle:    'The foundation holds',
+        };
+    }
+  }
+
+  #composeHeroTitle(fallback: string): string {
+    const active = this.gates.find((g) => g.status === 'installing' || g.status === 'checking');
+    if (!active) return fallback;
+    const verb = active.installingVerb;
+    const capitalized = verb.charAt(0).toUpperCase() + verb.slice(1);
+    return `${capitalized} · ${this.readyCount}/${this.total}`;
+  }
+
+  // ── Action ─────────────────────────────────────────────────────
+  retry(id: ComponentId | PackageManagerId): void {
+    this.#transport.retry?.(id);
+  }
+
   constructor(
     seed: HealthPayload = emptyPayload,
     transport: HealthTransport = new RealTransport(),

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HealthState, emptyPayload } from './health-state.svelte.js';
 import { MockTransport } from './health-transport.js';
 import { COMPONENT_ORDER } from './health-types.js';
-import type { HealthPayload, Remedy } from './health-types.js';
+import type { HealthPayload, Remedy, Component, HealthStatus } from './health-types.js';
 
 const remedyFixture = (): Remedy => ({
   message: 'Run the script in your terminal.',
@@ -397,3 +397,169 @@ describe('HealthState — B3: verify() forces a fresh check', () => {
 // $state is the canonical source for reroute via appState.healthOk.
 
 export { okPayload, needsActionPayload, remedyFixture };
+
+// ── makeState helper ────────────────────────────────────────────────────────
+// Creates a HealthState instance pre-populated with specific gate statuses
+// without going through apply() (which enforces strict invariants). Fields
+// are written directly since HealthState uses $state which is publicly writable.
+
+interface MakeStateOpts {
+  status?: HealthStatus;
+  readyIds?: string[];
+  installingId?: string;
+  failedId?: string;
+  installingVerbs?: Record<string, string>;
+  transport?: { retry?: (id: string) => void };
+}
+
+function makeComponent(id: string, label: string, opts: MakeStateOpts): Component {
+  let status: Component['status'] = 'pending';
+  if (opts.readyIds?.includes(id)) status = 'ready';
+  if (opts.installingId === id) status = 'installing';
+  if (opts.failedId === id) status = 'failed';
+  return {
+    id: id as Component['id'],
+    label,
+    detail: null,
+    note: null,
+    status,
+    version: null,
+    installingVerb: opts.installingVerbs?.[id] ?? 'installing',
+    description: `${label} description`,
+  };
+}
+
+function makeState(opts: MakeStateOpts): HealthState {
+  // Build a minimal transport that satisfies HealthTransport for construction.
+  // MockTransport requires a checkPayload so we pass the emptyPayload.
+  const baseTransport = new MockTransport({ checkPayload: emptyPayload });
+  // Attach an optional retry method from opts.transport if provided.
+  const transport = opts.transport
+    ? Object.assign(baseTransport, { retry: opts.transport.retry })
+    : baseTransport;
+
+  const s = new HealthState(emptyPayload, transport);
+  // Override $state fields directly — bypasses apply() invariants so tests
+  // can set arbitrary combinations of gate statuses.
+  s.status = opts.status ?? 'checking';
+  s.packageManager = makeComponent('homebrew', 'Homebrew', opts);
+  s.components = [
+    makeComponent('postgres', 'PostgreSQL', opts),
+    makeComponent('ollama',   'Ollama',     opts),
+    makeComponent('sensei',   'Sensei',     opts),
+    makeComponent('database', 'Database',   opts),
+    makeComponent('daemon',   'Daemon',     opts),
+  ];
+  return s;
+}
+
+// ── New derivation tests ────────────────────────────────────────────────────
+
+describe('HealthState — derivations', () => {
+  it('gates returns packageManager + components in that order', () => {
+    const s = makeState({});
+    expect(s.gates[0].id).toBe(s.packageManager.id);
+    expect(s.gates.length).toBe(1 + s.components.length);
+  });
+
+  it('total counts all gates', () => {
+    const s = makeState({});
+    expect(s.total).toBe(6); // pm + 5 components
+  });
+
+  it('readyCount counts gates with status="ready"', () => {
+    const s = makeState({ readyIds: ['homebrew', 'postgres', 'ollama'] });
+    expect(s.readyCount).toBe(3);
+  });
+
+  it('activeLabel returns label of first installing/checking gate', () => {
+    const s = makeState({
+      readyIds: ['homebrew', 'postgres'],
+      installingId: 'ollama',
+    });
+    expect(s.activeLabel).toBe('Ollama');
+  });
+
+  it('activeLabel is empty when no gate is active', () => {
+    const s = makeState({ readyIds: ['homebrew', 'postgres', 'ollama', 'sensei', 'database', 'daemon'] });
+    expect(s.activeLabel).toBe('');
+  });
+
+  it('firstBlockedIdx returns index of first failed gate, -1 when none', () => {
+    const s1 = makeState({ failedId: 'ollama' }); // index 2 in gates (pm=0, postgres=1, ollama=2)
+    expect(s1.firstBlockedIdx).toBe(2);
+
+    const s2 = makeState({});
+    expect(s2.firstBlockedIdx).toBe(-1);
+  });
+});
+
+describe('HealthState — display', () => {
+  it('checking status produces "starting" eyebrow', () => {
+    const s = makeState({ status: 'checking' });
+    expect(s.display.eyebrow).toBe('starting');
+    expect(s.display.headlinePre).toBe('Checking the');
+    expect(s.display.headlineKey).toBe('foundation.');
+    expect(s.display.headlineTone).toBe('accent');
+  });
+
+  it('resolving status produces "setting up" eyebrow + accent in-order key', () => {
+    const s = makeState({ status: 'resolving' });
+    expect(s.display.eyebrow).toBe('setting up');
+    expect(s.display.headlineKey).toBe('in order.');
+    expect(s.display.headlineTone).toBe('accent');
+  });
+
+  it('needs-action status produces "needs your hand" + step. key', () => {
+    const s = makeState({ status: 'needs-action' });
+    expect(s.display.eyebrow).toBe('needs your hand');
+    expect(s.display.headlineKey).toBe('step.');
+    expect(s.display.headlineTone).toBe('accent');
+  });
+
+  it('ok status produces "ready" + holds. key with success tone', () => {
+    const s = makeState({ status: 'ok' });
+    expect(s.display.eyebrow).toBe('ready');
+    expect(s.display.headlineKey).toBe('holds.');
+    expect(s.display.headlineTone).toBe('success');
+  });
+
+  it('heroTitle uses installingVerb when status="resolving"', () => {
+    const s = makeState({
+      status: 'resolving',
+      readyIds: ['homebrew', 'postgres'],
+      installingId: 'ollama',
+      installingVerbs: { ollama: 'installing' },
+    });
+    expect(s.display.heroTitle).toBe('Installing · 2/6');
+  });
+
+  it('heroTitle capitalizes whatever verb the wire provides', () => {
+    const s = makeState({
+      status: 'resolving',
+      readyIds: ['homebrew', 'postgres', 'ollama', 'sensei'],
+      installingId: 'database',
+      installingVerbs: { database: 'creating' },
+    });
+    expect(s.display.heroTitle).toBe('Creating · 4/6');
+  });
+
+  it('heroTitle is "The foundation holds" when status="ok"', () => {
+    const s = makeState({ status: 'ok' });
+    expect(s.display.heroTitle).toBe('The foundation holds');
+  });
+
+  it('heroTitle is "Needs your hand" when status="needs-action"', () => {
+    const s = makeState({ status: 'needs-action' });
+    expect(s.display.heroTitle).toBe('Needs your hand');
+  });
+});
+
+describe('HealthState — retry()', () => {
+  it('retry(id) triggers a check for the given gate via transport', () => {
+    const calls: string[] = [];
+    const s = makeState({ transport: { retry: (id: string) => { calls.push(id); } } });
+    s.retry('ollama');
+    expect(calls).toEqual(['ollama']);
+  });
+});
