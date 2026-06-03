@@ -22,7 +22,7 @@
   <div class="max-w-[960px] w-full mx-auto grid grid-cols-1 lg:grid-cols-2 gap-x-12 gap-y-8 min-h-full">
     <!-- Left column · identity, headline, remedy, footer -->
     <div class="flex flex-col min-w-0">
-      <Header status={state.status} />
+      <Header {state} />
 
       {#if state.needsAction && state.remedy}
         <Remedy remedy={state.remedy} {onVerify} />
