@@ -47,14 +47,12 @@
       {/if}
 
       <!-- Watermark — fills the empty space between content and Footer when ok. -->
-      <!-- Uses sensei.svg as a CSS mask so the silhouette picks up text-ink color, -->
-      <!-- giving a paper-toned faded glyph in both light and dark mode. -->
+      <!-- Per updated mockup: container is flex-1 with min-height 80px so it claims -->
+      <!-- the spare vertical room; the masked SVG inside sits centered at 62% mask-size -->
+      <!-- and 8% opacity, picking up bg-ink so it themes in both light and dark mode. -->
       {#if state.status === 'ok'}
-        <div class="flex-1 flex items-center justify-center my-6 min-h-0">
-          <div
-            aria-hidden="true"
-            class="watermark bg-ink opacity-10 pointer-events-none select-none"
-          ></div>
+        <div aria-hidden="true" class="flex-1 relative min-h-[80px] mt-4">
+          <div class="watermark absolute inset-0 bg-ink opacity-[0.08] pointer-events-none select-none"></div>
         </div>
       {:else}
         <div class="flex-1"></div>
@@ -97,15 +95,14 @@
   }
 
   /* Watermark: CSS mask renders the SVG silhouette in the current background
-     color (bg-ink). Size is responsive — fills available column width up to a
-     reasonable cap so the glyph reads as a watermark, not a wallpaper. */
+     color (bg-ink). The container is positioned absolute-inset, so size is
+     driven by the parent's flex-1 fill; mask-size: 62% keeps the glyph as a
+     subtle watermark rather than a wallpaper. */
   .watermark {
-    width: 240px;
-    height: 240px;
     -webkit-mask-image: url('/sensei.svg');
             mask-image: url('/sensei.svg');
-    -webkit-mask-size: contain;
-            mask-size: contain;
+    -webkit-mask-size: 62%;
+            mask-size: 62%;
     -webkit-mask-repeat: no-repeat;
             mask-repeat: no-repeat;
     -webkit-mask-position: center;
