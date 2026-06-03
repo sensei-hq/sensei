@@ -47,6 +47,25 @@
 ::selection { background: var(--accent-soft); }
 
 /*
+ * Tailwind `divide-{color}` color completion.
+ *
+ * Rokkit's `buildNamedShortcuts()` emits `bg-/text-/border-/border-{tblr}-/
+ * ring-/fill-/stroke-` for every named token — but NOT `divide-`. So
+ * `divide-paper-edge` etc. don't auto-resolve and the divide-y utility
+ * paints with the wrong (inherited) color. These rules fill in the gap
+ * for the surface tokens we actually use, so the same `divide-{name}`
+ * idiom works alongside `border-{name}`.
+ */
+.divide-paper      > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper); }
+.divide-paper-soft > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper-soft); }
+.divide-paper-mute > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper-mute); }
+.divide-paper-edge > :not([hidden]) ~ :not([hidden]) { border-color: var(--paper-edge); }
+.divide-ink-faint  > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink-faint); }
+.divide-ink-soft   > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink-soft); }
+.divide-ink-mute   > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink-mute); }
+.divide-ink        > :not([hidden]) ~ :not([hidden]) { border-color: var(--ink); }
+
+/*
  * Button helpers — use the canonical named tokens directly. Named-token CSS
  * vars contain complete oklch(...) expressions, so we use them as-is rather
  * than wrapping in `oklch(var(...) / 1)` (which would produce invalid CSS).
