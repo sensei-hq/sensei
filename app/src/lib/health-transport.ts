@@ -12,6 +12,10 @@ export interface HealthTransport {
    *  Resolves with the terminal HealthPayload (which is also delivered
    *  as a final `kind: 'report'` event before this promise resolves). */
   resolve(current: HealthPayload, onEvent: (ev: HealthEvent) => void): Promise<HealthPayload>;
+
+  /** Optional: trigger a re-check for a specific gate by id.
+   *  Implementations that don't support per-gate retry may omit this. */
+  retry?(id: string): void;
 }
 
 // ── RealTransport ─────────────────────────────────────────────────────────────
