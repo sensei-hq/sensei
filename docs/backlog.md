@@ -195,6 +195,19 @@ done 2026-05-16**:
 - [x] New Footer component (`sensei {version} · {platform}`) for the left-column bottom
 - [x] svelte-check 707/0/0 · vitest 482 (+22 new) · clippy clean · sensei-bootstrap 159 tests
 
+**Completed (2026-06-03) — Rokkit token migration Phase 1 (`/health` route group):**
+- [x] 6 reusable primitives extracted: `Wordmark`, `KanjiHeader`, `StatusDisc`, `Spinner` (in `$lib/components/`); `StatusIndicator`, `GateRow` (screen-local in `(health)/health/`)
+- [x] `HealthState` extended with `gates`, `total`, `readyCount`, `activeLabel`, `firstBlockedIdx`, `display` (incl. `heroTitle` composed via `installingVerb`), `retry()`
+- [x] `HealthView` rebuilt against `docs/mockups/Sensei/lib/bootstrap-splash.jsx` — two-column layout with kanji-numeral gate rows and zen italic descriptions; single column with "opening…" tickle on ok
+- [x] Named-token overrides added in `rokkit.config.js`: paper/ink shades, accent (shu.500/400), primary (kami.900/sumi.900), status dark shifts
+- [x] Skin re-alignment: `accent` skin role changed `fuji → shu`; `accent-soft` override removed (now redundant — canonical shu.100 default matches former explicit override)
+- [x] Primary skin re-alignment (`primary → kami/sumi`) **deferred to Phase 2/3** — `text-primary-z*` in (config), (observatory), (project), and $lib/components/ still resolve to vermillion via z-scale skin; changing skin now would regress those unmigrated screens
+- [x] `(health)/+layout.svelte`: `bg-surface-z0 → bg-paper`
+- [x] `Hero.svelte`, `Ledger.svelte` and their specs deleted; `Header.svelte` and `Remedy.svelte` migrated to named tokens
+- [x] All z-scale and inline `oklch(var(...))` removed from `(health)/health/` subfolder; `logs/` and `upgrade/` are out-of-scope unmigrated screens (Phase 2)
+- [x] Vitest: 545 tests pass (33 files); svelte-check: 752 files, 0 errors, 0 warnings
+- [x] Branch: develop, commits `5c6f89b2` → `c503eb55`
+
 ---
 
 ## 2. Setup Wizard (11 stages)
