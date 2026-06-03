@@ -64,7 +64,7 @@ describe('GateRow', () => {
     const m = mountComponent(GateRowHarness, { gate: makeGate({ status: 'pending' }), numeral: '一' });
     cleanup.push(m.destroy);
     const row = m.container.querySelector('[data-component="gate-row"]') as HTMLElement;
-    expect(row.style.opacity).toBe('0.5');
+    expect(row.style.opacity).toBe('0.65');
   });
 
   it('passes installingVerb as StatusIndicator label when status="installing"', () => {
