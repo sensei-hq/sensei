@@ -102,7 +102,7 @@
 
     <div class="meta">
       {#if status.text}
-        <span class="status mono status-{status.tone}">
+        <span class="status font-mono status-{status.tone}">
           {#if status.icon === 'spinner'}
             <svg class="spin" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
               <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
@@ -175,7 +175,7 @@
         <path d="M4.5 4.5 L11.5 11.5 M11.5 4.5 L4.5 11.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
       </svg>
       <div class="error-text">
-        Couldn’t configure {name} — <span class="mono error-message">{error}</span>
+        Couldn’t configure {name} — <span class="font-mono error-message">{error}</span>
       </div>
       {#if onRetry}
         <button type="button" class="retry" onclick={() => onRetry?.()}>Retry →</button>

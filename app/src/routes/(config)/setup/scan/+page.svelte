@@ -173,8 +173,8 @@
                 <div
                     class="flex justify-between pb-3 border-b border-paper-mute mb-3 text-xs text-ink-soft"
                 >
-                    <span class="mono">TASKS</span>
-                    <span class="mono text-ink-mute"
+                    <span class="font-mono">TASKS</span>
+                    <span class="font-mono text-ink-mute"
                         >{projects.pendingFolders} active · {activities.totalElapsed.toFixed(
                             1,
                         )}s</span
@@ -197,11 +197,11 @@
                             >
                             {#if f.filesTotal > 0}
                                 <span
-                                    class="mono text-xs text-ink-soft min-w-[60px] text-right"
+                                    class="font-mono text-xs text-ink-soft min-w-[60px] text-right"
                                     >{f.filesCompleted}/{f.filesTotal}</span
                                 >
                             {:else}
-                                <span class="mono text-xs text-ink-soft min-w-[60px] text-right">—</span>
+                                <span class="font-mono text-xs text-ink-soft min-w-[60px] text-right">—</span>
                             {/if}
                         </div>
                     {/each}

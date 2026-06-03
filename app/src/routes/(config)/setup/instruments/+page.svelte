@@ -53,7 +53,7 @@
     </div>
     <div data-testid="instruments-stack" class="flex flex-wrap gap-1 mb-6 bg-paper-mute border border-paper-mute rounded-md p-3">
       {#each stackChips as chip}
-        <span class="mono py-1 px-2 text-xs text-ink-mute bg-paper-soft border border-paper-mute rounded-sm">{chip}</span>
+        <span class="font-mono py-1 px-2 text-xs text-ink-mute bg-paper-soft border border-paper-mute rounded-sm">{chip}</span>
       {/each}
     </div>
   {/if}
@@ -72,7 +72,7 @@
     </div>
   {:else}
     <div class="flex items-center gap-2 mb-6">
-      <span class="mono py-1 px-2 text-xs text-success bg-paper-mute border border-success rounded-sm">
+      <span class="font-mono py-1 px-2 text-xs text-success bg-paper-mute border border-success rounded-sm">
         {installCount} MCPs to install
       </span>
     </div>
@@ -95,16 +95,16 @@
             <div class="min-w-0">
               <div class="flex items-baseline gap-2">
                 <span class="text-sm text-ink font-medium">{mcp.name}</span>
-                <span class="mono text-[11px] text-ink-soft">{mcp.publisher}</span>
+                <span class="font-mono text-[11px] text-ink-soft">{mcp.publisher}</span>
                 {#if mcp.verified}
                   <span class="text-[11px] text-success" title="Verified">✓</span>
                 {/if}
               </div>
               <div class="text-xs text-ink-soft mt-0.5">{mcp.summary}</div>
             </div>
-            <span class="mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
+            <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
             {#if mcp.installed}
-              <span class="mono text-[11px] text-success whitespace-nowrap">installed</span>
+              <span class="font-mono text-[11px] text-success whitespace-nowrap">installed</span>
             {:else}
               <Switch bind:value={mcp.selected} label={`Install ${mcp.name}`} />
             {/if}
@@ -131,13 +131,13 @@
             <div class="min-w-0">
               <div class="flex items-baseline gap-2">
                 <span class="text-sm text-ink font-medium">{mcp.name}</span>
-                <span class="mono text-[11px] text-ink-soft">{mcp.publisher}</span>
+                <span class="font-mono text-[11px] text-ink-soft">{mcp.publisher}</span>
               </div>
               <div class="text-xs text-ink-soft mt-0.5">{mcp.summary}</div>
             </div>
-            <span class="mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
+            <span class="font-mono text-[11px] text-ink-soft whitespace-nowrap">{mcp.tools} tools</span>
             {#if mcp.installed}
-              <span class="mono text-[11px] text-success whitespace-nowrap">installed</span>
+              <span class="font-mono text-[11px] text-success whitespace-nowrap">installed</span>
             {:else}
               <Switch bind:value={mcp.selected} label={`Install ${mcp.name}`} />
             {/if}
