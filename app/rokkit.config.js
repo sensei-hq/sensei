@@ -42,7 +42,36 @@ export default {
    * a touch above paper so the hairline looks etched, not lifted.
    */
   overrides: {
-    "paper-edge": { light: "kami.400", dark: "sumi.100" },
+    // ── Surface (paper) ──────────────────────────────────────────
+    paper:        { light: "kami.100", dark: "sumi.50"  },
+    "paper-soft": { light: "kami.200", dark: "sumi.100" },
+    "paper-mute": { light: "kami.300", dark: "sumi.200" },
+    "paper-edge": { light: "kami.400", dark: "sumi.100" },  // etched hairline in dark
+
+    // ── Ink (text-zone shades; sumi.600-900 is the two-pole text half) ─
+    ink:          { light: "kami.900", dark: "sumi.900" },
+    "ink-soft":   { light: "kami.700", dark: "sumi.800" },
+    "ink-mute":   { light: "kami.500", dark: "sumi.700" },
+    "ink-faint":  { light: "kami.300", dark: "sumi.600" },
+
+    // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
+    // Skin role for `accent` is still `fuji`; override forces shu values
+    // so `bg-accent`, `text-accent`, `border-accent` resolve to vermillion.
+    // Skin re-alignment happens in Task 12.
+    accent:        { light: "shu.500", dark: "shu.400" },
+    "accent-soft": { light: "shu.100", dark: "shu.200" },
+
+    // ── Primary — ink-colored (design system: --primary: var(--ink)) ─
+    // For the future ink-on-paper CTA button. Existing text-primary-z*
+    // (z-scale) still resolves via the skin (primary: shu) = vermillion.
+    primary:      { light: "kami.900", dark: "sumi.900" },
+    "on-primary": { light: "kami.100", dark: "sumi.50"  },
+
+    // ── Status — lighten for legibility in dark mode (shade 400 vs 500) ─
+    success:      { light: "hisui.500",  dark: "hisui.400"  },
+    warning:      { light: "kohaku.500", dark: "kohaku.400" },
+    danger:       { light: "beni.500",   dark: "beni.400"   },
+    info:         { light: "ai.500",     dark: "ai.400"     },
   },
 
   typography: {
