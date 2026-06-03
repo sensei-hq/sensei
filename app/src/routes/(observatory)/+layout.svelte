@@ -1,32 +1,14 @@
 <script lang="ts">
-    import { page } from "$app/state";
-    import { onMount } from "svelte";
-    import { appState } from "$lib/appstate.svelte.js";
-    import { senseiApi } from "$lib/api.js";
-    import { openProjectWindow } from "$lib/stores/windows.svelte.js";
-    import { Eyebrow } from "$lib/components";
-
-    let { children } = $props();
-
-    const NAV_ITEMS = [
-        { href: "/", kanji: "家", label: "Today" },
-        { href: "/projects", kanji: "場", label: "Projects" },
-        { href: "/sessions", kanji: "刻", label: "Sessions" },
-        { href: "/learnings", kanji: "憶", label: "Learnings" },
-        { href: "/insights", kanji: "學", label: "Insights" },
-        { href: "/libraries", kanji: "書", label: "Libraries" },
-        { href: "/instruments", kanji: "具", label: "Instruments" },
-    ];
-
-    const BOTTOM_ITEMS = [
-        { href: "/logs", kanji: "録", label: "Logs" },
-        { href: "/settings", kanji: "設", label: "Settings" },
-    ];
+    import { onMount } from 'svelte';
+    import { appState } from '$lib/appstate.svelte.js';
+    import { senseiApi } from '$lib/api.js';
+    import ObservatorySidebar from './ObservatorySidebar.svelte';
 
     type SidebarProject = { id: string; name: string; kanji: string };
 
+    let { children } = $props();
+
     let projects = $state<SidebarProject[]>([]);
-    let sidebarCollapsed = $state(false);
 
     onMount(async () => {
         await appState.load();
@@ -35,177 +17,19 @@
         projects = raw.map((p: any) => ({
             id: p.id,
             name: p.name,
-            kanji: p.icon?.value ?? "場",
+            kanji: p.icon?.value ?? '場',
         }));
     });
-
-    function isActive(href: string): boolean {
-        return (
-            page.url.pathname === href ||
-            page.url.pathname.startsWith(href + "/")
-        );
-    }
 </script>
 
-<div
-    class="w-full h-screen flex flex-col bg-paper-soft text-ink overflow-hidden"
->
+<div class="w-full h-screen flex flex-col bg-paper-soft text-ink overflow-hidden">
     <div class="drag-region h-8 shrink-0"></div>
 
-    <div
-        class="app-body flex-1 grid grid-cols-[220px_1fr] min-h-0 transition-[grid-template-columns] duration"
-        class:collapsed={sidebarCollapsed}
-    >
-        <!-- Sidebar -->
-        <aside
-            class="border-r border-paper-mute px-3.5 py-6 bg-paper-mute flex flex-col gap-5 overflow-auto"
-        >
-            <div class="flex items-baseline gap-2 px-1.5">
-                <span class="kanji text-xl text-accent">先</span>
-                {#if !sidebarCollapsed}
-                    <span class="display text-base">Sensei</span>
-                    <button
-                        class="collapse-btn ml-auto bg-none border-none text-ink-soft cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
-                        onclick={() => (sidebarCollapsed = true)}>‹</button
-                    >
-                {/if}
-            </div>
+    <div class="flex-1 flex min-h-0">
+        <ObservatorySidebar {projects} port={appState.port} />
 
-            {#snippet navItem(item: typeof NAV_ITEMS[number], collapsed: boolean)}
-                {@const active = isActive(item.href)}
-                <a
-                    href={item.href}
-                    class="nav-item flex items-center py-2 rounded-md text-sm text-ink-mute no-underline transition-colors duration-fast hover:bg-paper-mute"
-                    class:justify-center={collapsed}
-                    class:gap-2.5={!collapsed}
-                    class:px-2.5={!collapsed}
-                    class:active
-                    title={collapsed ? item.label : undefined}
-                >
-                    <span
-                        class="kanji text-sm w-3.5 text-ink-soft"
-                        class:nav-kanji-active={active}
-                        >{item.kanji}</span
-                    >
-                    {#if !collapsed}
-                        <span>{item.label}</span>
-                    {/if}
-                </a>
-            {/snippet}
-
-            {#snippet projectItem(proj: SidebarProject, collapsed: boolean)}
-                {@const active = !collapsed && isActive(`/projects/${proj.id}`)}
-                <button
-                    type="button"
-                    class="nav-item flex items-center py-2 rounded-md text-sm text-ink-mute no-underline transition-colors duration-fast hover:bg-paper-mute bg-none border-none cursor-pointer w-full"
-                    class:justify-center={collapsed}
-                    class:gap-2.5={!collapsed}
-                    class:px-2.5={!collapsed}
-                    class:text-left={!collapsed}
-                    onclick={() =>
-                        openProjectWindow(proj.id, proj.name).catch(
-                            console.error,
-                        )}
-                    title={collapsed ? `${proj.name} ↗` : `${proj.name} ↗ opens in its own window`}
-                >
-                    <span
-                        class="kanji text-sm w-3.5 text-ink-soft"
-                        class:nav-kanji-active={active}
-                        >{proj.kanji}</span
-                    >
-                    {#if !collapsed}
-                        <span class="nav-label">{proj.name}</span>
-                        <span class="text-xs opacity-40 ml-auto">↗</span>
-                    {/if}
-                </button>
-            {/snippet}
-
-            {#if sidebarCollapsed}
-                <nav class="flex flex-col gap-px">
-                    {#each NAV_ITEMS as item (item.href)}
-                        {@render navItem(item, true)}
-                    {/each}
-                </nav>
-
-                {#if projects.length > 0}
-                    <div class="h-px bg-paper-mute mx-2.5"></div>
-                    <nav class="flex flex-col gap-px">
-                        {#each projects as proj (proj.id)}
-                            {@render projectItem(proj, true)}
-                        {/each}
-                    </nav>
-                {/if}
-
-                <div class="mt-auto pt-2.5 border-t border-paper-mute">
-                    <button
-                        class="collapse-btn bg-none border-none text-ink-soft cursor-pointer text-sm px-1.5 py-0.5 rounded-md"
-                        onclick={() => (sidebarCollapsed = false)}>›</button
-                    >
-                </div>
-            {:else}
-                <div class="flex flex-col gap-0.5">
-                    <p class="px-2.5 pb-2 m-0"><Eyebrow>Observatory</Eyebrow></p>
-                    <nav class="flex flex-col gap-px">
-                        {#each NAV_ITEMS as item (item.href)}
-                            {@render navItem(item, false)}
-                        {/each}
-                    </nav>
-                </div>
-
-                {#if projects.length > 0}
-                    <div class="flex flex-col gap-0.5">
-                        <p class="px-2.5 pb-2 m-0"><Eyebrow>Projects</Eyebrow></p>
-                        <nav class="flex flex-col gap-px">
-                            {#each projects as proj (proj.id)}
-                                {@render projectItem(proj, false)}
-                            {/each}
-                        </nav>
-                    </div>
-                {/if}
-
-                <div class="flex flex-col gap-0.5 mt-auto">
-                    <nav class="flex flex-col gap-px">
-                        {#each BOTTOM_ITEMS as item (item.href)}
-                            {@render navItem(item, false)}
-                        {/each}
-                    </nav>
-                </div>
-
-                <div class="pt-2.5 border-t border-paper-mute">
-                    <span class="font-mono text-xs text-ink-soft"
-                        >daemon · port {appState.port}</span
-                    >
-                </div>
-            {/if}
-        </aside>
-
-        <!-- Main content -->
-        <main class="overflow-auto">
+        <main class="flex-1 overflow-auto">
             {@render children()}
         </main>
     </div>
 </div>
-
-<style>
-    /* Collapsed grid width */
-    .app-body.collapsed {
-        grid-template-columns: 52px 1fr;
-    }
-
-    /* Active nav item */
-    .nav-item.active {
-        background: var(--paper-mute);
-        color: var(--ink);
-    }
-
-    /* Active nav kanji accent */
-    .nav-kanji-active {
-        color: var(--accent);
-    }
-
-    /* Collapse button hover */
-    .collapse-btn:hover {
-        background: var(--paper-mute);
-        color: var(--ink-mute);
-    }
-</style>
