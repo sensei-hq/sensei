@@ -21,9 +21,9 @@ export default {
   skin: {
     surface:   { light: "kami", dark: "sumi" },
     ink:       { light: "kami", dark: "sumi" },
-    primary:   "shu",       // vermillion — the one accent (朱)
+    primary:   "shu",       // vermillion — the one accent (朱); skin re-alignment deferred to Phase 2/3
     secondary: "murasaki",  // muted purple (紫)
-    accent:    "fuji",      // wisteria violet (藤)
+    accent:    "shu",       // vermillion (朱) — was fuji; aligns skin with accent override
     success:   "hisui",     // jade green (翡翠)
     warning:   "kohaku",    // warm amber (琥珀)
     danger:    "beni",      // deep crimson (紅)
@@ -55,15 +55,15 @@ export default {
     "ink-faint":  { light: "kami.300", dark: "sumi.600" },
 
     // ── Accent — vermillion (design system: --accent: var(--shu-500)) ─
-    // Skin role for `accent` is still `fuji`; override forces shu values
-    // so `bg-accent`, `text-accent`, `border-accent` resolve to vermillion.
-    // Skin re-alignment happens in Task 12.
+    // accent-soft is omitted: skin is now `accent: "shu"` so the canonical
+    // default resolves to shu.100 / shu.200 — same as the former override.
+    // accent override (shade 400 dark shift) is kept for dark-mode legibility.
     accent:        { light: "shu.500", dark: "shu.400" },
-    "accent-soft": { light: "shu.100", dark: "shu.200" },
 
-    // ── Primary — ink-colored (design system: --primary: var(--ink)) ─
-    // For the future ink-on-paper CTA button. Existing text-primary-z*
-    // (z-scale) still resolves via the skin (primary: shu) = vermillion.
+    // ── Primary named token — ink-colored CTA (design system: --primary: var(--ink)) ─
+    // Named `bg-primary` / `text-primary` = ink color (for ink-on-paper buttons).
+    // z-scale `text-primary-z*` still resolves via skin (primary: shu) = vermillion
+    // in unmigrated screens. Full skin re-alignment deferred to Phase 2/3.
     primary:      { light: "kami.900", dark: "sumi.900" },
     "on-primary": { light: "kami.100", dark: "sumi.50"  },
 
