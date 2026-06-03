@@ -23,7 +23,7 @@
 <div
   data-component="gate-row"
   data-gate-id={gate.id}
-  class="border-b border-paper-edge py-2.5"
+  class="gate-row border-b border-paper-edge py-2.5"
   style="opacity: {gate.status === 'pending' ? 0.5 : 1};"
 >
   <div class="grid grid-cols-[22px_1fr_auto] items-center gap-3">
