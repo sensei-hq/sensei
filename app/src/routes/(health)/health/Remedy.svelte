@@ -53,7 +53,6 @@
     <Kanji char="手" />
     <div class="flex-1">
       <div class="text-sm text-ink">Run this in your terminal</div>
-      <div data-remedy-message class="text-xs text-ink-mute mt-0.5 select-text">{remedy.message}</div>
     </div>
     {#if remedy.url}
       <a data-role="remedy-url" href={remedy.url} target="_blank" rel="noopener noreferrer"
