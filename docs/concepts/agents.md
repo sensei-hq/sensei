@@ -38,14 +38,14 @@ The Sensei plugin ships eight agents in `marketplace/plugins/sensei/agents/`:
 
 | Agent | Kind | Tools | Purpose |
 |-------|------|-------|---------|
-| `sensei-analyst` | mindset | Read, Grep, Glob | Problem analysis before design |
-| `sensei-developer` | mindset | Read, Grep, Glob, Bash | Verify implementation approach before coding |
-| `sensei-acceptance-tester` | mindset | Read, Grep, Glob, Bash | Acceptance testing from the user's perspective |
-| `sensei-ux-designer` | mindset | Read, Grep, Glob | Usability, accessibility, consistency review |
-| `sensei-security-reviewer` | mindset | Read, Grep, Glob, Bash | OWASP / auth / data-exposure / injection audit |
-| `sensei-performance-engineer` | mindset | Read, Grep, Glob, Bash | Complexity, memory, network, scalability analysis |
-| `sensei-devops-sre` | mindset | Read, Grep, Glob, Bash | Deployability, monitoring, rollback, failure modes |
-| `sensei-persona-reviewer` | persona | Read, Grep, Glob | Review work from each project [persona's](./personas.md) perspective |
+| `sensei-analyst` | mindset | Read, Grep, Glob + sensei MCP | Problem analysis before design |
+| `sensei-developer` | mindset | Read, Grep, Glob, Bash + sensei MCP | Verify implementation approach before coding |
+| `sensei-acceptance-tester` | mindset | Read, Grep, Glob, Bash + sensei MCP | Acceptance testing from the user's perspective |
+| `sensei-ux-designer` | mindset | Read, Grep, Glob + sensei MCP | Usability, accessibility, consistency review |
+| `sensei-security-reviewer` | mindset | Read, Grep, Glob, Bash + sensei MCP | OWASP / auth / data-exposure / injection audit |
+| `sensei-performance-engineer` | mindset | Read, Grep, Glob, Bash + sensei MCP | Complexity, memory, network, scalability analysis |
+| `sensei-devops-sre` | mindset | Read, Grep, Glob, Bash + sensei MCP | Deployability, monitoring, rollback, failure modes |
+| `sensei-persona-reviewer` | persona | Read, Grep, Glob + sensei MCP | Review work from each project [persona's](./personas.md) perspective |
 
 The first seven are the [mindset](./mindsets.md) agents (the core three plus four specialists). The eighth is generic: instead of fixed questions it loads whatever personas the project defines. That one generic agent eliminates the need for a dedicated agent per persona.
 
@@ -59,7 +59,7 @@ name: sensei-security-reviewer
 description: Audit code for security vulnerabilities including OWASP top 10,
   auth issues, data exposure, and injection vectors. Use proactively when a
   task involves user input, authentication, data storage, or external comms.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, mcp__plugin_sensei_sensei__*
 model: sonnet
 color: red
 ---
@@ -75,13 +75,15 @@ color: red
 |-------|---------|
 | `name` | The agent's identifier. Built-in agents use the `sensei-` prefix (e.g. `sensei-analyst`). |
 | `description` | When to use it — written so Claude Code can decide to invoke it *proactively*. "Use proactively when…" phrasing matters. |
-| `tools` | The tools the agent may call — its **scope**. A review agent gets read-only tools; one that runs tests also gets `Bash`. |
+| `tools` | The tools the agent may call — its **scope**. A review agent gets read-only tools; one that runs tests also gets `Bash`. All built-ins also carry the sensei MCP grant `mcp__plugin_sensei_sensei__*` for code-graph access. |
 | `model` | Which model runs the agent (e.g. `sonnet`). |
 | `color` | Display color in the UI. |
 
 ### Tool scoping
 
-Tool scope is a guardrail, not a formality. Analysis-only agents (analyst, ux-designer, persona-reviewer) get just `Read, Grep, Glob` — they read and report, they never write. Agents that must run a test suite or inspect git state (developer, acceptance-tester, security, performance, devops) add `Bash`. The scope keeps an autonomous agent inside its lane: a UX review can't mutate code, and a persona review can't run arbitrary commands.
+Tool scope is a guardrail, not a formality. Analysis-only agents (analyst, ux-designer, persona-reviewer) get `Read, Grep, Glob` (no `Bash`) — they read and report, they never write. Agents that must run a test suite or inspect git state (developer, acceptance-tester, security, performance, devops) add `Bash`. The scope keeps an autonomous agent inside its lane: a UX review can't mutate code, and a persona review can't run arbitrary commands.
+
+All eight also receive the sensei MCP tools via the `mcp__plugin_sensei_sensei__*` grant. These are read-only code-graph and context queries (`search`, `get_callers`, `get_patterns`, `get_layered_context`, …) — they add **no** `Write`/`Edit`, so the read-and-report posture is preserved while the agent gains graph-aware navigation. The grant token is fixed by the plugin manifest (`mcp__plugin_<plugin>_<server>__*` → `plugin_sensei_sensei`), so it resolves identically on every install.
 
 ### Autonomy
 
@@ -89,10 +91,10 @@ Agents are read-heavy and run autonomously in the same working directory (no wor
 
 ## How agents integrate with Sensei
 
-Agents use the same Sensei MCP tools as the rest of the workflow:
+Every built-in agent is granted the sensei MCP server and is instructed to **navigate with it first** — the code graph for structure, `Grep`/`Glob` only for literal text scans (a specific token or secret) or when the daemon is unreachable. Agents use the same Sensei MCP tools as the rest of the workflow:
 
-- Code intelligence: `search()`, `get_callers()`, `get_callees()`, `get_patterns()` — graph-aware navigation instead of raw grep.
-- Project context: read `.sensei/rules.md` for rules, `.sensei/personas/*.md` for personas.
+- Code intelligence: `search()`, `get_callers()`, `get_callees()`, `get_patterns()`, `get_duplicates()`, `get_communities()` — graph-aware navigation instead of raw grep.
+- Project context: `get_layered_context()` for rules, conventions, and learnings; `.sensei/personas/*.md` for personas.
 - Telemetry: `log_event()` / `update_session()` for event capture.
 
 The daemon doesn't need to know agents exist — they are **plugin-level**. Claude Code discovers them from the plugin's `agents/` directory.
