@@ -431,6 +431,60 @@ impl PgStore {
         }).collect())
     }
 
+    /// Nodes in a folder that still need an embedding, restricted to the kinds
+    /// worth embedding (code symbols + files + doc sections). Returns
+    /// `(id, kind, name, signature, file_path)` — the fields needed to build the
+    /// embedding text. Used by the `EmbedNodes` task.
+    pub async fn nodes_without_embeddings(
+        &self,
+        folder_id: &uuid::Uuid,
+        limit: i64,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, String)>, String> {
+        let rows: Vec<(uuid::Uuid, String, String, Option<String>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT id, kind::text, name, signature, file_path
+                   FROM sensei.nodes
+                  WHERE folder_id = $1
+                    AND embedding IS NULL
+                    AND kind IN ('file','function','method','class','interface',
+                                 'type','const','enum','enum_variant','section')
+                  ORDER BY file_path, line_start
+                  LIMIT $2",
+            )
+            .bind(folder_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Store a node's vector embedding. The slice is rendered to pgvector's text
+    /// form (`[v1,v2,...]`) and cast to `vector`, so no pgvector crate is needed.
+    pub async fn set_node_embedding(
+        &self,
+        node_id: &uuid::Uuid,
+        embedding: &[f32],
+    ) -> Result<(), String> {
+        use std::fmt::Write as _;
+        let mut buf = String::with_capacity(embedding.len() * 8 + 2);
+        buf.push('[');
+        for (i, v) in embedding.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            let _ = write!(buf, "{v}");
+        }
+        buf.push(']');
+        sqlx_core::query::query("UPDATE sensei.nodes SET embedding = $1::vector WHERE id = $2")
+            .bind(buf)
+            .bind(node_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub async fn get_nodes_by_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, kind::text, name, parent_id, line_start FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 ORDER BY line_start"
