@@ -7,6 +7,7 @@ The vocabulary you need to understand how Sensei steers an AI coding session. Th
 | [mindsets.md](./mindsets.md) | **Mindset** | A thinking lens the AI "wears" to approach work — analyst, developer, tester, and specialists. |
 | [personas.md](./personas.md) | **Persona** | A project-specific *user* archetype you validate work against. |
 | [agents.md](./agents.md) | **Agent** | The Claude Code subagent mechanism that *implements* mindsets and runs autonomous tasks. |
+| [governance.md](./governance.md) | **Governance** | The layered rule hierarchy (scope × enforcement), promotion, and the hive-mind shared brain that decides which rules a session starts with. |
 
 ---
 
