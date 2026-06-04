@@ -231,6 +231,15 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
             .blocked_by(vec![libs_id])
     ).await;
 
+    // Embed code-graph nodes for semantic search + duplicate detection. Barrier
+    // on the file tasks so every node exists before we embed it; independent of
+    // edge/connection resolution, so it can run in parallel with those.
+    ctx.queue.enqueue(
+        Task::new(TaskKind::EmbedNodes, folder_path, "")
+            .with_parent(task.id)
+            .blocked_by(all_file_task_ids.clone())
+    ).await;
+
     // Detect subtrees → register as separate repos
     {
         let folder = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
