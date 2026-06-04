@@ -43,6 +43,8 @@ The loop is simple: you code with your assistant, Sensei observes, and next sess
 
 **Context delivery** -- the mechanism by which Sensei feeds relevant knowledge to your AI assistant at the start of a session. This includes active memories, project patterns, recent corrections, and relevant library documentation -- ranked and budgeted to fit within token limits.
 
+**Mindsets, personas, and agents** -- the three constructs that steer how a session thinks, who it builds for, and what runs autonomously. See [Concepts](../concepts/README.md) for what each is and the why behind them.
+
 ---
 
 ## Status
