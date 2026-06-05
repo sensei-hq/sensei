@@ -485,6 +485,24 @@ impl PgStore {
         Ok(())
     }
 
+    /// Abs paths of folders that still have embeddable nodes without an
+    /// embedding. Used by the backfill endpoint to enqueue `EmbedNodes` for
+    /// already-indexed folders (which a normal incremental scan won't revisit).
+    pub async fn folders_with_pending_embeddings(&self) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT f.abs_path
+               FROM sensei.nodes n
+               JOIN sensei.folders f ON f.id = n.folder_id
+              WHERE n.embedding IS NULL
+                AND n.kind IN ('file','function','method','class','interface',
+                               'type','const','enum','enum_variant','section')",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
     pub async fn get_nodes_by_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>)> = sqlx_core::query_as::query_as(
             "SELECT id, kind::text, name, parent_id, line_start FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 ORDER BY line_start"
