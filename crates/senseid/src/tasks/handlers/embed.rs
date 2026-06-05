@@ -59,7 +59,9 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
             capability: Capability::TextEmbed,
             model: None,
             router: None,
-            chain: None,
+            // Pin the 384-dim `embed` chain so node embeddings always match the
+            // vector(384) column, regardless of other TextEmbed models present.
+            chain: Some("embed".to_string()),
             payload: Payload::Embed { texts },
             budget: None,
         };
