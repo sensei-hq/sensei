@@ -34,27 +34,32 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let (_indexable_files, files_total) = super::scan_logic::count_indexable_files(repo_path);
 
     // ── 3. Find or create project ────────────────────────────────────
+    // README frontmatter is the authoritative source for project identity;
+    // fall back to the parent directory name (the legacy grouping heuristic)
+    // when absent. Scanning is read-only — frontmatter is never written back.
+    let fm = crate::tasks::processors::metadata::read_frontmatter(repo_path).unwrap_or_default();
     let parent_name = repo_path.parent()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or(folder_name);
+    let project_name: &str = fm.project.as_deref().unwrap_or(parent_name);
 
-    // Check if a project with this parent name exists
-    let project_id = match ctx.pg().get_project_by_name(parent_name).await {
+    // Find or create the project by its resolved name (get-or-create — idempotent).
+    let project_id = match ctx.pg().get_project_by_name(project_name).await {
         Ok(Some(proj)) => {
             // Project exists — use it
             proj["id"].as_str().unwrap_or("").to_string()
         }
         _ => {
             // Create new project
-            let id = ctx.pg().create_project(parent_name, None, None).await
+            let id = ctx.pg().create_project(project_name, None, None).await
                 .map(|id| id.to_string())
-                .unwrap_or_else(|_| format!("p-{}", parent_name));
+                .unwrap_or_else(|_| format!("p-{}", project_name));
 
             // Emit: project add
             emit(crate::api::events::StateEvent::project_add(crate::api::events::ScanProject {
                 id: id.clone(),
-                name: parent_name.to_string(),
+                name: project_name.to_string(),
                 status: crate::api::events::ProjectStatus::Indexing,
                 folders: vec![],
                 auto_detected: true,
@@ -274,7 +279,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     }
 
-    // ── Repo-level metadata scanners (fast, filesystem-only) ──────────
+    // ── Repo-level metadata + identity (filesystem-only, READ-ONLY) ───
     {
         use crate::tasks::processors::metadata;
 
@@ -286,14 +291,59 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         let folder = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
         if let Some(folder) = folder
             && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
+                // Folder props: scanned metadata + the parsed frontmatter blob.
                 let meta = serde_json::json!({
                     "icon": icon,
                     "external_links": links.links,
                     "summary": summary,
+                    "frontmatter": serde_json::to_value(&fm).unwrap_or(serde_json::Value::Null),
                 });
                 ctx.pg().set_folder_props(&folder_id, &meta).await.ok();
+
+                // Icon: root projects only — frontmatter `icon` is set on root
+                // READMEs, not subfolders/subtrees, so presence gates it.
+                if let Some(icon_path) = fm.icon.as_deref() {
+                    ctx.pg().set_folder_icons(&folder_id, &serde_json::json!({"custom": icon_path})).await.ok();
+                }
+
+                // Project identity (reconciled every scan): description/client/
+                // stack/tags from frontmatter, best-guess stack fallback.
+                if let Ok(pid) = uuid::Uuid::parse_str(&project_id) {
+                    let id_stack: Vec<String> =
+                        if fm.stack.is_empty() { stack.clone() } else { fm.stack.clone() };
+                    let mut tags: Vec<String> = Vec::new();
+                    if let Some(role) = fm.role.as_deref() { tags.push(format!("role:{role}")); }
+                    if let Some(org) = fm.organization.as_deref() {
+                        tags.push(format!("org:{}", metadata::slugify(org)));
+                    }
+                    ctx.pg().set_project_identity(
+                        &pid,
+                        fm.summary.as_deref(),
+                        fm.organization.as_deref(),
+                        &id_stack,
+                        &tags,
+                    ).await.ok();
+
+                    // Namespaces: organization/project/team + a technology
+                    // namespace per detected language; link this folder to each.
+                    let mut ns: Vec<(&str, String)> = Vec::new();
+                    if let Some(org) = fm.organization.as_deref() { ns.push(("organization", org.to_string())); }
+                    ns.push(("project", project_name.to_string()));
+                    if let Some(team) = fm.team.as_deref() { ns.push(("team", team.to_string())); }
+                    for lang in &id_stack { ns.push(("technology", lang.clone())); }
+                    for (scope, name) in &ns {
+                        let slug = metadata::slugify(name);
+                        if slug.is_empty() { continue; }
+                        if let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await {
+                            ctx.pg().link_folder_namespace(&folder_id, &ns_id).await.ok();
+                        }
+                    }
+                }
             }
     }
+
+    // Self-healing reconcile: re-tag orphaned discovery projects (no delete).
+    ctx.pg().mark_orphaned_projects().await.ok();
 
     tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", folder_name, dirs.len(), all_file_task_ids.len(), resolve_id);
     Ok(all_file_task_ids.len() as u32)
