@@ -27,6 +27,17 @@ fn embed_text(kind: &str, name: &str, signature: Option<&str>, file_path: &str) 
         s.push_str(file_path);
         s.push(']');
     }
+    // Cap length so an unusually long signature/name can't exceed the embedding
+    // model's context window (all-minilm ~256 tokens). Truncate on a char
+    // boundary; the head (kind + name + signature start) carries the signal.
+    const MAX: usize = 800;
+    if s.len() > MAX {
+        let mut end = MAX;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
     s
 }
 
@@ -116,5 +127,12 @@ mod tests {
     fn embed_text_omits_blank_signature_and_path() {
         assert_eq!(embed_text("class", "UserStore", None, ""), "class UserStore");
         assert_eq!(embed_text("const", "MAX", Some("   "), "lib.rs"), "const MAX [lib.rs]");
+    }
+
+    #[test]
+    fn embed_text_caps_length() {
+        let huge = "x".repeat(5000);
+        let t = embed_text("function", "f", Some(&huge), "a.rs");
+        assert!(t.len() <= 800, "embed text should be capped, got {}", t.len());
     }
 }

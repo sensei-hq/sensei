@@ -3,7 +3,7 @@
 use std::path::Path;
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::helpers::{is_binary_ext, build_globset};
+use super::helpers::{is_binary_ext, is_probably_binary, build_globset};
 
 // ── Process Repo ──────────────────────────────────────────────────────────
 
@@ -316,10 +316,13 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                     if let Some(org) = fm.organization.as_deref() {
                         tags.push(format!("org:{}", metadata::slugify(org)));
                     }
+                    // client = frontmatter `client` only (distinct from
+                    // organization — org is modeled as a namespace + `org:` tag,
+                    // never conflated into projects.client).
                     ctx.pg().set_project_identity(
                         &pid,
                         fm.summary.as_deref(),
-                        fm.organization.as_deref(),
+                        fm.client.as_deref(),
                         &id_stack,
                         &tags,
                     ).await.ok();
@@ -380,6 +383,17 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
 pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let abs_path = &task.path;
 
+    // Skip files we can't parse as source text. Returning Ok (not Err) is
+    // critical: a failed ProcessFile task would block its folder's
+    // resolve_edges barrier, leaving the folder stuck at 'discovered'. Binary
+    // (by extension) and non-UTF8 (by content sniff) files are skipped so
+    // indexing always completes.
+    let fpath = std::path::Path::new(abs_path);
+    let ext = fpath.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if is_binary_ext(ext) || is_probably_binary(fpath) {
+        return Ok(0);
+    }
+
     // Lookup once by abs_path; folder name comes from the DB row so subtree
     // composite names ("sensei:homebrew") survive as the repo_id passed to
     // downstream processors that namespace symbol IDs by repo.
@@ -388,8 +402,15 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .and_then(|r| r["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
 
-    // Parse the file
-    let result = crate::tasks::processors::process_file(abs_path, &task.folder_path, folder_name)?;
+    // Parse the file. A read/parse error is tolerated (skip, don't fail) so it
+    // never blocks the folder's resolve_edges barrier.
+    let result = match crate::tasks::processors::process_file(abs_path, &task.folder_path, folder_name) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!("process_file: skipping unparseable {abs_path}: {e}");
+            return Ok(0);
+        }
+    };
 
     // Write parsed symbols to PG
     let symbols_count = result.symbols.len();

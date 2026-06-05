@@ -10,6 +10,7 @@ use std::path::Path;
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize)]
 pub struct Frontmatter {
     pub organization: Option<String>,
+    pub client: Option<String>,
     pub project: Option<String>,
     pub team: Option<String>,
     pub role: Option<String>,
@@ -67,6 +68,7 @@ pub fn parse_frontmatter(content: &str) -> Option<Frontmatter> {
 
     Some(Frontmatter {
         organization: str_field("organization"),
+        client: str_field("client"),
         project: str_field("project"),
         team: str_field("team"),
         role: str_field("role"),
