@@ -31,28 +31,21 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         )));
     }
 
-    // 2. Classify all directories
+    // 2. Classify into project roots: git repos + quasi-repos (non-git project
+    //    roots that contain indexable code). Subfolders are never promoted.
     let all_dirs = scan_logic::all_directories(root, 3);
-    let classified = scan_logic::classify_folders(root, &git_folders, &all_dirs);
+    let classified = scan_logic::classify_folders(
+        root, &git_folders, &all_dirs, scan_logic::has_indexable_code,
+    );
 
-    // Emit discover activity for non-git folders
+    // Emit discover activity for quasi-repos (git folders were emitted above).
     for f in &classified {
-        match f.kind {
-            FolderKind::Sibling => {
-                emit(StateEvent::activity(ActivityEvent::new(
-                    ActivityLevel::Discover,
-                    &format!("{} · non-git sibling", f.path.display()),
-                    start.elapsed().as_secs_f64(),
-                )));
-            }
-            FolderKind::Standalone => {
-                emit(StateEvent::activity(ActivityEvent::new(
-                    ActivityLevel::Discover,
-                    &format!("{} · standalone folder", f.path.display()),
-                    start.elapsed().as_secs_f64(),
-                )));
-            }
-            _ => {}
+        if f.kind == FolderKind::Standalone {
+            emit(StateEvent::activity(ActivityEvent::new(
+                ActivityLevel::Discover,
+                &format!("{} · quasi-repo (no .git)", f.path.display()),
+                start.elapsed().as_secs_f64(),
+            )));
         }
     }
 
@@ -61,27 +54,22 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let root_id = ctx.pg().add_watch_root(&task.path, root_name, &serde_json::json!([])).await
         .map_err(|e| format!("Failed to register watch root: {}", e))?;
 
-    // 4. Register non-git folders in DB as deferred (no project yet — ProcessGitFolder will create/find projects)
+    // 4. Register each project root with its kind and enqueue processing.
+    //    ProcessGitFolder indexes any directory (a `.git` is not required), so a
+    //    quasi-repo is indexed exactly like a real repo.
     for f in &classified {
-        if matches!(f.kind, FolderKind::Sibling | FolderKind::Standalone) {
-            ctx.pg().upsert_repo(&root_id, &f.name, &f.path.to_string_lossy()).await.ok();
-        }
+        let kind = match f.kind {
+            FolderKind::Git => "git",
+            FolderKind::Standalone => "standalone",
+        };
+        let path_str = f.path.to_string_lossy();
+        ctx.pg().upsert_repo_kind(&root_id, kind, &f.name, &path_str).await.ok();
+        let process_task = Task::new(TaskKind::ProcessGitFolder, &path_str, &path_str)
+            .with_parent(task.id);
+        ctx.queue.enqueue(process_task).await;
     }
 
-    // 5. Register git folders in DB and enqueue ProcessGitFolder
-    for f in &classified {
-        if matches!(f.kind, FolderKind::Git) {
-            ctx.pg().upsert_repo(&root_id, &f.name, &f.path.to_string_lossy()).await.ok();
-            let git_task = Task::new(
-                TaskKind::ProcessGitFolder,
-                &f.path.to_string_lossy(),
-                &f.path.to_string_lossy(),
-            ).with_parent(task.id);
-            ctx.queue.enqueue(git_task).await;
-        }
-    }
-
-    // 6. Register watcher
+    // 5. Register watcher
     {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
         if let Ok(mut w) = watcher.lock() {
@@ -89,21 +77,19 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         }
     }
 
-    // 7. Summary activity
+    // 6. Summary activity
     let git_count = classified.iter().filter(|f| f.kind == FolderKind::Git).count();
-    let sibling_count = classified.iter().filter(|f| f.kind == FolderKind::Sibling).count();
-    let standalone_count = classified.iter().filter(|f| f.kind == FolderKind::Standalone).count();
+    let quasi_count = classified.iter().filter(|f| f.kind == FolderKind::Standalone).count();
 
     emit(StateEvent::activity(ActivityEvent::new(
         ActivityLevel::Info,
-        &format!("{} git · {} sibling · {} standalone folders discovered",
-            git_count, sibling_count, standalone_count),
+        &format!("{} git · {} quasi-repo project roots discovered", git_count, quasi_count),
         start.elapsed().as_secs_f64(),
     )));
 
-    tracing::info!("scan_root: {} git, {} sibling, {} standalone in {}",
-        git_count, sibling_count, standalone_count, task.path);
-    Ok(git_count as u32)
+    tracing::info!("scan_root: {} git, {} quasi-repo project roots in {}",
+        git_count, quasi_count, task.path);
+    Ok((git_count + quasi_count) as u32)
 }
 
 // ── Branch Switch ─────────────────────────────────────────────────────────
@@ -222,8 +208,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("proj/a/.git")).unwrap();
         std::fs::create_dir_all(tmp.path().join("proj/b/.git")).unwrap();
-        std::fs::create_dir_all(tmp.path().join("proj/notes")).unwrap();
-        std::fs::create_dir_all(tmp.path().join("random")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("proj/notes")).unwrap(); // non-git, no code → not a quasi-repo
+        // quasi-repo: top-level non-git dir with a manifest
+        std::fs::create_dir_all(tmp.path().join("loose")).unwrap();
+        std::fs::write(tmp.path().join("loose/go.mod"), "module loose").unwrap();
 
         let (ctx, mut rx) = make_ctx_with_events().await;
         let task = Task::new(TaskKind::ScanRoot, "", &tmp.path().to_string_lossy());
@@ -238,11 +226,11 @@ mod tests {
                 "ScanRoot should only emit activity events, got entity={}", evt.entity);
         }
 
-        // Discover events: 2 git + 1 sibling + 1 standalone = 4
+        // Discover events: 2 git + 1 quasi-repo = 3 (code-less `notes` is skipped)
         let discovers: Vec<_> = events.iter()
             .filter(|e| e.data["level"] == "discover")
             .collect();
-        assert_eq!(discovers.len(), 4, "expected 4 discover events, got {}", discovers.len());
+        assert_eq!(discovers.len(), 3, "expected 3 discover events, got {}", discovers.len());
 
         // Info summary
         let infos: Vec<_> = events.iter()
@@ -251,7 +239,6 @@ mod tests {
         assert_eq!(infos.len(), 1);
         let msg = infos[0].data["message"].as_str().unwrap();
         assert!(msg.contains("2 git"), "summary: {}", msg);
-        assert!(msg.contains("1 sibling"), "summary: {}", msg);
-        assert!(msg.contains("1 standalone"), "summary: {}", msg);
+        assert!(msg.contains("1 quasi-repo"), "summary: {}", msg);
     }
 }
