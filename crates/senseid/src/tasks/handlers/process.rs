@@ -399,12 +399,29 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .and_then(|r| r["name"].as_str())
         .unwrap_or_else(|| task.folder_name());
 
-    // Parse the file. A read/parse error is tolerated (skip, don't fail) so it
-    // never blocks the folder's resolve_edges barrier.
-    let result = match crate::tasks::processors::process_file(abs_path, &task.folder_path, folder_name) {
-        Ok(r) => r,
-        Err(e) => {
+    // Parse on a blocking thread. Parsing is synchronous, CPU-bound work; left
+    // on the async runtime it blocks the worker's poll() — and a parse that
+    // wedges (a pathological input, or a shared non-Sync parser contended by
+    // concurrent files) would freeze the thread *inside* poll(), which the
+    // executor watchdog cannot preempt (tokio::timeout only fires when the
+    // future yields Pending). spawn_blocking moves it off the runtime so the
+    // worker yields, the watchdog can fire, and one bad file can't wedge the
+    // pool. A read/parse error is tolerated (skip, don't fail) so it never
+    // blocks the folder's resolve_edges barrier.
+    let abs_owned = abs_path.clone();
+    let folder_path_owned = task.folder_path.clone();
+    let folder_name_owned = folder_name.to_string();
+    let parsed = tokio::task::spawn_blocking(move || {
+        crate::tasks::processors::process_file(&abs_owned, &folder_path_owned, &folder_name_owned)
+    }).await;
+    let result = match parsed {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
             tracing::debug!("process_file: skipping unparseable {abs_path}: {e}");
+            return Ok(0);
+        }
+        Err(join_err) => {
+            tracing::warn!("process_file: parse panicked for {abs_path}: {join_err}");
             return Ok(0);
         }
     };
