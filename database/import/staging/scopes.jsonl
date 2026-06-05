@@ -1,0 +1,8 @@
+{"key":"general","name":"General","level":0,"shareable":false,"description":"Built-in defaults — apply everywhere.","modified_at":"2026-06-05"}
+{"key":"user","name":"User","level":10,"shareable":false,"description":"Personal preferences that follow you across every repo.","modified_at":"2026-06-05"}
+{"key":"organization","name":"Organization","level":20,"shareable":true,"description":"Org-wide architecture principles and security/compliance constraints.","modified_at":"2026-06-05"}
+{"key":"client","name":"Client","level":30,"shareable":true,"description":"Standards that apply to a subset of projects for one client.","modified_at":"2026-06-05"}
+{"key":"technology","name":"Technology","level":40,"shareable":false,"description":"Language/framework conventions that cut across projects.","modified_at":"2026-06-05"}
+{"key":"team","name":"Team","level":50,"shareable":true,"description":"Decisions owned by a team.","modified_at":"2026-06-05"}
+{"key":"project","name":"Project","level":60,"shareable":false,"description":"Rules for one logical project (may span several repos).","modified_at":"2026-06-05"}
+{"key":"repository","name":"Repository","level":70,"shareable":false,"description":"Repository-specific rules and exceptions — most specific.","modified_at":"2026-06-05"}

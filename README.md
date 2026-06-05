@@ -1,3 +1,13 @@
+---
+organization: Sensei HQ
+project: sensei
+role: monorepo
+tagline: Development intelligence for AI-assisted coding
+summary: Sensei watches coding sessions, learns your team's patterns and conventions, and feeds that knowledge back to the AI assistant so it gets things right the first time.
+stack: [rust, sveltekit, svelte, tauri, typescript, postgres, ruby, markdown]
+icon: sensei.svg
+---
+
 # Sensei
 
 > Development intelligence for AI-assisted coding.

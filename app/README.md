@@ -1,3 +1,12 @@
+---
+organization: Sensei HQ
+project: sensei
+role: desktop
+tagline: Sensei desktop observatory
+summary: Desktop observatory for Sensei — visualize sessions, projects, patterns, and learnings.
+stack: [tauri, sveltekit, svelte, typescript]
+---
+
 # sensei app
 
 Desktop observatory for Sensei. Built with Tauri + SvelteKit + Svelte 5.
