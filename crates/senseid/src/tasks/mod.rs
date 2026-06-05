@@ -66,6 +66,41 @@ impl std::fmt::Display for TaskKind {
     }
 }
 
+impl TaskKind {
+    /// Wall-clock safety cap for a single task in the worker executor. A task
+    /// that exceeds this is abandoned by the watchdog and marked failed, so a
+    /// wedged handler (a stalled network/DB call) can't occupy a worker forever
+    /// and starve the resolve barrier — one stuck task otherwise freezes the
+    /// whole pool. This is a last-resort net, not a tight SLA: the cap is
+    /// generous and abandoned work is retried or backfilled.
+    pub fn watchdog_timeout(&self) -> std::time::Duration {
+        use std::time::Duration;
+        match self {
+            // Per-file / light tasks finish in well under a second normally.
+            TaskKind::ProcessFile
+            | TaskKind::ProcessFolder
+            | TaskKind::DeleteFile
+            | TaskKind::DeleteFolder
+            | TaskKind::ExtractDeps
+            | TaskKind::BranchSwitch
+            | TaskKind::MeasureVerdicts => Duration::from_secs(180),
+            // Whole-repo, barrier, embedding and network-bound doc-indexing
+            // tasks can legitimately run for minutes on a large repository.
+            TaskKind::ScanRoot
+            | TaskKind::ProcessGitFolder
+            | TaskKind::ResolveEdges
+            | TaskKind::ResolveLibs
+            | TaskKind::ImportLib
+            | TaskKind::BuildConnections
+            | TaskKind::ReconcileConnections
+            | TaskKind::EmbedNodes
+            | TaskKind::IndexLibrary
+            | TaskKind::IndexLibraryPage
+            | TaskKind::DetectCommunities => Duration::from_secs(600),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -209,5 +244,28 @@ mod tests {
         assert_eq!(TaskKind::DetectCommunities.to_string(), "detect_communities");
         assert_eq!(TaskKind::ExtractDeps.to_string(), "extract_deps");
         assert_eq!(TaskKind::MeasureVerdicts.to_string(), "measure_verdicts");
+    }
+
+    #[test]
+    fn watchdog_timeout_is_bounded_and_tiered() {
+        // Light per-file tasks get the short cap; heavy/whole-repo/network tasks
+        // get the long cap. Every variant returns a finite, positive bound.
+        let short = std::time::Duration::from_secs(180);
+        let long = std::time::Duration::from_secs(600);
+        assert_eq!(TaskKind::ProcessFile.watchdog_timeout(), short);
+        assert_eq!(TaskKind::DeleteFile.watchdog_timeout(), short);
+        assert_eq!(TaskKind::ResolveEdges.watchdog_timeout(), long);
+        assert_eq!(TaskKind::EmbedNodes.watchdog_timeout(), long);
+        assert_eq!(TaskKind::ScanRoot.watchdog_timeout(), long);
+        for k in [
+            TaskKind::ScanRoot, TaskKind::ProcessGitFolder, TaskKind::ProcessFolder,
+            TaskKind::ProcessFile, TaskKind::DeleteFile, TaskKind::DeleteFolder,
+            TaskKind::ResolveEdges, TaskKind::ResolveLibs, TaskKind::ImportLib,
+            TaskKind::BranchSwitch, TaskKind::BuildConnections, TaskKind::ReconcileConnections,
+            TaskKind::EmbedNodes, TaskKind::IndexLibrary, TaskKind::IndexLibraryPage,
+            TaskKind::DetectCommunities, TaskKind::ExtractDeps, TaskKind::MeasureVerdicts,
+        ] {
+            assert!(k.watchdog_timeout().as_secs() > 0, "{k} must have a positive cap");
+        }
     }
 }
