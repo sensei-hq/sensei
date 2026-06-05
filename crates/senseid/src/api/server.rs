@@ -168,21 +168,42 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
 /// Start root watchers for persisted scanned roots.
 async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
-    // Get all watch roots from PgStore
+    // Get all watch roots from PgStore — (id, path) for roots that still exist
+    // on disk (skip stale rows pointing at deleted dirs).
     let roots = state.pg.list_watch_roots().await.unwrap_or_default();
-
-    let root_paths: Vec<String> = roots.iter()
-        .filter_map(|r| r["path"].as_str().map(String::from))
+    let live: Vec<(uuid::Uuid, String)> = roots.iter()
+        .filter_map(|r| {
+            let path = r["path"].as_str()?.to_string();
+            let id = crate::api::util::json_uuid(&r["id"])?;
+            Some((id, path))
+        })
+        .filter(|(_, p)| std::path::Path::new(p).exists())
         .collect();
 
-    if root_paths.is_empty() { return; }
+    if live.is_empty() { return; }
 
-    let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
-    if let Ok(mut w) = watcher.lock() {
-        for root in &root_paths {
-            w.register(std::path::PathBuf::from(root), vec![]);
-            tracing::info!("Root watcher: registered {}", root);
+    // Register + start inside the lock; capture whether the watcher is live.
+    // (Don't hold the std Mutex across an await.)
+    let started = {
+        let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
+        match watcher.lock() {
+            Ok(mut w) => {
+                for (_, root) in &live {
+                    w.register(std::path::PathBuf::from(root), vec![]);
+                    tracing::info!("Root watcher: registered {}", root);
+                }
+                w.start().is_ok()
+                    && *w.status() == crate::watcher::root_watcher::WatcherStatus::Watching
+            }
+            Err(_) => false,
         }
-        w.start().ok();
+    };
+
+    // Reflect the live watcher state in folders_to_watch so the DB/UI shows
+    // 'watching' instead of being stuck at 'scanning' (the restart-watch gap).
+    if started {
+        for (id, _) in &live {
+            state.pg.update_watch_status(id, "watching").await.ok();
+        }
     }
 }

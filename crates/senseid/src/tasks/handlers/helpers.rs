@@ -1,12 +1,51 @@
 //! Shared helpers used by process and other handler modules.
 
-/// Check if a file extension indicates a binary (non-text) file.
+/// Check if a file extension indicates a binary (non-text) file. This is a
+/// fast first pass; `is_probably_binary` (content sniff) is the robust net for
+/// anything not on this list.
 pub(crate) fn is_binary_ext(ext: &str) -> bool {
-    ["png","jpg","jpeg","gif","ico","svg","woff","woff2","ttf","eot",
-     "zip","tar","gz","bz2","xz","7z","rar",
-     "exe","dll","so","dylib","o","a","lib",
-     "db","sqlite","sqlite3","profraw",
-     "wasm","map","DS_Store","lock"].contains(&ext)
+    [
+        // images
+        "png","jpg","jpeg","gif","ico","svg","webp","avif","bmp","tiff","tif","icns","heic",
+        // fonts
+        "woff","woff2","ttf","eot","otf",
+        // archives
+        "zip","tar","gz","tgz","bz2","xz","7z","rar","z",
+        // compiled / binaries
+        "exe","dll","so","dylib","o","a","lib","class","jar","pyc","pyo","pdb","wasm",
+        // databases / columnar data
+        "db","sqlite","sqlite3","profraw","parquet","arrow","feather",
+        // office documents
+        "pdf","doc","docx","xls","xlsx","ppt","pptx",
+        // media
+        "mp4","mov","avi","webm","mkv","mp3","wav","flac","ogg",
+        // misc binary
+        "bin","dat","pack","idx","map","DS_Store","lock",
+    ].contains(&ext)
+}
+
+/// Content sniff: read the head of a file and decide whether it is binary or
+/// non-UTF8 (and therefore not parseable as source text). Catches binaries
+/// whose extension isn't on the allowlist, plus latin-1/cp1252 text. A null
+/// byte is a strong binary signal; otherwise we require the bytes to be valid
+/// UTF-8 (tolerating a multi-byte char split at the read boundary).
+pub(crate) fn is_probably_binary(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let mut buf = [0u8; 8192];
+    let n = match std::fs::File::open(path).and_then(|mut f| f.read(&mut buf)) {
+        Ok(n) => n,
+        Err(_) => return true, // unreadable → treat as skippable
+    };
+    let slice = &buf[..n];
+    if slice.contains(&0) {
+        return true;
+    }
+    match std::str::from_utf8(slice) {
+        Ok(_) => false,
+        // Only call it binary when invalid bytes appear well before the end —
+        // a trailing error is likely a UTF-8 char split at the 8KB boundary.
+        Err(e) => e.valid_up_to() + 4 < n,
+    }
 }
 
 pub(crate) fn build_globset() -> globset::GlobSet {
@@ -37,6 +76,36 @@ mod tests {
         assert!(is_binary_ext("wasm"));
         assert!(is_binary_ext("sqlite3"));
         assert!(is_binary_ext("lock"));
+        // extended set (from the ~/Developer scan's binary failures)
+        assert!(is_binary_ext("avif"));
+        assert!(is_binary_ext("webp"));
+        assert!(is_binary_ext("pdf"));
+        assert!(is_binary_ext("jar"));
+        assert!(is_binary_ext("pyc"));
+        assert!(is_binary_ext("parquet"));
+        assert!(is_binary_ext("docx"));
+        assert!(is_binary_ext("xlsx"));
+        assert!(is_binary_ext("icns"));
+    }
+
+    #[test]
+    fn is_probably_binary_detects_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = dir.path().join("a.txt");
+        std::fs::write(&text, "fn main() { println!(\"hi\"); }\n").unwrap();
+        assert!(!is_probably_binary(&text), "valid UTF-8 text is not binary");
+
+        let nul = dir.path().join("b.bin");
+        std::fs::write(&nul, [0x00u8, 0x01, 0x02, b'a', b'b']).unwrap();
+        assert!(is_probably_binary(&nul), "null bytes => binary");
+
+        let latin1 = dir.path().join("c.htm");
+        // 0xE9 ('é' in latin-1) is invalid as a standalone UTF-8 byte.
+        std::fs::write(&latin1, [b'<', b'p', b'>', 0xE9, 0xE9, 0xE9, b'<', b'/', b'p', b'>']).unwrap();
+        assert!(is_probably_binary(&latin1), "non-UTF8 text => skip");
+
+        let missing = dir.path().join("nope");
+        assert!(is_probably_binary(&missing), "unreadable => skip");
     }
 
     #[test]
