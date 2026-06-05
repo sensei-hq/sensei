@@ -162,6 +162,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/scan/suggestions", get(workspace::scan_suggestions))
         .route("/api/scan/roots", get(workspace::scan_roots).post(workspace::add_watch_root))
         .route("/api/scan/roots/{id}", delete(workspace::delete_watch_root))
+        // Backfill embeddings for already-indexed nodes (EmbedNodes per folder)
+        .route("/api/embed/backfill", post(workspace::backfill_embeddings))
         // Knowledge plane
         .route("/api/knowledge/memories",                get(knowledge::list_memories).post(knowledge::save_memory))
         .route("/api/knowledge/memories/{id}",           get(knowledge::get_memory))
