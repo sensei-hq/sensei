@@ -1,3 +1,12 @@
+---
+organization: Sensei HQ
+project: sensei
+role: website
+tagline: Sensei marketing site
+summary: Marketing website for Sensei.
+stack: [sveltekit, svelte, typescript]
+---
+
 # sensei website
 
 Marketing website for Sensei.
