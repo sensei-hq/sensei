@@ -265,6 +265,36 @@ pub(crate) async fn scan_folder(
     Ok(Json(serde_json::json!({"ok": true, "scanning": true, "taskId": task_id})))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct BackfillBody {
+    /// Optional repo abs_path to backfill. If omitted, every folder with
+    /// nodes missing embeddings is backfilled.
+    pub folder: Option<String>,
+}
+
+/// Enqueue `EmbedNodes` tasks to backfill embeddings for already-indexed nodes.
+/// `EmbedNodes` otherwise only runs during a fresh (re)index, so existing or
+/// unchanged folders never get embedded. Idempotent — `EmbedNodes` embeds only
+/// nodes whose embedding is still NULL.
+pub(crate) async fn backfill_embeddings(
+    State(state): State<AppState>,
+    Json(body): Json<BackfillBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let paths: Vec<String> = match body.folder {
+        Some(f) if !f.trim().is_empty() => vec![expand_tilde(&f)],
+        _ => state
+            .pg
+            .folders_with_pending_embeddings()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    };
+    for abs_path in &paths {
+        let task = crate::tasks::Task::new(crate::tasks::TaskKind::EmbedNodes, abs_path, "");
+        state.task_queue.enqueue(task).await;
+    }
+    Ok(Json(serde_json::json!({"ok": true, "folders": paths.len()})))
+}
+
 /// Return project grouping suggestions from the last scan.
 pub(crate) async fn scan_suggestions(State(state): State<AppState>) -> Json<serde_json::Value> {
     let suggestions = state.pg.get_config("solution_suggestions").await
