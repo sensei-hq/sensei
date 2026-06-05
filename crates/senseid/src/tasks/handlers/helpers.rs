@@ -52,7 +52,7 @@ pub(crate) fn build_globset() -> globset::GlobSet {
     let patterns = &[
         "**/node_modules/**", "**/dist/**", "**/build/**", "**/target/**",
         "**/.next/**", "**/.svelte-kit/**",
-        "**/__pycache__/**", "**/.venv/**", "**/venv/**",
+        "**/__pycache__/**", "**/__MACOSX/**", "**/.venv/**", "**/venv/**",
         "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js",
         "**/*.test.ts", "**/*.test.tsx", "**/*.test.js",
         "**/*_test.py", "**/*_test.go", "**/*_test.rs",
@@ -63,6 +63,22 @@ pub(crate) fn build_globset() -> globset::GlobSet {
         if let Ok(g) = globset::Glob::new(p) { builder.add(g); }
     }
     builder.build().unwrap_or_else(|_| globset::GlobSetBuilder::new().build().unwrap())
+}
+
+/// A directory walker that honours ignore files (.gitignore, .ignore, global
+/// gitignore, .git/info/exclude). `require_git(false)` is the key bit: it makes
+/// `.gitignore` apply even when the directory is NOT a git repository, so a
+/// quasi-repo (a non-git project root) still skips the vendored / build
+/// directories its own `.gitignore` lists (node_modules, Pods, vendor/bundle, …)
+/// instead of indexing hundreds of MB of dependencies.
+pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
+    let mut b = ignore::WalkBuilder::new(path);
+    b.hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .require_git(false);
+    b
 }
 
 #[cfg(test)]
@@ -130,6 +146,7 @@ mod tests {
         assert!(gs.is_match("dist/bundle.js"));
         assert!(gs.is_match("target/debug/foo"));
         assert!(gs.is_match("__pycache__/foo.pyc"));
+        assert!(gs.is_match("__MACOSX/._foo"));
     }
 
     #[test]

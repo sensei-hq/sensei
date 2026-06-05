@@ -27,6 +27,12 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         .unwrap_or_else(|| task.folder_name().to_string());
     let folder_name: &str = &folder_name_owned;
 
+    // A quasi-repo (non-git project root) is its own project named after the
+    // folder; a real repo groups under its parent directory (the legacy
+    // multi-repo grouping heuristic).
+    let is_quasi = pre_registered.as_ref()
+        .and_then(|r| r["kind"].as_str()) == Some("standalone");
+
     // ── 1. Detect stack ──────────────────────────────────────────────
     let stack = super::scan_logic::detect_stack(repo_path);
 
@@ -42,7 +48,8 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or(folder_name);
-    let project_name: &str = fm.project.as_deref().unwrap_or(parent_name);
+    let fallback_name = if is_quasi { folder_name } else { parent_name };
+    let project_name: &str = fm.project.as_deref().unwrap_or(fallback_name);
 
     // Find or create the project by its resolved name (get-or-create — idempotent).
     let project_id = match ctx.pg().get_project_by_name(project_name).await {
@@ -84,7 +91,11 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         project_id: project_id.clone(),
         name: folder_name.to_string(),
         path: task.path.clone(),
-        kind: crate::api::events::FolderKind::Git,
+        kind: if is_quasi {
+            crate::api::events::FolderKind::Standalone
+        } else {
+            crate::api::events::FolderKind::Git
+        },
         stack: stack.clone(),
         files_total,
         files_completed: 0,
@@ -112,18 +123,6 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         ctx.pg().set_folder_project(fid, &pid, "primary", None).await.ok();
     }
 
-    // ── 6. Attach deferred siblings to this project ──────────────────
-    if let Ok(project_id) = uuid::Uuid::parse_str(&project_id) {
-        let parent = std::path::Path::new(&task.folder_path)
-            .parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-        if !parent.is_empty() {
-            let assigned = ctx.pg().assign_deferred_siblings_to_project(&parent, &project_id).await.unwrap_or(0);
-            if assigned > 0 {
-                tracing::info!("process_git_folder: {} — assigned {} deferred siblings to project {}", folder_name, assigned, project_id);
-            }
-        }
-    }
-
     if let Some(ref fid) = folder_uuid {
         ctx.pg().delete_nodes_by_folder(fid).await.ok();
     }
@@ -136,9 +135,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let mut dirs = std::collections::HashSet::new();
 
     // Walk all files to discover directories
-    let walker = ignore::WalkBuilder::new(repo_path)
-        .hidden(true).git_ignore(true).git_global(true).git_exclude(true)
-        .build();
+    let walker = super::helpers::build_walker(repo_path).build();
 
     for entry in walker.flatten() {
         if !entry.path().is_file() { continue; }
