@@ -106,10 +106,23 @@ impl Gateway {
                 }
             };
 
-            // Execute via adapter
+            // Execute via adapter. Inject the selected candidate's resolved model
+            // when the caller didn't pin one, so chain/registry selection actually
+            // drives the provider model — otherwise the adapter falls back to its
+            // own built-in default. A caller-pinned `request.model` takes precedence.
             let endpoint = format!("{}:{}", candidate.router, candidate.model);
+            let owned_request;
+            let req_for_adapter: &InferenceRequest = if request.model.is_some() {
+                request
+            } else {
+                owned_request = InferenceRequest {
+                    model: Some(candidate.api_model_id.clone()),
+                    ..request.clone()
+                };
+                &owned_request
+            };
             match adapter
-                .execute(&candidate.router_config, request)
+                .execute(&candidate.router_config, req_for_adapter)
                 .await
             {
                 Ok(mut response) => {
@@ -389,6 +402,140 @@ mod tests {
             },
             budget: None,
         }
+    }
+
+    // Adapter that records the request.model it receives, so we can assert the
+    // engine injects the chain-selected model rather than passing model=None.
+    struct RecordingAdapter {
+        seen_model: Arc<std::sync::Mutex<Option<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::adapters::InferenceAdapter for RecordingAdapter {
+        fn id(&self) -> &str {
+            "noop"
+        }
+        fn supports(&self, _capability: &Capability) -> bool {
+            true
+        }
+        async fn execute(
+            &self,
+            _config: &RouterConfig,
+            request: &InferenceRequest,
+        ) -> Result<InferenceResponse, GatewayError> {
+            *self.seen_model.lock().unwrap() = request.model.clone();
+            Ok(InferenceResponse {
+                success: true,
+                content: Some("ok".to_string()),
+                embeddings: None,
+                transcription: None,
+                audio: None,
+                images: None,
+                videos: None,
+                model: request.model.clone(),
+                usage: None,
+                tool_calls: Vec::new(),
+                estimated_cost: None,
+                actual_cost: None,
+                attempts: vec![],
+            })
+        }
+
+        async fn stream(
+            &self,
+            _config: &RouterConfig,
+            _request: &InferenceRequest,
+        ) -> Result<
+            std::pin::Pin<
+                Box<dyn futures::Stream<Item = Result<crate::types::request::StreamChunk, GatewayError>> + Send>,
+            >,
+            GatewayError,
+        > {
+            Err(GatewayError::NotConfigured)
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_selection_injects_resolved_api_model_id() {
+        // Model whose api_model_id ("noop-v2") differs from its registry id
+        // ("noop"); the chain entry leaves api_model_id None so it must resolve
+        // from the model config. The caller pins no model.
+        let mut routers = HashMap::new();
+        routers.insert(
+            "noop".to_string(),
+            RouterConfig {
+                url: "http://localhost".to_string(),
+                api_key_env: None,
+                api_key: None,
+                enabled: true,
+                timeout_ms: None,
+                headers: HashMap::new(),
+            },
+        );
+        let mut models = HashMap::new();
+        models.insert(
+            "noop".to_string(),
+            ModelConfig {
+                id: "noop".to_string(),
+                api_model_id: Some("noop-v2".to_string()),
+                provider: "noop".to_string(),
+                capabilities: vec![Capability::TextChat],
+                context_window: 4096,
+                max_output_tokens: 1024,
+                pricing: None,
+            },
+        );
+        let mut chains = HashMap::new();
+        chains.insert(
+            "chat_chain".to_string(),
+            FallbackChainConfig {
+                id: "chat_chain".to_string(),
+                capability: Capability::TextChat,
+                models: vec![ChainEntry {
+                    model: "noop".to_string(),
+                    router: Some("noop".to_string()),
+                    api_model_id: None,
+                    priority: 1,
+                }],
+                fallback_triggers: vec![],
+            },
+        );
+        let config = GatewayConfig { routers, models, chains };
+        let cb = CircuitBreakerManager::new(CircuitBreakerConfig {
+            threshold: 5,
+            timeout: Duration::from_secs(300),
+            half_open_max_requests: 3,
+        });
+        let gw = Gateway::new(config, AdapterRegistry::new(), cb);
+
+        let seen_model = Arc::new(std::sync::Mutex::new(None));
+        gw.adapters
+            .register(Arc::new(RecordingAdapter {
+                seen_model: seen_model.clone(),
+            }) as Arc<dyn crate::adapters::InferenceAdapter>)
+            .await;
+
+        let request = InferenceRequest {
+            capability: Capability::TextChat,
+            model: None,
+            router: None,
+            chain: Some("chat_chain".to_string()),
+            payload: Payload::Chat {
+                messages: vec![Message::text(MessageRole::User, "hi")],
+                system: None,
+                max_tokens: None,
+                temperature: None,
+                tools: Vec::new(),
+            },
+            budget: None,
+        };
+        gw.execute(&request).await.unwrap();
+
+        assert_eq!(
+            seen_model.lock().unwrap().clone(),
+            Some("noop-v2".to_string()),
+            "adapter should receive the chain-resolved api_model_id, not None or a default"
+        );
     }
 
     #[tokio::test]
