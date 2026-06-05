@@ -8,8 +8,6 @@ use crate::languages;
 
 /// Classify imports as internal vs external libraries. Update project.libs.
 pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
-    let mut lib_set = std::collections::HashSet::new();
-
     // folder_path is the repo abs_path (Task contract); look up the row
     // once and reuse for both repo_path and the later mark_folder_indexed
     // call. folder_name comes from the DB row so subtree composite names
@@ -20,62 +18,69 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         .unwrap_or_else(|| task.folder_name());
     let repo_path_str = task.folder_path.clone();
 
-    // Walk source files in the repo directory and extract external imports
-    if !repo_path_str.is_empty() {
-        let repo_path = std::path::Path::new(&repo_path_str);
-        let walker = super::helpers::build_walker(repo_path).build();
+    // Walk source files and extract external imports on a blocking thread:
+    // the walk reads and synchronously parses every file (adapter.parse), which
+    // would block the async worker's poll() — the same hazard process_file
+    // avoids — and on a large folder could freeze the pool. spawn_blocking keeps
+    // it off the runtime so the worker yields and the watchdog stays effective.
+    let libs: Vec<String> = tokio::task::spawn_blocking(move || {
+        let mut lib_set = std::collections::HashSet::new();
+        if !repo_path_str.is_empty() {
+            let repo_path = std::path::Path::new(&repo_path_str);
+            let walker = super::helpers::build_walker(repo_path).build();
 
-        for entry in walker.flatten() {
-            if !entry.path().is_file() { continue; }
-            let ext = entry.path().extension()
-                .and_then(|e| e.to_str())
-                .map(|e| format!(".{}", e))
-                .unwrap_or_default();
-            let adapter = match languages::adapter_for_ext(&ext) {
-                Some(a) => a,
-                None => continue,
-            };
-            let file_path = entry.path().to_string_lossy().to_string();
-            let content = match std::fs::read_to_string(&file_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let rel_path = entry.path().strip_prefix(repo_path)
-                .unwrap_or(entry.path())
-                .to_string_lossy().to_string();
-            let parsed = adapter.parse(&content, &rel_path);
-
-            for imp in &parsed.imports {
-                let path = &imp.target_path;
-                // Skip relative, absolute, node builtins, framework aliases
-                if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") { continue; }
-                if path.starts_with('$') { continue; }
-                if ["fs","path","os","url","http","https","module","child_process","crypto","util",
-                    "events","stream","buffer","net","dns","tls","cluster","worker_threads",
-                    "perf_hooks","process","assert","readline","querystring","string_decoder","zlib"]
-                    .contains(&path.as_str()) { continue; }
-                if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
-                if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
-                if path.starts_with("java.") || path.starts_with("javax.") { continue; }
-                if path.starts_with("import_") || path.starts_with("from_") { continue; }
-                if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
-
-                let lib_name = if path.starts_with('@') {
-                    path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
-                } else if path.contains("::") {
-                    path.split("::").next().unwrap_or("").to_string()
-                } else {
-                    path.split('/').next().unwrap_or("").to_string()
+            for entry in walker.flatten() {
+                if !entry.path().is_file() { continue; }
+                let ext = entry.path().extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| format!(".{}", e))
+                    .unwrap_or_default();
+                let adapter = match languages::adapter_for_ext(&ext) {
+                    Some(a) => a,
+                    None => continue,
                 };
-                if !lib_name.is_empty() && lib_name.len() > 1 {
-                    lib_set.insert(lib_name);
+                let file_path = entry.path().to_string_lossy().to_string();
+                let content = match std::fs::read_to_string(&file_path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let rel_path = entry.path().strip_prefix(repo_path)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy().to_string();
+                let parsed = adapter.parse(&content, &rel_path);
+
+                for imp in &parsed.imports {
+                    let path = &imp.target_path;
+                    // Skip relative, absolute, node builtins, framework aliases
+                    if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") { continue; }
+                    if path.starts_with('$') { continue; }
+                    if ["fs","path","os","url","http","https","module","child_process","crypto","util",
+                        "events","stream","buffer","net","dns","tls","cluster","worker_threads",
+                        "perf_hooks","process","assert","readline","querystring","string_decoder","zlib"]
+                        .contains(&path.as_str()) { continue; }
+                    if path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::") { continue; }
+                    if path.starts_with("std::") || path.starts_with("core::") || path.starts_with("alloc::") { continue; }
+                    if path.starts_with("java.") || path.starts_with("javax.") { continue; }
+                    if path.starts_with("import_") || path.starts_with("from_") { continue; }
+                    if path.starts_with("pub use") || path.starts_with("pub(crate)") { continue; }
+
+                    let lib_name = if path.starts_with('@') {
+                        path.split('/').next().unwrap_or("").trim_start_matches('@').to_string()
+                    } else if path.contains("::") {
+                        path.split("::").next().unwrap_or("").to_string()
+                    } else {
+                        path.split('/').next().unwrap_or("").to_string()
+                    };
+                    if !lib_name.is_empty() && lib_name.len() > 1 {
+                        lib_set.insert(lib_name);
+                    }
                 }
             }
         }
-    }
-
-    let mut libs: Vec<String> = lib_set.into_iter().collect();
-    libs.sort();
+        let mut v: Vec<String> = lib_set.into_iter().collect();
+        v.sort();
+        v
+    }).await.unwrap_or_default();
 
     // Check which libs are internal (match another repo in a project)
     let all_repos = ctx.pg().list_repositories().await.unwrap_or_default();
