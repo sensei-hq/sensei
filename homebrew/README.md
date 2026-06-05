@@ -1,3 +1,12 @@
+---
+organization: Sensei HQ
+project: sensei
+role: homebrew
+tagline: Homebrew tap for sensei
+summary: Homebrew tap for installing the sensei daemon, CLI, and MCP server.
+stack: [ruby]
+---
+
 # homebrew-tap
 
 Homebrew tap for [sensei](https://github.com/sensei-hq/sensei) — AI development intelligence for coding agents.
