@@ -406,6 +406,20 @@ fn baseline_production_config() -> GatewayConfig {
         max_output_tokens: 8_192,
         pricing: None,
     });
+    // Local embedding model (Ollama). 384-dim — matches sensei.nodes.embedding
+    // vector(384). Used by the EmbedNodes indexing task and semantic search.
+    // NOTE: the embedding space dimension is a schema contract; a different-dim
+    // model (e.g. gemini-text-embedding-004 at 768) cannot be swapped in without
+    // a matching DDL change to the embedding column.
+    models.insert("all-minilm".into(), ModelConfig {
+        id: "all-minilm".into(),
+        api_model_id: Some("all-minilm".into()),
+        provider: "ollama".into(),
+        capabilities: vec![Capability::TextEmbed],
+        context_window: 512,
+        max_output_tokens: 0,
+        pricing: None,
+    });
 
     let mut chains: HashMap<String, FallbackChainConfig> = HashMap::new();
     chains.insert("image_generate".into(), FallbackChainConfig {
@@ -436,6 +450,20 @@ fn baseline_production_config() -> GatewayConfig {
                 priority: 2,
             },
         ],
+        fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
+    });
+    // Embedding chain — intentionally 384-dim models only, to honour the
+    // sensei.nodes.embedding vector(384) contract. Do NOT add a 768-dim model
+    // (e.g. gemini-text-embedding-004) here without first migrating the column.
+    chains.insert("embed".into(), FallbackChainConfig {
+        id: "embed".into(),
+        capability: Capability::TextEmbed,
+        models: vec![ChainEntry {
+            model: "all-minilm".into(),
+            router: Some("ollama".into()),
+            api_model_id: None,
+            priority: 1,
+        }],
         fallback_triggers: vec![FallbackTrigger::RateLimit, FallbackTrigger::Timeout, FallbackTrigger::ProviderError],
     });
 
