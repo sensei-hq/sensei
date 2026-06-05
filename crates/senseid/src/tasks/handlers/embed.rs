@@ -9,6 +9,14 @@ use super::super::Task;
 const EMBED_BATCH: usize = 64;
 /// Expected embedding width — matches the `vector(384)` column on sensei.nodes.
 const EMBED_DIM: usize = 384;
+/// Per-batch wall-clock cap for the embedding call. Embedding is best-effort and
+/// backfillable, so a slow/stalled backend (e.g. Ollama not responding) must
+/// never hang a worker — that would starve resolve_libs and block the folder
+/// from ever being marked indexed.
+const EMBED_TIMEOUT_SECS: u64 = 30;
+/// Give up embedding a folder after this many consecutive batch failures — the
+/// backend is unhealthy; leave the remaining nodes for `/api/embed/backfill`.
+const EMBED_MAX_CONSECUTIVE_FAILURES: u32 = 5;
 
 /// Build the text fed to the embedding model for a node. Combines kind, name,
 /// signature, and file location so semantically related symbols land near each
@@ -27,10 +35,13 @@ fn embed_text(kind: &str, name: &str, signature: Option<&str>, file_path: &str) 
         s.push_str(file_path);
         s.push(']');
     }
-    // Cap length so an unusually long signature/name can't exceed the embedding
-    // model's context window (all-minilm ~256 tokens). Truncate on a char
-    // boundary; the head (kind + name + signature start) carries the signal.
-    const MAX: usize = 800;
+    // Cap length so a long signature/name can't exceed the embedding model's
+    // context window. all-minilm holds ~256 tokens; dense code can tokenise at
+    // well under one char per token, so 800 chars sometimes overflowed ("input
+    // length exceeds the context length"). 480 chars keeps the head (kind + name
+    // + signature start) — which carries the signal — comfortably inside it.
+    // Truncate on a char boundary.
+    const MAX: usize = 480;
     if s.len() > MAX {
         let mut end = MAX;
         while !s.is_char_boundary(end) {
@@ -60,6 +71,7 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     }
 
     let mut embedded = 0u32;
+    let mut consecutive_failures = 0u32;
     for chunk in nodes.chunks(EMBED_BATCH) {
         let texts: Vec<String> = chunk
             .iter()
@@ -77,21 +89,47 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
             budget: None,
         };
 
-        let response = ctx
-            .app_state
-            .gateway
-            .execute(&request)
-            .await
-            .map_err(|e| format!("gateway embed failed: {e}"))?;
-        let vectors = response
-            .embeddings
-            .ok_or_else(|| "gateway returned no embeddings".to_string())?;
+        // Embedding is best-effort: a stalled or erroring backend skips the
+        // batch rather than failing the task (which would otherwise spam errors
+        // and, on a hang, freeze the worker). Remaining nodes are picked up by
+        // `/api/embed/backfill`.
+        let exec = tokio::time::timeout(
+            std::time::Duration::from_secs(EMBED_TIMEOUT_SECS),
+            ctx.app_state.gateway.execute(&request),
+        )
+        .await;
+        let response = match exec {
+            Ok(Ok(r)) => {
+                consecutive_failures = 0;
+                r
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("embed_nodes: {} — batch embed failed (skipping): {e}", task.folder_name());
+                consecutive_failures += 1;
+                if consecutive_failures >= EMBED_MAX_CONSECUTIVE_FAILURES {
+                    tracing::warn!("embed_nodes: {} — backend unhealthy, leaving remaining nodes for backfill", task.folder_name());
+                    break;
+                }
+                continue;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "embed_nodes: {} — batch timed out after {EMBED_TIMEOUT_SECS}s, leaving remaining nodes for backfill",
+                    task.folder_name()
+                );
+                break;
+            }
+        };
+        let Some(vectors) = response.embeddings else {
+            tracing::warn!("embed_nodes: {} — gateway returned no embeddings (skipping batch)", task.folder_name());
+            continue;
+        };
         if vectors.len() != chunk.len() {
-            return Err(format!(
-                "embedding count mismatch: {} texts, {} vectors",
-                chunk.len(),
-                vectors.len()
-            ));
+            tracing::warn!(
+                "embed_nodes: {} — embedding count mismatch ({} texts, {} vectors), skipping batch",
+                task.folder_name(), chunk.len(), vectors.len()
+            );
+            continue;
         }
 
         for ((id, _, _, _, _), vector) in chunk.iter().zip(vectors.iter()) {
@@ -133,6 +171,6 @@ mod tests {
     fn embed_text_caps_length() {
         let huge = "x".repeat(5000);
         let t = embed_text("function", "f", Some(&huge), "a.rs");
-        assert!(t.len() <= 800, "embed text should be capped, got {}", t.len());
+        assert!(t.len() <= 480, "embed text should be capped, got {}", t.len());
     }
 }
