@@ -4,6 +4,13 @@
 
 use std::path::{Path, PathBuf};
 
+/// Directory names skipped during the scan walk: dependency/build output and
+/// generated/OS junk that never contains first-party source. Kept in one place
+/// so `walk_for_git` and `walk_dirs` agree.
+const IGNORED_DIRS: &[&str] = &[
+    "node_modules", "dist", "build", "target", "__pycache__", "__MACOSX",
+];
+
 /// A discovered folder with its classification.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiscoveredFolder {
@@ -14,26 +21,11 @@ pub struct DiscoveredFolder {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FolderKind {
+    /// A real git repository (has a `.git`) — a project root.
     Git,
-    WorkspaceMember,
-    Subtree,
-    Sibling,
+    /// A non-git directory that looks like a project the developer started but
+    /// never `git init`'d ("quasi-repo") — also treated as a project root.
     Standalone,
-}
-
-/// A project grouping discovered folders.
-#[derive(Debug, Clone)]
-pub struct DiscoveredProject {
-    pub name: String,
-    pub folders: Vec<DiscoveredFolder>,
-    pub confidence: Confidence,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Confidence {
-    High,
-    Medium,
-    Low,
 }
 
 /// Find all .git directories under root up to max_depth.
@@ -55,7 +47,7 @@ fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) 
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if !path.is_dir() || name.starts_with('.') { continue; }
-        if ["node_modules", "dist", "build", "target"].contains(&name.as_str()) { continue; }
+        if IGNORED_DIRS.contains(&name.as_str()) { continue; }
 
         if path.join(".git").is_dir() {
             out.push(path);
@@ -97,7 +89,7 @@ fn walk_dirs(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if !path.is_dir() || name.starts_with('.') { continue; }
-        if ["node_modules", "dist", "build", "target"].contains(&name.as_str()) { continue; }
+        if IGNORED_DIRS.contains(&name.as_str()) { continue; }
 
         out.push(path.clone());
         // Don't recurse into git folders
@@ -107,113 +99,86 @@ fn walk_dirs(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Classify all directories: git, sibling, standalone, or ignored (ancestor).
-/// Returns only non-ancestor, non-git-subfolder directories.
+/// Classify directories into **project roots** only: real git repos (`Git`) and
+/// "quasi-repos" — non-git directories that look like a project the developer
+/// started but never `git init`'d (`Standalone`).
+///
+/// A non-git directory is a quasi-repo when it sits at a project-root position
+/// (not inside any git repo or another quasi-repo, and not a grouping container
+/// of git repos) AND `has_code` reports indexable source for it. Candidates are
+/// considered shallowest-first so a nested directory is recognised as content of
+/// the project root above it rather than promoted to its own project.
+///
+/// Everything else — grouping containers, code-less loose folders, and any
+/// subfolder inside a project root — is intentionally NOT returned. The scan
+/// tracks project roots; it never promotes subfolders to repos (those become
+/// `kind=folder` rows under their parent, handled separately).
 pub fn classify_folders(
     root: &Path,
     git_folders: &[PathBuf],
     all_dirs: &[PathBuf],
+    has_code: impl Fn(&Path) -> bool,
 ) -> Vec<DiscoveredFolder> {
     let git_set: std::collections::HashSet<&PathBuf> = git_folders.iter().collect();
     let ancestors = ancestor_set(root, git_folders);
 
-    // Parents of git folders — used for sibling detection.
-    // Exclude root itself: direct children of scan root are standalone, not siblings.
-    let git_parents: std::collections::HashSet<PathBuf> = git_folders.iter()
-        .filter_map(|gf| gf.parent().map(|p| p.to_path_buf()))
-        .filter(|p| p != root)
+    let mut result: Vec<DiscoveredFolder> = git_folders.iter()
+        .map(|gf| DiscoveredFolder {
+            name: gf.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string(),
+            path: gf.clone(),
+            kind: FolderKind::Git,
+        })
         .collect();
 
-    let mut result = Vec::new();
+    // Project roots grow as quasi-repos are discovered; seed with git repos so a
+    // non-git dir inside a repo is never re-promoted.
+    let mut project_roots: Vec<PathBuf> = git_folders.to_vec();
 
-    for dir in all_dirs {
-        // Skip git folders themselves (handled separately)
-        if git_set.contains(dir) {
-            let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
-            result.push(DiscoveredFolder { name, path: dir.clone(), kind: FolderKind::Git });
+    // Candidate non-git directories, shallowest first.
+    let mut candidates: Vec<&PathBuf> = all_dirs.iter()
+        .filter(|d| !git_set.contains(*d))                              // not a git repo
+        .filter(|d| !ancestors.contains(*d))                           // not a git-repo grouping container
+        .filter(|d| !git_folders.iter().any(|gf| d.starts_with(gf)))   // not inside a git repo
+        .collect();
+    candidates.sort_by_key(|d| d.components().count());
+
+    for dir in candidates {
+        // Inside a project root already chosen (git or quasi)? → it's content, skip.
+        if project_roots.iter().any(|pr| pr != dir && dir.starts_with(pr)) {
             continue;
         }
-
-        // Skip ancestors of git folders (intermediate directories)
-        if ancestors.contains(dir) { continue; }
-
-        // Skip subdirectories of git folders (internal to the repo)
-        if git_folders.iter().any(|gf| dir.starts_with(gf)) { continue; }
-
-        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
-
-        // Sibling: shares parent with a git folder
-        if let Some(parent) = dir.parent()
-            && git_parents.contains(&parent.to_path_buf()) {
-                result.push(DiscoveredFolder { name, path: dir.clone(), kind: FolderKind::Sibling });
-                continue;
-            }
-
-        // Standalone: non-git, not a sibling
-        result.push(DiscoveredFolder { name, path: dir.clone(), kind: FolderKind::Standalone });
+        if has_code(dir) {
+            project_roots.push((*dir).clone());
+            result.push(DiscoveredFolder {
+                name: dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string(),
+                path: (*dir).clone(),
+                kind: FolderKind::Standalone,
+            });
+        }
+        // else: code-less loose directory → not a project root, not registered.
     }
 
     result
 }
 
-/// Group classified folders into projects.
-/// Git folders sharing a parent → one project.
-/// Siblings join the same project as their git neighbours.
-/// Standalone folders each get their own project.
-pub fn group_into_projects(folders: &[DiscoveredFolder]) -> Vec<DiscoveredProject> {
-    use std::collections::HashMap;
-
-    let mut parent_groups: HashMap<PathBuf, Vec<DiscoveredFolder>> = HashMap::new();
-    let mut standalones = Vec::new();
-
-    for f in folders {
-        match f.kind {
-            FolderKind::Git | FolderKind::Sibling => {
-                let parent = f.path.parent().unwrap_or(&f.path).to_path_buf();
-                parent_groups.entry(parent).or_default().push(f.clone());
-            }
-            FolderKind::Standalone => {
-                standalones.push(f.clone());
-            }
-            _ => {} // workspace members and subtrees handled elsewhere
-        }
+/// True if a directory looks like a project root with indexable source: it has a
+/// recognised manifest (`detect_stack`) or at least one non-binary source file
+/// directly inside it. Distinguishes a "quasi-repo" (a project the developer
+/// forgot to `git init`) from a data / asset / junk folder.
+pub fn has_indexable_code(dir: &Path) -> bool {
+    if !detect_stack(dir).is_empty() {
+        return true;
     }
-
-    let mut projects = Vec::new();
-
-    for (parent, members) in &parent_groups {
-        let git_count = members.iter().filter(|f| f.kind == FolderKind::Git).count();
-
-        if git_count >= 2 {
-            // Multi-folder project: named after parent directory
-            let name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("project").to_string();
-            projects.push(DiscoveredProject {
-                name,
-                folders: members.clone(),
-                confidence: Confidence::High,
-            });
-        } else {
-            // Solo git folder(s) under the same parent — each gets its own project
-            for f in members {
-                projects.push(DiscoveredProject {
-                    name: f.name.clone(),
-                    folders: vec![f.clone()],
-                    confidence: Confidence::Medium,
-                });
-            }
-        }
+    let Ok(entries) = std::fs::read_dir(dir) else { return false; };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() { continue; }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext.is_empty() { continue; }
+        if super::helpers::is_binary_ext(ext) { continue; }
+        return true;
     }
-
-    for f in &standalones {
-        projects.push(DiscoveredProject {
-            name: f.name.clone(),
-            folders: vec![f.clone()],
-            confidence: Confidence::Low,
-        });
-    }
-
-    projects.sort_by(|a, b| a.name.cmp(&b.name));
-    projects
+    false
 }
 
 /// Detect if a git folder is a monorepo (has workspace config).
@@ -254,12 +219,7 @@ pub fn count_indexable_files(path: &Path) -> (Vec<PathBuf>, u32) {
     let exclude = super::helpers::build_globset();
     let mut files = Vec::new();
 
-    let walker = ignore::WalkBuilder::new(path)
-        .hidden(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .build();
+    let walker = super::helpers::build_walker(path).build();
 
     for entry in walker.flatten() {
         if !entry.path().is_file() { continue; }
@@ -336,11 +296,13 @@ mod tests {
     }
 
     #[test]
-    fn classify_finds_git_sibling_standalone() {
+    fn classify_returns_only_git_when_non_git_dirs_have_no_code() {
+        // meeting_notes and random_docs in the fixture have no files → not
+        // quasi-repos. classify should return just the 4 git repos.
         let fixture = create_fixture();
         let gits = find_git_folders(fixture.path(), 3);
         let dirs = all_directories(fixture.path(), 3);
-        let classified = classify_folders(fixture.path(), &gits, &dirs);
+        let classified = classify_folders(fixture.path(), &gits, &dirs, has_indexable_code);
 
         let git_names: Vec<&str> = classified.iter()
             .filter(|f| f.kind == FolderKind::Git)
@@ -350,43 +312,98 @@ mod tests {
         assert!(git_names.contains(&"fldr_1"));
         assert!(git_names.contains(&"standalone"));
 
-        let siblings: Vec<&str> = classified.iter()
-            .filter(|f| f.kind == FolderKind::Sibling)
-            .map(|f| f.name.as_str())
-            .collect();
-        assert_eq!(siblings, vec!["meeting_notes"]);
-
-        let standalones: Vec<&str> = classified.iter()
-            .filter(|f| f.kind == FolderKind::Standalone)
-            .map(|f| f.name.as_str())
-            .collect();
-        assert_eq!(standalones, vec!["random_docs"]);
+        // No quasi-repos: the only non-git dirs hold no indexable code.
+        assert!(!classified.iter().any(|f| f.kind == FolderKind::Standalone));
     }
 
     #[test]
-    fn group_creates_projects() {
-        let fixture = create_fixture();
-        let gits = find_git_folders(fixture.path(), 3);
-        let dirs = all_directories(fixture.path(), 3);
-        let classified = classify_folders(fixture.path(), &gits, &dirs);
-        let projects = group_into_projects(&classified);
+    fn classify_detects_quasi_repo_with_code() {
+        // A non-git directory at project-root position WITH a manifest is a
+        // quasi-repo; a code-less sibling next to it is not.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // a real git repo so quasi-repo siblings are at project-root position
+        std::fs::create_dir_all(root.join("real-repo/.git")).unwrap();
+        std::fs::write(root.join("real-repo/Cargo.toml"), "[package]\nname=\"r\"").unwrap();
+        // forgot-to-git-init project (manifest) → quasi-repo
+        std::fs::create_dir_all(root.join("forgotten")).unwrap();
+        std::fs::write(root.join("forgotten/package.json"), r#"{"name":"f"}"#).unwrap();
+        // a top-level non-git dir with a loose source file → quasi-repo
+        std::fs::create_dir_all(root.join("scripts")).unwrap();
+        std::fs::write(root.join("scripts/run.py"), "print('hi')\n").unwrap();
+        // junk: only data/binary + nothing → not a quasi-repo
+        std::fs::create_dir_all(root.join("Archive")).unwrap();
+        std::fs::write(root.join("Archive/photo.png"), [0u8; 8]).unwrap();
 
-        // proj_a: 3 git + 1 sibling = 4 folders
-        let proj_a = projects.iter().find(|p| p.name == "proj_a");
-        assert!(proj_a.is_some());
-        assert_eq!(proj_a.unwrap().folders.len(), 4);
-        assert_eq!(proj_a.unwrap().confidence, Confidence::High);
+        let gits = find_git_folders(root, 3);
+        let dirs = all_directories(root, 3);
+        let classified = classify_folders(root, &gits, &dirs, has_indexable_code);
 
-        // standalone: 1 git folder → standalone project
-        let standalone_proj = projects.iter().find(|p| p.name == "standalone");
-        assert!(standalone_proj.is_some());
-        assert_eq!(standalone_proj.unwrap().folders.len(), 1);
-        assert_eq!(standalone_proj.unwrap().confidence, Confidence::Medium);
+        let quasi: Vec<&str> = classified.iter()
+            .filter(|f| f.kind == FolderKind::Standalone)
+            .map(|f| f.name.as_str())
+            .collect();
+        assert!(quasi.contains(&"forgotten"), "manifest folder is a quasi-repo");
+        assert!(quasi.contains(&"scripts"), "loose-source folder is a quasi-repo");
+        assert!(!quasi.contains(&"Archive"), "binary-only folder is not a quasi-repo");
+    }
 
-        // random_docs: standalone non-git
-        let docs_proj = projects.iter().find(|p| p.name == "random_docs");
-        assert!(docs_proj.is_some());
-        assert_eq!(docs_proj.unwrap().confidence, Confidence::Low);
+    #[test]
+    fn classify_does_not_promote_subfolders_of_a_quasi_repo() {
+        // A quasi-repo's own subdirectories must not each become a project root.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("proj/src")).unwrap();
+        std::fs::write(root.join("proj/Cargo.toml"), "[package]\nname=\"p\"").unwrap();
+        std::fs::write(root.join("proj/src/main.rs"), "fn main() {}").unwrap();
+
+        let gits = find_git_folders(root, 3);
+        let dirs = all_directories(root, 3);
+        let classified = classify_folders(root, &gits, &dirs, has_indexable_code);
+
+        // Exactly one project root: `proj`. `proj/src` is content, not a repo.
+        assert_eq!(classified.len(), 1);
+        assert_eq!(classified[0].name, "proj");
+        assert_eq!(classified[0].kind, FolderKind::Standalone);
+    }
+
+    #[test]
+    fn has_indexable_code_distinguishes_projects_from_junk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = tmp.path().join("m");
+        std::fs::create_dir_all(&manifest).unwrap();
+        std::fs::write(manifest.join("go.mod"), "module m").unwrap();
+        assert!(has_indexable_code(&manifest), "manifest => code");
+
+        let source = tmp.path().join("s");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("util.ts"), "export const x = 1;").unwrap();
+        assert!(has_indexable_code(&source), "loose source => code");
+
+        let assets = tmp.path().join("a");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("logo.png"), [0u8; 8]).unwrap();
+        assert!(!has_indexable_code(&assets), "binary-only => no code");
+
+        let empty = tmp.path().join("e");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(!has_indexable_code(&empty), "empty dir => no code");
+    }
+
+    #[test]
+    fn walk_skips_generated_dirs() {
+        // __pycache__ and __MACOSX must not be walked or classified.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"r\"").unwrap();
+        std::fs::create_dir_all(root.join("__pycache__")).unwrap();
+        std::fs::write(root.join("__pycache__/x.pyc"), [0u8; 4]).unwrap();
+        std::fs::create_dir_all(root.join("__MACOSX")).unwrap();
+
+        let dirs = all_directories(root, 3);
+        assert!(!dirs.iter().any(|d| d.ends_with("__pycache__")));
+        assert!(!dirs.iter().any(|d| d.ends_with("__MACOSX")));
     }
 
     #[test]
@@ -418,7 +435,7 @@ mod tests {
 
         let gits = find_git_folders(root, 3);
         let dirs = all_directories(root, 3);
-        let classified = classify_folders(root, &gits, &dirs);
+        let classified = classify_folders(root, &gits, &dirs, has_indexable_code);
 
         // Only myrepo should appear, not myrepo/src or myrepo/tests
         assert_eq!(classified.len(), 1);

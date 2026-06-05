@@ -309,6 +309,12 @@ impl PgStore {
         self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
     }
 
+    /// Register a project root with an explicit folder kind — `git` for real
+    /// repos, `standalone` for quasi-repos (non-git project roots).
+    pub async fn upsert_repo_kind(&self, root_id: &uuid::Uuid, kind: &str, name: &str, abs_path: &str) -> Result<uuid::Uuid, String> {
+        self.upsert_folder(root_id, kind, name, name, abs_path, None, None).await
+    }
+
     /// Get a repo (folder with kind='git'/'subtree') by abs_path.
     pub async fn get_repo_by_path(&self, abs_path: &str) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
@@ -328,7 +334,7 @@ impl PgStore {
     pub async fn get_repo_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, Option<uuid::Uuid>, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, abs_path, project_id, props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind) LIMIT 1"
+                "SELECT id, name, abs_path, project_id, props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind) LIMIT 1"
             ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(|(id, name, abs, pid, props, modified)| {
             serde_json::json!({ "id": id, "name": name, "abs_path": abs, "project_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
@@ -392,7 +398,7 @@ impl PgStore {
     /// Delete a folder (cascade deletes nodes, edges, scan_state, etc.).
     pub async fn delete_repo_by_name(&self, name: &str) -> Result<(), String> {
         sqlx_core::query::query(
-            "DELETE FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind)"
+            "DELETE FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind)"
         ).bind(name).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -683,16 +689,6 @@ impl PgStore {
         }).collect())
     }
 
-    /// Update deferred sibling folders' project_id to match their parent folder.
-    pub async fn assign_deferred_siblings_to_project(&self, parent_path: &str, project_id: &uuid::Uuid) -> Result<u64, String> {
-        let result = sqlx_core::query::query(
-            "UPDATE sensei.folders SET project_id = $2, modified_at = now()
-             WHERE project_id IS NULL AND status = 'deferred'::sensei.folder_status
-             AND path LIKE $1 || '/%'"
-        ).bind(parent_path).bind(project_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(result.rows_affected())
-    }
-
     // ── Extensions ────────────────────────────────────────────────────
 
     pub async fn create_extension(
@@ -834,7 +830,7 @@ impl PgStore {
 
     pub async fn list_repositories(&self) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, abs_path, kind::text FROM sensei.folders WHERE kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind) ORDER BY name"
+            "SELECT id, name, abs_path, kind::text FROM sensei.folders WHERE kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind) ORDER BY name"
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, name, abs_path, kind)| {
             serde_json::json!({ "id": id, "name": name, "abs_path": abs_path, "kind": kind })

@@ -23,9 +23,7 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // Walk source files in the repo directory and extract external imports
     if !repo_path_str.is_empty() {
         let repo_path = std::path::Path::new(&repo_path_str);
-        let walker = ignore::WalkBuilder::new(repo_path)
-            .hidden(true).git_ignore(true).git_global(true).git_exclude(true)
-            .build();
+        let walker = super::helpers::build_walker(repo_path).build();
 
         for entry in walker.flatten() {
             if !entry.path().is_file() { continue; }
