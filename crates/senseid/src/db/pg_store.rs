@@ -1612,6 +1612,118 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Update a project's derived identity props (from README frontmatter or
+    /// best-guess). Only overwrites description/client when provided; replaces
+    /// stack only when a non-empty stack is given; unions tags.
+    pub async fn set_project_identity(
+        &self,
+        id: &uuid::Uuid,
+        description: Option<&str>,
+        client: Option<&str>,
+        stack: &[String],
+        tags: &[String],
+    ) -> Result<(), String> {
+        let stack_json = serde_json::json!(stack);
+        let tags_vec: Vec<String> = tags.to_vec();
+        sqlx_core::query::query(
+            "UPDATE sensei.projects
+                SET description = COALESCE($2, description),
+                    client      = COALESCE($3, client),
+                    stack       = CASE WHEN jsonb_array_length($4) > 0 THEN $4 ELSE stack END,
+                    tags        = array(SELECT DISTINCT unnest(tags || $5)),
+                    modified_at = now()
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(description)
+        .bind(client)
+        .bind(&stack_json)
+        .bind(&tags_vec)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Get-or-create a namespace instance by (scope_key, slug). Returns its id.
+    pub async fn upsert_namespace(
+        &self,
+        scope_key: &str,
+        name: &str,
+        slug: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.namespaces(scope_key, name, slug)
+             VALUES($1, $2, $3)
+             ON CONFLICT (scope_key, slug) DO UPDATE SET name = EXCLUDED.name, modified_at = now()
+             RETURNING id",
+        )
+        .bind(scope_key)
+        .bind(name)
+        .bind(slug)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Link a folder (repo) to a namespace it belongs to. Idempotent.
+    pub async fn link_folder_namespace(
+        &self,
+        folder_id: &uuid::Uuid,
+        namespace_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.folder_namespaces(folder_id, namespace_id)
+             VALUES($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(folder_id)
+        .bind(namespace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Merge icon metadata onto a folder (icons column is jsonb {emoji,devicon,custom}).
+    pub async fn set_folder_icons(
+        &self,
+        folder_id: &uuid::Uuid,
+        icons: &serde_json::Value,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET icons = icons || $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(icons)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Self-healing reconcile: tag discovery projects with no member folders as
+    /// `orphaned` (for the user to resolve), and clear the tag from any that
+    /// regained folders. Never deletes. Returns rows changed.
+    pub async fn mark_orphaned_projects(&self) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.projects p
+                SET tags = CASE
+                      WHEN NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = p.id)
+                        THEN array(SELECT DISTINCT unnest(p.tags || ARRAY['orphaned']))
+                      ELSE array_remove(p.tags, 'orphaned')
+                    END,
+                    modified_at = now()
+              WHERE p.maturity = 'discovery'
+                AND ((NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = p.id))
+                     <> ('orphaned' = ANY(p.tags)))",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn get_project(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, Option<String>, Option<String>, String, Option<String>, serde_json::Value, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(

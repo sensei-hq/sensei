@@ -5,6 +5,7 @@
 
 mod icons;
 mod external_links;
+mod frontmatter;
 mod solutions;
 mod summary;
 
@@ -12,4 +13,5 @@ mod summary;
 // `crate::tasks::processors::metadata::X` continue to work.
 pub use icons::scan_icons;
 pub use external_links::scan_external_links;
+pub use frontmatter::{read_frontmatter, slugify};
 pub use summary::extract_summary;

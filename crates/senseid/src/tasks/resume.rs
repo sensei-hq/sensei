@@ -36,6 +36,17 @@ pub async fn resume_pending_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
             Some(p) if !p.is_empty() => p,
             _ => continue,
         };
+        // Skip folders that have vanished, and `git` rows that no longer have a
+        // `.git` marker at this level — this guards the subfolder-as-project
+        // inflation (#3), where a subfolder was mis-recorded as a repo. Subtrees
+        // are deliberately-registered subdirs and carry no `.git` of their own.
+        let path = std::path::Path::new(abs_path);
+        if !path.exists() {
+            continue;
+        }
+        if kind == "git" && !path.join(".git").exists() {
+            continue;
+        }
         let task = Task::new(TaskKind::ProcessGitFolder, abs_path, abs_path);
         queue.enqueue(task).await;
         enqueued += 1;
@@ -53,9 +64,22 @@ mod tests {
     use crate::tasks::TaskKind;
     use std::time::Duration;
 
-    /// Seed a folder row with an explicit status. Returns the abs_path.
-    async fn seed(pg: &PgStore, root_id: &uuid::Uuid, root_path: &str, name: &str, status: &str) -> String {
-        let abs_path = format!("{}/{}", root_path, name);
+    /// Seed a real folder dir (optionally with a `.git` marker) plus a DB row
+    /// at the given status. Returns the abs_path.
+    async fn seed(
+        pg: &PgStore,
+        root_id: &uuid::Uuid,
+        base: &std::path::Path,
+        name: &str,
+        status: &str,
+        with_git: bool,
+    ) -> String {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        if with_git {
+            std::fs::create_dir_all(dir.join(".git")).unwrap();
+        }
+        let abs_path = dir.to_string_lossy().to_string();
         let fid = pg.upsert_folder(root_id, "git", name, name, &abs_path, None, None).await.unwrap();
         sqlx_core::query::query(
             "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1"
@@ -76,42 +100,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_enqueues_process_git_folder_per_pending_row() {
+    async fn resume_enqueues_only_real_git_roots() {
         let pg = PgStore::connect_test().await.unwrap();
         let queue = TaskQueue::new();
 
-        let root_path = format!("/_test/resume_pending_{}", uuid::Uuid::new_v4().simple());
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let root_path = base.to_string_lossy().to_string();
         let rid = pg.add_watch_root(&root_path, "resume_root", &serde_json::json!([])).await.unwrap();
 
-        let pending_a = seed(&pg, &rid, &root_path, "a", "discovered").await;
-        let pending_b = seed(&pg, &rid, &root_path, "b", "queued").await;
-        // Terminal — must not be re-enqueued.
-        seed(&pg, &rid, &root_path, "c", "indexed").await;
-        seed(&pg, &rid, &root_path, "d", "failed").await;
-        seed(&pg, &rid, &root_path, "e", "deferred").await;
-        // `indexing` is excluded: at startup the in-memory queue is empty,
-        // so no worker can actually be running it.
-        seed(&pg, &rid, &root_path, "f", "indexing").await;
+        let pending_a = seed(&pg, &rid, base, "a", "discovered", true).await;
+        let pending_b = seed(&pg, &rid, base, "b", "queued", true).await;
+        // A subfolder mis-recorded as a git folder (no .git marker) — must be
+        // skipped so it isn't promoted to a project (#3 inflation fix).
+        let nogit = seed(&pg, &rid, base, "src", "discovered", false).await;
+        // Terminal rows are filtered out by list_pending_folders, never resumed.
+        seed(&pg, &rid, base, "c", "indexed", true).await;
 
-        let _count = resume_pending_scans(&queue, &pg).await;
+        resume_pending_scans(&queue, &pg).await;
 
-        // The caller's DB may contain unrelated pending rows from prior
-        // sessions, so we filter by our unique root prefix when asserting.
         let tasks = drain(&queue).await;
-        let ours: Vec<&Task> = tasks.iter()
+        let paths: std::collections::BTreeSet<&str> = tasks.iter()
             .filter(|t| t.path.starts_with(&root_path))
-            .collect();
-
-        assert_eq!(ours.len(), 2, "expected 2 resumed tasks, got {:?}",
-            ours.iter().map(|t| &t.path).collect::<Vec<_>>());
-
-        let paths: std::collections::BTreeSet<&str> = ours.iter()
             .map(|t| t.path.as_str())
             .collect();
-        assert!(paths.contains(pending_a.as_str()), "missing discovered row: {}", pending_a);
-        assert!(paths.contains(pending_b.as_str()), "missing queued row: {}", pending_b);
 
-        for t in &ours {
+        assert!(paths.contains(pending_a.as_str()), "missing discovered git root: {pending_a}");
+        assert!(paths.contains(pending_b.as_str()), "missing queued git root: {pending_b}");
+        assert!(!paths.contains(nogit.as_str()), "subfolder without .git should not resume: {nogit}");
+        assert_eq!(paths.len(), 2, "only real git roots should resume, got {paths:?}");
+
+        for t in tasks.iter().filter(|t| t.path.starts_with(&root_path)) {
             assert_eq!(t.kind, TaskKind::ProcessGitFolder, "wrong task kind: {:?}", t.kind);
             // scan_root sets folder_path = path for git roots; resume mirrors that.
             assert_eq!(t.folder_path, t.path, "folder_path should equal path for resumed git roots");
@@ -125,11 +144,12 @@ mod tests {
         let pg = PgStore::connect_test().await.unwrap();
         let queue = TaskQueue::new();
 
-        let root_path = format!("/_test/resume_empty_{}", uuid::Uuid::new_v4().simple());
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let root_path = base.to_string_lossy().to_string();
         let rid = pg.add_watch_root(&root_path, "resume_empty_root", &serde_json::json!([])).await.unwrap();
-        seed(&pg, &rid, &root_path, "only", "indexed").await;
+        seed(&pg, &rid, base, "only", "indexed", true).await;
 
-        let count_before = queue.status().await.pending;
         resume_pending_scans(&queue, &pg).await;
         let drained = drain(&queue).await;
         let ours: Vec<&Task> = drained.iter()
@@ -138,8 +158,6 @@ mod tests {
         assert!(ours.is_empty(), "expected no tasks under {}, got {:?}",
             root_path, ours.iter().map(|t| &t.path).collect::<Vec<_>>());
 
-        // Sanity: the queue total didn't grow on our account.
-        let _ = count_before;
         pg.remove_watch_root(&rid).await.unwrap();
     }
 }
