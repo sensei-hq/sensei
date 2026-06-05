@@ -157,11 +157,24 @@ pub struct OllamaAdapter {
     client: Client,
 }
 
+/// Default per-request timeout when the adapter is built without explicit
+/// config. A bare `reqwest::Client` has NO timeout, so a wedged Ollama
+/// connection (accepted but never answered) hangs the caller forever; this
+/// bounds it. Configured callers (`from_config`) override via
+/// `RouterConfig::timeout_ms`.
+const DEFAULT_TIMEOUT_SECS: u64 = 120;
+
 impl OllamaAdapter {
     pub fn new() -> Result<Self, GatewayError> {
-        Ok(Self {
-            client: Client::new(),
-        })
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .build()
+            .map_err(|e| GatewayError::ProviderError {
+                adapter: "ollama".into(),
+                message: e.to_string(),
+                status: None,
+            })?;
+        Ok(Self { client })
     }
 
     /// Create an adapter from a pre-built client (e.g. with timeout from config).
@@ -535,5 +548,50 @@ mod tests {
         assert!(response.success);
         assert!(response.content.is_some());
         assert!(!response.content.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_times_out_against_a_silent_server() {
+        // A server that accepts the connection but never sends a response. A
+        // no-timeout client (the old Client::new()) would hang here forever and
+        // wedge the worker; with a per-request timeout the call must return an
+        // error promptly instead. Uses std::net so no tokio "net" feature is
+        // required.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming() {
+                // Hold the connection open, never write a response.
+                if let Ok(s) = stream { held.push(s); }
+            }
+        });
+
+        let config = RouterConfig {
+            url: format!("http://{}", addr),
+            api_key_env: None,
+            api_key: None,
+            enabled: true,
+            timeout_ms: Some(300),
+            headers: std::collections::HashMap::new(),
+        };
+        let adapter = OllamaAdapter::from_config(&config).unwrap();
+        let request = InferenceRequest {
+            capability: Capability::TextEmbed,
+            model: Some("all-minilm".to_string()),
+            router: None,
+            chain: None,
+            payload: Payload::Embed { texts: vec!["hello".to_string()] },
+            budget: None,
+        };
+
+        let start = std::time::Instant::now();
+        let result = adapter.execute(&config, &request).await;
+        let elapsed = start.elapsed();
+        assert!(result.is_err(), "a silent server must produce an error, not hang");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "request must time out promptly, took {elapsed:?}"
+        );
     }
 }
