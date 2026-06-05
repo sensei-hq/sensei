@@ -68,25 +68,42 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 
     task_logger.info("task_started", None).await;
 
-    let result = match task.kind {
-        TaskKind::ScanRoot => handlers::scan_root(ctx, task).await,
-        TaskKind::ProcessGitFolder => handlers::process_git_folder(ctx, task).await,
-        TaskKind::ProcessFolder => handlers::process_folder(ctx, task).await,
-        TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
-        TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
-        TaskKind::DeleteFolder => handlers::delete_folder(ctx, task).await,
-        TaskKind::ResolveEdges => handlers::resolve_edges(ctx, task).await,
-        TaskKind::ResolveLibs => handlers::resolve_libs(ctx, task).await,
-        TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
-        TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
-        TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
-        TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
-        TaskKind::EmbedNodes => handlers::embed_nodes(ctx, task).await,
-        TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
-        TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
-        TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
-        TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
-        TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
+    // Dispatch to the handler under a watchdog: a wedged handler (e.g. a stalled
+    // network/DB call that never returns) would otherwise hold its worker
+    // forever, keep its task in `running`, and leave the folder's resolve
+    // barrier blocked — freezing the whole pool. The timeout cancels the handler
+    // future and the task is failed (which unblocks dependents and frees the
+    // worker). Abandoned work is retried/backfilled. Note: this preempts async
+    // waits (the realistic hangs); a purely CPU-bound sync loop would not yield.
+    let dispatch = async {
+        match task.kind {
+            TaskKind::ScanRoot => handlers::scan_root(ctx, task).await,
+            TaskKind::ProcessGitFolder => handlers::process_git_folder(ctx, task).await,
+            TaskKind::ProcessFolder => handlers::process_folder(ctx, task).await,
+            TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
+            TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
+            TaskKind::DeleteFolder => handlers::delete_folder(ctx, task).await,
+            TaskKind::ResolveEdges => handlers::resolve_edges(ctx, task).await,
+            TaskKind::ResolveLibs => handlers::resolve_libs(ctx, task).await,
+            TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
+            TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
+            TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
+            TaskKind::ReconcileConnections => handlers::reconcile_connections(ctx, task).await,
+            TaskKind::EmbedNodes => handlers::embed_nodes(ctx, task).await,
+            TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
+            TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
+            TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
+            TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
+            TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
+        }
+    };
+    let cap = task.kind.watchdog_timeout();
+    let result = match tokio::time::timeout(cap, dispatch).await {
+        Ok(r) => r,
+        Err(_) => Err(format!(
+            "watchdog: {} task #{} exceeded {}s and was abandoned (worker freed; retry/backfill)",
+            task.kind, task.id, cap.as_secs()
+        )),
     };
 
     let duration_ms = start.elapsed().as_millis() as i32;
