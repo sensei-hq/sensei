@@ -163,6 +163,24 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 
     spawn_root_watchers(&state, task_queue.clone()).await;
 
+    // Log retention: prune public.logs rows older than 30 days, on startup and
+    // then daily. The task logger writes two rows per task, so large scans add
+    // hundreds of thousands of rows; this keeps the table bounded.
+    {
+        let pg = state.pg.clone();
+        tokio::spawn(async move {
+            const RETENTION_DAYS: i32 = 30;
+            loop {
+                match pg.prune_logs(RETENTION_DAYS).await {
+                    Ok(n) if n > 0 => tracing::info!("log retention: pruned {n} log rows older than {RETENTION_DAYS}d"),
+                    Err(e) => tracing::warn!("log retention prune failed: {e}"),
+                    _ => {}
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+            }
+        });
+    }
+
     (create_router(state), task_queue)
 }
 
