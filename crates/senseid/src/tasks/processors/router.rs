@@ -22,8 +22,19 @@ pub fn process_file(abs_path: &str, repo_path: &str, repo_id: &str) -> Result<Fi
         .and_then(|e| e.to_str())
         .unwrap_or("");
 
-    let content = std::fs::read_to_string(file_path)
+    let raw = std::fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read: {}", e))?;
+
+    // Normalize line endings to LF before any parsing. tree-sitter byte offsets
+    // and the per-line / byte buffers used for text extraction must agree; a
+    // CRLF file otherwise yields node byte-ranges (counted over the CRLF source)
+    // that overshoot a CR-stripped extraction buffer and panic the parser
+    // (observed on CRLF-terminated .py files). Avoids the realloc for LF files.
+    let content = if raw.contains('\r') {
+        raw.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        raw
+    };
 
     // Route by file type
     match ext {
@@ -52,5 +63,35 @@ pub fn process_file(abs_path: &str, repo_path: &str, repo_id: &str) -> Result<Fi
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A CRLF-terminated source file must parse without panicking. Before line
+    /// endings were normalized, tree-sitter byte offsets (over the CRLF bytes)
+    /// overshot the extraction buffer and panicked on such files.
+    #[test]
+    fn process_file_handles_crlf_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crlf.py");
+        // Function body padded so node byte-ranges are well past a CR-stripped
+        // length — the condition that triggered the panic.
+        let mut src = String::from("def greet(name):\r\n");
+        for i in 0..200 {
+            src.push_str(&format!("    x{i} = compute(name, {i})  # pad line\r\n"));
+        }
+        src.push_str("    return name\r\n");
+        std::fs::write(&path, &src).unwrap();
+
+        let result = process_file(&path.to_string_lossy(), dir.path().to_str().unwrap(), "repo");
+        let parsed = result.expect("CRLF file should parse, not error");
+        assert!(
+            parsed.symbols.iter().any(|s| s.name == "greet"),
+            "expected the `greet` function symbol, got {:?}",
+            parsed.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
     }
 }
