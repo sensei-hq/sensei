@@ -2300,6 +2300,20 @@ impl PgStore {
         Ok(())
     }
 
+    /// Delete `public.logs` rows older than `days` days. The task logger writes
+    /// two rows per task, so large scans add hundreds of thousands of rows;
+    /// this enforces a retention window. Returns the number of rows removed.
+    pub async fn prune_logs(&self, days: i32) -> Result<u64, String> {
+        let r = sqlx_core::query::query(
+            "DELETE FROM public.logs WHERE logged_at < now() - (interval '1 day' * $1)"
+        )
+            .bind(days)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(r.rows_affected())
+    }
+
     // ── Raw ──────────────────────────────────────────────────────────
 
     /// Execute a parameterized query returning unresolved edges.

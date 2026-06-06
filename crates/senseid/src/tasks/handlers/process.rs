@@ -408,6 +408,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // worker yields, the watchdog can fire, and one bad file can't wedge the
     // pool. A read/parse error is tolerated (skip, don't fail) so it never
     // blocks the folder's resolve_edges barrier.
+    let folder_id = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]));
     let abs_owned = abs_path.clone();
     let folder_path_owned = task.folder_path.clone();
     let folder_name_owned = folder_name.to_string();
@@ -417,11 +418,24 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let result = match parsed {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
+            // Read/parse error — record per-file in index_errors (surfaced in the
+            // UI) instead of silently dropping it.
+            if let Some(fid) = &folder_id {
+                ctx.pg().log_index_error(fid, abs_path, &e, Some(ext), Some("parse")).await.ok();
+            }
             tracing::debug!("process_file: skipping unparseable {abs_path}: {e}");
             return Ok(0);
         }
         Err(join_err) => {
-            tracing::warn!("process_file: parse panicked for {abs_path}: {join_err}");
+            // The parser panicked (e.g. a tree-sitter node byte-range past the
+            // source). spawn_blocking turned it into a JoinError so the worker
+            // survives; record which file so panicking inputs are observable
+            // rather than vanishing.
+            let msg = format!("parser panicked: {join_err}");
+            if let Some(fid) = &folder_id {
+                ctx.pg().log_index_error(fid, abs_path, &msg, Some(ext), Some("parse")).await.ok();
+            }
+            tracing::warn!("process_file: {abs_path}: {msg}");
             return Ok(0);
         }
     };
