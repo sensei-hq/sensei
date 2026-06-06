@@ -58,14 +58,22 @@ pub async fn embed_nodes(ctx: &TaskContext, task: &Task) -> Result<u32, String> 
     use gateway::types::capability::Capability;
     use gateway::types::request::{InferenceRequest, Payload};
 
-    let folder = ctx.pg().get_repo_by_path(&task.folder_path).await.ok().flatten();
+    let folder = match ctx.pg().get_repo_by_path(&task.folder_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("embed_nodes: {} — get_repo_by_path failed: {e}", task.folder_path);
+            return Ok(0);
+        }
+    };
     let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]))
     else {
+        tracing::warn!("embed_nodes: {} — folder not found by path", task.folder_path);
         return Ok(0); // folder removed before this barrier ran — nothing to embed
     };
 
     // (id, kind, name, signature, file_path) for each node still missing an embedding.
     let nodes = ctx.pg().nodes_without_embeddings(&folder_id, 10_000).await?;
+    tracing::debug!("embed_nodes: {} (id={folder_id}) — {} pending nodes", task.folder_path, nodes.len());
     if nodes.is_empty() {
         return Ok(0);
     }
