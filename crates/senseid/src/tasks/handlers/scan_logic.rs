@@ -161,6 +161,40 @@ pub fn classify_folders(
     result
 }
 
+/// Build the complete subfolder tree under a project root from the set of
+/// directories that contain indexable files. Intermediate ancestors (dirs that
+/// hold no files directly but lie between the root and a file-bearing dir) are
+/// included so the tree has no gaps. Returns `(dir, parent_dir)` pairs ordered
+/// parent-before-child; the parent of a top-level dir is `repo_path` itself.
+/// The repo root is never included — storage starts at the project root, and
+/// wrapper directories above it are never passed in.
+pub fn subfolder_tree(repo_path: &Path, file_dirs: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    let mut all: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for d in file_dirs {
+        if d == repo_path || !d.starts_with(repo_path) {
+            continue;
+        }
+        let mut cur: Option<&Path> = Some(d.as_path());
+        while let Some(p) = cur {
+            if p == repo_path || !p.starts_with(repo_path) {
+                break;
+            }
+            all.insert(p.to_path_buf());
+            cur = p.parent();
+        }
+    }
+    let mut sorted: Vec<PathBuf> = all.into_iter().collect();
+    // Shallowest first so a parent is always created before its children.
+    sorted.sort_by_key(|d| d.components().count());
+    sorted
+        .into_iter()
+        .map(|d| {
+            let parent = d.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| repo_path.to_path_buf());
+            (d, parent)
+        })
+        .collect()
+}
+
 /// True if a directory looks like a project root with indexable source: it has a
 /// recognised manifest (`detect_stack`) or at least one non-binary source file
 /// directly inside it. Distinguishes a "quasi-repo" (a project the developer
@@ -388,6 +422,37 @@ mod tests {
         let empty = tmp.path().join("e");
         std::fs::create_dir_all(&empty).unwrap();
         assert!(!has_indexable_code(&empty), "empty dir => no code");
+    }
+
+    #[test]
+    fn subfolder_tree_includes_intermediates_parent_first() {
+        let root = Path::new("/repo");
+        let dirs = vec![
+            PathBuf::from("/repo/src/api"),
+            PathBuf::from("/repo/src/db"),
+            PathBuf::from("/repo/tests"),
+        ];
+        let tree = subfolder_tree(root, &dirs);
+        let names: Vec<String> = tree.iter().map(|(d, _)| d.to_string_lossy().to_string()).collect();
+
+        // The intermediate /repo/src (no direct files) is included.
+        assert!(names.contains(&"/repo/src".to_string()), "intermediate missing: {names:?}");
+        // The repo root itself is never stored.
+        assert!(!names.contains(&"/repo".to_string()));
+        // Parent appears before its children.
+        let pos = |s: &str| names.iter().position(|n| n == s).unwrap();
+        assert!(pos("/repo/src") < pos("/repo/src/api"));
+        assert!(pos("/repo/src") < pos("/repo/src/db"));
+        // Parent links resolve to the immediate parent (root for top-level dirs).
+        for (d, parent) in &tree {
+            match d.to_string_lossy().as_ref() {
+                "/repo/src" => assert_eq!(parent, Path::new("/repo")),
+                "/repo/tests" => assert_eq!(parent, Path::new("/repo")),
+                "/repo/src/api" => assert_eq!(parent, Path::new("/repo/src")),
+                "/repo/src/db" => assert_eq!(parent, Path::new("/repo/src")),
+                other => panic!("unexpected dir {other}"),
+            }
+        }
     }
 
     #[test]
