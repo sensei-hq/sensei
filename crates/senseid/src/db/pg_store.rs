@@ -315,6 +315,29 @@ impl PgStore {
         self.upsert_folder(root_id, kind, name, name, abs_path, None, None).await
     }
 
+    /// Upsert a structural subfolder (`kind='folder'`) within a project, linked
+    /// to its parent folder. Status is terminal (`indexed`) — these rows model
+    /// the filesystem tree, not scan progress. On conflict the kind is preserved
+    /// so a path that is actually a (nested) project root is never reclassified.
+    pub async fn upsert_subfolder(
+        &self, root_id: &uuid::Uuid, name: &str, path: &str, abs_path: &str,
+        parent_id: Option<&uuid::Uuid>, project_id: Option<&uuid::Uuid>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
+             VALUES($1, 'folder'::sensei.folder_kind, 'indexed'::sensei.folder_status, $2, $3, $4, $5, $6)
+             ON CONFLICT(abs_path) DO UPDATE SET
+                name = EXCLUDED.name,
+                parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
+                project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+                modified_at = now()
+             RETURNING id"
+        )
+            .bind(root_id).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
+            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     /// Get a repo (folder with kind='git'/'subtree') by abs_path.
     pub async fn get_repo_by_path(&self, abs_path: &str) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
