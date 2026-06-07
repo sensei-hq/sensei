@@ -77,6 +77,15 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     };
 
+    // A quasi-repo (non-git project root) is tagged so the UI can surface it as
+    // provisional — the user can discard it or promote it (git init → re-scanned
+    // as a real repo). The folder kind=standalone already marks the folder; this
+    // marks the project. Idempotent (tag union).
+    if is_quasi
+        && let Ok(pid) = uuid::Uuid::parse_str(&project_id) {
+            ctx.pg().set_project_identity(&pid, None, None, &[], &["quasi-repo".to_string()]).await.ok();
+        }
+
     // ── 4. Emit: folder add with stack + file count ──────────────────
     // Reuse the lookup we already did to derive folder_name. abs_path is
     // unique on sensei.folders so the row identifies this exact repo
@@ -85,6 +94,11 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let folder_uuid_str = folder_by_path.as_ref()
         .and_then(|f| f["id"].as_str().map(|s| s.to_string()))
         .unwrap_or_else(|| format!("f-{}", folder_name));
+    // Capture the project-root folder id + watch-root id now (Copy), before
+    // `folder_by_path` is moved below; used later to materialize the subfolder
+    // tree.
+    let project_root_uuid = folder_by_path.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]));
+    let repo_root_uuid = folder_by_path.as_ref().and_then(|f| crate::api::util::json_uuid(&f["root_id"]));
 
     emit(crate::api::events::StateEvent::folder_add(crate::api::events::ScanFolder {
         id: folder_uuid_str.clone(),
@@ -198,6 +212,32 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 all_file_task_ids.push(file_id);
 
                 // file_id collected in all_file_task_ids for barrier
+            }
+        }
+    }
+
+    // Materialize the subfolder tree as kind=folder rows so the project's
+    // directory structure is navigable. Storage starts at the project root —
+    // wrapper directories above it were never registered. Built top-down so each
+    // child's parent_id resolves to an already-created folder row.
+    if let (Some(root_uuid), Some(proj_root_uuid), Ok(pid)) =
+        (repo_root_uuid, project_root_uuid, uuid::Uuid::parse_str(&project_id))
+    {
+        let file_dirs: Vec<std::path::PathBuf> = dirs.iter().cloned().collect();
+        let tree = super::scan_logic::subfolder_tree(repo_path, &file_dirs);
+        let mut path_to_id: std::collections::HashMap<std::path::PathBuf, uuid::Uuid> =
+            std::collections::HashMap::new();
+        path_to_id.insert(repo_path.to_path_buf(), proj_root_uuid);
+        for (dir, parent) in tree {
+            let parent_id = path_to_id.get(&parent).copied().unwrap_or(proj_root_uuid);
+            let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let rel = dir.strip_prefix(repo_path).unwrap_or(&dir).to_string_lossy().to_string();
+            let abs = dir.to_string_lossy().to_string();
+            if let Ok(fid) = ctx.pg()
+                .upsert_subfolder(&root_uuid, &name, &rel, &abs, Some(&parent_id), Some(&pid))
+                .await
+            {
+                path_to_id.insert(dir, fid);
             }
         }
     }
