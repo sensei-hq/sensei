@@ -39,6 +39,9 @@ pub enum TaskKind {
     DetectCommunities,
     ExtractDeps,
     MeasureVerdicts,
+    /// Re-reconcile a project root's identity from its README frontmatter
+    /// (watcher-triggered on a root README change). Lightweight: no file walk.
+    ReconcileIdentity,
 }
 
 impl std::fmt::Display for TaskKind {
@@ -62,6 +65,7 @@ impl std::fmt::Display for TaskKind {
             Self::DetectCommunities => write!(f, "detect_communities"),
             Self::ExtractDeps => write!(f, "extract_deps"),
             Self::MeasureVerdicts => write!(f, "measure_verdicts"),
+            Self::ReconcileIdentity => write!(f, "reconcile_identity"),
         }
     }
 }
@@ -83,6 +87,7 @@ impl TaskKind {
             | TaskKind::DeleteFolder
             | TaskKind::ExtractDeps
             | TaskKind::BranchSwitch
+            | TaskKind::ReconcileIdentity
             | TaskKind::MeasureVerdicts => Duration::from_secs(180),
             // Whole-repo, barrier, embedding and network-bound doc-indexing
             // tasks can legitimately run for minutes on a large repository.
