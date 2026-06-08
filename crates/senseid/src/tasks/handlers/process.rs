@@ -316,94 +316,134 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     }
 
-    // ── Repo-level metadata + identity (filesystem-only, READ-ONLY) ───
-    {
-        use crate::tasks::processors::metadata;
-
-        let icon = metadata::scan_icons(repo_path);
-        let links = metadata::scan_external_links(repo_path);
-        let summary = metadata::extract_summary(repo_path);
-
-        // Persist metadata on the folder record via PgStore
-        let folder = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten();
-        if let Some(folder) = folder
-            && let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) {
-                // Folder props: scanned metadata + the parsed frontmatter blob.
-                let meta = serde_json::json!({
-                    "icon": icon,
-                    "external_links": links.links,
-                    "summary": summary,
-                    "frontmatter": serde_json::to_value(&fm).unwrap_or(serde_json::Value::Null),
-                });
-                ctx.pg().set_folder_props(&folder_id, &meta).await.ok();
-
-                // Icon: root projects only — frontmatter `icon` is set on root
-                // READMEs, not subfolders/subtrees, so presence gates it. Each
-                // variant is classified URL vs repo-relative so the UI knows how
-                // to load it; an optional `icon_dark` carries the dark variant.
-                if let Some(icon_path) = fm.icon.as_deref() {
-                    let mut icons = serde_json::json!({
-                        "custom": icon_path,
-                        "custom_is_url": metadata::icon_is_url(icon_path),
-                    });
-                    if let Some(dark) = fm.icon_dark.as_deref() {
-                        icons["custom_dark"] = serde_json::json!(dark);
-                        icons["custom_dark_is_url"] = serde_json::json!(metadata::icon_is_url(dark));
-                    }
-                    ctx.pg().set_folder_icons(&folder_id, &icons).await.ok();
-                }
-
-                // Project identity (reconciled every scan): description/client/
-                // stack/tags from frontmatter, best-guess stack fallback.
-                if let Ok(pid) = uuid::Uuid::parse_str(&project_id) {
-                    let id_stack: Vec<String> =
-                        if fm.stack.is_empty() { stack.clone() } else { fm.stack.clone() };
-                    let mut tags: Vec<String> = Vec::new();
-                    if let Some(role) = fm.role.as_deref() {
-                        // Keep the raw role as a project tag (lossless), and map
-                        // known generic roles onto the folder.role enum column.
-                        tags.push(format!("role:{role}"));
-                        if let Some(fr) = metadata::folder_role_from_frontmatter(role) {
-                            ctx.pg().update_folder_role(&folder_id, Some(fr)).await.ok();
-                        }
-                    }
-                    if let Some(org) = fm.organization.as_deref() {
-                        tags.push(format!("org:{}", metadata::slugify(org)));
-                    }
-                    // client = frontmatter `client` only (distinct from
-                    // organization — org is modeled as a namespace + `org:` tag,
-                    // never conflated into projects.client).
-                    ctx.pg().set_project_identity(
-                        &pid,
-                        fm.summary.as_deref(),
-                        fm.client.as_deref(),
-                        &id_stack,
-                        &tags,
-                    ).await.ok();
-
-                    // Namespaces: organization/project/team + a technology
-                    // namespace per detected language; link this folder to each.
-                    let mut ns: Vec<(&str, String)> = Vec::new();
-                    if let Some(org) = fm.organization.as_deref() { ns.push(("organization", org.to_string())); }
-                    ns.push(("project", project_name.to_string()));
-                    if let Some(team) = fm.team.as_deref() { ns.push(("team", team.to_string())); }
-                    for lang in &id_stack { ns.push(("technology", lang.clone())); }
-                    for (scope, name) in &ns {
-                        let slug = metadata::slugify(name);
-                        if slug.is_empty() { continue; }
-                        if let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await {
-                            ctx.pg().link_folder_namespace(&folder_id, &ns_id).await.ok();
-                        }
-                    }
-                }
-            }
-    }
+    // Repo-level metadata + identity reconcile from README frontmatter
+    // (filesystem-only, READ-ONLY). Extracted into reconcile_repo_identity so
+    // the watcher can re-run it incrementally on a README change.
+    let _ = reconcile_repo_identity(ctx, &task.path).await;
 
     // Self-healing reconcile: re-tag orphaned discovery projects (no delete).
     ctx.pg().mark_orphaned_projects().await.ok();
 
     tracing::info!("process_git_folder: {} — {} dirs, {} file tasks, barrier=#{}", folder_name, dirs.len(), all_file_task_ids.len(), resolve_id);
     Ok(all_file_task_ids.len() as u32)
+}
+
+// ── Reconcile identity ─────────────────────────────────────────────────────
+
+/// Reconcile a project root's identity FROM its README frontmatter — folder
+/// props (incl. the frontmatter snapshot), icons, project identity, role, and
+/// folder_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
+/// can't trigger a file-change loop), idempotent, and additive. Shared by the
+/// scan pipeline (process_git_folder) and the watcher's ReconcileIdentity task.
+pub async fn reconcile_repo_identity(ctx: &TaskContext, repo_abs_path: &str) -> Result<u32, String> {
+    use crate::tasks::processors::metadata;
+    let repo_path = Path::new(repo_abs_path);
+
+    let Some(folder) = ctx.pg().get_repo_by_path(repo_abs_path).await.ok().flatten() else {
+        return Ok(0); // not a registered folder
+    };
+    // Only project roots carry identity. A README inside a subfolder
+    // (kind='folder') must not reconcile project/namespace/icon state.
+    if !matches!(folder["kind"].as_str(), Some("git" | "standalone" | "subtree")) {
+        return Ok(0);
+    }
+    let Some(folder_id) = crate::api::util::json_uuid(&folder["id"]) else { return Ok(0); };
+
+    let fm = metadata::read_frontmatter(repo_path).unwrap_or_default();
+    let icon = metadata::scan_icons(repo_path);
+    let links = metadata::scan_external_links(repo_path);
+    let summary = metadata::extract_summary(repo_path);
+    let stack = super::scan_logic::detect_stack(repo_path);
+
+    // Folder props: scanned metadata + the parsed frontmatter blob. The
+    // frontmatter snapshot here is what reconcile_identity compares against to
+    // suppress no-op re-reconciles.
+    let meta = serde_json::json!({
+        "icon": icon,
+        "external_links": links.links,
+        "summary": summary,
+        "frontmatter": serde_json::to_value(&fm).unwrap_or(serde_json::Value::Null),
+    });
+    ctx.pg().set_folder_props(&folder_id, &meta).await.ok();
+
+    // Icon variants + URL-vs-repo-relative classification (root READMEs only).
+    if let Some(icon_path) = fm.icon.as_deref() {
+        let mut icons = serde_json::json!({
+            "custom": icon_path,
+            "custom_is_url": metadata::icon_is_url(icon_path),
+        });
+        if let Some(dark) = fm.icon_dark.as_deref() {
+            icons["custom_dark"] = serde_json::json!(dark);
+            icons["custom_dark_is_url"] = serde_json::json!(metadata::icon_is_url(dark));
+        }
+        ctx.pg().set_folder_icons(&folder_id, &icons).await.ok();
+    }
+
+    // Project identity + role + namespaces (only when linked to a project).
+    if let Some(pid) = folder["project_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        // Authoritative project name (matches what the scan created) for the
+        // `project` namespace; fall back to frontmatter / folder name.
+        let project_name = ctx.pg().get_project(&pid).await.ok().flatten()
+            .and_then(|p| p["name"].as_str().map(String::from))
+            .or_else(|| fm.project.clone())
+            .or_else(|| folder["name"].as_str().map(String::from))
+            .unwrap_or_default();
+
+        let id_stack: Vec<String> =
+            if fm.stack.is_empty() { stack.clone() } else { fm.stack.clone() };
+        let mut tags: Vec<String> = Vec::new();
+        if let Some(role) = fm.role.as_deref() {
+            // Keep the raw role as a project tag (lossless), map known generic
+            // roles onto the folder.role enum column.
+            tags.push(format!("role:{role}"));
+            if let Some(fr) = metadata::folder_role_from_frontmatter(role) {
+                ctx.pg().update_folder_role(&folder_id, Some(fr)).await.ok();
+            }
+        }
+        if let Some(org) = fm.organization.as_deref() {
+            tags.push(format!("org:{}", metadata::slugify(org)));
+        }
+        ctx.pg().set_project_identity(
+            &pid, fm.summary.as_deref(), fm.client.as_deref(), &id_stack, &tags,
+        ).await.ok();
+
+        let mut ns: Vec<(&str, String)> = Vec::new();
+        if let Some(org) = fm.organization.as_deref() { ns.push(("organization", org.to_string())); }
+        if !project_name.is_empty() { ns.push(("project", project_name.clone())); }
+        if let Some(team) = fm.team.as_deref() { ns.push(("team", team.to_string())); }
+        for lang in &id_stack { ns.push(("technology", lang.clone())); }
+        for (scope, name) in &ns {
+            let slug = metadata::slugify(name);
+            if slug.is_empty() { continue; }
+            if let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await {
+                ctx.pg().link_folder_namespace(&folder_id, &ns_id).await.ok();
+            }
+        }
+    }
+    Ok(1)
+}
+
+/// Watcher-triggered re-reconcile: re-apply identity when a project-root README
+/// changes — but only if its frontmatter actually differs from the snapshot we
+/// last stored. The change-detection makes a frontmatter write-back (#22) or a
+/// body-only README edit a no-op, so a UI-driven change → README write → watcher
+/// event neither loops nor churns the DB. `task.path` is the project-root abs
+/// path (set by the watcher).
+pub async fn reconcile_identity(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    use crate::tasks::processors::metadata;
+    let repo_path = Path::new(&task.path);
+
+    let fresh = serde_json::to_value(metadata::read_frontmatter(repo_path).unwrap_or_default())
+        .unwrap_or(serde_json::Value::Null);
+    let stored = ctx.pg().get_repo_by_path(&task.path).await.ok().flatten()
+        .and_then(|f| f.get("props").and_then(|p| p.get("frontmatter")).cloned());
+    if stored.as_ref() == Some(&fresh) {
+        tracing::debug!("reconcile_identity: {} — frontmatter unchanged, skipping", task.path);
+        return Ok(0);
+    }
+
+    tracing::info!("reconcile_identity: {} — frontmatter changed, reconciling", task.path);
+    reconcile_repo_identity(ctx, &task.path).await
 }
 
 // ── Process Folder ────────────────────────────────────────────────────────
