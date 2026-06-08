@@ -338,9 +338,19 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                 ctx.pg().set_folder_props(&folder_id, &meta).await.ok();
 
                 // Icon: root projects only — frontmatter `icon` is set on root
-                // READMEs, not subfolders/subtrees, so presence gates it.
+                // READMEs, not subfolders/subtrees, so presence gates it. Each
+                // variant is classified URL vs repo-relative so the UI knows how
+                // to load it; an optional `icon_dark` carries the dark variant.
                 if let Some(icon_path) = fm.icon.as_deref() {
-                    ctx.pg().set_folder_icons(&folder_id, &serde_json::json!({"custom": icon_path})).await.ok();
+                    let mut icons = serde_json::json!({
+                        "custom": icon_path,
+                        "custom_is_url": metadata::icon_is_url(icon_path),
+                    });
+                    if let Some(dark) = fm.icon_dark.as_deref() {
+                        icons["custom_dark"] = serde_json::json!(dark);
+                        icons["custom_dark_is_url"] = serde_json::json!(metadata::icon_is_url(dark));
+                    }
+                    ctx.pg().set_folder_icons(&folder_id, &icons).await.ok();
                 }
 
                 // Project identity (reconciled every scan): description/client/
@@ -349,7 +359,14 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
                     let id_stack: Vec<String> =
                         if fm.stack.is_empty() { stack.clone() } else { fm.stack.clone() };
                     let mut tags: Vec<String> = Vec::new();
-                    if let Some(role) = fm.role.as_deref() { tags.push(format!("role:{role}")); }
+                    if let Some(role) = fm.role.as_deref() {
+                        // Keep the raw role as a project tag (lossless), and map
+                        // known generic roles onto the folder.role enum column.
+                        tags.push(format!("role:{role}"));
+                        if let Some(fr) = metadata::folder_role_from_frontmatter(role) {
+                            ctx.pg().update_folder_role(&folder_id, Some(fr)).await.ok();
+                        }
+                    }
                     if let Some(org) = fm.organization.as_deref() {
                         tags.push(format!("org:{}", metadata::slugify(org)));
                     }

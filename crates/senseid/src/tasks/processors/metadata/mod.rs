@@ -13,5 +13,5 @@ mod summary;
 // `crate::tasks::processors::metadata::X` continue to work.
 pub use icons::scan_icons;
 pub use external_links::scan_external_links;
-pub use frontmatter::{read_frontmatter, slugify};
+pub use frontmatter::{folder_role_from_frontmatter, icon_is_url, read_frontmatter, slugify};
 pub use summary::extract_summary;
