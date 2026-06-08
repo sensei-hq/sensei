@@ -17,7 +17,10 @@ pub struct Frontmatter {
     pub stack: Vec<String>,
     pub summary: Option<String>,
     pub tagline: Option<String>,
+    /// Default/light icon. A repo-relative path (e.g. `sensei.svg`) or a URL.
     pub icon: Option<String>,
+    /// Optional dark-mode icon variant (`icon_dark:` in frontmatter).
+    pub icon_dark: Option<String>,
 }
 
 /// Parse YAML frontmatter from the top of a markdown document. Returns `None`
@@ -76,7 +79,37 @@ pub fn parse_frontmatter(content: &str) -> Option<Frontmatter> {
         summary: str_field("summary"),
         tagline: str_field("tagline"),
         icon: str_field("icon"),
+        icon_dark: str_field("icon_dark"),
     })
+}
+
+/// Classify an icon reference as a remote URL (vs a repo-relative path) so the
+/// consumer knows whether to load it directly or resolve it against the repo.
+pub fn icon_is_url(path: &str) -> bool {
+    let p = path.trim();
+    p.starts_with("http://") || p.starts_with("https://") || p.starts_with("//") || p.starts_with("data:")
+}
+
+/// Map a free-text frontmatter `role` to a canonical `folder_role` enum value,
+/// accepting common synonyms. Returns `None` for values that aren't generic
+/// folder roles (e.g. project-specific `marketplace`, or structural `monorepo`)
+/// — those are kept only as a `role:<raw>` project tag by the caller.
+pub fn folder_role_from_frontmatter(role: &str) -> Option<&'static str> {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "backend" | "server" | "api" | "service" | "daemon" => Some("backend"),
+        "frontend" | "ui" | "client" => Some("frontend"),
+        "library" | "lib" | "package" | "sdk" => Some("library"),
+        "docs" | "doc" | "documentation" => Some("docs"),
+        "infra" | "infrastructure" | "ops" | "devops" | "ci" => Some("infra"),
+        "website" | "site" | "web" | "marketing" => Some("website"),
+        "desktop" | "app" => Some("desktop"),
+        "mobile" | "ios" | "android" => Some("mobile"),
+        "config" | "configuration" | "settings" => Some("config"),
+        "packaging" | "tap" | "homebrew" | "brew" | "formula" | "distribution" => Some("packaging"),
+        // monorepo (structural), marketplace/extensions (project-specific, rare),
+        // and anything unrecognised → no enum role; kept as a tag.
+        _ => None,
+    }
 }
 
 /// Normalize a name into a slug (lowercase, non-alphanumeric runs collapsed to
@@ -137,6 +170,32 @@ mod tests {
     fn stack_accepts_comma_string() {
         let fm = parse_frontmatter("---\nstack: rust, TypeScript\n---\n").unwrap();
         assert_eq!(fm.stack, vec!["rust", "typescript"]);
+    }
+
+    #[test]
+    fn icon_variants_and_url_classification() {
+        let fm = parse_frontmatter("---\nicon: logo.svg\nicon_dark: logo-dark.svg\n---\n").unwrap();
+        assert_eq!(fm.icon.as_deref(), Some("logo.svg"));
+        assert_eq!(fm.icon_dark.as_deref(), Some("logo-dark.svg"));
+        assert!(!icon_is_url("logo.svg"));
+        assert!(!icon_is_url("assets/icon.png"));
+        assert!(icon_is_url("https://cdn.example.com/i.svg"));
+        assert!(icon_is_url("//cdn.example.com/i.svg"));
+        assert!(icon_is_url("data:image/svg+xml;base64,AAAA"));
+    }
+
+    #[test]
+    fn folder_role_maps_synonyms_and_skips_specific() {
+        assert_eq!(folder_role_from_frontmatter("desktop"), Some("desktop"));
+        assert_eq!(folder_role_from_frontmatter("App"), Some("desktop"));
+        assert_eq!(folder_role_from_frontmatter("website"), Some("website"));
+        assert_eq!(folder_role_from_frontmatter("homebrew"), Some("packaging"));
+        assert_eq!(folder_role_from_frontmatter("  Library "), Some("library"));
+        assert_eq!(folder_role_from_frontmatter("mobile"), Some("mobile"));
+        // project-specific / structural → no enum role (kept as a tag)
+        assert_eq!(folder_role_from_frontmatter("monorepo"), None);
+        assert_eq!(folder_role_from_frontmatter("marketplace"), None);
+        assert_eq!(folder_role_from_frontmatter("whatever"), None);
     }
 
     #[test]
