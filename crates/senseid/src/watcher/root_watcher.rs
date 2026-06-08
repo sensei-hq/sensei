@@ -291,6 +291,21 @@ impl RootWatcher {
                             .with_module(&mod_id);
                         let id = queue.enqueue(task).await;
                         file_task_ids.push(id);
+
+                        // If a README changed, re-reconcile its directory's
+                        // identity from frontmatter. Enqueued for the README's
+                        // parent; the handler no-ops unless that parent is a
+                        // project root AND the frontmatter actually changed (so a
+                        // subfolder README, or a write-back echo, costs nothing).
+                        if path.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.eq_ignore_ascii_case("readme.md") || n.eq_ignore_ascii_case("readme"))
+                            && let Some(parent) = path.parent()
+                        {
+                            queue.enqueue(
+                                Task::new(TaskKind::ReconcileIdentity, &parent.to_string_lossy(), &parent.to_string_lossy())
+                            ).await;
+                        }
                     }
                 }
             }
