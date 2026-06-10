@@ -561,9 +561,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
             let mut held = Vec::new();
-            for stream in listener.incoming() {
-                // Hold the connection open, never write a response.
-                if let Ok(s) = stream { held.push(s); }
+            // Hold each accepted connection open, never write a response.
+            for s in listener.incoming().flatten() {
+                held.push(s);
             }
         });
 
