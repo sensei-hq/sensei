@@ -5,6 +5,14 @@ create table if not exists memories (
 , project_id               uuid          references sensei.projects(id) on delete cascade
 , scope                    memory_scope  not null default 'project'
 , scope_filter             text
+-- Governance plane: a memory positioned on a namespace (where it applies) +
+-- enforcement (how much authority it carries). namespace_id supersedes the
+-- legacy scope/scope_filter/project_id triple for resolution; the old columns
+-- are retained during the transition so the flat assemble_context keeps working.
+, namespace_id             uuid          references sensei.namespaces(id) on delete set null
+, enforcement              enforcement   not null default 'recommended'
+, origin                   text          not null default 'learned'
+, source_id                uuid
 , type                     memory_type   not null
 , title                    text          not null
 , content                  text          not null
@@ -26,6 +34,11 @@ create index if not exists memories_project_id_idx
 create index if not exists memories_scope_idx
     on memories(scope, scope_filter)
  where status = 'active';
+
+-- Resolution lookup: active rules for a namespace ordered by authority.
+create index if not exists memories_namespace_idx
+    on memories(namespace_id, enforcement, status)
+ where status in ('active', 'reinforced', 'battle_tested');
 
 create index if not exists memories_strength_idx
     on memories(strength desc)
@@ -50,7 +63,15 @@ comment on column memories.id
 comment on column memories.project_id
      is 'Foreign key to projects. Null = global memory (applies to all projects).';
 comment on column memories.scope
-     is 'When to surface: global (always), project (this project), stack (matching tech), task_type (matching task), module (matching code area).';
+     is 'When to surface: global (always), project (this project), stack (matching tech), task_type (matching task), module (matching code area). Legacy axis — superseded by namespace_id for governance resolution.';
+comment on column memories.namespace_id
+     is 'Governance scope instance this rule applies to (organization/project/technology/...). Null = unscoped (general). Resolution gathers rules across a repo''s member namespaces + always-on general/user.';
+comment on column memories.enforcement
+     is 'Authority axis: advisory < recommended < required < mandatory. mandatory = non-overridable constitution tier (a more specific scope cannot weaken it).';
+comment on column memories.origin
+     is 'Provenance: learned (knowledge plane), authored (written directly), promoted (elevated from a narrower scope), federated (pulled from a hive-mind).';
+comment on column memories.source_id
+     is 'When origin=promoted/federated, the id of the source memory (or remote record) this was derived from. Null otherwise.';
 comment on column memories.scope_filter
      is 'Qualifier for scope: stack name (e.g. "rust"), task type (e.g. "fix"), module path (e.g. "src/api"). Null for global/project scope.';
 comment on column memories.type
