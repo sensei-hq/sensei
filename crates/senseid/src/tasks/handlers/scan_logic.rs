@@ -274,6 +274,79 @@ pub fn count_indexable_files(path: &Path) -> (Vec<PathBuf>, u32) {
     (files, count)
 }
 
+/// True if a directory tree holds at least one indexable (non-binary) source
+/// file, respecting the same ignore patterns the scan uses. Short-circuits on
+/// the first match. Used by the scan reconcile to tell a provably-dead former
+/// project root (empty / no content left on disk) from one that still carries
+/// real content the user may want to keep.
+pub fn dir_has_indexable_content(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    let exclude = super::helpers::build_globset();
+    let walker = super::helpers::build_walker(path).build();
+    for entry in walker.flatten() {
+        if !entry.path().is_file() {
+            continue;
+        }
+        let rel = entry.path().strip_prefix(path).unwrap_or(entry.path());
+        if exclude.is_match(&*rel.to_string_lossy()) {
+            continue;
+        }
+        let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext.is_empty() || super::helpers::is_binary_ext(ext) {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// What to do with a DB-recorded project root the current scan did NOT
+/// re-discover. Returned by [`classify_stale_root`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum StaleAction {
+    /// Still a live project root (re-discovered this scan) — leave it alone.
+    Keep,
+    /// Provably dead: the path is gone, is an empty husk whose indexed nodes no
+    /// longer reflect disk, or now sits inside a still-live root that owns the
+    /// subtree. Remove the row (cascading its nodes and subtree).
+    Remove,
+    /// The path still exists with real content but has no live owner — this is
+    /// ambiguous (an archive the user kept? a container?), so tag it stale and
+    /// let the user decide. The scan never auto-deletes unaccounted-for content.
+    MarkStale,
+}
+
+/// Decide the fate of a DB-recorded project root (`kind` git/standalone/subtree)
+/// that the current scan did not re-discover as a root. Pure: the disk facts
+/// (`exists`, `has_content`) are injected so the rule is unit-testable.
+///
+/// `live_roots` is the set of project-root paths the scan just discovered (real
+/// git repos + quasi-repos). The scan is otherwise additive — it only ever
+/// *registers* roots it finds — so without this reconcile a root that lost its
+/// `.git`, was emptied, or was moved would linger forever as a phantom project.
+pub fn classify_stale_root(
+    folder: &Path,
+    live_roots: &std::collections::HashSet<PathBuf>,
+    exists: bool,
+    has_content: bool,
+) -> StaleAction {
+    if live_roots.contains(folder) {
+        return StaleAction::Keep;
+    }
+    // Inside a still-live root → that root now owns this subtree (it gets
+    // re-materialised as kind=folder rows), so drop the stale root row and let
+    // it be recreated under the correct parent.
+    if live_roots.iter().any(|r| r.as_path() != folder && folder.starts_with(r)) {
+        return StaleAction::Remove;
+    }
+    if !exists || !has_content {
+        return StaleAction::Remove; // gone, or an empty husk with stale nodes
+    }
+    StaleAction::MarkStale
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +634,82 @@ mod tests {
         let (files, count) = count_indexable_files(tmp.path());
         assert!(count >= 2, "expected at least 2 files (main.rs, lib.rs), got {}", count);
         assert!(files.iter().any(|f| f.to_string_lossy().contains("main.rs")));
+    }
+
+    // ── Reconcile: stale-root classification ─────────────────────
+
+    fn live(paths: &[&str]) -> std::collections::HashSet<PathBuf> {
+        paths.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn stale_root_kept_when_rediscovered() {
+        let roots = live(&["/dev/a", "/dev/b"]);
+        assert_eq!(
+            classify_stale_root(Path::new("/dev/a"), &roots, true, true),
+            StaleAction::Keep
+        );
+    }
+
+    #[test]
+    fn stale_root_removed_when_path_gone() {
+        let roots = live(&["/dev/a"]);
+        // /dev/zombie not a live root, no longer on disk → remove
+        assert_eq!(
+            classify_stale_root(Path::new("/dev/zombie"), &roots, false, false),
+            StaleAction::Remove
+        );
+    }
+
+    #[test]
+    fn stale_root_removed_when_empty_husk() {
+        let roots = live(&["/dev/a"]);
+        // exists on disk but holds no indexable content (moved-out husk) → remove
+        assert_eq!(
+            classify_stale_root(Path::new("/dev/husk"), &roots, true, false),
+            StaleAction::Remove
+        );
+    }
+
+    #[test]
+    fn stale_root_removed_when_inside_a_live_root() {
+        let roots = live(&["/dev/repo"]);
+        // a former nested repo now owned by the live root above it — remove even
+        // though it still has content (the live root re-materialises the subtree)
+        assert_eq!(
+            classify_stale_root(Path::new("/dev/repo/sub"), &roots, true, true),
+            StaleAction::Remove
+        );
+    }
+
+    #[test]
+    fn stale_root_marked_when_content_but_no_owner() {
+        let roots = live(&["/dev/a"]);
+        // real content on disk, not a live root, not under any live root →
+        // ambiguous, never auto-delete: mark stale for the user to decide
+        assert_eq!(
+            classify_stale_root(Path::new("/dev/archive"), &roots, true, true),
+            StaleAction::MarkStale
+        );
+    }
+
+    #[test]
+    fn dir_has_indexable_content_distinguishes_husk_from_content() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(!dir_has_indexable_content(&empty), "empty dir => no content");
+
+        let binary = tmp.path().join("binary");
+        std::fs::create_dir_all(&binary).unwrap();
+        std::fs::write(binary.join("logo.png"), [0u8; 8]).unwrap();
+        assert!(!dir_has_indexable_content(&binary), "binary-only => no content");
+
+        let nested = tmp.path().join("nested");
+        std::fs::create_dir_all(nested.join("src/api")).unwrap();
+        std::fs::write(nested.join("src/api/handler.rs"), "fn h() {}").unwrap();
+        assert!(dir_has_indexable_content(&nested), "source in a subdir => content");
     }
 
     #[test]
