@@ -195,24 +195,75 @@ pub fn subfolder_tree(repo_path: &Path, file_dirs: &[PathBuf]) -> Vec<(PathBuf, 
         .collect()
 }
 
-/// True if a directory looks like a project root with indexable source: it has a
-/// recognised manifest (`detect_stack`) or at least one non-binary source file
-/// directly inside it. Distinguishes a "quasi-repo" (a project the developer
-/// forgot to `git init`) from a data / asset / junk folder.
-pub fn has_indexable_code(dir: &Path) -> bool {
-    if !detect_stack(dir).is_empty() {
+/// How confident we are that a non-git directory is a real project root.
+/// Returned by [`classify_quasi_repo`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuasiKind {
+    /// Has a recognised manifest (`Cargo.toml`, `package.json`, `go.mod`, …) —
+    /// strongly likely a real project the developer simply never `git init`'d.
+    Manifest,
+    /// No manifest, but holds recognised source / Markdown files — likely a
+    /// project but unconfirmed (a scattered old code store, a docs folder).
+    /// Indexed, but flagged for the user to keep / organise / discard.
+    LooseCode,
+}
+
+/// True if a file extension marks first-party *source* the scanner treats as a
+/// project signal: a language the parser supports, a common source language we
+/// recognise without a parser adapter, or Markdown docs. Data, config, and
+/// binaries (`.csv`, `.json`, `.txt`, `.png`, …) deliberately do NOT count — a
+/// folder of only those is not a project.
+pub fn is_project_source_ext(ext: &str) -> bool {
+    let e = ext.trim_start_matches('.').to_ascii_lowercase();
+    // Markdown docs: a docs-only folder is a documentation project.
+    if matches!(e.as_str(), "md" | "mdx") {
         return true;
     }
-    let Ok(entries) = std::fs::read_dir(dir) else { return false; };
+    // Anything the parser has a language adapter for is code.
+    if crate::languages::adapter_for_ext(&format!(".{e}")).is_some() {
+        return true;
+    }
+    // Common source languages we recognise as code even without a parser adapter.
+    matches!(
+        e.as_str(),
+        "go" | "rb" | "sh" | "bash" | "zsh" | "fish" | "pl" | "pm" | "php"
+            | "lua" | "r" | "jl" | "scala" | "ex" | "exs" | "erl" | "hs" | "ml"
+            | "dart" | "cs" | "fs" | "fsx" | "clj" | "cljs" | "groovy" | "m" | "mm"
+            | "cxx" | "hh" | "hxx" | "swift" | "scss" | "css" | "html"
+    )
+}
+
+/// Classify a non-git directory as a quasi-repo (a project the developer never
+/// `git init`'d) and how confident we are. `None` means "not a project root" —
+/// only data / config / binaries / nothing recognised — so it is not promoted.
+///
+/// Tier 1 [`QuasiKind::Manifest`]: a recognised manifest → confident project.
+/// Tier 2 [`QuasiKind::LooseCode`]: ≥1 recognised source / `.md` file but no
+/// manifest → indexed, then flagged for review.
+pub fn classify_quasi_repo(dir: &Path) -> Option<QuasiKind> {
+    if !detect_stack(dir).is_empty() {
+        return Some(QuasiKind::Manifest);
+    }
+    let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() { continue; }
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext.is_empty() { continue; }
-        if super::helpers::is_binary_ext(ext) { continue; }
-        return true;
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && is_project_source_ext(ext)
+        {
+            return Some(QuasiKind::LooseCode);
+        }
     }
-    false
+    None
+}
+
+/// True if a directory is a project root worth indexing — a quasi-repo of either
+/// tier (manifest-backed or loose source). Used by [`classify_folders`] to gate
+/// promotion; the tier itself ([`classify_quasi_repo`]) drives the review flag.
+pub fn has_indexable_code(dir: &Path) -> bool {
+    classify_quasi_repo(dir).is_some()
 }
 
 /// Detect if a git folder is a monorepo (has workspace config).
@@ -421,6 +472,55 @@ mod tests {
 
         // No quasi-repos: the only non-git dirs hold no indexable code.
         assert!(!classified.iter().any(|f| f.kind == FolderKind::Standalone));
+    }
+
+    #[test]
+    fn is_project_source_ext_covers_code_and_md_not_data() {
+        // parser languages + common unparsed source + markdown count
+        for e in ["py", "rs", "ts", "cpp", "h", "go", "rb", "sh", "pl", "php", "lua", "md", "mdx"] {
+            assert!(is_project_source_ext(e), "{e} should count as project source");
+            assert!(is_project_source_ext(&format!(".{e}")), "leading-dot {e} should count too");
+        }
+        // data / config / binaries are NOT a project signal on their own
+        for e in ["csv", "txt", "json", "yaml", "toml", "png", "lock", "log", "pdf"] {
+            assert!(!is_project_source_ext(e), "{e} should NOT count as project source");
+        }
+    }
+
+    #[test]
+    fn classify_quasi_repo_tiers_manifest_loose_and_none() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Tier 1 — manifest → confident project
+        let manifest = tmp.path().join("manifest");
+        std::fs::create_dir_all(&manifest).unwrap();
+        std::fs::write(manifest.join("Cargo.toml"), "[package]\nname=\"m\"").unwrap();
+        assert_eq!(classify_quasi_repo(&manifest), Some(QuasiKind::Manifest));
+
+        // Tier 2 — loose code (no manifest) → flagged
+        let cpp = tmp.path().join("cpp");
+        std::fs::create_dir_all(&cpp).unwrap();
+        std::fs::write(cpp.join("main.cpp"), "int main(){}").unwrap();
+        std::fs::write(cpp.join("util.h"), "#pragma once").unwrap();
+        assert_eq!(classify_quasi_repo(&cpp), Some(QuasiKind::LooseCode));
+
+        // Tier 2 — markdown docs folder → flagged (treated as a docs project)
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("guide.md"), "# Guide").unwrap();
+        assert_eq!(classify_quasi_repo(&docs), Some(QuasiKind::LooseCode));
+
+        // Tier 3 — data only (csv/txt) → NOT a project
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("rows.csv"), "a,b\n1,2\n").unwrap();
+        std::fs::write(data.join("notes.txt"), "scratch").unwrap();
+        assert_eq!(classify_quasi_repo(&data), None);
+
+        // Tier 3 — empty → NOT a project
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(classify_quasi_repo(&empty), None);
     }
 
     #[test]
