@@ -455,6 +455,21 @@ impl PgStore {
         Ok(())
     }
 
+    /// Remove a tag from a folder's `tags` array (no-op if absent). Pairs with
+    /// [`tag_folder`] so the scan can keep a derived flag (e.g. `needs-review`)
+    /// in sync — clearing it when a folder no longer qualifies.
+    pub async fn untag_folder(&self, folder_id: &uuid::Uuid, tag: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET tags = array_remove(tags, $2), modified_at = now() WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(tag)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Delete a folder (cascade deletes nodes, edges, scan_state, etc.).
     pub async fn delete_repo_by_name(&self, name: &str) -> Result<(), String> {
         sqlx_core::query::query(
