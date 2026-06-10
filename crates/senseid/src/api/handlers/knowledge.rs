@@ -83,6 +83,39 @@ pub(crate) async fn get_context(
 }
 
 // ============================================================================
+// GET /api/knowledge/rules?folder=<abs_path>  — governance Tier-1 resolution
+// ============================================================================
+
+#[derive(Deserialize)]
+pub(crate) struct RulesQuery {
+    /// Absolute path of the repo whose governing rules to resolve.
+    pub folder: String,
+}
+
+/// Resolve the rules governing a repo: gather its namespace memberships + the
+/// always-on general/user scopes, ordered by enforcement then scope level,
+/// deduped, with the mandatory (non-overridable) ones flagged.
+pub(crate) async fn get_rules(
+    State(state): State<AppState>,
+    Query(q): Query<RulesQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let folder = state.pg.get_repo_by_path(&q.folder).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "folder not indexed"))?;
+    let folder_id = crate::api::util::json_uuid(&folder["id"])
+        .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "folder has no id"))?;
+    let raw = state.pg.resolve_rules_raw(&folder_id).await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let ruleset = crate::governance::structure_ruleset(raw);
+    Ok(Json(serde_json::json!({
+        "folder": q.folder,
+        "total": ruleset.total,
+        "mandatory_count": ruleset.mandatory_count,
+        "rules": ruleset.rules,
+    })))
+}
+
+// ============================================================================
 // POST /api/knowledge/proposals  — propose_memory
 // POST /api/knowledge/memories   — save_memory (explicit)
 // ============================================================================
