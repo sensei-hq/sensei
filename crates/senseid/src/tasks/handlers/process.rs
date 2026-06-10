@@ -40,16 +40,35 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let (_indexable_files, files_total) = super::scan_logic::count_indexable_files(repo_path);
 
     // ── 3. Find or create project ────────────────────────────────────
-    // README frontmatter is the authoritative source for project identity;
-    // fall back to the parent directory name (the legacy grouping heuristic)
-    // when absent. Scanning is read-only — frontmatter is never written back.
+    // Every project root is its own project, named after itself. Grouping
+    // multiple folders into one project is opt-in via README frontmatter
+    // `project:` (e.g. a monorepo and its subtrees that all set
+    // `project: sensei`). Parent-directory grouping is deliberately NOT used —
+    // it conflated unrelated repos that merely share a parent dir (e.g. every
+    // repo under the scan root collapsing into one "Developer" project).
+    // Scanning is read-only — frontmatter is never written back.
     let fm = crate::tasks::processors::metadata::read_frontmatter(repo_path).unwrap_or_default();
-    let parent_name = repo_path.parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or(folder_name);
-    let fallback_name = if is_quasi { folder_name } else { parent_name };
-    let project_name: &str = fm.project.as_deref().unwrap_or(fallback_name);
+    // Project name resolution:
+    //  * a git subtree (composite folder name "parent:sub") groups with its
+    //    parent repository's project unless its own README sets `project:`;
+    //  * every other project root is its own project, named after itself,
+    //    unless its README sets `project:`.
+    let project_name_owned: String = match folder_name.split_once(':') {
+        Some((parent_repo, _)) if fm.project.is_none() => {
+            // Inherit the parent repository's project (the monorepo it was split
+            // from), falling back to the parent repo's folder name.
+            let parent_project = ctx.pg().get_repo_by_name(parent_repo).await.ok().flatten()
+                .and_then(|f| crate::api::util::json_uuid(&f["project_id"]));
+            match parent_project {
+                Some(pid) => ctx.pg().get_project(&pid).await.ok().flatten()
+                    .and_then(|p| p["name"].as_str().map(String::from))
+                    .unwrap_or_else(|| parent_repo.to_string()),
+                None => parent_repo.to_string(),
+            }
+        }
+        _ => fm.project.clone().unwrap_or_else(|| folder_name.to_string()),
+    };
+    let project_name: &str = &project_name_owned;
 
     // Find or create the project by its resolved name (get-or-create — idempotent).
     let project_id = match ctx.pg().get_project_by_name(project_name).await {
