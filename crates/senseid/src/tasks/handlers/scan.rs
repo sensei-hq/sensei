@@ -69,6 +69,22 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         ctx.queue.enqueue(process_task).await;
     }
 
+    // 4.5 Reconcile: prune roots the scan no longer discovers (self-healing).
+    //     The scan is additive — without this, a root that lost its `.git`, was
+    //     emptied, or moved lingers forever as a phantom project.
+    let live: std::collections::HashSet<std::path::PathBuf> =
+        classified.iter().map(|f| f.path.clone()).collect();
+    let (removed, marked) = reconcile_roots(ctx.pg(), &root_id, &live).await;
+    let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or(0);
+    if removed > 0 || marked > 0 {
+        emit(StateEvent::activity(ActivityEvent::new(
+            ActivityLevel::Info,
+            &format!("reconcile · {removed} stale roots removed · {marked} flagged stale · {orphaned} projects re-tagged"),
+            start.elapsed().as_secs_f64(),
+        )));
+        tracing::info!("scan_root reconcile: removed={removed} marked={marked} orphaned_retagged={orphaned}");
+    }
+
     // 5. Register watcher
     {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(ctx.queue.clone());
@@ -90,6 +106,57 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     tracing::info!("scan_root: {} git, {} quasi-repo project roots in {}",
         git_count, quasi_count, task.path);
     Ok((git_count + quasi_count) as u32)
+}
+
+/// Prune project roots the scan no longer discovers, healing the index after a
+/// repo loses its `.git`, is emptied, or is moved. Diffs the DB's recorded roots
+/// (`kind` git/standalone/subtree) under this watch root against the freshly
+/// discovered `live` set and applies [`scan_logic::classify_stale_root`]:
+/// provably-dead roots are deleted (cascading nodes + subtree); ambiguous ones
+/// (real content, no live owner) are tagged `stale` for the user to triage.
+/// Returns `(removed, marked)`.
+async fn reconcile_roots(
+    pg: &crate::db::pg_store::PgStore,
+    root_id: &uuid::Uuid,
+    live: &std::collections::HashSet<std::path::PathBuf>,
+) -> (u32, u32) {
+    use scan_logic::StaleAction;
+    let recorded = pg.list_folders_by_root(root_id).await.unwrap_or_default();
+    let (mut removed, mut marked) = (0u32, 0u32);
+    for r in &recorded {
+        // Only project roots are reconciled here; kind=folder rows are owned by
+        // their root and re-materialised when it is processed.
+        if !matches!(r["kind"].as_str().unwrap_or(""), "git" | "standalone" | "subtree") {
+            continue;
+        }
+        let abs = r["abs_path"].as_str().unwrap_or("");
+        if abs.is_empty() {
+            continue;
+        }
+        let p = std::path::PathBuf::from(abs);
+        if live.contains(&p) {
+            continue; // re-discovered this scan
+        }
+        let Some(id) = crate::api::util::json_uuid(&r["id"]) else { continue };
+        let exists = p.exists();
+        let has_content = exists && scan_logic::dir_has_indexable_content(&p);
+        match scan_logic::classify_stale_root(&p, live, exists, has_content) {
+            StaleAction::Keep => {}
+            StaleAction::Remove => {
+                if pg.delete_folder_tree(&id).await.is_ok() {
+                    removed += 1;
+                    tracing::info!("reconcile: removed stale root {abs}");
+                }
+            }
+            StaleAction::MarkStale => {
+                if pg.tag_folder(&id, "stale").await.is_ok() {
+                    marked += 1;
+                    tracing::info!("reconcile: flagged stale root {abs}");
+                }
+            }
+        }
+    }
+    (removed, marked)
 }
 
 // ── Branch Switch ─────────────────────────────────────────────────────────
@@ -201,6 +268,88 @@ mod tests {
 
         let status = ctx.queue.status().await;
         assert_eq!(status.pending, 2, "only git folders should be enqueued");
+    }
+
+    #[tokio::test]
+    async fn scan_reconciles_stale_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // A live git repo.
+        std::fs::create_dir_all(root.join("alive/.git")).unwrap();
+        std::fs::write(root.join("alive/Cargo.toml"), "[package]\nname=\"alive\"").unwrap();
+        // A git repo nested under a grouping dir; `group` is an ancestor-of-git,
+        // so the scan never classifies it as a root — but it still has content.
+        std::fs::create_dir_all(root.join("group/repo/.git")).unwrap();
+        std::fs::write(root.join("group/repo/Cargo.toml"), "[package]\nname=\"repo\"").unwrap();
+        // A former git repo that lost its `.git` but still holds code → the scan
+        // re-classifies it as a quasi-repo (standalone), not a dead row.
+        std::fs::create_dir_all(root.join("revived")).unwrap();
+        std::fs::write(root.join("revived/Cargo.toml"), "[package]\nname=\"revived\"").unwrap();
+
+        let ctx = make_ctx().await;
+        let root_str = root.to_string_lossy().to_string();
+
+        // Pre-register three stale roots as a prior scan would have:
+        //  - `ghost`: kind=git whose path no longer exists on disk → must be removed
+        //  - `group`: kind=git now an ancestor-of-git (no live owner) → must be flagged
+        //  - `revived`: kind=git that lost `.git` but still has code → relabel standalone
+        let root_id = ctx.pg().add_watch_root(&root_str, "root", &serde_json::json!([])).await.unwrap();
+        let ghost = root.join("ghost"); // never created on disk
+        ctx.pg().upsert_repo_kind(&root_id, "git", "ghost", &ghost.to_string_lossy()).await.unwrap();
+        let group = root.join("group");
+        ctx.pg().upsert_repo_kind(&root_id, "git", "group", &group.to_string_lossy()).await.unwrap();
+        let revived = root.join("revived");
+        ctx.pg().upsert_repo_kind(&root_id, "git", "revived", &revived.to_string_lossy()).await.unwrap();
+
+        let task = Task::new(TaskKind::ScanRoot, "", &root_str);
+        scan_root(&ctx, &task).await.unwrap();
+
+        // ghost (path gone) → removed entirely
+        assert!(
+            ctx.pg().get_repo_by_path(&ghost.to_string_lossy()).await.unwrap().is_none(),
+            "stale root with no path on disk should be removed"
+        );
+
+        // group (exists with content, but no live owner) → kept and tagged `stale`
+        let group_row = ctx.pg().get_repo_by_path(&group.to_string_lossy()).await.unwrap()
+            .expect("contentful stale root should be marked, not deleted");
+        let tags: Vec<String> = group_row["tags"].as_array().unwrap_or(&vec![]).iter()
+            .filter_map(|t| t.as_str().map(String::from)).collect();
+        assert!(tags.contains(&"stale".to_string()), "group should be tagged stale, got {tags:?}");
+
+        // alive remains a live git root, untouched
+        assert!(
+            ctx.pg().get_repo_by_path(&root.join("alive").to_string_lossy()).await.unwrap().is_some(),
+            "live git repo should remain"
+        );
+
+        // revived (lost .git, still has code) → relabelled standalone, not stale/removed
+        let revived_row = ctx.pg().get_repo_by_path(&revived.to_string_lossy()).await.unwrap()
+            .expect("revived quasi-repo should remain");
+        assert_eq!(revived_row["kind"], "standalone", "former git root with code should relabel standalone");
+    }
+
+    #[tokio::test]
+    async fn upsert_repo_kind_relabels_git_standalone_but_preserves_subtree() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root_id = ctx.pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "r", &serde_json::json!([]))
+            .await.unwrap();
+
+        // git ⇄ standalone is authoritative on re-registration.
+        let p1 = tmp.path().join("a").to_string_lossy().to_string();
+        ctx.pg().upsert_repo_kind(&root_id, "git", "a", &p1).await.unwrap();
+        ctx.pg().upsert_repo_kind(&root_id, "standalone", "a", &p1).await.unwrap();
+        assert_eq!(ctx.pg().get_repo_by_path(&p1).await.unwrap().unwrap()["kind"], "standalone");
+        ctx.pg().upsert_repo_kind(&root_id, "git", "a", &p1).await.unwrap();
+        assert_eq!(ctx.pg().get_repo_by_path(&p1).await.unwrap().unwrap()["kind"], "git");
+
+        // A subtree must NOT be clobbered by a root re-registration.
+        let p2 = tmp.path().join("b").to_string_lossy().to_string();
+        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
+        ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
+        assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
     }
 
     #[tokio::test]
