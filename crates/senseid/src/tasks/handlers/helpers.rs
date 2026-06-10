@@ -24,6 +24,29 @@ pub(crate) fn is_binary_ext(ext: &str) -> bool {
     ].contains(&ext)
 }
 
+/// File modification time as Unix epoch milliseconds — a cheap stat (no read)
+/// used to gate whether a file needs re-indexing on a re-scan.
+pub(crate) fn file_mtime_ms(path: &std::path::Path) -> Option<i64> {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as i64)
+}
+
+/// Incremental-index fingerprint: `(mtime_ms, sha256_hex)`. The mtime gates
+/// re-indexing cheaply; the content hash is the authoritative change signal
+/// recorded in `scan_state`. Returns `None` if the file can't be read.
+pub(crate) fn file_fingerprint(path: &std::path::Path) -> Option<(i64, String)> {
+    use sha2::{Digest, Sha256};
+    let mtime = file_mtime_ms(path)?;
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Some((mtime, format!("{:x}", hasher.finalize())))
+}
+
 /// Content sniff: read the head of a file and decide whether it is binary or
 /// non-UTF8 (and therefore not parseable as source text). Catches binaries
 /// whose extension isn't on the allowlist, plus latin-1/cp1252 text. A null

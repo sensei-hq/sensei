@@ -646,6 +646,21 @@ impl PgStore {
         Ok(())
     }
 
+    /// Un-resolve edges that point INTO a file's nodes: clear `target_id` while
+    /// keeping `target_name`. Called before re-indexing a changed file so the
+    /// inbound cross-file edges survive (they'd otherwise be cascade-deleted when
+    /// the target nodes are dropped) and are re-pointed by `resolve_edges` once
+    /// the file's new nodes exist. Returns the number of edges un-resolved.
+    pub async fn unresolve_edges_to_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
+              WHERE folder_id = $1
+                AND target_id IN (SELECT id FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2)
+                AND target_name IS NOT NULL"
+        ).bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn get_edges_by_kind(&self, folder_id: &uuid::Uuid, kind: &str) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT id, source_id, target_id, target_name FROM sensei.edges WHERE folder_id = $1 AND kind = $2::sensei.edge_kind"
@@ -1185,6 +1200,25 @@ impl PgStore {
     pub async fn delete_scan_state(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
         sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1")
             .bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// All scan-state fingerprints for a folder as `(file_path, mtime)`. Loaded
+    /// once per scan so the indexer can diff the working tree against the last
+    /// index in memory (skip unchanged files, re-index changed, drop removed)
+    /// instead of N per-file queries.
+    pub async fn list_scan_state(&self, folder_id: &uuid::Uuid) -> Result<Vec<(String, i64)>, String> {
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+            "SELECT file_path, mtime FROM sensei.scan_state WHERE folder_id = $1"
+        ).bind(folder_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Drop a single file's scan-state row (used when a file no longer exists on
+    /// disk, e.g. it was deleted or removed by a branch switch).
+    pub async fn delete_scan_state_file(&self, folder_id: &uuid::Uuid, file_path: &str) -> Result<(), String> {
+        sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2")
+            .bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 

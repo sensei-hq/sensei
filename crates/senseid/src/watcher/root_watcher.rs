@@ -323,7 +323,7 @@ impl RootWatcher {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /// Read current branch from .git/HEAD file.
-fn read_git_head(head_path: &str) -> Option<String> {
+pub(crate) fn read_git_head(head_path: &str) -> Option<String> {
     let content = std::fs::read_to_string(head_path).ok()?;
     let trimmed = content.trim();
     if trimmed.starts_with("ref: refs/heads/") {
